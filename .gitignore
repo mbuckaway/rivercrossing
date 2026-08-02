@@ -230,3 +230,6 @@ coverage.json
 
 # Claude Code local state
 .claude/
+
+# Functional-test screenshot artifacts (CI uploads these on failure)
+tests/functional/_screenshots/

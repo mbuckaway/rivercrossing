@@ -36,7 +36,18 @@ def probe() -> str:
         msg = "frame opened but the screenshot could not be saved"
         raise RuntimeError(msg)
 
-    simulator_ok = hasattr(wx.UIActionSimulator(), "Text")
+    # Does the simulator actually *deliver* events, or merely exist?
+    # Measured on a developer Mac: MouseClick/Char return True and
+    # deliver nothing, because the process never becomes the OS-active
+    # app. Checking hasattr() reports a working simulator that isn't, so
+    # type into a real field and read the value back instead.
+    field = wx.TextCtrl(frame, name="probe_input")
+    field.SetFocus()
+    simulator = wx.UIActionSimulator()
+    simulator.Char(ord("7"))
+    wx.Yield()
+    simulator_delivers = field.GetValue() == "7"
+
     frame.Destroy()
     # Deliberately no app.Destroy(): on macOS that blocks and the probe
     # never returns. Letting the interpreter exit tears the app down.
@@ -44,7 +55,8 @@ def probe() -> str:
 
     return (
         f"{wx.version()} | frame shown | {size.width}x{size.height} PNG "
-        f"saved to {OUTPUT} | UIActionSimulator usable={simulator_ok}"
+        f"saved to {OUTPUT} | UIActionSimulator delivers events="
+        f"{simulator_delivers}"
     )
 
 

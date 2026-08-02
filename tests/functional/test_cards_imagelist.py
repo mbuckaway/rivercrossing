@@ -14,13 +14,11 @@ exit.
 """
 
 import re
-from functools import cache
 from pathlib import Path  # noqa: TC003 -- pytest reads fixture annotations at runtime
 from typing import Any
 
 import pytest
 
-from rivercrossing.ui import require_wx
 from rivercrossing.ui.cards_imagelist import (
     BITMAP_SIZES,
     CARD_KEYS,
@@ -50,23 +48,6 @@ CODE_CASES = (
     (SCALE_2X, "2C", "2c"),
     (SCALE_2X, JOKER_CODE, JOKER_KEY),
 )
-
-
-@cache
-def _wx_app() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
-    """Return the process-wide wx.App, creating it on first use.
-
-    ``functools.cache`` holds the only strong reference, which is
-    the point: the app must outlive every fixture scope.
-    """
-    wx = require_wx()
-    return wx.GetApp() or wx.App()
-
-
-@pytest.fixture(scope="session")
-def wx_app() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
-    """Guarantee a live wx.App before any bitmap is decoded."""
-    return _wx_app()
 
 
 @pytest.fixture(scope="module")
