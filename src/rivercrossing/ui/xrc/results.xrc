@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Results window (spec.md 15b file map, xrc-windows.md section D) - the
+  12 frozen controls the canvas annotates. Control names are frozen;
+  tests find them with FindWindowByName and tools/gen_ids.py turns them
+  into ui/ids.py (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3 (tools/toolkit_probe.py):
+
+    * wxInfoBar cannot be authored here. XRC yields a generic
+      wx.Control and silently drops the name attribute, so
+      FindWindowByName returns None. stale_infobar is built with
+      wx.InfoBar() in code and given its frozen name with SetName().
+    * wxDataViewListCtrl cannot be authored here either: its XRC
+      handler hard-forces the control name to "dataviewCtrl".
+      standings_list is a wxDataViewCtrl, whose name IS honoured;
+      columns, rows and the card bitmaps come from code (canvas
+      code-side items 1 and 2).
+    * <checked>1</checked> IS honoured on wxCheckBox - unlike the
+      <checked> property of a wxITEM_RADIO menu item, which XRC
+      silently ignores (wxWidgets src/xrc/xh_chckb.cpp calls SetValue
+      unconditionally). All five publish options therefore declare
+      their canvas default here rather than in code.
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). No
+      minimum is documented for this window (spec.md 13 sizes the
+      console only), so it declares no <size> and the sizer handler
+      Fit()s the frame and applies SetSizeHints().
+
+  This is a wxFrame, not a dialog: the canvas draws full window chrome
+  (minimise / maximise / close) and the window stays open beside the
+  console while the ride runs.
+
+  Code-side per the canvas footnote: standings_list rows, with
+  "draw required" tie rows carrying a warning badge column; the
+  stale-export banner after reopened corrections; tiebreak_list rows
+  and the live re-rank on reorder; show_times_chk also hiding the
+  Total column here.
+-->
+<resource>
+
+  <object class="wxFrame" name="results_frame">
+    <title>Results</title>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!--
+        InfoBar slot. stale_infobar is constructed in code and inserted
+        at index 0 of this sizer; see the file header for why it cannot
+        be declared here.
+      -->
+      <object class="spacer">
+        <size>0,0</size>
+      </object>
+
+      <!-- The tie-break order re-ranks the standings live; the control
+           supplies its own caption and the reorder arrows. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND|wxRIGHT</flag>
+            <border>12</border>
+            <object class="wxEditableListBox" name="tiebreak_list">
+              <label>Tie-break order</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_BOTTOM</flag>
+            <object class="wxButton" name="reopen_btn">
+              <label>Reopen ride…</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="standings_list"/>
+      </object>
+
+      <!-- Canvas defaults, and E1.5.2 asserts them: times off, laps
+           board on, time board off, full field on, all cards on. Each
+           box is independent, so each declares its own state. The
+           literal ampersand in the first label is written "&&" - a
+           single "&" is a mnemonic marker and is stripped from the
+           displayed text. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Publish options</label>
+          <orient>wxVERTICAL</orient>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxWrapSizer">
+              <orient>wxHORIZONTAL</orient>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>16</border>
+                <object class="wxCheckBox" name="show_times_chk">
+                  <label>Show lap &amp;&amp; total times</label>
+                  <checked>0</checked>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>16</border>
+                <object class="wxCheckBox" name="laps_board_chk">
+                  <label>Laps leaderboard</label>
+                  <checked>1</checked>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>16</border>
+                <object class="wxCheckBox" name="time_board_chk">
+                  <label>Fastest-time leaderboard</label>
+                  <checked>0</checked>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>16</border>
+                <object class="wxCheckBox" name="full_field_chk">
+                  <label>Full field</label>
+                  <checked>1</checked>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxCheckBox" name="all_cards_chk">
+                  <label>All cards drawn</label>
+                  <checked>1</checked>
+                </object>
+              </object>
+
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="export_html_btn">
+              <label>Export HTML…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="export_pdf_btn">
+              <label>Export PDF…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="poster_btn">
+              <label>Podium poster…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <object class="wxButton" name="export_csv_btn">
+              <label>Export CSV…</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

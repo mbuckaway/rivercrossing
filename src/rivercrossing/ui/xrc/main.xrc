@@ -1,0 +1,523 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  RiverCrossing console: main_frame + main_menubar (spec.md 15b file map,
+  xrc-windows.md section A). Control names are frozen; tests find them with
+  FindWindowByName and tools/gen_ids.py turns them into ui/ids.py (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3 (tools/toolkit_probe.py):
+
+    * wxInfoBar cannot be authored here. XRC yields a generic wx.Control and
+      silently drops the name attribute, so FindWindowByName returns None.
+      resume_infobar, reopened_infobar and finished_infobar are built with
+      wx.InfoBar() in code and given their frozen names with SetName().
+    * wxDataViewListCtrl cannot be authored here either: its XRC handler
+      hard-forces the control name to "dataviewCtrl". crossings_list and
+      flagged_list are therefore wxDataViewCtrl, whose name IS honoured;
+      columns, rows and per-row attributes are appended in code with a
+      DataViewIndexListModel subclass (canvas code-side item 1).
+    * wxMenuBar's XRC handler never applies the name attribute to the control
+      (wxWidgets src/xrc/xh_menu.cpp). "main_menubar" is the resource id used
+      by XmlResource.LoadMenuBar(); it does not resolve via FindWindowByName.
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). The
+      canvas minimum of 1100x700 is declared as <size> below and must be
+      re-applied code-side with SetMinSize(). (spec.md 13 says 1180x740;
+      the canvas is implementation truth and wins - recorded conflict.)
+
+  Code-side per the canvas footnotes: feed columns/rows and bold flagged-row
+  attributes, card bitmaps from the imagelist, InfoBar text and show/hide,
+  main_splitter sash restore from settings, per-ride-state enabling of menus
+  and buttons, radio menu-item defaults (see main_menubar below), and every
+  data label's text.
+-->
+<resource>
+
+  <object class="wxFrame" name="main_frame">
+    <title>RiverCrossing</title>
+    <size>1100,700</size>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!--
+        InfoBar slot. resume_infobar / reopened_infobar / finished_infobar are
+        constructed in code and inserted at index 0 of this sizer; see the file
+        header for why they cannot be declared here.
+      -->
+      <object class="spacer">
+        <size>0,0</size>
+      </object>
+
+      <!-- Ride identity, clock and the start/stop group. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>8</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
+              <object class="sizeritem">
+                <object class="wxStaticText" name="ride_name_lbl">
+                  <label></label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <object class="wxStaticText" name="ride_status_lbl">
+                  <label></label>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT|wxRIGHT</flag>
+            <border>12</border>
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_RIGHT</flag>
+                <object class="wxStaticText" name="clock_elapsed_lbl">
+                  <label>0:00:00</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_RIGHT</flag>
+                <object class="wxStaticText" name="clock_remaining_lbl">
+                  <label></label>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_RIGHT|wxBOTTOM</flag>
+                <border>4</border>
+                <object class="wxButton" name="start_btn">
+                  <label>Start ride</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_RIGHT</flag>
+                <object class="wxBoxSizer">
+                  <orient>wxHORIZONTAL</orient>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                    <border>6</border>
+                    <object class="wxCheckBox" name="arm_stop_chk">
+                      <label>Arm</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <object class="wxButton" name="stop_btn">
+                      <label>Stop ride…</label>
+                    </object>
+                  </object>
+                </object>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <!-- The plate entry row: the operator's whole working surface. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>8</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStaticText">
+              <label>Plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>12</border>
+            <object class="wxTextCtrl" name="plate_input">
+              <style>wxTE_PROCESS_ENTER</style>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="last_crossing_lbl">
+              <label></label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="undo_btn">
+              <label>Undo last (Ctrl+Z)</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <!--
+        Crossings feed | review sidebar. The sash position is restored from
+        settings in code (canvas code-side item 4); minsize keeps either pane
+        from being dragged shut - the canvas draws the sidebar at 250 px.
+      -->
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>8</border>
+        <object class="wxSplitterWindow" name="main_splitter">
+          <orientation>vertical</orientation>
+          <minsize>200</minsize>
+
+          <object class="wxPanel">
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND</flag>
+                <object class="wxDataViewCtrl" name="crossings_list"/>
+              </object>
+            </object>
+          </object>
+
+          <object class="wxPanel">
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxLEFT|wxBOTTOM</flag>
+                <border>8</border>
+                <object class="wxFlexGridSizer">
+                  <cols>2</cols>
+                  <vgap>6</vgap>
+                  <hgap>6</hgap>
+                  <growablecols>0,1</growablecols>
+
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>Crossings</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="crossings_count_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>Cards dealt</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="cards_count_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>On course</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="on_course_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>Shoe</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="shoe_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND|wxLEFT|wxBOTTOM</flag>
+                <border>8</border>
+                <object class="wxStaticBoxSizer">
+                  <label>Needs review</label>
+                  <orient>wxVERTICAL</orient>
+                  <object class="sizeritem">
+                    <option>1</option>
+                    <flag>wxEXPAND|wxBOTTOM</flag>
+                    <border>6</border>
+                    <object class="wxDataViewCtrl" name="flagged_list"/>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_RIGHT</flag>
+                    <object class="wxButton" name="review_btn">
+                      <label>Review…</label>
+                    </object>
+                  </object>
+                </object>
+              </object>
+
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+
+    <!-- Auto-attached to the frame by the XRC handler (SetStatusBar). -->
+    <object class="wxStatusBar" name="main_statusbar">
+      <fields>3</fields>
+    </object>
+
+  </object>
+
+  <!--
+    Seven menus, 45 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 8 - Ride 7 - Riders 4 - Cards 7 - Results 7 -
+    View 1 row, 11 items - Help 4). File order follows the 15 table
+    (Import CSV, Export CSV, Back Up), not 15b's listing order.
+
+    wxID_PREFERENCES / wxID_EXIT / wxID_ABOUT carry no <label>: the stock id
+    supplies the platform-correct text and lets wx relocate them into the
+    macOS application menu (CODINGSTANDARDS-UX-DESKTOP.md section 5).
+
+    Radio menu items get no <checked> here: wxWidgets' XRC handler applies
+    that property only when kind == wxITEM_CHECK (src/xrc/xh_menu.cpp), so it
+    is a silent no-op on wxITEM_RADIO. Code checks mi_theme_system and
+    mi_zoom_100 - the two documented defaults - after LoadMenuBar.
+  -->
+  <object class="wxMenuBar" name="main_menubar">
+
+    <object class="wxMenu">
+      <label>&amp;File</label>
+      <object class="wxMenuItem" name="mi_new_ride">
+        <label>&amp;New Ride…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_open_library">
+        <label>Ride &amp;Library</label>
+      </object>
+      <object class="wxMenuItem" name="mi_duplicate_ride">
+        <label>&amp;Duplicate Ride…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_import_csv">
+        <label>&amp;Import Riders CSV…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_export_csv">
+        <label>&amp;Export Riders CSV…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_backup_now">
+        <label>&amp;Back Up Database…</label>
+      </object>
+      <object class="separator"/>
+      <object class="wxMenuItem" name="wxID_PREFERENCES"/>
+      <object class="separator"/>
+      <object class="wxMenuItem" name="wxID_EXIT"/>
+    </object>
+
+    <object class="wxMenu">
+      <label>&amp;Ride</label>
+      <object class="wxMenuItem" name="mi_start_ride">
+        <label>&amp;Start Ride</label>
+      </object>
+      <object class="wxMenuItem" name="mi_stop_ride">
+        <label>Sto&amp;p Ride…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_set_start_time">
+        <label>Set Start &amp;Time…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_finish_ride">
+        <label>&amp;Finish Ride…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_reopen_ride">
+        <label>&amp;Reopen Ride</label>
+      </object>
+      <object class="wxMenuItem" name="mi_audit_trail">
+        <label>&amp;Audit Trail…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_ride_setup">
+        <label>Ride Set&amp;up…</label>
+      </object>
+    </object>
+
+    <object class="wxMenu">
+      <label>Ri&amp;ders</label>
+      <object class="wxMenuItem" name="mi_rider_editor">
+        <label>Rider &amp;Editor</label>
+      </object>
+      <object class="wxMenuItem" name="mi_add_entry">
+        <label>&amp;Add Rider/Entry…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_mark_dnf">
+        <label>&amp;Mark DNF…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_entry_detail">
+        <label>Entry &amp;Detail…</label>
+      </object>
+    </object>
+
+    <object class="wxMenu">
+      <label>&amp;Cards</label>
+      <object class="wxMenuItem" name="mi_undo_crossing">
+        <label>&amp;Undo Last Crossing</label>
+        <accel>Ctrl+Z</accel>
+      </object>
+      <object class="wxMenuItem" name="mi_add_crossing_at">
+        <label>&amp;Add Crossing at Time…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_edit_crossing">
+        <label>&amp;Edit Crossing…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_reassign_plate">
+        <label>&amp;Reassign Plate…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_deal_manual">
+        <label>&amp;Deal Manual Card…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_void_card">
+        <label>&amp;Void Card…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_review_held">
+        <label>Review &amp;Held Cards</label>
+      </object>
+    </object>
+
+    <object class="wxMenu">
+      <label>Re&amp;sults</label>
+      <object class="wxMenuItem" name="mi_standings">
+        <label>&amp;Standings</label>
+        <accel>F5</accel>
+      </object>
+      <object class="wxMenuItem" name="mi_export_html">
+        <label>Generate &amp;HTML…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_export_pdf">
+        <label>Export &amp;PDF…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_export_poster">
+        <label>Podium P&amp;oster PDF…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_export_results_csv">
+        <label>Export Standings &amp;CSV…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_preview_browser">
+        <label>Preview in &amp;Browser</label>
+      </object>
+      <object class="wxMenuItem" name="mi_tiebreak_order">
+        <label>&amp;Tie-break Order…</label>
+      </object>
+    </object>
+
+    <!--
+      The theme trio and the zoom ladder are two separate radio groups; wx
+      groups consecutive wxITEM_RADIO entries, so mi_hide_times and the
+      separators around it are what keep them apart. The zoom items carry no
+      mnemonic: seven numeric labels cannot hold unique ones, and the whole
+      ladder is reachable with Alt+V then the arrow keys.
+    -->
+    <object class="wxMenu">
+      <label>&amp;View</label>
+      <object class="wxMenuItem" name="mi_theme_system">
+        <label>Theme: &amp;System</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_theme_light">
+        <label>Theme: &amp;Light</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_theme_dark">
+        <label>Theme: &amp;Dark</label>
+        <radio>1</radio>
+      </object>
+      <object class="separator"/>
+      <object class="wxMenuItem" name="mi_hide_times">
+        <label>&amp;Hide Times on Console</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="separator"/>
+      <object class="wxMenuItem" name="mi_zoom_90">
+        <label>Zoom 90%</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_zoom_100">
+        <label>Zoom 100%</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_zoom_110">
+        <label>Zoom 110%</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_zoom_120">
+        <label>Zoom 120%</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_zoom_130">
+        <label>Zoom 130%</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_zoom_140">
+        <label>Zoom 140%</label>
+        <radio>1</radio>
+      </object>
+      <object class="wxMenuItem" name="mi_zoom_150">
+        <label>Zoom 150%</label>
+        <radio>1</radio>
+      </object>
+    </object>
+
+    <object class="wxMenu">
+      <label>&amp;Help</label>
+      <object class="wxMenuItem" name="mi_user_guide">
+        <label>&amp;User Guide</label>
+        <accel>F1</accel>
+      </object>
+      <object class="wxMenuItem" name="mi_shortcuts">
+        <label>&amp;Keyboard Shortcuts</label>
+      </object>
+      <object class="wxMenuItem" name="mi_selftest">
+        <label>Run Evaluator &amp;Self-test</label>
+      </object>
+      <object class="separator"/>
+      <object class="wxMenuItem" name="wxID_ABOUT"/>
+    </object>
+
+  </object>
+
+</resource>

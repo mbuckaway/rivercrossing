@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Audit trail viewer (spec.md 15b file map, xrc-windows.md section D) -
+  the three frozen controls the canvas annotates plus the stock
+  wxID_CLOSE. Control names are frozen; tests find them with
+  FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
+  (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3:
+
+    * wxDataViewListCtrl cannot be authored here: its XRC handler
+      hard-forces the control name to "dataviewCtrl". audit_list is a
+      wxDataViewCtrl, whose name IS honoured; the when/who/action/
+      entry/reason columns and the rows are appended in code with a
+      DataViewIndexListModel subclass (canvas code-side item 1).
+    * wxSearchCtrl round-trips through XRC with its name intact
+      (tools/toolkit_probe.py check_xrc_names).
+    * <default>1</default> IS honoured on wxButton; the dialog's
+      GetDefaultItem() returns wxID_CLOSE.
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). No
+      minimum is documented for this dialog, so it declares no <size>
+      and the sizer handler Fit()s it and applies SetSizeHints().
+
+  The two filter controls carry visible wxStaticText labels. The canvas
+  draws none, but UX-DESKTOP 7 requires a real, persistent label on
+  every input - a search glyph and a dropdown arrow are not reachable
+  by a screen reader. The labels are unnamed: they are chrome, not
+  data, and nothing needs to find them.
+
+  action_choice's six entries are the filter set drawn on the canvas.
+  No <selection> is declared - the presenter picks the current filter,
+  and an XRC wxChoice with content already lands on index 0
+  ("All actions"), which is the canvas default.
+
+  Code-side per the canvas: audit_list columns and rows, newest first;
+  the search text and the chosen action both narrowing the same query.
+-->
+<resource>
+
+  <object class="wxDialog" name="audit_dlg">
+    <title>Audit Trail</title>
+    <!-- R-05 requires resizable windows; the in-app text zoom (90-150%)
+         cannot work in a fixed-size dialog. spec.md 13 says "dialogs
+         fixed-size" - recorded conflict, resolved in favour of R-05. -->
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStaticText">
+              <label>Search</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>12</border>
+            <object class="wxSearchCtrl" name="audit_search"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStaticText">
+              <label>Action</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxChoice" name="action_choice">
+              <content>
+                <item>All actions</item>
+                <item>Crossing edits</item>
+                <item>Card deals/voids</item>
+                <item>Moves</item>
+                <item>DNF</item>
+                <item>Shoe reshuffle</item>
+              </content>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="audit_list"/>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_CLOSE">
+              <default>1</default>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

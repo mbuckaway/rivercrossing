@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ride library + delete-ride confirmation (spec.md 15b file map,
+  xrc-windows.md section D). Control names are frozen; tests find them
+  with FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
+  (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3:
+
+    * wxDataViewListCtrl cannot be authored here: its XRC handler
+      hard-forces the control name to "dataviewCtrl". rides_list is a
+      wxDataViewCtrl, whose name IS honoured; columns and rows are
+      appended in code with a DataViewIndexListModel subclass (canvas
+      code-side item 1).
+    * wxStdDialogButtonSizer only *places* the buttons its AddButton()
+      recognises - wxID_OK/YES/SAVE, wxID_APPLY, wxID_NO,
+      wxID_CANCEL/CLOSE, wxID_HELP/CONTEXT_HELP. Any other button is
+      still created as a child of the dialog, so it resolves by name,
+      but it is never added to the sizer: GetContainingSizer() is None
+      and it stays at (-1,-1). Measured for wxID_OPEN (5000),
+      wxID_NEW (5002), wxID_DELETE (5038) and a custom-named button.
+      So the extra buttons live in a sibling wxBoxSizer and only
+      wxID_CLOSE / wxID_CANCEL sit in a wxStdDialogButtonSizer - the
+      same shape rider_editor_dlg and entry_detail_dlg use.
+    * <default>1</default> IS honoured on wxButton (dialog
+      GetDefaultItem() returns it), inside a std sizer or a box sizer.
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow).
+      Neither dialog has a documented minimum, so neither declares a
+      <size>: the sizer handler Fit()s it and applies SetSizeHints().
+      Code re-applies SetMinSize() when one is specified.
+
+  Recorded gap: the canvas draws the ride's name inside delete_ride_dlg's
+  first sentence ("Deletes "Club poker night" and all its data.") but
+  annotates no name for that label, so a presenter has nothing to write
+  it to. The data-bearing sentence is declared here as an unnamed,
+  empty wxStaticText and the static remainder as its own label; the
+  frozen-name registry needs a *_lbl entry before this can be filled.
+
+  Code-side per the canvas: rides_list columns and rows; wxID_DELETE
+  never enabled on a RUNNING ride; delete_ride_dlg's wxID_DELETE
+  enabled only on an exact match of confirm_name_input against the
+  ride name; the backup written before the delete commits.
+-->
+<resource>
+
+  <object class="wxDialog" name="ride_library_dlg">
+    <title>Ride Library</title>
+    <!-- R-05 requires resizable windows; the in-app text zoom (90-150%)
+         cannot work in a fixed-size dialog. spec.md 13 says "dialogs
+         fixed-size" - recorded conflict, resolved in favour of R-05. -->
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="rides_list"/>
+      </object>
+
+      <!-- Open · New… · Duplicate… · Delete… on the left, Close on the
+           right. wxID_OPEN and wxID_CLOSE keep their stock labels; the
+           canvas gives New/Duplicate/Delete the ellipsis that marks a
+           button as opening a further dialog (UX-DESKTOP 5). -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="wxID_OPEN">
+              <default>1</default>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="wxID_NEW">
+              <label>New…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="duplicate_btn">
+              <label>Duplicate…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="wxID_DELETE">
+              <label>Delete…</label>
+            </object>
+          </object>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CLOSE"/>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="delete_ride_dlg">
+    <title>Delete Ride</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- "Deletes "<ride name>" and all its data." - written by the
+           presenter. See the recorded gap in the file header: the
+           canvas annotates no frozen name for this line. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>A backup is written first. Type the ride's name to confirm:</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxTextCtrl" name="confirm_name_input"/>
+      </object>
+
+      <!-- wxID_DELETE is not one of the ids wxStdDialogButtonSizer
+           places (see the file header), so it sits beside the std
+           sizer rather than inside it. Cancel is the default and takes
+           the initial focus: this destruction is irreversible, so a
+           reflex Enter must be safe (spec.md 13, UX-DESKTOP 3/4). -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="wxID_DELETE">
+              <label>Delete</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CANCEL">
+                  <default>1</default>
+                  <focused>1</focused>
+                </object>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

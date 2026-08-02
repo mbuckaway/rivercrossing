@@ -1,0 +1,846 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The thirteen small dialogs of spec.md 15b's dialogs.xrc entry:
+  set_start_dlg, stop_confirm_dlg, finish_confirm_dlg,
+  continue_or_new_dlg, resume_dlg, exit_running_dlg (xrc-windows.md
+  section B), edit_crossing_dlg, reassign_dlg, manual_deal_dlg,
+  dnf_confirm_dlg (section C), about_dlg, selftest_dlg, shortcuts_dlg
+  (section E). Control names are frozen; tests find them with
+  FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
+  (R-05, R-73). Names repeat across these windows on purpose -
+  plate_input, reason_input and continue_btn each appear in more than
+  one - because spec.md 15b requires uniqueness only within a
+  top-level window.
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3:
+
+    * wxStdDialogButtonSizer only *places* the ids its AddButton()
+      recognises - wxID_OK/YES/SAVE, wxID_APPLY, wxID_NO,
+      wxID_CANCEL/CLOSE, wxID_HELP/CONTEXT_HELP. Any other button is
+      still created as a child of the dialog, so it resolves by name,
+      but it is never added to the sizer: GetContainingSizer() is None
+      and it stays at (-1,-1). void_btn, continue_btn, archive_new_btn,
+      library_btn and rerun_btn therefore sit in a sibling wxBoxSizer,
+      the shape entry_detail_dlg already uses.
+    * <default>1</default> is honoured on wxButton, inside a std sizer
+      or a box sizer; the dialog's GetDefaultItem() returns it.
+      <focused>1</focused> is declared alongside it on the destructive
+      confirms but could NOT be verified here: a terminal-launched,
+      unbundled Python never becomes the frontmost macOS application,
+      so no window takes key focus and even an explicit SetFocus()
+      leaves FindFocus() at None. The functional suite has to assert
+      initial focus against an activated app.
+    * <wrap>420</wrap> is honoured on wxStaticText and is what keeps
+      the three long confirm paragraphs from Fit()ing to a single
+      700-940 px line. wxStaticText::Wrap() rewrites the label with
+      newlines, so anything that later calls SetLabel on one of these
+      has to re-wrap; they are all fixed wording, so nothing does.
+    * XRC cannot give one control both a custom name and a stock id
+      value: the id comes from the name attribute, and the
+      name="foo=5100" form is not parsed by this build (XRCID returns
+      a generated value and the window name keeps the literal "=5100").
+      The canvas marks continue_btn as wxID_OK in continue_or_new_dlg
+      and resume_dlg; the frozen name wins here and the affirmative
+      behaviour is code-side - SetAffirmativeId(XRCID("continue_btn")).
+    * wxDataViewListCtrl cannot be authored here: its XRC handler
+      hard-forces the control name to "dataviewCtrl". shortcuts_list is
+      a wxDataViewCtrl, whose name IS honoured.
+    * wxHyperlinkCtrl needs both a label and a url; constructing it
+      with neither trips a C++ assertion that aborts the interpreter,
+      so gorba_link declares both.
+    * <font><family>teletype</family></font> gives selftest_output a
+      genuinely fixed-width face (IsFixedWidth() is True) without
+      naming a font or a point size, so it still follows system
+      metrics and the 90-150% zoom.
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). None
+      of these dialogs has a documented minimum, so none declares a
+      <size> and the sizer handler Fit()s it and applies
+      SetSizeHints(). selftest_output declares a control-level <size>
+      because a multi-line text area has no useful best size of its
+      own.
+
+  Recorded gap: continue_or_new_dlg and resume_dlg both put live data
+  in their message line ("stopped with 1 124 crossings recorded"; the
+  ride name, with the wording swapping for a crash), but the canvas
+  annotates no name for either label. They are declared here as
+  unnamed, empty wxStaticText and cannot be written to until the
+  frozen-name registry gains a *_lbl entry for each. The same gap
+  exists in delete_ride_dlg (library.xrc).
+
+  Code-side per the canvas: edit_crossing_dlg is one resource with two
+  titles - Cards > Edit Crossing and Cards > Add Crossing at Time set
+  the title and prefill the fields, and void_btn is shown in edit mode
+  only; every message and data label's text; selftest_output's report;
+  shortcuts_list's rows, generated from the single accelerator table so
+  they cannot drift.
+-->
+<resource>
+
+  <!-- ============================ section B ============================ -->
+
+  <object class="wxDialog" name="set_start_dlg">
+    <title>Set Start Time</title>
+    <!-- R-05 requires resizable windows; the in-app text zoom (90-150%)
+         cannot work in a fixed-size dialog. spec.md 13 says "dialogs
+         fixed-size" - recorded conflict, resolved in favour of R-05.
+         The same style is on every dialog in this file. -->
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxStaticText">
+              <label>Started at</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxDatePickerCtrl" name="start_date_picker"/>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxTimePickerCtrl" name="start_time_picker"/>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Lap-1 times recompute from this moment.</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <default>1</default>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- Destructive confirm: Cancel is both the default and the initially
+       focused control, so a reflex Enter is safe (spec.md 13,
+       UX-DESKTOP 3). wxID_OK carries the canvas's verb label; the stock
+       id is what keeps it on the platform-correct side. -->
+  <object class="wxDialog" name="stop_confirm_dlg">
+    <title>Stop Ride?</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>The clock stops for everyone. Riders still on course keep their laps; no cards are dealt after stop. You can continue the ride later without losing anything.</label>
+          <wrap>420</wrap>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Stop ride</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <default>1</default>
+              <focused>1</focused>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="finish_confirm_dlg">
+    <title>Finish Ride?</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Locks entry and computes final standings (evaluator self-test must be green). You can reopen later for corrections.</label>
+          <wrap>420</wrap>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Finish ride</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <default>1</default>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- Three buttons, so spec.md 13's order applies: ghost, secondary,
+       primary left to right - Cancel, Archive & start new, Continue
+       ride. The std sizer cannot do that ordering itself here because
+       continue_btn cannot carry wxID_OK (see the file header), so only
+       Cancel sits inside it. -->
+  <object class="wxDialog" name="continue_or_new_dlg">
+    <title>Ride Already Has Data</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- "This ride was stopped with <n> crossings recorded." - see
+           the recorded gap in the file header: the canvas annotates no
+           frozen name for this line. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Continue it (keeps start time and all data) or archive and start fresh?</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CANCEL"/>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="archive_new_btn">
+              <label>Archive &amp;&amp; start new</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="continue_btn">
+              <label>Continue ride</label>
+              <default>1</default>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- Two buttons, neither of which is an id wxStdDialogButtonSizer
+       places, so this dialog has no std sizer at all: library_btn is
+       the secondary and continue_btn the primary, ordered left to
+       right per spec.md 13. -->
+  <object class="wxDialog" name="resume_dlg">
+    <title>Resume Ride</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- The ride name, and wording that swaps for a crash restart
+           (session_state) - see the recorded gap in the file header:
+           the canvas annotates no frozen name for this line. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="library_btn">
+              <label>Open library</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="continue_btn">
+              <label>Continue ride</label>
+              <default>1</default>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="exit_running_dlg">
+    <title>Ride Is Running</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Quitting won't stop the ride — it keeps timing on the wall clock, and you'll be asked to continue when you reopen.</label>
+          <wrap>420</wrap>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Quit — keep ride running</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <default>1</default>
+              <focused>1</focused>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- ============================ section C ============================ -->
+
+  <object class="wxDialog" name="edit_crossing_dlg">
+    <title>Edit Crossing</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="plate_input"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Time</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTimePickerCtrl" name="time_picker"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Reason</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="reason_input"/>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="void_btn">
+              <label>Void crossing…</label>
+            </object>
+          </object>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_OK">
+                  <default>1</default>
+                </object>
+              </object>
+              <object class="button">
+                <object class="wxButton" name="wxID_CANCEL"/>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="reassign_dlg">
+    <title>Reassign Plate</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- "Crossing 14:21:59 · lap credited to 45" - written by the
+           presenter from the selected crossing. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="crossing_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>New plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="new_plate_input"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Reason</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="reason_input"/>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <default>1</default>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="manual_deal_dlg">
+    <title>Deal Manual Card</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="plate_input"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Reason</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="reason_input"/>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Deals the next card from the shoe — deterministic, audit-logged.</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Deal</label>
+              <default>1</default>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="dnf_confirm_dlg">
+    <title>Mark DNF</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- The entry being marked ("212 · M. Chen"); the consequence
+           beside it is fixed wording and stays in XRC. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStaticText" name="entry_lbl">
+              <label></label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>— keeps laps and cards, ranked in the DNF block. Reversible.</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxStaticText">
+              <label>Reason</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="reason_input"/>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Mark DNF</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <default>1</default>
+              <focused>1</focused>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- ============================ section E ============================ -->
+
+  <object class="wxDialog" name="about_dlg">
+    <title>About RiverCrossing</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- The ride logo, falling back to the app icon - both supplied
+           in code, so no <bitmap> is declared. -->
+      <object class="sizeritem">
+        <flag>wxALIGN_CENTRE_HORIZONTAL|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBitmap" name="about_logo_bmp"/>
+      </object>
+
+      <!-- "RiverCrossing 1.0.0" - the version comes from the package. -->
+      <object class="sizeritem">
+        <flag>wxALIGN_CENTRE_HORIZONTAL|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="version_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxALIGN_CENTRE_HORIZONTAL|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Timing &amp;&amp; poker-hand scoring for poker-run rides.</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxALIGN_CENTRE_HORIZONTAL|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>4</border>
+            <object class="wxStaticText">
+              <label>Built for GORBA —</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxHyperlinkCtrl" name="gorba_link">
+              <label>gorba.ca</label>
+              <url>https://gorba.ca</url>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_CLOSE">
+              <default>1</default>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="selftest_dlg">
+    <title>Evaluator Self-Test</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- The report is dot-leadered, so it only lines up in a
+           fixed-width face. "teletype" asks for the system's monospace
+           family rather than naming one, which keeps the control
+           native and lets it follow the text zoom. -->
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxTextCtrl" name="selftest_output">
+          <style>wxTE_MULTILINE|wxTE_READONLY</style>
+          <size>420,140</size>
+          <font>
+            <family>teletype</family>
+          </font>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="rerun_btn">
+              <label>Run again</label>
+            </object>
+          </object>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CLOSE">
+                  <default>1</default>
+                </object>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="shortcuts_dlg">
+    <title>Keyboard Shortcuts</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="shortcuts_list"/>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_CLOSE">
+              <default>1</default>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Settings dialog (spec.md 15b file map, xrc-windows.md section E) - the
+  seven frozen controls the canvas annotates plus the stock wxID_OK /
+  wxID_CANCEL row. Control names are frozen; tests find them with
+  FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
+  (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3:
+
+    * <value>1</value> and <style>wxRB_GROUP</style> are both honoured
+      on wxRadioButton (tools/toolkit_probe.py check_xrc_names), so the
+      appearance group opens and defaults here rather than in code.
+    * <content> is honoured on wxChoice, and a wxChoice loaded with
+      content lands on index 0 with no <selection> declared.
+    * <default>1</default> IS honoured on wxButton; the dialog's
+      GetDefaultItem() returns wxID_OK.
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). No
+      minimum is documented for this dialog, so it declares no <size>
+      and the sizer handler Fit()s it and applies SetSizeHints().
+
+  Only the radio group declares a default. spec.md 13 requires that a
+  radio group is never left unselected, so "System" is structural and
+  belongs here. sound_chk, hide_times_chk and zoom_choice are stored
+  settings: the presenter loads them when the dialog opens, so no
+  <checked> or <selection> is declared for them.
+
+  zoom_choice's seven entries are the documented zoom ladder - the same
+  90/100/110/120/130/140/150 rungs the View menu carries as
+  mi_zoom_90...mi_zoom_150 (spec.md 15b) for the 90-150% range of
+  spec.md 13 / R-04.
+
+  The canvas notes the wxPython 4.2.5 baseline disabled the Dark radio
+  with a "needs wxPython 4.3" hint. This build is 4.3.1 / wxWidgets
+  3.3.3, so wxApp.SetAppearance exists and all three radios stay
+  enabled; enabling state is code-side either way.
+
+  Code-side per the canvas: loading and storing every value; applying
+  the appearance choice through wxApp.SetAppearance; hide_times_chk
+  reaching the console mid-ride; backup_now_btn opening the OS-native
+  save dialog.
+-->
+<resource>
+
+  <object class="wxDialog" name="settings_dlg">
+    <title>Settings</title>
+    <!-- R-05 requires resizable windows; the in-app text zoom (90-150%)
+         cannot work in a fixed-size dialog. spec.md 13 says "dialogs
+         fixed-size" - recorded conflict, resolved in favour of R-05. -->
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Appearance</label>
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxBOTTOM</flag>
+            <border>4</border>
+            <object class="wxRadioButton" name="appearance_system_radio">
+              <label>System</label>
+              <style>wxRB_GROUP</style>
+              <value>1</value>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxBOTTOM</flag>
+            <border>4</border>
+            <object class="wxRadioButton" name="appearance_light_radio">
+              <label>Light</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <object class="wxRadioButton" name="appearance_dark_radio">
+              <label>Dark</label>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="sound_chk">
+          <label>Sound on crossing (recorded / flagged / error cues)</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="hide_times_chk">
+          <label>Hide times on the console (toggle any time, even mid-ride)</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStaticText">
+              <label>Text zoom</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxChoice" name="zoom_choice">
+              <content>
+                <item>90%</item>
+                <item>100%</item>
+                <item>110%</item>
+                <item>120%</item>
+                <item>130%</item>
+                <item>140%</item>
+                <item>150%</item>
+              </content>
+            </object>
+          </object>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="backup_now_btn">
+              <label>Back up now</label>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <default>1</default>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

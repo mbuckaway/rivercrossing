@@ -69,7 +69,15 @@ version = { attr = "rivercrossing.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-rivercrossing = ["py.typed"]
+# The UI *is* these files -- without them a built wheel or PyInstaller bundle
+# launches to a stack trace. E1.6.1's asset-manifest test guards the bundle;
+# this guards the wheel.
+rivercrossing = [
+    "py.typed",
+    "ui/xrc/*.xrc",
+    "ui/assets/cards/*.png",
+    "ui/assets/sounds/*.wav",
+]
 
 # ----------------------------------------------------------------- ruff
 

@@ -1,0 +1,353 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Ride Setup dialog (spec.md 15b file map, xrc-windows.md section B) - the 22
+  frozen controls the canvas annotates, plus the stock wxID_OK / wxID_CANCEL
+  row in a wxStdDialogButtonSizer so button order is right on both platforms.
+
+  Radio defaults are drawn on the canvas and required by spec.md 13 ("radio
+  groups always have a default"): solo_radio, pooled_radio and jokers_2_radio
+  start selected. wxRB_GROUP opens each of the three groups - entry mode,
+  plate model and jokers-per-deck - and <value>1</value> is honoured by XRC
+  (measured: tools/toolkit_probe.py check_xrc_names).
+
+  Code-side per the canvas footnote: field values are loaded from the ride
+  record (this file declares structure and ranges only); the entry-mode and
+  plate-model groups lock after start for relay rides and stay editable for
+  pooled ones (R-17); tiebreak_list rows and their reorder are persisted.
+
+  Ranges: only max riders per team has documented bounds (spec.md 1 and 2 -
+  2 to 10, default 4). decks_spin and cap_spin get a floor of 1 and no
+  ceiling; lap_km_spin gets one decimal, matching the canvas's "8.0".
+  Everything else is validated in code.
+-->
+<resource>
+
+  <object class="wxDialog" name="ride_setup_dlg">
+    <title>Ride Setup</title>
+    <!-- R-05 requires resizable windows; the in-app text zoom (90-150%)
+         cannot work in a fixed-size dialog. spec.md 13 says "dialogs
+         fixed-size" - recorded conflict, resolved in favour of R-05. -->
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxStaticText">
+              <label>Name</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="name_input"/>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>4</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1,3</growablecols>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Date</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxDatePickerCtrl" name="date_picker"/>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Planned start</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTimePickerCtrl" name="start_time_picker"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Venue</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="venue_input"/>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Lap length km</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxSpinCtrlDouble" name="lap_km_spin">
+              <digits>1</digits>
+              <inc>0.1</inc>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Organizer</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="organizer_input"/>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Scorer</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="scorer_input"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Duration h:m</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="duration_input"/>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Min lap m:s</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="min_lap_input"/>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxStaticText">
+              <label>Logo</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND</flag>
+            <object class="wxFilePickerCtrl" name="logo_picker">
+              <style>wxFLP_OPEN|wxFLP_USE_TEXTCTRL</style>
+              <wildcard>PNG images (*.png)|*.png</wildcard>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Entries</label>
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxBOTTOM</flag>
+            <border>4</border>
+            <object class="wxRadioButton" name="solo_radio">
+              <label>Solo riders only (default)</label>
+              <style>wxRB_GROUP</style>
+              <value>1</value>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxBOTTOM</flag>
+            <border>4</border>
+            <object class="wxRadioButton" name="mixed_radio">
+              <label>Solo + teams</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxLEFT|wxBOTTOM</flag>
+            <border>20</border>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>8</border>
+                <object class="wxStaticText">
+                  <label>Max riders per team</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>8</border>
+                <object class="wxSpinCtrl" name="team_size_spin">
+                  <min>2</min>
+                  <max>10</max>
+                  <value>4</value>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>(2–10)</label>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxLEFT|wxBOTTOM</flag>
+            <border>20</border>
+            <object class="wxRadioButton" name="pooled_radio">
+              <label>Rider plates — pooled (default): each rider draws per lap, uncapped; team hand from pooled cards</label>
+              <style>wxRB_GROUP</style>
+              <value>1</value>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxLEFT</flag>
+            <border>20</border>
+            <object class="wxRadioButton" name="relay_radio">
+              <label>Team plate — relay: one plate per team, one rider on course (EPIC)</label>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Cards</label>
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>6</border>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxStaticText">
+                  <label>Decks</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>14</border>
+                <object class="wxSpinCtrl" name="decks_spin">
+                  <min>1</min>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxStaticText">
+                  <label>Jokers/deck:</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxRadioButton" name="jokers_0_radio">
+                  <label>0</label>
+                  <style>wxRB_GROUP</style>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxRadioButton" name="jokers_2_radio">
+                  <label>2</label>
+                  <value>1</value>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>14</border>
+                <object class="wxRadioButton" name="jokers_4_radio">
+                  <label>4</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxCheckBox" name="cap_chk">
+                  <label>Card cap</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxSpinCtrl" name="cap_spin">
+                  <min>1</min>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <!-- Rows and their order come from the ride's tiebreak_order
+               (spec.md 5); the control supplies the reorder arrows. -->
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND</flag>
+            <object class="wxEditableListBox" name="tiebreak_list">
+              <label>Tie-break order</label>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK"/>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>
