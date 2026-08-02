@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Application bootstrap: the ``rivercrossing`` GUI entry point."""
 
-import wx
+from rivercrossing.ui import require_wx
 
 
 def main() -> int:
@@ -9,6 +9,10 @@ def main() -> int:
 
     Returns:
         The process exit code; ``0`` on a clean shutdown.
+
+    Raises:
+        WxUnavailableError: If ``wx`` cannot be imported.
     """
+    wx = require_wx()
     wx.App()
     return 0

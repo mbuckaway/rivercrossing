@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resource>
+  <object class="wxFrame" name="main_frame">
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="plate_input"/>
+      </object>
+      <object class="sizeritem">
+        <object class="wxStaticText" name="ride_name_lbl">
+          <label>Ride</label>
+        </object>
+      </object>
+      <object class="sizeritem">
+        <object class="wxButton" name="undo_btn">
+          <label>Undo</label>
+        </object>
+      </object>
+    </object>
+  </object>
+</resource>

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resource>
+  <object class="wxDialog" name="edit_crossing_dlg">
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="plate_input"/>
+      </object>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="reason_input"/>
+      </object>
+      <object class="sizeritem">
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK"/>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+    </object>
+  </object>
+  <object class="wxDialog" name="manual_deal_dlg">
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="plate_input"/>
+      </object>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="reason_input"/>
+      </object>
+    </object>
+  </object>
+  <object class="wxDialog" name="reassign_dlg">
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="new_plate_input"/>
+      </object>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="reason_input"/>
+      </object>
+    </object>
+  </object>
+</resource>

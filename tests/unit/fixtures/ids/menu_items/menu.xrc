@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resource>
+  <object class="wxMenuBar" name="results_menubar">
+    <object class="wxMenu">
+      <label>Results</label>
+      <object class="wxMenuItem" name="mi_standings">
+        <label>Standings</label>
+        <accel>F5</accel>
+      </object>
+      <object class="wxMenuItem" name="mi_zoom_100">
+        <label>100%</label>
+        <radio>1</radio>
+      </object>
+    </object>
+  </object>
+</resource>
