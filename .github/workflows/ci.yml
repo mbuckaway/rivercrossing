@@ -1,0 +1,177 @@
+# RiverCrossing CI — the six-stage gauntlet from design/docs-md/spec.md §14.
+#
+# EPIC 1 wires stages 1, 2, 3 and 5. Stage 4 (Acceptance) needs the full race,
+# which arrives in EPIC 9; stage 6 (Package/signing) is EPIC 9 too.
+#
+# macOS is the hard gate. windows-latest runs but does not block: there is no
+# Windows test machine available to act on a failure yet. That is a deliberate,
+# temporary deviation from R-75 and §14, which require both platforms green
+# before release -- reverse it as soon as a Windows box exists.
+
+name: CI
+
+on:
+  push:
+    branches: ["master", "topic/**"]
+  pull_request:
+    branches: ["master"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: "1"
+  PYTHON_VERSION: "3.14"
+
+jobs:
+  # ---------------------------------------------------------------- stage 1
+  static:
+    name: "1 · Static (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: ruff
+        run: ruff check . && ruff format --check --diff .
+      - name: mypy --strict
+        run: mypy
+      - name: import-linter (wx stays inside rivercrossing.ui)
+        run: lint-imports
+      - name: ids.py drift vs .xrc (R-05)
+        run: nox -s ids_drift
+
+  # ---------------------------------------------------------------- stage 2
+  unit:
+    name: "2 · Unit + property (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: pytest (coverage gate >= 90% line and branch)
+        run: pytest tests/unit -m "not functional"
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage.json
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- stage 3
+  functional:
+    name: "3 · Functional UI (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+
+      # §14 claims both hosted runners have a real desktop session, so no Xvfb.
+      # Prove it before 23 windows depend on it: open a frame, screenshot it.
+      - name: Desktop-session probe
+        run: python tools/ci_gui_probe.py
+      - name: Upload probe screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gui-probe-${{ matrix.os }}
+          path: ci-gui-probe.png
+          if-no-files-found: warn
+
+      - name: pytest functional (real wx windows)
+        run: pytest tests/functional --no-cov
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screenshots-${{ matrix.os }}
+          path: |
+            tests/functional/_screenshots/**
+            *.png
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------- stage 5
+  build:
+    name: "5 · Build dev bundle (${{ matrix.os }})"
+    needs: [static, unit]
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: PyInstaller onedir (unsigned dev bundle)
+        run: nox -s bundle
+      - name: Smoke the built bundle
+        run: nox -s smoke
+      - name: Upload dev bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-devbundle-${{ matrix.os }}
+          path: dist/**
+          if-no-files-found: ignore
+
+  # ------------------------------------------------- Phase 0.2, informational
+  # Records the wxPython 4.3.1 widget surface on Windows. Never gates: with no
+  # Windows test machine, a failure here is information, not something anyone
+  # can act on yet.
+  windows-toolkit-probe:
+    name: "0 · Toolkit probe (windows, informational)"
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+      - name: Install wxPython only
+        run: uv pip install --system "wxPython~=4.3.1"
+      - name: Probe the widget surface
+        run: python tools/toolkit_probe.py

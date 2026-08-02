@@ -1,0 +1,218 @@
+# RiverCrossing — the whole project configuration.
+# module-skeletons.md §S1: "pyproject.toml is the whole config ... No setup.py,
+# no requirements.txt."
+
+[build-system]
+# setuptools >= 77 is the floor for the PEP 639 SPDX `license` string below.
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rivercrossing"
+description = "Poker-run ride timing and scoring for Windows and macOS"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+dynamic = ["version"]
+authors = [{ name = "Mark Buckaway" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: MacOS X :: Cocoa",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Other Audience",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Games/Entertainment",
+]
+
+# Runtime dependencies. wxPython 4.3.1 (wxWidgets 3.3.3) is the pin adopted after
+# the Phase 0 toolkit gate; it supplies wxApp.SetAppearance, so R-03's dark mode
+# works on both platforms. `wxasync` is deliberately absent: 0.49 (2023) works
+# functionally under 4.3.1/Python 3.14 but cannot be torn down -- one teardown
+# path segfaults, the other hangs -- and a segfault on quit would make every
+# clean exit look like a crash to R-52's session bookkeeping. The async writer
+# lands in EPIC 5 on a different mechanism.
+dependencies = [
+    "wxPython~=4.3.1",
+    "fpdf2",
+    "jinja2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-cov",       # T-14 needs --cov-branch/--cov-fail-under in pytest config
+    "hypothesis",
+    "coverage[toml]",
+    "nox",              # the task runner; identical invocation on macOS and Windows
+    "ruff>=0.15",       # floor for target-version = "py314" and PEP 758 handling
+    "mypy",
+    "import-linter",    # enforces "wx only under rivercrossing.ui" (R-71)
+    "pyinstaller",
+    "pypdf",
+    "pillow",
+]
+
+[project.gui-scripts]
+rivercrossing = "rivercrossing.ui.app:main"
+
+[project.urls]
+Repository = "https://github.com/mbuckaway/rivercrossing"
+
+[tool.setuptools.dynamic]
+version = { attr = "rivercrossing.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rivercrossing = ["py.typed"]
+
+# ----------------------------------------------------------------- ruff
+
+[tool.ruff]
+# CODINGSTANDARDS-PYTHON.md:41 sets 79 for code but :44 allows a team to raise it
+# to 99. Taken: wx call sites and frozen XRC names make 79 impractical.
+line-length = 99
+target-version = "py314"
+src = ["src", "tests", "tools"]
+# ruff 0.16 formats Python code blocks inside Markdown. The standards docs use
+# deliberately "wrong" snippets to illustrate style rules, and reformatting them
+# destroys the point being made. Keep ruff out of prose entirely.
+extend-exclude = ["*.md", "design/"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # Conflict with the formatter; ruff itself recommends disabling these.
+    "COM812",
+    "ISC001",
+    # Mutually exclusive with D211/D212, which the pep257 convention selects.
+    "D203",
+    "D213",
+    # Require binding every exception message to a local first. Our tests assert
+    # messages with pytest.raises(match=...), so the message text is already
+    # pinned; the extra local adds noise without adding safety.
+    "EM101",
+    "EM102",
+    "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert with bare `assert` and use literal expected values on purpose.
+"tests/**" = ["S101", "PLR2004", "INP001", "ANN201", "D100", "D103", "SLF001"]
+# Developer tooling is a script, not library code, and prints its progress.
+# PLC0415: the probes import wx *inside* each function on purpose -- the driver
+# process must stay importable when wx is broken, which is the case it reports.
+# FBT003: wx APIs take positional booleans (attr.SetBold(True)); not ours to fix.
+"tools/**" = ["T201", "INP001", "PLC0415", "FBT003"]
+"noxfile.py" = ["D100", "ANN001", "ANN201", "INP001"]
+# wx event handlers must match the framework's PascalCase override names.
+"src/rivercrossing/ui/views/**" = ["N802"]
+
+[tool.ruff.lint.flake8-copyright]
+# CPY001 is stable in ruff 0.16 and `select = ["ALL"]` enables it. Its default
+# pattern wants a literal "Copyright <year>"; this repo uses a bare SPDX line
+# instead. Pointing the rule at SPDX turns it into an enforcer of the actual
+# convention rather than something to suppress.
+notice-rgx = "# SPDX-License-Identifier:"
+
+[tool.ruff.lint.pycodestyle]
+# CODINGSTANDARDS-PYTHON.md:42. W505 is inert unless this is set -- ruff ignores
+# the rule entirely when max-doc-length has no value, even if W505 is selected.
+max-doc-length = 72
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10               # CODINGSTANDARDS-SIMPLECODE.md:154
+
+[tool.ruff.lint.pylint]
+max-args = 3                      # CODINGSTANDARDS-SIMPLECODE.md:154
+max-nested-blocks = 4             # CODINGSTANDARDS-SIMPLECODE.md:127
+
+# ----------------------------------------------------------------- mypy
+
+[tool.mypy]
+strict = true
+python_version = "3.14"
+# `tools/` joins this list when tools/gen_ids.py lands (plan task 2.1).
+files = ["src"]
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# wxPython ships no type information.
+module = ["wx.*"]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+# T-14: --cov-branch and --cov-fail-under=90 live in the project pytest config.
+# The functional session passes --no-cov, since wx views are covered by driving
+# real windows rather than by line counting.
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--cov=rivercrossing",
+    "--cov-branch",
+    "--cov-fail-under=90",
+    "--cov-report=term-missing",
+    "--cov-report=json",
+]
+markers = [
+    "functional: drives real wx windows; needs a desktop session (CI stage 3)",
+]
+
+# ----------------------------------------------------------------- coverage
+
+[tool.coverage.run]
+branch = true
+source = ["rivercrossing"]
+omit = [
+    # Thin entry points and the wx view layer: exercised by the functional
+    # suite, which drives real windows rather than counting lines. R-71 scopes
+    # the >=90% gate to the pure-Python core modules.
+    "*/rivercrossing/__main__.py",
+    "*/rivercrossing/ui/app.py",
+    "*/rivercrossing/ui/views/*",
+    "*/rivercrossing/ui/ids.py",
+]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+]
+
+[tool.coverage.json]
+output = "coverage.json"
+
+# ----------------------------------------------------------------- import-linter
+
+[tool.importlinter]
+root_package = "rivercrossing"
+# Required whenever a forbidden module is external to root_package -- `wx` is.
+# Without it lint-imports refuses to run at all, on any tree.
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+# R-71: core logic imports no wx. import-linter errors on a source module that
+# does not exist, so this list grows task by task rather than naming the whole
+# eventual tree up front: rivercrossing.htmlexport joins at plan task 2.2,
+# rivercrossing.demo at 2.4, and cards/hands/standings/store/csvio/pdfexport as
+# EPICs 2-6 land.
+name = "wx stays inside rivercrossing.ui"
+type = "forbidden"
+source_modules = ["rivercrossing.ride"]
+forbidden_modules = ["wx"]
