@@ -229,13 +229,12 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- "This ride was stopped with <n> crossings recorded." - see
-           the recorded gap in the file header: the canvas annotates no
-           frozen name for this line. -->
+      <!-- "This ride was stopped with <n> crossings recorded."
+           Written by the presenter. -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxStaticText">
+        <object class="wxStaticText" name="message_lbl">
           <label></label>
         </object>
       </object>
@@ -303,12 +302,11 @@
       <orient>wxVERTICAL</orient>
 
       <!-- The ride name, and wording that swaps for a crash restart
-           (session_state) - see the recorded gap in the file header:
-           the canvas annotates no frozen name for this line. -->
+           (session_state). Written by the presenter. -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxStaticText">
+        <object class="wxStaticText" name="message_lbl">
           <label></label>
         </object>
       </object>
@@ -362,21 +360,55 @@
         </object>
       </object>
 
+      <!-- Three buttons per spec §3, §15 and R-51: Cancel · Finish ride
+           first… · Quit-keep-running. The canvas draws only two; the
+           requirements are the acceptance authority and this is missing
+           functionality, not styling, so the third button stays.
+           Order is §13's Ghost · Secondary · Primary.
+           finish_first_btn sits outside the wxStdDialogButtonSizer
+           because Realize() positions only the ids it recognises. A
+           custom button placed inside it is created but left at
+           (-1,-1). Cancel keeps the default so a reflex Enter is safe
+           (R-76: destructive confirms focus Cancel). -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxALL</flag>
         <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CANCEL">
+                  <default>1</default>
+                  <focused>1</focused>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="finish_first_btn">
+              <label>Finish ride first…</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxButton" name="wxID_OK">
               <label>Quit — keep ride running</label>
             </object>
           </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL">
-              <default>1</default>
-              <focused>1</focused>
-            </object>
-          </object>
+
         </object>
       </object>
 

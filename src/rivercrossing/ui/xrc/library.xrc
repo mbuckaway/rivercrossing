@@ -126,13 +126,13 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- "Deletes "<ride name>" and all its data." - written by the
-           presenter. See the recorded gap in the file header: the
-           canvas annotates no frozen name for this line. -->
+      <!-- "Deletes "<ride name>" and all its data." Written by the
+           presenter. UX-DESKTOP §4 requires the object be named in a
+           destructive confirmation, so this line is not optional. -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxStaticText">
+        <object class="wxStaticText" name="message_lbl">
           <label></label>
         </object>
       </object>
