@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="stylesheet" href="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/styles.css">
+<script src="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/_ds_bundle.js"></script>
+<style>body{margin:0;background:var(--color-bg)}a{color:var(--color-accent-700)}a:hover{color:var(--color-accent-800)}</style>
+</helmet>
+<section style="max-width:760px;margin:0 auto;padding:40px 30px 80px;font-family:var(--font-body);color:var(--color-text)">
+<div style="font-family:var(--font-heading);font-weight:600;font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--color-accent-700)">RiverCrossing · console sound cues · Spec §10 / R-31 · starter set</div>
+<h1 style="font-family:var(--font-heading);font-weight:600;font-size:30px;margin:6px 0 4px">Audition the three cues</h1>
+<p style="font-size:13.5px;max-width:70ch;margin:0 0 22px">Bundled at <code style="font-family:ui-monospace,Menlo,monospace;font-size:12px">assets/sounds/</code> (44.1 kHz, 16-bit mono). Distinct by ear so the operator never looks down; wired behind the Settings toggle in task E4.4.3.</p>
+<div style="display:flex;flex-direction:column;gap:16px">
+<div class="blueprint" style="padding:14px 18px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;align-items:center;gap:16px"><div style="width:220px"><div style="font-family:var(--font-heading);font-weight:600;font-size:17px">① recorded.wav</div><div style="font-size:12px" class="text-muted">70 ms bright tick — crossing committed</div></div><audio controls="{{ true }}" src="../assets/sounds/recorded.wav" style="flex:1;height:36px"></audio></div></div>
+<div class="blueprint" style="padding:14px 18px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;align-items:center;gap:16px"><div style="width:220px"><div style="font-family:var(--font-heading);font-weight:600;font-size:17px">② flagged.wav</div><div style="font-size:12px" class="text-muted">280 ms two-tone down-chirp — short lap, needs review</div></div><audio controls="{{ true }}" src="../assets/sounds/flagged.wav" style="flex:1;height:36px"></audio></div></div>
+<div class="blueprint" style="padding:14px 18px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+<div style="display:flex;align-items:center;gap:16px"><div style="width:220px"><div style="font-family:var(--font-heading);font-weight:600;font-size:17px">③ error.wav</div><div style="font-size:12px" class="text-muted">300 ms low buzz — unknown plate / entry refused</div></div><audio controls="{{ true }}" src="../assets/sounds/error.wav" style="flex:1;height:36px"></audio></div></div>
+</div>
+</section>
+</x-dc>
+</body>
+</html>
