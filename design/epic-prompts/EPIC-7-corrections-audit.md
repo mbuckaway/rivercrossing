@@ -18,11 +18,11 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `docs-md/xrc-windows.md → editcrossing, reassigndlg, dealdlg, dnfdlg, auditdlg, entrydetail`
 1. `docs-md/task-briefs.md → E7 briefs`
 
-Everything you need is in this bundle; `docs-md/` holds the markdown docs and `docs-html/` the same documents as browsable HTML (identical content).
+Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E7.1 Audited command layer** — every correction requires a reason and writes exactly one audit row; recompute cascades proven by a replay-equivalence property.
-- **E7.2 Dialogs live** — all Cards-menu routes and entry-detail buttons wired to real commands; REOPENED mode allows corrections only and re-ranks on "Finish again".
+- **E7.2 Dialogs live** — all Cards-menu routes and entry-detail buttons wired to real commands; REOPENED mode allows corrections only and re-ranks on "Finish again". **One mock-first step:** §15's Void Card… confirm has no frozen window (it cites the retired 3d pattern), so mock it and register its names in spec.md §15b before wiring, replacing EPIC 1's flagged sentinel.
 - **E7.3 Audit viewer + stale-export flag** — newest-first with plate/action filters; corrections after an export raise the stale banner until re-export.
 
 Per-task test lists live in `docs-md/task-briefs.md` under EPIC 7 — those named test files and cases ARE the specification for this EPIC. Do not invent extra scope.

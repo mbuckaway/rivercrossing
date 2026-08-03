@@ -52,7 +52,7 @@ rivercrossing/
 │   │   └── templates/          #   base.html.j2 + widget macros + vendored CSS/fonts
 │   ├── pdfexport.py            # §8b fpdf2 renderer + podium poster (5a–5d)
 │   └── ui/
-│       ├── app.py              # WxAsyncApp bootstrap, theme + session wiring
+│       ├── app.py              # wx.App bootstrap, theme + session wiring
 │       ├── theme.py            # the one token table, light+dark (R-03)
 │       ├── sound.py            # three WAV cues per §10 (recorded/flagged/error)
 │       ├── ids.py              # mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)
@@ -209,7 +209,7 @@ class ConsolePresenter:        on_plate_entered(text) · on_undo() · on_arm_sto
 # same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv)
 # ResultsPresenter (1f flags, rerank on tie-break change) · LibraryPresenter (1g)
 # DetailPresenter (1e/7b) · AuditPresenter (R-38) · SettingsPresenter (3a)
-app.main() -> int              # WxAsyncApp; resume dialog per session_state (4a/1h)
+app.main() -> int              # wx.App; resume dialog per session_state (4a/1h)
 theme.tokens(mode) -> Tokens   # light|dark|system; live re-skin (R-03)
 ids.py: PLATE_INPUT = "plate_input" …   # = XRC names, generated from xrc/ (§15b)
 sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   # §10 cues, settings toggle
@@ -227,7 +227,7 @@ tests/
 ├── property/                  # Hypothesis: hands invariants, shoe determinism
 ├── simulations/               # seeded whole rides: 180×6 h, both entry modes,
 │   └── test_simulated_rides.py#   both plate models, 0/2/4 jokers, cap on/off (§12)
-├── functional/                # real wx, driven via ids.py + wx.UIActionSimulator
+├── functional/                # real wx, driven via ids.py + direct event injection (§12)
 │   ├── harness.py             # find-by-SetName, click, type, dialog hooks
 │   ├── pages.py               # page objects per window (1a…8c)
 │   └── test_menu_coverage.py  # walks every §15 route in every ride state (R-73)
@@ -241,8 +241,9 @@ tests/
 ```
 [project]  name = "rivercrossing"  requires-python = ">=3.14"
     # import package rivercrossing — renamed with the product (§11)
-dependencies = ["wxPython~=4.2.5", "wxasync", "fpdf2", "jinja2"]  # wx 3.2 stable wheel;
-    # dark mode auto-activates on the 4.3 upgrade (SetAppearance) — no code change
+dependencies = ["wxPython~=4.3.1", "fpdf2", "jinja2"]     # wxWidgets 3.3.3, cp314 wheel;
+    # SetAppearance ships in it, so dark mode is live on both platforms (R-03)
+    # wxasync is deliberately absent — Spec §10; E5 picks the wx⇄asyncio integration
     # sqlite3 is stdlib; Tailwind CLI is a build-time asset step, not a runtime dep
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",

@@ -11,11 +11,11 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 
 | ID | Level | Requirement | Trace |
 |---|---|---|---|
-| R-01 | MUST | Runs on Windows 10/11 and macOS 13+ from installers: unsigned Inno Setup .exe (no Windows cert — SmartScreen step documented in the guide); Developer-ID-signed, notarized .dmg. One codebase, Python 3.14 + wxPython 4.2.5 (wxWidgets 3.2 stable — the latest released wheel; 4.3/wx 3.3 is the pinned upgrade path, R-03). | §10, §14 |
-| R-02 | MUST | Async UI: the plate entry field never blocks — every DB write, export and import runs off the UI loop (wxasync + single async writer). | §10 |
-| R-03 | MUST | Light and dark themes from one token table; follows the OS by default with manual override (System/Light/Dark radios) — on the 4.2.5 baseline macOS follows the OS natively and Windows ships light (Dark radio disabled with a "needs wxPython 4.3" hint); when wxPython 4.3 (wx 3.3, wxApp.SetAppearance) releases, the same radios activate unchanged. Native controls, never restyled. | §10 · [mainframe](xrc-windows.md)/[settingsdlg](xrc-windows.md) |
+| R-01 | MUST | Runs on Windows 10/11 and macOS 13+ from installers: unsigned Inno Setup .exe (no Windows cert — SmartScreen step documented in the guide); Developer-ID-signed, notarized .dmg. One codebase, Python 3.14 + wxPython 4.3.1 (wxWidgets 3.3.3 — cp314 wheels, and the release that supplies wx.App.SetAppearance, R-03). | §10, §14 |
+| R-02 | MUST | Async UI: the plate entry field never blocks — every DB write, export and import runs off the UI loop (single async writer; the wx⇄asyncio integration is chosen in EPIC 5, where that writer appears — `wxasync` is ruled out per §10). | §10 |
+| R-03 | MUST | Light and dark themes from one token table; follows the OS by default with manual override (System/Light/Dark radios) — all three live on both platforms, since the 4.3.1 baseline supplies wx.App.SetAppearance: no capability check, no disabled radio. Native controls, never restyled. | §10 · [mainframe](xrc-windows.md)/[settingsdlg](xrc-windows.md) |
 | R-04 | SHOULD | Per-monitor DPI awareness on Windows; View menu text zoom 90–150%. | §13 |
-| R-05 | MUST | **XRC-first UI generation:** every UI artifact — window, dialog, menubar, panel — is authored in sizer-based XRC resources and loaded from them (native controls, resizable, no absolute positioning); code never builds layout programmatically except the documented code-side items (DataView columns/rows, imagelists, InfoBar text, state enabling). Snake_case XRC names are the canonical control registry per §15b, stock IDs for standard buttons; ids.py is generated from the .xrc files and drift fails CI. | §15b · [XRC canvas](xrc-windows.md) |
+| R-05 | MUST | **XRC-first UI generation:** every UI artifact — window, dialog, menubar, panel — is authored in sizer-based XRC resources and loaded from them (native controls, resizable, no absolute positioning); code never builds layout programmatically except the documented code-side items (DataView columns/rows, imagelists, InfoBar construction and text, window minimum sizes, radio menu-item defaults, state enabling) and the three classes XRC cannot name at all — wxInfoBar, wxDataViewListCtrl, wxMenuBar (§15b). Snake_case XRC names are the canonical control registry per §15b, stock IDs for standard buttons; ids.py is generated from the .xrc files and drift fails CI. | §15b · [XRC canvas](xrc-windows.md) |
 
 ### 2 · Rides & configuration
 
@@ -90,9 +90,9 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 | R-70 | MUST | TDD: tests written first (tdd-python-writer agent), red→green→refactor, module by module in dependency order. | §12 |
 | R-71 | MUST | Core logic in pure-Python modules with zero wx imports; coverage ≥ 90%; ruff + mypy strict clean. | §11 |
 | R-72 | MUST | Card algorithm verified by known vectors, Hypothesis property tests, brute-force cross-check, and seeded whole-ride simulations across entry modes, joker counts and caps. | §12 |
-| R-73 | MUST | Every entry box, button, radio, menu item and dialog is reachable and drivable by the functional harness via stable snake_case XRC names (FindWindowByName); the menu-coverage test walks all §15 routes in all ride states. | §12/§15 |
+| R-73 | MUST | Every entry box, button, radio, menu item and dialog is reachable and drivable by the functional harness via stable snake_case XRC names — FindWindowByName for windows and controls, the loaded menubar for `mi_*` items, whose names XRC does not apply to the control (§15b); the menu-coverage test walks all §15 routes in all ride states. | §12/§15 |
 | R-74 | MUST | Acceptance: a scripted full race (min lap lowered — an ordinary ride setting) runs end-to-end through the real UI incl. stop/continue, kill+relaunch, quit+relaunch, finish, reopen → correct → finish again, exports parsed and asserted — 100% pass on both OSes before any release. | §12/§14 |
-| R-75 | MUST | CI per §14: GitHub Actions windows-latest + macos-latest (real desktop sessions — no virtual display), 6 stages, screenshot-on-failure artifacts, built-binary smoke test, signed installers on tags. | §14 |
+| R-75 | MUST | CI per §14: GitHub Actions windows-latest + macos-latest (real desktop sessions — no virtual display), 6 stages, screenshot-on-failure artifacts, built-binary smoke test, signed installers on tags. **Temporary deviation:** macOS is currently the hard gate and windows-latest runs advisory, because no Windows test machine is available to act on a failure; the requirement keeps its MUST and the gate is restored to both platforms as soon as one exists. | §14 |
 | R-76 | MUST | Dialog behavior per §13: Esc cancels, Enter = default, destructive confirms focus Cancel, focus returns to opener; asserted per dialog by the harness. | §13 |
 | R-77 | SHOULD | Nightly seeded acceptance race; failures file the seed for exact reproduction. | §14 |
 
@@ -102,6 +102,8 @@ Sponsor strips on published results (v2) · age/category fields — excluded by 
 
 ### Open questions
 
-None. (All resolved: pooled card entitlement — uncapped, one card per lap, any rider may out-lap their teammates (R-16) · ride deletion — yes, type-to-confirm (R-18) · Windows unsigned / macOS Developer ID (R-01) · categories — excluded entirely.)
+**Deck-count default.** Spec §4 states 8 decks (432 cards for a 180-entry field); the XRC canvas draws 2 in `decks_spin`. Unresolved, and deliberately not picked here: the XRC declares no value, the presenter supplies it, so the ride-setup work in E3/E4 chooses the number and amends whichever of the two is wrong.
+
+Otherwise none. (All resolved: pooled card entitlement — uncapped, one card per lap, any rider may out-lap their teammates (R-16) · ride deletion — yes, type-to-confirm (R-18) · Windows unsigned / macOS Developer ID (R-01) · categories — excluded entirely.)
 
 Companions: [engineering spec](spec.md) · [XRC windows](xrc-windows.md) · [module skeletons](module-skeletons.md) · [UI designs (retired)](ui-designs-retired.md) · [HTML results sample](../exports/epic-2026-results.html) ([no-times](../exports/epic-2026-results-no-times.html)).

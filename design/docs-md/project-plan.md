@@ -32,26 +32,26 @@ Parallelization: after E1 exits, E2 and E3 run in parallel; E6/E7/E8 parallel af
 
 - **Commits/PRs:** Conventional Commits, scope = module — first commit `test(hands): E2.1.1 red`, then `feat(hands): E2.1.1 green`. PR title `E2.1.1 — eval5 rank table`; body links the plan anchor + requirement ids; squash merge; one task per PR.
 
-- **Mock-first rule:** all 23 screens already have frozen mockups (XRC canvas). If any future screen lacks one, a mock-first task produces the mockup and registers its control names in §15b *before* any UI code.
+- **Mock-first rule:** the 23 canvas screens have frozen mockups, but §15 routes three items at a dialog the canvas never drew — Duplicate Ride… and Reopen Ride (E5), the Void Card… confirm (E7). Those, and any future screen without a mockup, get a mock-first step that produces the mockup and registers its control names in §15b *before* any UI code.
 
 ### 3 · Coding standards & gates
 
-Adopted verbatim from the repo's quality gauntlet — Spec §12 (TDD + harness), §14 (six CI stages), Requirements R-70…77. Standards files (created in E1.1, canonical thereafter): `pyproject.toml` ([tool.ruff] all-rules baseline, [tool.mypy] strict, [tool.coverage] gates), `.github/workflows/ci.yml`, `CONTRIBUTING.md` (this §2/§3 distilled). Gates: **≥ 90% line and ≥ 90% branch** on core modules (cards, hands, standings, ride, store, csvio, htmlexport, pdfexport — per R-71 "coverage ≥ 90%", applied to both meters; branch coverage via `coverage --branch`), Hypothesis property suites where §11 names them, headless core (wx imports forbidden outside `rivercrossing.ui` — import-linter contract). Python 3.14 · wxPython ~=4.2.5 · Jinja2 · fpdf2 · stdlib sqlite3.
+Adopted verbatim from the repo's quality gauntlet — Spec §12 (TDD + harness), §14 (six CI stages), Requirements R-70…77. Standards files (created in E1.1, canonical thereafter): `pyproject.toml` ([tool.ruff] all-rules baseline, [tool.mypy] strict, [tool.coverage] gates), `.github/workflows/ci.yml`, `CONTRIBUTING.md` (this §2/§3 distilled). Gates: **≥ 90% line and ≥ 90% branch** on core modules (cards, hands, standings, ride, store, csvio, htmlexport, pdfexport — per R-71 "coverage ≥ 90%", applied to both meters; branch coverage via `coverage --branch`), Hypothesis property suites where §11 names them, headless core (wx imports forbidden outside `rivercrossing.ui` — import-linter contract). Python 3.14 · wxPython ~=4.3.1 (wxWidgets 3.3.3) · Jinja2 · fpdf2 · stdlib sqlite3.
 
 ### 4 · UI / functional test strategy (wxPython)
 
 | Tooling option | Verdict | Why |
 |---|---|---|
-| pytest + wx.UIActionSimulator + FindWindowByName | **ADOPT** | Real native input events against the frozen XRC names — already the Spec §12 harness; runs on the CI desktop sessions §14 mandates (no virtual display). |
+| pytest + wx.UIActionSimulator + FindWindowByName | **ADOPT the names; the simulator is not the driver** | FindWindowByName against the frozen XRC names is the harness spine and stays. The simulator is not: measured, from a terminal-launched interpreter it returns `True` and delivers nothing — the process never becomes the OS-active application, so no handler fires and no control value changes — and `Text(str)` raises `TypeError` on this build. Spec §12's direct event injection (`SetValue()` fires `EVT_TEXT`, a posted `wx.CommandEvent` fires `EVT_BUTTON`) is therefore the **primary** mechanism, not the CI fallback. The row stays because a signed `.app` bundle may make the app frontmost and the events land — being measured separately; re-measure before relying on it. |
 | XRC load validation (each .xrc loads; every §15b name resolves) | **ADOPT** | Unit-level, headless-cheap; pairs with the CI-generated ids.py drift gate (R-05). |
 | Screenshot-on-failure artifacts + one auto-retry | **ADOPT** | Flake control per §14 stage 3; event-driven waits, never bare sleeps. |
 | Wx Inspection Tool (wx.lib.inspection) | ADOPT (dev-only) | Interactive widget-tree debugging; never in CI. |
-| pywinauto / WinAppDriver / Appium | REJECT | Windows-only or UIA-tree gaps for wx widgets; duplicates the simulator with more flake. |
+| pywinauto / WinAppDriver / Appium | REJECT | Windows-only or UIA-tree gaps for wx widgets; duplicates the injection harness with more flake. |
 | SikuliX / image-matching | REJECT | Brittle to theme, DPI and font rendering across the two OSes. |
-| Squish for wx | REJECT | Commercial license + CI seats; the simulator covers the need. |
+| Squish for wx | REJECT | Commercial license + CI seats; the injection harness covers the need. |
 | pytest-qt / dogtail / AT-SPI | REJECT | Wrong toolkit (Qt) / Linux-only — not targets. |
 
-**Smoke test per screen from day one:** E1.3.3 adds one parametrized test over all 23 windows — load from XRC, Show(), assert every §15b name resolves, capture a screenshot artifact, close cleanly. It runs in every CI build forever after.
+**Smoke test per screen from day one:** E1.3.3 adds one parametrized test over all 23 windows — load from XRC, Show(), assert every §15b name resolves (the info bars after their code-side construction; `main_menubar` through `XmlResource.LoadMenuBar()`, which is the one name XRC never applies to a control — §15b), capture a screenshot artifact, close cleanly. It runs in every CI build forever after.
 
 ### 5 · EPICs
 
@@ -63,7 +63,7 @@ E1.1 · Repo + gauntlet bootstrap
 
 · **E1.1.1** Repo per [skeletons](module-skeletons.md): src layout, pyproject (deps §3), CONTRIBUTING.md — S1 test: packaging smoke (`pip install -e . && import rivercrossing`) · S2 files.
 
-· **E1.1.2** CI stages 1–3 skeleton + stage-5 in dev-bundle mode (ruff/mypy → pytest → functional; PyInstaller onedir, unsigned, artifact upload) on windows-latest + macos-latest — S1: a deliberately failing probe test proves the gate blocks · S2: workflow green.
+· **E1.1.2** CI stages 1–3 skeleton + stage-5 in dev-bundle mode (ruff/mypy → pytest → functional; PyInstaller onedir, unsigned, artifact upload) on windows-latest + macos-latest — S1: a deliberately failing probe test proves the gate blocks · S2: workflow green. macOS is the blocking gate and Windows runs advisory while no Windows test machine exists to act on a failure — the temporary deviation recorded in Spec §14 and R-75.
 
 · **E1.1.3** import-linter contract: wx only under `rivercrossing.ui` — S1 red contract test · S2 config.
 
@@ -87,7 +87,7 @@ E1.3 · XRC authoring — all 23 windows
 
 E1.4 · Menus + navigation
 
-· **E1.4.1** Menubar per §15/§15b incl. Results menu, accelerators (Enter, Ctrl+Z, F1, F5), macOS relocation — S1: menu coverage test walks every §15 row to its target (red) · S2 wire routes.
+· **E1.4.1** Menubar per §15/§15b incl. Results menu, accelerators (Enter, Ctrl+Z, F1, F5), macOS relocation — S1: menu coverage test walks every §15 row to its target (red) · S2 wire routes. The three rows with no frozen window — Duplicate Ride…, Reopen Ride, Void Card… (§15) — route to a flagged sentinel the coverage test asserts as such; E5 and E7 replace it mock-first, and no window name is invented here.
 
 · **E1.4.2** State-based enable/disable against mocked ride states DRAFT/RUNNING/FINISHED/REOPENED — S1 parametrized enablement tests from the §15 "Enabled when" column · S2 command-state table.
 
@@ -105,7 +105,7 @@ E1.6 · D1 exit
 
 · **E1.6.2** Scripted walkthrough against the CI-built bundles on both OSes: menu walk, drive every named control, screenshots; tag v0.1 with the two bundles attached.
 
-Exit criteria the CI-built dev bundle launches and passes smoke on Windows AND macOS (artifacts downloadable) · 23/23 smoke green · menu coverage green vs §15 · every §15b name resolves · demo seam lint green · zero business logic outside demo fixtures.
+Exit criteria the CI-built dev bundle launches and passes smoke on Windows AND macOS (artifacts downloadable; the Windows leg reports but does not block until a test machine exists — §14) · 23/23 smoke green · menu coverage green vs §15 · every §15b name resolves · demo seam lint green · zero business logic outside demo fixtures.
 
 E2 · Deal & score engine
 
@@ -151,7 +151,7 @@ Exit criteria mini-race green on both OSes · flags/undo/held cards behave per �
 
 E5 · Persistence & crash recovery
 
-The ride survives anything: SQLite event store with replay, autosave/backup, session_state, and the resume/reopened flows — proven by killing the process mid-race and continuing.
+The ride survives anything: SQLite event store with replay, autosave/backup, session_state, and the resume/reopened flows — proven by killing the process mid-race and continuing. Two contracts land here because this is where they first bite: the **wx⇄asyncio integration** behind the async writer (`wxasync` is ruled out — Spec §10) and, mock-first per §2, the two windows §15 routes to without a frozen design — **Duplicate Ride…** and **Reopen Ride** — names registered in §15b before any UI code.
 
 - **E5.1 Store** — E5.1.1 schema + migrations (multi-ride, §6); E5.1.2 event append + replay→RideEngine equivalence (S1: replay == live state property); E5.1.3 WAL + crash-consistency (kill subprocess mid-transaction, reopen, last commit intact — R-50s).
 
@@ -179,7 +179,7 @@ Exit criteria goldens byte-identical · exports open offline from file:// · tim
 
 E7 · Corrections & audit
 
-Every scorer's-table mistake is fixable with a reason and a trail: edit/void crossings, add-at-time, reassign plates, manual deal, void card, DNF, reopen-for-corrections, and the filterable audit viewer.
+Every scorer's-table mistake is fixable with a reason and a trail: edit/void crossings, add-at-time, reassign plates, manual deal, void card, DNF, reopen-for-corrections, and the filterable audit viewer. The **Void Card…** confirm is the third §15 route with no frozen window: E7 authors it mock-first per §2 and registers its names in §15b.
 
 - **E7.1 Command layer** — E7.1.1 each correction = audited command with reason (S1: audit-row assertions per command · S2); E7.1.2 recompute cascades (laps/times/cards) with property test: corrections then replay == direct history.
 
@@ -191,9 +191,9 @@ Exit criteria all §15 Cards-menu routes live with reasons enforced · reopen→
 
 E8 · Settings & assistance
 
-The operator-comfort layer: appearance radios with the 4.2.5 baseline behavior, hide-times live toggle, text zoom, sound toggle, keyboard-shortcuts dialog fed by the accelerator table, bundled user guide (F1 + per-dialog anchors), About.
+The operator-comfort layer: appearance radios live on both platforms, hide-times live toggle, text zoom, sound toggle, keyboard-shortcuts dialog fed by the accelerator table, bundled user guide (F1 + per-dialog anchors), About.
 
-- **E8.1 Settings live** — E8.1.1 persistence of all settings; E8.1.2 appearance: macOS follows OS, Windows Dark disabled + "needs wxPython 4.3" hint, SetAppearance branch behind a capability check (activates on 4.3 with zero UI change); E8.1.3 hide-times toggles console columns mid-ride (R-63 companion); E8.1.4 zoom 90–150% re-layouts.
+- **E8.1 Settings live** — E8.1.1 persistence of all settings; E8.1.2 appearance: System/Light/Dark all applied through `wx.App.SetAppearance` on the 4.3.1 baseline — System follows the OS, no capability check, no disabled radio, per-OS matrix asserted; E8.1.3 hide-times toggles console columns mid-ride (R-63 companion); E8.1.4 zoom 90–150% re-layouts.
 
 - **E8.2 Assistance** — E8.2.1 shortcuts_dlg rows generated from the accelerator table (cannot drift); E8.2.2 user guide: build docs/user-guide.html from the 6a outline, F1 + Help-button anchors, screenshots regenerated by the harness each release; E8.2.3 About box (ride logo fallback to app icon, version from package).
 
@@ -229,9 +229,10 @@ R-numbers cite the requirements doc's tables; where a band (R-30…36, R-50…54
 
 | Risk | Mitigation |
 |---|---|
-| wxPython 4.3 (dark mode) slips further | Baseline is released 4.2.5; Dark radio disabled on Windows with hint; SetAppearance behind a capability check — zero rework on upgrade. |
-| UIActionSimulator flake on CI desktops | Event-driven waits, one auto-retry, screenshot artifacts (§14); harness helpers centralized so fixes are one-place. |
-| wxDataViewListCtrl per-cell attributes differ mac/Windows | E1.5.1 smoke asserts bold-flag rendering on both OSes early — the riskiest widget lands in D1, not v0.9. |
+| wxPython 4.3 (dark mode) slips further | **Resolved** — 4.3.0 shipped 2026-07-28 and 4.3.1 on 2026-07-30, both with cp314 wheels; the baseline is 4.3.1 / wxWidgets 3.3.3 and `wx.App.SetAppearance` ships in it, so R-03's three radios are live on both platforms with no capability check and no disabled control. |
+| wx⇄asyncio integration undecided | `wxasync` is out (Spec §10 — one teardown path segfaults, another hangs, and a segfault on quit would forge a crash signal against R-52). E5 chooses the mechanism where the async writer first appears; E1–E4 hold no database, so nothing built before then depends on the choice. |
+| UIActionSimulator does not deliver events | Not flake — measured: no OS-active app, no delivery (§4). Direct event injection is the harness's primary driver; event-driven waits, one auto-retry, screenshot artifacts (§14); harness helpers centralized so fixes are one-place. |
+| wxDataViewCtrl per-row attributes differ mac/Windows | E1.5.1 smoke asserts bold-flag rendering on both OSes early — the riskiest widget lands in D1, not v0.9. (wxDataViewListCtrl is not an option at all: its XRC handler forces the control name — §15b; attributes come from a `DataViewIndexListModel.GetAttrByRow` override.) |
 | Tailwind CLI / Node only at package build | Compiled CSS is committed as a build artifact with checksum; exports never need Node at runtime (R-61); CI fails loudly if the vendored CSS is stale vs theme.css. |
 | Apple notarization credentials unavailable | E9 gate advisory until secrets land (contract from E1.1.2); unsigned dev builds flow the whole time. |
 | PyInstaller × wxPython packaging quirks (hidden imports, plists, DataView backends) | Dev bundles are built and smoke-tested from D1 (E1.6.1) — packaging breakage surfaces in the first EPIC, not E9. |

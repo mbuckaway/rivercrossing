@@ -17,7 +17,7 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `docs-md/requirements.md R-01, R-74, R-77`
 1. `docs-md/task-briefs.md → E9 briefs`
 
-Everything you need is in this bundle; `docs-md/` holds the markdown docs and `docs-html/` the same documents as browsable HTML (identical content).
+Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E9.1 Bundles** — PyInstaller apps with assets/templates/guide/WAVs included; Inno Setup per-user .exe (unsigned in v1, SmartScreen documented); dmgbuild + codesign + notarize (unsigned dmg with an advisory gate until credentials land).

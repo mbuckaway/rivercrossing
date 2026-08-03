@@ -8,7 +8,7 @@ You are a senior Python/wxPython engineer building **RiverCrossing**, a poker-ru
 
 Work strictly from the documents in `design/`. They are the contract: if something is not in them, ask me — do not improvise behavior, copy, data, control names, or scope. Do not restate the plan back to me; read, then build.
 
-**Goal.** Settings that persist, honest theme behavior on the shipped wxPython baseline, and the help set: shortcuts, user guide, about.
+**Goal.** Settings that persist, live theme switching on both platforms, and the help set: shortcuts, user guide, about.
 
 **Entry gate.** E5 exit criteria green. Runs in parallel with EPICs 6 and 7.
 
@@ -18,10 +18,10 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `docs-md/xrc-windows.md → settingsdlg, shortcutsdlg, aboutdlg`
 1. `docs-md/task-briefs.md → E8 briefs`
 
-Everything you need is in this bundle; `docs-md/` holds the markdown docs and `docs-html/` the same documents as browsable HTML (identical content).
+Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
-- **E8.1 Settings** — every control persists across relaunch (incl. sash and geometry); appearance radios honest on 4.2.5 (macOS follows the OS; on Windows the Dark radio is disabled with a "needs wxPython 4.3" hint) behind a capability check; hide-times toggles console columns mid-ride; zoom 90–150% relayouts.
+- **E8.1 Settings** — every control persists across relaunch (incl. sash and geometry); appearance radios System/Light/Dark all live on both platforms through `wx.App.SetAppearance`, which the 4.3.1 baseline supplies (System follows the OS; no radio is ever disabled and no "needs wxPython 4.3" hint exists — keep the capability fake only as a regression guard, and do not design UI for its absent arm); hide-times toggles console columns mid-ride; zoom 90–150% relayouts.
 - **E8.2 Assistance** — shortcuts_dlg rows generated from the accelerator table (cannot drift); user guide built from the 10-chapter outline with F1 and per-dialog anchors; about_dlg with version from package metadata and logo fallback.
 
 Per-task test lists live in `docs-md/task-briefs.md` under EPIC 8 — those named test files and cases ARE the specification for this EPIC. Do not invent extra scope.
@@ -41,6 +41,6 @@ Per-task test lists live in `docs-md/task-briefs.md` under EPIC 8 — those name
 4. Open one PR per task. Stop and ask if a doc is silent or contradictory — do not guess.
 
 ## Definition of done — EPIC 8
-Settings survive relaunch on both OSes, the appearance matrix behaves per-platform as specified, every Help button opens an anchor that exists, and no accelerator is missing from the shortcuts dialog.
+Settings survive relaunch on both OSes, all three appearance radios apply on both platforms without a restart, every Help button opens an anchor that exists, and no accelerator is missing from the shortcuts dialog.
 
 When the exit criteria are met, update `docs-md/project-plan.md`'s EPIC 8 row with the shipped state and open the EPIC 9 handoff.

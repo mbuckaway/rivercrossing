@@ -7,10 +7,10 @@ Programmatic cross-checks over all documents, plus a manual read of the menu sys
 | --- | --- |
 | R-id integrity | 49 requirements defined; **zero** orphan citations across spec, plan, briefs, skeletons, XRC canvas. |
 | Window inventory | 23 windows in the XRC canvas; every doc that states a count says 23. |
-| Menu system | `spec.md` §15 route map = 38 rows; every row has a target and an "enabled when" state; §15b registry names 40 `mi_*` items covering all of them; canvas menubar shows the same seven menus. |
-| XRC naming | 84 distinct snake_case control/window names, all suffix-conventional; no duplicates within a window. |
+| Menu system | `spec.md` §15 route map = 38 rows; every row has a target and an "enabled when" state; §15b registry names 45 `mi_*` items covering all of them — the zoom radios are written as the range `mi_zoom_90…mi_zoom_150`, which is seven items, and the generator counts them individually; canvas menubar shows the same seven menus. |
+| XRC naming | 115 named controls across the 23 windows (112 annotated on the canvas, plus `finished_infobar`, `stale_infobar` and `main_splitter`, which appear only in its code-side footnotes), all suffix-conventional; no duplicates within a window, and names repeat *across* windows by design (§15b requires uniqueness only within one). The authoritative count is whatever `tools/gen_ids.py` extracts from the .xrc files — 171 constants once the menu items and window ids are counted — held honest by the drift gate (R-05). |
 | Task coverage | Plan and briefs now agree on all 86 numbered tasks (see F-2). |
-| Stack baseline | wxPython 4.2.5 / wx 3.2 consistently stated as the floor in all six docs; 4.3 only ever as the upgrade path. |
+| Stack baseline | wxPython 4.3.1 / wxWidgets 3.3.3 consistently stated as the baseline in all six docs — 4.3.0 shipped 2026-07-28 and 4.3.1 on 2026-07-30 with cp314 wheels, and `wx.App.SetAppearance` ships in them, so R-03 has no conditional Windows arm and no doc describes one. |
 | Export defaults | `ExportOptions` defaults identical in skeletons, briefs, results-window mockup and both golden pages (times off, laps board on, time board off, full field on, all cards on, lap 8 km). |
 | Radio defaults | Every radio group in the canvas has a stated default: solo-only entries, rider-plates-pooled, 2 jokers/deck, tie-break ① laps, appearance System, zoom 100%. |
 | Asset naming | `-2x` suffix (not `@2x`) stated in briefs and README, matching the shipped files. |
@@ -27,5 +27,7 @@ Programmatic cross-checks over all documents, plus a manual read of the menu sys
 | F-7 | Markdown conversion: cross-document links pointed at `.dc.html` files that do not exist beside the markdown. | All links remapped to the sibling `.md` files; template and export links repointed to `../templates/` and `../exports/`. |
 | F-8 | Bundled HTML copies referenced assets at their old project-root paths. | Repointed to `../exports/`, `../templates/`, `../assets/sounds/` inside `docs-html/`. |
 
-## Standing caveat (by design, not a defect)
+## Standing caveats (by design, not defects)
 The golden results pages were hand-assembled from the real payloads, so the first render from the shipped Jinja2 templates may differ in loop indentation. Task **E6.2.2** therefore regenerates the goldens once from the real renderer, verifies value-parity against these fixtures, and freezes the bytes from then on.
+
+`docs-md/` is canonical and current; `docs-html/` is a mirror and is **stale as of EPIC 1** — it still carries the wxPython 4.2.5 baseline, `wxasync`, the wxDataViewListCtrl/wxInfoBar XRC claims, the simulator-as-primary test mechanism and the both-platforms CI gate. The line above ("already fixed in both `docs-html/` and `docs-md/`") holds only for the F-1…F-8 findings, which predate those amendments. Re-rendering the HTML flows from Claude Design; hand-editing six generated files would only add a second source of drift.

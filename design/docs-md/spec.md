@@ -2,7 +2,7 @@
 
 *Engineering spec · v0.1 · July 23 2026*
 
-Target: Python 3.14 · wxPython 4.2 · async
+Target: Python 3.14 · wxPython 4.3 · async
 Windows + macOS · SQLite
 
 ### 1 · Event model
@@ -55,7 +55,7 @@ REOPENED
 
 ### 4 · The shoe — dealing cards
 
-The shoe is `deck_count × (52 + jokers_per_deck)` cards (default 8 decks × 2 jokers = 432 for a 180-entry field), Fisher-Yates shuffled with the stored `rng_seed`. A crossing deals `shoe[deal_index++]`; the index is recoverable from dealt-card count, so the deal is **deterministic and auditable** — replaying the seed reproduces every card. Duplicates across entries are expected (multi-deck); an empty shoe reshuffles (seed+1) with an audit entry. Short-lap crossings deal into state *held* until the operator confirms or voids. Manual add/void is always available from the entry detail.
+The shoe is `deck_count × (52 + jokers_per_deck)` cards (default 8 decks × 2 jokers = 432 for a 180-entry field — the XRC canvas draws 2 decks, so the *default* is an open question owned by the ride-setup work in E3/E4; the XRC declares no value and the presenter supplies it), Fisher-Yates shuffled with the stored `rng_seed`. A crossing deals `shoe[deal_index++]`; the index is recoverable from dealt-card count, so the deal is **deterministic and auditable** — replaying the seed reproduces every card. Duplicates across entries are expected (multi-deck); an empty shoe reshuffles (seed+1) with an audit entry. Short-lap crossings deal into state *held* until the operator confirms or voids. Manual add/void is always available from the entry detail.
 
 ### 5 · Hand evaluation — best 5 of N, jokers wild
 
@@ -164,9 +164,9 @@ Same standings model, second renderer: `rivercrossing.pdfexport` emits a print-r
 
 ### 10 · Stack, theming & packaging
 
-- **Async design:** one asyncio event loop integrated with wx via `wxasync` (AsyncBind for handlers). The entry field never blocks: crossings commit through an async DB writer (sqlite3 on a single worker via `asyncio.to_thread` — one writer, WAL, no lock contention); the ride clock, 30 s session heartbeat, hourly backups and standings recompute run as asyncio tasks; CSV import and HTML export run off-loop with progress callbacks. Core modules stay sync pure functions (hands, standings) — async lives at the store/UI boundary, so only there do tests need `pytest-asyncio`.
+- **Async design:** the entry field never blocks — crossings commit through an async DB writer (sqlite3 on a single worker via `asyncio.to_thread` — one writer, WAL, no lock contention); the ride clock, 30 s session heartbeat, hourly backups and standings recompute run as background tasks, never inline in a handler; CSV import and HTML export run off-loop with progress callbacks. Core modules stay sync pure functions (hands, standings) — async lives at the store/UI boundary, so only there do tests need `pytest-asyncio`. **The wx⇄asyncio integration itself is chosen in EPIC 5**, where the async writer first appears and nothing earlier needs it (E1–E4 hold no database). `wxasync` is ruled out: 0.49 (2023) works functionally on this stack but cannot be torn down — one teardown path segfaults, another hangs, while a plain `wx.App` on the identical stack exits cleanly. Beyond CI, a segfault on quit would make every clean exit indistinguishable from a crash, which is exactly the signal `app_session.closed_at` and the resume dialog's wording rest on (R-52).
 
-- **Stack:** Python 3.14 · wxPython 4.2.5 baseline / wxWidgets 3.2 stable — 4.3 / wx 3.3 is the pinned upgrade path, not the floor: no stable 4.3 wheel exists (July 2026) (all windows from XRC resources — §15b; wxDataViewListCtrl feed with card bitmaps from a 53-card imagelist; System/Light/Dark radios: on 4.2.5 macOS follows the OS, Windows ships light with the Dark radio disabled + "needs wxPython 4.3" hint; when 4.3 releases, wxApp.SetAppearance activates the trio with zero UI change; native controls never restyled) · sqlite3 stdlib · `phevaluator` for natural 5-card ranks + the thin wild layer above (unit-tested) · platformdirs for the db location.
+- **Stack:** Python 3.14 · wxPython 4.3.1 / wxWidgets 3.3.3 baseline — 4.3.0 shipped 2026-07-28 and 4.3.1 on 2026-07-30, both with cp314 wheels (all windows from XRC resources — §15b, less the three classes XRC cannot name, which are built in code; wxDataViewCtrl feed with card bitmaps from a 53-card imagelist; System/Light/Dark radios live on both platforms — 4.3.1 supplies `wx.App.SetAppearance`, so no capability check and no disabled radio; native controls never restyled) · sqlite3 stdlib · `phevaluator` for natural 5-card ranks + the thin wild layer above (unit-tested) · platformdirs for the db location.
 
 - **Sound on crossing** (Settings toggle, default on): three bundled WAV cues so the operator never has to look down — ① *recorded*: one short click the instant a crossing commits · ② *rejected*: a low double-buzz for an unknown plate or empty Enter (the entry field also shakes/red-borders) · ③ *held*: a distinct two-tone alert when a short-lap crossing holds its card. Everything else is silent (undo and menu actions use the status bar). Played via `wx.adv.Sound` async — never blocks the entry field; identical files on both platforms, shipped in the installers. The player sits behind a `rivercrossing.ui.audio` interface so functional tests inject a fake and assert which cue fired (no audio hardware in CI).
 
@@ -194,7 +194,7 @@ Core modules are pure Python with **zero wx imports** — every one imports and 
 
 - **Simulation suite (card algorithm):** seeded whole-ride simulations — e.g. 180 entries × 6 h with random lap distributions, solo-only and mixed, **both plate models** (relay and rider-pooled incl. mid-ride team moves), 0/2/4 jokers, with and without cap X, shoe exhaustion mid-ride. Invariants asserted: cards dealt = non-voided crossings − held; standings are a total order; identical hands resolve exactly by the configured rule; replaying the seed reproduces every deal and the final standings byte-for-byte.
 
-- **Functional UI tests:** every entry box, button and list carries its stable snake_case **XRC name** (§15b); a pytest harness finds controls by name and drives them with `wx.UIActionSimulator` (real key/mouse events) with direct event injection as the CI fallback — so typing a plate, Enter, undo, dialogs and toggles are all validated against the visible list contents.
+- **Functional UI tests:** every entry box, button and list carries its stable snake_case **XRC name** (§15b); a pytest harness finds controls by name and drives them by **direct event injection** — `SetValue()` fires `EVT_TEXT`, a posted `wx.CommandEvent` fires `EVT_BUTTON`, both measured — so typing a plate, Enter, undo, dialogs and toggles are all validated against the visible list contents. Injection is the primary mechanism, not a fallback: from a terminal-launched interpreter `wx.UIActionSimulator` reports `True` and delivers nothing, because the process never becomes the OS-active app, and `Text(str)` raises `TypeError` on this build. Real input events are re-measured, never assumed, if a signed bundle ever makes the app frontmost.
 
 - **Menu coverage test:** a parametrized test walks every menu item and asserts it routes to its §15 target (window opens, dialog opens, or command fires) in both entry modes and all three ride states.
 
@@ -214,7 +214,7 @@ Grounded in platform dialog guidelines (Windows ContentDialog, Carbon/Primer acc
 
 - **Console states:** DRAFT — clock shows planned start, entry field disabled with "Start the ride to record crossings", primary action is Start Ride (designed: 8a); RUNNING — as designed; FINISHED — result banner with Reopen + Results + export buttons, feed read-only, entry disabled (designed: 8b); REOPENED — corrections banner, edits highlighted in the feed, single primary "Finish again" (designed: 8c). Empty feeds show one-line hints, never blank panels.
 
-- **Windows:** single instance per database; console minimum 1180×740, dialogs fixed-size; per-monitor DPI aware (v2) on Windows; View zoom scales type 90–150%.
+- **Windows:** single instance per database; console minimum 1100×700 (fits 1366×768 — the canvas figure, which is implementation truth; declared as `<size>` and re-applied with `SetMinSize()`, since XRC has no window-level minsize, §15b); dialogs resizable per R-05 — R-04's 90–150% text zoom cannot reflow inside a fixed dialog; per-monitor DPI aware (v2) on Windows; View zoom scales type 90–150%.
 
 - **Times:** stored UTC, displayed local 24-hour; elapsed as h:mm:ss. Settings offers **"Hide times on the console"** — toggleable while a ride runs: lap/total columns and per-crossing times disappear from the console (it's-not-a-race mode); the ride clock stays (the operator must know when the window closes), and timestamps are still recorded underneath for corrections and optional publication.
 
@@ -223,6 +223,8 @@ Grounded in platform dialog guidelines (Windows ContentDialog, Carbon/Primer acc
 ### 14 · CI — building & testing a GUI app
 
 GitHub Actions, matrix `windows-latest + macos-latest` — both runners have a real desktop session, so wx windows open without a virtual display (no Xvfb; that's only needed if a Linux target is ever added). GUI suites are kept lean by design: logic lives in the sync core modules (§11), so the bulk of the pyramid runs headless-fast.
+
+**macOS is the hard gate; `windows-latest` runs advisory and does not block** — there is no Windows test machine available to act on a failure, so a red Windows leg would only wedge the pipeline. This is a deliberate, temporary deviation from R-75 and from the both-OSes gates in the table below, not the new intent: it is reversed the moment a Windows box exists, and R-75 keeps its MUST meanwhile.
 
 | Stage (both OSes) | What runs · gate |
 |---|---|
@@ -239,11 +241,13 @@ Every PR runs stages 1–4; main additionally runs 5; version tags run all six a
 
 One menu tree on both platforms (wx relocates About / Settings / Quit into the macOS app menu; Ctrl ⇒ ⌘). Every item routes through the same command layer as its on-screen button. "OS-native" = standard file/save picker, deliberately not custom. *Design* ids are mock ids in [ui-designs-retired.md](ui-designs-retired.md) (retired — flow reference only).
 
+**Three routes have no frozen window.** Duplicate Ride…, Reopen Ride and Void Card… all cite the "3d pattern" — a confirm dialog that exists only in the retired hi-fi designs, so no window in the XRC canvas covers them. The gap is owned by **EPIC 5** (Duplicate Ride…, Reopen Ride) and **EPIC 7** (Void Card…), each authored mock-first with its control names registered in §15b before any UI code. EPIC 1 routes all three to a flagged sentinel the menu-coverage test asserts as such — never an invented window name.
+
 | Menu item | Opens / does | Design | Enabled when |
 |---|---|---|---|
 | **File ▸ New Ride…** | Ride setup window (blank) | 1c | always |
 | **File ▸ Ride Library** | Ride library window | 1g | always |
-| **File ▸ Duplicate Ride…** | Duplicate-ride dialog → new DRAFT ride | 3d | a ride is open |
+| **File ▸ Duplicate Ride…** | Duplicate-ride dialog → new DRAFT ride — no frozen window; E5 authors it, E1 shows the sentinel | 3d | a ride is open |
 | **File ▸ Import Riders CSV…** | OS-native picker → import report dialog | 3e | ride open (structure edits: DRAFT only) |
 | **File ▸ Export Riders CSV…** | OS-native save dialog | — | ride open |
 | **File ▸ Back Up Database…** | OS-native save dialog | — | always |
@@ -253,7 +257,7 @@ One menu tree on both platforms (wx relocates About / Settings / Quit into the m
 | **Ride ▸ Stop Ride…** | Stop confirm dialog (console button additionally requires the Arm checkbox) | 3d | RUNNING |
 | **Ride ▸ Set Start Time…** | Set-start-time dialog (lap-1 recompute) | 3d | RUNNING · REOPENED |
 | **Ride ▸ Finish Ride…** | Finish confirm → Results window ("Finish again" from REOPENED) | 3d → 1f | RUNNING · REOPENED |
-| **Ride ▸ Reopen Ride** | Confirm (3d pattern) → RUNNING | 3d | FINISHED |
+| **Ride ▸ Reopen Ride** | Confirm (3d pattern) → RUNNING — no frozen window; E5 authors it, E1 shows the sentinel | 3d | FINISHED |
 | **Ride ▸ Audit Trail…** | Read-only audit viewer (§3) — when · who · action · entry · reason, filterable | — | ride open, ≥1 audit row |
 | **Ride ▸ Ride Setup…** | Ride setup window (this ride) | 1c | ride open (locks tighten after start) |
 | **Riders ▸ Rider Editor** | Rider editor window | 1d / 2b | ride open |
@@ -265,7 +269,7 @@ One menu tree on both platforms (wx relocates About / Settings / Quit into the m
 | **Cards ▸ Edit Crossing…** | Edit-crossing dialog | 3c | RUNNING · REOPENED, ≥1 crossing |
 | **Cards ▸ Reassign Plate…** | Reassign dialog | 3c | RUNNING · REOPENED, ≥1 crossing |
 | **Cards ▸ Deal Manual Card…** | Manual-deal dialog | 3c | RUNNING · REOPENED |
-| **Cards ▸ Void Card…** | From entry detail, cards row → confirm (3d pattern) | 1e | RUNNING · REOPENED, entry has cards |
+| **Cards ▸ Void Card…** | From entry detail, cards row → confirm (3d pattern) — no frozen window for the confirm; E7 authors it, E1 shows the sentinel | 1e | RUNNING · REOPENED, entry has cards |
 | **Cards ▸ Review Held Cards** | Focuses console review panel / short-lap dialog | 1a · 1h | held cards > 0 (shows count) |
 | **Results ▸ Standings** | Results window | 1f | ride open (live while running) |
 | **Results ▸ Generate HTML…** | OS-native save dialog → writes file (§8) | 1f | FINISHED |
@@ -282,14 +286,20 @@ One menu tree on both platforms (wx relocates About / Settings / Quit into the m
 
 ### 15b · XRC appendix — windows, files & naming (canonical)
 
-Every window and dialog is defined in **wxWidgets XRC** (sizer-based, resizable, native controls, no absolute positioning, no restyling). The native window designs live in [XRC Windows](xrc-windows.md) — control names annotated there are the XRC `name` attributes and are **frozen**: tests find widgets by them (wxWindow.FindWindowByName), so a rename is a breaking change. The Industry-styled hi-fi mockups are retired as implementation reference. Baseline: **wxPython 4.2.5 / wxWidgets 3.2 stable** — the latest released wheel; 4.3 / wx 3.3 is the pinned upgrade that activates wxApp.SetAppearance dark mode (XRC files and names identical on both; XRC colour syntax available but unused — native colours only).
+Every window and dialog is defined in **wxWidgets XRC** (sizer-based, resizable, native controls, no absolute positioning, no restyling). The native window designs live in [XRC Windows](xrc-windows.md) — control names annotated there are the XRC `name` attributes and are **frozen**: tests find widgets by them (wxWindow.FindWindowByName), so a rename is a breaking change. The Industry-styled hi-fi mockups are retired as implementation reference. Baseline: **wxPython 4.3.1 / wxWidgets 3.3.3** — cp314 wheels, and the release that supplies wxApp.SetAppearance, so the dark theme needs no capability check (XRC colour syntax available but unused — native colours only).
 
-- **Naming:** snake_case; suffix by role — `_frame _dlg _panel _lbl _input _btn _chk _radio _choice _list _picker _spin _infobar`; menu items `mi_<action>`; standard buttons use stock IDs (wxID_OK, wxID_CANCEL, wxID_CLOSE, wxID_DELETE, wxID_OPEN, wxID_NEW, wxID_EXIT, wxID_ABOUT). Names unique within their top-level window. `ui/ids.py` mirrors these names 1:1 (generated from the .xrc files in CI — drift fails the build).
+- **Naming:** snake_case; suffix by role — `_frame _dlg _panel _lbl _input _btn _chk _radio _choice _list _picker _spin _infobar`; menu items `mi_<action>`; standard buttons use stock IDs (wxID_OK, wxID_CANCEL, wxID_CLOSE, wxID_DELETE, wxID_OPEN, wxID_NEW, wxID_EXIT, wxID_ABOUT). Names unique within their top-level window — so a name may repeat across windows, and several do: `plate_input`, `reason_input`, `continue_btn`, `message_lbl`. `ui/ids.py` mirrors these names 1:1 (generated from the .xrc files in CI — drift fails the build): **171 constants** — 23 windows, 45 `mi_*` menu items, 103 controls. The generator is the authoritative count; the drift gate keeps it honest.
+
+- **Two names added past the canvas, in four windows:** `finish_first_btn` in `exit_running_dlg` — the third button §15 and R-51 both describe, which the canvas drew with two (missing functionality, not styling) · `message_lbl` in `delete_ride_dlg`, `continue_or_new_dlg` and `resume_dlg` — each interpolates live ride data into a line the canvas left unnamed, so a presenter had nothing to write to and the line rendered blank; in the delete confirm that also breached UX-DESKTOP §4's "name the object in a destructive confirmation". One shared name, legal because uniqueness is required only within a window.
 
 - **Files (src/rivercrossing/ui/xrc/):** main.xrc → main_frame + main_menubar · setup.xrc → ride_setup_dlg · riders.xrc → rider_editor_dlg + csv_preview_dlg · detail.xrc → entry_detail_dlg · results.xrc → results_frame · library.xrc → ride_library_dlg + delete_ride_dlg · audit.xrc → audit_dlg · settings.xrc → settings_dlg · dialogs.xrc → set_start_dlg, stop_confirm_dlg, finish_confirm_dlg, continue_or_new_dlg, resume_dlg, exit_running_dlg, edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg, about_dlg, selftest_dlg, shortcuts_dlg.
 
 - **Menu item names** (map 1:1 to §15 rows): File — mi_new_ride, mi_open_library, mi_duplicate_ride, mi_backup_now, mi_import_csv, mi_export_csv, wxID_PREFERENCES (Settings…), wxID_EXIT · Ride — mi_start_ride, mi_stop_ride, mi_set_start_time, mi_finish_ride, mi_reopen_ride, mi_audit_trail, mi_ride_setup · Riders — mi_rider_editor, mi_add_entry, mi_mark_dnf, mi_entry_detail · Cards — mi_undo_crossing, mi_add_crossing_at, mi_edit_crossing, mi_reassign_plate, mi_deal_manual, mi_void_card, mi_review_held · Results — mi_standings (F5), mi_export_html, mi_export_pdf, mi_export_poster, mi_export_results_csv, mi_preview_browser, mi_tiebreak_order · View — mi_theme_system / mi_theme_light / mi_theme_dark (radio items), mi_hide_times (check item), mi_zoom_90…mi_zoom_150 (radio items) · Help — mi_user_guide, mi_shortcuts, mi_selftest, wxID_ABOUT.
 
-- **Declared in XRC vs code:** XRC owns structure, labels, sizers, styles (wxRB_GROUP radio groups inside wxStaticBoxSizer, wxStdDialogButtonSizer button rows, wxSplitterWindow, wxInfoBar shells, wxDataViewListCtrl shells). Code owns: DataView columns/rows/attributes, card imagelist (53 bitmaps @1x/2x from ui/assets/cards/), InfoBar messages + show/hide, splitter sash restore, per-state menu enabling, SetAppearance. Custom-drawn widgets: none.
+- **Declared in XRC vs code:** XRC owns structure, labels, sizers, styles (wxRB_GROUP radio groups inside wxStaticBoxSizer, wxStdDialogButtonSizer button rows, wxSplitterWindow, wxDataViewCtrl shells). Code owns: DataView columns/rows/attributes, card imagelist (53 bitmaps @1x/2x from ui/assets/cards/), InfoBar construction + messages + show/hide, splitter sash restore, window minimum sizes, radio menu-item defaults, per-state menu enabling, SetAppearance. Custom-drawn widgets: none.
+
+- **Three classes cannot be authored in XRC at all** (measured on 4.3.1 / wxWidgets 3.3.3): **wxInfoBar** — the handler yields a generic `wx.Control`, not a `wx.InfoBar`, and silently drops `name`, so the four info bars (`resume_infobar`, `reopened_infobar`, `finished_infobar`, `stale_infobar`) are built with `wx.InfoBar()` in code and given their frozen names with `SetName()` · **wxDataViewListCtrl** — its handler hard-forces the control name to `dataviewCtrl`, so no frozen name resolves; all ten list controls are therefore authored as **wxDataViewCtrl**, whose name *is* honoured, and per-row attributes come from a `DataViewIndexListModel` subclass overriding `GetAttrByRow` (there is no setter — `SetAttrByRow` and `SetItemAttr` do not exist) · **wxMenuBar** — also drops its name: `main_menubar` is the resource id `XmlResource.LoadMenuBar()` loads by, and it never resolves through `FindWindowByName`.
+
+- **Further code-side items, all measured:** `<checked>` is a no-op on **radio** menu items (the handler applies it only to `wxITEM_CHECK`), so the theme and zoom defaults — `mi_theme_system`, `mi_zoom_100` — are checked in code after `LoadMenuBar`; `<value>` on a `wxRadioButton` does work, so the in-window radios keep their XRC defaults · XRC has **no window-level `minsize`** (only sizeritem and wxSplitterWindow), so window minimums are declared as `<size>` and re-applied with `SetMinSize()` · `wxStdDialogButtonSizer` positions only OK/Yes/Save/Apply/No/Cancel/Close/Help — `wxID_OPEN`, `wxID_NEW`, `wxID_DELETE` and every custom button (`finish_first_btn`, `continue_btn`, `archive_new_btn`, `library_btn`, `void_btn`, `rerun_btn`) are created and resolve by name but are left unpositioned at `(-1,-1)`, so they belong in a sibling `wxBoxSizer` · a bare `&` in a label is a mnemonic and is stripped on macOS — author `&&`, and read labels back with `GetLabelText()` · one control cannot carry both a frozen name and a stock id, since the id comes *from* the name, so `continue_btn` (annotated wxID_OK in `continue_or_new_dlg` and `resume_dlg`) keeps its name and the affirmative behaviour is wired in code with `SetAffirmativeId()`.
 
 Companions: [requirements](requirements.md) · [XRC window designs (implementation truth)](xrc-windows.md) · [module skeletons](module-skeletons.md) · [project plan](project-plan.md) · [task briefs](task-briefs.md) · [hi-fi designs (retired — flow reference)](ui-designs-retired.md) · [results sample](../exports/epic-2026-results.html) / [no-times](../exports/epic-2026-results-no-times.html). Event facts from gorba.ca; hand-evaluation approach per standard evaluators (7,462-rank tables, best-5-of-N).

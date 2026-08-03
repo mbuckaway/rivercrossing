@@ -16,8 +16,8 @@ This folder is the complete build contract. A developer or coding agent who was 
 
 | Folder | Contents |
 | --- | --- |
-| `docs-md/` | The full doc set as markdown — **the canonical text for coding agents.** |
-| `docs-html/` | The same documents as browsable HTML (identical content, richer layout). Open in any browser. |
+| `docs-md/` | The full doc set as markdown — **the canonical text for coding agents, and the only copy kept current.** |
+| `docs-html/` | The same documents as browsable HTML, richer layout — **a mirror, not a source, and stale as of EPIC 1**: it predates the amendments to the wxPython baseline, the XRC-authoring limits, the test-driving mechanism and the platform gate. Read it for layout; where it differs from `docs-md/`, the markdown is right. Re-rendering flows from Claude Design, not from hand edits. |
 | `epic-prompts/` | **Nine paste-ready Claude build prompts** (one per EPIC) + `README.md` index with order and entry gates. Paste one into a fresh coding session; it carries the role, the read list, the tasks, the TDD ground rules and the exit criteria. |
 | `screenshots/windows/` | JPG of each of the 23 window designs, named by XRC name (`main_frame.jpg`, `ride_setup_dlg.jpg`, …). |
 | `exports/` | The two golden results pages. Their embedded `race-data` JSON blocks are the export test fixtures. |
@@ -32,14 +32,16 @@ This folder is the complete build contract. A developer or coding agent who was 
 - **Ship verbatim:** `templates/`.
 
 ## Pinned environment (not a framework choice)
-Python 3.14 · wxPython ~=4.2.5 (wxWidgets 3.2 stable; 4.3 / wx 3.3 is the pinned dark-mode upgrade path) · all UI loaded from sizer-based XRC · stdlib sqlite3 (WAL, event-sourced) · Jinja2 (HTML export) · fpdf2 (PDF) · wxasync. Windows 10/11 and macOS 13+; CI builds runnable bundles for both from EPIC 1.
+Python 3.14 · wxPython ~=4.3.1 (wxWidgets 3.3.3, cp314 wheels; it supplies `wx.App.SetAppearance`, so dark mode is live on both platforms) · all UI loaded from sizer-based XRC · stdlib sqlite3 (WAL, event-sourced) · Jinja2 (HTML export) · fpdf2 (PDF). No `wxasync`: it cannot be torn down on this stack (`spec.md` §10), and the wx⇄asyncio integration is chosen in EPIC 5 with the async writer. Windows 10/11 and macOS 13+; CI builds runnable bundles for both from EPIC 1 — macOS is the blocking gate until a Windows test machine exists (§14, R-75).
 
 ## Non-negotiables
-- **XRC-first.** Every window, dialog, menubar and panel is authored in XRC and loaded from it. Snake_case names in `spec.md` §15b are frozen — tests find widgets by them; `ids.py` is generated and drift fails CI.
+- **XRC-first.** Every window, dialog, menubar and panel is authored in XRC and loaded from it — except the three classes whose XRC handlers drop or force the control name (wxInfoBar, wxDataViewListCtrl, wxMenuBar), listed with their code-side replacements in `spec.md` §15b. Snake_case names in §15b are frozen — tests find widgets by them; `ids.py` is generated (171 constants) and drift fails CI.
 - **Native look.** Standard controls are never restyled; no absolute positioning, no custom chrome. The screenshots are HTML approximations — real windows wear native platform chrome.
 - **TDD.** Tests are written first by the `tdd-python-writer` agent; ≥90% line and branch coverage on core modules; ruff + mypy strict.
 - **No invented facts.** If a document is silent, ask.
 
 ## Known gaps
+- Three `spec.md` §15 routes have no frozen window: **Duplicate Ride…**, **Reopen Ride** (owned by EPIC 5) and the **Void Card…** confirm (EPIC 7). They cite the retired hi-fi "3d pattern"; each is authored mock-first with its names registered in §15b before any UI code. EPIC 1 routes them to a flagged sentinel.
+- **Deck-count default** is unresolved: `spec.md` §4 says 8 decks, the XRC canvas draws 2. The XRC declares no value and the presenter supplies it; E3/E4 picks the number (`requirements.md`, Open questions).
 - `screenshots/windows/about_dlg.jpg` shows a blank logo slot (the GORBA logo is an external fetch in the design doc). Layout is otherwise exact.
 - Card bitmaps and WAV cues are production-ready starters; tasks E1.3.2 and E4.4.3 commit the generator scripts and may regenerate them — keep the file names.

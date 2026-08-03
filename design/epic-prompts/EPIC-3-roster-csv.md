@@ -18,7 +18,7 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `docs-md/xrc-windows.md → ridereditor, csvdlg`
 1. `docs-md/task-briefs.md → E3 briefs`
 
-Everything you need is in this bundle; `docs-md/` holds the markdown docs and `docs-html/` the same documents as browsable HTML (identical content).
+Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E3.1 Models** — plate uniqueness, team size 2–max(≤10), solo default, pooled vs relay shapes, the state × plate-model lock matrix.

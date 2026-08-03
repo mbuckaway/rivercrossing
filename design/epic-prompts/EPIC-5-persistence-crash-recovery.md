@@ -18,13 +18,14 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `docs-md/xrc-windows.md → resumedlg, exitdlg, librarydlg, deletedlg`
 1. `docs-md/task-briefs.md → E5 briefs`
 
-Everything you need is in this bundle; `docs-md/` holds the markdown docs and `docs-html/` the same documents as browsable HTML (identical content).
+Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E5.1 Store** — schema + migrations, event replay equivalence property, crash-consistency loop (kill mid-race, reopen intact).
-- **E5.2 Session bookkeeping** — unclean-close flag, exit-with-running-ride dialog, resume dialog wording for crash vs quit, reopened banner.
+- **E5.2 Session bookkeeping** — unclean-close flag, exit-with-running-ride dialog (three buttons: Cancel · Finish ride first… · Quit-keep-running, Cancel the default), resume dialog wording for crash vs quit written into `message_lbl`, reopened banner. The clean-quit signal is why `wxasync` is out (spec.md §10): a segfault on quit would be indistinguishable from a crash, and R-52 reads `closed_at` to tell them apart.
 - **E5.3 Backups** — on open + hourly + manual, keep 20; type-name delete guard with backup-first.
-- **E5.4 Library live + demo retirement** — remove the DemoDataSource wiring; screens now show real or empty states.
+- **E5.4 Library live + demo retirement** — remove the DemoDataSource wiring; screens now show real or empty states. **Two mock-first steps land here:** §15's Duplicate Ride… dialog and Reopen Ride confirm have no frozen window (they cite the retired 3d pattern), so mock both and register their names in spec.md §15b before writing UI code, replacing EPIC 1's flagged sentinel.
+- **The wx⇄asyncio integration is chosen in this EPIC** — spec.md §10 defers it here because the async writer first appears here, and rules out `wxasync`. Decide it explicitly, with the teardown behaviour tested, before the writer lands.
 
 Per-task test lists live in `docs-md/task-briefs.md` under EPIC 5 — those named test files and cases ARE the specification for this EPIC. Do not invent extra scope.
 

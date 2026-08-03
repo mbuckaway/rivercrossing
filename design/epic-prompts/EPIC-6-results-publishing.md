@@ -19,7 +19,7 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `exports/epic-2026-results.html and exports/epic-2026-results-no-times.html` — golden references; their embedded race-data blocks are your test fixtures
 1. `docs-md/xrc-windows.md → resultsframe · docs-md/task-briefs.md → E6 briefs`
 
-Everything you need is in this bundle; `docs-md/` holds the markdown docs and `docs-html/` the same documents as browsable HTML (identical content).
+Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E6.1 Standings** — tie-break rules ①②③ reorderable with instant re-rank; laps and fastest leaderboards; DNF block last.

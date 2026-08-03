@@ -18,7 +18,7 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `docs-md/task-briefs.md → E2 briefs (E2.1.1 … E2.4.1)`
 1. `docs-md/module-skeletons.md` — cards.py / hands.py / standings.py APIs
 
-Everything you need is in this bundle; `docs-md/` holds the markdown docs and `docs-html/` the same documents as browsable HTML (identical content).
+Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E2.1 Evaluator** — 7,462-rank table-driven eval5; joker/wild layer incl. five-of-a-kind above straight flush; best-5-of-N with cap X; Hypothesis properties (transitivity, permutation invariance, joker monotonicity).
