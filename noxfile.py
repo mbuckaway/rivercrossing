@@ -66,9 +66,35 @@ def functional(session):
     Coverage is off here: the view layer is proven by driving
     windows and asserting what they contain, not by counting
     executed lines.
+
+    Each test *file* runs in its own worker process. Measured: in a
+    single shared process, FindWindowByName intermittently fails to
+    resolve a control that exists on a freshly loaded main_frame --
+    3 failures in 8 full-suite runs, always the same three tests,
+    while the same code is deterministic in isolation (12/12 frame
+    loads, 400 dialog build/destroy cycles). Something in wx's
+    per-process state degrades after several hundred window
+    constructions. Bounding each file to its own process took that
+    to 6/6 clean runs.
+
+    This bounds the problem rather than curing it, and the
+    underlying wx behaviour is still unexplained -- so if the
+    flakiness reappears, suspect a single file having grown past the
+    same threshold rather than assuming this is settled. Note
+    --forked would be the wrong tool on macOS: forking a process
+    that has already initialised NSApplication is not safe.
     """
     session.install(DEV)
-    session.run("pytest", "tests/functional", "--no-cov", *session.posargs)
+    session.run(
+        "pytest",
+        "tests/functional",
+        "--no-cov",
+        "-n",
+        "auto",
+        "--dist",
+        "loadfile",
+        *session.posargs,
+    )
 
 
 @nox.session(python=PYTHON)

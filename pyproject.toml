@@ -45,6 +45,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-cov",       # T-14 needs --cov-branch/--cov-fail-under in pytest config
+    "pytest-xdist",     # per-file worker processes for the functional suite; see noxfile
     "hypothesis",
     "coverage[toml]",
     "nox",              # the task runner; identical invocation on macOS and Windows
