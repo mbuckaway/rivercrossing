@@ -46,6 +46,7 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",       # T-14 needs --cov-branch/--cov-fail-under in pytest config
     "pytest-xdist",     # per-file worker processes for the functional suite; see noxfile
+    "pytest-rerunfailures",  # project-plan §4's "one auto-retry" flake control
     "hypothesis",
     "coverage[toml]",
     "nox",              # the task runner; identical invocation on macOS and Windows
@@ -242,5 +243,6 @@ source_modules = [
     "rivercrossing.ride",
     "rivercrossing.htmlexport",
     "rivercrossing.ui.presenters",
+    "rivercrossing.ui.views",
 ]
 forbidden_modules = ["rivercrossing.demo"]

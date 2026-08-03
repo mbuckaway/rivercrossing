@@ -29,20 +29,19 @@ paper-cut kind Rule 7 warns against. If a second real window ever
 needs the feed-rendering logic, extract it then.
 """
 
-from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import wx
 import wx.dataview
 
-from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import feed_model, ids
-from rivercrossing.ui.cards_imagelist import CardImageList, load_card_image_list
+from rivercrossing.ui.views._support import default_card_images, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from rivercrossing.ui.cards_imagelist import CardImageList
     from rivercrossing.ui.presenters.console import Cue
     from rivercrossing.ui.presenters.data_source import Counters, DataSource, FeedRow
 
@@ -81,26 +80,6 @@ MIN_SIZE = (1100, 700)
 # settings store; nothing else in this module depends on how that
 # eventually works, and nothing outside this module reads it.
 _persisted_main_splitter_sash: int | None = None
-
-# See _find's docstring: retries for the measured stale-lookup case.
-_FIND_SETTLE_ATTEMPTS = 25
-
-
-@cache
-def _default_card_images() -> CardImageList:
-    """Return the packaged card deck, decoded once per process.
-
-    There is only ever one console window, so nothing needs a fresh
-    ``CardImageList`` per :class:`MainFrame` -- and, measured,
-    repeatedly decoding and freeing 53 card bitmaps (once per
-    construction) is what pushes this wx build into the address-reuse
-    hazard :meth:`MainFrame._find` documents, far sooner than
-    ``MainFrame`` construction alone does. Callers that genuinely need
-    an isolated imagelist (a test asserting on a deliberately broken
-    one, say) still pass ``card_images=`` explicitly; this cache only
-    backs the default.
-    """
-    return load_card_image_list()
 
 
 class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -187,7 +166,7 @@ class MainFrame:
         self,
         frame: wx.Frame,
         *,
-        data_source: DataSource | None = None,
+        data_source: DataSource,
         card_images: CardImageList | None = None,
     ) -> None:
         """Decorate an already-loaded ``main_frame`` window.
@@ -196,15 +175,17 @@ class MainFrame:
             frame: The ``wx.Frame`` ``harness.load_window`` (or the
                 app bootstrap) already loaded from ``main.xrc``.
             data_source: The display-data seam (module-skeletons.md
-                ``ui.presenters``); defaults to :class:`DemoDataSource`
-                -- this module's only reference to
-                ``rivercrossing.demo``.
+                ``ui.presenters``). This view knows only the
+                :class:`~rivercrossing.ui.presenters.data_source.
+                DataSource` Protocol -- the caller wires in whichever
+                implementation applies (``DemoDataSource`` today, a
+                store-backed one from EPIC 4-5 on).
             card_images: The card bitmaps for the feed's Card column;
                 defaults to the packaged deck at 1x.
         """
         self.frame = frame
-        self.data_source: DataSource = data_source if data_source is not None else DemoDataSource()
-        self.card_images = card_images if card_images is not None else _default_card_images()
+        self.data_source = data_source
+        self.card_images = card_images if card_images is not None else default_card_images()
 
         self.crossings_list = self._find(ids.CROSSINGS_LIST, wx.dataview.DataViewCtrl)
         self.main_splitter = self._find(ids.MAIN_SPLITTER, wx.SplitterWindow)
@@ -249,50 +230,18 @@ class MainFrame:
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this frame's own child controls by name.
 
-        Explicit ``parent=self.frame`` throughout, the same reasoning
-        ``harness.find_control`` documents: the bare static form of
-        ``FindWindowByName`` defaults to searching every top-level
-        window in the process and can resolve a same-named control
-        that belongs to a different window.
-
-        Measured (reproduced under load in this repo's own functional
-        suite, many ``MainFrame``s built and torn down in one
-        session): wxPython wraps wx objects by C++ pointer identity,
-        and when a previous ``main_frame``'s deletion is still
-        pending, a freshly-allocated control can land at an address
-        the wrapper cache still associates with a *different*,
-        already-destroyed control's Python class. Generic methods
-        (``GetName()`` among them) still dispatch through the real
-        object's C++ vtable and report correctly even then, so name
-        alone does not catch this -- only the wrapper's own Python
-        *type* is wrong. Checking ``isinstance(control,
-        expected_type)`` is what actually catches it, and
-        ``wx.SafeYield()`` -- the same kind of pump
-        ``harness.close_window`` uses to flush a deferred deletion --
-        resolves it on retry in every case measured at the scale one
-        ``MainFrame`` construction reaches. It is not a complete fix
-        under sustained load across a whole test session (a known,
-        reported residual risk, not silently swallowed); production
-        never approaches that load, since only one console window is
-        ever built.
+        See :func:`find_control`'s docstring (``ui.views._support``)
+        for the full measured reasoning this mirrors: an explicit
+        ``self.frame`` parent scopes the lookup, and the retry loop
+        settles the address-reuse hazard this wx build exhibits
+        under sustained window churn.
 
         Raises:
             LookupError: If *name* does not resolve to an
                 *expected_type* instance inside this frame, even
                 after settling.
         """
-        control = wx.Window.FindWindowByName(name, self.frame)
-        attempts = 0
-        while not isinstance(control, expected_type) and attempts < _FIND_SETTLE_ATTEMPTS:
-            wx.SafeYield()
-            control = wx.Window.FindWindowByName(name, self.frame)
-            attempts += 1
-        if not isinstance(control, expected_type):
-            # LookupError, not TypeError: this mirrors harness.py's own
-            # ControlNotFoundError(LookupError) for the identical "name
-            # did not resolve inside this window" case.
-            raise LookupError(f"main_frame has no control named {name!r}")  # noqa: TRY004
-        return control
+        return find_control(self.frame, name, expected_type)
 
     # ------------------------------------------------------- InfoBars
 

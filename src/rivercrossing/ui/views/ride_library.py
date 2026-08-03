@@ -10,14 +10,10 @@ DataViewCtrl`` shell from XRC, a code-side ``DataViewIndexListModel``
 subclass, and a plain Python class that decorates the already-loaded
 dialog.
 
-**Why no shared ``_find``/``CardImageList`` helper module (SIMPLECODE
-Rule 7):** this task's file batch is exactly four view modules plus
-their tests, with ``views/main_frame.py`` itself off limits to edit.
-Each of the four views below duplicates the same small,
-address-reuse-safe control lookup ``MainFrame._find`` already proved
-out. Extracting a shared helper is a real, worthwhile follow-up once
-a batch permits touching more than one view file at a time; doing it
-here would mean editing a file outside this task's batch.
+``_find``'s control lookup used to be duplicated across each of
+these view modules, plus ``main_frame.py``. Both it and
+``main_frame.py``'s card-imagelist cache now live in one shared
+home, ``ui.views._support`` -- see that module's docstring.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -25,8 +21,8 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.dataview
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
+from rivercrossing.ui.views._support import associate_model, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -60,10 +56,6 @@ COLUMN_LABELS: tuple[str, ...] = ("Ride", "Date", "Status", "Entries")
 # sizer content, not a second canvas number -- see this task's own
 # report for how it was measured.
 MIN_SIZE = (520, 182)
-
-# See MainFrame._find's docstring (views/main_frame.py): retries for
-# the measured wxPython 4.3.1/wxWidgets 3.3.3 stale-lookup hazard.
-_FIND_SETTLE_ATTEMPTS = 25
 
 
 def format_ride_status(status: RideStatus) -> str:
@@ -120,17 +112,19 @@ class RideLibrary:
     in this task's scope.
     """
 
-    def __init__(self, dialog: wx.Dialog, *, data_source: DataSource | None = None) -> None:
+    def __init__(self, dialog: wx.Dialog, *, data_source: DataSource) -> None:
         """Decorate an already-loaded ``ride_library_dlg`` window.
 
         Args:
             dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
                 app bootstrap) already loaded from ``library.xrc``.
-            data_source: The display-data seam; defaults to
-                :class:`DemoDataSource`.
+            data_source: The display-data seam. This view knows only
+                the :class:`~rivercrossing.ui.presenters.data_source.
+                DataSource` Protocol -- the caller wires in whichever
+                implementation applies.
         """
         self.dialog = dialog
-        self.data_source: DataSource = data_source if data_source is not None else DemoDataSource()
+        self.data_source = data_source
 
         self.rides_list = self._find(ids.RIDES_LIST, wx.dataview.DataViewCtrl)
         self._build_columns()
@@ -142,26 +136,15 @@ class RideLibrary:
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
 
-        See ``MainFrame._find``'s docstring (``views/main_frame.py``)
-        for the full measured reasoning this mirrors: an explicit
-        ``parent=self.dialog`` scopes the lookup, and the retry loop
-        settles the address-reuse hazard this wx build exhibits
-        under sustained window churn.
+        See :func:`find_control`'s docstring (``ui.views._support``)
+        for the full measured reasoning this mirrors.
 
         Raises:
             LookupError: If *name* does not resolve to an
                 *expected_type* instance inside this dialog, even
                 after settling.
         """
-        control = wx.Window.FindWindowByName(name, self.dialog)
-        attempts = 0
-        while not isinstance(control, expected_type) and attempts < _FIND_SETTLE_ATTEMPTS:
-            wx.SafeYield()
-            control = wx.Window.FindWindowByName(name, self.dialog)
-            attempts += 1
-        if not isinstance(control, expected_type):
-            raise LookupError(f"ride_library_dlg has no control named {name!r}")  # noqa: TRY004
-        return control
+        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append ``rides_list``'s four columns in canvas order."""
@@ -169,9 +152,13 @@ class RideLibrary:
             self.rides_list.AppendTextColumn(label, col)
 
     def show_rides(self, rows: list[RideSummary]) -> None:
-        """Render ``rides_list`` (``LibraryView``)."""
+        """Render ``rides_list`` (``LibraryView``).
+
+        See ``ui.views._support.associate_model``'s docstring for
+        why this repaints explicitly (unverified remedy).
+        """
         self._model = RidesListModel(rows)
-        self.rides_list.AssociateModel(self._model)
+        associate_model(self.rides_list, self._model)
 
     def _apply_min_size(self) -> None:
         """Force the canvas's 520px floor, then Fit() the rest (D16).

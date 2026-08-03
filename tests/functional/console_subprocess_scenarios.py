@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any
 import harness
 import wx
 
+from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
 from rivercrossing.ui.views import MainFrame
 
@@ -80,7 +81,7 @@ def _sash_round_trip_once(resource: Any) -> dict[str, Any]:  # noqa: ANN401
     first_window.Show()
     first_window.Layout()
     harness.pump()
-    first_console = MainFrame(first_window)
+    first_console = MainFrame(first_window, data_source=DemoDataSource())
     first_console.main_splitter.SetSashPosition(300)
     first_console.persist_layout()
     harness.close_window(first_window)
@@ -90,7 +91,7 @@ def _sash_round_trip_once(resource: Any) -> dict[str, Any]:  # noqa: ANN401
     second_window.Layout()
     harness.pump()
     try:
-        second_console = MainFrame(second_window)
+        second_console = MainFrame(second_window, data_source=DemoDataSource())
         restored = second_console.main_splitter.GetSashPosition()
     finally:
         harness.close_window(second_window)
@@ -123,7 +124,7 @@ def _hide_times_columns_round_trip() -> dict[str, Any]:
     window.Layout()
     harness.pump()
     try:
-        console = MainFrame(window)
+        console = MainFrame(window, data_source=DemoDataSource())
         crossings_list = harness.find_control(window, ids.CROSSINGS_LIST)
         before = _visible_column_titles(crossings_list)
         console.set_hide_times(hide=True)
@@ -143,7 +144,7 @@ def _hide_times_leaves_clock_shown() -> dict[str, Any]:
     window.Layout()
     harness.pump()
     try:
-        console = MainFrame(window)
+        console = MainFrame(window, data_source=DemoDataSource())
         console.set_hide_times(hide=True)
         elapsed_shown = harness.find_control(window, ids.CLOCK_ELAPSED_LBL).IsShown()
         remaining_shown = harness.find_control(window, ids.CLOCK_REMAINING_LBL).IsShown()

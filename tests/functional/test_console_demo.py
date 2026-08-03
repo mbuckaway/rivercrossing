@@ -47,8 +47,9 @@ import harness
 import pytest
 import wx.dataview
 
+from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import feed_model, ids
-from rivercrossing.ui.views import MainFrame
+from rivercrossing.ui.views import MainFrame, _support
 from rivercrossing.ui.views.main_frame import (
     FINISHED_INFOBAR,
     MIN_SIZE,
@@ -87,7 +88,7 @@ def shared_console(xrc_resource: object) -> MainFrame:
     window.Show()
     window.Layout()
     harness.pump()
-    console = MainFrame(window)
+    console = MainFrame(window, data_source=DemoDataSource())
     try:
         yield console
     finally:
@@ -316,6 +317,13 @@ def test_main_frame_crossings_model_card_column_renders_the_dealt_bitmap(
     rendered = model.GetValueByRow(0, feed_model.COL_CARD)  # plate 123 -> "9H"
 
     assert rendered is shared_console.card_images.bitmap("9h")
+
+
+def test_main_frame_card_images_defaults_to_the_shared_support_cache(
+    shared_console: MainFrame,
+) -> None:
+    """The extracted ``default_card_images`` cache backs this deck."""
+    assert shared_console.card_images is _support.default_card_images()
 
 
 # --- min size --------------------------------------------------------

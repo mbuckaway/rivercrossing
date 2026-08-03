@@ -77,12 +77,18 @@ def functional(session):
     constructions. Bounding each file to its own process took that
     to 6/6 clean runs.
 
-    This bounds the problem rather than curing it, and the
-    underlying wx behaviour is still unexplained -- so if the
-    flakiness reappears, suspect a single file having grown past the
-    same threshold rather than assuming this is settled. Note
-    --forked would be the wrong tool on macOS: forking a process
-    that has already initialised NSApplication is not safe.
+    Plus one auto-retry, which project-plan.md §4 adopts by name as
+    this suite's flake control. It is doing real work, not papering
+    over a mystery: after isolation the residual rate measured 1 bad
+    run in 10 (a failure or, once, a hang near completion), and with
+    the retry it measured 10/10 clean. The trigger is narrowed --
+    building a frame, moving a splitter sash, destroying it and
+    rebuilding fails ~1 in 6 even in a fresh process -- but the
+    underlying wx behaviour is not explained, so treat a green suite
+    as bounded, not solved.
+
+    --forked would be the wrong tool on macOS: forking a process that
+    has already initialised NSApplication is not safe.
     """
     session.install(DEV)
     session.run(
@@ -93,6 +99,8 @@ def functional(session):
         "auto",
         "--dist",
         "loadfile",
+        "--reruns",
+        "1",
         *session.posargs,
     )
 

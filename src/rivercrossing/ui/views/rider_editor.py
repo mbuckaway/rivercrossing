@@ -13,8 +13,8 @@ actions (Add/Save/Delete, team assignment) are a later phase's job
 per ``RidersPresenter``'s own docstring ("Phase 5 wires...") and are
 not in this task's scope -- this module only shows the demo roster.
 
-See ``ride_library.py``'s module docstring for why ``_find`` is
-duplicated here rather than shared.
+``_find`` is now shared via ``ui.views._support.find_control`` --
+see that module's docstring for why it used to be duplicated here.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.dataview
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
+from rivercrossing.ui.views._support import associate_model, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -59,10 +59,6 @@ SOLO_TEAM_TEXT = "—"
 # Height is Fit()'s own measurement of the real, demo-populated
 # sizer content -- see this task's own report for how it was measured.
 MIN_SIZE = (640, 281)
-
-# See MainFrame._find's docstring (views/main_frame.py): retries for
-# the measured wxPython 4.3.1/wxWidgets 3.3.3 stale-lookup hazard.
-_FIND_SETTLE_ATTEMPTS = 25
 
 
 def format_team(row: RiderRow) -> str:
@@ -125,17 +121,19 @@ class RiderEditor:
     are a later phase's job and are not in this task's scope.
     """
 
-    def __init__(self, dialog: wx.Dialog, *, data_source: DataSource | None = None) -> None:
+    def __init__(self, dialog: wx.Dialog, *, data_source: DataSource) -> None:
         """Decorate an already-loaded ``rider_editor_dlg`` window.
 
         Args:
             dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
                 app bootstrap) already loaded from ``riders.xrc``.
-            data_source: The display-data seam; defaults to
-                :class:`DemoDataSource`.
+            data_source: The display-data seam. This view knows only
+                the :class:`~rivercrossing.ui.presenters.data_source.
+                DataSource` Protocol -- the caller wires in whichever
+                implementation applies.
         """
         self.dialog = dialog
-        self.data_source: DataSource = data_source if data_source is not None else DemoDataSource()
+        self.data_source = data_source
 
         self.riders_list = self._find(ids.RIDERS_LIST, wx.dataview.DataViewCtrl)
         self._team_column = self._build_columns()
@@ -147,7 +145,7 @@ class RiderEditor:
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
 
-        See ``MainFrame._find``'s docstring (``views/main_frame.py``)
+        See :func:`find_control`'s docstring (``ui.views._support``)
         for the full measured reasoning this mirrors.
 
         Raises:
@@ -155,15 +153,7 @@ class RiderEditor:
                 *expected_type* instance inside this dialog, even
                 after settling.
         """
-        control = wx.Window.FindWindowByName(name, self.dialog)
-        attempts = 0
-        while not isinstance(control, expected_type) and attempts < _FIND_SETTLE_ATTEMPTS:
-            wx.SafeYield()
-            control = wx.Window.FindWindowByName(name, self.dialog)
-            attempts += 1
-        if not isinstance(control, expected_type):
-            raise LookupError(f"rider_editor_dlg has no control named {name!r}")  # noqa: TRY004
-        return control
+        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Append ``riders_list``'s three columns in canvas order.
@@ -179,9 +169,13 @@ class RiderEditor:
         return columns[COL_TEAM]
 
     def show_riders(self, rows: list[RiderRow]) -> None:
-        """Render ``riders_list``, hiding Team in a solo-only ride."""
+        """Render ``riders_list``, hiding Team in a solo-only ride.
+
+        See ``ui.views._support.associate_model``'s docstring for
+        why this repaints explicitly (unverified remedy).
+        """
         self._model = RidersListModel(rows)
-        self.riders_list.AssociateModel(self._model)
+        associate_model(self.riders_list, self._model)
         self._team_column.SetHidden(is_solo_only(rows))
 
     def _apply_min_size(self) -> None:

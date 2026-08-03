@@ -20,14 +20,16 @@ this deliberately avoids triggering).
 
 import re
 from typing import Any
+from unittest.mock import MagicMock
 
 import harness
 import pytest
 
+from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.data_source import RiderRow, RideSummary, StandingsRow
-from rivercrossing.ui.views import results_win, ride_library, rider_editor
+from rivercrossing.ui.views import _support, results_win, ride_library, rider_editor
 from rivercrossing.ui.views.entry_detail import COL_CARD as LAPS_COL_CARD
 from rivercrossing.ui.views.entry_detail import EntryDetailDialog
 from rivercrossing.ui.views.results_win import ResultsWindow
@@ -89,7 +91,7 @@ def shared_library(xrc_resource: object) -> RideLibrary:
     window.Show()
     window.Layout()
     harness.pump()
-    view = RideLibrary(window)
+    view = RideLibrary(window, data_source=DemoDataSource())
     try:
         yield view
     finally:
@@ -103,7 +105,7 @@ def shared_rider_editor(xrc_resource: object) -> RiderEditor:
     window.Show()
     window.Layout()
     harness.pump()
-    view = RiderEditor(window)
+    view = RiderEditor(window, data_source=DemoDataSource())
     try:
         yield view
     finally:
@@ -117,7 +119,7 @@ def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
     window.Show()
     window.Layout()
     harness.pump()
-    view = EntryDetailDialog(window, "77")
+    view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
     try:
         yield view
     finally:
@@ -131,7 +133,7 @@ def shared_results(xrc_resource: object) -> ResultsWindow:
     window.Show()
     window.Layout()
     harness.pump()
-    view = ResultsWindow(window)
+    view = ResultsWindow(window, data_source=DemoDataSource())
     try:
         yield view
     finally:
@@ -309,6 +311,19 @@ def test_entry_detail_cards_list_renders_the_held_card_bitmaps(
     )
 
 
+def test_entry_detail_card_images_defaults_to_the_shared_support_cache(
+    shared_entry_detail: EntryDetailDialog,
+) -> None:
+    """The extracted ``_support.default_card_images`` backs this deck.
+
+    Also proves the merge's real effect: before extraction,
+    ``main_frame.py`` and ``entry_detail.py`` each cached their own
+    separate 53-bitmap deck; ``test_console_demo.py``'s equivalent
+    assertion for ``shared_console`` shares this exact object.
+    """
+    assert shared_entry_detail.card_images is _support.default_card_images()
+
+
 def test_entry_detail_given_an_unknown_plate_raises_naming_it(xrc_resource: object) -> None:
     """T-5: ``DemoDataSource.entry_detail``'s only ``raise``."""
     window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
@@ -318,7 +333,7 @@ def test_entry_detail_given_an_unknown_plate_raises_naming_it(xrc_resource: obje
     try:
         expected = re.escape("no entry detail for plate 'no-such-plate'")
         with pytest.raises(LookupError, match=expected):
-            EntryDetailDialog(window, "no-such-plate")
+            EntryDetailDialog(window, "no-such-plate", data_source=DemoDataSource())
     finally:
         harness.close_window(window)
 
@@ -459,3 +474,122 @@ def test_results_window_find_given_an_unknown_control_name_raises_naming_it(
     """T-5: the one ``raise`` in ``views/results_win.py``."""
     with pytest.raises(LookupError, match=re.escape("no control named 'no_such_control'")):
         shared_results._find("no_such_control")
+
+
+# ------------------------------ repaint after model (unverified remedy)
+
+
+def _spy_repaint(control: Any) -> tuple[MagicMock, MagicMock]:  # noqa: ANN401
+    """Replace *control*'s Refresh/Update with spies; return both.
+
+    Monkeypatching a real wx control's bound methods is a
+    platform/GUI I/O boundary (T-10), the same category
+    ``test_dialog_behavior.py``'s own ``_spy_on_set_focus`` already
+    treats as legitimate to spy on directly in this codebase.
+
+    *control* must stay referenced by a local in the caller for as
+    long as the spy needs to see calls: measured (a throwaway probe
+    script, per this repo's convention), wxPython's wrapper cache is
+    weak, and a ``FindWindowByName`` result with no other surviving
+    Python reference is collected -- the *next* lookup of the same
+    control then builds a brand-new wrapper, missing this one's
+    instance attributes entirely.
+    """
+    refresh, update = MagicMock(), MagicMock()
+    control.Refresh = refresh
+    control.Update = update
+    return refresh, update
+
+
+def test_ride_library_show_rides_repaints_the_list_after_associating_its_model(
+    xrc_resource: object,
+) -> None:
+    """Unverified remedy; see ``associate_model``'s docstring."""
+    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    window.Show()
+    harness.pump()
+    control = harness.find_control(window, ids.RIDES_LIST)  # kept alive: _spy_repaint's docstring
+    refresh, update = _spy_repaint(control)
+
+    try:
+        view = RideLibrary(window, data_source=DemoDataSource())
+        row_count = view.rides_list.GetModel().GetCount()
+    finally:
+        harness.close_window(window)
+
+    assert row_count == len(CANVAS_RIDES)
+    refresh.assert_called_once_with()
+    update.assert_called_once_with()
+
+
+def test_rider_editor_show_riders_repaints_the_list_after_associating_its_model(
+    xrc_resource: object,
+) -> None:
+    """Unverified remedy; see ``associate_model``'s docstring."""
+    window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
+    window.Show()
+    harness.pump()
+    control = harness.find_control(window, ids.RIDERS_LIST)  # kept alive: _spy_repaint's docstring
+    refresh, update = _spy_repaint(control)
+
+    try:
+        view = RiderEditor(window, data_source=DemoDataSource())
+        row_count = view.riders_list.GetModel().GetCount()
+    finally:
+        harness.close_window(window)
+
+    assert row_count == len(CANVAS_RIDERS)
+    refresh.assert_called_once_with()
+    update.assert_called_once_with()
+
+
+def test_entry_detail_show_entry_repaints_both_dataviews_after_associating_models(
+    xrc_resource: object,
+) -> None:
+    """Unverified remedy; see ``associate_model``'s docstring.
+
+    ``show_entry`` associates two separate models (cards_list,
+    laps_list) in one call -- both must repaint.
+    """
+    window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
+    window.Show()
+    harness.pump()
+    # Both kept alive: _spy_repaint's docstring.
+    cards_control = harness.find_control(window, ids.CARDS_LIST)
+    laps_control = harness.find_control(window, ids.LAPS_LIST)
+    cards_refresh, cards_update = _spy_repaint(cards_control)
+    laps_refresh, laps_update = _spy_repaint(laps_control)
+
+    try:
+        view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
+        cards_count = view.cards_list.GetModel().GetCount()
+        laps_count = view.laps_list.GetModel().GetCount()
+    finally:
+        harness.close_window(window)
+
+    assert (cards_count, laps_count) == (len(CANVAS_CARDS_HELD_KEYS), len(CANVAS_LAPS))
+    cards_refresh.assert_called_once_with()
+    cards_update.assert_called_once_with()
+    laps_refresh.assert_called_once_with()
+    laps_update.assert_called_once_with()
+
+
+def test_results_window_show_standings_repaints_the_list_after_associating_its_model(
+    xrc_resource: object,
+) -> None:
+    """Unverified remedy; see ``associate_model``'s docstring."""
+    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window.Show()
+    harness.pump()
+    control = harness.find_control(window, ids.STANDINGS_LIST)  # kept alive: _spy_repaint's doc
+    refresh, update = _spy_repaint(control)
+
+    try:
+        view = ResultsWindow(window, data_source=DemoDataSource())
+        row_count = view.standings_list.GetModel().GetCount()
+    finally:
+        harness.close_window(window)
+
+    assert row_count == len(CANVAS_STANDINGS)
+    refresh.assert_called_once_with()
+    update.assert_called_once_with()

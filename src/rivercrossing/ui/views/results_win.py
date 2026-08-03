@@ -21,8 +21,8 @@ carry their canvas defaults in ``results.xrc`` itself (times off,
 laps board on, time board off, full field on, all cards on), so this
 module does not set them; it only renders ``standings_list``.
 
-See ``ride_library.py``'s module docstring for why ``_find`` is
-duplicated here rather than shared.
+``_find`` is now shared via ``ui.views._support.find_control`` --
+see that module's docstring for why it used to be duplicated here.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -30,8 +30,8 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.dataview
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
+from rivercrossing.ui.views._support import associate_model, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -75,10 +75,6 @@ JOKER_DISPLAY = "JK★"
 # Height is Fit()'s own measurement of the real, demo-populated
 # sizer content -- see this task's own report for how it was measured.
 MIN_SIZE = (720, 442)
-
-# See MainFrame._find's docstring (views/main_frame.py): retries for
-# the measured wxPython 4.3.1/wxWidgets 3.3.3 stale-lookup hazard.
-_FIND_SETTLE_ATTEMPTS = 25
 
 
 def format_card(code: str) -> str:
@@ -150,17 +146,19 @@ class ResultsWindow:
     not in this task's scope.
     """
 
-    def __init__(self, frame: wx.Frame, *, data_source: DataSource | None = None) -> None:
+    def __init__(self, frame: wx.Frame, *, data_source: DataSource) -> None:
         """Decorate an already-loaded ``results_frame`` window.
 
         Args:
             frame: The ``wx.Frame`` ``harness.load_window`` (or the
                 app bootstrap) already loaded from ``results.xrc``.
-            data_source: The display-data seam; defaults to
-                :class:`DemoDataSource`.
+            data_source: The display-data seam. This view knows only
+                the :class:`~rivercrossing.ui.presenters.data_source.
+                DataSource` Protocol -- the caller wires in whichever
+                implementation applies.
         """
         self.frame = frame
-        self.data_source: DataSource = data_source if data_source is not None else DemoDataSource()
+        self.data_source = data_source
 
         self.standings_list = self._find(ids.STANDINGS_LIST, wx.dataview.DataViewCtrl)
         self.show_times_chk = self._find(ids.SHOW_TIMES_CHK, wx.CheckBox)
@@ -178,7 +176,7 @@ class ResultsWindow:
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this frame's own child controls by name.
 
-        See ``MainFrame._find``'s docstring (``views/main_frame.py``)
+        See :func:`find_control`'s docstring (``ui.views._support``)
         for the full measured reasoning this mirrors.
 
         Raises:
@@ -186,15 +184,7 @@ class ResultsWindow:
                 *expected_type* instance inside this frame, even
                 after settling.
         """
-        control = wx.Window.FindWindowByName(name, self.frame)
-        attempts = 0
-        while not isinstance(control, expected_type) and attempts < _FIND_SETTLE_ATTEMPTS:
-            wx.SafeYield()
-            control = wx.Window.FindWindowByName(name, self.frame)
-            attempts += 1
-        if not isinstance(control, expected_type):
-            raise LookupError(f"results_frame has no control named {name!r}")  # noqa: TRY004
-        return control
+        return find_control(self.frame, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append ``standings_list``'s seven columns in canvas order."""
@@ -202,9 +192,13 @@ class ResultsWindow:
             self.standings_list.AppendTextColumn(label, col)
 
     def show_standings(self, rows: list[StandingsRow]) -> None:
-        """Render ``standings_list`` (``ResultsView``)."""
+        """Render ``standings_list`` (``ResultsView``).
+
+        See ``ui.views._support.associate_model``'s docstring for
+        why this repaints explicitly (unverified remedy).
+        """
         self._model = StandingsListModel(rows)
-        self.standings_list.AssociateModel(self._model)
+        associate_model(self.standings_list, self._model)
 
     def _apply_min_size(self) -> None:
         """Force the canvas's 720px floor, then Fit() the rest (D16).

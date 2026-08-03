@@ -29,19 +29,19 @@ The demo fixture's own comment (``rivercrossing.demo``) records that
 rest are illegible in the canvas and are not invented here either;
 ``show_entry`` renders exactly what the fixture gives it.
 
-See ``ride_library.py``'s module docstring for why ``_find`` and the
-card-imagelist cache are duplicated here rather than shared.
+``_find`` and the card-imagelist cache are now shared via
+``ui.views._support`` -- see that module's docstring for why they
+used to be duplicated here.
 """
 
-from functools import cache
 from typing import TYPE_CHECKING, Any
 
 import wx
 import wx.dataview
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
-from rivercrossing.ui.cards_imagelist import CardImageList, asset_key, load_card_image_list
+from rivercrossing.ui.cards_imagelist import CardImageList, asset_key
+from rivercrossing.ui.views._support import associate_model, default_card_images, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -83,22 +83,6 @@ LAPS_COLUMN_WIDTHS: tuple[int, ...] = (50, 80, 80, 60, 60)
 # turned out to be the natural floor, not the DataViews (this task's
 # own report). Not a canvas number: xrc-windows.md states none.
 MIN_SIZE = (726, 331)
-
-# See MainFrame._find's docstring (views/main_frame.py): retries for
-# the measured wxPython 4.3.1/wxWidgets 3.3.3 stale-lookup hazard.
-_FIND_SETTLE_ATTEMPTS = 25
-
-
-@cache
-def _default_card_images() -> CardImageList:
-    """Return the packaged card deck, decoded once per process.
-
-    Mirrors ``views/main_frame.py``'s own ``_default_card_images``:
-    this task's file batch cannot extract a shared cache (module
-    docstring), so this dialog decodes its own separate 53-bitmap
-    ``CardImageList`` rather than reusing the console's.
-    """
-    return load_card_image_list()
 
 
 class CardsHeldModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -184,7 +168,7 @@ class EntryDetailDialog:
         dialog: wx.Dialog,
         plate: str,
         *,
-        data_source: DataSource | None = None,
+        data_source: DataSource,
     ) -> None:
         """Decorate an already-loaded ``entry_detail_dlg`` window.
 
@@ -192,8 +176,10 @@ class EntryDetailDialog:
             dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
                 app bootstrap) already loaded from ``detail.xrc``.
             plate: The plate of the entry to render.
-            data_source: The display-data seam; defaults to
-                :class:`DemoDataSource`.
+            data_source: The display-data seam. This view knows only
+                the :class:`~rivercrossing.ui.presenters.data_source.
+                DataSource` Protocol -- the caller wires in whichever
+                implementation applies.
 
         No ``card_images=`` override: unlike ``MainFrame``, nothing in
         this task needs one (SIMPLECODE Rule 1) -- both DataViews'
@@ -201,8 +187,8 @@ class EntryDetailDialog:
         (module docstring).
         """
         self.dialog = dialog
-        self.data_source: DataSource = data_source if data_source is not None else DemoDataSource()
-        self.card_images = _default_card_images()
+        self.data_source = data_source
+        self.card_images = default_card_images()
 
         self.entry_header_lbl = self._find(ids.ENTRY_HEADER_LBL, wx.StaticText)
         self.members_lbl = self._find(ids.MEMBERS_LBL, wx.StaticText)
@@ -219,7 +205,7 @@ class EntryDetailDialog:
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
 
-        See ``MainFrame._find``'s docstring (``views/main_frame.py``)
+        See :func:`find_control`'s docstring (``ui.views._support``)
         for the full measured reasoning this mirrors.
 
         Raises:
@@ -227,15 +213,7 @@ class EntryDetailDialog:
                 *expected_type* instance inside this dialog, even
                 after settling.
         """
-        control = wx.Window.FindWindowByName(name, self.dialog)
-        attempts = 0
-        while not isinstance(control, expected_type) and attempts < _FIND_SETTLE_ATTEMPTS:
-            wx.SafeYield()
-            control = wx.Window.FindWindowByName(name, self.dialog)
-            attempts += 1
-        if not isinstance(control, expected_type):
-            raise LookupError(f"entry_detail_dlg has no control named {name!r}")  # noqa: TRY004
-        return control
+        return find_control(self.dialog, name, expected_type)
 
     def _build_cards_column(self) -> None:
         """Append ``cards_list``'s one bitmap column (D15)."""
@@ -255,13 +233,17 @@ class EntryDetailDialog:
                 self.laps_list.AppendTextColumn(label, col, width=width)
 
     def show_entry(self, detail: EntryDetail) -> None:
-        """Render header, members, held cards and laps rows."""
+        """Render header, members, held cards and laps rows.
+
+        See ``ui.views._support.associate_model``'s docstring for
+        why each DataView repaints explicitly (unverified remedy).
+        """
         self.entry_header_lbl.SetLabel(detail.header)
         self.members_lbl.SetLabel(detail.members)
         self._cards_model = CardsHeldModel(detail.cards_held, self.card_images)
-        self.cards_list.AssociateModel(self._cards_model)
+        associate_model(self.cards_list, self._cards_model)
         self._laps_model = EntryLapsModel(detail.laps, self.card_images)
-        self.laps_list.AssociateModel(self._laps_model)
+        associate_model(self.laps_list, self._laps_model)
 
     def _apply_min_size(self) -> None:
         """``Fit()`` the dialog to its now content-bearing sizer (D16).
