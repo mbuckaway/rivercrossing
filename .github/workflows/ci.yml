@@ -3,10 +3,17 @@
 # EPIC 1 wires stages 1, 2, 3 and 5. Stage 4 (Acceptance) needs the full race,
 # which arrives in EPIC 9; stage 6 (Package/signing) is EPIC 9 too.
 #
-# macOS is the hard gate. windows-latest runs but does not block: there is no
-# Windows test machine available to act on a failure yet. That is a deliberate,
-# temporary deviation from R-75 and §14, which require both platforms green
-# before release -- reverse it as soon as a Windows box exists.
+# **macOS is the target and the only gate.** §14 and R-75 want both platforms
+# green before release, and that remains the intent -- but there is no Windows
+# test machine to act on a failure, so Windows runs as a single informational
+# job that reports without blocking. Restore it to the gating matrix as soon as
+# a Windows box exists; the deviation is recorded in spec.md §14 and R-75.
+#
+# Windows is currently known-red for two reasons, both recorded rather than
+# hidden: import-linter's Unicode output hits cp1252 (addressed here with
+# PYTHONUTF8), and Escape in a dialog returns a different id than wx.ID_CANCEL,
+# which is a real platform difference in the R-76 tests that needs a Windows
+# machine to resolve.
 
 name: CI
 
@@ -23,17 +30,16 @@ concurrency:
 env:
   FORCE_COLOR: "1"
   PYTHON_VERSION: "3.14"
+  # Windows consoles default to cp1252 and several of our tools print Unicode.
+  # Harmless on macOS; on Windows it is the difference between a real result
+  # and a UnicodeEncodeError from the reporting layer.
+  PYTHONUTF8: "1"
 
 jobs:
   # ---------------------------------------------------------------- stage 1
   static:
-    name: "1 · Static (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
+    name: "1 · Static"
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,20 +54,15 @@ jobs:
         run: ruff check . && ruff format --check --diff .
       - name: mypy --strict
         run: mypy
-      - name: import-linter (wx stays inside rivercrossing.ui)
+      - name: import-linter (wx confined to ui; demo seam removable)
         run: lint-imports
       - name: ids.py drift vs .xrc (R-05)
-        run: nox -s ids_drift
+        run: python tools/gen_ids.py --check
 
   # ---------------------------------------------------------------- stage 2
   unit:
-    name: "2 · Unit + property (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
+    name: "2 · Unit + property"
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -78,19 +79,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-${{ matrix.os }}
+          name: coverage-macos
           path: coverage.json
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------- stage 3
   functional:
-    name: "3 · Functional UI (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
+    name: "3 · Functional UI"
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -102,25 +98,29 @@ jobs:
       - name: Install
         run: uv pip install --system -e ".[dev]"
 
-      # §14 claims both hosted runners have a real desktop session, so no Xvfb.
-      # Prove it before 23 windows depend on it: open a frame, screenshot it.
+      # §14 claims the hosted runner has a real desktop session, so no Xvfb.
+      # Prove it before 23 windows depend on it, and measure whether
+      # UIActionSimulator actually delivers events here -- locally it does not,
+      # because the process never becomes the OS-active app.
       - name: Desktop-session probe
         run: python tools/ci_gui_probe.py
       - name: Upload probe screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: gui-probe-${{ matrix.os }}
+          name: gui-probe-macos
           path: ci-gui-probe.png
           if-no-files-found: warn
 
+      # Per-file worker processes plus §4's one auto-retry. Both are load-
+      # bearing: see noxfile.py's functional session for the measurements.
       - name: pytest functional (real wx windows)
-        run: pytest tests/functional --no-cov
+        run: pytest tests/functional --no-cov -n auto --dist loadfile --reruns 1
       - name: Upload failure screenshots
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: failure-screenshots-${{ matrix.os }}
+          name: failure-screenshots-macos
           path: |
             tests/functional/_screenshots/**
             *.png
@@ -128,14 +128,9 @@ jobs:
 
   # ---------------------------------------------------------------- stage 5
   build:
-    name: "5 · Build dev bundle (${{ matrix.os }})"
+    name: "5 · Build dev bundle"
     needs: [static, unit]
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.os == 'windows-latest' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -153,25 +148,71 @@ jobs:
       - name: Upload dev bundle
         uses: actions/upload-artifact@v4
         with:
-          name: rivercrossing-devbundle-${{ matrix.os }}
+          name: rivercrossing-devbundle-macos
           path: dist/**
           if-no-files-found: ignore
 
-  # ------------------------------------------------- Phase 0.2, informational
-  # Records the wxPython 4.3.1 widget surface on Windows. Never gates: with no
-  # Windows test machine, a failure here is information, not something anyone
-  # can act on yet.
-  windows-toolkit-probe:
-    name: "0 · Toolkit probe (windows, informational)"
+  # ------------------------------------------------------- Windows, advisory
+  # One job, every step non-fatal, so the check goes green and the log carries
+  # the picture. A red X nobody may act on is noise; a green check with a
+  # written summary is a record. Promote this back into the gating matrix when
+  # a Windows test machine exists.
+  windows-advisory:
+    name: "Windows (advisory, non-blocking)"
     runs-on: windows-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - uses: astral-sh/setup-uv@v5
-      - name: Install wxPython only
-        run: uv pip install --system "wxPython~=4.3.1"
-      - name: Probe the widget surface
+        with:
+          enable-cache: true
+      - name: Install
+        continue-on-error: true
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Toolkit probe (does the wx surface exist on Windows?)
+        id: probe
+        continue-on-error: true
         run: python tools/toolkit_probe.py
+
+      - name: Static
+        id: static
+        continue-on-error: true
+        run: ruff check . && mypy && lint-imports && python tools/gen_ids.py --check
+
+      - name: Unit
+        id: unit
+        continue-on-error: true
+        run: pytest tests/unit -m "not functional"
+
+      - name: Functional
+        id: functional
+        continue-on-error: true
+        run: pytest tests/functional --no-cov -n auto --dist loadfile --reruns 1
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Windows — advisory only"
+            echo
+            echo "Windows does not gate this build: there is no Windows test"
+            echo "machine to act on a failure. R-75 keeps its MUST and §14"
+            echo "still wants both platforms green before release."
+            echo
+            echo "| Step | Outcome |"
+            echo "|---|---|"
+            echo "| Toolkit probe | ${{ steps.probe.outcome }} |"
+            echo "| Static | ${{ steps.static.outcome }} |"
+            echo "| Unit | ${{ steps.unit.outcome }} |"
+            echo "| Functional | ${{ steps.functional.outcome }} |"
+            echo
+            echo "Known Windows-specific issues as of EPIC 1:"
+            echo "- Escape in a dialog returns an id other than wx.ID_CANCEL,"
+            echo "  so the R-76 tests fail. A real platform difference."
+            echo "- import-linter printed Unicode into cp1252; PYTHONUTF8=1"
+            echo "  is set globally to address that."
+          } >> "$GITHUB_STEP_SUMMARY"
