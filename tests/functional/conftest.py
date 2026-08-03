@@ -25,19 +25,24 @@ def _wx_app() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
     Measured: ``wx.xrc``'s ``LoadFrame``/``LoadDialog``/``LoadMenuBar``
     (and ``wx.Bitmap.SaveFile``) call ``wxLogError`` internally on
     failure, in addition to returning ``None``/``False``. With a real
-    ``wx.App`` alive, that goes to the default GUI log target
-    instead of stderr and queues rather than printing immediately;
-    unless something shows or clears it, ``wxApp::CleanUp()`` tries
-    to pop up a "Several errors occurred" dialog while the
-    interpreter is exiting, and hangs forever with no user present
-    to dismiss it. This suite deliberately drives those
-    ``WindowLoadError``/``ScreenshotError`` paths (T-5's negative-path
-    tests), so GUI logging is disabled for the whole session rather
-    than patched around each call site.
+    ``wx.App`` alive that goes to the default GUI log target, which
+    queues rather than printing; unless something shows or clears it,
+    ``wxApp::CleanUp()`` tries to pop a "Several errors occurred"
+    dialog while the interpreter exits and hangs forever with no user
+    present to dismiss it. This suite deliberately drives those
+    ``WindowLoadError``/``ScreenshotError`` paths, so the log target is
+    redirected for the whole session.
+
+    Redirected to stderr rather than disabled outright. Both avoid the
+    exit-time modal -- measured, all three ways -- but disabling also
+    silences genuine wx diagnostics for every later test, and wx
+    reports plenty worth reading (a failed XRC load says exactly which
+    resource name it could not find). Keeping the messages costs
+    nothing and makes the next wx problem debuggable.
     """
     wx = require_wx()
     app = wx.GetApp() or wx.App()
-    wx.Log.EnableLogging(False)  # noqa: FBT003 -- wx's own positional bool
+    wx.Log.SetActiveTarget(wx.LogStderr())
     return app
 
 
