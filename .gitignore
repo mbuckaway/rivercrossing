@@ -31,6 +31,8 @@ MANIFEST
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# ...but our PyInstaller spec is hand-authored, tracked source (EPIC 1 task 6.1.2).
+!installers/*.spec
 
 # Installer logs
 pip-log.txt
@@ -216,3 +218,18 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# macOS
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+
+# Coverage JSON (CODINGSTANDARDS-PYTHON.md T-14 reads totals from coverage.json)
+coverage.json
+
+# Claude Code local state
+.claude/
+
+# Functional-test screenshot artifacts (CI uploads these on failure)
+tests/functional/_screenshots/

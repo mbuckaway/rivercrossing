@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GORBA EPIC &amp; MTB Festival 2026 — Official Poker Run Results (no times)</title>
+<!-- Template emitted by rivercrossing.htmlexport (Spec §8).
+     THIS SAMPLE previews with the Tailwind 4 browser build + Google Fonts (dev stand-ins).
+     PRODUCTION: CSS is compiled once at package build (Tailwind CLI in CI against this
+     frozen template) and vendored with base64 Barlow woff2 subsets; export injects the
+     race JSON + logo into the prebuilt template — no Node, no CDN, fully offline.
+     Markup is STATIC Jinja2 output (autoescape on, StrictUndefined): base.html.j2 +
+     macros (event_header, podium_card, standings_row, laps_board, time_board,
+     field_row, drawn_row) render the whole page at export. No client-side
+     rendering, zero script logic — the page works with JS disabled. The race-data
+     block is the embedded machine-readable record (</ escaped as <\/, round-trip
+     tested against the payload model); nothing reads it at runtime. Time cells
+     are emitted only when show_times — absent markup, not hidden markup. Plain
+     Tailwind utilities + frozen custom classes (.bp/.c/.chip/.t-col/.no-print);
+     no component library. The "j2:" comments below name the emitting macro. -->
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;700&family=Barlow+Condensed:wght@400;600&display=swap" rel="stylesheet">
+<style type="text/tailwindcss">
+@theme {
+  --color-ink: #1d1f20;
+  --color-paper: #f2f2f3;
+  --color-panel: #e9e9ea;
+  --color-steel-100: #eef6ff;
+  --color-steel-300: #b5d9fd;
+  --color-steel-500: #749dc4;
+  --color-steel-600: #597ea3;
+  --color-steel-700: #416180;
+  --color-steel-800: #2c455d;
+  --color-steel-900: #1d2d3d;
+  --font-head: "Barlow Condensed", sans-serif;
+  --font-body: "Barlow", sans-serif;
+}
+.bp { position: relative; border: 1px solid rgba(29,31,32,.16); }
+.bp > i.c { position: absolute; width: 11px; height: 11px; color: rgba(29,31,32,.55); }
+.bp > i.c::before, .bp > i.c::after { content: ""; position: absolute; background: currentColor; }
+.bp > i.c::before { left: 5px; top: 0; width: 1px; height: 100%; }
+.bp > i.c::after { top: 5px; left: 0; width: 100%; height: 1px; }
+.bp > i.tl { top: -6px; left: -6px; } .bp > i.tr { top: -6px; right: -6px; }
+.bp > i.bl { bottom: -6px; left: -6px; } .bp > i.br { bottom: -6px; right: -6px; }
+.chip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid rgba(29,31,32,.16); background: #e9e9ea; padding: 0 6px; font-family: var(--font-head); font-weight: 600; font-size: 13px; line-height: 20px; }
+.chip.r { color: #416180; } /* hearts & diamonds take the steel accent — mono palette, no red */
+.chip.j { background: transparent; border-color: #597ea3; color: #416180; }
+@media print { .no-print { display: none !important; } body { background: #fff !important; } }
+</style>
+</head>
+<body class="bg-paper text-ink font-body" style="background-color:#f2f2f3">
+<div class="mx-auto max-w-5xl px-4 sm:px-8 py-8">
+
+  <header class="bp p-6 sm:p-8"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i>
+    <div class="flex flex-wrap items-center gap-6">
+      <img src="https://gorba.ca/wp-content/uploads/2024/02/gorba-logo-green.png" alt="GORBA — Guelph Off-Road Bicycling Association" class="h-16 w-auto" id="org-logo">
+      <div class="min-w-0">
+        <!-- j2: event_header(event, options) --><div class="font-head font-semibold uppercase tracking-[0.12em] text-steel-700 text-sm">Official results · poker run</div>
+        <h1 class="font-head font-semibold text-4xl sm:text-5xl leading-none">GORBA EPIC &amp; MTB Festival 2026</h1>
+        <p class="mt-1 text-sm text-ink/60">Sunday September 20, 2026 · Guelph Lake MTB Trails · 8 km closed loop · riding 10:00–16:00</p>
+      </div>
+      <div class="ms-auto text-right hidden sm:block">
+        <div class="font-head font-semibold text-3xl leading-none">180 · 1124 · 1092</div>
+        <div class="text-xs text-ink/55 mt-1">entries · laps · cards dealt</div>
+      </div>
+    </div>
+  </header>
+
+  <p class="mt-4 text-sm text-ink/60 max-w-2xl">It's not a race, it's a poker run — placings are by best poker hand. Lap counts below are unofficial and shown for bragging rights only.</p>
+
+  <div class="mt-4 text-xs text-ink/50">Published without times — the organizer’s export setting decides; there is no toggle on the page, and no time data is embedded in it.</div>
+
+  <!-- Podium -->
+  <section class="mt-8">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Best hands — top 3</h2>
+    <!-- j2: {% for r in results[:3] %}{{ podium_card(r, options) }}{% endfor %} -->
+    <div class="mt-4 grid gap-5 sm:grid-cols-3">
+      <div class="bp p-5 bg-steel-800 text-paper"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">1</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#88 Moss Ridge Riders</div><div class="text-xs text-paper/70">TEAM ×4 · 11 laps</div></div></div><div class="mt-4"><span class="inline-flex flex-wrap gap-1"><span class="chip text-base leading-7 px-2">9 ♠</span><span class="chip r text-base leading-7 px-2">9 ♦</span><span class="chip text-base leading-7 px-2">9 ♣</span><span class="chip j text-base leading-7 px-2">★ JOKER</span><span class="chip r text-base leading-7 px-2">K ♥</span></span></div><div class="mt-3 font-head font-semibold uppercase tracking-wide text-steel-300">Four of a Kind — Nines</div></div>
+      <div class="bp p-5 bg-transparent"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">2</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#7 Luca Ferrari</div><div class="text-xs text-ink/55">SOLO · 10 laps</div></div></div><div class="mt-4"><span class="inline-flex flex-wrap gap-1"><span class="chip text-base leading-7 px-2">A ♠</span><span class="chip r text-base leading-7 px-2">A ♦</span><span class="chip j text-base leading-7 px-2">★ JOKER</span><span class="chip text-base leading-7 px-2">4 ♣</span><span class="chip r text-base leading-7 px-2">4 ♥</span></span></div><div class="mt-3 font-head font-semibold uppercase tracking-wide text-steel-700">Full House — Aces over Fours</div></div>
+      <div class="bp p-5 bg-transparent"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">3</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#127 Dirt Dynamos</div><div class="text-xs text-ink/55">TEAM ×3 · 10 laps</div></div></div><div class="mt-4"><span class="inline-flex flex-wrap gap-1"><span class="chip text-base leading-7 px-2">Q ♠</span><span class="chip r text-base leading-7 px-2">Q ♦</span><span class="chip j text-base leading-7 px-2">★ JOKER</span><span class="chip r text-base leading-7 px-2">9 ♥</span><span class="chip text-base leading-7 px-2">9 ♣</span></span></div><div class="mt-3 font-head font-semibold uppercase tracking-wide text-steel-700">Full House — Queens over Nines</div></div>
+    </div>
+  </section>
+
+  <!-- Top ten -->
+  <section class="mt-10">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Top ten</h2>
+    <div class="mt-3 overflow-x-auto"><table class="w-full text-sm tabular-nums">
+      <thead><tr class="text-left text-[11px] uppercase tracking-[0.08em] text-ink/55 border-b border-ink/15">
+        <th class="py-2 pr-3">Place</th><th class="py-2 pr-3">Plate</th><th class="py-2 pr-3">Entry</th><th class="py-2 pr-3">Laps</th><th class="py-2 pr-3">Best 5 cards</th><th class="py-2">Hand</th>
+      </tr></thead>
+      <tbody><!-- j2: {% for r in results[:10] %}{{ standings_row(r, options) }}{% endfor %} -->
+        <tr class="border-b border-ink/8 bg-steel-500/10"><td class="py-2 pr-3 font-bold">1</td><td class="py-2 pr-3 font-bold">88</td><td class="py-2 pr-3">Moss Ridge Riders</td><td class="py-2 pr-3">11</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">9 ♠</span><span class="chip r">9 ♦</span><span class="chip">9 ♣</span><span class="chip j">★ JOKER</span><span class="chip r">K ♥</span></span></td><td class="py-2 font-head font-semibold uppercase">Four of a Kind — Nines</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">2</td><td class="py-2 pr-3 font-bold">7</td><td class="py-2 pr-3">Luca Ferrari</td><td class="py-2 pr-3">10</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♠</span><span class="chip r">A ♦</span><span class="chip j">★ JOKER</span><span class="chip">4 ♣</span><span class="chip r">4 ♥</span></span></td><td class="py-2 font-head font-semibold uppercase">Full House — Aces over Fours</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">3</td><td class="py-2 pr-3 font-bold">127</td><td class="py-2 pr-3">Dirt Dynamos <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span></td><td class="py-2 pr-3">10</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">Q ♠</span><span class="chip r">Q ♦</span><span class="chip j">★ JOKER</span><span class="chip r">9 ♥</span><span class="chip">9 ♣</span></span></td><td class="py-2 font-head font-semibold uppercase">Full House — Queens over Nines</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">4</td><td class="py-2 pr-3 font-bold">56</td><td class="py-2 pr-3">Fat Tire Four <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span></td><td class="py-2 pr-3">9</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip r">Q ♥</span><span class="chip">Q ♣</span><span class="chip">Q ♠</span><span class="chip r">9 ♦</span><span class="chip">9 ♠</span></span></td><td class="py-2 font-head font-semibold uppercase">Full House — Queens over Nines</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">5</td><td class="py-2 pr-3 font-bold">61</td><td class="py-2 pr-3">Marc Tremblay</td><td class="py-2 pr-3">10</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip r">K ♦</span><span class="chip r">J ♦</span><span class="chip r">8 ♦</span><span class="chip r">6 ♦</span><span class="chip r">2 ♦</span></span></td><td class="py-2 font-head font-semibold uppercase">Flush — King high</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">6</td><td class="py-2 pr-3 font-bold">150</td><td class="py-2 pr-3">Singletrack Sisters</td><td class="py-2 pr-3">9</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">9 ♣</span><span class="chip r">8 ♦</span><span class="chip">7 ♠</span><span class="chip r">6 ♥</span><span class="chip">5 ♣</span></span></td><td class="py-2 font-head font-semibold uppercase">Straight — Nine high</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">7</td><td class="py-2 pr-3 font-bold">143</td><td class="py-2 pr-3">Chain Gang</td><td class="py-2 pr-3">8</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">7 ♠</span><span class="chip r">7 ♥</span><span class="chip">7 ♣</span><span class="chip r">K ♦</span><span class="chip">J ♠</span></span></td><td class="py-2 font-head font-semibold uppercase">Three of a Kind — Sevens</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">8</td><td class="py-2 pr-3 font-bold">12</td><td class="py-2 pr-3">Ana Souza</td><td class="py-2 pr-3">9</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">K ♠</span><span class="chip r">K ♥</span><span class="chip">5 ♣</span><span class="chip r">5 ♦</span><span class="chip r">A ♥</span></span></td><td class="py-2 font-head font-semibold uppercase">Two Pair — Kings &amp; Fives</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">9</td><td class="py-2 pr-3 font-bold">102</td><td class="py-2 pr-3">Lake Effect</td><td class="py-2 pr-3">9</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">10 ♠</span><span class="chip r">10 ♥</span><span class="chip">4 ♣</span><span class="chip">4 ♠</span><span class="chip r">Q ♦</span></span></td><td class="py-2 font-head font-semibold uppercase">Two Pair — Tens &amp; Fours</td></tr>
+        <tr class="border-b border-ink/8"><td class="py-2 pr-3 font-bold">10</td><td class="py-2 pr-3 font-bold">19</td><td class="py-2 pr-3">Owen Clark</td><td class="py-2 pr-3">8</td><td class="py-2 pr-3"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♣</span><span class="chip">A ♠</span><span class="chip r">K ♥</span><span class="chip">J ♣</span><span class="chip r">8 ♦</span></span></td><td class="py-2 font-head font-semibold uppercase">Pair — Aces</td></tr>
+      </tbody>
+    </table></div>
+    <!-- j2: {% if tie_note %} --><p class="mt-2 text-xs text-ink/50">P3/P4 held identical hands — resolved by the ride's tie-break rule #1, most laps (10 v 9).</p>
+  </section>
+
+  <!-- Optional leaderboards -->
+  <!-- j2: {% if options.laps_board %}{{ laps_board(laps_board, options) }}{% endif %}{% if options.time_board %}{{ time_board(time_board) }}{% endif %} -->
+  <div class="mt-10 grid gap-8 md:grid-cols-2">
+    <section><h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Most laps</h2><p class="text-xs text-ink/50 mt-1">Unofficial — 8 km per lap.</p><table class="mt-3 w-full text-sm tabular-nums"><tbody><tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">1</td><td class="py-2 pr-3 font-bold w-12">#88</td><td class="py-2 pr-3">Moss Ridge Riders</td><td class="py-2 pr-3 text-right font-head font-semibold text-lg">11</td></tr><tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">2</td><td class="py-2 pr-3 font-bold w-12">#7</td><td class="py-2 pr-3">Luca Ferrari</td><td class="py-2 pr-3 text-right font-head font-semibold text-lg">10</td></tr><tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">3</td><td class="py-2 pr-3 font-bold w-12">#61</td><td class="py-2 pr-3">Marc Tremblay</td><td class="py-2 pr-3 text-right font-head font-semibold text-lg">10</td></tr><tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">4</td><td class="py-2 pr-3 font-bold w-12">#127</td><td class="py-2 pr-3">Dirt Dynamos</td><td class="py-2 pr-3 text-right font-head font-semibold text-lg">10</td></tr><tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">5</td><td class="py-2 pr-3 font-bold w-12">#12</td><td class="py-2 pr-3">Ana Souza</td><td class="py-2 pr-3 text-right font-head font-semibold text-lg">9</td></tr></tbody></table></section>
+  </div>
+
+  <!-- Full field -->
+  <section class="mt-10">
+    <h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Full field</h2>
+    <p class="text-xs text-ink/50 mt-1">Every entry, ordered by hand. ★ = joker, shown as the card it played. This export includes every card drawn (organizer option).</p>
+    <div class="mt-3 overflow-x-auto"><table class="w-full text-sm tabular-nums">
+      <thead><tr class="text-left text-[11px] uppercase tracking-[0.08em] text-ink/55 border-b border-ink/15">
+        <th class="py-2 pr-3">Place</th><th class="py-2 pr-3">Plate</th><th class="py-2 pr-3">Entry</th><th class="py-2 pr-3">Type</th><th class="py-2 pr-3">Laps</th><th class="py-2">Best hand</th>
+      </tr></thead>
+      <tbody><!-- j2: {% for r in results %}{{ field_row(r, options) }}{% if options.all_cards %}{{ drawn_row(r, options) }}{% endif %}{% endfor %} -->
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">1</td><td class="py-1.5 pr-3 font-bold">88</td><td class="py-1.5 pr-3">Moss Ridge Riders</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">TEAM ×4</td><td class="py-1.5 pr-3">11</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">9 ♠</span><span class="chip r">9 ♦</span><span class="chip">9 ♣</span><span class="chip j">★ JOKER</span><span class="chip r">K ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Four of a Kind — Nines</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 11 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">9 ♠</span><span class="chip r">9 ♦</span><span class="chip">9 ♣</span><span class="chip j">★ JOKER</span><span class="chip r">K ♥</span><span class="chip">2 ♣</span><span class="chip r">5 ♦</span><span class="chip r">7 ♥</span><span class="chip">J ♣</span><span class="chip">3 ♠</span><span class="chip r">10 ♦</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">2</td><td class="py-1.5 pr-3 font-bold">7</td><td class="py-1.5 pr-3">Luca Ferrari</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">10</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♠</span><span class="chip r">A ♦</span><span class="chip j">★ JOKER</span><span class="chip">4 ♣</span><span class="chip r">4 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Full House — Aces over Fours</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 10 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">A ♠</span><span class="chip r">A ♦</span><span class="chip j">★ JOKER</span><span class="chip">4 ♣</span><span class="chip r">4 ♥</span><span class="chip">8 ♠</span><span class="chip r">2 ♦</span><span class="chip r">9 ♥</span><span class="chip">Q ♣</span><span class="chip">6 ♠</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">3</td><td class="py-1.5 pr-3 font-bold">127</td><td class="py-1.5 pr-3">Dirt Dynamos</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">TEAM ×3</td><td class="py-1.5 pr-3">10</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">Q ♠</span><span class="chip r">Q ♦</span><span class="chip j">★ JOKER</span><span class="chip r">9 ♥</span><span class="chip">9 ♣</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Full House — Queens over Nines</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 10 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">Q ♠</span><span class="chip r">Q ♦</span><span class="chip j">★ JOKER</span><span class="chip r">9 ♥</span><span class="chip">9 ♣</span><span class="chip">4 ♣</span><span class="chip r">7 ♦</span><span class="chip r">2 ♥</span><span class="chip">10 ♠</span><span class="chip r">J ♦</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">4</td><td class="py-1.5 pr-3 font-bold">56</td><td class="py-1.5 pr-3">Fat Tire Four</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">TEAM ×4</td><td class="py-1.5 pr-3">9</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">Q ♥</span><span class="chip">Q ♣</span><span class="chip">Q ♠</span><span class="chip r">9 ♦</span><span class="chip">9 ♠</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Full House — Queens over Nines</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 9 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip r">Q ♥</span><span class="chip">Q ♣</span><span class="chip">Q ♠</span><span class="chip r">9 ♦</span><span class="chip">9 ♠</span><span class="chip r">3 ♦</span><span class="chip r">6 ♥</span><span class="chip">8 ♣</span><span class="chip">2 ♠</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">5</td><td class="py-1.5 pr-3 font-bold">61</td><td class="py-1.5 pr-3">Marc Tremblay</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">10</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">K ♦</span><span class="chip r">J ♦</span><span class="chip r">8 ♦</span><span class="chip r">6 ♦</span><span class="chip r">2 ♦</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Flush — King high</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 10 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip r">K ♦</span><span class="chip r">J ♦</span><span class="chip r">8 ♦</span><span class="chip r">6 ♦</span><span class="chip r">2 ♦</span><span class="chip">4 ♠</span><span class="chip">9 ♣</span><span class="chip r">Q ♥</span><span class="chip">7 ♣</span><span class="chip r">10 ♥</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">6</td><td class="py-1.5 pr-3 font-bold">150</td><td class="py-1.5 pr-3">Singletrack Sisters</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">TEAM ×4</td><td class="py-1.5 pr-3">9</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">9 ♣</span><span class="chip r">8 ♦</span><span class="chip">7 ♠</span><span class="chip r">6 ♥</span><span class="chip">5 ♣</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Straight — Nine high</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 9 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">9 ♣</span><span class="chip r">8 ♦</span><span class="chip">7 ♠</span><span class="chip r">6 ♥</span><span class="chip">5 ♣</span><span class="chip">K ♠</span><span class="chip r">2 ♥</span><span class="chip r">4 ♦</span><span class="chip">A ♣</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">7</td><td class="py-1.5 pr-3 font-bold">143</td><td class="py-1.5 pr-3">Chain Gang</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">TEAM ×2</td><td class="py-1.5 pr-3">8</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">7 ♠</span><span class="chip r">7 ♥</span><span class="chip">7 ♣</span><span class="chip r">K ♦</span><span class="chip">J ♠</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Three of a Kind — Sevens</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 8 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">7 ♠</span><span class="chip r">7 ♥</span><span class="chip">7 ♣</span><span class="chip r">K ♦</span><span class="chip">J ♠</span><span class="chip">3 ♣</span><span class="chip r">8 ♥</span><span class="chip">5 ♠</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">8</td><td class="py-1.5 pr-3 font-bold">12</td><td class="py-1.5 pr-3">Ana Souza</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">9</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">K ♠</span><span class="chip r">K ♥</span><span class="chip">5 ♣</span><span class="chip r">5 ♦</span><span class="chip r">A ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Two Pair — Kings &amp; Fives</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 9 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">K ♠</span><span class="chip r">K ♥</span><span class="chip">5 ♣</span><span class="chip r">5 ♦</span><span class="chip r">A ♥</span><span class="chip">2 ♠</span><span class="chip r">8 ♦</span><span class="chip r">4 ♥</span><span class="chip">10 ♣</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">9</td><td class="py-1.5 pr-3 font-bold">102</td><td class="py-1.5 pr-3">Lake Effect</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">TEAM ×3</td><td class="py-1.5 pr-3">9</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">10 ♠</span><span class="chip r">10 ♥</span><span class="chip">4 ♣</span><span class="chip">4 ♠</span><span class="chip r">Q ♦</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Two Pair — Tens &amp; Fours</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 9 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">10 ♠</span><span class="chip r">10 ♥</span><span class="chip">4 ♣</span><span class="chip">4 ♠</span><span class="chip r">Q ♦</span><span class="chip">6 ♣</span><span class="chip r">9 ♦</span><span class="chip r">3 ♥</span><span class="chip">K ♣</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">10</td><td class="py-1.5 pr-3 font-bold">19</td><td class="py-1.5 pr-3">Owen Clark</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">8</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♣</span><span class="chip">A ♠</span><span class="chip r">K ♥</span><span class="chip">J ♣</span><span class="chip r">8 ♦</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Aces</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 8 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">A ♣</span><span class="chip">A ♠</span><span class="chip r">K ♥</span><span class="chip">J ♣</span><span class="chip r">8 ♦</span><span class="chip r">5 ♥</span><span class="chip">2 ♣</span><span class="chip r">7 ♦</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">11</td><td class="py-1.5 pr-3 font-bold">33</td><td class="py-1.5 pr-3">Peter Kim</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">7</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">K ♣</span><span class="chip r">K ♦</span><span class="chip">Q ♠</span><span class="chip r">9 ♥</span><span class="chip">6 ♣</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Kings</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 7 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">K ♣</span><span class="chip r">K ♦</span><span class="chip">Q ♠</span><span class="chip r">9 ♥</span><span class="chip">6 ♣</span><span class="chip">3 ♠</span><span class="chip r">10 ♥</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">12</td><td class="py-1.5 pr-3 font-bold">168</td><td class="py-1.5 pr-3">Grinder Bros</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">TEAM ×2</td><td class="py-1.5 pr-3">8</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">J ♥</span><span class="chip r">J ♦</span><span class="chip">A ♠</span><span class="chip">8 ♣</span><span class="chip">3 ♠</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Jacks</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 8 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip r">J ♥</span><span class="chip r">J ♦</span><span class="chip">A ♠</span><span class="chip">8 ♣</span><span class="chip">3 ♠</span><span class="chip r">6 ♦</span><span class="chip">10 ♣</span><span class="chip r">5 ♦</span></span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">13</td><td class="py-1.5 pr-3 font-bold">71</td><td class="py-1.5 pr-3">Gita Rao</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">7</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">8 ♠</span><span class="chip r">8 ♥</span><span class="chip">K ♣</span><span class="chip r">10 ♦</span><span class="chip r">4 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Eights</span></td></tr><tr class="border-b border-ink/8"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 7 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">8 ♠</span><span class="chip r">8 ♥</span><span class="chip">K ♣</span><span class="chip r">10 ♦</span><span class="chip r">4 ♥</span><span class="chip r">2 ♦</span><span class="chip">Q ♣</span></span></td></tr>
+        <tr class="border-b border-ink/8 opacity-60"><td class="py-1.5 pr-3">14</td><td class="py-1.5 pr-3 font-bold">94</td><td class="py-1.5 pr-3">Ted Novak <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">4</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">A ♦</span><span class="chip">Q ♣</span><span class="chip">9 ♠</span><span class="chip r">5 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">High Card — Ace</span></td></tr><tr class="border-b border-ink/8 opacity-60"><td></td><td></td><td colspan="4" class="pb-2 pt-0 text-xs text-ink/55">All 4 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip r">A ♦</span><span class="chip">Q ♣</span><span class="chip">9 ♠</span><span class="chip r">5 ♥</span></span></td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <footer class="mt-12 border-t border-ink/15 pt-5 pb-8 text-sm text-ink/60">
+    <div class="flex flex-wrap gap-x-8 gap-y-2">
+      <!-- j2: footer(event) --><span>Organizer: GORBA — J. Marsden</span><span>Scorer: D. Whitfield</span><span>Generated 16:07, Sept 20 2026</span>
+    </div>
+    <p class="mt-4 text-xs text-ink/40">Timed &amp; scored with RiverCrossing · results computed as best 5-card poker hand from all cards held, jokers wild.</p>
+  </footer>
+</div>
+
+<!-- ══ Embedded data record — the exact payload this page was rendered from
+     (all scoring computed by the app; round-trip tested; </ escaped as <\/).
+     The markup above is static Jinja2 output — nothing reads this block. ══ -->
+<script type="application/json" id="race-data">
+{
+  "event": {
+    "kicker": "Official results · poker run",
+    "title": "GORBA EPIC & MTB Festival 2026",
+    "meta": "Sunday September 20, 2026 · Guelph Lake MTB Trails · 8 km closed loop · riding 10:00–16:00",
+    "organizer": "Organizer: GORBA — J. Marsden",
+    "scorer": "Scorer: D. Whitfield",
+    "generated": "Generated 16:07, Sept 20 2026",
+    "entries": 180, "laps": 1124, "cards": 1092
+  },
+  "options": { "showTimes": false, "lapsBoard": true, "timeBoard": false, "fullField": true, "allCards": true },
+  "tieNote": "P3/P4 held identical hands — resolved by the ride's tie-break rule #1, most laps (10 v 9).",
+  "results": [
+    {"place":1,"plate":88,"entry":"Moss Ridge Riders","type":"TEAM ×4","laps":11,"hand":"Four of a Kind — Nines","cards":[["9","s"],["9","d"],["9","c"],["JK","j"],["K","h"]],"drawn":[["9","s"],["9","d"],["9","c"],["JK","j"],["K","h"],["2","c"],["5","d"],["7","h"],["J","c"],["3","s"],["10","d"]]},
+    {"place":2,"plate":7,"entry":"Luca Ferrari","type":"SOLO","laps":10,"hand":"Full House — Aces over Fours","cards":[["A","s"],["A","d"],["JK","j"],["4","c"],["4","h"]],"drawn":[["A","s"],["A","d"],["JK","j"],["4","c"],["4","h"],["8","s"],["2","d"],["9","h"],["Q","c"],["6","s"]]},
+    {"place":3,"plate":127,"entry":"Dirt Dynamos","type":"TEAM ×3","laps":10,"hand":"Full House — Queens over Nines","tie":true,"cards":[["Q","s"],["Q","d"],["JK","j"],["9","h"],["9","c"]],"drawn":[["Q","s"],["Q","d"],["JK","j"],["9","h"],["9","c"],["4","c"],["7","d"],["2","h"],["10","s"],["J","d"]]},
+    {"place":4,"plate":56,"entry":"Fat Tire Four","type":"TEAM ×4","laps":9,"hand":"Full House — Queens over Nines","tie":true,"cards":[["Q","h"],["Q","c"],["Q","s"],["9","d"],["9","s"]],"drawn":[["Q","h"],["Q","c"],["Q","s"],["9","d"],["9","s"],["3","d"],["6","h"],["8","c"],["2","s"]]},
+    {"place":5,"plate":61,"entry":"Marc Tremblay","type":"SOLO","laps":10,"hand":"Flush — King high","cards":[["K","d"],["J","d"],["8","d"],["6","d"],["2","d"]],"drawn":[["K","d"],["J","d"],["8","d"],["6","d"],["2","d"],["4","s"],["9","c"],["Q","h"],["7","c"],["10","h"]]},
+    {"place":6,"plate":150,"entry":"Singletrack Sisters","type":"TEAM ×4","laps":9,"hand":"Straight — Nine high","cards":[["9","c"],["8","d"],["7","s"],["6","h"],["5","c"]],"drawn":[["9","c"],["8","d"],["7","s"],["6","h"],["5","c"],["K","s"],["2","h"],["4","d"],["A","c"]]},
+    {"place":7,"plate":143,"entry":"Chain Gang","type":"TEAM ×2","laps":8,"hand":"Three of a Kind — Sevens","cards":[["7","s"],["7","h"],["7","c"],["K","d"],["J","s"]],"drawn":[["7","s"],["7","h"],["7","c"],["K","d"],["J","s"],["3","c"],["8","h"],["5","s"]]},
+    {"place":8,"plate":12,"entry":"Ana Souza","type":"SOLO","laps":9,"hand":"Two Pair — Kings & Fives","cards":[["K","s"],["K","h"],["5","c"],["5","d"],["A","h"]],"drawn":[["K","s"],["K","h"],["5","c"],["5","d"],["A","h"],["2","s"],["8","d"],["4","h"],["10","c"]]},
+    {"place":9,"plate":102,"entry":"Lake Effect","type":"TEAM ×3","laps":9,"hand":"Two Pair — Tens & Fours","cards":[["10","s"],["10","h"],["4","c"],["4","s"],["Q","d"]],"drawn":[["10","s"],["10","h"],["4","c"],["4","s"],["Q","d"],["6","c"],["9","d"],["3","h"],["K","c"]]},
+    {"place":10,"plate":19,"entry":"Owen Clark","type":"SOLO","laps":8,"hand":"Pair — Aces","cards":[["A","c"],["A","s"],["K","h"],["J","c"],["8","d"]],"drawn":[["A","c"],["A","s"],["K","h"],["J","c"],["8","d"],["5","h"],["2","c"],["7","d"]]},
+    {"place":11,"plate":33,"entry":"Peter Kim","type":"SOLO","laps":7,"hand":"Pair — Kings","cards":[["K","c"],["K","d"],["Q","s"],["9","h"],["6","c"]],"drawn":[["K","c"],["K","d"],["Q","s"],["9","h"],["6","c"],["3","s"],["10","h"]]},
+    {"place":12,"plate":168,"entry":"Grinder Bros","type":"TEAM ×2","laps":8,"hand":"Pair — Jacks","cards":[["J","h"],["J","d"],["A","s"],["8","c"],["3","s"]],"drawn":[["J","h"],["J","d"],["A","s"],["8","c"],["3","s"],["6","d"],["10","c"],["5","d"]]},
+    {"place":13,"plate":71,"entry":"Gita Rao","type":"SOLO","laps":7,"hand":"Pair — Eights","cards":[["8","s"],["8","h"],["K","c"],["10","d"],["4","h"]],"drawn":[["8","s"],["8","h"],["K","c"],["10","d"],["4","h"],["2","d"],["Q","c"]]},
+    {"place":14,"plate":94,"entry":"Ted Novak","type":"SOLO","laps":4,"hand":"High Card — Ace","dnf":true,"cards":[["A","d"],["Q","c"],["9","s"],["5","h"]],"drawn":[["A","d"],["Q","c"],["9","s"],["5","h"]]}
+  ],
+  "lapsBoard": [
+    {"plate":88,"entry":"Moss Ridge Riders","laps":11},
+    {"plate":7,"entry":"Luca Ferrari","laps":10},
+    {"plate":61,"entry":"Marc Tremblay","laps":10},
+    {"plate":127,"entry":"Dirt Dynamos","laps":10},
+    {"plate":12,"entry":"Ana Souza","laps":9}
+  ],
+  "timeBoard": []
+}
+</script>
+</body>
+</html>

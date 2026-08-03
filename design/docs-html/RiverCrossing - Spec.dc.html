@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="stylesheet" href="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/styles.css">
+<script src="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/_ds_bundle.js"></script>
+<style>body{margin:0;background:#e9e9ea}a{color:#416180}a:hover{color:#2c455d}@media print{body{background:#fff}}</style>
+</helmet>
+<div style="max-width:940px;margin:0 auto;padding:36px 20px 80px;font-family:var(--font-body);color:var(--color-text)">
+<div class="blueprint" style="background:var(--color-bg);padding:40px 48px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+
+<div style="display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--color-divider);padding-bottom:18px">
+<img src="https://gorba.ca/wp-content/uploads/2024/02/gorba-logo-green.png" alt="GORBA" style="height:48px;width:auto">
+<div>
+<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);font-family:var(--font-heading);font-weight:600">Engineering spec · v0.1 · July 23 2026</div>
+<h1 style="font-size:34px;margin:2px 0 0">RiverCrossing — data, algorithms &amp; state</h1>
+</div>
+<div style="margin-left:auto;text-align:right;font-size:12px" class="text-muted">Target: Python 3.14 · wxPython 4.2 · async<br>Windows + macOS · SQLite</div>
+</div>
+
+<h2 style="font-size:24px;margin-top:28px">1 · Event model</h2>
+<p style="font-size:14px;max-width:75ch">Reference event: the <a href="https://gorba.ca/events/gorba-epic/">GORBA EPIC</a> — a 6-hour poker run on an 8&nbsp;km closed loop (riding 10:00–16:00). An <strong>entry</strong> is a solo rider or, when the ride's entry mode allows it, a relay team sharing one plate; one rider per entry is on course at a time. Team size runs from 2 up to the ride's <strong>max riders per team</strong> — an entry box at setup, default 4, hard limit 10 (the EPIC uses 4). Mixed rides also choose a <strong>plate model</strong>: <em>Rider plates — pooled</em> (<strong>default</strong> — every rider carries a unique plate, draws one card per lap against it with <strong>no per-rider limit</strong> — one rider may out-lap the whole team — and the team's hand is scored from the pooled cards; the ride-level cap X, when set, applies to the entry's pooled total) or <em>Team plate — relay</em> (one plate per entry, one rider on course at a time — the EPIC's format, chosen at setup). <strong>New rides default to solo-only</strong> — team fields and columns stay hidden until "Solo + teams" is selected at setup (the EPIC runs mixed). In mixed mode, teams are fully configurable <strong>right up to the moment the ride starts</strong>: create, rename, resize (2 up to the ride's max), move riders between entries, convert solo ⇄ team — in the editor or by re-importing CSV as many times as needed. Starting the ride locks entry structure (plates, types, membership); rider-name spelling fixes stay allowed and are audit-logged. Every completed lap crosses the timing line once and deals the entry one card from a virtual shoe. Placings are by best 5-card poker hand from all cards held. Laps and times are recorded but unofficial. Nothing here is EPIC-specific: lap length, duration, shoe, cap and tie-breaks are all per-ride settings.</p>
+
+<h2 style="font-size:24px;margin-top:26px">2 · Database — SQLite, one file, many rides</h2>
+<p style="font-size:13px" class="text-muted">PRAGMA journal_mode=WAL · synchronous=NORMAL · foreign_keys=ON. One transaction per operator action. Timestamps are UTC epoch; display is local. Auto-backup: copy of rides.db on open and hourly while running.</p>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:110px">Table</th><th>Columns (″·″ separated; <em>italic = nullable</em>)</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">ride</td><td>id · name · event_date · venue · course_name · lap_km · organizer · scorer · <em>logo_png BLOB</em> · planned_start · planned_duration_s · <em>actual_start</em> · <em>finished_at</em> · status <span class="text-muted">(draft | running | finished | reopened)</span> · entry_mode <span class="text-muted">(solo | mixed — <strong>default solo</strong>; mixed enables teams)</span> · max_team_size <span class="text-muted">(2–10, default 4)</span> · plate_model <span class="text-muted">(rider_pooled | team_relay — default rider_pooled)</span> · min_lap_s · deck_count · jokers_per_deck · <em>max_cards</em> <span class="text-muted">(NULL = one per lap, uncapped)</span> · tiebreak_order JSON · rng_seed · created_at · updated_at</td></tr>
+<tr><td style="font-weight:700">entry</td><td>id · ride_id → · plate <span class="text-muted">(UNIQUE per ride)</span> · display_name · type <span class="text-muted">(solo | team)</span> · team_size <span class="text-muted">(2 ≤ n ≤ ride.max_team_size)</span> · status <span class="text-muted">(active | dnf)</span> · <em>dnf_at</em> · <em>notes</em></td></tr>
+<tr><td style="font-weight:700">rider</td><td>id · entry_id → · name · <em>plate</em> <span class="text-muted">(rider_pooled rides: unique per ride; crossings and cards attribute to the rider's plate and pool to the entry)</span> · sort_order · <em>emergency_contact</em> · <em>waiver_signed</em> · <em>ccn_reg_id</em> <span class="text-muted">(optional fields from race-timing practice; no age/category fields anywhere — out of scope by decision)</span></td></tr>
+<tr><td style="font-weight:700">crossing</td><td>id · ride_id → · entry_id → · <em>rider_id</em> <span class="text-muted">(which team member, if tracked)</span> · seq <span class="text-muted">(1..n per entry)</span> · crossed_at · lap_s · flag <span class="text-muted">(none | short | manual)</span> · voided · <em>void_reason</em></td></tr>
+<tr><td style="font-weight:700">card</td><td>id · ride_id → · entry_id → · <em>crossing_id</em> <span class="text-muted">(NULL = added manually)</span> · <em>shoe_index</em> · rank <span class="text-muted">(2–14, 0 = joker)</span> · <em>suit</em> <span class="text-muted">(s h d c)</span> · state <span class="text-muted">(held | dealt | voided)</span> · dealt_at</td></tr>
+<tr><td style="font-weight:700">app_session</td><td>id · opened_at · <em>closed_at</em> <span class="text-muted">(written on clean exit — NULL means the previous session crashed)</span> · <em>active_ride_id</em> · heartbeat_at <span class="text-muted">(touched every 30 s while a ride runs)</span> — <span class="text-muted">how reopening knows a ride was running and whether the close was clean or a crash.</span></td></tr>
+<tr><td style="font-weight:700">audit</td><td>id · ride_id → · at · action · payload_json — <span class="text-muted">every mutation: record, undo, void, reassign plate, deal, manual card, DNF, setting change. Undo = compensating write, never DELETE.</span></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:24px;margin-top:26px">3 · Ride state machine</h2>
+<div style="display:flex;gap:10px;align-items:center;font-family:var(--font-heading);font-weight:600;font-size:15px;flex-wrap:wrap;margin:10px 0 8px">
+<span class="blueprint" style="padding:8px 18px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>DRAFT</span><span style="color:var(--color-neutral-500)">→ start (button, or “set start time” if the gun was missed)</span>
+<span class="blueprint" style="padding:8px 18px;background:var(--color-accent);color:var(--color-bg);border-color:var(--color-accent)"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>RUNNING</span><span style="color:var(--color-neutral-500)">→ finish</span>
+<span class="blueprint" style="padding:8px 18px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>FINISHED</span><span style="color:var(--color-neutral-500)">⇄ reopen / finish again</span>
+<span class="blueprint" style="padding:8px 18px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>REOPENED</span>
+</div>
+<ul style="font-size:14px;line-height:1.65;margin:8px 0;padding-left:20px">
+<li><strong>Elapsed time is wall-clock:</strong> <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">now − actual_start</code>. There is no in-memory timer to lose — quit, crash or “stop” never costs time or data.</li>
+<li><strong>Stop</strong> is a UI guard, not a state, and takes three deliberate acts: the console Stop button is disabled until the <em>Arm</em> checkbox beside it is ticked, pressing it then opens the confirm dialog, and only confirming locks the entry field. The checkbox disarms itself after use or after 10 s untouched. Pressing Start on a ride that already has crossings asks <em>“Continue ride?”</em> — continue keeps <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">actual_start</code> unchanged; “start a new ride” archives first.</li>
+<li><strong>Exit is caught:</strong> closing the app (window × or File ▸ Exit) with a ride RUNNING opens the exit dialog — Cancel · Finish ride first… · Quit-keep-running. Quitting writes <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">app_session.closed_at</code> and leaves the ride RUNNING; the wall clock keeps counting while the app is closed.</li>
+<li><strong>Resume on open:</strong> on launch, ride status = running always opens the resume dialog. Session bookkeeping picks the copy: closed_at present → "You quit at 12:41 — the ride kept running"; closed_at NULL → crash, "closed unexpectedly at 12:41" (last heartbeat). Continue picks up mid-ride; every crossing was committed when it happened.</li>
+<li><strong>DRAFT is the roster window:</strong> entries and teams stay fully editable — including delete — via UI or repeated CSV imports, until start. Start locks plates, entry types and membership; after start only new plates and name fixes. Entries with recorded data are never deleted, only DNF'd or voided. <strong>Rider-pooled rides stay editable while RUNNING:</strong> riders may move between teams mid-event (mis-entries, team switches) — the rider's plate, crossings and cards travel with them, every move audit-logged. Relay rides keep the start lock (the plate <em>is</em> the team's identity).</li>
+<li><strong>Set start time…</strong> retro-fixes <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">actual_start</code> and recomputes lap-1 times; logged to audit.</li>
+<li><strong>REOPENED is corrections-only</strong> (a distinct status, not RUNNING): the clock stays closed and live plate entry stays off; the operator adds a missed crossing <em>at an explicit time</em>, edits/voids crossings and cards, or moves riders (pooled). Standings recompute on every change and on tie-break reordering; <em>Finish again</em> re-locks to FINISHED. Published exports older than the latest correction are flagged stale.</li>
+<li><strong>Audit trail viewer</strong> (Ride ▸ Audit Trail…): read-only, newest-first table of the audit log — when · who (operator) · action · entry · reason — filterable by entry and action; Entry detail links straight to it pre-filtered. In pooled mode, "Move to team…" on a rider row opens a team picker and lands here too.</li>
+<li><strong>Delete ride</strong> (library only): type the ride's name to confirm; an automatic database backup is written first; a RUNNING ride is never deletable.</li>
+</ul>
+
+<h2 style="font-size:24px;margin-top:26px">4 · The shoe — dealing cards</h2>
+<p style="font-size:14px;max-width:78ch">The shoe is <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">deck_count × (52 + jokers_per_deck)</code> cards (default 8 decks × 2 jokers = 432 for a 180-entry field), Fisher-Yates shuffled with the stored <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">rng_seed</code>. A crossing deals <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">shoe[deal_index++]</code>; the index is recoverable from dealt-card count, so the deal is <strong>deterministic and auditable</strong> — replaying the seed reproduces every card. Duplicates across entries are expected (multi-deck); an empty shoe reshuffles (seed+1) with an audit entry. Short-lap crossings deal into state <em>held</em> until the operator confirms or voids. Manual add/void is always available from the entry detail.</p>
+
+<h2 style="font-size:24px;margin-top:26px">5 · Hand evaluation — best 5 of N, jokers wild</h2>
+<div style="display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap">
+<div style="flex:1;min-width:330px">
+<table class="table" style="font-size:13px">
+<thead><tr><th style="width:30px">#</th><th>Hand — best → worst</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td>1</td><td style="font-weight:700">Five of a Kind <span class="tag tag-outline" style="font-size:9.5px">wild only</span></td><td>9 9 9 9 ★</td></tr>
+<tr><td>2</td><td style="font-weight:700">Royal Flush</td><td>A K Q J 10 suited</td></tr>
+<tr><td>3</td><td style="font-weight:700">Straight Flush</td><td>8 7 6 5 4 suited</td></tr>
+<tr><td>4</td><td style="font-weight:700">Four of a Kind</td><td>Q Q Q Q 7</td></tr>
+<tr><td>5</td><td style="font-weight:700">Full House</td><td>J J J 4 4</td></tr>
+<tr><td>6</td><td style="font-weight:700">Flush</td><td>K J 8 6 2 suited</td></tr>
+<tr><td>7</td><td style="font-weight:700">Straight <span class="text-muted">(A high or low)</span></td><td>9 8 7 6 5</td></tr>
+<tr><td>8</td><td style="font-weight:700">Three of a Kind</td><td>7 7 7 K J</td></tr>
+<tr><td>9</td><td style="font-weight:700">Two Pair</td><td>K K 5 5 A</td></tr>
+<tr><td>10</td><td style="font-weight:700">One Pair</td><td>A A K J 8</td></tr>
+<tr><td>11</td><td style="font-weight:700">High Card</td><td>A Q 9 5 3</td></tr>
+</tbody>
+</table>
+<p style="font-size:12px;margin-top:6px" class="text-muted">Within a class, standard kicker comparison — the 7,462 distinct natural ranks are stored as one integer per entry, so sorting the field is a plain sort. Ship the rank table locally; self-test on startup against known vectors (wheel straight, joker five-of-a-kind, …).</p>
+</div>
+<div style="flex:1;min-width:340px">
+<pre style="margin:0;border:1px solid var(--color-divider);background:var(--color-surface);padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;overflow:auto">best_hand(cards):                # n ≤ ~15
+  naturals, j = split_jokers(cards)
+  if j >= 5: return FIVE_OF_KIND(Ace)
+  best = -inf
+  # a wild never hurts → all jokers play
+  for subset in combinations(naturals, 5 - j):
+    for fill in completions(subset, j):
+      # candidates pruned to: ranks in subset,
+      # straight-completing ranks, suits present,
+      # aces — ≤ ~20 per wild (52 also fine)
+      best = max(best, eval5(subset + fill))
+  return best
+# eval5 = phevaluator/treys + a five-of-a-kind
+# check ranked above straight flush.
+# n=12, j=2 → C(10,3)=120 subsets ≈ &lt;1 ms;
+# whole 180-entry field well under a second.</pre>
+<p style="font-size:12.5px;margin:10px 0 0"><strong>Card cap X</strong> (optional per ride): only the first X dealt cards score; later laps still count for laps/time. Entries holding fewer than 5 cards still rank: their cards form the best partial hand, and a missing kicker always ranks below any present one (a 4-card ace-high sits under every 5-card ace-high). <strong>Ties</strong> between byte-identical hand ranks resolve by the ride's ordered rules — ① most laps ② shortest total time ③ high-card draw at the venue (app flags “draw required”). The order is editable after the finish; standings re-run instantly.</p>
+</div>
+</div>
+
+<h2 style="font-size:24px;margin-top:26px">6 · Timing rules</h2>
+<ul style="font-size:14px;line-height:1.65;margin:8px 0;padding-left:20px">
+<li>Lap time = this crossing − the entry's previous crossing (seq 1: − actual_start). For teams this <em>includes</em> pit/handoff time — relay by design.</li>
+<li>Crossings under <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">min_lap_s</code> (default 18:00 for an 8 km loop) flag <em>short</em>: usually a double-entry or mistyped plate. Crossing records; card is held.</li>
+<li>Total time = last crossing − actual_start. Leaderboards: laps DESC, then total ASC. Times shown to 1 s.</li>
+<li>Corrections: undo last (compensating write) · void/edit any crossing · reassign a crossing's plate · DNF keeps all laps/cards, listed and marked.</li>
+</ul>
+
+<h2 style="font-size:24px;margin-top:26px">7 · CSV import / export</h2>
+<pre style="margin:8px 0;border:1px solid var(--color-divider);background:var(--color-surface);padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;overflow:auto">plate,entry_name,type,rider_1,rider_2,rider_3,rider_4,notes
+127,Dirt Dynamos,team3,Sarah Okafor,Priya Nair,Tom Hale,,
+61,Marc Tremblay,solo,,,,,</pre>
+<ul style="font-size:13.5px;line-height:1.65;margin:8px 0;padding-left:20px;max-width:88ch">
+<li><strong>Format:</strong> UTF-8 with header; <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">type ∈ solo | teamN</code> with N from 2 up to the ride’s max riders per team (≤ 10); <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">rider_1…rider_N</code> columns match (the example shows a max-4 ride). Rows exceeding the ride’s max land in the conflict report.</li>
+<li><strong>Rider-pooled rides use one row per rider instead:</strong> <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">plate,name,team_name,notes</code> — riders sharing a team_name form a team (blank = solo). Re-imports may regroup teams; while RUNNING a changed team_name is treated as a membership move (audit-logged), not a conflict.</li>
+<li><strong>Import semantics:</strong> match on plate (update in place), insert new plates, and list every conflict before anything is written — preview first, commit second, nothing touched on preview.</li>
+<li><strong>Teams come from the file:</strong> <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">type</code> + <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">rider_1…rider_N</code> fully define membership; repeated imports keep applying while the ride is in DRAFT (late roster from the registration system, morning-of changes).</li>
+<li><strong>Once RUNNING:</strong> imports may only add new plates or fix name spellings; structural changes are rejected into the conflict report.</li>
+<li><strong>Export</strong> mirrors the columns; a finished ride adds <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">laps, cards, best_hand, total_time</code>.</li>
+</ul>
+
+<h2 style="font-size:24px;margin-top:26px">8 · HTML results export</h2>
+<p style="font-size:14px;max-width:88ch">One self-contained file per publish. Working samples: <a href="../exports/epic-2026-results.html">epic-2026-results.html</a> (times shown) · <a href="../exports/epic-2026-results-no-times.html">epic-2026-results-no-times.html</a> (times omitted per R-63 — no time data embedded). <strong>The light template is the only published look</strong> — theme is not an export option.</p>
+<ul style="font-size:13.5px;line-height:1.65;margin:8px 0;padding-left:20px;max-width:88ch">
+<li><strong>Static markup, rendered by Jinja2.</strong> Every section is rendered at export; the page ships zero script logic and works with JS disabled. The only <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">&lt;script&gt;</code> on the page is the data record below.</li>
+<li><strong>Embedded data record.</strong> The full results payload as JSON in a classic <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">&lt;script type="application/json" id="race-data"&gt;</code> block — machine-readable, round-trip tested, never a rendering source; every <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">&lt;/</code> escaped as <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">&lt;\/</code>.</li>
+<li><strong>CSS compiled once at package build, not at export.</strong> CI runs the Tailwind 4 CLI against the frozen template and vendors the output (plus Barlow / Barlow Condensed woff2 subsets, base64) into <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">rivercrossing.htmlexport</code> — exporting needs no Node, no CDN, no network. The samples preview with the browser build + Google Fonts as dev stand-ins only. The organizer logo embeds as base64.</li>
+<li><strong>No invented data.</strong> A value withheld by an option (times, R-63) is absent from both markup and JSON — conditional Jinja blocks omit the cells entirely rather than hiding them.</li>
+<li><strong>Controls &amp; widgets.</strong> Tailwind ships none and the published page needs none — it is read-only (header, counters, podium cards, tables, card chips): plain utilities plus a frozen custom-class allowlist (<code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">@theme</code> tokens, .bp/.c corner marks, .chip, .t-col, .no-print). No component library; if v2 ever adds interactive widgets, the pre-approved choice is daisyUI (CSS-only Tailwind plugin, no browser JS) — JS-driven kits (Flowbite, Preline) are ruled out for generated offline files.</li>
+<li><strong>Templates (binding, written):</strong> <a href="../templates/base.html.j2">base.html.j2</a> (document + context contract in its header, dev/production head split) · <a href="../templates/macros.html.j2">macros.html.j2</a> (chip/chips + the eight section macros incl. footer) · <a href="../templates/theme.css">theme.css</a> (frozen Tailwind source) — copy verbatim into <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">src/rivercrossing/htmlexport/templates/</code>. One base template + widget macros; the payload is the frozen <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">ExportOptions</code>/standings dataclasses.</li>
+<li><strong>Render method.</strong> <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">htmlexport.render()</code> builds the context dict from the dataclasses (plus the <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">racejson</code> filter that escapes <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">&lt;/</code>), creates <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">Environment(PackageLoader("rivercrossing.htmlexport", "templates"), autoescape=True, undefined=StrictUndefined)</code>, and returns <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">base.html.j2</code> rendered. Each section is one macro call — <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">event_header · podium_card · standings_row · laps_board · time_board · field_row · drawn_row</code> — mirrored 1:1 by the <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">&lt;!-- j2: --&gt;</code> comments in the samples.</li>
+<li><strong>Tests.</strong> Golden-file: committed payload fixtures render to committed golden pages byte-for-byte (goldens regenerate deliberately on template changes) · JSON round-trip re-parses the embedded record and asserts value-identity with the payload model · CI asserts the export holds zero external references (works from <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">file://</code>).</li>
+</ul>
+
+<h2 style="font-size:24px;margin-top:26px">8b · PDF results export</h2>
+<p style="font-size:14px;max-width:78ch">Same standings model, second renderer: <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">rivercrossing.pdfexport</code> emits a print-ready PDF with the same sections and flags as the HTML export (podium, top ten, optional laps/time boards, full field, show/hide times, all cards drawn). Engine: <strong>fpdf2</strong> — pure Python, zero native dependencies, so it bundles cleanly into both installers and renders deterministically (same input ⇒ byte-stable output, ideal for golden-file tests). Letter/A4 selectable; header carries the organizer logo + ride name, footer "Page n of N · generated …"; card graphics drawn as rank + suit glyphs in the steel scheme. <em>Alternative considered:</em> WeasyPrint would reuse the HTML template outright (CSS paged media, headers/footers), but drags Pango/Cairo/GDK-PixBuf native libraries into the installers — revisit only if pixel-parity with the web page becomes a requirement. Browser-based converters (Playwright, wkhtmltopdf) are out: no browser dependency in a timing app. Runs off-loop like the HTML export; filename <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">{ride-slug}-results.pdf</code>. A "Podium poster" flag additionally emits <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">{ride-slug}-podium.pdf</code> — one celebratory page (top 3, large card faces) for the prize table.</p>
+
+<h2 style="font-size:24px;margin-top:26px">9 · Failure matrix</h2>
+<table class="table" style="font-size:13px">
+<thead><tr><th style="width:280px">Event</th><th>Behaviour</th></tr></thead>
+<tbody>
+<tr><td>App closed (× / Exit) while running</td><td>Exit dialog: Cancel · Finish first · Quit-keep-running. Ride stays RUNNING on wall clock; relaunch → resume dialog ("you quit at…").</td></tr>
+<tr><td>App crash / force-quit while running</td><td>Relaunch → resume dialog ("closed unexpectedly at…", from session heartbeat); elapsed continues from wall clock; last committed crossing intact (WAL).</td></tr>
+<tr><td>Stop pressed by accident</td><td>Start again → “Continue ride?” — continue keeps original start; zero loss.</td></tr>
+<tr><td>Start missed at the gun</td><td>“Set start time…” back-dates actual_start; lap-1 times recompute.</td></tr>
+<tr><td>Power loss mid-write</td><td>SQLite WAL rolls back the partial transaction only.</td></tr>
+<tr><td>Same plate twice in under min-lap</td><td>Short-lap flag; card held for confirm / void / reassign.</td></tr>
+<tr><td>System clock jumps (NTP)</td><td>UTC timestamps; warn on regression &gt; 2 s; monotonic guard on seq.</td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:24px;margin-top:26px">10 · Stack, theming &amp; packaging</h2>
+<ul style="font-size:14px;line-height:1.65;margin:8px 0 0;padding-left:20px">
+<li><strong>Async design:</strong> one asyncio event loop integrated with wx via <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">wxasync</code> (AsyncBind for handlers). The entry field never blocks: crossings commit through an async DB writer (sqlite3 on a single worker via <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">asyncio.to_thread</code> — one writer, WAL, no lock contention); the ride clock, 30 s session heartbeat, hourly backups and standings recompute run as asyncio tasks; CSV import and HTML export run off-loop with progress callbacks. Core modules stay sync pure functions (hands, standings) — async lives at the store/UI boundary, so only there do tests need <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">pytest-asyncio</code>.</li>
+<li><strong>Stack:</strong> Python 3.14 · wxPython 4.2.5 baseline / wxWidgets 3.2 stable — 4.3 / wx 3.3 is the pinned upgrade path, not the floor: no stable 4.3 wheel exists (July 2026) (all windows from XRC resources — §15b; wxDataViewListCtrl feed with card bitmaps from a 53-card imagelist; System/Light/Dark radios: on 4.2.5 macOS follows the OS, Windows ships light with the Dark radio disabled + "needs wxPython 4.3" hint; when 4.3 releases, wxApp.SetAppearance activates the trio with zero UI change; native controls never restyled) · sqlite3 stdlib · <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">phevaluator</code> for natural 5-card ranks + the thin wild layer above (unit-tested) · platformdirs for the db location.</li>
+<li><strong>Sound on crossing</strong> (Settings toggle, default on): three bundled WAV cues so the operator never has to look down — ① <em>recorded</em>: one short click the instant a crossing commits · ② <em>rejected</em>: a low double-buzz for an unknown plate or empty Enter (the entry field also shakes/red-borders) · ③ <em>held</em>: a distinct two-tone alert when a short-lap crossing holds its card. Everything else is silent (undo and menu actions use the status bar). Played via <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">wx.adv.Sound</code> async — never blocks the entry field; identical files on both platforms, shipped in the installers. The player sits behind a <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">rivercrossing.ui.audio</code> interface so functional tests inject a fake and assert which cue fired (no audio hardware in CI).</li>
+<li><strong>Light/dark:</strong> one token table (the two palettes in the UI doc) drives all custom-drawn panels; follow the OS via <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">wx.SystemSettings/SystemAppearance</code>, with a manual override in settings.</li>
+<li><strong>Installers:</strong> PyInstaller builds → Windows: Inno Setup (.exe installer, per-user, unsigned — see §14) · macOS: .app in a .dmg via dmgbuild, Developer ID codesigned + notarized. CI matrix builds both per tag (§14). Bundles include the third-party license texts shown by About ▸ Licenses… — a redistribution obligation for the OSS dependencies.</li>
+</ul>
+
+<h2 style="font-size:24px;margin-top:26px">11 · Modules — complete, testable libraries</h2>
+<p style="font-size:13px;margin-bottom:8px" class="text-muted">Core modules are pure Python with <strong>zero wx imports</strong> — every one imports and tests headless. File-level repo layout, public APIs and build order: <a href="RiverCrossing - Module Skeletons.dc.html">Module Skeletons</a> (binding companion). The UI layer is a thin shell that calls them.</p>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:190px">Module</th><th>Responsibility · key tests</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">rivercrossing.cards</td><td>Card model, seeded Shoe (Fisher-Yates, deal_index, reshuffle). <span class="text-muted">Tests: deal determinism from seed, exhaustion/reshuffle, composition n×(52+j).</span></td></tr>
+<tr><td style="font-weight:700">rivercrossing.hands</td><td>The card algorithm (§5): eval5 + wild layer + five-of-a-kind, rank compare. <span class="text-muted">Tests: known-vector table for every hand class, wheel, joker cases, cap X; Hypothesis property tests — adding a card never lowers the rank, wild result ≥ any natural completion, agreement with a brute-force C(n,5)×52ʲ reference on thousands of random hands.</span></td></tr>
+<tr><td style="font-weight:700">rivercrossing.standings</td><td>Ordering, tie-break rules ①②③, leaderboards. <span class="text-muted">Tests: crafted tie fixtures, rule-reorder re-runs, DNF placement.</span></td></tr>
+<tr><td style="font-weight:700">rivercrossing.ride</td><td>State machine, crossings, lap/total timing, min-lap flagging, undo. <span class="text-muted">Tests: retro start-time fix, stop/continue, short-lap hold, compensating-write undo.</span></td></tr>
+<tr><td style="font-weight:700">rivercrossing.store</td><td>SQLite persistence, migrations, audit log, backups. <span class="text-muted">Tests: kill a subprocess mid-transaction and reopen — last committed crossing intact (WAL); replay audit → identical state.</span></td></tr>
+<tr><td style="font-weight:700">rivercrossing.csvio / .htmlexport / .pdfexport</td><td>§7 / §8 / §8b. <span class="text-muted">Tests: round-trip import→export, conflict report, exported HTML parsed back — JSON island equals computed standings; PDF opened with pypdf in tests — page count, standings text and options flags asserted, plus a golden-file byte comparison on a fixed seed.</span></td></tr>
+<tr><td style="font-weight:700">rivercrossing.ui</td><td>wxPython windows only — no business logic. <span class="text-muted">Tested functionally, below.</span></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:24px;margin-top:26px">12 · TDD &amp; the testing system</h2>
+<ul style="font-size:14px;line-height:1.65;margin:8px 0;padding-left:20px">
+<li><strong>Process:</strong> tests are written first by the <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">tdd-python-writer</code> agent (red), implementation follows (green), then refactor — per module, in the dependency order above. pytest + pytest-asyncio + coverage; gate ≥ 90% on core modules; ruff + mypy strict as "good pythoning" guardrails.</li>
+<li><strong>Simulation suite (card algorithm):</strong> seeded whole-ride simulations — e.g. 180 entries × 6 h with random lap distributions, solo-only and mixed, <strong>both plate models</strong> (relay and rider-pooled incl. mid-ride team moves), 0/2/4 jokers, with and without cap X, shoe exhaustion mid-ride. Invariants asserted: cards dealt = non-voided crossings − held; standings are a total order; identical hands resolve exactly by the configured rule; replaying the seed reproduces every deal and the final standings byte-for-byte.</li>
+<li><strong>Functional UI tests:</strong> every entry box, button and list carries its stable snake_case <strong>XRC name</strong> (§15b); a pytest harness finds controls by name and drives them with <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">wx.UIActionSimulator</code> (real key/mouse events) with direct event injection as the CI fallback — so typing a plate, Enter, undo, dialogs and toggles are all validated against the visible list contents.</li>
+<li><strong>Menu coverage test:</strong> a parametrized test walks every menu item and asserts it routes to its §15 target (window opens, dialog opens, or command fires) in both entry modes and all three ride states.</li>
+<li><strong>Full race run-through (acceptance):</strong> a scripted end-to-end test creates a ride with <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">min_lap_s</code> lowered (it is an ordinary ride setting, so a test race runs in seconds) — CSV import → start → hundreds of simulated crossings typed through the real entry field → accidental stop → continue → hard kill + relaunch against the same db → finish → <strong>reopen → add a missed crossing at time + void one → finish again</strong> → export HTML → parse and assert the corrected standings. Must pass 100% on Windows and macOS CI before a build ships.</li>
+</ul>
+
+<h2 style="font-size:24px;margin-top:26px">13 · UI behavior standards</h2>
+<p style="font-size:13px;margin-bottom:8px" class="text-muted">Grounded in platform dialog guidelines (Windows ContentDialog, Carbon/Primer accessibility patterns). These rules are testable and the functional harness asserts them per dialog.</p>
+<ul style="font-size:14px;line-height:1.65;margin:8px 0;padding-left:20px">
+<li><strong>Dialogs:</strong> Esc always cancels (= Cancel, never a destructive path); Enter activates the marked default button. Initial focus: confirmation dialogs → the primary button; <em>destructive</em> confirms (void, delete, start-over) → <strong>Cancel</strong>, so a reflex Enter is safe; form dialogs (add entry, edit crossing, set start time) → the first input field. Tab is trapped inside the dialog; on close, focus returns to the control that opened it.</li>
+<li><strong>Every control has a stable name</strong> (its XRC <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">name</code> attribute, §15b) — the same ids serve the functional tests and screen-reader labels.</li>
+<li><strong>Console focus:</strong> the plate field owns focus; recording keeps focus there; Space always returns it; opening any window never steals it mid-keystroke (input buffered).</li>
+<li><strong>Radio groups always have a default</strong> — no unselected groups anywhere (defaults: solo-only · plate model rider-pooled · one card per lap · 2 jokers · tie-break ① laps · theme System · Add entry → Solo · manual card → from shoe).</li>
+<li><strong>Console states:</strong> DRAFT — clock shows planned start, entry field disabled with "Start the ride to record crossings", primary action is Start Ride (designed: <a href="RiverCrossing - UI Designs.dc.html#8a">8a</a>); RUNNING — as designed; FINISHED — result banner with Reopen + Results + export buttons, feed read-only, entry disabled (designed: <a href="RiverCrossing - UI Designs.dc.html#8b">8b</a>); REOPENED — corrections banner, edits highlighted in the feed, single primary "Finish again" (designed: <a href="RiverCrossing - UI Designs.dc.html#8c">8c</a>). Empty feeds show one-line hints, never blank panels.</li>
+<li><strong>Windows:</strong> single instance per database; console minimum 1180×740, dialogs fixed-size; per-monitor DPI aware (v2) on Windows; View zoom scales type 90–150%.</li>
+<li><strong>Times:</strong> stored UTC, displayed local 24-hour; elapsed as h:mm:ss. Settings offers <strong>"Hide times on the console"</strong> — toggleable while a ride runs: lap/total columns and per-crossing times disappear from the console (it's-not-a-race mode); the ride clock stays (the operator must know when the window closes), and timestamps are still recorded underneath for corrections and optional publication.</li>
+<li><strong>Buttons:</strong> one primary per surface; destructive actions never the default; three-button dialogs order Ghost · Secondary · Primary left→right.</li>
+</ul>
+
+<h2 style="font-size:24px;margin-top:26px">14 · CI — building &amp; testing a GUI app</h2>
+<p style="font-size:13px;margin-bottom:8px" class="text-muted">GitHub Actions, matrix <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">windows-latest + macos-latest</code> — both runners have a real desktop session, so wx windows open without a virtual display (no Xvfb; that's only needed if a Linux target is ever added). GUI suites are kept lean by design: logic lives in the sync core modules (§11), so the bulk of the pyramid runs headless-fast.</p>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:190px">Stage (both OSes)</th><th>What runs · gate</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">1 · Static</td><td>ruff + mypy strict — fail fast, no GUI needed.</td></tr>
+<tr><td style="font-weight:700">2 · Unit + property</td><td>pytest on cards/hands/standings/ride/store/exports incl. Hypothesis + simulation suite; coverage ≥ 90% gate; pytest-asyncio at the store boundary.</td></tr>
+<tr><td style="font-weight:700">3 · Functional UI</td><td>The §12 harness drives real wx windows on the runner's desktop. Flake control: event-driven waits (never bare sleeps), one auto-retry per test, and a full-screen PNG captured on failure and uploaded as an artifact.</td></tr>
+<tr><td style="font-weight:700">4 · Acceptance</td><td>The full race run-through (§12) — CSV in, hundreds of typed crossings, stop/continue, kill + relaunch, quit + relaunch, finish, HTML + PDF exports parsed and asserted. Must pass 100%.</td></tr>
+<tr><td style="font-weight:700">5 · Build</td><td>PyInstaller bundles (incl. WAVs, fonts, user guide, license texts) → <strong>smoke test: launch the built binary</strong>, open the sample db, record one crossing via the harness, quit clean.</td></tr>
+<tr><td style="font-weight:700">6 · Package (tags)</td><td>Windows: Inno Setup .exe, <strong>unsigned</strong> (no Authenticode cert available — the guide documents the SmartScreen "More info → Run anyway" step) · macOS: dmgbuild → Developer ID codesign + notarytool staple (Apple developer account available). Installers uploaded as release artifacts with checksums.</td></tr>
+</tbody>
+</table>
+<p style="font-size:12.5px;margin-top:8px" class="text-muted">Every PR runs stages 1–4; main additionally runs 5; version tags run all six and draft the release. Stage 5 runs in <strong>dev-bundle mode from EPIC 1 (D1) onward</strong> — PyInstaller onedir, unsigned, uploaded as runnable Windows + macOS artifacts on every main build — and graduates to full installers in EPIC 9. A nightly job replays the acceptance race with fresh random seeds and files the seed on failure so any hand-evaluation edge case is reproducible.</p>
+
+<h2 style="font-size:24px;margin-top:26px">15 · Menu → screen &amp; dialog map</h2>
+<p style="font-size:13px;margin-bottom:8px" class="text-muted">One menu tree on both platforms (wx relocates About / Settings / Quit into the macOS app menu; Ctrl ⇒ ⌘). Every item routes through the same command layer as its on-screen button — <em>Design</em> links point into the UI doc. "OS-native" = standard file/save picker, deliberately not custom.</p>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:210px">Menu item</th><th>Opens / does</th><th style="width:120px">Design</th><th style="width:190px">Enabled when</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">File ▸ New Ride…</td><td>Ride setup window (blank)</td><td><a href="RiverCrossing - UI Designs.dc.html#1c">1c</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">File ▸ Ride Library</td><td>Ride library window</td><td><a href="RiverCrossing - UI Designs.dc.html#1g">1g</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">File ▸ Duplicate Ride…</td><td>Duplicate-ride dialog → new DRAFT ride</td><td><a href="RiverCrossing - UI Designs.dc.html#3d">3d</a></td><td>a ride is open</td></tr>
+<tr><td style="font-weight:700">File ▸ Import Riders CSV…</td><td>OS-native picker → import report dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#3e">3e</a></td><td>ride open (structure edits: DRAFT only)</td></tr>
+<tr><td style="font-weight:700">File ▸ Export Riders CSV…</td><td>OS-native save dialog</td><td>—</td><td>ride open</td></tr>
+<tr><td style="font-weight:700">File ▸ Back Up Database…</td><td>OS-native save dialog</td><td>—</td><td>always</td></tr>
+<tr><td style="font-weight:700">File ▸ Settings…</td><td>Settings window</td><td><a href="RiverCrossing - UI Designs.dc.html#3a">3a</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">File ▸ Exit</td><td>Ride RUNNING → exit dialog (Cancel · Finish first · Quit-keep-running); otherwise quits. Reopen → resume dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#4a">4a</a> · <a href="RiverCrossing - UI Designs.dc.html#1h">1h</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">Ride ▸ Start Ride</td><td>Starts; with existing data → Continue-ride dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#1h">1h</a></td><td>DRAFT, or stopped RUNNING</td></tr>
+<tr><td style="font-weight:700">Ride ▸ Stop Ride…</td><td>Stop confirm dialog (console button additionally requires the Arm checkbox)</td><td><a href="RiverCrossing - UI Designs.dc.html#3d">3d</a></td><td>RUNNING</td></tr>
+<tr><td style="font-weight:700">Ride ▸ Set Start Time…</td><td>Set-start-time dialog (lap-1 recompute)</td><td><a href="RiverCrossing - UI Designs.dc.html#3d">3d</a></td><td>RUNNING · REOPENED</td></tr>
+<tr><td style="font-weight:700">Ride ▸ Finish Ride…</td><td>Finish confirm → Results window ("Finish again" from REOPENED)</td><td><a href="RiverCrossing - UI Designs.dc.html#3d">3d</a> → <a href="RiverCrossing - UI Designs.dc.html#1f">1f</a></td><td>RUNNING · REOPENED</td></tr>
+<tr><td style="font-weight:700">Ride ▸ Reopen Ride</td><td>Confirm (3d pattern) → RUNNING</td><td><a href="RiverCrossing - UI Designs.dc.html#3d">3d</a></td><td>FINISHED</td></tr>
+<tr><td style="font-weight:700">Ride ▸ Audit Trail…</td><td>Read-only audit viewer (§3) — when · who · action · entry · reason, filterable</td><td>—</td><td>ride open, ≥1 audit row</td></tr>
+<tr><td style="font-weight:700">Ride ▸ Ride Setup…</td><td>Ride setup window (this ride)</td><td><a href="RiverCrossing - UI Designs.dc.html#1c">1c</a></td><td>ride open (locks tighten after start)</td></tr>
+<tr><td style="font-weight:700">Riders ▸ Rider Editor</td><td>Rider editor window</td><td><a href="RiverCrossing - UI Designs.dc.html#1d">1d</a> / <a href="RiverCrossing - UI Designs.dc.html#2b">2b</a></td><td>ride open</td></tr>
+<tr><td style="font-weight:700">Riders ▸ Add Rider/Entry…</td><td>Rider editor in new-entry mode — plate field focused</td><td><a href="RiverCrossing - UI Designs.dc.html#3b">3b</a></td><td>ride open (new plates any time)</td></tr>
+<tr><td style="font-weight:700">Riders ▸ Mark DNF…</td><td>DNF confirm dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#3b">3b</a></td><td>RUNNING · REOPENED</td></tr>
+<tr><td style="font-weight:700">Riders ▸ Entry Detail…</td><td>Entry detail window</td><td><a href="RiverCrossing - UI Designs.dc.html#1e">1e</a></td><td>ride open</td></tr>
+<tr><td style="font-weight:700">Cards ▸ Undo Last Crossing</td><td>Direct command + status-bar notice (no dialog)</td><td><a href="RiverCrossing - UI Designs.dc.html#1a">1a</a></td><td>RUNNING, ≥1 crossing</td></tr>
+<tr><td style="font-weight:700">Cards ▸ Add Crossing at Time…</td><td>Edit-crossing dialog in "add" mode — plate + explicit time (a rider missed at the line)</td><td><a href="RiverCrossing - UI Designs.dc.html#3c">3c</a> · <a href="RiverCrossing - UI Designs.dc.html#8c">8c</a></td><td>RUNNING · REOPENED</td></tr>
+<tr><td style="font-weight:700">Cards ▸ Edit Crossing…</td><td>Edit-crossing dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#3c">3c</a></td><td>RUNNING · REOPENED, ≥1 crossing</td></tr>
+<tr><td style="font-weight:700">Cards ▸ Reassign Plate…</td><td>Reassign dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#3c">3c</a></td><td>RUNNING · REOPENED, ≥1 crossing</td></tr>
+<tr><td style="font-weight:700">Cards ▸ Deal Manual Card…</td><td>Manual-deal dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#3c">3c</a></td><td>RUNNING · REOPENED</td></tr>
+<tr><td style="font-weight:700">Cards ▸ Void Card…</td><td>From entry detail, cards row → confirm (3d pattern)</td><td><a href="RiverCrossing - UI Designs.dc.html#1e">1e</a></td><td>RUNNING · REOPENED, entry has cards</td></tr>
+<tr><td style="font-weight:700">Cards ▸ Review Held Cards</td><td>Focuses console review panel / short-lap dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#1a">1a</a> · <a href="RiverCrossing - UI Designs.dc.html#1h">1h</a></td><td>held cards &gt; 0 (shows count)</td></tr>
+<tr><td style="font-weight:700">Results ▸ Standings</td><td>Results window</td><td><a href="RiverCrossing - UI Designs.dc.html#1f">1f</a></td><td>ride open (live while running)</td></tr>
+<tr><td style="font-weight:700">Results ▸ Generate HTML…</td><td>OS-native save dialog → writes file (§8)</td><td><a href="RiverCrossing - UI Designs.dc.html#1f">1f</a></td><td>FINISHED</td></tr>
+<tr><td style="font-weight:700">Results ▸ Export PDF…</td><td>OS-native save dialog → writes file (§8b)</td><td><a href="RiverCrossing - UI Designs.dc.html#1f">1f</a></td><td>FINISHED</td></tr>
+<tr><td style="font-weight:700">Results ▸ Podium Poster PDF…</td><td>OS-native save dialog → one-page poster (§8b)</td><td><a href="RiverCrossing - UI Designs.dc.html#5d">5d</a></td><td>FINISHED</td></tr>
+<tr><td style="font-weight:700">Results ▸ Export Standings CSV…</td><td>OS-native save dialog → standings rows (place, plate, entry, laps, hand[, times])</td><td><a href="RiverCrossing - UI Designs.dc.html#1f">1f</a></td><td>FINISHED</td></tr>
+<tr><td style="font-weight:700">Results ▸ Preview in Browser</td><td>Opens last export in default browser</td><td>—</td><td>an export exists</td></tr>
+<tr><td style="font-weight:700">Results ▸ Tie-break Order…</td><td>Focuses the tie-break control in Results</td><td><a href="RiverCrossing - UI Designs.dc.html#1f">1f</a></td><td>ride open</td></tr>
+<tr><td style="font-weight:700">View ▸ Theme · Hide Times · Zoom</td><td>Direct commands — theme radio trio, hide-times check item, zoom radios — mirrored in Settings</td><td><a href="RiverCrossing - UI Designs.dc.html#3a">3a</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">Help ▸ User Guide</td><td>Opens bundled docs/user-guide.html in browser — 10 chapters + 2 appendices, section anchors deep-linked from dialog Help buttons; screenshots regenerated by the functional-test harness each release</td><td><a href="RiverCrossing - UI Designs.dc.html#6a">6a</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">Help ▸ Keyboard Shortcuts</td><td>Shortcuts dialog</td><td><a href="RiverCrossing - UI Designs.dc.html#3f">3f</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">Help ▸ Run Evaluator Self-test</td><td>Self-test result dialog (§12)</td><td><a href="RiverCrossing - UI Designs.dc.html#3f">3f</a></td><td>always</td></tr>
+<tr><td style="font-weight:700">Help ▸ About RiverCrossing</td><td>About box</td><td><a href="RiverCrossing - UI Designs.dc.html#3f">3f</a></td><td>always</td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:24px;margin-top:26px">15b · XRC appendix — windows, files &amp; naming (canonical)</h2>
+<p style="font-size:13.5px;max-width:82ch">Every window and dialog is defined in <strong>wxWidgets XRC</strong> (sizer-based, resizable, native controls, no absolute positioning, no restyling). The native window designs live in <a href="RiverCrossing - XRC Windows.dc.html">XRC Windows</a> — control names annotated there are the XRC <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">name</code> attributes and are <strong>frozen</strong>: tests find widgets by them (wxWindow.FindWindowByName), so a rename is a breaking change. The Industry-styled hi-fi mockups are retired as implementation reference. Baseline: <strong>wxPython 4.2.5 / wxWidgets 3.2 stable</strong> — the latest released wheel; 4.3 / wx 3.3 is the pinned upgrade that activates wxApp.SetAppearance dark mode (XRC files and names identical on both; XRC colour syntax available but unused — native colours only).</p>
+<ul style="font-size:14px;line-height:1.65;margin:8px 0;padding-left:20px">
+<li><strong>Naming:</strong> snake_case; suffix by role — <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">_frame _dlg _panel _lbl _input _btn _chk _radio _choice _list _picker _spin _infobar</code>; menu items <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">mi_&lt;action&gt;</code>; standard buttons use stock IDs (wxID_OK, wxID_CANCEL, wxID_CLOSE, wxID_DELETE, wxID_OPEN, wxID_NEW, wxID_EXIT, wxID_ABOUT). Names unique within their top-level window. <code style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px">ui/ids.py</code> mirrors these names 1:1 (generated from the .xrc files in CI — drift fails the build).</li>
+<li><strong>Files (src/rivercrossing/ui/xrc/):</strong> main.xrc → main_frame + main_menubar · setup.xrc → ride_setup_dlg · riders.xrc → rider_editor_dlg + csv_preview_dlg · detail.xrc → entry_detail_dlg · results.xrc → results_frame · library.xrc → ride_library_dlg + delete_ride_dlg · audit.xrc → audit_dlg · settings.xrc → settings_dlg · dialogs.xrc → set_start_dlg, stop_confirm_dlg, finish_confirm_dlg, continue_or_new_dlg, resume_dlg, exit_running_dlg, edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg, about_dlg, selftest_dlg, shortcuts_dlg.</li>
+<li><strong>Menu item names</strong> (map 1:1 to §15 rows): File — mi_new_ride, mi_open_library, mi_duplicate_ride, mi_backup_now, mi_import_csv, mi_export_csv, wxID_PREFERENCES (Settings…), wxID_EXIT · Ride — mi_start_ride, mi_stop_ride, mi_set_start_time, mi_finish_ride, mi_reopen_ride, mi_audit_trail, mi_ride_setup · Riders — mi_rider_editor, mi_add_entry, mi_mark_dnf, mi_entry_detail · Cards — mi_undo_crossing, mi_add_crossing_at, mi_edit_crossing, mi_reassign_plate, mi_deal_manual, mi_void_card, mi_review_held · Results — mi_standings (F5), mi_export_html, mi_export_pdf, mi_export_poster, mi_export_results_csv, mi_preview_browser, mi_tiebreak_order · View — mi_theme_system / mi_theme_light / mi_theme_dark (radio items), mi_hide_times (check item), mi_zoom_90…mi_zoom_150 (radio items) · Help — mi_user_guide, mi_shortcuts, mi_selftest, wxID_ABOUT.</li>
+<li><strong>Declared in XRC vs code:</strong> XRC owns structure, labels, sizers, styles (wxRB_GROUP radio groups inside wxStaticBoxSizer, wxStdDialogButtonSizer button rows, wxSplitterWindow, wxInfoBar shells, wxDataViewListCtrl shells). Code owns: DataView columns/rows/attributes, card imagelist (53 bitmaps @1x/2x from ui/assets/cards/), InfoBar messages + show/hide, splitter sash restore, per-state menu enabling, SetAppearance. Custom-drawn widgets: none.</li>
+</ul>
+</div>
+
+
+<p style="font-size:11.5px;color:rgba(29,31,32,.5);max-width:940px;margin:14px auto 0">Companions: <a href="RiverCrossing - Requirements.dc.html">requirements</a> · <a href="RiverCrossing - XRC Windows.dc.html">XRC window designs (implementation truth)</a> · <a href="RiverCrossing - Module Skeletons.dc.html">module skeletons</a> · <a href="RiverCrossing - Project Plan.dc.html">project plan</a> · <a href="RiverCrossing - Task Briefs.dc.html">task briefs</a> · <a href="RiverCrossing - UI Designs.dc.html">hi-fi designs (retired — flow reference)</a> · <a href="../exports/epic-2026-results.html">results sample</a> / <a href="../exports/epic-2026-results-no-times.html">no-times</a>. Event facts from gorba.ca; hand-evaluation approach per standard evaluators (7,462-rank tables, best-5-of-N).</p>
+</div>
+
+</x-dc>
+</body>
+</html>

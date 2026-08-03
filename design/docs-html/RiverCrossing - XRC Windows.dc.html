@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/styles.css">
+<script src="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/_ds_bundle.js"></script>
+<style>body{margin:0;background:#e8e9ea}a{color:#2563a8}a:hover{color:#1a4a80}</style>
+</helmet>
+<section style="padding:30px 34px 80px;font-family:'Segoe UI',system-ui,sans-serif;color:#1a1a1a">
+
+<div style="max-width:1080px;background:#fff;border:1px solid #c8c8c8;padding:18px 22px;margin-bottom:30px;font-size:13px">
+<div style="font-size:20px;font-weight:600">RiverCrossing — XRC window designs <span style="font-weight:400;color:#666">(implementation truth · retires the Industry hi-fi mockups)</span></div>
+<div style="margin-top:8px;line-height:1.55">Native wxWidgets controls only, sizer-based, Windows look shown (identical structure on macOS). Every interactive control carries its <code style="font-family:Consolas,monospace;font-size:10px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">xrc_name</code> annotation — these are the XRC <code style="font-family:Consolas,monospace;font-size:10px">name</code> attributes, canonical and frozen; standard buttons use stock IDs (wxID_OK, wxID_CANCEL, wxID_CLOSE, wxID_DELETE, wxID_EXIT, wxID_ABOUT). Naming rules + window↔file map: Spec §15b.</div>
+<div style="margin-top:8px;line-height:1.55;color:#444"><strong>Canvas caveats (HTML approximation):</strong> browser form controls stand in for wx natives; exact spacing/fonts come from sizers + system fonts, not these pixels; sizes below are minimums expressed in dialog units at build time. <strong>Global code-side items (not expressible in XRC):</strong> ① wxDataViewListCtrl columns + row data + per-row attributes (bold flagged rows, red suits) — appended in code; ② card imagelist population (53 card bitmaps @1x/2x); ③ wxInfoBar message text + Show/Hide calls; ④ splitter sash position restore from settings; ⑤ menu enable/disable per ride state (§15); ⑥ theme: 4.2.5 baseline = macOS follows OS / Windows light; wxApp.SetAppearance on the wx 3.3+ upgrade. Everything else drawn here is declared in XRC.</div>
+</div>
+
+<div style="font-size:15px;font-weight:600;margin:26px 0 14px">A · Main frame</div>
+<div style="display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start">
+
+<div id="mainframe" style="width:1000px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;align-items:center;gap:8px"><span style="font-weight:600">RiverCrossing — GORBA EPIC &amp; MTB Festival 2026</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">main_frame</code><span style="margin-left:auto;color:#666;letter-spacing:4px">— ▢ ✕</span></div>
+<div style="background:#fff;border-bottom:1px solid #e2e2e2;padding:3px 10px;display:flex;gap:16px;font-size:12px"><span>File</span><span>Ride</span><span>Riders</span><span>Cards</span><span>Results</span><span>View</span><span>Help</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;margin-left:auto">main_menubar · items mi_* — see §15b</code></div>
+<div style="background:#fdf6e3;border-bottom:1px solid #e6d9a8;padding:5px 10px;font-size:11.5px;display:flex;gap:10px;align-items:center"><span>ⓘ This ride was running when the app closed. Continue timing on wall clock?</span><button style="font:11px 'Segoe UI';padding:2px 10px">Continue ride</button><button style="font:11px 'Segoe UI';padding:2px 10px">Open library</button><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;margin-left:auto">resume_infobar · reopened_infobar (wxInfoBar, hidden by default)</code></div>
+<div style="display:flex;gap:14px;align-items:center;padding:10px 12px;border-bottom:1px solid #ddd;background:#f9f9f9">
+<div><div style="font-size:14px;font-weight:600">GORBA EPIC &amp; MTB Festival 2026 <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">ride_name_lbl</code></div>
+<div style="color:#0a7a2f;font-weight:600">RUNNING <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">ride_status_lbl</code></div></div>
+<div style="margin-left:auto;text-align:right"><span style="font-size:30px;font-weight:700;font-variant-numeric:tabular-nums">4:22:41</span> <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">clock_elapsed_lbl</code><div style="color:#555">1:37:19 to close <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">clock_remaining_lbl</code></div></div>
+<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
+<button style="font:12px 'Segoe UI';padding:3px 16px" disabled>Start ride</button>
+<div style="display:flex;gap:6px;align-items:center"><label style="display:flex;gap:4px;align-items:center"><input type="checkbox">Arm</label><button style="font:12px 'Segoe UI';padding:3px 12px" disabled>Stop ride…</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">start_btn · arm_stop_chk · stop_btn</code></div>
+</div>
+<div style="display:flex;gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid #ddd">
+<span style="font-weight:600">Plate</span><input value="123" style="font:20px 'Segoe UI';padding:3px 8px;width:130px;font-weight:600"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">plate_input (focused)</code>
+<span style="color:#0a7a2f">✓ 123 · Sam Ellis · Lap 4 · 22:41 · dealt 9♥</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">last_crossing_lbl</code>
+<button style="font:12px 'Segoe UI';padding:3px 12px;margin-left:auto">Undo last (Ctrl+Z)</button><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">undo_btn</code>
+</div>
+<div style="display:flex;min-height:300px">
+<div style="flex:1;border-right:3px double #bbb;position:relative">
+<table style="width:100%;border-collapse:collapse;font-size:12px">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:4px 8px;border-bottom:1px solid #ccc;font-weight:600">Time</th><th style="padding:4px 8px;border-bottom:1px solid #ccc;font-weight:600">Plate</th><th style="padding:4px 8px;border-bottom:1px solid #ccc;font-weight:600">Entry</th><th style="padding:4px 8px;border-bottom:1px solid #ccc;font-weight:600">Lap</th><th style="padding:4px 8px;border-bottom:1px solid #ccc;font-weight:600">Lap time</th><th style="padding:4px 8px;border-bottom:1px solid #ccc;font-weight:600">Total</th><th style="padding:4px 8px;border-bottom:1px solid #ccc;font-weight:600">Card</th></tr></thead>
+<tbody style="font-variant-numeric:tabular-nums">
+<tr style="background:#e8f0fe"><td style="padding:3px 8px">14:22:41</td><td>123</td><td>Sam Ellis</td><td>4</td><td>22:41</td><td>1:31:04</td><td><span style="display:inline-block;width:17px;height:22px;border:1px solid #999;background:#fff;font-size:10px;text-align:center;color:#c00">9♥</span></td></tr>
+<tr><td style="padding:3px 8px">14:22:18</td><td>77</td><td>Trail Blazers (T)</td><td>9</td><td>19:55</td><td>3:02:11</td><td><span style="display:inline-block;width:17px;height:22px;border:1px solid #999;background:#fff;font-size:10px;text-align:center">K♠</span></td></tr>
+<tr style="font-weight:700;color:#8a5a00"><td style="padding:3px 8px">14:21:59</td><td>45</td><td>J. Okafor</td><td>6</td><td>07:12 ⚑</td><td>2:44:30</td><td><span style="display:inline-block;width:17px;height:22px;border:1px dashed #999;background:#fff;font-size:9px;text-align:center">held</span></td></tr>
+<tr><td style="padding:3px 8px">14:21:30</td><td>212</td><td>M. Chen</td><td>5</td><td>24:02</td><td>2:10:44</td><td><span style="display:inline-block;width:17px;height:22px;border:1px solid #999;background:#fff;font-size:10px;text-align:center">JK★</span></td></tr>
+<tr><td style="padding:3px 8px">14:20:52</td><td>8</td><td>R. Dubois</td><td>7</td><td>21:17</td><td>2:58:03</td><td><span style="display:inline-block;width:17px;height:22px;border:1px solid #999;background:#fff;font-size:10px;text-align:center;color:#c00">4♦</span></td></tr>
+</tbody></table>
+<div style="padding:4px 8px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">crossings_list (wxDataViewListCtrl · newest first · last 30)</code></div>
+</div>
+<div style="width:250px;padding:10px;display:flex;flex-dire-ction:column;flex-direction:column;gap:10px">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11.5px">
+<div style="border:1px solid #ccc;background:#fff;padding:5px 8px">Crossings<div style="font-size:17px;font-weight:700">1 124</div></div>
+<div style="border:1px solid #ccc;background:#fff;padding:5px 8px">Cards dealt<div style="font-size:17px;font-weight:700">1 092</div></div>
+<div style="border:1px solid #ccc;background:#fff;padding:5px 8px">On course<div style="font-size:17px;font-weight:700">42</div></div>
+<div style="border:1px solid #ccc;background:#fff;padding:5px 8px">Shoe<div style="font-size:17px;font-weight:700">41/108</div></div>
+</div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">crossings_count_lbl · cards_count_lbl · on_course_lbl · shoe_lbl</code>
+<fieldset style="border:1px solid #bdbdbd;margin:0;padding:6px 8px"><legend style="font-size:11px;padding:0 4px">Needs review (1)</legend>
+<div style="font-size:11.5px;background:#fff;border:1px solid #ddd;padding:4px 6px">⚑ 45 · lap 6 · 07:12 &lt; min 12:00</div>
+<div style="margin-top:4px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;padding:0 3px;border:1px solid #fde68a">flagged_list · review_btn</code></div></fieldset>
+</div>
+</div>
+<div style="display:flex;border-top:1px solid #bbb;background:#f0f0f0;font-size:11px;color:#444"><div style="padding:3px 10px;border-right:1px solid #ccc">epic-2026.prdb</div><div style="padding:3px 10px;border-right:1px solid #ccc">Saved 14:22:41</div><div style="padding:3px 10px">Shoe cycle 1 · seed 8843</div><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;margin-left:auto">main_statusbar</code></div>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ code-side: feed columns/rows + bold-flagged row attrs; card column bitmaps from imagelist; InfoBar text + show/hide; sash position (main_splitter); state variants — DRAFT: clock 0:00:00, start_btn enabled, plate_input disabled with "start the ride to record" hint · FINISHED: entry row hidden, result banner InfoBar (finished_infobar) with Reopen/Results buttons · REOPENED: corrections banner, entry disabled, edited rows highlighted. Hide-times setting removes Lap time/Total columns + times in last_crossing_lbl; clock stays. Min frame 1100×700, fits 1366×768.</div>
+</div>
+</div>
+
+<div style="font-size:15px;font-weight:600;margin:30px 0 14px">B · Ride setup &amp; lifecycle dialogs</div>
+<div style="display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start">
+
+<div id="setupdlg" style="width:560px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;align-items:center;gap:8px"><span style="font-weight:600">Ride Setup</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">ride_setup_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+<div style="display:grid;grid-template-columns:110px 1fr 110px 1fr;gap:6px 8px;align-items:center">
+<span>Name</span><input value="GORBA EPIC 2026" style="font:12px 'Segoe UI';padding:2px 4px;grid-column:2/5">
+<span>Date</span><input value="2026-09-20 ▾" style="font:12px 'Segoe UI';padding:2px 4px;width:110px"><span>Planned start</span><input value="10:00:00 ▾" style="font:12px 'Segoe UI';padding:2px 4px;width:90px">
+<span>Venue</span><input value="Guelph Lake" style="font:12px 'Segoe UI';padding:2px 4px"><span>Lap length km</span><input value="8.0" style="font:12px 'Segoe UI';padding:2px 4px;width:70px">
+<span>Organizer</span><input value="J. Marsden" style="font:12px 'Segoe UI';padding:2px 4px"><span>Scorer</span><input value="D. Whitfield" style="font:12px 'Segoe UI';padding:2px 4px">
+<span>Duration h:m</span><input value="6:00" style="font:12px 'Segoe UI';padding:2px 4px;width:70px"><span>Min lap m:s</span><input value="12:00" style="font:12px 'Segoe UI';padding:2px 4px;width:70px">
+<span>Logo</span><input value="gorba.png  [Browse…]" style="font:12px 'Segoe UI';padding:2px 4px;grid-column:2/5">
+</div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · logo_picker</code>
+<fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px 10px"><legend style="font-size:11px;padding:0 4px">Entries</legend>
+<label style="display:block"><input type="radio" name="em" defaultChecked="{{ true }}"> Solo riders only (default)</label>
+<label style="display:block"><input type="radio" name="em"> Solo + teams</label>
+<div style="margin:6px 0 0 20px;display:flex;gap:8px;align-items:center;color:#888">Max riders per team <input value="4" style="font:12px 'Segoe UI';padding:1px 4px;width:44px" disabled> (2–10)</div>
+<div style="margin:6px 0 0 20px;color:#888">
+<label style="display:block"><input type="radio" name="pm" defaultChecked="{{ true }}" disabled> Rider plates — pooled (default): each rider draws per lap, uncapped; team hand from pooled cards</label>
+<label style="display:block"><input type="radio" name="pm" disabled> Team plate — relay: one plate per team, one rider on course (EPIC)</label></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">solo_radio · mixed_radio · team_size_spin · pooled_radio · relay_radio (enabled only when mixed_radio)</code>
+</fieldset>
+<fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px 10px"><legend style="font-size:11px;padding:0 4px">Cards</legend>
+<div style="display:flex;gap:14px;align-items:center">Decks <input value="2" style="font:12px 'Segoe UI';padding:1px 4px;width:44px"> Jokers/deck:
+<label><input type="radio" name="jk"> 0</label><label><input type="radio" name="jk" defaultChecked="{{ true }}"> 2</label><label><input type="radio" name="jk"> 4</label>
+<label style="margin-left:12px"><input type="checkbox"> Card cap</label><input value="10" style="font:12px 'Segoe UI';padding:1px 4px;width:44px" disabled></div>
+<div style="margin-top:6px;display:flex;gap:8px;align-items:center">Tie-break order <span style="border:1px solid #ccc;background:#fff;padding:2px 8px">① Most laps ② Total time ③ High-card draw ▲▼</span></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">decks_spin · jokers_0_radio · jokers_2_radio (default) · jokers_4_radio · cap_chk · cap_spin · tiebreak_list (wxEditableListBox reorder arrows)</code>
+</fieldset>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 18px;font-weight:600">OK</button><button style="font:12px 'Segoe UI';padding:3px 14px">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_OK · wxID_CANCEL (wxStdDialogButtonSizer)</code>
+</div>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ code-side: entry/plate-model group locks after start (relay) or stays editable (pooled, R-17); tiebreak_list reorder persisted. All fields plain XRC.</div>
+</div>
+
+<div id="setstartdlg" style="width:340px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Set Start Time</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">set_start_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;gap:8px;align-items:center">Started at <input value="2026-09-20 ▾" style="font:12px 'Segoe UI';padding:2px 4px;width:108px"> <input value="10:02:30 ▾" style="font:12px 'Segoe UI';padding:2px 4px;width:86px"></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">start_date_picker · start_time_picker</code>
+<div style="color:#555;font-size:11.5px">Lap-1 times recompute from this moment.</div>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 18px;font-weight:600">OK</button><button style="font:12px 'Segoe UI';padding:3px 14px">Cancel</button></div>
+</div>
+</div>
+
+<div id="stopdlg" style="width:360px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Stop Ride?</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">stop_confirm_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+<div>The clock stops for everyone. Riders still on course keep their laps; no cards are dealt after stop. You can continue the ride later without losing anything.</div>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px">Stop ride</button><button style="font:12px 'Segoe UI';padding:3px 14px;font-weight:600">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_OK "Stop ride" · wxID_CANCEL (default + focused)</code>
+</div>
+</div>
+
+<div id="finishdlg" style="width:360px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Finish Ride?</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">finish_confirm_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+<div>Locks entry and computes final standings (evaluator self-test must be green). You can reopen later for corrections.</div>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px">Finish ride</button><button style="font:12px 'Segoe UI';padding:3px 14px;font-weight:600">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_OK "Finish ride" · wxID_CANCEL (default)</code>
+</div>
+</div>
+
+<div id="continuedlg" style="width:380px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Ride Already Has Data</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">continue_or_new_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+<div>This ride was stopped with 1 124 crossings recorded. Continue it (keeps start time and all data) or archive and start fresh?</div>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px;font-weight:600">Continue ride</button><button style="font:12px 'Segoe UI';padding:3px 14px">Archive &amp; start new</button><button style="font:12px 'Segoe UI';padding:3px 14px">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">continue_btn (wxID_OK, default) · archive_new_btn · wxID_CANCEL</code>
+</div>
+</div>
+
+<div id="resumedlg" style="width:380px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Resume Ride</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">resume_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+<div>"GORBA EPIC 2026" is still running — it kept timing on the wall clock. <span style="color:#555">(Wording swaps for crash: "The app closed unexpectedly…" — session_state)</span></div>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px;font-weight:600">Continue ride</button><button style="font:12px 'Segoe UI';padding:3px 14px">Open library</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">continue_btn (wxID_OK, default) · library_btn</code>
+</div>
+</div>
+
+<div id="exitdlg" style="width:380px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Ride Is Running</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">exit_running_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+<div>Quitting won't stop the ride — it keeps timing on the wall clock, and you'll be asked to continue when you reopen.</div>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px">Quit — keep ride running</button><button style="font:12px 'Segoe UI';padding:3px 14px;font-weight:600">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_OK "Quit…" · wxID_CANCEL (default)</code>
+</div>
+</div>
+</div>
+
+<div style="font-size:15px;font-weight:600;margin:30px 0 14px">C · Riders, corrections &amp; cards</div>
+<div style="display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start">
+
+<div id="ridereditor" style="width:640px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Rider Editor</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">rider_editor_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="display:flex;gap:0">
+<div style="flex:1;border-right:1px solid #ccc">
+<table style="width:100%;border-collapse:collapse">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;border-bottom:1px solid #ccc;font-weight:600">Plate</th><th style="padding:3px 8px;border-bottom:1px solid #ccc;font-weight:600">Name</th><th style="padding:3px 8px;border-bottom:1px solid #ccc;font-weight:600">Team</th></tr></thead>
+<tbody><tr style="background:#e8f0fe"><td style="padding:2px 8px">123</td><td>Sam Ellis</td><td>—</td></tr>
+<tr><td style="padding:2px 8px">77</td><td>A. Roy</td><td>Trail Blazers</td></tr>
+<tr><td style="padding:2px 8px">78</td><td>K. Singh</td><td>Trail Blazers</td></tr>
+<tr><td style="padding:2px 8px">212</td><td>M. Chen</td><td>—</td></tr></tbody></table>
+<div style="padding:3px 8px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">riders_list (Team col hidden in solo-only)</code></div>
+</div>
+<div style="width:230px;padding:10px;display:flex;flex-direction:column;gap:8px">
+<fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px"><legend style="font-size:11px;padding:0 4px">Rider</legend>
+<div style="display:grid;grid-template-columns:44px 1fr;gap:5px;align-items:center">
+<span>Plate</span><input value="213" style="font:12px 'Segoe UI';padding:2px 4px;width:70px">
+<span>Name</span><input style="font:12px 'Segoe UI';padding:2px 4px">
+<span>Team</span><select style="font:12px 'Segoe UI'"><option>— solo —</option><option>Trail Blazers</option><option>New team…</option></select></div>
+<div style="margin-top:6px;display:flex;gap:6px"><button style="font:12px 'Segoe UI';padding:2px 12px;font-weight:600">Add</button><button style="font:12px 'Segoe UI';padding:2px 10px">Save</button><button style="font:12px 'Segoe UI';padding:2px 10px">Delete</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;margin-top:4px">plate_input (next free) · name_input · team_choice · add_btn · save_btn · delete_btn</code>
+</fieldset>
+<div style="display:flex;gap:6px"><button style="font:12px 'Segoe UI';padding:2px 10px">Import CSV…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Export CSV…</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">import_btn · export_btn · wxID_CLOSE</code>
+<button style="font:12px 'Segoe UI';padding:2px 12px;align-self:flex-end">Close</button>
+</div>
+</div>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ code-side: list rows; team_choice content; delete disabled once entry has data (post-start = DNF/void only, R-15). Teams editable until start (relay) / during ride (pooled).</div>
+</div>
+
+<div id="csvdlg" style="width:430px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Import Riders — Preview</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">csv_preview_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div>riders.csv → <strong>178 riders · 12 teams · 3 conflicts</strong> <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">summary_lbl</code></div>
+<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ccc">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">Row</th><th style="padding:3px 8px;font-weight:600">Problem</th></tr></thead>
+<tbody><tr><td style="padding:2px 8px">41</td><td>Duplicate plate 77</td></tr><tr><td style="padding:2px 8px">96</td><td>Missing name</td></tr></tbody></table>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">conflicts_list</code>
+<div style="color:#555;font-size:11.5px">Nothing is written until you import. Re-import freely reshapes teams before start.</div>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px;font-weight:600">Import</button><button style="font:12px 'Segoe UI';padding:3px 14px">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_OK "Import" (disabled while conflicts &gt; 0) · wxID_CANCEL</code>
+</div>
+</div>
+
+<div id="entrydetail" style="width:560px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Entry Detail — 77 Trail Blazers</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">entry_detail_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div><strong>Team · 3 riders · 9 laps · 3:02:11</strong> — A. Roy (77) · K. Singh (78) · L. Marchetti (79) <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">entry_header_lbl · members_lbl</code></div>
+<fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px"><legend style="font-size:11px;padding:0 4px">Cards held (9)</legend>
+<div style="display:flex;gap:4px">
+<span style="display:inline-block;width:24px;height:32px;border:1px solid #999;background:#fff;text-align:center;font-size:12px;line-height:2.4;color:#c00">9♥</span>
+<span style="display:inline-block;width:24px;height:32px;border:1px solid #999;background:#fff;text-align:center;font-size:12px;line-height:2.4">K♠</span>
+<span style="display:inline-block;width:24px;height:32px;border:1px solid #999;background:#fff;text-align:center;font-size:12px;line-height:2.4">K♣</span>
+<span style="display:inline-block;width:24px;height:32px;border:1px solid #999;background:#fff;text-align:center;font-size:11px;line-height:2.6">JK★</span>
+<span style="display:inline-block;width:24px;height:32px;border:1px solid #999;background:#fff;text-align:center;font-size:12px;line-height:2.4;color:#c00">4♦</span><span style="align-self:center;color:#777">…</span></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">cards_list (wxDataViewListCtrl icon mode / imagelist bitmaps)</code>
+</fieldset>
+<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ccc">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">Lap</th><th style="padding:3px 8px;font-weight:600">Time</th><th style="padding:3px 8px;font-weight:600">Lap time</th><th style="padding:3px 8px;font-weight:600">Rider</th><th style="padding:3px 8px;font-weight:600">Card</th></tr></thead>
+<tbody><tr><td style="padding:2px 8px">9</td><td>14:22:18</td><td>19:55</td><td>78</td><td>K♣</td></tr><tr><td style="padding:2px 8px">8</td><td>14:02:23</td><td>21:40</td><td>77</td><td>JK★</td></tr></tbody></table>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">laps_list</code>
+<div style="display:flex;gap:6px;flex-wrap:wrap"><button style="font:12px 'Segoe UI';padding:2px 10px">Edit crossing…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Deal card…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Void card…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Move rider…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Mark DNF…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Audit trail</button><button style="font:12px 'Segoe UI';padding:2px 12px;margin-left:auto">Close</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">edit_crossing_btn · deal_card_btn · void_card_btn · move_rider_btn (pooled only) · dnf_btn · audit_btn · wxID_CLOSE</code>
+</div>
+</div>
+
+<div id="editcrossing" style="width:360px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Edit Crossing <span style="color:#888">/ Add Crossing at Time</span></span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">edit_crossing_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div style="display:grid;grid-template-columns:60px 1fr;gap:6px;align-items:center">
+<span>Plate</span><input value="45" style="font:12px 'Segoe UI';padding:2px 4px;width:80px">
+<span>Time</span><input value="14:21:59 ▾" style="font:12px 'Segoe UI';padding:2px 4px;width:100px">
+<span>Reason</span><input value="mis-keyed plate" style="font:12px 'Segoe UI';padding:2px 4px"></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">plate_input · time_picker · reason_input · void_btn (edit mode only)</code>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:2px 10px">Void crossing…</button><button style="font:12px 'Segoe UI';padding:3px 16px;font-weight:600">OK</button><button style="font:12px 'Segoe UI';padding:3px 12px">Cancel</button></div>
+</div>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ one XRC dialog, two titles: Cards ▸ Edit / Add-at-Time set title + prefill in code; reason required, audit-logged.</div>
+</div>
+
+<div id="reassigndlg" style="width:340px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Reassign Plate</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">reassign_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div>Crossing 14:21:59 · lap credited to <strong>45</strong> <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">crossing_lbl</code></div>
+<div style="display:grid;grid-template-columns:80px 1fr;gap:6px;align-items:center"><span>New plate</span><input value="46" style="font:12px 'Segoe UI';padding:2px 4px;width:80px"><span>Reason</span><input style="font:12px 'Segoe UI';padding:2px 4px"></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">new_plate_input · reason_input</code>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 16px;font-weight:600">OK</button><button style="font:12px 'Segoe UI';padding:3px 12px">Cancel</button></div>
+</div>
+</div>
+
+<div id="dealdlg" style="width:340px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Deal Manual Card</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">manual_deal_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div style="display:grid;grid-template-columns:60px 1fr;gap:6px;align-items:center"><span>Plate</span><input value="45" style="font:12px 'Segoe UI';padding:2px 4px;width:80px"><span>Reason</span><input value="flagged lap confirmed" style="font:12px 'Segoe UI';padding:2px 4px"></div>
+<div style="color:#555;font-size:11.5px">Deals the next card from the shoe — deterministic, audit-logged.</div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">plate_input · reason_input</code>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 16px;font-weight:600">Deal</button><button style="font:12px 'Segoe UI';padding:3px 12px">Cancel</button></div>
+</div>
+</div>
+
+<div id="dnfdlg" style="width:340px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Mark DNF</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">dnf_confirm_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div><strong>212 · M. Chen</strong> — keeps laps and cards, ranked in the DNF block. Reversible. <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">entry_lbl</code></div>
+<div style="display:grid;grid-template-columns:60px 1fr;gap:6px;align-items:center"><span>Reason</span><input value="mechanical" style="font:12px 'Segoe UI';padding:2px 4px"></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">reason_input</code>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px">Mark DNF</button><button style="font:12px 'Segoe UI';padding:3px 12px;font-weight:600">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_OK "Mark DNF" · wxID_CANCEL (default)</code>
+</div>
+</div>
+</div>
+
+<div style="font-size:15px;font-weight:600;margin:30px 0 14px">D · Results, library, audit</div>
+<div style="display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start">
+
+<div id="resultsframe" style="width:720px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Results — GORBA EPIC 2026 (FINISHED 16:02:11)</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">results_frame</code><span style="margin-left:auto;color:#666">— ▢ ✕</span></div>
+<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;gap:10px;align-items:center">Tie-break: <span style="border:1px solid #ccc;background:#fff;padding:2px 8px">① Most laps ② Total time ③ High-card draw ▲▼</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">tiebreak_list (re-rank live)</code><button style="font:12px 'Segoe UI';padding:2px 10px;margin-left:auto">Reopen ride…</button><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">reopen_btn</code></div>
+<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ccc;font-variant-numeric:tabular-nums">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">Place</th><th style="padding:3px 8px;font-weight:600">Plate</th><th style="padding:3px 8px;font-weight:600">Entry</th><th style="padding:3px 8px;font-weight:600">Laps</th><th style="padding:3px 8px;font-weight:600">Total</th><th style="padding:3px 8px;font-weight:600">Best 5</th><th style="padding:3px 8px;font-weight:600">Hand</th></tr></thead>
+<tbody>
+<tr><td style="padding:3px 8px;font-weight:700">1</td><td>77</td><td>Trail Blazers</td><td>9</td><td>5:44:02</td><td>K♠ K♣ K♦ JK★ 9♥</td><td>Four of a kind, kings</td></tr>
+<tr><td style="padding:3px 8px;font-weight:700">2</td><td>123</td><td>Sam Ellis</td><td>8</td><td>5:51:17</td><td>Q♥ J♥ T♥ 9♥ 8♥</td><td>Straight flush, queen-high</td></tr>
+<tr><td style="padding:3px 8px;font-weight:700">3</td><td>8</td><td>R. Dubois</td><td>7</td><td>5:38:44</td><td>A♣ A♦ A♥ 4♦ 4♠</td><td>Full house, aces over fours</td></tr>
+</tbody></table>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">standings_list (full field; DNF block last; card bitmaps via imagelist)</code>
+<fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px 10px"><legend style="font-size:11px;padding:0 4px">Publish options</legend>
+<div style="display:flex;gap:16px;flex-wrap:wrap">
+<label><input type="checkbox"> Show lap &amp; total times</label>
+<label><input type="checkbox" defaultChecked="{{ true }}"> Laps leaderboard</label>
+<label><input type="checkbox"> Fastest-time leaderboard</label>
+<label><input type="checkbox" defaultChecked="{{ true }}"> Full field</label>
+<label><input type="checkbox" defaultChecked="{{ true }}"> All cards drawn</label></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">show_times_chk (off default; hides Total col here too) · laps_board_chk · time_board_chk · full_field_chk · all_cards_chk</code>
+</fieldset>
+<div style="display:flex;gap:8px"><button style="font:12px 'Segoe UI';padding:3px 12px;font-weight:600">Export HTML…</button><button style="font:12px 'Segoe UI';padding:3px 12px">Export PDF…</button><button style="font:12px 'Segoe UI';padding:3px 12px">Podium poster…</button><button style="font:12px 'Segoe UI';padding:3px 12px">Export CSV…</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">export_html_btn · export_pdf_btn · poster_btn · export_csv_btn</code>
+</div>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ code-side: standings rows; "draw required" tie rows highlighted with a ⚠ badge column; stale-export flag banner (wxInfoBar stale_infobar) after reopened corrections.</div>
+</div>
+
+<div id="librarydlg" style="width:520px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Ride Library</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">ride_library_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ccc">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">Ride</th><th style="padding:3px 8px;font-weight:600">Date</th><th style="padding:3px 8px;font-weight:600">Status</th><th style="padding:3px 8px;font-weight:600">Entries</th></tr></thead>
+<tbody><tr style="background:#e8f0fe"><td style="padding:2px 8px">GORBA EPIC 2026</td><td>2026-09-20</td><td>RUNNING</td><td>180</td></tr>
+<tr><td style="padding:2px 8px">Club poker night</td><td>2026-06-11</td><td>FINISHED</td><td>24</td></tr></tbody></table>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">rides_list</code>
+<div style="display:flex;gap:6px"><button style="font:12px 'Segoe UI';padding:2px 12px;font-weight:600">Open</button><button style="font:12px 'Segoe UI';padding:2px 10px">New…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Duplicate…</button><button style="font:12px 'Segoe UI';padding:2px 10px">Delete…</button><button style="font:12px 'Segoe UI';padding:2px 12px;margin-left:auto">Close</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">wxID_OPEN · wxID_NEW · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE</code>
+</div>
+</div>
+
+<div id="deletedlg" style="width:380px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Delete Ride</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">delete_ride_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<div>Deletes <strong>"Club poker night"</strong> and all its data. A backup is written first. Type the ride's name to confirm:</div>
+<input placeholder="Club poker night" style="font:12px 'Segoe UI';padding:2px 4px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">confirm_name_input</code>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 14px" disabled>Delete</button><button style="font:12px 'Segoe UI';padding:3px 12px;font-weight:600">Cancel</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_DELETE (enabled on exact match) · wxID_CANCEL (default)</code>
+</div>
+</div>
+
+<div id="auditdlg" style="width:520px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Audit Trail</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">audit_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+<div style="display:flex;gap:8px;align-items:center"><input placeholder="Filter by plate/entry…" style="font:12px 'Segoe UI';padding:2px 6px;width:170px"><select style="font:12px 'Segoe UI'"><option>All actions</option><option>Crossing edits</option><option>Card deals/voids</option><option>Moves</option><option>DNF</option><option>Shoe reshuffle</option></select></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">audit_search (wxSearchCtrl) · action_choice</code>
+<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ccc">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">When</th><th style="padding:3px 8px;font-weight:600">Who</th><th style="padding:3px 8px;font-weight:600">Action</th><th style="padding:3px 8px;font-weight:600">Entry</th><th style="padding:3px 8px;font-weight:600">Reason</th></tr></thead>
+<tbody><tr><td style="padding:2px 8px">14:23:02</td><td>scorer</td><td>Void crossing</td><td>45</td><td>mis-key</td></tr>
+<tr><td style="padding:2px 8px">14:21:40</td><td>scorer</td><td>Manual deal 7♦</td><td>45</td><td>flag confirmed</td></tr></tbody></table>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">audit_list (newest first)</code>
+<div style="display:flex;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:2px 12px">Close</button></div>
+</div>
+</div>
+</div>
+
+<div style="font-size:15px;font-weight:600;margin:30px 0 14px">E · System &amp; help</div>
+<div style="display:flex;flex-wrap:wrap;gap:30px;align-items:flex-start">
+
+<div id="settingsdlg" style="width:400px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Settings</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">settings_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:10px">
+<fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px 10px"><legend style="font-size:11px;padding:0 4px">Appearance</legend>
+<label style="margin-right:14px"><input type="radio" name="ap" defaultChecked="{{ true }}"> System</label>
+<label style="margin-right:14px"><input type="radio" name="ap"> Light</label>
+<label><input type="radio" name="ap"> Dark</label>
+<div style="margin-top:4px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">appearance_system_radio (default) · appearance_light_radio · appearance_dark_radio — 4.2.5 baseline: macOS follows OS, Windows light (Dark disabled, "needs wxPython 4.3" hint); SetAppearance activates on wx 3.3+</code></div></fieldset>
+<label><input type="checkbox" defaultChecked="{{ true }}"> Sound on crossing (recorded / flagged / error cues)</label>
+<label><input type="checkbox"> Hide times on the console (toggle any time, even mid-ride)</label>
+<div style="display:flex;gap:8px;align-items:center">Text zoom <input value="100% ▾" style="font:12px 'Segoe UI';padding:2px 4px;width:64px"><button style="font:12px 'Segoe UI';padding:2px 10px;margin-left:auto">Back up now</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">sound_chk · hide_times_chk · zoom_choice · backup_now_btn</code>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 18px;font-weight:600">OK</button><button style="font:12px 'Segoe UI';padding:3px 14px">Cancel</button></div>
+</div>
+</div>
+
+<div id="aboutdlg" style="width:360px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">About RiverCrossing</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">about_dlg (Help ▸ wxID_ABOUT)</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:14px;display:flex;flex-direction:column;gap:8px;align-items:center;text-align:center">
+<img src="https://gorba.ca/wp-content/uploads/2024/02/gorba-logo-green.png" alt="GORBA" style="height:52px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">about_logo_bmp (ride logo, falls back to app icon)</code>
+<div style="font-size:15px;font-weight:600">RiverCrossing <span style="font-weight:400">1.0.0</span> <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">version_lbl</code></div>
+<div style="font-size:11.5px;color:#555">Timing &amp; poker-hand scoring for poker-run rides.<br>Built for GORBA — <a href="https://gorba.ca">gorba.ca</a> <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">gorba_link (wxHyperlinkCtrl)</code></div>
+<button style="font:12px 'Segoe UI';padding:3px 16px">Close</button>
+</div>
+</div>
+
+<div id="shortcutsdlg" style="width:420px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Keyboard Shortcuts</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">shortcuts_dlg (Help ▸ mi_shortcuts)</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+<table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ccc">
+<thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">Key</th><th style="padding:3px 8px;font-weight:600">Action</th></tr></thead>
+<tbody><tr><td style="padding:2px 8px;width:110px">Enter</td><td>Record crossing for typed plate</td></tr>
+<tr><td style="padding:2px 8px">Ctrl+Z</td><td>Undo last crossing</td></tr>
+<tr><td style="padding:2px 8px">F5</td><td>Standings (Results window)</td></tr>
+<tr><td style="padding:2px 8px">F1</td><td>User guide</td></tr></tbody></table>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">shortcuts_list (read-only; rows filled in code from the accelerator table — cannot drift)</code>
+<div style="display:flex;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:2px 12px">Close</button></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_CLOSE</code>
+</div>
+</div>
+
+<div id="selftestdlg" style="width:400px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Evaluator Self-Test</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">selftest_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:8px">
+<textarea readonly style="font:11px Consolas,monospace;height:90px;resize:none">7,462 distinct ranks ........ PASS
+Joker vector table (28) ..... PASS
+Five-of-a-kind ordering ..... PASS
+Whole-field 180×12 timing ... 0.31 s PASS</textarea>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">selftest_output (read-only wxTextCtrl, monospace) · rerun_btn</code>
+<div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:2px 10px">Run again</button><button style="font:12px 'Segoe UI';padding:3px 14px">Close</button></div>
+</div>
+</div>
+</div>
+</section>
+</x-dc>
+</body>
+</html>

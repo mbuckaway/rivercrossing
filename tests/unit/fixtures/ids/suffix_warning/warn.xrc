@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resource>
+  <object class="wxDialog" name="warn_dlg">
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+      <object class="sizeritem">
+        <object class="wxButton" name="ok_btn">
+          <label>OK</label>
+        </object>
+      </object>
+      <object class="sizeritem">
+        <object class="wxStaticText" name="mystery_widget">
+          <label>?</label>
+        </object>
+      </object>
+    </object>
+  </object>
+</resource>

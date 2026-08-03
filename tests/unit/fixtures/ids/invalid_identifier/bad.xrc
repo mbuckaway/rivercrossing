@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resource>
+  <object class="wxDialog" name="bad_identifier_dlg">
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="bad-name"/>
+      </object>
+    </object>
+  </object>
+</resource>

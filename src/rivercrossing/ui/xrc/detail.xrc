@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Entry Detail dialog (spec.md 15b file map, xrc-windows.md section C)
+  - the 10 frozen controls the canvas annotates plus the stock
+  wxID_CLOSE. Control names are frozen; tests find them with
+  FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
+  (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3 (tools/toolkit_probe.py):
+
+    * wxDataViewListCtrl cannot be authored here: its XRC handler
+      hard-forces the control name to "dataviewCtrl". cards_list and
+      laps_list are wxDataViewCtrl, whose name IS honoured; columns,
+      rows and the card bitmaps come from code (canvas code-side
+      items 1 and 2).
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). No
+      minimum is documented for this dialog, so it declares no <size>
+      and the sizer handler Fit()s it and applies SetSizeHints().
+
+  Code-side per the canvas: entry_header_lbl and members_lbl text; the
+  "Cards held" count in the static box label (SetLabel on its
+  GetStaticBox()); cards_list as a horizontal card strip drawn from the
+  53-bitmap imagelist; laps_list rows; move_rider_btn enabled for
+  pooled rides only.
+-->
+<resource>
+
+  <object class="wxDialog" name="entry_detail_dlg">
+    <title>Entry Detail</title>
+    <!-- R-05 requires resizable windows; the in-app text zoom (90-150%)
+         cannot work in a fixed-size dialog. spec.md 13 says "dialogs
+         fixed-size" - recorded conflict, resolved in favour of R-05. -->
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- One line on the canvas: the entry summary, then its riders. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxStaticText" name="entry_header_lbl">
+              <label></label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="members_lbl">
+              <label></label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <!-- The canvas heading reads "Cards held (9)"; the count is
+           appended in code, the static box owns the wording. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Cards held</label>
+          <orient>wxVERTICAL</orient>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxDataViewCtrl" name="cards_list"/>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="laps_list"/>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="edit_crossing_btn">
+              <label>Edit crossing…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="deal_card_btn">
+              <label>Deal card…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="void_card_btn">
+              <label>Void card…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="move_rider_btn">
+              <label>Move rider…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="dnf_btn">
+              <label>Mark DNF…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="audit_btn">
+              <label>Audit trail</label>
+            </object>
+          </object>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CLOSE"/>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

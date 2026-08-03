@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="stylesheet" href="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/styles.css">
+<script src="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/_ds_bundle.js"></script>
+<style>body{margin:0;background:var(--color-bg)}a{color:var(--color-accent-700)}a:hover{color:var(--color-accent-900)}
+pre.sk{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.55;margin:0;padding:14px 16px;overflow-x:auto;color:var(--color-text);background:transparent;white-space:pre}
+pre.sk b{color:var(--color-accent-700);font-weight:700}
+pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
+</helmet>
+<div style="font-family:var(--font-body);color:var(--color-text);max-width:1060px;margin:0 auto;padding:36px 40px 60px;font-size:14px">
+
+<div style="display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--color-divider);padding-bottom:18px">
+<img src="https://gorba.ca/wp-content/uploads/2024/02/gorba-logo-green.png" alt="GORBA" style="height:48px;width:auto">
+<div>
+<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);font-family:var(--font-heading);font-weight:600">Build plan · v1.0 · July 24 2026 · companion to Spec §11</div>
+<h1 style="font-family:var(--font-heading);font-size:30px;margin:2px 0 0">RiverCrossing — Module Skeletons</h1>
+</div>
+<div style="margin-left:auto;text-align:right;font-size:12px" class="text-muted">Repo layout · public APIs · build order<br>Names here are binding for implementation</div>
+</div>
+
+<p style="font-size:13.5px;margin-top:14px;max-width:82ch" class="text-muted">The file-level plan of the repository: where every module lives, its public surface (the skeleton the tdd-python-writer agent writes tests against first), and the order to build. Grounded in current Python packaging practice (src/ layout + pyproject.toml) and the wxPython community's MVP "passive view" pattern — wx appears <em>only</em> in the view layer; presenters and models import no wx and test headless.</p>
+
+<h2 style="font-family:var(--font-heading);font-size:24px;margin-top:26px">S1 · Layout principles</h2>
+<ul style="font-size:14px;line-height:1.65;margin:8px 0 0;padding-left:20px">
+<li><strong>src/ layout, one installable package.</strong> Code lives under <code style="font-family:ui-monospace,monospace;font-size:12.5px">src/rivercrossing/</code>; tests import the <em>installed</em> package (editable install), never the working directory — the standard guard against false-green imports.</li>
+<li><strong>pyproject.toml is the whole config</strong> — metadata, dependencies, entry points, plus tool tables for ruff, mypy (strict), pytest and coverage. No setup.py, no requirements.txt.</li>
+<li><strong>MVP, passive view.</strong> Views (wx) are dumb: they render view-models and forward events. Presenters are pure Python — they hold UI logic, call the core, and are unit-tested headless with fake views (satisfying R-71's zero-wx rule and §12's functional harness). Business logic lives below both, in the core modules.</li>
+<li><strong>Core modules are libraries</strong> (R-71): each imports alone, tests alone, and could ship alone — the card algorithm (<code style="font-family:ui-monospace,monospace;font-size:12.5px">hands</code>) especially, per the simulation mandate.</li>
+<li><strong>Nothing invents names.</strong> Module names below are exactly Spec §11's; dialog/window names map 1:1 to the UI designs (ids in comments).</li>
+</ul>
+
+<h2 style="font-family:var(--font-heading);font-size:24px;margin-top:26px">S2 · Repository tree</h2>
+<div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><pre class="sk">rivercrossing/
+├── pyproject.toml              <i># PEP 621 metadata + ruff/mypy/pytest/coverage config</i>
+├── README.md · LICENSE · CHANGELOG.md
+├── .github/workflows/
+│   ├── ci.yml                  <i># §14 six-stage matrix: windows-latest + macos-latest</i>
+│   └── release.yml             <i># tag → PyInstaller → Inno Setup .exe / notarized .dmg</i>
+├── installers/
+│   ├── rivercrossing.spec           <i># PyInstaller (both OSes, one spec)</i>
+│   ├── windows.iss             <i># Inno Setup, per-user, unsigned (R-01)</i>
+│   └── dmg_settings.py         <i># dmgbuild config; codesign + notarize in release.yml</i>
+├── docs/user-guide/            <i># per the User Guide outline (6a)</i>
+├── src/rivercrossing/
+│   ├── __init__.py             <i># __version__ single source</i>
+│   ├── __main__.py             <i># python -m rivercrossing → ui.app.main()</i>
+│   ├── py.typed
+│   ├── cards.py                <i># card model + seeded Shoe</i>
+│   ├── hands.py                <i># poker evaluator: eval5 + wild layer + ranking table</i>
+│   ├── standings.py            <i># ordering, tie-breaks ①②③, leaderboards</i>
+│   ├── ride.py                 <i># state machine, crossings, timing, undo</i>
+│   ├── store/
+│   │   ├── __init__.py         <i># Store facade (public API)</i>
+│   │   ├── schema.py           <i># DDL v1 + PRAGMAs (WAL, foreign_keys)</i>
+│   │   ├── migrations.py       <i># linear, numbered, idempotent</i>
+│   │   ├── writer.py           <i># the single async writer task (§10)</i>
+│   │   ├── audit.py            <i># append-only audit log (R-33/R-38)</i>
+│   │   └── backup.py           <i># open + hourly + manual, keep 20 (R-54)</i>
+│   ├── csvio.py                <i># §7 import/export, preview-then-commit</i>
+│   ├── htmlexport.py           <i># §8 Jinja2 renderer (self-contained page)</i>
+│   │   └── templates/          <i>#   base.html.j2 + widget macros + vendored CSS/fonts</i>
+│   ├── pdfexport.py            <i># §8b fpdf2 renderer + podium poster (5a–5d)</i>
+│   └── ui/
+│       ├── app.py              <i># WxAsyncApp bootstrap, theme + session wiring</i>
+│       ├── theme.py            <i># the one token table, light+dark (R-03)</i>
+│       ├── sound.py            <i># three WAV cues per §10 (recorded/flagged/error)</i>
+│       ├── ids.py              <i># mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)</i>
+│       ├── xrc/                <i># canonical UI: main, setup, riders, detail, results,</i>
+│       │                       <i>#   library, audit, settings, dialogs (.xrc — Spec §15b)</i>
+│       ├── assets/             <i># icons, cue WAVs, cards/ (53 bitmaps @1x/2x), fonts</i>
+│       ├── presenters/         <i># pure Python, no wx — one per window</i>
+│       │   ├── console.py · setup.py · riders.py · results.py
+│       │   ├── library.py · detail.py · audit.py · settings.py
+│       └── views/              <i># wx only — thin loaders binding xrc/ resources, no business logic</i>
+│           ├── main_frame.py   <i># 1a/1b + menubar (2c) + status bar</i>
+│           ├── console_panel.py<i># feed, entry field, counters (1a, 8a–8c)</i>
+│           ├── ride_setup.py   <i># 1c/7a</i>
+│           ├── rider_editor.py <i># 1d/2b + csv preview (3e)</i>
+│           ├── entry_detail.py <i># 1e/7b</i>
+│           ├── results_win.py  <i># 1f</i>
+│           ├── ride_library.py <i># 1g</i>
+│           ├── audit_view.py   <i># Ride ▸ Audit Trail (R-38)</i>
+│           └── dialogs.py      <i># 3a–3f, 4a: settings, DNF, edit-crossing,</i>
+│                               <i>#   confirms, resume/exit, about, self-test</i>
+└── tests/                      <i># mirrors src; see S5</i></pre></div>
+
+<h2 style="font-family:var(--font-heading);font-size:24px;margin-top:26px">S3 · Build order &amp; dependency graph</h2>
+<p style="font-size:13.5px;max-width:82ch">Strictly bottom-up; each module goes red→green→refactor before the next starts (R-70). Arrows read "imports".</p>
+<div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><pre class="sk"><b>1 cards</b> ── no deps
+<b>2 hands</b> ── no deps                        <i>(pure algorithm; vectors + Hypothesis + brute force)
+</i><b>3 standings</b> ─→ hands                     <i>(ranking + tie-breaks over evaluated hands)
+</i><b>4 ride</b> ─→ cards                          <i>(state machine deals via Shoe; no DB, no wx)
+</i><b>5 store</b> ─→ ride, cards                   <i>(persists events; replays them back into RideEngine)
+</i><b>6 csvio</b> ─→ store models
+<b>7 htmlexport / 8 pdfexport</b> ─→ standings, store models
+<b>9 ui.presenters</b> ─→ ride, store, standings, csvio, exports
+<b>10 ui.views + app</b> ─→ presenters, theme, sound, ids   <i>(wx enters here, nowhere else)
+</i><b>11 installers + CI release lane</b>          <i>(smoke test the built binary, §14)</i></pre></div>
+
+<h2 style="font-family:var(--font-heading);font-size:24px;margin-top:26px">S4 · Module skeletons — public surfaces</h2>
+<p style="font-size:13.5px;max-width:82ch" class="text-muted">Signatures the tests are written against. Internals are free; these names are not. All dataclasses are frozen unless noted; times are aware UTC datetimes; durations are float seconds.</p>
+
+<div style="display:grid;grid-template-columns:1fr;gap:18px;margin-top:12px">
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.cards — deck model &amp; seeded shoe <span class="text-muted" style="font-weight:400">(§4)</span></div>
+<pre class="sk"><b>class</b> Suit(Enum): CLUBS DIAMONDS HEARTS SPADES
+<b>class</b> Rank(IntEnum): TWO=2 … TEN=10 JACK=11 QUEEN=12 KING=13 ACE=14
+<b>@dataclass</b> Card(rank: Rank | None, suit: Suit | None, joker: bool = False)
+    .code() -> str            <i># "AS", "TD", "JK" — the stored form</i>
+    Card.parse(code: str) -> Card
+<b>class</b> Shoe:                   <i># deterministic multi-deck shoe</i>
+    __init__(decks: int, jokers_per_deck: int, seed: int)
+    deal() -> tuple[Card, int]          <i># (card, deal_index); raises ShoeEmpty</i>
+    reshuffle() -> None                 <i># new cycle; audit caller logs it (§4)</i>
+    remaining: int · dealt: int · cycle: int
+    Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int) -> Shoe
+<i># invariant: same (config, seed) ⇒ identical deal sequence (R-40)</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.hands — the card algorithm <span class="text-muted" style="font-weight:400">(§5 · R-41/42/44)</span></div>
+<pre class="sk"><b>class</b> HandClass(IntEnum):     <i># low beats high nothing — order is the local ranking table</i>
+    HIGH_CARD PAIR TWO_PAIR TRIPS STRAIGHT FLUSH FULL_HOUSE
+    QUADS STRAIGHT_FLUSH ROYAL_FLUSH FIVE_OF_A_KIND
+<b>@dataclass</b> EvaluatedHand(cls: HandClass, tiebreak: tuple[int, ...],
+                         best5: tuple[Card, ...], jokers_played_as: tuple[Card, ...])
+    <i># total order: (cls, tiebreak); jokers rendered ★-as-card in exports</i>
+best_hand(cards: Sequence[Card]) -> EvaluatedHand      <i># 0..N cards, any joker count;</i>
+    <i># N&lt;5 ⇒ partial-hand rule; whole-field 180×12 &lt; 1 s (R-42)</i>
+compare(a: EvaluatedHand, b: EvaluatedHand) -> int
+self_test() -> SelfTestReport   <i># 7,462 distinct-rank sweep + joker vectors;</i>
+                                <i># wired to launch + Help menu; failure blocks Finish (R-44)</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.standings — ordering &amp; tie-breaks <span class="text-muted" style="font-weight:400">(§5 · R-43/60)</span></div>
+<pre class="sk"><b>class</b> TieBreak(Enum): MOST_LAPS TOTAL_TIME HIGH_CARD_DRAW
+<b>@dataclass</b> EntryResult(entry_id, plate, name, kind, laps, total_time,
+                       best_lap, cards, hand: EvaluatedHand, dnf: bool)
+<b>@dataclass</b> Placed(place: int, result: EntryResult, tie_note: str | None,
+                  draw_required: bool)                 <i># never silently ordered</i>
+rank(results, order: tuple[TieBreak, ...]) -> list[Placed]
+laps_leaderboard(results, top: int = 10) -> list[Placed]
+time_leaderboard(results, top: int = 10) -> list[Placed]   <i># most laps, then time</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.ride — state machine &amp; timing <span class="text-muted" style="font-weight:400">(§3/§6 · R-30…36)</span></div>
+<pre class="sk"><b>class</b> RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
+<b>class</b> RideEngine:             <i># pure; wall-clock injected for tests</i>
+    __init__(config: RideConfig, shoe: Shoe, clock: Callable[[], datetime])
+    start(at: datetime | None = None) -> Event          <i># button or retro time (R-30)</i>
+    set_start_time(at: datetime) -> Event               <i># lap-1 recompute (3d)</i>
+    record_crossing(plate: str, at=None) -> CrossingResult
+        <i># → lap n, lap_time, card | ShortLapFlagged (card held, 1h) | UnknownPlate</i>
+    add_crossing_at(plate: str, at: datetime) -> CrossingResult   <i># RUNNING·REOPENED</i>
+    undo_last() -> Event · edit_crossing(id, …) · void_crossing(id, reason)
+    reassign_crossing(id, plate) · deal_manual(plate, reason) · void_card(id, reason)
+    mark_dnf(entry_id, reason) · move_rider(rider_id, team_id)    <i># pooled only (R-17)</i>
+    stop() -> Event · finish() -> Event · reopen() -> Event       <i># REOPENED = corrections only</i>
+    state: RideStatus · elapsed() · remaining() · on_course: int
+    snapshot() -> list[EntryResult]                     <i># feeds standings live
+</i><i># every mutation returns an Event the store persists; engine rebuilds via replay(events)</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.store — persistence <span class="text-muted" style="font-weight:400">(§2/§9 · R-50…54)</span></div>
+<pre class="sk"><b>class</b> Store:                  <i># facade; sqlite3, WAL, foreign_keys ON</i>
+    Store.open(path) -> Store              <i># runs migrations; records session row</i>
+    rides() · create_ride(config) · duplicate_ride(id) · delete_ride(id, typed_name)
+    load_engine(ride_id) -> RideEngine     <i># replay events; shoe from stored seed</i>
+    append(ride_id, event: Event) -> None  <i># sync commit path</i>
+    audit(ride_id, filter=…) -> list[AuditRow]
+    session_state() -> SessionState        <i># CLEAN_QUIT | CRASHED | RUNNING_AT_EXIT (R-52)
+</i><b>class</b> AsyncWriter:            <i># §10 single writer; UI awaits put(), never blocks</i>
+    put(event) -> Awaitable[None] · drain() · close()
+backup.run(path, keep=20) · backup.schedule_hourly(…) · backup.restore(src, dst)
+<i>schema.py: rides · entries · riders · crossings · cards · audit · sessions · settings
+</i><i>(columns per Spec §2, incl. status enum with REOPENED, shoe seed, plate_model)</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.csvio / htmlexport / pdfexport <span class="text-muted" style="font-weight:400">(§7/§8/§8b · R-21/61/62/63)</span></div>
+<pre class="sk">csvio.preview(path, ride) -> ImportPreview      <i># counts + conflicts; writes nothing</i>
+csvio.commit(preview) -> ImportReport · csvio.export(ride, path) -> None
+<b>@dataclass</b> ExportOptions(show_times=False, laps_board=True, time_board=False,
+                        full_field=True, all_cards=True, lap_km=8.0)  <i># times hidden by default (R-63)</i>
+htmlexport.render(ride, placed, opts) -> str    <i># Jinja2 (autoescape, StrictUndefined),</i>
+    <i># base.html.j2 + macros (event_header, podium_card, standings_row,</i>
+    <i># laps_board, time_board, field_row, drawn_row) — STATIC markup, no page JS;</i>
+    <i># vendored Tailwind CSS + fonts inlined, payload JSON</i>
+    <i># embedded (</ escaped as <\/), logo base64; times off ⇒ neither cells nor JSON fields emitted.</i>
+    <i># Tests: golden pages from committed fixtures + JSON round-trip (§8)</i>
+pdfexport.render(ride, placed, opts, path)      <i># fpdf2, deterministic bytes (R-62)</i>
+pdfexport.podium_poster(ride, placed, path)     <i># one-page poster (5d)</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.ui — MVP shell <span class="text-muted" style="font-weight:400">(§10/§13/§15 · R-02/03/31/73/76)</span></div>
+<pre class="sk"><i># presenters: pure Python; each takes (view: Protocol, store, engine) and is
+</i><i># unit-tested with a FakeView. Views implement the Protocol with wx.
+</i><b>class</b> ConsoleView(Protocol):   show_feed(rows) · show_counters(c) · flash_crossing(r)
+                               set_state(RideStatus) · focus_entry() · play(cue)
+<b>class</b> ConsolePresenter:        on_plate_entered(text) · on_undo() · on_arm_stop(bool)
+                               on_stop_confirmed() · on_hide_times(bool) · tick()
+<i># same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv)
+</i><i># ResultsPresenter (1f flags, rerank on tie-break change) · LibraryPresenter (1g)
+</i><i># DetailPresenter (1e/7b) · AuditPresenter (R-38) · SettingsPresenter (3a)</i>
+app.main() -> int              <i># WxAsyncApp; resume dialog per session_state (4a/1h)</i>
+theme.tokens(mode) -> Tokens   <i># light|dark|system; live re-skin (R-03)</i>
+ids.py: PLATE_INPUT = "plate_input" …   <i># = XRC names, generated from xrc/ (§15b)</i>
+sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   <i># §10 cues, settings toggle</i></pre></div>
+</div>
+
+<h2 style="font-family:var(--font-heading);font-size:24px;margin-top:26px">S5 · tests/ — mirrors src, plus the harness</h2>
+<div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><pre class="sk">tests/
+├── unit/                      <i># per core module, headless, coverage ≥ 90% (R-71)</i>
+│   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py
+│   ├── test_store.py · test_csvio.py · test_htmlexport.py · test_pdfexport.py
+│   └── presenters/            <i># FakeView-driven presenter tests — still no wx</i>
+├── vectors/                   <i># 7,462-rank sweep data + joker vector table (R-44/72)</i>
+├── property/                  <i># Hypothesis: hands invariants, shoe determinism</i>
+├── simulations/               <i># seeded whole rides: 180×6 h, both entry modes,</i>
+│   └── test_simulated_rides.py<i>#   both plate models, 0/2/4 jokers, cap on/off (§12)</i>
+├── functional/                <i># real wx, driven via ids.py + wx.UIActionSimulator</i>
+│   ├── harness.py             <i># find-by-SetName, click, type, dialog hooks</i>
+│   ├── pages.py               <i># page objects per window (1a…8c)</i>
+│   └── test_menu_coverage.py  <i># walks every §15 route in every ride state (R-73)</i>
+├── acceptance/
+│   └── test_full_race.py      <i># scripted race incl. kill+relaunch, reopen→finish again (R-74)</i>
+└── conftest.py                <i># tmp DB per test, frozen clock, seeded shoes</i></pre></div>
+
+<h2 style="font-family:var(--font-heading);font-size:24px;margin-top:26px">S6 · pyproject.toml — the shape</h2>
+<div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><pre class="sk">[project]  name = "rivercrossing"  requires-python = ">=3.14"
+    <i># import package rivercrossing — renamed with the product (§11)</i>
+dependencies = ["wxPython~=4.2.5", "wxasync", "fpdf2", "jinja2"]  <i># wx 3.2 stable wheel;</i>
+    <i># dark mode auto-activates on the 4.3 upgrade (SetAppearance) — no code change</i>
+    <i># sqlite3 is stdlib; Tailwind CLI is a build-time asset step, not a runtime dep</i>
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",
+       "ruff", "mypy", "pyinstaller"]
+[project.gui-scripts]  rivercrossing = "rivercrossing.ui.app:main"
+[tool.ruff] · [tool.mypy] strict = true · [tool.pytest.ini_options]
+[tool.coverage.report] fail_under = 90        <i># core modules (R-71)</i></pre></div>
+
+<p style="font-size:11px;color:var(--color-neutral-500);border-top:1px solid var(--color-divider);padding-top:10px;margin-top:22px">Companions: Spec (§11 module table, §12 tests, §14 CI) · Requirements (R-70…R-77) · UI Designs (ids referenced in views/). Any rename here must be reflected in Spec §11 the same day — the two documents are one contract.</p>
+</div>
+</x-dc>
+</body>
+</html>

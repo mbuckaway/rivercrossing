@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="stylesheet" href="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/styles.css">
+<script src="_ds/industry-fba42e46-505a-4305-ac1d-c81457e191b1/_ds_bundle.js"></script>
+<style>body{margin:0;background:#e9e9ea}a{color:#416180}a:hover{color:#2c455d}@media print{body{background:#fff}}</style>
+</helmet>
+<div style="max-width:980px;margin:0 auto;padding:36px 20px 80px;font-family:var(--font-body);color:var(--color-text);font-size:14px">
+<div class="blueprint" style="background:var(--color-bg);padding:40px 48px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br"></i>
+
+<div style="display:flex;align-items:center;gap:16px;border-bottom:1px solid var(--color-divider);padding-bottom:18px">
+<img src="https://gorba.ca/wp-content/uploads/2024/02/gorba-logo-green.png" alt="GORBA" style="height:48px;width:auto">
+<div>
+<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--color-accent-700);font-family:var(--font-heading);font-weight:600">Requirements · v1.0 · July 23 2026 · binding for implementation</div>
+<h1 style="font-size:34px;margin:2px 0 0">RiverCrossing — Requirements</h1>
+</div>
+<div style="margin-left:auto;text-align:right;font-size:12px" class="text-muted">MUST = release blocker · SHOULD = v1 target<br>Trace: spec § / <a href="RiverCrossing - XRC Windows.dc.html">XRC window</a></div>
+</div>
+<p style="font-size:13px;margin-top:12px;max-width:82ch" class="text-muted">Each requirement is testable and traces to the <a href="RiverCrossing - Spec.dc.html">engineering spec</a> (§) and the <a href="RiverCrossing - XRC Windows.dc.html">XRC window designs</a> (window ids) — the artifacts code is built from; the retired <a href="RiverCrossing - UI Designs.dc.html">hi-fi designs</a> are history only, not required reading for the build. "The app works the first time" is enforced by R-70…R-77: nothing ships unless the full acceptance race passes on both OSes in CI.</p>
+
+<h2 style="font-size:22px;margin-top:22px">1 · Platform &amp; runtime</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-01</td><td>MUST</td><td>Runs on Windows 10/11 and macOS 13+ from installers: unsigned Inno Setup .exe (no Windows cert — SmartScreen step documented in the guide); Developer-ID-signed, notarized .dmg. One codebase, Python 3.14 + wxPython 4.2.5 (wxWidgets 3.2 stable — the latest released wheel; 4.3/wx 3.3 is the pinned upgrade path, R-03).</td><td>§10, §14</td></tr>
+<tr><td style="font-weight:700">R-02</td><td>MUST</td><td>Async UI: the plate entry field never blocks — every DB write, export and import runs off the UI loop (wxasync + single async writer).</td><td>§10</td></tr>
+<tr><td style="font-weight:700">R-03</td><td>MUST</td><td>Light and dark themes from one token table; follows the OS by default with manual override (System/Light/Dark radios) — on the 4.2.5 baseline macOS follows the OS natively and Windows ships light (Dark radio disabled with a "needs wxPython 4.3" hint); when wxPython 4.3 (wx 3.3, wxApp.SetAppearance) releases, the same radios activate unchanged. Native controls, never restyled.</td><td>§10 · <a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a>/<a href="RiverCrossing - XRC Windows.dc.html#settingsdlg">settingsdlg</a></td></tr>
+<tr><td style="font-weight:700">R-04</td><td>SHOULD</td><td>Per-monitor DPI awareness on Windows; View menu text zoom 90–150%.</td><td>§13</td></tr>
+<tr><td style="font-weight:700">R-05</td><td>MUST</td><td><strong>XRC-first UI generation:</strong> every UI artifact — window, dialog, menubar, panel — is authored in sizer-based XRC resources and loaded from them (native controls, resizable, no absolute positioning); code never builds layout programmatically except the documented code-side items (DataView columns/rows, imagelists, InfoBar text, state enabling). Snake_case XRC names are the canonical control registry per §15b, stock IDs for standard buttons; ids.py is generated from the .xrc files and drift fails CI.</td><td>§15b · <a href="RiverCrossing - XRC Windows.dc.html">XRC canvas</a></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">2 · Rides &amp; configuration</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-10</td><td>MUST</td><td>One SQLite database holds many rides; each ride stores name, date, venue, course, lap length, organizer, scorer, logo, planned start, duration, minimum lap time.</td><td>§2 · <a href="RiverCrossing - XRC Windows.dc.html#setupdlg">setupdlg</a>/<a href="RiverCrossing - XRC Windows.dc.html#librarydlg">librarydlg</a></td></tr>
+<tr><td style="font-weight:700">R-11</td><td>MUST</td><td>Entry mode per ride: <strong>solo-only (default)</strong> or solo + teams. Team UI is fully hidden in solo-only rides.</td><td>§1 · <a href="RiverCrossing - XRC Windows.dc.html#setupdlg">setupdlg</a>/<a href="RiverCrossing - XRC Windows.dc.html#ridereditor">ridereditor</a></td></tr>
+<tr><td style="font-weight:700">R-12</td><td>MUST</td><td>Max riders per team is a per-ride number entry, 2–10, default 4.</td><td>§1/§2 · <a href="RiverCrossing - XRC Windows.dc.html#setupdlg">setupdlg</a></td></tr>
+<tr><td style="font-weight:700">R-13</td><td>MUST</td><td>Shoe config per ride: deck count and jokers per deck (0/2/4, jokers wild); optional card cap X; laps past the cap still count.</td><td>§4/§5 · <a href="RiverCrossing - XRC Windows.dc.html#setupdlg">setupdlg</a></td></tr>
+<tr><td style="font-weight:700">R-14</td><td>MUST</td><td>Tie-break order (① laps ② total time ③ high-card draw) set at ride setup, draggable, and changeable after the finish with instant re-ranking.</td><td>§5 · <a href="RiverCrossing - XRC Windows.dc.html#setupdlg">setupdlg</a>/<a href="RiverCrossing - XRC Windows.dc.html#resultsframe">resultsframe</a></td></tr>
+<tr><td style="font-weight:700">R-16</td><td>MUST</td><td>Mixed rides choose a plate model: rider plates pooled to the team (<strong>default</strong> — each rider draws against their own unique plate, uncapped: one card per lap for as many laps as they ride; the team hand scores from the pooled cards, with the optional ride-level cap X applying to the pooled total) or team plate (relay — the EPIC's format).</td><td>§1/§2 · <a href="RiverCrossing - XRC Windows.dc.html#setupdlg">setupdlg</a></td></tr>
+<tr><td style="font-weight:700">R-17</td><td>MUST</td><td>Rider-pooled rides remain editable while running: riders move between teams with their plate, crossings and cards; every move audit-logged. Relay rides keep the start lock.</td><td>§3/§7 · <a href="RiverCrossing - XRC Windows.dc.html#entrydetail">entrydetail</a></td></tr>
+<tr><td style="font-weight:700">R-18</td><td>MUST</td><td>Ride library offers Delete: type the ride's name to confirm, automatic backup written first, never available on a RUNNING ride.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#librarydlg">librarydlg</a>/<a href="RiverCrossing - XRC Windows.dc.html#deletedlg">deletedlg</a></td></tr>
+<tr><td style="font-weight:700">R-15</td><td>MUST</td><td>Rides are duplicable (setup + roster, no timing data). Entries and teams are freely editable and deletable only until the start; after start, DNF/void only — nothing with recorded data is ever deleted.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#ridereditor">ridereditor</a>/<a href="RiverCrossing - XRC Windows.dc.html#librarydlg">librarydlg</a></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">3 · Riders, teams &amp; CSV</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-20</td><td>MUST</td><td>Rider editor: add/edit solo entries and teams (plate, name, members); plate unique per ride, prefilled with next free.</td><td>§2 · <a href="RiverCrossing - XRC Windows.dc.html#ridereditor">ridereditor</a></td></tr>
+<tr><td style="font-weight:700">R-21</td><td>MUST</td><td>CSV import and export per the §7 column spec (solo and teamN forms, rider_1…rider_N). Import previews counts + conflicts and writes nothing until confirmed; re-import reshapes teams freely until start.</td><td>§7 · <a href="RiverCrossing - XRC Windows.dc.html#csvdlg">csvdlg</a></td></tr>
+<tr><td style="font-weight:700">R-22</td><td>MUST</td><td>Team relay model: one plate per entry, one rider on course at a time; crossings may record which member rode the lap.</td><td>§1/§2 · <a href="RiverCrossing - XRC Windows.dc.html#entrydetail">entrydetail</a></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">4 · Timing console</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-30</td><td>MUST</td><td>Start by button or by setting the start time after the fact; elapsed/remaining derive from wall clock, never an in-memory timer.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a>/<a href="RiverCrossing - XRC Windows.dc.html#setstartdlg">setstartdlg</a></td></tr>
+<tr><td style="font-weight:700">R-31</td><td>MUST</td><td>Crossings recorded by typing plate + Enter; feedback (rider, lap, lap time, card) within 100 ms perceived; audio cues per spec; focus stays in the entry field.</td><td>§6/§10/§13 · <a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a></td></tr>
+<tr><td style="font-weight:700">R-32</td><td>MUST</td><td>Live feed shows the latest 20–30 crossings (time, plate, entry/rider, lap, lap time, total, card), newest first, plus counters (crossings, cards, on-course, shoe).</td><td><a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a></td></tr>
+<tr><td style="font-weight:700">R-33</td><td>MUST</td><td>Corrections: one-keystroke undo of the last crossing; edit/void any crossing; reassign plate; manual card deal/void; DNF. Every correction audit-logged with reason; undo is a compensating write.</td><td>§6 · <a href="RiverCrossing - XRC Windows.dc.html#editcrossing">editcrossing</a>/<a href="RiverCrossing - XRC Windows.dc.html#reassigndlg">reassigndlg</a>/<a href="RiverCrossing - XRC Windows.dc.html#dnfdlg">dnfdlg</a></td></tr>
+<tr><td style="font-weight:700">R-34</td><td>MUST</td><td>Crossings faster than the ride's minimum lap flag for review and hold their card until confirmed/voided/reassigned.</td><td>§6 · <a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a></td></tr>
+<tr><td style="font-weight:700">R-35</td><td>MUST</td><td>Stop is three deliberate acts: Arm checkbox enables the Stop button; Stop opens a confirm; only confirming stops. Arm auto-clears after use or 10 s.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a>/<a href="RiverCrossing - XRC Windows.dc.html#stopdlg">stopdlg</a></td></tr>
+<tr><td style="font-weight:700">R-36</td><td>MUST</td><td>Console renders all four states — DRAFT / RUNNING / FINISHED / REOPENED — per §13 (entry disabled outside RUNNING; REOPENED is corrections-only with edits highlighted).</td><td>§13 · <a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a></td></tr>
+<tr><td style="font-weight:700">R-38</td><td>MUST</td><td>Read-only audit trail viewer (Ride ▸ Audit Trail…): when · who · action · entry · reason, newest first, filterable by entry/action; Entry detail deep-links pre-filtered.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#auditdlg">auditdlg</a></td></tr>
+<tr><td style="font-weight:700">R-37</td><td>MUST</td><td>Settings "Hide times on the console" — toggleable while a ride runs; lap/total columns and per-crossing times disappear, the closing-window clock stays, times keep recording underneath.</td><td>§13 · <a href="RiverCrossing - XRC Windows.dc.html#mainframe">mainframe</a>/<a href="RiverCrossing - XRC Windows.dc.html#settingsdlg">settingsdlg</a></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">5 · Cards &amp; poker scoring</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-40</td><td>MUST</td><td>Each completed lap deals one card from a seeded, shuffled multi-deck shoe; the deal is deterministic and replayable from the stored seed; empty shoe reshuffles with an audit entry.</td><td>§4</td></tr>
+<tr><td style="font-weight:700">R-41</td><td>MUST</td><td>Standings rank entries by best 5-card hand from all held cards, jokers fully wild, five of a kind above royal flush; ranking table per §5 stored locally.</td><td>§5</td></tr>
+<tr><td style="font-weight:700">R-42</td><td>MUST</td><td>The hand algorithm handles 0–2+ jokers and any card count up to the cap; whole-field evaluation (180 entries × 12 cards) completes in under 1 s.</td><td>§5/§11</td></tr>
+<tr><td style="font-weight:700">R-43</td><td>MUST</td><td>Identical hands resolve by the configured tie-break order; unresolved ties are flagged "draw required", never silently ordered.</td><td>§5 · <a href="RiverCrossing - XRC Windows.dc.html#resultsframe">resultsframe</a></td></tr>
+<tr><td style="font-weight:700">R-44</td><td>MUST</td><td>Evaluator self-test (7,462 ranks + joker vectors) runs at launch and on demand from Help; failure blocks finishing a ride.</td><td>§12 · <a href="RiverCrossing - XRC Windows.dc.html#selftestdlg">selftestdlg</a></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">6 · Resilience</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-50</td><td>MUST</td><td>Every crossing/card/edit commits to SQLite (WAL) as it happens; a crash or power loss loses at most the uncommitted keystroke.</td><td>§2/§9</td></tr>
+<tr><td style="font-weight:700">R-51</td><td>MUST</td><td>Closing the app with a ride running is caught with the exit dialog; quitting keeps the ride running on wall time.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#exitdlg">exitdlg</a></td></tr>
+<tr><td style="font-weight:700">R-52</td><td>MUST</td><td>On launch with a running ride, a resume dialog always appears; session bookkeeping distinguishes clean quit from crash and words the dialog accordingly. Continuing preserves start time and all data.</td><td>§2/§3 · <a href="RiverCrossing - XRC Windows.dc.html#resumedlg">resumedlg</a></td></tr>
+<tr><td style="font-weight:700">R-53</td><td>MUST</td><td>Start pressed on a ride with data asks continue-vs-new; continue loses no time or data; "new" archives first.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#continuedlg">continuedlg</a></td></tr>
+<tr><td style="font-weight:700">R-54</td><td>MUST</td><td>Automatic backups on open + hourly while running (keep 20); manual Back Up Now; restoring a backup is documented in the guide.</td><td>§2 · <a href="RiverCrossing - XRC Windows.dc.html#settingsdlg">settingsdlg</a></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">7 · Results &amp; publishing</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-60</td><td>MUST</td><td>Results are computable the moment the ride finishes: top 10 by hand with card graphics, full field, DNFs marked.</td><td>§5 · <a href="RiverCrossing - XRC Windows.dc.html#resultsframe">resultsframe</a></td></tr>
+<tr><td style="font-weight:700">R-61</td><td>MUST</td><td>HTML export: one self-contained file rendered with Jinja2 (autoescape, StrictUndefined; base template + macros) from frozen payload dataclasses — Tailwind 4 CSS compiled + inlined, results JSON embedded with </ escaped as <\/, logo base64, zero script logic — static markup renders with JS disabled and the JSON block is the machine-readable record; golden-file + JSON round-trip tests, zero external references (CI-checked) that opens from file:// with no network; flags for times, laps board, time board, full field, all cards drawn (every card per entry, with the drawing rider on pooled rides); the light template is the only published look — no theme option. Page CSS is compiled once at package build (Tailwind CLI in CI against the frozen template) and vendored with base64 font subsets — no Node/CDN at export or runtime; markup is plain Tailwind utilities + the frozen custom classes (§8), <strong>no component library</strong> (the page is read-only; daisyUI is the pre-approved CSS-only fallback if v2 adds interactive widgets).</td><td>§8 · <a href="../exports/epic-2026-results.html">sample</a>/<a href="../exports/epic-2026-results-no-times.html">no-times</a></td></tr>
+<tr><td style="font-weight:700">R-62</td><td>MUST</td><td>PDF export via fpdf2 with the same sections and flags; deterministic output; optional one-page podium poster.</td><td>§8b · <a href="RiverCrossing - UI Designs.dc.html#5a">5a–5d</a> <span class="text-muted">(design doc)</span></td></tr>
+<tr><td style="font-weight:700">R-63</td><td>MUST</td><td>Times appear in published results only when the export setting says so — hidden by default, no toggle on the page, and with times off the time data is not embedded at all; laps/time leaderboards are opt-in.</td><td>§8 · <a href="RiverCrossing - XRC Windows.dc.html#resultsframe">resultsframe</a></td></tr>
+<tr><td style="font-weight:700">R-64</td><td>SHOULD</td><td>Finished rides reopen into a corrections-only REOPENED state (clock closed, add-at-time/edit/void, moves on pooled rides); Finish again re-locks; stale exports are flagged.</td><td>§3 · <a href="RiverCrossing - XRC Windows.dc.html#resultsframe">resultsframe</a></td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">8 · Quality, testing &amp; CI — "works the first time"</h2>
+<table class="table" style="font-size:12.5px">
+<thead><tr><th style="width:64px">ID</th><th style="width:58px">Level</th><th>Requirement</th><th style="width:110px">Trace</th></tr></thead>
+<tbody>
+<tr><td style="font-weight:700">R-70</td><td>MUST</td><td>TDD: tests written first (tdd-python-writer agent), red→green→refactor, module by module in dependency order.</td><td>§12</td></tr>
+<tr><td style="font-weight:700">R-71</td><td>MUST</td><td>Core logic in pure-Python modules with zero wx imports; coverage ≥ 90%; ruff + mypy strict clean.</td><td>§11</td></tr>
+<tr><td style="font-weight:700">R-72</td><td>MUST</td><td>Card algorithm verified by known vectors, Hypothesis property tests, brute-force cross-check, and seeded whole-ride simulations across entry modes, joker counts and caps.</td><td>§12</td></tr>
+<tr><td style="font-weight:700">R-73</td><td>MUST</td><td>Every entry box, button, radio, menu item and dialog is reachable and drivable by the functional harness via stable snake_case XRC names (FindWindowByName); the menu-coverage test walks all §15 routes in all ride states.</td><td>§12/§15</td></tr>
+<tr><td style="font-weight:700">R-74</td><td>MUST</td><td>Acceptance: a scripted full race (min lap lowered — an ordinary ride setting) runs end-to-end through the real UI incl. stop/continue, kill+relaunch, quit+relaunch, finish, reopen → correct → finish again, exports parsed and asserted — 100% pass on both OSes before any release.</td><td>§12/§14</td></tr>
+<tr><td style="font-weight:700">R-75</td><td>MUST</td><td>CI per §14: GitHub Actions windows-latest + macos-latest (real desktop sessions — no virtual display), 6 stages, screenshot-on-failure artifacts, built-binary smoke test, signed installers on tags.</td><td>§14</td></tr>
+<tr><td style="font-weight:700">R-76</td><td>MUST</td><td>Dialog behavior per §13: Esc cancels, Enter = default, destructive confirms focus Cancel, focus returns to opener; asserted per dialog by the harness.</td><td>§13</td></tr>
+<tr><td style="font-weight:700">R-77</td><td>SHOULD</td><td>Nightly seeded acceptance race; failures file the seed for exact reproduction.</td><td>§14</td></tr>
+</tbody>
+</table>
+
+<h2 style="font-size:22px;margin-top:22px">Out of scope — v1</h2>
+<p style="font-size:13px;max-width:82ch">Sponsor strips on published results (v2) · age/category fields — excluded by decision, must not appear or be asked for anywhere · hardware timing (RFID/chip) · networked multi-operator scoring · e-bike/waiver policy enforcement (recorded fields only).</p>
+
+<h2 style="font-size:22px;margin-top:22px">Open questions</h2>
+<p style="font-size:13px;max-width:82ch">None. <span class="text-muted">(All resolved: pooled card entitlement — uncapped, one card per lap, any rider may out-lap their teammates (R-16) · ride deletion — yes, type-to-confirm (R-18) · Windows unsigned / macOS Developer ID (R-01) · categories — excluded entirely.)</span></p>
+</div>
+<p style="font-size:11.5px;color:rgba(29,31,32,.5);max-width:980px;margin:14px auto 0">Companions: <a href="RiverCrossing - Spec.dc.html">engineering spec</a> · <a href="RiverCrossing - XRC Windows.dc.html">XRC windows</a> · <a href="RiverCrossing - Module Skeletons.dc.html">module skeletons</a> · <a href="RiverCrossing - UI Designs.dc.html">UI designs (retired)</a> · <a href="../exports/epic-2026-results.html">HTML results sample</a> (<a href="../exports/epic-2026-results-no-times.html">no-times</a>).</p>
+</div>
+</x-dc>
+</body>
+</html>

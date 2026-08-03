@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Rider editor + CSV import preview (spec.md 15b file map,
+  xrc-windows.md section C). Control names are frozen; tests find them
+  with FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
+  (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3 (tools/toolkit_probe.py):
+
+    * wxDataViewListCtrl cannot be authored here: its XRC handler
+      hard-forces the control name to "dataviewCtrl". riders_list and
+      conflicts_list are wxDataViewCtrl, whose name IS honoured;
+      columns and rows are appended in code with a
+      DataViewIndexListModel subclass (canvas code-side item 1).
+    * XRC has no minsize property for windows - only for sizeritem and
+      wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow).
+      Neither dialog has a documented minimum, so neither declares a
+      <size>: the sizer handler then Fit()s the dialog and applies
+      SetSizeHints(). Code re-applies SetMinSize() if a screen-fit
+      minimum is ever specified.
+
+  Code-side per the canvas footnotes: riders_list rows, and its Team
+  column hidden in a solo-only ride; team_choice contents (teams stay
+  editable until start for relay rides, during the ride for pooled
+  ones); delete_btn disabled once an entry has data - after the start
+  it is DNF/void only (R-15); summary_lbl text and conflicts_list rows;
+  csv_preview_dlg's wxID_OK disabled while conflicts > 0.
+-->
+<resource>
+
+  <object class="wxDialog" name="rider_editor_dlg">
+    <title>Rider Editor</title>
+    <!-- R-05 requires resizable windows; the in-app text zoom (90-150%)
+         cannot work in a fixed-size dialog. spec.md 13 says "dialogs
+         fixed-size" - recorded conflict, resolved in favour of R-05. -->
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxHORIZONTAL</orient>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="riders_list"/>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxTOP|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxStaticBoxSizer">
+              <label>Rider</label>
+              <orient>wxVERTICAL</orient>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>8</border>
+                <object class="wxFlexGridSizer">
+                  <cols>2</cols>
+                  <vgap>6</vgap>
+                  <hgap>8</hgap>
+                  <growablecols>1</growablecols>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxStaticText">
+                      <label>Plate</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxTextCtrl" name="plate_input"/>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxStaticText">
+                      <label>Name</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxTextCtrl" name="name_input"/>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxStaticText">
+                      <label>Team</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxChoice" name="team_choice"/>
+                  </object>
+
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_RIGHT</flag>
+                <object class="wxBoxSizer">
+                  <orient>wxHORIZONTAL</orient>
+                  <object class="sizeritem">
+                    <flag>wxRIGHT</flag>
+                    <border>6</border>
+                    <object class="wxButton" name="add_btn">
+                      <label>Add</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxRIGHT</flag>
+                    <border>6</border>
+                    <object class="wxButton" name="save_btn">
+                      <label>Save</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <object class="wxButton" name="delete_btn">
+                      <label>Delete</label>
+                    </object>
+                  </object>
+                </object>
+              </object>
+
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxButton" name="import_btn">
+                  <label>Import CSV…</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND</flag>
+                <object class="wxButton" name="export_btn">
+                  <label>Export CSV…</label>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CLOSE"/>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="csv_preview_dlg">
+    <title>Import Riders — Preview</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- "riders.csv → 178 riders · 12 teams · 3 conflicts": one line
+           built in code from the parsed file. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="summary_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="conflicts_list"/>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Nothing is written until you import. Re-import freely reshapes teams before start.</label>
+        </object>
+      </object>
+
+      <!-- wxID_OK carries the canvas's "Import" label; the stock id is
+           what keeps the button on the platform-correct side. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Import</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

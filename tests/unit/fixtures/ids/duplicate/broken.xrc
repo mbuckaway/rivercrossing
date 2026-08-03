@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resource>
+  <object class="wxDialog" name="broken_dlg">
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="plate_input"/>
+      </object>
+      <object class="sizeritem">
+        <object class="wxTextCtrl" name="plate_input"/>
+      </object>
+    </object>
+  </object>
+</resource>
