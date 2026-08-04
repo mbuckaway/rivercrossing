@@ -99,6 +99,12 @@ class FakeConsoleView:
     def play(self, cue: Cue) -> None:
         """Record the played cue (unused here)."""
 
+    def show_notice(self, text: str) -> None:
+        """Record the shown notice (unused here)."""
+
+    def clear_entry(self) -> None:
+        """Record the clear request (unused here)."""
+
 
 class FakeSetupView:
     """A complete ``SetupView`` implementation for headless tests."""
@@ -309,7 +315,6 @@ def test_presenter_holds_the_view_and_data_source_it_was_given(
 @pytest.mark.parametrize(
     ("method_name", "args", "kwargs"),
     [
-        ("on_plate_entered", ("123",), {}),
         ("on_undo", (), {}),
         ("on_arm_stop", (), {"armed": True}),
         ("on_arm_stop", (), {"armed": False}),
@@ -329,6 +334,89 @@ def test_console_presenter_method_is_a_no_op_returning_none(
     result = method(*args, **kwargs)
 
     assert result is None
+
+
+class RecordingConsoleView:
+    """A ``ConsoleView`` spy recording each call, in order (D1 wiring).
+
+    Distinct from :class:`FakeConsoleView`: the ``on_plate_entered``
+    cases below assert call *order* and *argument content*, which a
+    no-op fake cannot record.
+    """
+
+    def __init__(self) -> None:
+        """Start with an empty call log."""
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def show_feed(self, rows: list[FeedRow]) -> None:
+        """Record the fed rows."""
+        self.calls.append(("show_feed", (rows,)))
+
+    def show_counters(self, c: Counters) -> None:
+        """Record the counters."""
+        self.calls.append(("show_counters", (c,)))
+
+    def flash_crossing(self, r: FeedRow) -> None:
+        """Record the flashed crossing."""
+        self.calls.append(("flash_crossing", (r,)))
+
+    def set_state(self, status: RideStatus) -> None:
+        """Record the ride state."""
+        self.calls.append(("set_state", (status,)))
+
+    def focus_entry(self) -> None:
+        """Record the focus request."""
+        self.calls.append(("focus_entry", ()))
+
+    def play(self, cue: Cue) -> None:
+        """Record the played cue."""
+        self.calls.append(("play", (cue,)))
+
+    def show_notice(self, text: str) -> None:
+        """Record the shown notice."""
+        self.calls.append(("show_notice", (text,)))
+
+    def clear_entry(self) -> None:
+        """Record the clear request."""
+        self.calls.append(("clear_entry", ()))
+
+
+# --- on_plate_entered: D1 placeholder behaviour (A3, A5) --------------
+
+
+def test_on_plate_entered_given_text_shows_notice_clears_and_refocuses() -> None:
+    """A5: notice, then clear, then refocus -- in that exact order."""
+    view = RecordingConsoleView()
+    presenter = ConsolePresenter(view, FakeDataSource())
+
+    presenter.on_plate_entered("123")
+
+    assert view.calls == [
+        ("show_notice", ("Plate 123 — recording engine lands in EPIC 4",)),
+        ("clear_entry", ()),
+        ("focus_entry", ()),
+    ]
+
+
+def test_on_plate_entered_strips_surrounding_whitespace_into_the_notice() -> None:
+    """Leading/trailing whitespace never reaches the notice text."""
+    view = RecordingConsoleView()
+    presenter = ConsolePresenter(view, FakeDataSource())
+
+    presenter.on_plate_entered("  123  ")
+
+    assert view.calls[0] == ("show_notice", ("Plate 123 — recording engine lands in EPIC 4",))
+
+
+@pytest.mark.parametrize("text", ["", "   "], ids=["empty", "whitespace_only"])
+def test_on_plate_entered_given_blank_text_only_refocuses(text: str) -> None:
+    """A3: a blank (or whitespace-only) plate only refocuses."""
+    view = RecordingConsoleView()
+    presenter = ConsolePresenter(view, FakeDataSource())
+
+    presenter.on_plate_entered(text)
+
+    assert view.calls == [("focus_entry", ())]
 
 
 # -------------------------------------------------------- mypy negative

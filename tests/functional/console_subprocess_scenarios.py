@@ -1,34 +1,45 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Child-process program for the three subprocess-isolated tests.
+"""Child-process program for this suite's subprocess-isolated scenarios.
 
 Constructing many ``MainFrame``s across one long pytest session
 measurably raises a wxPython 4.3.1/wxWidgets 3.3.3 address-reuse
 hazard (``views/main_frame.py``'s own ``_find`` docstring): a
 freshly-allocated control can transiently answer ``FindWindowByName``
 with a *different*, already-destroyed control's Python type. Running
-the three riskiest scenarios in a brand-new, **spawned** interpreter
-each -- never forked, since forking a process that may already have
-an initialised ``NSApplication`` is unsafe on macOS, and this
+each widget-churn-heavy scenario in a brand-new, **spawned**
+interpreter -- never forked, since forking a process that may already
+have an initialised ``NSApplication`` is unsafe on macOS, and this
 session's own ``wx_app`` fixture usually already has one -- removes
 the *accumulated* churn a long, shared session builds up.
 
-That alone is not the whole story, measured with throwaway sampling
+That alone is not the whole story for the three original scenarios
+(``sash_round_trip``, ``hide_times_columns_round_trip``,
+``hide_times_leaves_clock_shown``), measured with throwaway sampling
 scripts per this repo's convention: even fully isolated, one attempt
 at the sash-round-trip sequence specifically (build, SetSashPosition,
-persist, destroy, rebuild, GetSashPosition -- the one scenario of the
-three that touches ``main_splitter`` twice) still hits the hazard at
-a real per-attempt rate (roughly one attempt in six, sampled). The
-other two measured clean at 20/20 single-attempt runs and stay as one
-attempt each. :func:`_sash_round_trip` retries the *whole sequence*
--- not a single lookup, which ``main_frame.py``'s own ``_find``
-already does without it helping once one lookup inside a
-construction has gone wrong -- which cuts the residual rate sharply
-but, sampled, does not always reach zero within one process: a rare
-process launch can land on a layout where every in-process attempt
-fails alike. ``test_console_demo.py``'s own ``_run_scenario`` adds a
-second layer on top of this module, retrying the *spawn* itself
-(a fresh process gets an independent layout) -- the two together are
-what the full-suite measurement in this task's report is of.
+persist, destroy, rebuild, GetSashPosition -- the one of the three
+that touches ``main_splitter`` twice) still hits the hazard at a real
+per-attempt rate (roughly one attempt in six, sampled). The other two
+measured clean at 20/20 single-attempt runs and stay as one attempt
+each. :func:`_sash_round_trip` retries the *whole sequence* -- not a
+single lookup, which ``main_frame.py``'s own ``_find`` already does
+without it helping once one lookup inside a construction has gone
+wrong -- which cuts the residual rate sharply but, sampled, does not
+always reach zero within one process: a rare process launch can land
+on a layout where every in-process attempt fails alike.
+``test_console_demo.py``'s own ``_run_scenario`` adds a second layer
+on top of this module, retrying the *spawn* itself (a fresh process
+gets an independent layout) -- the two together are what the
+full-suite measurement in this task's report is of.
+
+The Phase 8 scenarios below (``plate_entry_round_trip``,
+``record_btn_click_records_once``, ``console_starts_in_running_state``,
+``state_enablement_round_trip``) isolate for a second reason on top of
+the same address-reuse motivation: each mutates ``main_frame`` state
+(enablement, the status bar, the entry field, or a real
+``EVT_TEXT_ENTER``/``EVT_BUTTON`` dispatch through the full app
+bootstrap) that ``test_console_demo.py``'s shared, read-only
+``shared_console`` fixture explicitly forbids mutating.
 
 This module *is* the child process's entire program. Run as::
 
@@ -54,7 +65,10 @@ import harness
 import wx
 
 from rivercrossing.demo import DemoDataSource
+from rivercrossing.ride import RideStatus
+from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids
+from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.views import MainFrame
 
 if TYPE_CHECKING:
@@ -153,10 +167,131 @@ def _hide_times_leaves_clock_shown() -> dict[str, Any]:
     return {"clock_elapsed_shown": elapsed_shown, "clock_remaining_shown": remaining_shown}
 
 
+def _state_enablement_round_trip() -> dict[str, Any]:
+    """set_state enables plate_input/record_btn together, both ways."""
+    resource = harness.load_xrc_resources()
+    window = harness.load_window(resource, ids.MAIN_FRAME, frame=True)
+    window.Show()
+    window.Layout()
+    harness.pump()
+    try:
+        console = MainFrame(window, data_source=DemoDataSource())
+        record_btn = harness.find_control(window, ids.RECORD_BTN)
+        console.set_state(RideStatus.RUNNING)
+        running = [console.plate_input.IsEnabled(), record_btn.IsEnabled()]
+        console.set_state(RideStatus.DRAFT)
+        draft = [console.plate_input.IsEnabled(), record_btn.IsEnabled()]
+    finally:
+        harness.close_window(window)
+    return {"running": running, "draft": draft}
+
+
+def _counting_plate_entries() -> tuple[list[str], Callable[[], None]]:
+    """Wrap ``ConsolePresenter.on_plate_entered`` to count real calls.
+
+    Proves the double-submit guard (no ``Skip()``, no
+    ``SetDefault()``) by counting genuine calls, which the final
+    rendered notice text alone cannot distinguish from two identical
+    calls.
+    """
+    calls: list[str] = []
+    original = ConsolePresenter.on_plate_entered
+
+    def _counting(self: ConsolePresenter, text: str) -> None:
+        calls.append(text)
+        original(self, text)
+
+    ConsolePresenter.on_plate_entered = _counting
+
+    def _restore() -> None:
+        ConsolePresenter.on_plate_entered = original
+
+    return calls, _restore
+
+
+def _post_text_enter(control: Any) -> None:  # noqa: ANN401
+    """Post the event a real Enter keypress fires in *control*."""
+    event = wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, control.GetId())
+    event.SetEventObject(control)
+    control.GetEventHandler().ProcessEvent(event)
+    harness.pump()
+
+
+def _round_trip_result(frame: Any, plate_input: Any, calls: list[str]) -> dict[str, Any]:  # noqa: ANN401
+    """Read the plate-entry round trip's four observable facts."""
+    return {
+        "status_text": frame.GetStatusBar().GetStatusText(0),
+        "field_value": plate_input.GetValue(),
+        "focused": wx.Window.FindFocus() is plate_input,
+        "notice_count": len(calls),
+    }
+
+
+def _plate_entry_round_trip() -> dict[str, Any]:
+    """Typing a plate then Enter records once, clears, refocuses."""
+    calls, restore = _counting_plate_entries()
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+            plate_input.SetValue("123")
+            _post_text_enter(plate_input)
+            return _round_trip_result(frame, plate_input, calls)
+        finally:
+            harness.close_window(frame)
+    finally:
+        restore()
+
+
+def _record_btn_click_records_once() -> dict[str, Any]:
+    """Clicking Record does exactly what pressing Enter does (A5)."""
+    calls, restore = _counting_plate_entries()
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+            plate_input.SetValue("77")
+            harness.click(frame, ids.RECORD_BTN)
+            return _round_trip_result(frame, plate_input, calls)
+        finally:
+            harness.close_window(frame)
+    finally:
+        restore()
+
+
+def _console_starts_in_running_state() -> dict[str, Any]:
+    """Run the bootstrap and read the console's starting state."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+        record_btn = harness.find_control(frame, ids.RECORD_BTN)
+        status_label = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+        return {
+            "plate_enabled": plate_input.IsEnabled(),
+            "record_enabled": record_btn.IsEnabled(),
+            "status_label": status_label.GetLabelText(),
+        }
+    finally:
+        harness.close_window(frame)
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
+    "state_enablement_round_trip": _state_enablement_round_trip,
+    "plate_entry_round_trip": _plate_entry_round_trip,
+    "record_btn_click_records_once": _record_btn_click_records_once,
+    "console_starts_in_running_state": _console_starts_in_running_state,
 }
 
 

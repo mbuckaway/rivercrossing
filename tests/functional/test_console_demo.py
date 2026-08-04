@@ -24,16 +24,16 @@ own address-reuse hazard (``MainFrame._find``'s docstring) at whole
 -suite scale, where every functional module's own window churn adds
 to the same process's tally.
 
-The three tests that mutate ``main_frame`` state instead run their
-whole scenario in a fresh, *spawned* interpreter each --
+The tests that mutate ``main_frame`` state instead run their whole
+scenario in a fresh, *spawned* interpreter each --
 ``console_subprocess_scenarios.py``, this module's own docstring --
 never forked: forking a process that may already have an initialised
 ``NSApplication`` is unsafe on macOS, and this session's own
 ``wx_app`` fixture usually already has one. Measured (a throwaway
 sampling script, per this repo's convention): even fully isolated,
 that hazard still shows up at a real per-*spawn* rate for one of the
-three, so :func:`_run_scenario` also retries the spawn itself, not
-only relying on the child's own in-process retry.
+three original scenarios, so :func:`_run_scenario` also retries the
+spawn itself, not only relying on the child's own in-process retry.
 """
 
 import json
@@ -354,6 +354,87 @@ def test_main_frame_crossings_model_held_card_row_renders_no_bitmap(
     rendered = model.GetValueByRow(held_row, feed_model.COL_CARD)
 
     assert rendered.IsOk() is False
+
+
+# --- record-crossing row: record_btn, plate font, A4 wiring -----------
+
+
+def test_main_frame_record_btn_resolves_with_the_canvas_label(shared_console: MainFrame) -> None:
+    """``record_btn`` (P8-D3) resolves inside ``main_frame`` by name."""
+    record_btn = harness.find_control(shared_console.frame, ids.RECORD_BTN)
+
+    assert record_btn.GetLabelText() == "Record (Enter)"
+
+
+def test_main_frame_plate_input_font_is_about_one_and_a_half_times_the_system_default(
+    shared_console: MainFrame,
+) -> None:
+    """P8-D3: the XRC relative-size font renders ~1.5x default."""
+    default_pt = wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT).GetPointSize()
+    plate_pt = shared_console.plate_input.GetFont().GetPointSize()
+
+    assert abs(plate_pt - round(default_pt * 1.5)) <= 1
+
+
+def test_main_frame_set_state_enables_or_disables_plate_input_and_record_btn_together() -> None:
+    """A4: record_btn tracks plate_input, enabled only in RUNNING.
+
+    Runs in its own spawned interpreter (module docstring): ``set_
+    state`` mutates controls the shared, read-only ``shared_console``
+    fixture forbids mutating.
+    """
+    result = _run_scenario("state_enablement_round_trip")
+
+    assert result["ok"], result["context"]
+    assert result["data"]["running"] == [True, True], result["context"]
+    assert result["data"]["draft"] == [False, False], result["context"]
+
+
+def test_main_frame_plate_entry_round_trip_records_once_clears_and_refocuses() -> None:
+    """Enter records the plate exactly once, clears, and refocuses (A5).
+
+    Runs in its own spawned interpreter (module docstring): a real
+    app bootstrap and a real ``EVT_TEXT_ENTER`` cannot run against
+    the shared ``shared_console`` fixture.
+    """
+    result = _run_scenario("plate_entry_round_trip")
+
+    assert result["ok"], result["context"]
+    expected_notice = "Plate 123 — recording engine lands in EPIC 4"
+    assert result["data"]["status_text"] == expected_notice, result["context"]
+    assert result["data"]["field_value"] == "", result["context"]
+    assert result["data"]["focused"] is True, result["context"]
+    assert result["data"]["notice_count"] == 1, result["context"]
+
+
+def test_main_frame_record_btn_click_records_once_clears_and_refocuses() -> None:
+    """Clicking Record does exactly what pressing Enter does (A5).
+
+    Runs in its own spawned interpreter (module docstring), like the
+    Enter round trip above.
+    """
+    result = _run_scenario("record_btn_click_records_once")
+
+    assert result["ok"], result["context"]
+    expected_notice = "Plate 77 — recording engine lands in EPIC 4"
+    assert result["data"]["status_text"] == expected_notice, result["context"]
+    assert result["data"]["field_value"] == "", result["context"]
+    assert result["data"]["focused"] is True, result["context"]
+    assert result["data"]["notice_count"] == 1, result["context"]
+
+
+def test_build_main_window_starts_the_console_in_the_running_state() -> None:
+    """The bootstrap runs ``set_state(data_source.ride_status())`` (A4).
+
+    Runs in its own spawned interpreter (module docstring): drives
+    the real ``build_main_window`` bootstrap, not a bare ``MainFrame``.
+    """
+    result = _run_scenario("console_starts_in_running_state")
+
+    assert result["ok"], result["context"]
+    assert result["data"]["plate_enabled"] is True, result["context"]
+    assert result["data"]["record_enabled"] is True, result["context"]
+    assert result["data"]["status_label"] == "RUNNING", result["context"]
 
 
 # --- negative path: MainFrame._find (T-5) -----------------------------

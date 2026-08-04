@@ -38,6 +38,12 @@ class IncompleteConsoleView:
     def focus_entry(self) -> None:
         """No-op fixture stub."""
 
+    def show_notice(self, text: str) -> None:
+        """No-op fixture stub."""
+
+    def clear_entry(self) -> None:
+        """No-op fixture stub."""
+
 
 def _accepts_console_view(view: ConsoleView) -> None:
     """Type-check-only sink requiring a complete ``ConsoleView``."""

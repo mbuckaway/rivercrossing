@@ -151,6 +151,24 @@ def test_build_main_window_applies_the_console_canvas_minimum_size(
     assert (min_size.width, min_size.height) == (1100, 700)
 
 
+# --- record-crossing wiring runs at bootstrap (Phase 8, A4) -------
+
+
+def test_build_main_window_wires_the_console_to_the_running_data_source(
+    bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """``set_state(data_source.ride_status())`` ran during bootstrap.
+
+    Read-only: ``bound_frame`` never mutates after construction, so
+    this shares the fixture with every other assertion in this
+    module (fixture docstring).
+    """
+    plate_input = harness.find_control(bound_frame, ids.PLATE_INPUT)
+    status_label = harness.find_control(bound_frame, ids.RIDE_STATUS_LBL)
+
+    assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (True, "RUNNING")
+
+
 # --- every §15 route is bound (T-3, R-73) -------------------------
 
 
