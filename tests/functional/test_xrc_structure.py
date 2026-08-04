@@ -466,7 +466,7 @@ def test_team_size_spin_declares_the_spec_documented_range() -> None:
 
 
 def test_entry_row_is_wrapped_in_a_record_crossing_static_box_sizer() -> None:
-    """The operator's find-me frame: a native wxStaticBoxSizer, not chrome."""
+    """The operator's find-me frame: native, never custom-drawn."""
     labels = [
         _param(obj, "label")
         for obj in _window("main_frame").iter("object")
@@ -484,7 +484,7 @@ def test_record_btn_declares_the_record_enter_label() -> None:
 
 
 def test_plate_input_declares_a_relative_sysfont_not_a_point_size() -> None:
-    """P8-D3: relative sizing only -- the 90-150% zoom must still scale it."""
+    """P8-D3: relative only -- the 90-150% zoom must still apply."""
     font = _objects_by_name(_window("main_frame"))["plate_input"].find("font")
 
     values = (_param(font, "sysfont"), _param(font, "relativesize"), font.find("size"))
@@ -501,7 +501,7 @@ def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
 
 
 def test_exit_confirm_dlg_is_declared_with_cancel_default_focused() -> None:
-    """A2/P8-D1: the destructive-confirm pattern -- Cancel is safe and default."""
+    """A2/P8-D1: the destructive confirm -- Cancel is safe & default."""
     dialog = _top_level_windows("dialogs.xrc")["exit_confirm_dlg"]
     sizer = next(
         obj for obj in dialog.iter("object") if obj.attrib["class"] == "wxStdDialogButtonSizer"

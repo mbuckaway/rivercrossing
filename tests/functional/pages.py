@@ -181,8 +181,8 @@ EXIT_RUNNING_DLG = WindowSpec(
     buttons=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
 )
 
-# Added EPIC 1 Phase 8 (P8-D1): the app never exits without confirmation,
-# so a quit with no ride running shows this destructive confirm instead
+# Phase 8 (P8-D1): the app never exits without confirmation, so a
+# quit with no ride running shows this destructive confirm instead
 # of quitting outright.
 EXIT_CONFIRM_DLG = WindowSpec(
     name=ids.EXIT_CONFIRM_DLG,
