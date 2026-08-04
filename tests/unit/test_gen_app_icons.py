@@ -15,6 +15,7 @@ import re
 import string
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
+from unittest.mock import Mock
 
 import pytest
 from hypothesis import given
@@ -199,3 +200,23 @@ def test_main_given_a_missing_svg_source_names_the_file(
 
     assert exit_code == 1
     assert "icon.svg" in capsys.readouterr().err
+
+
+def test_main_given_a_successful_pipeline_returns_zero_and_reports_the_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A raise-free pipeline exits 0 and names the target dir."""
+    branding_dir = tmp_path / "branding"
+    build_dir = tmp_path / "build"
+    fake_generate = Mock(return_value=None)
+    monkeypatch.setattr(gen_app_icons, "generate_branding", fake_generate)
+
+    exit_code = gen_app_icons.main(
+        ["--branding-dir", str(branding_dir), "--build-dir", str(build_dir)]
+    )
+
+    fake_generate.assert_called_once_with(branding_dir, build_dir)
+    assert exit_code == 0
+    assert str(branding_dir) in capsys.readouterr().out
