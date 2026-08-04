@@ -248,6 +248,10 @@ class FakeDataSource:
             )
         ]
 
+    def ride_status(self) -> RideStatus:
+        """Return one fixed ride status."""
+        return RideStatus.RUNNING
+
 
 # ------------------------------------------------ protocol conformance
 
