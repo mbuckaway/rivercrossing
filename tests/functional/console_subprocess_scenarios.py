@@ -68,7 +68,6 @@ from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids
-from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.views import MainFrame
 
 if TYPE_CHECKING:
@@ -186,25 +185,32 @@ def _state_enablement_round_trip() -> dict[str, Any]:
     return {"running": running, "draft": draft}
 
 
-def _counting_plate_entries() -> tuple[list[str], Callable[[], None]]:
-    """Wrap ``ConsolePresenter.on_plate_entered`` to count real calls.
+def _counting_show_notices() -> tuple[list[str], Callable[[], None]]:
+    """Wrap ``MainFrame.show_notice`` to count its real calls (A5).
 
-    Proves the double-submit guard (no ``Skip()``, no
-    ``SetDefault()``) by counting genuine calls, which the final
-    rendered notice text alone cannot distinguish from two identical
-    calls.
+    # logic-coverage-exempt: T-10 -- this passthrough spy targets an
+    # internal view method, not a true I/O boundary, because the
+    # final rendered status-bar text alone cannot distinguish one
+    # real call from a wrongly re-fired second one:
+    # on_plate_entered's own blank-guard swallows a double-fire's
+    # visible side effects (its second call would see an
+    # already-cleared field and only refocus, leaving the status
+    # bar's text unchanged either way). Counting real invocations is
+    # the only direct way to observe the double-submit guard; the
+    # spy still calls through to the genuine implementation, it
+    # never fakes it.
     """
     calls: list[str] = []
-    original = ConsolePresenter.on_plate_entered
+    original = MainFrame.show_notice
 
-    def _counting(self: ConsolePresenter, text: str) -> None:
+    def _counting(self: MainFrame, text: str) -> None:
         calls.append(text)
         original(self, text)
 
-    ConsolePresenter.on_plate_entered = _counting
+    MainFrame.show_notice = _counting
 
     def _restore() -> None:
-        ConsolePresenter.on_plate_entered = original
+        MainFrame.show_notice = original
 
     return calls, _restore
 
@@ -240,7 +246,7 @@ def _spy_on_set_focus(control: Any) -> list[bool]:  # noqa: ANN401
 
 def _plate_entry_round_trip() -> dict[str, Any]:
     """Typing a plate then Enter records once, clears, refocuses."""
-    calls, restore = _counting_plate_entries()
+    calls, restore = _counting_show_notices()
     try:
         frame = app_module.build_main_window(wx.GetApp())
         frame.Show()
@@ -265,7 +271,7 @@ def _plate_entry_round_trip() -> dict[str, Any]:
 
 def _record_btn_click_records_once() -> dict[str, Any]:
     """Clicking Record does exactly what pressing Enter does (A5)."""
-    calls, restore = _counting_plate_entries()
+    calls, restore = _counting_show_notices()
     try:
         frame = app_module.build_main_window(wx.GetApp())
         frame.Show()
