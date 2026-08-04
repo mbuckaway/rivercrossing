@@ -217,14 +217,25 @@ def _post_text_enter(control: Any) -> None:  # noqa: ANN401
     harness.pump()
 
 
-def _round_trip_result(frame: Any, plate_input: Any, calls: list[str]) -> dict[str, Any]:  # noqa: ANN401
-    """Read the plate-entry round trip's four observable facts."""
-    return {
-        "status_text": frame.GetStatusBar().GetStatusText(0),
-        "field_value": plate_input.GetValue(),
-        "focused": wx.Window.FindFocus() is plate_input,
-        "notice_count": len(calls),
-    }
+def _spy_on_set_focus(control: Any) -> list[bool]:  # noqa: ANN401
+    """Monkeypatch *control*'s ``SetFocus``, recording each call.
+
+    ``SetFocus()`` is a platform/GUI I/O boundary (T-10) -- legitimate
+    to spy on directly, since ``FindFocus()``/``HasFocus()`` are
+    measured unobservable in this session, even freshly spawned
+    (``test_dialog_behavior.py``'s own documented limitation and its
+    ``_spy_on_set_focus`` precedent, reproduced here for the same
+    reason: this session is never the frontmost, focused app).
+    """
+    original = control.SetFocus
+    calls: list[bool] = []
+
+    def _spy() -> None:
+        calls.append(True)
+        original()
+
+    control.SetFocus = _spy
+    return calls
 
 
 def _plate_entry_round_trip() -> dict[str, Any]:
@@ -237,9 +248,15 @@ def _plate_entry_round_trip() -> dict[str, Any]:
         harness.pump()
         try:
             plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+            focus_calls = _spy_on_set_focus(plate_input)  # after the bootstrap's own focus_entry()
             plate_input.SetValue("123")
             _post_text_enter(plate_input)
-            return _round_trip_result(frame, plate_input, calls)
+            return {
+                "status_text": frame.GetStatusBar().GetStatusText(0),
+                "field_value": plate_input.GetValue(),
+                "focused": len(focus_calls) > 0,
+                "notice_count": len(calls),
+            }
         finally:
             harness.close_window(frame)
     finally:
@@ -256,9 +273,15 @@ def _record_btn_click_records_once() -> dict[str, Any]:
         harness.pump()
         try:
             plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+            focus_calls = _spy_on_set_focus(plate_input)  # after the bootstrap's own focus_entry()
             plate_input.SetValue("77")
             harness.click(frame, ids.RECORD_BTN)
-            return _round_trip_result(frame, plate_input, calls)
+            return {
+                "status_text": frame.GetStatusBar().GetStatusText(0),
+                "field_value": plate_input.GetValue(),
+                "focused": len(focus_calls) > 0,
+                "notice_count": len(calls),
+            }
         finally:
             harness.close_window(frame)
     finally:

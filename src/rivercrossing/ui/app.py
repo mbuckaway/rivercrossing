@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
 from rivercrossing.ui import accelerators, commands, ids, require_wx
+from rivercrossing.ui.presenters.console import ConsolePresenter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -105,9 +106,10 @@ def _accelerator_entries(menubar: Any) -> list[Any]:  # noqa: ANN401 -- wx ships
     Enter, ``accelerators.ACCELERATOR_TABLE``'s 4th row, is not a
     menu accelerator at all (that table's own docstring) and carries
     no ``menu_item_id`` to harvest, so it contributes no entry here:
-    ``plate_input`` already carries ``wxTE_PROCESS_ENTER`` (measured,
-    ``main.xrc``) for a future console handler, and a frame-level
-    accelerator on bare Enter would risk shadowing it.
+    ``plate_input`` carries ``wxTE_PROCESS_ENTER`` (measured,
+    ``main.xrc``) for :meth:`MainFrame.wire_entry`'s own console
+    handler, and a frame-level accelerator on bare Enter would risk
+    shadowing it.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -256,6 +258,13 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401, ARG001 -- see conftest.
 
     data_source = DemoDataSource()  # the one demo seam construction (E1.2.4)
     _console = MainFrame(frame, data_source=data_source)  # kept alive by its own event binding
+
+    # _presenter is kept alive the same way: wire_entry's closure holds
+    # its bound on_plate_entered, which wx's own event table then holds.
+    _presenter = ConsolePresenter(_console, data_source=data_source)
+    _console.wire_entry(_presenter.on_plate_entered)
+    _console.set_state(data_source.ride_status())
+    _console.focus_entry()
 
     _apply_accelerators(frame, menubar)
     _bind_routes(_RouteContext(frame=frame, resource=resource, data_source=data_source))

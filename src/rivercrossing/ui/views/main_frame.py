@@ -190,6 +190,7 @@ class MainFrame:
         self.crossings_list = self._find(ids.CROSSINGS_LIST, wx.dataview.DataViewCtrl)
         self.main_splitter = self._find(ids.MAIN_SPLITTER, wx.SplitterWindow)
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)
+        self.record_btn = self._find(ids.RECORD_BTN, wx.Button)
         self.last_crossing_lbl = self._find(ids.LAST_CROSSING_LBL, wx.StaticText)
         self.ride_status_lbl = self._find(ids.RIDE_STATUS_LBL, wx.StaticText)
         self.crossings_count_lbl = self._find(ids.CROSSINGS_COUNT_LBL, wx.StaticText)
@@ -346,16 +347,52 @@ class MainFrame:
     def set_state(self, status: RideStatus) -> None:
         """Reflect the ride's lifecycle state (ConsoleView).
 
-        Minimal for this task: the status label and entry-field
-        enablement. The DRAFT/FINISHED/REOPENED banner variants
-        xrc-windows.md's footnote lists are a later phase's job.
+        Minimal for this task: the status label and record-crossing
+        row enablement (A4: ``record_btn`` tracks ``plate_input``,
+        both live only in RUNNING). The DRAFT/FINISHED/REOPENED
+        banner variants xrc-windows.md's footnote lists are a later
+        phase's job.
         """
         self.ride_status_lbl.SetLabel(status.value.upper())
-        self.plate_input.Enable(status == RideStatus.RUNNING)
+        running = status == RideStatus.RUNNING
+        self.plate_input.Enable(running)
+        self.record_btn.Enable(running)
 
     def focus_entry(self) -> None:
         """Return focus to the plate entry field (ConsoleView)."""
         self.plate_input.SetFocus()
+
+    def show_notice(self, text: str) -> None:
+        """Post *text* to the status bar's first field (ConsoleView)."""
+        self.frame.SetStatusText(text, 0)
+
+    def clear_entry(self) -> None:
+        """Empty the plate entry field (ConsoleView).
+
+        ``ChangeValue``, not ``SetValue``: wx's own documented
+        contract is that ``ChangeValue`` does not fire ``EVT_TEXT``,
+        so clearing the field after a submit cannot loop back into
+        any future EVT_TEXT-driven validation.
+        """
+        self.plate_input.ChangeValue("")
+
+    def wire_entry(self, on_submit: Callable[[str], None]) -> None:
+        """Bind Enter and Record to *on_submit* with the field's text.
+
+        Binds ``EVT_TEXT_ENTER`` (``plate_input`` carries
+        ``wxTE_PROCESS_ENTER``) and ``EVT_BUTTON`` (``record_btn``)
+        to the same call. Neither handler calls ``event.Skip()``,
+        and ``record_btn`` never gets ``SetDefault()``: with
+        ``wxTE_PROCESS_ENTER``, ``Skip()`` would fall through to
+        wx's own default-button dispatch and fire a second submit
+        for the one Enter keypress.
+        """
+
+        def _submit(_event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+            on_submit(self.plate_input.GetValue())
+
+        self.plate_input.Bind(wx.EVT_TEXT_ENTER, _submit)
+        self.record_btn.Bind(wx.EVT_BUTTON, _submit)
 
     def play(self, cue: Cue) -> None:
         """Play the audio cue for the given event (ConsoleView).
