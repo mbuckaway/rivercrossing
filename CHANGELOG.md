@@ -6,7 +6,37 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
-Working EPIC 1 of 9 — the runnable UI shell (D1).
+Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish follow-up.
+
+### Added — Phase 8 (D1 polish)
+
+- **Quitting always confirms.** File ▸ Exit / ⌘Q / app-menu Quit now work: with a ride running the
+  three-button `exit_running_dlg` appears (Cancel · Finish ride first… · Quit — keep ride running);
+  otherwise the new `exit_confirm_dlg` asks before exiting. Dock ▸ Quit and log-out run the same
+  confirmation. This amends the original "otherwise quits" contract (R-51, spec §15) — the design
+  documents were updated first.
+- **macOS close button hides, never quits.** The red ✕ hides the window and the app keeps running;
+  clicking the Dock icon brings it back (a `MacReopenApp` override — wx's default only restores
+  minimized windows). On Windows the ✕ runs the quit confirmation.
+- **The console entry row is now the "Record crossing" frame**: a native `wxStaticBoxSizer` around a
+  larger plate field (1.5× relative type, wider minimum, "Plate number" hint) with a new
+  "Record (Enter)" button — Enter and the button both submit exactly once, clear the field, and
+  return focus. The console now starts with the entry focused and its ride state applied.
+- **Live dark mode.** View ▸ Theme ▸ System/Light/Dark apply through `wx.App.SetAppearance` — on
+  macOS the switch is immediate and restyles existing windows; on Windows (wxWidgets 3.3.3 pin)
+  appearance can only be set before the first window, so the app posts an honest "takes effect at
+  next launch" notice. Selecting System re-applies on OS appearance changes (best-effort — wx pins
+  the current appearance rather than truly following the system). The documented `mi_theme_system` /
+  `mi_zoom_100` menu defaults are now actually checked at launch.
+- **A real app icon** (playing card + stopwatch): SVG sources under `installers/branding/svg/`,
+  generated `RiverCrossing.icns` / `rivercrossing.ico` committed (no PNG enters git; intermediates
+  live under `build/`), applied to the .app bundle and the Windows executable by the PyInstaller
+  spec. `tools/gen_app_icons.py` + `nox -s gen_branding` regenerate everything.
+- **An unsigned drag-to-Applications DMG**: `dmgbuild` config at `installers/dmg_settings.py`
+  (Applications symlink, dual-resolution background with a drag arrow, volume icon), built by
+  `nox -s dmg`, smoked by `nox -s dmg_smoke` (mounts, verifies contents, detaches), and produced by
+  the macOS CI build job as `dist/RiverCrossing-<version>.dmg`. Code-signing and notarization remain
+  EPIC 9 (E9.1.3).
 
 ### Added
 

@@ -7,8 +7,8 @@ and per-row attributes, the card imagelist, the three ``wxInfoBar``
 shells, the ``main_splitter`` sash restore, per-state menu enabling,
 and ``SetAppearance``. This module covers the first four for
 ``main_frame`` -- per-state menu enabling is ``commands.py``'s route
-table (E1.4) and ``SetAppearance`` is a later theme task; neither is
-in this task's file batch.
+table (E1.4) and ``SetAppearance`` is ``theme.py``'s job (wired by
+the app bootstrap, Phase 8); neither lives here.
 
 :class:`MainFrame` decorates an already-XRC-loaded ``wx.Frame`` -- it
 never calls ``LoadFrame`` itself. Loading stays the caller's job

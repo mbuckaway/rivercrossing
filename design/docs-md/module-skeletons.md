@@ -28,9 +28,12 @@ rivercrossing/
 │   ├── ci.yml                  # §14 six-stage matrix: windows-latest + macos-latest
 │   └── release.yml             # tag → PyInstaller → Inno Setup .exe / notarized .dmg
 ├── installers/
-│   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec)
+│   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec; branded icons since Phase 8)
 │   ├── windows.iss             # Inno Setup, per-user, unsigned (R-01)
-│   └── dmg_settings.py         # dmgbuild config; codesign + notarize in release.yml
+│   ├── dmg_settings.py         # dmgbuild config (exists — Phase 8, unsigned); codesign + notarize in release.yml (E9.1.3)
+│   └── branding/               # icon + DMG-background SVG sources and their COMMITTED generated
+│                               #   artifacts (.icns/.ico/dual-res .tiff — no PNG in git);
+│                               #   regenerate with tools/gen_app_icons.py via `nox -s gen_branding`
 ├── docs/user-guide/            # per the User Guide outline (6a)
 ├── src/rivercrossing/
 │   ├── __init__.py             # __version__ single source
