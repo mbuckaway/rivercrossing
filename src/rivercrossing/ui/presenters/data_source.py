@@ -148,6 +148,10 @@ class DataSource(Protocol):
         """Return the four console counter values."""
         ...
 
+    def ride_status(self) -> RideStatus:
+        """Return the active ride's current lifecycle status."""
+        ...
+
     def rides(self) -> list[RideSummary]:
         """Return the ride library rows."""
         ...
