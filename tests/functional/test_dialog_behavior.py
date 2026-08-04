@@ -163,6 +163,7 @@ _HAS_NATIVE_CANCEL = (
     ids.FINISH_CONFIRM_DLG,
     ids.CONTINUE_OR_NEW_DLG,
     ids.EXIT_RUNNING_DLG,
+    ids.EXIT_CONFIRM_DLG,
     ids.CSV_PREVIEW_DLG,
     ids.EDIT_CROSSING_DLG,
     ids.REASSIGN_DLG,
@@ -353,6 +354,7 @@ _DEFAULT_CLICK_CASES = (
     _DefaultClickCase(ids.STOP_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.FINISH_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.EXIT_RUNNING_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
+    _DefaultClickCase(ids.EXIT_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.EDIT_CROSSING_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.REASSIGN_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.MANUAL_DEAL_DLG, pages.WX_ID_OK, wx.ID_OK),
@@ -523,13 +525,16 @@ def test_set_default_button_given_unknown_control_raises(xrc_resource: object) -
 # standings, and its XRC default is already Cancel -- it was left
 # out of the original four only because it carries no <focused>
 # marker alongside that default, which was reported rather than
-# guessed at.
+# guessed at. exit_confirm_dlg joined in Phase 8 (P8-D1): quitting
+# with no ride running is destructive too, and its XRC co-declares
+# <default> and <focused> on Cancel from the start.
 _DESTRUCTIVE = (
     ids.STOP_CONFIRM_DLG,
     ids.DNF_CONFIRM_DLG,
     ids.DELETE_RIDE_DLG,
     ids.EXIT_RUNNING_DLG,
     ids.FINISH_CONFIRM_DLG,
+    ids.EXIT_CONFIRM_DLG,
 )
 
 
@@ -711,9 +716,9 @@ def test_run_dialog_returns_result_and_restores_opener_focus(
 _ALL_DIALOG_SPECS = tuple(spec for spec in pages.WINDOWS if not spec.is_frame)
 
 
-def test_all_dialogs_declare_exactly_twenty_one_rows() -> None:
+def test_all_dialogs_declare_exactly_twenty_two_rows() -> None:
     """A dialog disappearing from ``pages.WINDOWS`` must shrink this."""
-    assert len(_ALL_DIALOG_SPECS) == 21
+    assert len(_ALL_DIALOG_SPECS) == 22
 
 
 @pytest.mark.parametrize("spec", _ALL_DIALOG_SPECS, ids=lambda s: s.name)

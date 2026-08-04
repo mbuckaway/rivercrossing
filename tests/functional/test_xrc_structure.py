@@ -38,6 +38,7 @@ MAIN_FRAME_CONTROLS = (
     "arm_stop_chk",
     "stop_btn",
     "plate_input",
+    "record_btn",
     "last_crossing_lbl",
     "undo_btn",
     "main_splitter",
@@ -457,3 +458,60 @@ def test_team_size_spin_declares_the_spec_documented_range() -> None:
     bounds = (_param(spin, "min"), _param(spin, "max"), _param(spin, "value"))
 
     assert bounds == ("2", "10", "4")
+
+
+# --------------------------------------------------------------------
+# Phase 8: the record-crossing row and exit_confirm_dlg (xrc-windows.md
+# amendments A2/P8-D1, P8-D3).
+
+
+def test_entry_row_is_wrapped_in_a_record_crossing_static_box_sizer() -> None:
+    """The operator's find-me frame: a native wxStaticBoxSizer, not chrome."""
+    labels = [
+        _param(obj, "label")
+        for obj in _window("main_frame").iter("object")
+        if obj.attrib["class"] == "wxStaticBoxSizer"
+    ]
+
+    assert "Record crossing" in labels
+
+
+def test_record_btn_declares_the_record_enter_label() -> None:
+    """P8-D3: the row's key-hint convention, matching undo_btn's."""
+    button = _objects_by_name(_window("main_frame"))["record_btn"]
+
+    assert _param(button, "label") == "Record (Enter)"
+
+
+def test_plate_input_declares_a_relative_sysfont_not_a_point_size() -> None:
+    """P8-D3: relative sizing only -- the 90-150% zoom must still scale it."""
+    font = _objects_by_name(_window("main_frame"))["plate_input"].find("font")
+
+    values = (_param(font, "sysfont"), _param(font, "relativesize"), font.find("size"))
+
+    assert values == ("wxSYS_DEFAULT_GUI_FONT", "1.5", None)
+
+
+def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
+    """A7/P8-D3: the "Plate number" hint and a wider DIP width."""
+    control = _objects_by_name(_window("main_frame"))["plate_input"]
+    width = int(_param(control, "size").split(",")[0])
+
+    assert (_param(control, "hint"), width >= 200) == ("Plate number", True)
+
+
+def test_exit_confirm_dlg_is_declared_with_cancel_default_focused() -> None:
+    """A2/P8-D1: the destructive-confirm pattern -- Cancel is safe and default."""
+    dialog = _top_level_windows("dialogs.xrc")["exit_confirm_dlg"]
+    sizer = next(
+        obj for obj in dialog.iter("object") if obj.attrib["class"] == "wxStdDialogButtonSizer"
+    )
+    buttons = _objects_by_name(sizer)
+
+    values = (
+        _param(buttons["wxID_CANCEL"], "default"),
+        _param(buttons["wxID_CANCEL"], "focused"),
+        _param(buttons["wxID_OK"], "label"),
+    )
+
+    assert values == ("1", "1", "Quit")
