@@ -100,7 +100,7 @@ def test_dmg_filename_carries_the_package_version(dmg_path: Path) -> None:
 
 
 def test_dmg_passes_hdiutil_verify(dmg_path: Path) -> None:
-    """hdiutil itself confirms the image is not corrupt.
+    """``hdiutil verify`` confirms the image itself is not corrupt.
 
     Isolated from the mount/detach fixture on purpose (risk noted in
     the plan): a mount-side flake must never be misattributed to a
@@ -116,10 +116,19 @@ def test_dmg_passes_hdiutil_verify(dmg_path: Path) -> None:
 def test_mounted_dmg_carries_app_symlink_background_and_volume_icon(
     mounted_dmg: Path,
 ) -> None:
-    """The mounted volume matches dmg_settings.py's planned contents."""
+    """The mounted volume matches dmg_settings.py's planned contents.
+
+    Measured, and not the layout an outside description of "a
+    .background directory" would suggest: dmgbuild/core.py copies
+    the background straight to ``<volume>/.background<ext>`` --
+    ``.background.tiff`` here, a hidden *file* at the volume root,
+    not a directory -- and the volume icon to
+    ``<volume>/.VolumeIcon.icns``, also at the root. Confirmed against
+    a real mounted image built by this same pipeline.
+    """
     app_path = mounted_dmg / "RiverCrossing.app"
     applications_link = mounted_dmg / "Applications"
-    background_path = mounted_dmg / ".background" / "dmg_background.tiff"
+    background_path = mounted_dmg / ".background.tiff"
     volume_icon_path = mounted_dmg / ".VolumeIcon.icns"
 
     assert app_path.is_dir()

@@ -316,7 +316,7 @@ def bundle_executable() -> Path:
 
 @pytest.fixture(scope="module")
 def bundle_app_path() -> Path:
-    """Return the built ``.app`` bundle's path (macOS-only, BUNDLE())."""
+    """Return the built ``.app``'s path (BUNDLE(), macOS-only)."""
     if sys.platform != "darwin":
         pytest.skip("BUNDLE() only wraps a .app on darwin")
     app_path = DIST / "RiverCrossing.app"

@@ -56,6 +56,7 @@ dev = [
     "pyinstaller",
     "pypdf",
     "pillow",
+    "dmgbuild; sys_platform == 'darwin'",  # P8-D7: unsigned drag-to-Applications DMG
 ]
 
 [project.gui-scripts]
@@ -120,6 +121,8 @@ ignore = [
 # FBT003: wx APIs take positional booleans (attr.SetBold(True)); not ours to fix.
 "tools/**" = ["T201", "INP001", "PLC0415", "FBT003"]
 "noxfile.py" = ["D100", "ANN001", "ANN201", "INP001"]
+# installers/ is a config tree, not an installed package (mirrors tools/**).
+"installers/*.py" = ["INP001"]
 # wx event handlers must match the framework's PascalCase override names.
 "src/rivercrossing/ui/views/**" = ["N802"]
 

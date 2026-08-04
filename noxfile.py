@@ -7,14 +7,16 @@ drift. Sessions map onto the CI stages in spec.md section 14:
     stage 1 Static     -> lint, typecheck, importlint, ids_drift
     stage 2 Unit       -> unit
     stage 3 Functional -> functional
-    stage 5 Build      -> bundle, smoke
+    stage 5 Build      -> bundle, smoke, dmg, dmg_smoke
 
 Run `nox -l` to list them, `nox -s <name>` to run one.
 """
 
+import sys
 from pathlib import Path
 
 import nox
+import nox.command
 
 nox.options.default_venv_backend = "uv|virtualenv"
 nox.options.reuse_existing_virtualenvs = True
@@ -27,6 +29,9 @@ GEN_IDS = ROOT / "tools" / "gen_ids.py"
 GEN_APP_ICONS = ROOT / "tools" / "gen_app_icons.py"
 SPEC = ROOT / "installers" / "rivercrossing.spec"
 BUNDLE_SMOKE = ROOT / "tests" / "functional" / "test_bundle_smoke.py"
+DMG_SETTINGS = ROOT / "installers" / "dmg_settings.py"
+DMG_SMOKE = ROOT / "tests" / "functional" / "test_dmg_smoke.py"
+APP_PATH = ROOT / "dist" / "RiverCrossing.app"
 
 DEV = "-e.[dev]"
 
@@ -152,3 +157,55 @@ def smoke(session):
         return
     session.install(DEV)
     session.run("pytest", str(BUNDLE_SMOKE), "--no-cov", *session.posargs)
+
+
+def _project_version() -> str:
+    """Read rivercrossing.__version__ straight off src/ (P8-D7).
+
+    Runs in nox's own host process, not a session's venv, so this
+    reads the single source of truth (module-skeletons.md S2)
+    directly rather than depending on either process having the
+    package installed.
+    """
+    sys.path.insert(0, str(ROOT / "src"))
+    import rivercrossing  # noqa: PLC0415 -- only this session needs the version
+
+    return rivercrossing.__version__
+
+
+@nox.session(python=PYTHON)
+def dmg(session):
+    """Build the unsigned drag-to-Applications DMG (P8-D7)."""
+    if sys.platform != "darwin":
+        session.skip("dmgbuild/hdiutil only run on darwin")
+    if not APP_PATH.is_dir():
+        session.error(f"no built .app -- run `nox -s bundle` first; missing {APP_PATH}")
+    session.install(DEV)
+
+    output_dmg = ROOT / "dist" / f"RiverCrossing-{_project_version()}.dmg"
+    dmg_args = (
+        "dmgbuild",
+        "-s",
+        str(DMG_SETTINGS),
+        "-D",
+        f"app={APP_PATH}",
+        "RiverCrossing",
+        str(output_dmg),
+    )
+    try:
+        session.run(*dmg_args)
+    except nox.command.CommandFailed:
+        # hdiutil-on-hosted-runners flake (project-plan.md §4): one
+        # retry, after clearing whatever partial image it left behind.
+        output_dmg.unlink(missing_ok=True)
+        session.run(*dmg_args)
+
+
+@nox.session(python=PYTHON)
+def dmg_smoke(session):
+    """Mount the built DMG and smoke-test it (CI stage 5, P8-D7)."""
+    if not DMG_SMOKE.exists():
+        session.log("DMG smoke test not authored yet")
+        return
+    session.install(DEV)
+    session.run("pytest", str(DMG_SMOKE), "--no-cov", *session.posargs)
