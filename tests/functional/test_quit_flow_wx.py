@@ -169,3 +169,15 @@ def test_forced_close_destroys_the_frame_without_opening_a_dialog() -> None:
     result = _run_scenario("forced_close_destroys_without_dialog")
 
     assert result["data"] == {"being_deleted": True, "run_dialog_calls": 0}, result["context"]
+
+
+def test_session_end_confirmed_then_close_destroys_with_no_second_dialog() -> None:
+    """The really_quitting flag makes a follow-on plain Close() skip it.
+
+    QUERY_END_SESSION's own default handler calls a plain (not
+    forced) ``TopWindow->Close()`` next -- this is what keeps that
+    second call from re-opening exit_running_dlg/exit_confirm_dlg.
+    """
+    result = _run_scenario("session_end_confirmed_then_close_destroys_once")
+
+    assert result["data"] == {"being_deleted": True, "run_dialog_calls": 1}, result["context"]

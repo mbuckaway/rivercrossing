@@ -544,6 +544,40 @@ def _query_end_session_confirmed_does_not_veto() -> dict[str, Any]:
         dialogs.run_dialog = original_run_dialog
 
 
+def _session_end_confirmed_then_close_destroys_once() -> dict[str, Any]:
+    """Skip a follow-on Close() once QUERY_END_SESSION set the flag.
+
+    Closes the gap a QUIT-outcome QUERY_END_SESSION leaves open on its
+    own: its own default handler proceeds to call ``TopWindow->
+    Close()`` next, a *plain*, vetoable close, not a forced one --
+    this is the ``context.app.really_quitting`` half of
+    ``_on_main_frame_close``'s ``not event.CanVeto() or ...`` guard,
+    never exercised by the QUERY_END_SESSION event alone.
+    """
+    calls: list[int] = []
+    original_run_dialog = dialogs.run_dialog
+
+    def _counting_run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+        calls.append(1)
+        return wx.ID_OK
+
+    dialogs.run_dialog = _counting_run_dialog
+    try:
+        app = wx.GetApp()
+        frame = app_module.build_main_window(app)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        event = wx.CloseEvent(wx.wxEVT_QUERY_END_SESSION)
+        event.SetCanVeto(True)  # noqa: FBT003 -- wx API takes a positional bool
+        app.ProcessEvent(event)
+        destroy_calls = _spy_on_destroy(frame)
+        frame.Close()  # plain, not forced -- what QUERY_END_SESSION's own default does next
+        return {"being_deleted": len(destroy_calls) > 0, "run_dialog_calls": len(calls)}
+    finally:
+        dialogs.run_dialog = original_run_dialog
+
+
 def _forced_close_destroys_without_dialog() -> dict[str, Any]:
     """Close(force=True) destroys the frame; no confirm dialog opens."""
     calls: list[int] = []
@@ -585,6 +619,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "mac_reopen_shows_and_raises": _mac_reopen_shows_and_raises,
     "query_end_session_cancelled_vetoes": _query_end_session_cancelled_vetoes,
     "query_end_session_confirmed_does_not_veto": _query_end_session_confirmed_does_not_veto,
+    "session_end_confirmed_then_close_destroys_once": (
+        _session_end_confirmed_then_close_destroys_once
+    ),
     "forced_close_destroys_without_dialog": _forced_close_destroys_without_dialog,
 }
 
