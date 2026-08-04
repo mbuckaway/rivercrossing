@@ -41,17 +41,26 @@ the same address-reuse motivation: each mutates ``main_frame`` state
 bootstrap) that ``test_console_demo.py``'s shared, read-only
 ``shared_console`` fixture explicitly forbids mutating.
 
+Task 8.5's quit-flow scenarios (``quit_menu_confirmed_destroys`` and
+its siblings, called from ``test_quit_flow_wx.py`` rather than
+``test_console_demo.py``) isolate for a third reason: quitting is
+process-global state -- ``wx.App.really_quitting``, and the red
+X/Dock-reopen pair that only ever makes sense against one live
+``main_frame`` at a time -- so each gets its own fresh interpreter
+too, never sharing one with any other scenario.
+
 This module *is* the child process's entire program. Run as::
 
     python console_subprocess_scenarios.py <scenario>
 
-it builds its own ``wx.App`` and its own XRC resource (nothing from
-the parent session's fixtures crosses a process boundary), runs one
-scenario, and prints exactly one JSON line to stdout::
+it builds its own app (:func:`rivercrossing.ui.app.build_app`) and
+its own XRC resource (nothing from the parent session's fixtures
+crosses a process boundary), runs one scenario, and prints exactly
+one JSON line to stdout::
 
     {"ok": bool, "error": str | None, "data": {...} | None}
 
-It never asserts anything itself -- ``test_console_demo.py`` decodes
+It never asserts anything itself -- the caller test module decodes
 this line and performs the actual comparisons, so a wrong measured
 value still surfaces as a normal pytest assertion diff, not a bare
 non-zero exit code.
@@ -62,13 +71,15 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 import harness
+import pages
 import wx
+import wx.xrc
 
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids
-from rivercrossing.ui.views import MainFrame
+from rivercrossing.ui.views import MainFrame, dialogs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -244,6 +255,30 @@ def _spy_on_set_focus(control: Any) -> list[bool]:  # noqa: ANN401
     return calls
 
 
+def _spy_on_destroy(window: Any) -> list[bool]:  # noqa: ANN401
+    """Monkeypatch *window*'s ``Destroy``, recording each real call.
+
+    ``Destroy()`` is a platform/GUI I/O boundary (T-10), the same
+    category as ``SetFocus()`` above: measured, ``IsBeingDeleted()``
+    right after a real ``Destroy()`` -- with no intervening pump --
+    still reads ``False`` on this build (a deferred deletion that has
+    not yet run), and touching the window again *after* one pump
+    raises ``RuntimeError: wrapped C/C++ object ... has been
+    deleted``. Spying on the call itself, rather than any later state
+    read, is the only way measured to observe "Destroy() really ran"
+    without either false negative.
+    """
+    original = window.Destroy
+    calls: list[bool] = []
+
+    def _spy() -> bool:
+        calls.append(True)
+        return bool(original())
+
+    window.Destroy = _spy
+    return calls
+
+
 def _plate_entry_round_trip() -> dict[str, Any]:
     """Typing a plate then Enter records once, clears, refocuses."""
     calls, restore = _counting_show_notices()
@@ -313,6 +348,224 @@ def _console_starts_in_running_state() -> dict[str, Any]:
         harness.close_window(frame)
 
 
+# --- Phase 8, task 8.5: quit always confirms; macOS X hides --------
+
+
+def _fire_exit_route(frame: Any) -> None:  # noqa: ANN401
+    """Post a real ``EVT_MENU`` for ``wxID_EXIT`` at *frame*.
+
+    Never pumped afterwards: the handler this fires calls
+    ``ShowModal()`` synchronously, which is itself the native modal
+    loop that runs any ``wx.CallAfter`` a caller already scheduled
+    before calling this (the same ``_run_with_action`` technique
+    ``test_dialog_behavior.py`` proves works, module docstring).
+    """
+    real_id = wx.xrc.XRCID("wxID_EXIT")
+    event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
+    event.SetEventObject(frame)
+    frame.GetEventHandler().ProcessEvent(event)
+
+
+def _quit_menu_confirmed_destroys() -> dict[str, Any]:
+    """wxID_EXIT + Quit on exit_running_dlg (demo RUNNING)."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    destroy_calls = _spy_on_destroy(frame)
+
+    def _click_quit() -> None:
+        dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+        harness.click(dialog, pages.WX_ID_OK)
+
+    wx.CallAfter(_click_quit)
+    _fire_exit_route(frame)
+    return {"frame_being_deleted": len(destroy_calls) > 0}
+
+
+def _quit_menu_cancelled_stays() -> dict[str, Any]:
+    """wxID_EXIT + Cancel on exit_running_dlg: frame survives."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+
+        def _click_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        wx.CallAfter(_click_cancel)
+        _fire_exit_route(frame)
+        return {"frame_being_deleted": frame.IsBeingDeleted(), "frame_shown": frame.IsShown()}
+    finally:
+        harness.close_window(frame)
+
+
+def _running_ride_shows_exit_running_dlg() -> dict[str, Any]:
+    """Fire wxID_EXIT; check exit_running_dlg is what shows."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        found: dict[str, bool] = {}
+
+        def _probe_and_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            found["shown"] = dialog is not None and dialog.IsShown()
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        wx.CallAfter(_probe_and_cancel)
+        _fire_exit_route(frame)
+        return {"exit_running_dlg_shown": found.get("shown", False)}
+    finally:
+        harness.close_window(frame)
+
+
+def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
+    """Show exit_confirm_dlg when the status is not RUNNING."""
+    original_ride_status = DemoDataSource.ride_status
+    DemoDataSource.ride_status = lambda _self: RideStatus.DRAFT
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            found: dict[str, bool] = {}
+
+            def _probe_and_cancel() -> None:
+                dialog = wx.Window.FindWindowByName(ids.EXIT_CONFIRM_DLG)
+                found["shown"] = dialog is not None and dialog.IsShown()
+                harness.click(dialog, pages.WX_ID_CANCEL)
+
+            wx.CallAfter(_probe_and_cancel)
+            _fire_exit_route(frame)
+            return {"exit_confirm_dlg_shown": found.get("shown", False)}
+        finally:
+            harness.close_window(frame)
+    finally:
+        DemoDataSource.ride_status = original_ride_status
+
+
+def _finish_first_ends_dialog_stays_running_posts_notice() -> dict[str, Any]:
+    """finish_first_btn (A1): ends the dialog, ride stays running."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+
+        def _click_finish_first() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            harness.click(dialog, ids.FINISH_FIRST_BTN)
+
+        wx.CallAfter(_click_finish_first)
+        _fire_exit_route(frame)
+        return {
+            "frame_being_deleted": frame.IsBeingDeleted(),
+            "status_text": frame.GetStatusBar().GetStatusText(0),
+        }
+    finally:
+        harness.close_window(frame)
+
+
+def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
+    """Hide main_frame via a plain Close(); never destroy it."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    frame.Close()
+    harness.pump()
+    try:
+        return {"being_deleted": frame.IsBeingDeleted(), "shown": frame.IsShown()}
+    finally:
+        harness.close_window(frame)
+
+
+def _mac_reopen_shows_and_raises() -> dict[str, Any]:
+    """Show and raise main_frame after the red X hid it."""
+    app = wx.GetApp()
+    frame = app_module.build_main_window(app)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    frame.Close()
+    harness.pump()
+    try:
+        app.MacReopenApp()
+        harness.pump()
+        return {"shown_after_reopen": frame.IsShown()}
+    finally:
+        harness.close_window(frame)
+
+
+def _query_end_session_cancelled_vetoes() -> dict[str, Any]:
+    """Dock Quit, Cancel: the session-end event is vetoed."""
+    original_run_dialog = dialogs.run_dialog
+    dialogs.run_dialog = lambda _dialog, opener: wx.ID_CANCEL  # noqa: ARG005 -- opener= is a real kwarg
+    try:
+        app = wx.GetApp()
+        frame = app_module.build_main_window(app)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            event = wx.CloseEvent(wx.wxEVT_QUERY_END_SESSION)
+            event.SetCanVeto(True)  # noqa: FBT003 -- wx API takes a positional bool
+            app.ProcessEvent(event)
+            return {"vetoed": event.GetVeto()}
+        finally:
+            harness.close_window(frame)
+    finally:
+        dialogs.run_dialog = original_run_dialog
+
+
+def _query_end_session_confirmed_does_not_veto() -> dict[str, Any]:
+    """Dock Quit, Quit: no veto, and the quit flag is set."""
+    original_run_dialog = dialogs.run_dialog
+    dialogs.run_dialog = lambda _dialog, opener: wx.ID_OK  # noqa: ARG005 -- opener= is a real kwarg
+    try:
+        app = wx.GetApp()
+        frame = app_module.build_main_window(app)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            event = wx.CloseEvent(wx.wxEVT_QUERY_END_SESSION)
+            event.SetCanVeto(True)  # noqa: FBT003 -- wx API takes a positional bool
+            app.ProcessEvent(event)
+            return {"vetoed": event.GetVeto(), "really_quitting": app.really_quitting}
+        finally:
+            harness.close_window(frame)
+    finally:
+        dialogs.run_dialog = original_run_dialog
+
+
+def _forced_close_destroys_without_dialog() -> dict[str, Any]:
+    """Close(force=True) destroys the frame; no confirm dialog opens."""
+    calls: list[int] = []
+    original_run_dialog = dialogs.run_dialog
+
+    def _counting_run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401
+        calls.append(1)
+        return original_run_dialog(dialog, opener)
+
+    dialogs.run_dialog = _counting_run_dialog
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        destroy_calls = _spy_on_destroy(frame)
+        frame.Close(force=True)
+        return {"being_deleted": len(destroy_calls) > 0, "run_dialog_calls": len(calls)}
+    finally:
+        dialogs.run_dialog = original_run_dialog
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
@@ -321,6 +574,18 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "plate_entry_round_trip": _plate_entry_round_trip,
     "record_btn_click_records_once": _record_btn_click_records_once,
     "console_starts_in_running_state": _console_starts_in_running_state,
+    "quit_menu_confirmed_destroys": _quit_menu_confirmed_destroys,
+    "quit_menu_cancelled_stays": _quit_menu_cancelled_stays,
+    "running_ride_shows_exit_running_dlg": _running_ride_shows_exit_running_dlg,
+    "exit_confirm_dlg_shown_when_not_running": _exit_confirm_dlg_shown_when_not_running,
+    "finish_first_ends_dialog_stays_running_posts_notice": (
+        _finish_first_ends_dialog_stays_running_posts_notice
+    ),
+    "red_x_close_vetoes_and_hides_on_mac": _red_x_close_vetoes_and_hides_on_mac,
+    "mac_reopen_shows_and_raises": _mac_reopen_shows_and_raises,
+    "query_end_session_cancelled_vetoes": _query_end_session_cancelled_vetoes,
+    "query_end_session_confirmed_does_not_veto": _query_end_session_confirmed_does_not_veto,
+    "forced_close_destroys_without_dialog": _forced_close_destroys_without_dialog,
 }
 
 
@@ -351,10 +616,13 @@ def main(argv: list[str]) -> int:
             json.dumps({"ok": False, "error": "usage: <script> <scenario>", "data": None})
         )
         return 2
-    # Bound to a name for the rest of main(): an unbound wx.App() is
+    # Bound to a name for the rest of main(): an unbound App is
     # collected immediately (measured), and wx.GetApp() then reports
     # PyNoAppError for everything the scenario tries after it.
-    app = wx.App()  # noqa: F841 -- kept alive by this binding, never read
+    # app_module.build_app(), not a plain wx.App(): the quit-flow
+    # scenarios below need the real MacReopenApp override and
+    # really_quitting flag it carries.
+    app = app_module.build_app()  # noqa: F841 -- kept alive by this binding, never read
     wx.Log.SetActiveTarget(wx.LogStderr())
     result = _run(argv[1])
     print(json.dumps(result))  # noqa: T201 -- the child's entire contract with its parent
