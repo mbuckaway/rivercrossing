@@ -202,9 +202,14 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="File",
         label="Exit",
         ids=("wxID_EXIT",),
-        # Branches on ride state (RUNNING -> exit_running_dlg; otherwise
-        # quits directly) rather than reaching one fixed target, so this
-        # is the flow itself, not a single window/dialog.
+        # Branches on ride state via quit_flow.dialog_for_status
+        # (RUNNING -> exit_running_dlg; otherwise -> exit_confirm_dlg)
+        # rather than reaching one fixed target, so this is the flow
+        # itself, not a single window/dialog. Phase 8 (P8-D1/R-51):
+        # the app never exits without confirmation -- app.py's own
+        # "exit_or_quit" special-case in _make_route_handler is what
+        # runs that flow; this table only records that the row has
+        # one.
         kind=TargetKind.COMMAND,
         target="exit_or_quit",
         enabled_when=ALWAYS,  # "always"

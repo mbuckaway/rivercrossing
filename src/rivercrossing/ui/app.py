@@ -25,13 +25,14 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
   since a failed XRC load still names the resource it could not find.
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
-``rivercrossing.demo``, :func:`~rivercrossing.ui.require_wx`) are
-imported at module scope, so this module itself stays importable even
-when wx cannot be (mirrors the guard the original stub's own
-docstring already promised). Every wx-touching name -- ``wx`` itself,
-its ``xrc`` submodule, and the view classes -- is imported inside the
-function that first needs it, each behind its own :func:`require_wx`
-call.
+``quit_flow``, ``rivercrossing.demo``,
+:func:`~rivercrossing.ui.require_wx`) are imported at module scope, so
+this module itself stays importable even when wx cannot be (mirrors
+the guard the original stub's own docstring already promised). Every
+wx-touching name -- ``wx`` itself, its ``xrc`` submodule, the view
+classes, and the ``RiverCrossingApp`` subclass :func:`build_app`
+builds -- is imported/defined inside the function that first needs
+it, each behind its own :func:`require_wx` call.
 """
 
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
-from rivercrossing.ui import accelerators, commands, ids, require_wx
+from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx
 from rivercrossing.ui.presenters.console import ConsolePresenter
 
 if TYPE_CHECKING:
@@ -47,7 +48,7 @@ if TYPE_CHECKING:
 
     from rivercrossing.ui.presenters.data_source import DataSource
 
-__all__ = ["build_main_window", "main"]
+__all__ = ["build_app", "build_main_window", "main"]
 
 # Riders > Entry Detail... has no plate to open with until a real ride
 # exists (EPIC 4+); "77" is the only plate rivercrossing.demo carries
@@ -59,16 +60,27 @@ _ENTRY_DETAIL_DEMO_PLATE = "77"
 class _RouteContext:
     """The pieces every bound §15 route handler needs to act.
 
-    Threading these three together keeps every route-handling helper
+    Threading these four together keeps every route-handling helper
     below to at most one extra parameter, and keeps this module's one
     :class:`DemoDataSource` construction (E1.2.4) to the single call
     in :func:`build_main_window` -- every window a route later opens
     reuses that same instance rather than constructing its own.
+
+    Attributes:
+        frame: ``main_frame``.
+        resource: The loaded ``wx.xrc.XmlResource``.
+        data_source: The demo/live display-data seam.
+        app: The live ``wx.App`` -- carries ``really_quitting`` (the
+            flag :func:`_on_query_end_session`/the exit route set so
+            :func:`_on_main_frame_close` never re-opens a confirm
+            dialog for a quit already confirmed, P8-D1's risk 1) and
+            ``main_frame`` (for ``RiverCrossingApp.MacReopenApp``).
     """
 
     frame: Any
     resource: Any
     data_source: DataSource
+    app: Any
 
 
 def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
@@ -190,18 +202,141 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
             window.Destroy()
 
 
+def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
+    """Run the quit-confirm dialog for the ride's current status.
+
+    Loads :func:`quit_flow.dialog_for_status`'s target from
+    *context*'s already-loaded resource, binds ``finish_first_btn``
+    to ``EndModal`` first when the dialog carries one (A1 -- today it
+    ends nothing), shows it through
+    :func:`~rivercrossing.ui.views.dialogs.run_dialog` -- the one seam
+    every dialog in this codebase shows through -- and posts the
+    Finish-Ride stub notice on ``QuitOutcome.FINISH_FIRST`` before
+    returning.
+    """
+    wx = require_wx()
+
+    dialog_name = quit_flow.dialog_for_status(context.data_source.ride_status())
+    dialog = context.resource.LoadDialog(None, dialog_name)
+
+    finish_first_id: int | None = None
+    finish_first_button = wx.Window.FindWindowByName(ids.FINISH_FIRST_BTN, dialog)
+    if finish_first_button is not None:
+        finish_first_id = finish_first_button.GetId()
+        dialog.Bind(
+            wx.EVT_BUTTON,
+            lambda event: dialog.EndModal(event.GetId()),
+            finish_first_button,
+        )
+
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    try:
+        result = dialogs.run_dialog(dialog, opener=context.frame)
+    finally:
+        if not dialog.IsBeingDeleted():
+            dialog.Destroy()
+
+    outcome = quit_flow.outcome_for(result, ok_id=wx.ID_OK, finish_first_id=finish_first_id)
+    if outcome is quit_flow.QuitOutcome.FINISH_FIRST:
+        label = commands.route_for_id("mi_finish_ride").label
+        context.frame.SetStatusText(f"{label} — not yet implemented")
+    return outcome
+
+
+def _handle_exit_route(context: _RouteContext) -> None:
+    """File ▸ Exit / app-menu Quit / ⌘Q (all ``wxID_EXIT``): confirm.
+
+    On a ``QUIT`` outcome, marks *context.app* as really quitting and
+    force-closes -- ``Close(force=True)`` builds a non-vetoable
+    ``EVT_CLOSE`` (P8-D1), so :func:`_on_main_frame_close` destroys
+    the frame with no second dialog.
+    """
+    if _confirm_quit(context) is not quit_flow.QuitOutcome.QUIT:
+        return
+    context.app.really_quitting = True
+    context.frame.Close(force=True)
+
+
+def _on_main_frame_close(context: _RouteContext, event: Any) -> None:  # noqa: ANN401
+    """Handle ``main_frame``'s own ``EVT_CLOSE``: the red X / close box.
+
+    Checked first, together: a forced close (``not event.CanVeto()``,
+    always true for :func:`_handle_exit_route`'s own
+    ``Close(force=True)``) and *context.app.really_quitting* (set by
+    a confirmed ``wxEVT_QUERY_END_SESSION``,
+    :func:`_on_query_end_session`) both destroy with no dialog -- the
+    second case is what keeps Dock ▸ Quit quittable (P8-D1's risk 1):
+    its own default handler calls ``TopWindow->Close()`` next, and
+    that call must not show a second confirm or hide instead of
+    quitting.
+
+    macOS never quits on the red X (P8-D2): it hides *context.frame*
+    instead, leaving ``RiverCrossingApp.MacReopenApp`` a window to
+    restore on a Dock-icon click. Windows has no equivalent hide
+    convention, so it runs the same confirm flow the menu does.
+    """
+    wx = require_wx()
+    if not event.CanVeto() or context.app.really_quitting:
+        context.frame.Destroy()
+        return
+    if wx.Platform == "__WXMAC__":
+        event.Veto()
+        context.frame.Hide()
+        return
+    if _confirm_quit(context) is quit_flow.QuitOutcome.QUIT:
+        context.app.really_quitting = True
+        context.frame.Destroy()
+    else:
+        event.Veto()
+
+
+def _on_query_end_session(context: _RouteContext, event: Any) -> None:  # noqa: ANN401
+    """Handle Dock ▸ Quit / logout (``wxEVT_QUERY_END_SESSION``).
+
+    Vetoing on anything but ``QUIT`` is what stops a cancelled Dock ▸
+    Quit from tearing the app down anyway; ``event.Skip()`` on
+    ``QUIT`` lets wx's own default handler proceed to
+    ``TopWindow->Close()``, which :func:`_on_main_frame_close` then
+    finds *really_quitting* already set and destroys with no second
+    dialog (P8-D1's risk 1).
+    """
+    if _confirm_quit(context) is quit_flow.QuitOutcome.QUIT:
+        context.app.really_quitting = True
+        event.Skip()
+        return
+    event.Veto()
+
+
+def _bind_process_quit_paths(context: _RouteContext) -> None:
+    """Wire every way the process can end (P8-D1/P8-D2/P8-D8).
+
+    Binds *context.frame*'s own ``EVT_CLOSE`` and *context.app*'s
+    ``wxEVT_QUERY_END_SESSION``, and hands *context.app* the frame
+    reference ``RiverCrossingApp.MacReopenApp`` restores later.
+    """
+    wx = require_wx()
+    context.app.main_frame = context.frame
+    context.frame.Bind(wx.EVT_CLOSE, lambda event: _on_main_frame_close(context, event))
+    context.app.Bind(wx.EVT_QUERY_END_SESSION, lambda event: _on_query_end_session(context, event))
+
+
 def _make_route_handler(
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
     """Return the ``EVT_MENU`` handler *route* fires.
 
-    A ``COMMAND`` row has no window to open, and no ride engine yet
-    exists to run its real action (EPIC 4+); it posts a status-bar
-    notice instead of silently doing nothing. ``WINDOW``/``DIALOG``
-    rows always attempt to open their target through
-    :func:`_open_target`, which posts the same kind of notice if that
-    target has no frozen window yet.
+    ``route.target == "exit_or_quit"`` (the Exit row, P8-D8) always
+    runs the quit-confirm flow instead of the generic ``COMMAND``
+    stub below it. Every other ``COMMAND`` row has no window to open
+    and no ride engine yet to run its real action (EPIC 4+); it posts
+    a status-bar notice instead of silently doing nothing.
+    ``WINDOW``/``DIALOG`` rows always attempt to open their target
+    through :func:`_open_target`, which posts the same kind of notice
+    if that target has no frozen window yet.
     """
+    if route.target == "exit_or_quit":
+        return lambda _event: _handle_exit_route(context)
     if route.kind is commands.TargetKind.COMMAND:
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     return lambda _event: _open_target(context, route)
@@ -223,14 +358,16 @@ def _bind_routes(context: _RouteContext) -> None:
             context.frame.Bind(wx.EVT_MENU, handler, id=wx.xrc.XRCID(item_id))
 
 
-def build_main_window(app: Any) -> Any:  # noqa: ANN401, ARG001 -- see conftest.xrc_resource's own pattern
+def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Build and wire ``main_frame``, complete but not yet shown.
 
     Loads every packaged XRC resource, builds the console
     (:class:`~rivercrossing.ui.views.MainFrame`) and attaches its
     menubar via ``LoadMenuBar`` (never ``FindWindowByName`` -- the XRC
     menubar handler drops the name, spec.md §15b), applies the
-    accelerator table, and binds every §15 route -- threading the one
+    accelerator table, binds every §15 route, and wires the two
+    process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
+    (Phase 8, P8-D1/P8-D2) -- threading the one
     :class:`DemoDataSource` this function constructs through every
     window the bootstrap can reach. Deleting ``rivercrossing.demo``
     breaks exactly this module's import line and this construction
@@ -241,9 +378,11 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401, ARG001 -- see conftest.
     blocks.
 
     Args:
-        app: The live ``wx.App`` :func:`main` already constructed;
-            taken for ordering only -- an App must exist before any
-            wx object is built -- and otherwise unused here.
+        app: The live app :func:`main`/:func:`build_app` already
+            constructed. An App must exist before any wx object is
+            built; this function also hands it *frame*, for
+            ``RiverCrossingApp.MacReopenApp`` to restore later, and
+            binds its ``wxEVT_QUERY_END_SESSION``.
 
     Returns:
         The loaded, fully wired ``main_frame``, not yet shown.
@@ -267,9 +406,65 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401, ARG001 -- see conftest.
     _console.focus_entry()
 
     _apply_accelerators(frame, menubar)
-    _bind_routes(_RouteContext(frame=frame, resource=resource, data_source=data_source))
+    context = _RouteContext(frame=frame, resource=resource, data_source=data_source, app=app)
+    _bind_routes(context)
+    _bind_process_quit_paths(context)
 
     return frame
+
+
+def _build_app_class() -> type[Any]:
+    """Build the ``wx.App`` subclass Dock-reopen and quit need.
+
+    A function, not a module-level ``class`` statement: the class
+    body needs a live ``wx.App`` to subclass at all, and a bare
+    ``class RiverCrossingApp(wx.App):`` at import time would break
+    this module's "importable even when wx cannot be" guarantee
+    (module docstring).
+    """
+    require_wx()
+    import wx  # noqa: PLC0415 -- deferred, see module docstring
+
+    class RiverCrossingApp(wx.App):  # type: ignore[misc]
+        """The one live app object: owns Dock-reopen and the quit flag.
+
+        ``# type: ignore[misc]``: wx ships no stubs (pyproject.toml's
+        ``ignore_missing_imports`` for ``wx.*``), so ``wx.App``
+        resolves to ``Any`` and mypy refuses to subclass ``Any`` --
+        the same reasoning ``main_frame.CrossingsFeedModel`` already
+        documents for the first wx base class this codebase
+        subclasses.
+
+        ``main_frame``/``really_quitting`` are set by
+        :func:`build_main_window`/:func:`_handle_exit_route`/
+        :func:`_on_main_frame_close`/:func:`_on_query_end_session`
+        once they exist; both default here so every attribute access
+        is safe even before then.
+        """
+
+        main_frame: Any = None
+        really_quitting: bool = False
+
+        def MacReopenApp(self) -> None:  # noqa: N802 -- wx's own override name
+            """Show and raise the hidden main frame (P8-D2).
+
+            wx's own default ``MacReopenApp`` only restores an
+            *iconized* window (source-verified at the 4.3.1 pin) --
+            this app hides ``main_frame`` on the red X instead of
+            iconizing it (:func:`_on_main_frame_close`), so the
+            default alone would leave a Dock-icon click doing
+            nothing.
+            """
+            if self.main_frame is not None:
+                self.main_frame.Show()
+                self.main_frame.Raise()
+
+    return RiverCrossingApp
+
+
+def build_app() -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Construct the one live ``RiverCrossingApp`` instance."""
+    return _build_app_class()()
 
 
 def main() -> int:
@@ -286,7 +481,7 @@ def main() -> int:
         WxUnavailableError: If ``wx`` cannot be imported.
     """
     wx = require_wx()
-    app = wx.App()  # bound for this whole call -- an unbound App is collected immediately
+    app = build_app()  # bound for this whole call -- an unbound App is collected immediately
     wx.Log.SetActiveTarget(wx.LogStderr())  # see module docstring: the exit-time modal hang
 
     frame = build_main_window(app)
