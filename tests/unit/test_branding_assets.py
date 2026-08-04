@@ -114,7 +114,7 @@ def test_committed_background_tiff_carries_a_one_x_and_a_two_x_page() -> None:
 
 
 def test_no_png_is_committed_under_installers_branding() -> None:
-    """No .png file exists anywhere under installers/branding (GitLab)."""
+    """No .png file exists anywhere under installers/branding."""
     png_paths = list(BRANDING_DIR.rglob("*.png"))
 
     assert png_paths == []
