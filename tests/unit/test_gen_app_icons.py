@@ -112,7 +112,9 @@ def test_check_rsvg_convert_available_given_tool_present_does_not_raise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A present rsvg-convert passes the guard without raising."""
-    monkeypatch.setattr(gen_app_icons.shutil, "which", lambda _name: "/opt/homebrew/bin/rsvg-convert")
+    monkeypatch.setattr(
+        gen_app_icons.shutil, "which", lambda _name: "/opt/homebrew/bin/rsvg-convert"
+    )
 
     result = gen_app_icons._check_rsvg_convert_available()
 
@@ -147,7 +149,7 @@ def test_check_svg_sources_exist_given_both_files_present_does_not_raise(tmp_pat
 def test_check_svg_sources_exist_given_background_svg_missing_raises_naming_it(
     tmp_path: Path,
 ) -> None:
-    """A present icon.svg but missing dmg_background.svg names the latter.
+    """A present icon.svg but a missing background names the latter.
 
     Exercises the loop's second iteration: the first file existing
     must not short-circuit the check for the second.
@@ -168,7 +170,7 @@ def test_main_given_missing_rsvg_convert_fails_naming_brew_install_librsvg(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """No rsvg-convert on PATH fails the CLI with the brew install hint."""
+    """Missing rsvg-convert fails the CLI with the brew install hint."""
     monkeypatch.setattr(gen_app_icons.shutil, "which", lambda _name: None)
 
     exit_code = gen_app_icons.main(

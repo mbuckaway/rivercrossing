@@ -24,6 +24,7 @@ PYTHON = "3.14"
 ROOT = Path(__file__).parent
 XRC_DIR = ROOT / "src" / "rivercrossing" / "ui" / "xrc"
 GEN_IDS = ROOT / "tools" / "gen_ids.py"
+GEN_APP_ICONS = ROOT / "tools" / "gen_app_icons.py"
 SPEC = ROOT / "installers" / "rivercrossing.spec"
 BUNDLE_SMOKE = ROOT / "tests" / "functional" / "test_bundle_smoke.py"
 
@@ -124,6 +125,13 @@ def ids_drift(session):
         return
     session.install(DEV)
     session.run("python", str(GEN_IDS), "--check")
+
+
+@nox.session(python=PYTHON)
+def gen_branding(session):
+    """Regenerate the committed branding artifacts (P8-D5)."""
+    session.install(DEV)
+    session.run("python", str(GEN_APP_ICONS))
 
 
 @nox.session(python=PYTHON)
