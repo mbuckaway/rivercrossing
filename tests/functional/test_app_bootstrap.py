@@ -174,6 +174,31 @@ def test_build_main_window_wires_the_console_to_the_running_data_source(
     assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (True, "RUNNING")
 
 
+# --- theme + zoom menu radio defaults (Phase 8, 8.6, P8-D4) -------
+
+
+def test_build_main_window_checks_the_theme_and_zoom_menu_defaults(
+    bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """main.xrc:338-341's documented gap: no ``.Check(`` call existed.
+
+    ``mi_theme_system`` happens to read checked even before this fix,
+    since it is the first item of its own ``wxRB_GROUP`` and wx
+    checks a fresh radio group's first member by default (measured);
+    ``mi_zoom_100`` is not first in its own group and reads
+    unchecked until the fix lands, which is what actually turns this
+    combined assertion red today.
+    """
+    menubar = bound_frame.GetMenuBar()
+
+    checked = (
+        menubar.IsChecked(wx.xrc.XRCID(ids.MI_THEME_SYSTEM)),
+        menubar.IsChecked(wx.xrc.XRCID(ids.MI_ZOOM_100)),
+    )
+
+    assert checked == (True, True)
+
+
 # --- every §15 route is bound (T-3, R-73) -------------------------
 
 

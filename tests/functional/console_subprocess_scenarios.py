@@ -68,6 +68,7 @@ non-zero exit code.
 
 import json
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import harness
@@ -78,13 +79,15 @@ import wx.xrc
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import ids
+from rivercrossing.ui import ids, theme
 from rivercrossing.ui.views import MainFrame, dialogs
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 __all__ = ["main"]
+
+_SCREENSHOT_DIR = Path(__file__).resolve().parent / "_screenshots"
 
 
 def _visible_column_titles(crossings_list: Any) -> list[str]:  # noqa: ANN401
@@ -600,6 +603,125 @@ def _forced_close_destroys_without_dialog() -> dict[str, Any]:
         dialogs.run_dialog = original_run_dialog
 
 
+# --- Phase 8, task 8.6: live dark mode + menu radio defaults -------
+
+
+def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401
+    """Post a real ``EVT_MENU`` for *item_id* at *frame* and pump it.
+
+    Safe to pump right after, unlike ``_fire_exit_route`` above: no
+    theme id ever opens a modal dialog.
+    """
+    real_id = wx.xrc.XRCID(item_id)
+    event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
+    event.SetEventObject(frame)
+    frame.GetEventHandler().ProcessEvent(event)
+    harness.pump()
+
+
+def _theme_radio_checked(frame: Any, item_id: str) -> bool:  # noqa: ANN401
+    """Return whether *item_id*'s own menu item is currently checked."""
+    item, _menu = frame.GetMenuBar().FindItem(wx.xrc.XRCID(item_id))
+    return bool(item.IsChecked())
+
+
+def _theme_dark_applies_at_runtime() -> dict[str, Any]:
+    """mi_theme_dark: SystemAppearance flips dark; the radio stays checked.
+
+    Also captures a dark-mode screenshot artifact (Phase 8's own
+    visual record) via the same ``harness.screenshot`` machinery
+    ``test_screen_smoke.py`` already uses, into the same
+    ``_screenshots`` directory.
+    """
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        _fire_menu_event(frame, ids.MI_THEME_DARK)
+        saved = harness.screenshot(frame, _SCREENSHOT_DIR / "theme_dark.png")
+        return {
+            "is_dark": wx.SystemSettings.GetAppearance().IsDark(),
+            "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_DARK),
+            "screenshot_exists": saved.exists(),
+        }
+    finally:
+        harness.close_window(frame)
+
+
+def _theme_light_round_trip() -> dict[str, Any]:
+    """Dark then Light: SystemAppearance and the radio both flip back."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        _fire_menu_event(frame, ids.MI_THEME_DARK)
+        _fire_menu_event(frame, ids.MI_THEME_LIGHT)
+        return {
+            "is_dark": wx.SystemSettings.GetAppearance().IsDark(),
+            "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_LIGHT),
+        }
+    finally:
+        harness.close_window(frame)
+
+
+def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
+    """Dark then System: a guarded re-apply, bounded (best-effort).
+
+    Counts every real ``theme.apply`` call via a call-through spy --
+    the genuine implementation still runs, this only observes it
+    (mirrors ``_counting_show_notices``'s own justification above):
+    the final ``SystemSettings`` state alone cannot distinguish "the
+    guard let exactly one re-apply through" from "it let none, or
+    many, through".
+    """
+    calls: list[theme.ThemeMode] = []
+    original_apply = theme.apply
+
+    def _counting_apply(app: Any, mode: theme.ThemeMode) -> Any:  # noqa: ANN401
+        calls.append(mode)
+        return original_apply(app, mode)
+
+    theme.apply = _counting_apply
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            _fire_menu_event(frame, ids.MI_THEME_DARK)
+            _fire_menu_event(frame, ids.MI_THEME_SYSTEM)
+            return {
+                "apply_call_count": len(calls),
+                "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_SYSTEM),
+            }
+        finally:
+            harness.close_window(frame)
+    finally:
+        theme.apply = original_apply
+
+
+def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, Any]:
+    """Theme ids are silent (Ok, macOS); mi_zoom_110 still posts the stub."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        before = frame.GetStatusBar().GetStatusText(0)
+        _fire_menu_event(frame, ids.MI_THEME_DARK)
+        after_theme = frame.GetStatusBar().GetStatusText(0)
+        _fire_menu_event(frame, "mi_zoom_110")
+        after_zoom = frame.GetStatusBar().GetStatusText(0)
+        return {
+            "theme_notice_unchanged": after_theme == before,
+            "zoom_stub_notice": after_zoom,
+        }
+    finally:
+        harness.close_window(frame)
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
@@ -623,6 +745,14 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
         _session_end_confirmed_then_close_destroys_once
     ),
     "forced_close_destroys_without_dialog": _forced_close_destroys_without_dialog,
+    "theme_dark_applies_at_runtime": _theme_dark_applies_at_runtime,
+    "theme_light_round_trip": _theme_light_round_trip,
+    "theme_system_reapplies_on_sys_colour_changed": (
+        _theme_system_reapplies_on_sys_colour_changed
+    ),
+    "theme_ids_do_not_post_the_stub_notice_but_zoom_still_does": (
+        _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does
+    ),
 }
 
 
