@@ -626,7 +626,7 @@ def _theme_radio_checked(frame: Any, item_id: str) -> bool:  # noqa: ANN401
 
 
 def _theme_dark_applies_at_runtime() -> dict[str, Any]:
-    """mi_theme_dark: SystemAppearance flips dark; the radio stays checked.
+    """mi_theme_dark: SystemAppearance flips dark, radio stays checked.
 
     Also captures a dark-mode screenshot artifact (Phase 8's own
     visual record) via the same ``harness.screenshot`` machinery
@@ -650,7 +650,7 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
 
 
 def _theme_light_round_trip() -> dict[str, Any]:
-    """Dark then Light: SystemAppearance and the radio both flip back."""
+    """Dark then Light: SystemAppearance and the radio flip back."""
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
@@ -669,12 +669,15 @@ def _theme_light_round_trip() -> dict[str, Any]:
 def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
     """Dark then System: a guarded re-apply, bounded (best-effort).
 
-    Counts every real ``theme.apply`` call via a call-through spy --
-    the genuine implementation still runs, this only observes it
-    (mirrors ``_counting_show_notices``'s own justification above):
-    the final ``SystemSettings`` state alone cannot distinguish "the
-    guard let exactly one re-apply through" from "it let none, or
-    many, through".
+    # logic-coverage-exempt: T-10 -- this passthrough spy targets an
+    # internal module function (``theme.apply``), not a true I/O
+    # boundary, for the same reason ``_counting_show_notices`` above
+    # is exempted: the final ``SystemSettings`` state alone cannot
+    # distinguish "the guard let exactly one re-apply through" from
+    # "it let none, or many, through". Counting real invocations is
+    # the only direct way to observe the reentrancy guard; the spy
+    # still calls through to the genuine implementation, it never
+    # fakes it.
     """
     calls: list[theme.ThemeMode] = []
     original_apply = theme.apply
@@ -703,7 +706,7 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
 
 
 def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, Any]:
-    """Theme ids are silent (Ok, macOS); mi_zoom_110 still posts the stub."""
+    """Theme ids post no notice (Ok); mi_zoom_110 still posts one."""
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless tests for the theme mode mapping and notice text (Phase 8, 8.6).
+"""Headless tests for the theme mode mapping and notice text (Phase 8).
 
 ``theme.mode_for_menu_id`` is fully wx-free (module docstring), so its
 three-way mapping and its negative path are exactly the kind of logic
@@ -81,7 +81,7 @@ NOTICE_FOR_RESULT_CASES = (
 def test_notice_for_result_given_each_appearance_result_matches_expected_notice(
     result: object, expected_notice: str | None
 ) -> None:
-    """CannotChange (MSW, a window already exists) alone gets a notice."""
+    """CannotChange (MSW, a window already open) alone gets a notice."""
     notice = theme.notice_for_result(result)
 
     assert notice == expected_notice

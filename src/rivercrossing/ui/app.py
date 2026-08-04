@@ -25,7 +25,7 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
   since a failed XRC load still names the resource it could not find.
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
-``quit_flow``, ``rivercrossing.demo``,
+``quit_flow``, ``theme``, ``rivercrossing.demo``,
 :func:`~rivercrossing.ui.require_wx`) are imported at module scope, so
 this module itself stays importable even when wx cannot be (mirrors
 the guard the original stub's own docstring already promised). Every
@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
-from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx
+from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
 
 if TYPE_CHECKING:
@@ -54,6 +54,11 @@ __all__ = ["build_app", "build_main_window", "main"]
 # exists (EPIC 4+); "77" is the only plate rivercrossing.demo carries
 # entry_detail fixture data for, so it is what D1's menu route opens.
 _ENTRY_DETAIL_DEMO_PLATE = "77"
+
+# The View row's own commands.py target (P8-D8): its 11 ids share one
+# route, dispatched further by event id below -- the theme trio to
+# theme.ThemeController, the other 8 to the generic COMMAND stub.
+_VIEW_ROUTE_TARGET = "view_setting"
 
 
 @dataclass(frozen=True)
@@ -75,12 +80,15 @@ class _RouteContext:
             :func:`_on_main_frame_close` never re-opens a confirm
             dialog for a quit already confirmed, P8-D1's risk 1) and
             ``main_frame`` (for ``RiverCrossingApp.MacReopenApp``).
+        theme_controller: The one live :class:`theme.ThemeController`
+            the View row's theme ids apply modes through (P8-D4).
     """
 
     frame: Any
     resource: Any
     data_source: DataSource
     app: Any
+    theme_controller: theme.ThemeController
 
 
 def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
@@ -141,6 +149,67 @@ def _apply_accelerators(frame: Any, menubar: Any) -> None:  # noqa: ANN401 -- wx
     """Apply the frozen accelerator table to *frame* (E1.4.1)."""
     wx = require_wx()
     frame.SetAcceleratorTable(wx.AcceleratorTable(_accelerator_entries(menubar)))
+
+
+def _check_default_menu_radios(menubar: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Tick the two documented radio defaults after ``LoadMenuBar``.
+
+    ``<checked>`` is a silent no-op on ``wxITEM_RADIO`` (main.xrc's
+    own comment, measured against ``src/xrc/xh_menu.cpp``) -- both
+    documented defaults are ticked here in code instead (P8-D4).
+    ``mi_theme_system`` already reads checked before this call in
+    practice (it is the first item of its own radio group, and wx
+    checks a fresh group's first member by default, measured); this
+    still ticks it explicitly rather than relying on group order,
+    which XRC authoring could change without this line noticing.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    menubar.Check(wx.xrc.XRCID(ids.MI_THEME_SYSTEM), True)  # noqa: FBT003 -- wx API takes a positional bool
+    menubar.Check(wx.xrc.XRCID(ids.MI_ZOOM_100), True)  # noqa: FBT003 -- wx API takes a positional bool
+
+
+def _theme_item_id_for(real_id: int) -> str | None:
+    """Return the theme radio's own XRC name for *real_id*, if any.
+
+    The reverse of ``wx.xrc.XRCID``: an ``EVT_MENU`` only ever carries
+    the resolved runtime int, never the name that produced it, so the
+    three theme ids are walked back explicitly rather than kept in
+    some other, larger lookup this row's other eight ids would also
+    need to share.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    return next(
+        (item_id for item_id in theme.THEME_MENU_ITEM_IDS if wx.xrc.XRCID(item_id) == real_id),
+        None,
+    )
+
+
+def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: Any) -> None:  # noqa: ANN401
+    """Dispatch the View row: theme ids to the controller, else stub.
+
+    P8-D4. The other eight ids in this row (``mi_hide_times``, the seven
+    ``mi_zoom_*``) keep the pre-Phase-8 generic ``COMMAND`` stub --
+    they carry no engine yet either. A synthetic ``EVT_MENU`` never
+    flips a radio's own checked state the way a genuine native click
+    does (measured: this harness's functional suite has no delivery
+    mechanism but direct event injection, harness.py's own module
+    docstring), so this ticks the fired radio explicitly;
+    ``wxMenuBar.Check`` also unchecks the theme trio's other two
+    members (measured), matching what a real click's own native
+    handling would already have done.
+    """
+    item_id = _theme_item_id_for(event.GetId())
+    if item_id is None:
+        context.frame.SetStatusText(f"{route.label} — not yet implemented")
+        return
+    context.frame.GetMenuBar().Check(event.GetId(), True)  # noqa: FBT003 -- wx API takes a positional bool
+    notice = context.theme_controller.on_menu(item_id)
+    if notice is not None:
+        context.frame.SetStatusText(notice)
 
 
 def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) -> None:  # noqa: ANN401
@@ -321,6 +390,21 @@ def _bind_process_quit_paths(context: _RouteContext) -> None:
     context.app.Bind(wx.EVT_QUERY_END_SESSION, lambda event: _on_query_end_session(context, event))
 
 
+def _bind_theme(context: _RouteContext) -> None:
+    """Best-effort re-apply of System mode (P8-D4).
+
+    Binds ``EVT_SYS_COLOUR_CHANGED`` on *context.frame*, not
+    *context.app*: measured (a throwaway probe, per this repo's own
+    convention), a ``wx.SysColourChangedEvent`` delivered through a
+    frame's own event handler reaches only a frame-level ``Bind``,
+    never an app-level one -- real OS appearance-change notifications
+    target windows, and ``main_frame`` is the one window this app
+    keeps alive for its whole run.
+    """
+    wx = require_wx()
+    context.frame.Bind(wx.EVT_SYS_COLOUR_CHANGED, context.theme_controller.on_sys_colour_changed)
+
+
 def _make_route_handler(
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
@@ -328,15 +412,21 @@ def _make_route_handler(
 
     ``route.target == "exit_or_quit"`` (the Exit row, P8-D8) always
     runs the quit-confirm flow instead of the generic ``COMMAND``
-    stub below it. Every other ``COMMAND`` row has no window to open
-    and no ride engine yet to run its real action (EPIC 4+); it posts
-    a status-bar notice instead of silently doing nothing.
-    ``WINDOW``/``DIALOG`` rows always attempt to open their target
-    through :func:`_open_target`, which posts the same kind of notice
-    if that target has no frozen window yet.
+    stub below it. ``route.target == _VIEW_ROUTE_TARGET`` (the View
+    row, P8-D4) dispatches further by *event*'s own id, inside
+    :func:`_handle_view_row`, rather than by anything ``route`` alone
+    carries -- its 11 ids all share this one row. Every other
+    ``COMMAND`` row has no window to open and no ride engine yet to
+    run its real action (EPIC 4+); it posts a status-bar notice
+    instead of silently doing nothing. ``WINDOW``/``DIALOG`` rows
+    always attempt to open their target through :func:`_open_target`,
+    which posts the same kind of notice if that target has no frozen
+    window yet.
     """
     if route.target == "exit_or_quit":
         return lambda _event: _handle_exit_route(context)
+    if route.target == _VIEW_ROUTE_TARGET:
+        return lambda event: _handle_view_row(context, route, event)
     if route.kind is commands.TargetKind.COMMAND:
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     return lambda _event: _open_target(context, route)
@@ -364,10 +454,12 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     Loads every packaged XRC resource, builds the console
     (:class:`~rivercrossing.ui.views.MainFrame`) and attaches its
     menubar via ``LoadMenuBar`` (never ``FindWindowByName`` -- the XRC
-    menubar handler drops the name, spec.md §15b), applies the
-    accelerator table, binds every §15 route, and wires the two
+    menubar handler drops the name, spec.md §15b), ticks the two
+    documented radio defaults, applies the accelerator table, binds
+    every §15 route and the theme controller's own
+    ``EVT_SYS_COLOUR_CHANGED`` re-apply, and wires the two
     process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
-    (Phase 8, P8-D1/P8-D2) -- threading the one
+    (Phase 8, P8-D1/P8-D2/P8-D4) -- threading the one
     :class:`DemoDataSource` this function constructs through every
     window the bootstrap can reach. Deleting ``rivercrossing.demo``
     breaks exactly this module's import line and this construction
@@ -394,6 +486,7 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     frame = resource.LoadFrame(None, ids.MAIN_FRAME)
     menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
+    _check_default_menu_radios(menubar)
 
     data_source = DemoDataSource()  # the one demo seam construction (E1.2.4)
     _console = MainFrame(frame, data_source=data_source)  # kept alive by its own event binding
@@ -406,9 +499,19 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     _console.focus_entry()
 
     _apply_accelerators(frame, menubar)
-    context = _RouteContext(frame=frame, resource=resource, data_source=data_source, app=app)
+    # theme_controller is kept alive by _RouteContext, threaded through
+    # every route handler the same way data_source is.
+    theme_controller = theme.ThemeController(app)
+    context = _RouteContext(
+        frame=frame,
+        resource=resource,
+        data_source=data_source,
+        app=app,
+        theme_controller=theme_controller,
+    )
     _bind_routes(context)
     _bind_process_quit_paths(context)
+    _bind_theme(context)
 
     return frame
 

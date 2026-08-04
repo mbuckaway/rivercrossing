@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-wx tests for View > Theme: live SetAppearance wiring (Phase 8, 8.6).
+"""Real-wx tests for View > Theme: live SetAppearance wiring (Phase 8).
 
 R-03/P8-D4: the three theme radios apply the OS appearance at runtime
 via ``wx.App.SetAppearance``. Appearance is process-global state --
@@ -109,7 +109,7 @@ def _run_scenario(name: str) -> dict[str, Any]:
 
 
 def test_wx_pyapp_appearance_enums_exist_at_the_pinned_wx() -> None:
-    """Pins the exact spellings ``theme.py`` depends on (measured 4.3.1).
+    """Pins the exact spellings ``theme.py`` depends on (measured).
 
     ``wx.Appearance`` does **not** exist at this pin; ``wx.PyApp.
     Appearance`` and ``wx.PyApp.AppearanceResult`` do, and ``wx.App``
@@ -151,7 +151,7 @@ def test_theme_dark_applies_at_runtime_and_keeps_the_radio_checked() -> None:
 
 
 def test_theme_light_round_trip_restores_light_appearance() -> None:
-    """Dark then Light: SystemAppearance and the radio both flip back."""
+    """Dark then Light: SystemAppearance and the radio flip back."""
     result = _run_scenario("theme_light_round_trip")
 
     assert result["data"] == {"is_dark": False, "radio_checked": True}, result["context"]
@@ -178,7 +178,7 @@ def test_theme_system_reapplies_on_sys_colour_changed_bounded_by_the_guard() -> 
 
 
 def test_theme_ids_post_no_stub_notice_while_zoom_ids_still_do() -> None:
-    """Theme ids stay silent (Ok, macOS); mi_zoom_110 still posts the stub."""
+    """Theme ids post no notice (Ok); mi_zoom_110 still posts one."""
     result = _run_scenario("theme_ids_do_not_post_the_stub_notice_but_zoom_still_does")
 
     expected_zoom_notice = f"{commands.route_for_id('mi_zoom_110').label} — not yet implemented"
