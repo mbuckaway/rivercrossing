@@ -140,9 +140,9 @@ nox -s functional                              # CI stage 3 — real wx windows
 nox -s bundle smoke                            # CI stage 5 — build, then smoke the binary
 ```
 
-**macOS is the primary target and the hard CI gate.** `windows-latest` runs in the matrix but is
-currently non-blocking because no Windows test machine is available — a deliberate, temporary deviation
-from R-75 / spec §14, to be reversed when one exists.
+**Both platforms gate.** `windows-latest` and `macos-latest` run the same blocking stages (R-75 /
+spec §14). The EPIC 1 deviation that made macOS the only gate was reversed in Phase 10, after every
+known Windows failure was root-caused and fixed and Windows testers became available.
 
 ---
 

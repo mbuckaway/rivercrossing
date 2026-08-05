@@ -6,8 +6,39 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
-Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish and Phase 9
-Windows-installer follow-ups.
+Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish, Phase 9
+Windows-installer and Phase 10 Windows-parity follow-ups.
+
+### Changed — Phase 10 (Windows parity)
+
+- **Windows now gates CI equally with macOS.** The advisory machinery (two non-blocking Windows
+  jobs, twelve `continue-on-error` steps, summary tables standing in for red checks) is gone:
+  stages 1–3 run as a two-OS matrix with the same desktop-session probe, coverage and
+  failure-screenshot artifacts on both platforms, and both stage-5 build jobs block while producing
+  the installable artifacts (unsigned DMG, unsigned NSIS setup `.exe`). The design-doc deviation
+  (spec §14, R-75) is reversed — Windows testers are available and the deviation's premise is gone.
+- **Every Windows failure the advisory mask had been hiding was root-caused and fixed** (all
+  measured on windows-latest, run 31015653629 → green in run 31036832940: unit 846 passed,
+  functional 678 passed / 0 failed):
+  - The dialog-harness safety net clobbered every successful modal result with its `-999` sentinel
+    on wxMSW (47 tests): `IsModal()` does not clear within the pending-events pass that runs the
+    action's own `EndModal`, so the sentinel now re-queues one pass later and fires only while the
+    return code is unset.
+  - MSW `GetDefaultItem()` follows the focused control and ignores a bare `<default>1</default>`
+    (3 tests): the three dialogs missing `<focused>1</focused>` now focus their intended default —
+    which also closes a latent §13 gap (`finish_confirm_dlg` never focused Cancel).
+  - Scenario subprocesses hung in the Windows close-confirmation modal at cleanup and died with
+    empty pipes (13 tests): scenario cleanup now closes through the `really_quitting` seam, the
+    child flushes its JSON envelope and enables `faulthandler`, and the triplicated runner lives
+    once in `tests/functional/scenario_runner.py`.
+  - `entry_detail` was the only window with a purely `Fit()`-derived width and measured 650 under
+    Segoe UI metrics (1 test): it now forces its measured 726 px minimum like its three siblings.
+  - mypy's output arrived ANSI-colorized under CI's `FORCE_COLOR=1` on win32 (1 test): the protocol
+    probe passes `--no-color-output`.
+- **Platform-divergent behaviors are pinned by platform-specific tests both ways**: win32-only
+  tests assert the Windows close button runs the same confirmation as File ▸ Exit (cancel stays,
+  confirm quits) and that a theme change posts the "takes effect at next launch" notice with the
+  radio checked; the macOS hide-on-close/reopen and live theme-switch tests are darwin-only.
 
 ### Added — Phase 9 (Windows installer)
 
@@ -19,11 +50,10 @@ Windows-installer follow-ups.
 - **A native local compile loop**: `brew install makensis`, then `nox -s winsetup` compiles the script
   on macOS against a synthetic payload under `build/`; `nox -s winsetup_smoke` runs the compile smoke
   everywhere and the install/launch/uninstall tests on win32.
-- **An advisory `windows-package` CI job** (non-blocking per the standing macOS-only-gate deviation):
-  dev bundle → bundle smoke → `choco install nsis` → compile → E9.1.2's silent
-  install/launch/uninstall suite, uploading the setup `.exe`, the Windows dev bundle (spec §14's
-  runnable Windows artifact, for the first time) and `build/winsetup-logs/` diagnostics on every
-  outcome.
+- **A Windows packaging CI job** (advisory at introduction, blocking since Phase 10): dev bundle →
+  bundle smoke → `choco install nsis` → compile → E9.1.2's silent install/launch/uninstall suite,
+  uploading the setup `.exe`, the Windows dev bundle (spec §14's runnable Windows artifact, for the
+  first time) and `build/winsetup-logs/` diagnostics on every outcome.
 - **SmartScreen instructions** for testers in README ▸ Testing on Windows — the R-01 "More info →
   Run anyway" step lives there until the E8 user guide exists.
 
@@ -120,8 +150,9 @@ accelerator plus check and radio items, a 53-bitmap `ImageList`, splitter sash r
 `wx.adv.HyperlinkCtrl`, `DatePickerCtrl`, `TimePickerCtrl`, `EditableListBox`, `wx.adv.Sound`,
 `wx.UIActionSimulator`, and screenshot capture.
 
-### Notes — temporary platform deviation
+### Notes — temporary platform deviation (reversed in Phase 10)
 
-macOS is the hard CI gate; `windows-latest` runs but does not block, because no Windows test machine is
-available to act on a failure. This deviates from R-75 and `spec.md` §14, which require both platforms
-green before any release, and should be reversed once a Windows machine exists.
+From EPIC 1 until Phase 10, macOS was the hard CI gate and `windows-latest` ran without blocking,
+because no Windows test machine was available to act on a failure. Phase 10 reversed the deviation:
+every hidden Windows failure was root-caused and fixed (see Changed — Phase 10), Windows testers are
+available, and both platforms now gate as R-75 and `spec.md` §14 always required.
