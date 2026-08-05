@@ -63,7 +63,7 @@ E1.1 · Repo + gauntlet bootstrap
 
 · **E1.1.1** Repo per [skeletons](module-skeletons.md): src layout, pyproject (deps §3), CONTRIBUTING.md — S1 test: packaging smoke (`pip install -e . && import rivercrossing`) · S2 files.
 
-· **E1.1.2** CI stages 1–3 skeleton + stage-5 in dev-bundle mode (ruff/mypy → pytest → functional; PyInstaller onedir, unsigned, artifact upload) on windows-latest + macos-latest — S1: a deliberately failing probe test proves the gate blocks · S2: workflow green. macOS is the blocking gate and Windows runs advisory while no Windows test machine exists to act on a failure — the temporary deviation recorded in Spec §14 and R-75.
+· **E1.1.2** CI stages 1–3 skeleton + stage-5 in dev-bundle mode (ruff/mypy → pytest → functional; PyInstaller onedir, unsigned, artifact upload) on windows-latest + macos-latest — S1: a deliberately failing probe test proves the gate blocks · S2: workflow green. macOS was the blocking gate with Windows advisory while no Windows test machine existed — a temporary deviation recorded in Spec §14 and R-75 and reversed in EPIC 1 Phase 10 (both platforms now gate).
 
 · **E1.1.3** import-linter contract: wx only under `rivercrossing.ui` — S1 red contract test · S2 config.
 
@@ -105,7 +105,7 @@ E1.6 · D1 exit
 
 · **E1.6.2** Scripted walkthrough against the CI-built bundles on both OSes: menu walk, drive every named control, screenshots; tag v0.1 with the two bundles attached.
 
-Exit criteria the CI-built dev bundle launches and passes smoke on Windows AND macOS (artifacts downloadable; the Windows leg reports but does not block until a test machine exists — §14) · 23/23 smoke green · menu coverage green vs §15 · every §15b name resolves · demo seam lint green · zero business logic outside demo fixtures.
+Exit criteria the CI-built dev bundle launches and passes smoke on Windows AND macOS (artifacts downloadable; since EPIC 1 Phase 10 the Windows leg blocks like macOS — §14) · 23/23 smoke green · menu coverage green vs §15 · every §15b name resolves · demo seam lint green · zero business logic outside demo fixtures.
 
 E2 · Deal & score engine
 
