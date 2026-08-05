@@ -108,18 +108,43 @@ def _show(xrc_resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no s
     return dialog
 
 
+def _end_modal_if_undecided(dialog: Any) -> None:  # noqa: ANN401
+    """Fire the safety-net ``EndModal`` only when nothing else has.
+
+    Measured on windows-latest (run 31015653629): wxMSW does not
+    clear ``IsModal()`` within the pending-events pass that runs the
+    action's own ``EndModal``, so an unguarded, same-pass sentinel
+    overwrote every successful dialog result with ``-999`` -- 47
+    tests red on Windows, green on macOS. The return-code guard is
+    what closes that: a decided dialog carries its real result here
+    even while ``IsModal()`` is still true.
+    """
+    if not dialog.IsModal() or dialog.GetReturnCode() != 0:
+        return
+    dialog.EndModal(_TIMEOUT_SENTINEL)
+
+
+def _arm_safety_net(dialog: Any) -> None:  # noqa: ANN401
+    """Queue the sentinel one pending-events pass after *action*.
+
+    Re-queuing gives the modal loop a pass to unwind after the
+    action ends the dialog, so the sentinel check sees the decided
+    state instead of racing it.
+    """
+    wx.CallAfter(_end_modal_if_undecided, dialog)
+
+
 def _run_with_action(dialog: Any, action: Any, runner: Any) -> int:  # noqa: ANN401
     """Call *runner* while scheduling *action* once the loop pumps.
 
-    A safety-net ``EndModal`` is scheduled right after *action* so
-    a probe that turns out not to end the dialog (the
-    ``resume_dlg`` gap) cannot hang the suite forever with no user
-    present. *runner* is usually ``dialog.ShowModal`` but can be
-    any zero-arg callable that ends up calling it, e.g.
-    :func:`dialogs.run_dialog`.
+    A safety-net ``EndModal`` is armed right after *action* so a
+    probe that turns out not to end the dialog (the ``resume_dlg``
+    gap) cannot hang the suite forever with no user present.
+    *runner* is usually ``dialog.ShowModal`` but can be any zero-arg
+    callable that ends up calling it, e.g. :func:`dialogs.run_dialog`.
     """
     wx.CallAfter(action)
-    wx.CallAfter(lambda: dialog.EndModal(_TIMEOUT_SENTINEL) if dialog.IsModal() else None)
+    wx.CallAfter(_arm_safety_net, dialog)
     return int(runner())
 
 
