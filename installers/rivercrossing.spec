@@ -7,9 +7,12 @@ one ``sys.platform`` branch at the bottom: macOS additionally wraps
 the onedir folder in a ``.app`` with an ``Info.plist``.
 
 spec.md section 14 stage 5, dev-bundle mode: **onedir, unsigned**.
-Signing, notarization, the ``.dmg`` and the Inno installer are EPIC
-9 (E9.1.2 / E9.1.3), as are the app icons -- there is no ``.icns``
-or ``.ico`` in the tree to point at yet.
+Phase 8 (P8-D7) pulls the mechanical half of E9.1.1 forward: the
+built ``.app`` and, on Windows, the ``.exe`` carry the committed
+branding artifacts under ``installers/branding/`` (icon=), and an
+unsigned drag-to-Applications ``.dmg`` is built by ``nox -s dmg``
+from ``installers/dmg_settings.py``. Codesigning, notarization and
+the Inno installer remain EPIC 9 (E9.1.2 / E9.1.3).
 
 Two things here are load-bearing and easy to get wrong.
 
@@ -51,6 +54,12 @@ BUNDLE_ID = "io.github.mbuckaway.rivercrossing"
 
 ENTRY_SCRIPT = ROOT / "src" / "rivercrossing" / "__main__.py"
 UI_DIR = ROOT / "src" / "rivercrossing" / "ui"
+
+# Committed generated artifacts (P8-D5); tools/gen_app_icons.py
+# regenerates them from installers/branding/svg/*.svg.
+BRANDING = ROOT / "installers" / "branding"
+ICON_ICNS = BRANDING / "RiverCrossing.icns"
+ICON_ICO = BRANDING / "rivercrossing.ico"
 
 # The wx submodules the XRC files reach by class name. Measured, by
 # building this spec both ways and diffing the packaged module list
@@ -125,7 +134,10 @@ executable = EXE(  # noqa: F821 -- PyInstaller injects EXE
     argv_emulation=False,
     codesign_identity=None,  # unsigned dev bundle (spec.md section 14)
     entitlements_file=None,
-    icon=None,  # no .icns/.ico in the tree yet -- E9.1.1
+    # The .ico is advisory only -- there is no Windows build machine
+    # to prove PyInstaller's Windows icon handling, so it is left
+    # untouched (None) on the platform that is actually gated: macOS.
+    icon=str(ICON_ICO) if sys.platform == "win32" else None,
 )
 
 collected = COLLECT(  # noqa: F821 -- PyInstaller injects COLLECT
@@ -150,7 +162,10 @@ if sys.platform == "darwin":
     app = BUNDLE(  # noqa: F821 -- PyInstaller injects BUNDLE
         collected,
         name=f"{APP_NAME}.app",
-        icon=None,
+        # PyInstaller copies this into Contents/Resources and sets
+        # Info.plist's CFBundleIconFile -- without it the .app ships
+        # PyInstaller's own default icon-windowed.icns instead.
+        icon=str(ICON_ICNS),
         bundle_identifier=BUNDLE_ID,
         version=rivercrossing.__version__,
         info_plist=INFO_PLIST,

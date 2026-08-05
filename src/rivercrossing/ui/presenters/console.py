@@ -55,6 +55,14 @@ class ConsoleView(Protocol):
         """Return keyboard focus to the plate entry field."""
         ...
 
+    def show_notice(self, text: str) -> None:
+        """Show a transient notice (the status bar's first field)."""
+        ...
+
+    def clear_entry(self) -> None:
+        """Empty the plate entry field."""
+        ...
+
     def play(self, cue: Cue) -> None:
         """Play the audio cue for the given event."""
         ...
@@ -74,7 +82,22 @@ class ConsolePresenter:
         self.data_source = data_source
 
     def on_plate_entered(self, text: str) -> None:
-        """Handle Enter in the plate entry field."""
+        """Handle Enter (or Record) with the plate entry's text.
+
+        D1 has no ride engine yet (EPIC 4): a blank/whitespace-only
+        submission only returns focus (A3); anything else posts the
+        placeholder "recorded" notice (A5), clears the field, then
+        refocuses -- in that order, so a second, wrongly re-fired
+        submit for the same keypress cannot repeat the notice before
+        the field is emptied.
+        """
+        plate = text.strip()
+        if not plate:
+            self.view.focus_entry()
+            return
+        self.view.show_notice(f"Plate {plate} — recording engine lands in EPIC 4")
+        self.view.clear_entry()
+        self.view.focus_entry()
 
     def on_undo(self) -> None:
         """Handle Undo last (Ctrl+Z / undo_btn)."""

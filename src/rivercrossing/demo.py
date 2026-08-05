@@ -208,6 +208,13 @@ class DemoDataSource:
         """Return the four console counter values."""
         return _COUNTERS
 
+    def ride_status(self) -> RideStatus:
+        """Return the active ride's current lifecycle status.
+
+        RUNNING -- the console canvas's fixture ride is mid-run.
+        """
+        return RideStatus.RUNNING
+
     def rides(self) -> list[RideSummary]:
         """Return the ride library rows."""
         return list(_RIDES)

@@ -68,7 +68,7 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 | ID | Level | Requirement | Trace |
 |---|---|---|---|
 | R-50 | MUST | Every crossing/card/edit commits to SQLite (WAL) as it happens; a crash or power loss loses at most the uncommitted keystroke. | §2/§9 |
-| R-51 | MUST | Closing the app with a ride running is caught with the exit dialog; quitting keeps the ride running on wall time. | §3 · [exitdlg](xrc-windows.md) |
+| R-51 | MUST | The app never exits without confirmation: closing with a ride running is caught with the exit dialog (quitting keeps the ride running on wall time); otherwise the quit confirm (`exit_confirm_dlg`) appears. On macOS the window × hides the app (Dock reopens it) rather than quitting. | §3 · [exitdlg](xrc-windows.md) |
 | R-52 | MUST | On launch with a running ride, a resume dialog always appears; session bookkeeping distinguishes clean quit from crash and words the dialog accordingly. Continuing preserves start time and all data. | §2/§3 · [resumedlg](xrc-windows.md) |
 | R-53 | MUST | Start pressed on a ride with data asks continue-vs-new; continue loses no time or data; "new" archives first. | §3 · [continuedlg](xrc-windows.md) |
 | R-54 | MUST | Automatic backups on open + hourly while running (keep 20); manual Back Up Now; restoring a backup is documented in the guide. | §2 · [settingsdlg](xrc-windows.md) |

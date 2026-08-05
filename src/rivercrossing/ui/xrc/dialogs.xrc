@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The thirteen small dialogs of spec.md 15b's dialogs.xrc entry:
+  The fourteen small dialogs of spec.md 15b's dialogs.xrc entry:
   set_start_dlg, stop_confirm_dlg, finish_confirm_dlg,
-  continue_or_new_dlg, resume_dlg, exit_running_dlg (xrc-windows.md
-  section B), edit_crossing_dlg, reassign_dlg, manual_deal_dlg,
-  dnf_confirm_dlg (section C), about_dlg, selftest_dlg, shortcuts_dlg
-  (section E). Control names are frozen; tests find them with
+  continue_or_new_dlg, resume_dlg, exit_running_dlg, exit_confirm_dlg
+  (xrc-windows.md section B; exit_confirm_dlg added Phase 8, P8-D1),
+  edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg
+  (section C), about_dlg, selftest_dlg, shortcuts_dlg (section E).
+  Control names are frozen; tests find them with
   FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
   (R-05, R-73). Names repeat across these windows on purpose -
   plate_input, reason_input and continue_btn each appear in more than
@@ -409,6 +410,47 @@
             </object>
           </object>
 
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- Phase 8 amendment (P8-D1/R-51/R-76): the app never exits without
+       confirmation. Quitting with no ride running shows this destructive
+       confirm instead of quitting outright; Cancel is both the default
+       and the initially focused control, so a reflex Enter is safe. -->
+  <object class="wxDialog" name="exit_confirm_dlg">
+    <title>Quit RiverCrossing?</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Are you sure you want to quit? No ride is running.</label>
+          <wrap>420</wrap>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Quit</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <default>1</default>
+              <focused>1</focused>
+            </object>
+          </object>
         </object>
       </object>
 

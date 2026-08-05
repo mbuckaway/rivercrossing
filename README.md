@@ -51,6 +51,8 @@ nox -s lint typecheck importlint ids_drift   # static analysis
 nox -s unit                                   # unit tests + coverage gate
 nox -s functional                             # drives real wx windows (needs a desktop session)
 nox -s bundle smoke                           # build the app bundle, then smoke it
+nox -s dmg dmg_smoke                          # macOS: build the unsigned drag-to-Applications DMG, then smoke it
+nox -s gen_branding                           # regenerate the committed icon/DMG artwork from the SVGs
 ```
 
 `scripts/*.sh` wrap these for convenience. See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow, the
@@ -65,7 +67,7 @@ gates, and the wxPython testing gotchas worth knowing before you write a UI test
 | `tests/` | `unit/` (headless) and `functional/` (drives real wx windows) |
 | `design/` | The complete build contract: requirements, engineering spec, 23 window designs, templates, golden fixtures |
 | `tools/` | Developer tooling — the `ids.py` generator, the wxPython toolkit probe |
-| `installers/` | PyInstaller spec for the macOS and Windows bundles |
+| `installers/` | PyInstaller spec, `dmgbuild` settings, and `branding/` (SVG sources + committed icon/DMG artwork) |
 
 `design/` is worth reading before changing anything. It is written to be sufficient on its own:
 `docs-md/requirements.md` is the acceptance authority, `docs-md/spec.md` the engineering spec, and

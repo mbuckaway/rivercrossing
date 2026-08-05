@@ -128,11 +128,14 @@
         </object>
       </object>
 
-      <!-- The plate entry row: the operator's whole working surface. -->
+      <!-- The plate entry row: the operator's whole working surface,
+           framed by a native wxStaticBoxSizer as the console's find-me
+           affordance (Phase 8 amendment; xrc-windows.md section A). -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
         <border>8</border>
-        <object class="wxBoxSizer">
+        <object class="wxStaticBoxSizer">
+          <label>Record crossing</label>
           <orient>wxHORIZONTAL</orient>
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
@@ -146,6 +149,19 @@
             <border>12</border>
             <object class="wxTextCtrl" name="plate_input">
               <style>wxTE_PROCESS_ENTER</style>
+              <size>240,-1</size>
+              <hint>Plate number</hint>
+              <font>
+                <sysfont>wxSYS_DEFAULT_GUI_FONT</sysfont>
+                <relativesize>1.5</relativesize>
+              </font>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>12</border>
+            <object class="wxButton" name="record_btn">
+              <label>Record (Enter)</label>
             </object>
           </object>
           <object class="sizeritem">

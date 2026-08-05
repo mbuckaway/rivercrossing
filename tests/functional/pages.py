@@ -82,6 +82,7 @@ MAIN_FRAME = WindowSpec(
         ids.ARM_STOP_CHK,
         ids.STOP_BTN,
         ids.PLATE_INPUT,
+        ids.RECORD_BTN,
         ids.LAST_CROSSING_LBL,
         ids.UNDO_BTN,
         ids.MAIN_SPLITTER,
@@ -94,7 +95,7 @@ MAIN_FRAME = WindowSpec(
         ids.REVIEW_BTN,
         ids.MAIN_STATUSBAR,
     ),
-    buttons=(ids.START_BTN, ids.STOP_BTN, ids.UNDO_BTN, ids.REVIEW_BTN),
+    buttons=(ids.START_BTN, ids.STOP_BTN, ids.RECORD_BTN, ids.UNDO_BTN, ids.REVIEW_BTN),
 )
 
 # --- xrc-windows section B: ride setup & lifecycle dialogs ------------
@@ -178,6 +179,17 @@ EXIT_RUNNING_DLG = WindowSpec(
     is_frame=False,
     controls=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
     buttons=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
+)
+
+# Phase 8 (P8-D1): the app never exits without confirmation, so a
+# quit with no ride running shows this destructive confirm instead
+# of quitting outright.
+EXIT_CONFIRM_DLG = WindowSpec(
+    name=ids.EXIT_CONFIRM_DLG,
+    xrc_file="dialogs.xrc",
+    is_frame=False,
+    controls=(WX_ID_OK, WX_ID_CANCEL),
+    buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
 # --- xrc-windows section C: riders, corrections & cards ---------------
@@ -380,8 +392,8 @@ SELFTEST_DLG = WindowSpec(
     buttons=(ids.RERUN_BTN, WX_ID_CLOSE),
 )
 
-# xrc-windows's own A-E order: 1 console + 7 setup/lifecycle dialogs +
-# 7 rider/card dialogs + 4 results/library/audit + 4 system/help = 23.
+# xrc-windows's own A-E order: 1 console + 8 setup/lifecycle dialogs +
+# 7 rider/card dialogs + 4 results/library/audit + 4 system/help = 24.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
@@ -391,6 +403,7 @@ WINDOWS: tuple[WindowSpec, ...] = (
     CONTINUE_OR_NEW_DLG,
     RESUME_DLG,
     EXIT_RUNNING_DLG,
+    EXIT_CONFIRM_DLG,
     RIDER_EDITOR_DLG,
     CSV_PREVIEW_DLG,
     ENTRY_DETAIL_DLG,

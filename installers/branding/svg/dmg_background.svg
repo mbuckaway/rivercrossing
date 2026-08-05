@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-only -->
+<!--
+  RiverCrossing DMG window background (master, 660x400 - MUST equal the
+  window_rect size in installers/dmg_settings.py exactly, or Finder tiles).
+
+  The .app sits at (170,200) and the /Applications symlink at (490,200)
+  (icon_locations, 128 px icons); the arrow between the two landing pads is
+  the drag-to-install instruction. No <text> - Finder already labels both
+  icons, and path-only artwork keeps rendering font-independent. No filters.
+
+  Rasterised at 1x (660x400) and 2x (1320x800) by tools/gen_app_icons.py,
+  then combined into the committed dual-resolution TIFF with
+  `tiffutil -cathidpicheck`.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 660 400">
+
+  <!-- window background -->
+  <rect width="660" height="400" fill="#F4F5F7"/>
+  <rect y="336" width="660" height="64" fill="#ECEEF1"/>
+
+  <!-- landing pad under the app icon -->
+  <circle cx="170" cy="200" r="80" fill="#E7EAEE"/>
+
+  <!-- dashed target ring around the Applications position -->
+  <circle cx="490" cy="200" r="80" fill="none" stroke="#C3C9CF"
+          stroke-width="5" stroke-dasharray="16 12"/>
+
+  <!-- drag arrow -->
+  <path d="M 262 200 H 366" stroke="#8E969E" stroke-width="18"
+        stroke-linecap="round" fill="none"/>
+  <path d="M 360 170 L 404 200 L 360 230 Z" fill="#8E969E"/>
+
+  <!-- small brand motif, top centre: mini card + stopwatch -->
+  <g transform="translate(330 52)">
+    <g transform="translate(-16 0) rotate(-14)">
+      <rect x="-17" y="-23" width="34" height="46" rx="5"
+            fill="#FFFFFF" stroke="#1F2937" stroke-width="3"/>
+      <path transform="scale(0.055)"
+            d="M 0 -150
+               C 90 -60 150 -10 150 60
+               C 150 130 80 160 30 130
+               C 40 180 70 210 95 225
+               L -95 225
+               C -70 210 -40 180 -30 130
+               C -80 160 -150 130 -150 60
+               C -150 -10 -90 -60 0 -150 Z"
+            fill="#111827"/>
+    </g>
+    <g transform="translate(22 6)">
+      <rect x="-3" y="-33" width="6" height="8" fill="#1F2937"/>
+      <circle r="24" fill="#E8EAED" stroke="#1F2937" stroke-width="3.5"/>
+      <circle r="18" fill="#FFFFFF" stroke="#9CA3AF" stroke-width="1.5"/>
+      <path d="M 0 0 L 9 -10" stroke="#F59E0B" stroke-width="4"
+            stroke-linecap="round" fill="none"/>
+      <circle r="3" fill="#1F2937"/>
+    </g>
+  </g>
+
+  <!-- felt-green accent line along the top edge -->
+  <rect width="660" height="6" fill="#1E5C3F"/>
+</svg>

@@ -145,6 +145,10 @@ jobs:
         run: nox -s bundle
       - name: Smoke the built bundle
         run: nox -s smoke
+      - name: Build unsigned DMG
+        run: nox -s dmg
+      - name: Smoke the DMG
+        run: nox -s dmg_smoke
       - name: Upload dev bundle
         uses: actions/upload-artifact@v4
         with:

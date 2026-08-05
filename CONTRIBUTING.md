@@ -109,6 +109,23 @@ These cost real debugging time; they are not theoretical.
 - Use event-driven waits, never bare `sleep`. Stage 3 allows one auto-retry and uploads a screenshot on
   failure.
 
+## Regenerating the branding artifacts
+
+The app icon and DMG background are authored as SVGs (`installers/branding/svg/`) and shipped as
+**committed** generated artifacts — `RiverCrossing.icns`, `rivercrossing.ico` and the dual-resolution
+`dmg_background.tiff`. Nothing rasterised is generated in CI; regeneration is a local macOS task:
+
+```bash
+brew install librsvg        # provides rsvg-convert; iconutil/tiffutil ship with macOS
+nox -s gen_branding         # renders, assembles, and overwrites the committed artifacts
+```
+
+PNG intermediates land only under `build/branding/` (gitignored) — **no `.png` file is ever
+committed** (repository policy), and `tests/unit/test_branding_assets.py` enforces that along with
+the artifacts' structure (all ten `.icns` representations, the `.ico` sizes, the 1×/2× TIFF pages).
+There is deliberately no byte-drift gate: `rsvg-convert` output varies across librsvg versions, so
+the honesty tests pin structure, not bytes. Edit the SVGs, regenerate, commit both together.
+
 ## CI secrets contract
 
 Named here so the release lane in EPIC 9 has a defined interface. The organisation supplies the values;

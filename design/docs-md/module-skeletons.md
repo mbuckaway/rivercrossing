@@ -28,9 +28,12 @@ rivercrossing/
 │   ├── ci.yml                  # §14 six-stage matrix: windows-latest + macos-latest
 │   └── release.yml             # tag → PyInstaller → Inno Setup .exe / notarized .dmg
 ├── installers/
-│   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec)
+│   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec; branded icons since Phase 8)
 │   ├── windows.iss             # Inno Setup, per-user, unsigned (R-01)
-│   └── dmg_settings.py         # dmgbuild config; codesign + notarize in release.yml
+│   ├── dmg_settings.py         # dmgbuild config (exists — Phase 8, unsigned); codesign + notarize in release.yml (E9.1.3)
+│   └── branding/               # icon + DMG-background SVG sources and their COMMITTED generated
+│                               #   artifacts (.icns/.ico/dual-res .tiff — no PNG in git);
+│                               #   regenerate with tools/gen_app_icons.py via `nox -s gen_branding`
 ├── docs/user-guide/            # per the User Guide outline (6a)
 ├── src/rivercrossing/
 │   ├── __init__.py             # __version__ single source
@@ -53,7 +56,8 @@ rivercrossing/
 │   ├── pdfexport.py            # §8b fpdf2 renderer + podium poster (5a–5d)
 │   └── ui/
 │       ├── app.py              # wx.App bootstrap, theme + session wiring
-│       ├── theme.py            # the one token table, light+dark (R-03)
+│       ├── theme.py            # appearance modes via wx.App.SetAppearance (R-03);
+│       │                       #   token table deferred — no consumer yet (open item O2)
 │       ├── sound.py            # three WAV cues per §10 (recorded/flagged/error)
 │       ├── ids.py              # mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)
 │       ├── xrc/                # canonical UI: main, setup, riders, detail, results,
@@ -204,13 +208,15 @@ rivercrossing.ui — MVP shell (§10/§13/§15 · R-02/03/31/73/76)
 # unit-tested with a FakeView. Views implement the Protocol with wx.
 class ConsoleView(Protocol):   show_feed(rows) · show_counters(c) · flash_crossing(r)
                                set_state(RideStatus) · focus_entry() · play(cue)
+                               show_notice(text) · clear_entry()   # Phase 8: entry-row feedback
 class ConsolePresenter:        on_plate_entered(text) · on_undo() · on_arm_stop(bool)
                                on_stop_confirmed() · on_hide_times(bool) · tick()
 # same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv)
 # ResultsPresenter (1f flags, rerank on tie-break change) · LibraryPresenter (1g)
 # DetailPresenter (1e/7b) · AuditPresenter (R-38) · SettingsPresenter (3a)
 app.main() -> int              # wx.App; resume dialog per session_state (4a/1h)
-theme.tokens(mode) -> Tokens   # light|dark|system; live re-skin (R-03)
+theme.apply(app, mode) -> AppearanceResult   # light|dark|system via wx.App.SetAppearance (R-03);
+                               # tokens(mode) deferred — no custom-drawn consumer yet (O2)
 ids.py: PLATE_INPUT = "plate_input" …   # = XRC names, generated from xrc/ (§15b)
 sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   # §10 cues, settings toggle
 ```

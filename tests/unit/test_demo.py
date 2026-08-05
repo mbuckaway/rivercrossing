@@ -161,6 +161,16 @@ def test_demo_counters_reports_shoe_as_41_of_108() -> None:
     assert (counters.shoe_remaining, counters.shoe_total) == (41, 108)
 
 
+# -------------------------------------------------------- ride status
+
+
+def test_demo_ride_status_returns_running_to_match_the_canvas_fixture() -> None:
+    """``ride_status()`` reports RUNNING, the console's own fixture."""
+    status = DemoDataSource().ride_status()
+
+    assert status == RideStatus.RUNNING
+
+
 # ---------------------------------------------------------------- rides
 
 

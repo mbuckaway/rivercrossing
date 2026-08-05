@@ -43,6 +43,7 @@ bootstrap lands, add the window assertion to the launch test.
 
 import hashlib
 import importlib.util
+import plistlib
 import re
 import shutil
 import subprocess
@@ -314,6 +315,17 @@ def bundle_executable() -> Path:
 
 
 @pytest.fixture(scope="module")
+def bundle_app_path() -> Path:
+    """Return the built ``.app``'s path (BUNDLE(), macOS-only)."""
+    if sys.platform != "darwin":
+        pytest.skip("BUNDLE() only wraps a .app on darwin")
+    app_path = DIST / "RiverCrossing.app"
+    if not app_path.is_dir():
+        pytest.skip(f"no built bundle -- run `nox -s bundle` first; missing {app_path}")
+    return app_path
+
+
+@pytest.fixture(scope="module")
 def bundled_xrc(bundle_ui_dirs: tuple[Path, ...], wx_app: object) -> Any:  # noqa: ANN401, ARG001
     """Load the *bundle's* own .xrc copies into a private resource.
 
@@ -393,6 +405,31 @@ def test_bundle_executable_launches_without_a_frozen_import_failure(
 
     assert launch.returncode in {0, None}, context
     assert "Traceback (most recent call last)" not in launch.stderr, context
+
+
+def test_built_app_resources_carry_the_branded_icns(bundle_app_path: Path) -> None:
+    """BUNDLE() copies the committed .icns into Contents/Resources."""
+    icns_path = bundle_app_path / "Contents" / "Resources" / "RiverCrossing.icns"
+
+    assert icns_path.is_file()
+
+
+def test_info_plist_names_the_branded_icon_not_pyinstallers_default(
+    bundle_app_path: Path,
+) -> None:
+    """The plist points at our icon, and PyInstaller's default is gone.
+
+    Both halves of the same claim: a spec that forgot ``icon=`` would
+    still pass the first half (PyInstaller always ships *an* .icns)
+    while shipping the wrong one.
+    """
+    info_plist_path = bundle_app_path / "Contents" / "Info.plist"
+    with info_plist_path.open("rb") as handle:
+        info_plist = plistlib.load(handle)
+    default_icon_path = bundle_app_path / "Contents" / "Resources" / "icon-windowed.icns"
+
+    assert info_plist["CFBundleIconFile"] == "RiverCrossing.icns"
+    assert not default_icon_path.exists()
 
 
 def test_pyinstaller_build_given_a_missing_asset_fails_naming_it(tmp_path: Path) -> None:

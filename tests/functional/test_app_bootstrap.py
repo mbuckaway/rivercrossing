@@ -36,6 +36,7 @@ import wx.xrc
 
 from rivercrossing.ui import accelerators, commands, ids
 from rivercrossing.ui import app as app_module
+from rivercrossing.ui.views import dialogs
 
 pytestmark = pytest.mark.functional
 
@@ -68,7 +69,11 @@ _original_mainloop = wx.App.MainLoop
 def _mainloop_then_close(self):
     frame = wx.Window.FindWindowByName(ids.MAIN_FRAME)
     _captured["frame_shown_before_loop"] = bool(frame is not None and frame.IsShown())
-    wx.CallLater(200, frame.Close)
+    # force=True: Phase 8's EVT_CLOSE handler vetoes and hides a plain
+    # Close() on macOS (P8-D2) instead of destroying the frame, which
+    # would leave nothing to end this probe's MainLoop before its own
+    # timeout.
+    wx.CallLater(200, frame.Close, force=True)
     return _original_mainloop(self)
 
 
@@ -149,6 +154,49 @@ def test_build_main_window_applies_the_console_canvas_minimum_size(
     min_size = bound_frame.GetMinSize()
 
     assert (min_size.width, min_size.height) == (1100, 700)
+
+
+# --- record-crossing wiring runs at bootstrap (Phase 8, A4) -------
+
+
+def test_build_main_window_wires_the_console_to_the_running_data_source(
+    bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """``set_state(data_source.ride_status())`` ran during bootstrap.
+
+    Read-only: ``bound_frame`` never mutates after construction, so
+    this shares the fixture with every other assertion in this
+    module (fixture docstring).
+    """
+    plate_input = harness.find_control(bound_frame, ids.PLATE_INPUT)
+    status_label = harness.find_control(bound_frame, ids.RIDE_STATUS_LBL)
+
+    assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (True, "RUNNING")
+
+
+# --- theme + zoom menu radio defaults (Phase 8, 8.6, P8-D4) -------
+
+
+def test_build_main_window_checks_the_theme_and_zoom_menu_defaults(
+    bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """main.xrc:338-341's documented gap: no ``.Check(`` call existed.
+
+    ``mi_theme_system`` happens to read checked even before this fix,
+    since it is the first item of its own ``wxRB_GROUP`` and wx
+    checks a fresh radio group's first member by default (measured);
+    ``mi_zoom_100`` is not first in its own group and reads
+    unchecked until the fix lands, which is what actually turns this
+    combined assertion red today.
+    """
+    menubar = bound_frame.GetMenuBar()
+
+    checked = (
+        menubar.IsChecked(wx.xrc.XRCID(ids.MI_THEME_SYSTEM)),
+        menubar.IsChecked(wx.xrc.XRCID(ids.MI_ZOOM_100)),
+    )
+
+    assert checked == (True, True)
 
 
 # --- every §15 route is bound (T-3, R-73) -------------------------
@@ -239,6 +287,31 @@ def test_unauthored_dialog_route_posts_a_no_window_status_notice(
     status_text = firing_frame.GetStatusBar().GetStatusText()
 
     assert status_text == f"{route.label} — no window authored yet"
+
+
+# --- Exit always confirms first (Phase 8, P8-D1) ------------------
+
+
+def test_exit_route_no_longer_posts_the_not_yet_implemented_stub(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """P8-D1: Exit runs the confirm flow, not the generic COMMAND stub.
+
+    ``views.dialogs.run_dialog`` monkeypatched to Cancel -- the STAY
+    outcome posts no notice at all -- so the status bar's text before
+    and after firing ``wxID_EXIT`` must be identical, and the frame
+    must still be alive: proof the special-cased handler ran instead
+    of the generic COMMAND stub, which would have overwritten it with
+    "Exit — not yet implemented".
+    """
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, _opener: wx.ID_CANCEL)
+    before = firing_frame.GetStatusBar().GetStatusText()
+
+    _fire_menu_event(firing_frame, "wxID_EXIT")
+
+    after = (firing_frame.GetStatusBar().GetStatusText(), firing_frame.IsBeingDeleted())
+    assert after == (before, False)
 
 
 # --- negative: main() must show the frame before it can block ----
