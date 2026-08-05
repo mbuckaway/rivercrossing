@@ -31,6 +31,12 @@
       so no window takes key focus and even an explicit SetFocus()
       leaves FindFocus() at None. The functional suite has to assert
       initial focus against an activated app.
+      Measured on windows-latest (Phase 10): MSW GetDefaultItem()
+      follows the focused control - or the first-declared button when
+      nothing is focused - and <default>1</default> alone is NOT
+      honoured there. Every intended default therefore also carries
+      <focused>1</focused>, which is what spec.md 13's initial-focus
+      rules ask for anyway.
     * <wrap>420</wrap> is honoured on wxStaticText and is what keeps
       the three long confirm paragraphs from Fit()ing to a single
       700-940 px line. wxStaticText::Wrap() rewrites the label with
@@ -210,6 +216,7 @@
           <object class="button">
             <object class="wxButton" name="wxID_CANCEL">
               <default>1</default>
+              <focused>1</focused>
             </object>
           </object>
         </object>
@@ -282,6 +289,7 @@
             <object class="wxButton" name="continue_btn">
               <label>Continue ride</label>
               <default>1</default>
+              <focused>1</focused>
             </object>
           </object>
 
@@ -336,6 +344,7 @@
             <object class="wxButton" name="continue_btn">
               <label>Continue ride</label>
               <default>1</default>
+              <focused>1</focused>
             </object>
           </object>
 

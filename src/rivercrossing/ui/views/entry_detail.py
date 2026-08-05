@@ -78,10 +78,15 @@ LAP_COLUMN_LABELS: tuple[str, ...] = ("Lap", "Time", "Lap time", "Rider", "Card"
 CARDS_HELD_COLUMN_WIDTH = 60
 LAPS_COLUMN_WIDTHS: tuple[int, ...] = (50, 80, 80, 60, 60)
 
-# D16: measured via Fit() with the demo rows loaded and the widths
-# above applied -- the dialog's own edit_crossing_btn..audit_btn row
-# turned out to be the natural floor, not the DataViews (this task's
-# own report). Not a canvas number: xrc-windows.md states none.
+# D16: measured via Fit() with the demo rows loaded and the
+# widths above applied -- the dialog's own edit_crossing_btn..
+# audit_btn row turned out to be the natural floor on macOS,
+# not the DataViews (this task's own report). Not a canvas
+# number: xrc-windows.md states none. windows-latest CI
+# measured a narrower 650px natural floor there (Segoe UI's
+# own button metrics), so the width below is now forced before
+# Fit(), matching ride_library/rider_editor/results_win, for
+# cross-platform determinism.
 MIN_SIZE = (726, 331)
 
 
@@ -246,13 +251,17 @@ class EntryDetailDialog:
         associate_model(self.laps_list, self._laps_model)
 
     def _apply_min_size(self) -> None:
-        """``Fit()`` the dialog to its now content-bearing sizer (D16).
+        """Force the measured 726px floor, then ``Fit()`` (D16).
 
-        No canvas width is stated for this dialog, so nothing is
-        forced beforehand -- the explicit column widths already
-        applied are what keeps this floor meaningful rather than
-        collapsing to the near-empty-DataView minimum D16 warns
-        about.
+        No canvas width is stated for this dialog, so 726px is
+        not a canvas number -- it is this task's own macOS
+        measurement (module docstring). windows-latest CI
+        measured a narrower 650px natural floor there (Segoe
+        UI's own button metrics), so the width is now forced
+        beforehand, exactly like ride_library/rider_editor/
+        results_win already force theirs, for cross-platform
+        determinism.
         """
+        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
         self.dialog.Fit()
         self.dialog.SetMinSize(self.dialog.GetSize())

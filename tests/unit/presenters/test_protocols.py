@@ -432,8 +432,11 @@ def test_console_view_missing_method_fails_mypy_typecheck() -> None:
     """
     fixture = _FIXTURES_DIR / "incomplete_console_view.py"
 
+    # --no-color-output: CI exports FORCE_COLOR=1 and mypy honours it,
+    # wrapping the quoted names below in ANSI codes on win32 (measured
+    # on windows-latest) -- the substring asserts need plain text.
     result = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "mypy", str(fixture)],
+        [sys.executable, "-m", "mypy", "--no-color-output", str(fixture)],
         capture_output=True,
         text=True,
         cwd=_REPO_ROOT,

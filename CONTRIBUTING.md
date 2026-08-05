@@ -45,11 +45,11 @@ Stage 3 needs a **real desktop session** — no virtual display. It cannot run h
 | `ui/ids.py` matches the `.xrc` files (R-05) | `nox -s ids_drift` |
 | Every window, control and menu route drivable by the harness (R-73) | stage 3 |
 
-**macOS is currently the hard gate; `windows-latest` runs but does not block.** No Windows test machine
-is available to act on a failure. This is a deliberate, temporary deviation from R-75 and spec §14, which
-require both platforms green before release — it must be reversed when a Windows machine exists. Two
-advisory Windows jobs run per push: the test leg (static/unit/functional) and, since Phase 9, the
-packaging leg (dev bundle + unsigned installer), both artifact-rich on failure.
+**Both platforms gate.** Stages 1–3 run as a `macos-latest` + `windows-latest` matrix and both
+stage-5 build jobs block, exactly as R-75 and spec §14 always intended. The EPIC 1 deviation that made
+macOS the only gate (no Windows test machine) was reversed in Phase 10 after every known Windows
+failure was root-caused and fixed; the Windows legs upload the same probe screenshots, coverage and
+failure artifacts as macOS.
 
 ## How we work
 
@@ -143,7 +143,7 @@ nox -s winsetup_smoke       # compile tests everywhere; install/launch/uninstall
 ```
 
 The real artifact only ever comes from CI: PyInstaller cannot cross-compile, so the Windows payload
-exists only on a Windows runner. The advisory `windows-package` job builds the dev bundle, compiles
+exists only on a Windows runner. The blocking `build-windows` job builds the dev bundle, compiles
 `dist/RiverCrossing-<version>-setup.exe` (NSIS arrives via `choco install nsis` — the windows-2025
 image does not preinstall it), and drives E9.1.2's silent install → launch → uninstall tests. The
 setup `.exe`, the Windows dev bundle and the `build/winsetup-logs/` diagnostics upload as artifacts on

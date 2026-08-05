@@ -25,10 +25,7 @@ pin (spec.md / xrc-windows.md footnote (6)):
 * **MSW** returns ``AppearanceResult.CannotChange`` once any
   top-level window already exists, so a Windows theme change only
   takes effect at the next launch; :func:`notice_for_result` is what
-  turns that into the honest status-bar text. Windows is advisory in
-  this project (no test machine, spec §14/R-75) -- this behaviour is
-  exercised through the wx-free unit surface below, never through a
-  live Windows session.
+  turns that into the honest status-bar text.
 
 :func:`mode_for_menu_id` is fully wx-free, so it stays importable
 even when wx is broken -- this module's own import line touches no

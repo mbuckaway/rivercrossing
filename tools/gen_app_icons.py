@@ -6,7 +6,7 @@ this generator rasterises ``installers/branding/svg/icon.svg`` and
 ``installers/branding/svg/dmg_background.svg`` into the three
 platform artifacts the app and its DMG ship with -- ``RiverCrossing.
 icns`` (app icon and DMG volume icon), ``rivercrossing.ico``
-(Windows EXE icon, advisory -- no Windows build machine) and
+(Windows EXE icon, proven on the gating Windows build job) and
 ``dmg_background.tiff`` (Apple dual-resolution TIFF for the DMG
 window). The three outputs are committed alongside their SVG
 sources; ``tools/gen_card_bitmaps.py`` is the precedent for a

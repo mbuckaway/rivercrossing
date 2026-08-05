@@ -136,9 +136,9 @@ executable = EXE(  # noqa: F821 -- PyInstaller injects EXE
     argv_emulation=False,
     codesign_identity=None,  # unsigned dev bundle (spec.md section 14)
     entitlements_file=None,
-    # The .ico is advisory only -- there is no Windows build machine
-    # to prove PyInstaller's Windows icon handling, so it is left
-    # untouched (None) on the platform that is actually gated: macOS.
+    # Proven by the gating Windows build job: the packaged exe builds
+    # and installs with this .ico on windows-latest (Phase 10). macOS
+    # keeps None here; BUNDLE() below applies the .icns instead.
     icon=str(ICON_ICO) if sys.platform == "win32" else None,
 )
 

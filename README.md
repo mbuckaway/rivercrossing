@@ -29,8 +29,8 @@ See [design/docs-md/project-plan.md](design/docs-md/project-plan.md) for the ful
 - **wxPython 4.3.1** (wxWidgets 3.3) — installed automatically; supplies the dark-mode support in R-03
 - macOS 13+ or Windows 10/11
 
-macOS is the primary development and CI target today. Windows is supported by design and builds in CI,
-but is not currently gated — see [CONTRIBUTING.md](CONTRIBUTING.md).
+macOS and Windows both gate CI: every push runs the full static/unit/functional stages and builds the
+installable artifacts on both platforms — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Install and run
 
