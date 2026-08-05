@@ -26,10 +26,10 @@ rivercrossing/
 ├── README.md · LICENSE · CHANGELOG.md
 ├── .github/workflows/
 │   ├── ci.yml                  # §14 six-stage matrix: windows-latest + macos-latest
-│   └── release.yml             # tag → PyInstaller → Inno Setup .exe / notarized .dmg
+│   └── release.yml             # tag → PyInstaller → NSIS .exe / notarized .dmg
 ├── installers/
 │   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec; branded icons since Phase 8)
-│   ├── windows.iss             # Inno Setup, per-user, unsigned (R-01)
+│   ├── windows.nsi             # NSIS, per-user, unsigned (exists — Phase 9; NSIS replaces Inno Setup, R-01); Authenticode in release.yml (E9.1.2)
 │   ├── dmg_settings.py         # dmgbuild config (exists — Phase 8, unsigned); codesign + notarize in release.yml (E9.1.3)
 │   └── branding/               # icon + DMG-background SVG sources and their COMMITTED generated
 │                               #   artifacts (.icns/.ico/dual-res .tiff — no PNG in git);

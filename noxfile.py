@@ -7,11 +7,13 @@ drift. Sessions map onto the CI stages in spec.md section 14:
     stage 1 Static     -> lint, typecheck, importlint, ids_drift
     stage 2 Unit       -> unit
     stage 3 Functional -> functional
-    stage 5 Build      -> bundle, smoke, dmg, dmg_smoke
+    stage 5 Build      -> bundle, smoke, dmg, dmg_smoke,
+                           winsetup, winsetup_smoke
 
 Run `nox -l` to list them, `nox -s <name>` to run one.
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -32,6 +34,8 @@ BUNDLE_SMOKE = ROOT / "tests" / "functional" / "test_bundle_smoke.py"
 DMG_SETTINGS = ROOT / "installers" / "dmg_settings.py"
 DMG_SMOKE = ROOT / "tests" / "functional" / "test_dmg_smoke.py"
 APP_PATH = ROOT / "dist" / "RiverCrossing.app"
+NSI = ROOT / "installers" / "windows.nsi"
+WINSETUP_SMOKE = ROOT / "tests" / "functional" / "test_winsetup_smoke.py"
 
 DEV = "-e.[dev]"
 
@@ -209,3 +213,89 @@ def dmg_smoke(session):
         return
     session.install(DEV)
     session.run("pytest", str(DMG_SMOKE), "--no-cov", *session.posargs)
+
+
+# Homebrew's makensis 3.12 (arm64) crashes with std::bad_alloc when
+# LANG/LC_ALL are unset (upstream NSIS bug #1165); force a UTF-8
+# locale rather than trust whatever the calling shell left set.
+_MAKENSIS_ENV = {"LANG": "en_GB.UTF-8", "LC_ALL": "en_GB.UTF-8"}
+_MAKENSIS_CANDIDATES = (
+    "/opt/homebrew/bin/makensis",
+    r"C:\Program Files (x86)\NSIS\makensis.exe",
+)
+
+
+def _find_makensis() -> str | None:
+    """Return a usable makensis binary, or None if there isn't one."""
+    found = shutil.which("makensis")
+    if found is not None:
+        return found
+    for candidate in _MAKENSIS_CANDIDATES:
+        if Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _write_synthetic_payload(payload_dir: Path) -> None:
+    """Write a compile-smoke-only payload, rebuilt fresh each run.
+
+    Never the real dist/ tree: this is what proves windows.nsi still
+    compiles on a machine that cannot build the actual PyInstaller
+    onedir, not a stand-in for the real artifact.
+    """
+    shutil.rmtree(payload_dir, ignore_errors=True)
+    internal_dir = payload_dir / "_internal"
+    internal_dir.mkdir(parents=True)
+    (payload_dir / "rivercrossing.exe").write_bytes(b"MZ\x00\x00fake-exe-for-testing")
+    (internal_dir / "data.bin").write_bytes(b"\x00\x01\x02\x03")
+
+
+@nox.session(python=PYTHON)
+def winsetup(session):
+    """Compile the unsigned per-user NSIS installer (CI stage 5).
+
+    On win32 this packages the real dist/rivercrossing onedir into
+    dist/RiverCrossing-<version>-setup.exe. Off win32 (this Mac) it
+    is compile smoke only: a synthetic payload compiles to build/,
+    never dist/ -- dist/ stays reserved for the real artifact
+    windows-latest CI produces.
+    """
+    makensis = _find_makensis()
+    if makensis is None:
+        session.skip(
+            "no makensis on this machine -- the real installer is compiled on windows-latest CI"
+        )
+
+    version = _project_version()
+    if sys.platform == "win32":
+        payload = ROOT / "dist" / "rivercrossing"
+        if not payload.is_dir():
+            session.error(f"no built payload -- run `nox -s bundle` first; missing {payload}")
+        outfile = ROOT / "dist" / f"RiverCrossing-{version}-setup.exe"
+    else:
+        payload = ROOT / "build" / "winsetup-payload"
+        _write_synthetic_payload(payload)
+        outfile = ROOT / "build" / f"RiverCrossing-{version}-setup.exe"
+
+    session.run(
+        makensis,
+        f"-DAPPVERSION={version}",
+        # Native separators: Windows makensis finds no files behind a
+        # forward-slash File glob (measured on windows-latest).
+        f"-DPAYLOAD_DIR={payload}",
+        f"-DOUTFILE={outfile}",
+        str(NSI),
+        external=True,
+        env=_MAKENSIS_ENV,
+    )
+    session.log(f"built {outfile}")
+
+
+@nox.session(python=PYTHON)
+def winsetup_smoke(session):
+    """Run the Windows installer smoke tests (CI stage 5, Phase 9)."""
+    if not WINSETUP_SMOKE.exists():
+        session.log("Windows installer smoke test not authored yet")
+        return
+    session.install(DEV)
+    session.run("pytest", str(WINSETUP_SMOKE), "--no-cov", *session.posargs)

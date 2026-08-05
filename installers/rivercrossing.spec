@@ -11,8 +11,10 @@ Phase 8 (P8-D7) pulls the mechanical half of E9.1.1 forward: the
 built ``.app`` and, on Windows, the ``.exe`` carry the committed
 branding artifacts under ``installers/branding/`` (icon=), and an
 unsigned drag-to-Applications ``.dmg`` is built by ``nox -s dmg``
-from ``installers/dmg_settings.py``. Codesigning, notarization and
-the Inno installer remain EPIC 9 (E9.1.2 / E9.1.3).
+from ``installers/dmg_settings.py``. Phase 9 adds the unsigned
+per-user NSIS installer (``installers/windows.nsi``, ``nox -s
+winsetup``); codesigning, notarization and Authenticode remain
+EPIC 9 (E9.1.2 / E9.1.3).
 
 Two things here are load-bearing and easy to get wrong.
 

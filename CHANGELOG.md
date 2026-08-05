@@ -6,7 +6,26 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
-Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish follow-up.
+Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish and Phase 9
+Windows-installer follow-ups.
+
+### Added — Phase 9 (Windows installer)
+
+- **An unsigned per-user Windows installer** (the unsigned half of E9.1.2, pulled forward):
+  `installers/windows.nsi` installs the dev bundle under `%LOCALAPPDATA%\Programs\RiverCrossing` with
+  a Start-menu entry and a Programs-and-Features uninstall entry — no administrator prompt — and its
+  uninstaller removes the directory, the shortcut and the registry key. Version, payload and output
+  path arrive as guarded `makensis` defines (single source: `rivercrossing.__version__`).
+- **A native local compile loop**: `brew install makensis`, then `nox -s winsetup` compiles the script
+  on macOS against a synthetic payload under `build/`; `nox -s winsetup_smoke` runs the compile smoke
+  everywhere and the install/launch/uninstall tests on win32.
+- **An advisory `windows-package` CI job** (non-blocking per the standing macOS-only-gate deviation):
+  dev bundle → bundle smoke → `choco install nsis` → compile → E9.1.2's silent
+  install/launch/uninstall suite, uploading the setup `.exe`, the Windows dev bundle (spec §14's
+  runnable Windows artifact, for the first time) and `build/winsetup-logs/` diagnostics on every
+  outcome.
+- **SmartScreen instructions** for testers in README ▸ Testing on Windows — the R-01 "More info →
+  Run anyway" step lives there until the E8 user guide exists.
 
 ### Added — Phase 8 (D1 polish)
 
@@ -54,6 +73,15 @@ Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish f
 
 ### Changed
 
+- **The Windows installer toolchain is NSIS, not the Inno Setup named in the design documents** —
+  amended docs-first in Phase 9 (R-01, spec §10/§14, module-skeletons, task-briefs E9.1.2,
+  project-plan). Evidence: `makensis` 3.12 compiles Windows installers natively on macOS (Homebrew
+  arm64 bottle — measured in the Phase 9 toolchain probe), while Inno's ISCC runs on macOS only under
+  Wine, and Homebrew's `wine-stable` cask is deprecated (fails the Gatekeeper check) and is disabled on
+  2026-09-01. NSIS is absent from the windows-2025 runner image, so CI installs it with the
+  preinstalled Chocolatey (`choco` nsis 3.12.0 matches the local brew 3.12). Measured en route and
+  encoded in the nox session: `makensis` crashes with `std::bad_alloc` under an unset locale (NSIS
+  bug 1165), so every invocation forces a UTF-8 locale.
 - **wxPython pinned to `~=4.3.1` (wxWidgets 3.3.3), not the `~=4.2.5` in the design documents.** The
   documents justify 4.2.5 with "no stable 4.3 wheel exists (July 2026)"; 4.3.0 shipped 2026-07-28 and
   4.3.1 on 2026-07-30. 4.3.1 provides `wx.App.SetAppearance`, so R-03's dark mode works on both platforms

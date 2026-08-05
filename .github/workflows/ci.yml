@@ -1,7 +1,9 @@
 # RiverCrossing CI — the six-stage gauntlet from design/docs-md/spec.md §14.
 #
 # EPIC 1 wires stages 1, 2, 3 and 5. Stage 4 (Acceptance) needs the full race,
-# which arrives in EPIC 9; stage 6 (Package/signing) is EPIC 9 too.
+# which arrives in EPIC 9; stage 6 (Package/signing) is EPIC 9 too. Phase 9
+# additionally packages the unsigned per-user NSIS installer on an advisory
+# windows-latest job (the unsigned half of E9.1.2); Authenticode stays stage 6.
 #
 # **macOS is the target and the only gate.** §14 and R-75 want both platforms
 # green before release, and that remains the intent -- but there is no Windows
@@ -219,4 +221,104 @@ jobs:
             echo "  so the R-76 tests fail. A real platform difference."
             echo "- import-linter printed Unicode into cp1252; PYTHONUTF8=1"
             echo "  is set globally to address that."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------- Windows packaging, advisory
+  # EPIC 1 Phase 9 (the unsigned half of E9.1.2): build the Windows dev
+  # bundle, smoke it, compile the unsigned per-user NSIS installer and
+  # drive E9.1.2's named tests -- silent install -> launch -> silent
+  # uninstall. Same advisory contract as windows-advisory above: every
+  # step non-fatal, the summary carries the picture, the artifacts carry
+  # the evidence. NSIS is not preinstalled on the windows-2025 image, so
+  # the job installs it with the preinstalled Chocolatey (choco nsis
+  # 3.12.0 matches the local brew makensis 3.12). Authenticode signing
+  # remains stage 6 / E9.1.2.
+  windows-package:
+    name: "Windows packaging (advisory, non-blocking)"
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        id: install
+        continue-on-error: true
+        run: uv pip install --system -e ".[dev]"
+
+      - name: Build the dev bundle
+        id: bundle
+        continue-on-error: true
+        run: nox -s bundle
+
+      - name: Smoke the built bundle
+        id: smoke
+        continue-on-error: true
+        run: nox -s smoke
+
+      - name: Install NSIS (absent from the windows-2025 image)
+        id: nsis
+        continue-on-error: true
+        run: choco install nsis -y --no-progress
+
+      - name: Compile the unsigned installer
+        id: winsetup
+        continue-on-error: true
+        run: nox -s winsetup
+
+      - name: Silent install, launch, uninstall (E9.1.2)
+        id: winsetup_smoke
+        continue-on-error: true
+        run: nox -s winsetup_smoke
+
+      - name: Upload the setup executable
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-setup-windows
+          path: dist/RiverCrossing-*-setup.exe
+          if-no-files-found: warn
+
+      - name: Upload the Windows dev bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-devbundle-windows
+          path: dist/rivercrossing/**
+          if-no-files-found: ignore
+
+      - name: Upload packaging diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winsetup-diagnostics
+          path: |
+            build/winsetup-logs/**
+            *.png
+          if-no-files-found: ignore
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Windows packaging — advisory only"
+            echo
+            echo "Same advisory contract as the Windows job above: no"
+            echo "Windows test machine exists to act on a failure, so"
+            echo "this job reports without blocking (spec §14, R-75"
+            echo "deviation). The setup .exe and the diagnostics are"
+            echo "uploaded as artifacts either way."
+            echo
+            echo "| Step | Outcome |"
+            echo "|---|---|"
+            echo "| Install | ${{ steps.install.outcome }} |"
+            echo "| Build dev bundle | ${{ steps.bundle.outcome }} |"
+            echo "| Bundle smoke | ${{ steps.smoke.outcome }} |"
+            echo "| Install NSIS | ${{ steps.nsis.outcome }} |"
+            echo "| Compile installer | ${{ steps.winsetup.outcome }} |"
+            echo "| Install/launch/uninstall | ${{ steps.winsetup_smoke.outcome }} |"
           } >> "$GITHUB_STEP_SUMMARY"

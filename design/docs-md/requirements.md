@@ -11,7 +11,7 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 
 | ID | Level | Requirement | Trace |
 |---|---|---|---|
-| R-01 | MUST | Runs on Windows 10/11 and macOS 13+ from installers: unsigned Inno Setup .exe (no Windows cert — SmartScreen step documented in the guide); Developer-ID-signed, notarized .dmg. One codebase, Python 3.14 + wxPython 4.3.1 (wxWidgets 3.3.3 — cp314 wheels, and the release that supplies wx.App.SetAppearance, R-03). | §10, §14 |
+| R-01 | MUST | Runs on Windows 10/11 and macOS 13+ from installers: unsigned NSIS .exe (no Windows cert — SmartScreen step documented in the guide; Phase 9 amendment: NSIS replaces Inno Setup — makensis compiles natively on macOS, while Inno's compiler needs Wine, whose Homebrew cask is deprecated and disabled 2026-09-01); Developer-ID-signed, notarized .dmg. One codebase, Python 3.14 + wxPython 4.3.1 (wxWidgets 3.3.3 — cp314 wheels, and the release that supplies wx.App.SetAppearance, R-03). | §10, §14 |
 | R-02 | MUST | Async UI: the plate entry field never blocks — every DB write, export and import runs off the UI loop (single async writer; the wx⇄asyncio integration is chosen in EPIC 5, where that writer appears — `wxasync` is ruled out per §10). | §10 |
 | R-03 | MUST | Light and dark themes from one token table; follows the OS by default with manual override (System/Light/Dark radios) — all three live on both platforms, since the 4.3.1 baseline supplies wx.App.SetAppearance: no capability check, no disabled radio. Native controls, never restyled. | §10 · [mainframe](xrc-windows.md)/[settingsdlg](xrc-windows.md) |
 | R-04 | SHOULD | Per-monitor DPI awareness on Windows; View menu text zoom 90–150%. | §13 |
