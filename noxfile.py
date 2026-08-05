@@ -280,7 +280,9 @@ def winsetup(session):
     session.run(
         makensis,
         f"-DAPPVERSION={version}",
-        f"-DPAYLOAD_DIR={payload.as_posix()}",
+        # Native separators: Windows makensis finds no files behind a
+        # forward-slash File glob (measured on windows-latest).
+        f"-DPAYLOAD_DIR={payload}",
         f"-DOUTFILE={outfile}",
         str(NSI),
         external=True,

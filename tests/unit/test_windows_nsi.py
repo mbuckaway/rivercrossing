@@ -164,10 +164,15 @@ def test_windows_nsi_install_section_sets_the_output_path_to_installdir(nsi_text
 def test_windows_nsi_install_section_stages_the_payload_directory_recursively(
     nsi_text: str,
 ) -> None:
-    """The whole PyInstaller payload ships, not a hand-picked subset."""
+    """The whole PyInstaller payload ships, not a hand-picked subset.
+
+    The filespec joins with a backslash: Windows makensis finds no
+    files behind a forward-slash glob (measured on windows-latest),
+    while POSIX makensis converts the backslash (measured locally).
+    """
     install_section = _section_body(nsi_text, "Install")
 
-    assert 'File /r "${PAYLOAD_DIR}/*"' in install_section
+    assert r'File /r "${PAYLOAD_DIR}\*"' in install_section
 
 
 def test_windows_nsi_install_section_creates_the_start_menu_shortcut(nsi_text: str) -> None:

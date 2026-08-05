@@ -16,13 +16,17 @@
 ; ever hard-coded here:
 ;
 ;   makensis -DAPPVERSION=<rivercrossing.__version__>
-;            -DPAYLOAD_DIR=<built payload dir, forward slashes>
+;            -DPAYLOAD_DIR=<built payload dir, native separators>
 ;            -DOUTFILE=<absolute output path for the setup .exe>
 ;            installers/windows.nsi
 ;
-; Relative compile-time paths (the branding icon below) resolve
-; against this script's own directory, and a UTF-8 locale must be set
-; for makensis on macOS -- both measured in the Phase 9 probe.
+; Measured platform quirks, all encoded here or in the callers:
+; relative compile-time paths (the branding icon below) resolve
+; against this script's own directory; makensis on macOS needs a
+; UTF-8 locale; and the File filespec below joins with a backslash
+; because Windows makensis finds no files behind a forward-slash
+; glob (measured on windows-latest) while POSIX makensis converts
+; the backslash (measured locally).
 
 !ifndef APPVERSION
   !error "APPVERSION not defined -- pass -DAPPVERSION=<rivercrossing.__version__>"
@@ -50,7 +54,7 @@ UninstPage instfiles
 Section "Install"
   SetShellVarContext current
   SetOutPath "$INSTDIR"
-  File /r "${PAYLOAD_DIR}/*"
+  File /r "${PAYLOAD_DIR}\*"
   CreateShortcut "$SMPROGRAMS\RiverCrossing.lnk" "$INSTDIR\rivercrossing.exe"
   WriteUninstaller "$INSTDIR\uninstall.exe"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RiverCrossing" "DisplayName" "RiverCrossing"

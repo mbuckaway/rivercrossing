@@ -180,7 +180,10 @@ def test_windows_nsi_compiles_with_all_defines_to_the_named_outfile(
         [
             makensis_path,
             f"-DAPPVERSION={rivercrossing.__version__}",
-            f"-DPAYLOAD_DIR={payload_dir.as_posix()}",
+            # Native separators: Windows makensis finds no files
+            # behind a forward-slash File glob (measured on
+            # windows-latest); POSIX makensis takes both.
+            f"-DPAYLOAD_DIR={payload_dir}",
             f"-DOUTFILE={outfile}",
             str(NSI_PATH),
         ],
@@ -212,7 +215,7 @@ def test_windows_nsi_compile_without_appversion_fails_naming_it(
     completed = subprocess.run(  # noqa: S603 -- absolute makensis path, fixed argv
         [
             makensis_path,
-            f"-DPAYLOAD_DIR={payload_dir.as_posix()}",
+            f"-DPAYLOAD_DIR={payload_dir}",
             f"-DOUTFILE={outfile}",
             str(NSI_PATH),
         ],
