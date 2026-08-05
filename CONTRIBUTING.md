@@ -27,6 +27,8 @@ nox -s lint typecheck importlint ids_drift   # stage 1 · static
 nox -s unit                                   # stage 2 · unit + coverage gate
 nox -s functional                             # stage 3 · real wx windows
 nox -s bundle smoke                           # stage 5 · build, then smoke the binary
+nox -s dmg dmg_smoke                          # stage 5 · unsigned DMG (macOS only)
+nox -s winsetup winsetup_smoke                # stage 5 · unsigned Windows installer (see below)
 nox                                           # stages 1 + 2
 ```
 
@@ -45,7 +47,9 @@ Stage 3 needs a **real desktop session** — no virtual display. It cannot run h
 
 **macOS is currently the hard gate; `windows-latest` runs but does not block.** No Windows test machine
 is available to act on a failure. This is a deliberate, temporary deviation from R-75 and spec §14, which
-require both platforms green before release — it must be reversed when a Windows machine exists.
+require both platforms green before release — it must be reversed when a Windows machine exists. Two
+advisory Windows jobs run per push: the test leg (static/unit/functional) and, since Phase 9, the
+packaging leg (dev bundle + unsigned installer), both artifact-rich on failure.
 
 ## How we work
 
@@ -125,6 +129,28 @@ committed** (repository policy), and `tests/unit/test_branding_assets.py` enforc
 the artifacts' structure (all ten `.icns` representations, the `.ico` sizes, the 1×/2× TIFF pages).
 There is deliberately no byte-drift gate: `rsvg-convert` output varies across librsvg versions, so
 the honesty tests pin structure, not bytes. Edit the SVGs, regenerate, commit both together.
+
+## The Windows installer — local loop
+
+`installers/windows.nsi` is the unsigned per-user Windows installer (the E9.1.2 pull-forward, Phase 9).
+NSIS compiles it, and `makensis` cross-compiles natively on macOS — the reason NSIS replaced Inno Setup
+in the design contract (R-01, Phase 9 amendment):
+
+```bash
+brew install makensis       # native arm64 NSIS -- no Wine
+nox -s winsetup             # off-win32: compile smoke against a synthetic payload under build/
+nox -s winsetup_smoke       # compile tests everywhere; install/launch/uninstall tests are win32-only
+```
+
+The real artifact only ever comes from CI: PyInstaller cannot cross-compile, so the Windows payload
+exists only on a Windows runner. The advisory `windows-package` job builds the dev bundle, compiles
+`dist/RiverCrossing-<version>-setup.exe` (NSIS arrives via `choco install nsis` — the windows-2025
+image does not preinstall it), and drives E9.1.2's silent install → launch → uninstall tests. The
+setup `.exe`, the Windows dev bundle and the `build/winsetup-logs/` diagnostics upload as artifacts on
+every outcome.
+
+Measured quirk, encoded in `noxfile.py` and the smoke tests: `makensis` crashes with `std::bad_alloc`
+when `LANG`/`LC_ALL` are unset (NSIS bug 1165), so every invocation forces a UTF-8 locale.
 
 ## CI secrets contract
 

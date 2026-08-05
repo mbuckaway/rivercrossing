@@ -1,7 +1,9 @@
 # RiverCrossing CI — the six-stage gauntlet from design/docs-md/spec.md §14.
 #
 # EPIC 1 wires stages 1, 2, 3 and 5. Stage 4 (Acceptance) needs the full race,
-# which arrives in EPIC 9; stage 6 (Package/signing) is EPIC 9 too.
+# which arrives in EPIC 9; stage 6 (Package/signing) is EPIC 9 too. Phase 9
+# additionally packages the unsigned per-user NSIS installer on an advisory
+# windows-latest job (the unsigned half of E9.1.2); Authenticode stays stage 6.
 #
 # **macOS is the target and the only gate.** §14 and R-75 want both platforms
 # green before release, and that remains the intent -- but there is no Windows

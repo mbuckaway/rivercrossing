@@ -44,6 +44,24 @@ uv venv .venv && uv pip install -e '.[dev]'
 rivercrossing            # or: python -m rivercrossing
 ```
 
+## Testing on Windows
+
+Every CI run builds an unsigned Windows installer, `RiverCrossing-<version>-setup.exe`, and uploads it
+as a build artifact.
+
+1. Open the newest **CI** run on the
+   [Actions](https://github.com/mbuckaway/rivercrossing/actions) page. Download the
+   **rivercrossing-setup-windows** artifact and unzip it. Downloading artifacts needs a GitHub login
+   (any account).
+2. Run the setup executable. **SmartScreen warns that the app is unrecognised** — the installer is
+   unsigned by decision until EPIC 9 (R-01). Click **More info**, then **Run anyway**.
+3. The app installs per-user — no administrator prompt — under
+   `%LOCALAPPDATA%\Programs\RiverCrossing`, with a Start-menu entry. Launch **RiverCrossing** from the
+   Start menu. The current build opens the D1 demo shell: all 23 windows, the full menu system and
+   every dialog, on demo data.
+4. Uninstall from Windows **Settings ▸ Apps**, or run `uninstall.exe` from the install directory.
+   Removal cleans the install directory, the Start-menu entry and the registry entry.
+
 ## Development
 
 ```bash
@@ -52,6 +70,7 @@ nox -s unit                                   # unit tests + coverage gate
 nox -s functional                             # drives real wx windows (needs a desktop session)
 nox -s bundle smoke                           # build the app bundle, then smoke it
 nox -s dmg dmg_smoke                          # macOS: build the unsigned drag-to-Applications DMG, then smoke it
+nox -s winsetup winsetup_smoke                # Windows installer: compile (native makensis) + smoke
 nox -s gen_branding                           # regenerate the committed icon/DMG artwork from the SVGs
 ```
 
@@ -67,7 +86,7 @@ gates, and the wxPython testing gotchas worth knowing before you write a UI test
 | `tests/` | `unit/` (headless) and `functional/` (drives real wx windows) |
 | `design/` | The complete build contract: requirements, engineering spec, 23 window designs, templates, golden fixtures |
 | `tools/` | Developer tooling — the `ids.py` generator, the wxPython toolkit probe |
-| `installers/` | PyInstaller spec, `dmgbuild` settings, and `branding/` (SVG sources + committed icon/DMG artwork) |
+| `installers/` | PyInstaller spec, `dmgbuild` settings, the NSIS installer script (`windows.nsi`), and `branding/` (SVG sources + committed icon/DMG artwork) |
 
 `design/` is worth reading before changing anything. It is written to be sufficient on its own:
 `docs-md/requirements.md` is the acceptance authority, `docs-md/spec.md` the engineering spec, and
