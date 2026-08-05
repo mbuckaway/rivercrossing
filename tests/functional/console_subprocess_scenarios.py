@@ -27,10 +27,10 @@ without it helping once one lookup inside a construction has gone
 wrong -- which cuts the residual rate sharply but, sampled, does not
 always reach zero within one process: a rare process launch can land
 on a layout where every in-process attempt fails alike.
-``test_console_demo.py``'s own ``_run_scenario`` adds a second layer
-on top of this module, retrying the *spawn* itself (a fresh process
-gets an independent layout) -- the two together are what the
-full-suite measurement in this task's report is of.
+``scenario_runner.run_scenario`` adds a second layer on top of this
+module, retrying the *spawn* itself (a fresh process gets an
+independent layout) -- the two together are what the full-suite
+measurement in this task's report is of.
 
 The Phase 8 scenarios below (``plate_entry_round_trip``,
 ``record_btn_click_records_once``, ``console_starts_in_running_state``,
@@ -49,6 +49,23 @@ X/Dock-reopen pair that only ever makes sense against one live
 ``main_frame`` at a time -- so each gets its own fresh interpreter
 too, never sharing one with any other scenario.
 
+Phase 10, measured on windows-latest CI run 31015653629: every
+scenario above that builds ``main_frame`` through
+:func:`rivercrossing.ui.app.build_main_window` and then cleans it up
+with a plain, vetoable ``harness.close_window(frame)`` hangs on
+Windows. A vetoable ``Close()`` there runs the very same
+``_confirm_quit`` flow File ▸ Exit does (``app.py``'s
+``_on_main_frame_close``, non-mac branch) -- macOS vetoes and hides
+instead -- and nothing in the child dismisses the resulting modal, so
+the parent's 30s timeout kills the child before this module's own
+``print(json.dumps(result))`` ever reaches the pipe (empty
+stdout/stderr, ``data=None``, the exact symptom that CI run showed).
+:func:`_close_without_prompt` closes the gap: setting
+``really_quitting`` first makes the same guard
+:func:`~rivercrossing.ui.app._handle_exit_route`'s own forced close
+already relies on destroy the frame immediately, with no dialog, on
+every platform.
+
 This module *is* the child process's entire program. Run as::
 
     python console_subprocess_scenarios.py <scenario>
@@ -63,9 +80,16 @@ one JSON line to stdout::
 It never asserts anything itself -- the caller test module decodes
 this line and performs the actual comparisons, so a wrong measured
 value still surfaces as a normal pytest assertion diff, not a bare
-non-zero exit code.
+non-zero exit code. ``faulthandler.enable()`` runs first, before
+anything else in :func:`main`, so a native-level crash (a segfault,
+not a Python exception) still writes a Python traceback to stderr
+instead of leaving the parent with nothing but a bare non-zero exit
+code to diagnose -- the same empty-pipe failure mode
+:func:`_close_without_prompt` above exists to prevent for the hang
+case.
 """
 
+import faulthandler
 import json
 import sys
 from pathlib import Path
@@ -302,7 +326,7 @@ def _plate_entry_round_trip() -> dict[str, Any]:
                 "notice_count": len(calls),
             }
         finally:
-            harness.close_window(frame)
+            _close_without_prompt(frame)
     finally:
         restore()
 
@@ -327,7 +351,7 @@ def _record_btn_click_records_once() -> dict[str, Any]:
                 "notice_count": len(calls),
             }
         finally:
-            harness.close_window(frame)
+            _close_without_prompt(frame)
     finally:
         restore()
 
@@ -348,7 +372,7 @@ def _console_starts_in_running_state() -> dict[str, Any]:
             "status_label": status_label.GetLabelText(),
         }
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 # --- Phase 8, task 8.5: quit always confirms; macOS X hides --------
@@ -367,6 +391,26 @@ def _fire_exit_route(frame: Any) -> None:  # noqa: ANN401
     event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
     event.SetEventObject(frame)
     frame.GetEventHandler().ProcessEvent(event)
+
+
+def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401
+    """Destroy *frame* at scenario cleanup, never through a dialog.
+
+    Measured on windows-latest CI (module docstring): a plain,
+    vetoable ``Close()`` at cleanup time -- what
+    ``harness.close_window`` always does -- runs the very same
+    ``_confirm_quit`` flow File ▸ Exit does on any platform but
+    macOS, and nothing in this child dismisses that dialog. Setting
+    ``really_quitting`` first makes ``_on_main_frame_close``'s own
+    ``not event.CanVeto() or context.app.really_quitting`` guard
+    destroy *frame* immediately instead, on every platform -- the
+    same guard :func:`_handle_exit_route`'s own forced close already
+    relies on. Every scenario that builds ``main_frame`` through
+    :func:`~rivercrossing.ui.app.build_main_window` uses this in its
+    cleanup ``finally``, never before the behaviour under test runs.
+    """
+    wx.GetApp().really_quitting = True
+    harness.close_window(frame)
 
 
 def _quit_menu_confirmed_destroys() -> dict[str, Any]:
@@ -402,7 +446,7 @@ def _quit_menu_cancelled_stays() -> dict[str, Any]:
         _fire_exit_route(frame)
         return {"frame_being_deleted": frame.IsBeingDeleted(), "frame_shown": frame.IsShown()}
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 def _running_ride_shows_exit_running_dlg() -> dict[str, Any]:
@@ -423,7 +467,7 @@ def _running_ride_shows_exit_running_dlg() -> dict[str, Any]:
         _fire_exit_route(frame)
         return {"exit_running_dlg_shown": found.get("shown", False)}
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
@@ -447,7 +491,7 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
             _fire_exit_route(frame)
             return {"exit_confirm_dlg_shown": found.get("shown", False)}
         finally:
-            harness.close_window(frame)
+            _close_without_prompt(frame)
     finally:
         DemoDataSource.ride_status = original_ride_status
 
@@ -471,7 +515,7 @@ def _finish_first_ends_dialog_stays_running_posts_notice() -> dict[str, Any]:
             "status_text": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
@@ -485,7 +529,7 @@ def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
     try:
         return {"being_deleted": frame.IsBeingDeleted(), "shown": frame.IsShown()}
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 def _mac_reopen_shows_and_raises() -> dict[str, Any]:
@@ -502,7 +546,7 @@ def _mac_reopen_shows_and_raises() -> dict[str, Any]:
         harness.pump()
         return {"shown_after_reopen": frame.IsShown()}
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 def _query_end_session_cancelled_vetoes() -> dict[str, Any]:
@@ -521,7 +565,7 @@ def _query_end_session_cancelled_vetoes() -> dict[str, Any]:
             app.ProcessEvent(event)
             return {"vetoed": event.GetVeto()}
         finally:
-            harness.close_window(frame)
+            _close_without_prompt(frame)
     finally:
         dialogs.run_dialog = original_run_dialog
 
@@ -542,7 +586,7 @@ def _query_end_session_confirmed_does_not_veto() -> dict[str, Any]:
             app.ProcessEvent(event)
             return {"vetoed": event.GetVeto(), "really_quitting": app.really_quitting}
         finally:
-            harness.close_window(frame)
+            _close_without_prompt(frame)
     finally:
         dialogs.run_dialog = original_run_dialog
 
@@ -603,6 +647,59 @@ def _forced_close_destroys_without_dialog() -> dict[str, Any]:
         dialogs.run_dialog = original_run_dialog
 
 
+def _windows_close_cancelled_stays() -> dict[str, Any]:
+    """Windows ✕ + Cancel on exit_running_dlg: frame survives.
+
+    Documented Windows ✕ contract (Phase 10, measured on
+    windows-latest CI): a plain, vetoable ``frame.Close()`` -- what
+    the close box fires -- runs the very same ``_confirm_quit`` flow
+    ``_fire_exit_route``'s ``wxID_EXIT`` does (``_on_main_frame_close``
+    's non-mac branch), so this mirrors ``_quit_menu_cancelled_stays``
+    exactly except for firing a plain ``Close()`` instead of the
+    wxID_EXIT menu route.
+    """
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+
+        def _click_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        wx.CallAfter(_click_cancel)
+        frame.Close()
+        return {"frame_being_deleted": frame.IsBeingDeleted(), "frame_shown": frame.IsShown()}
+    finally:
+        _close_without_prompt(frame)
+
+
+def _windows_close_confirmed_destroys() -> dict[str, Any]:
+    """Windows ✕ + Quit on exit_running_dlg: the frame is destroyed.
+
+    Mirrors ``_quit_menu_confirmed_destroys`` exactly except for
+    firing a plain ``frame.Close()`` instead of the wxID_EXIT menu
+    route (see :func:`_windows_close_cancelled_stays`'s own
+    docstring): both reach ``_on_main_frame_close``'s non-mac branch,
+    which destroys *frame* directly on a confirmed ``QUIT`` outcome,
+    so no further cleanup close is needed here either.
+    """
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    destroy_calls = _spy_on_destroy(frame)
+
+    def _click_quit() -> None:
+        dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+        harness.click(dialog, pages.WX_ID_OK)
+
+    wx.CallAfter(_click_quit)
+    frame.Close()
+    return {"frame_being_deleted": len(destroy_calls) > 0}
+
+
 # --- Phase 8, task 8.6: live dark mode + menu radio defaults -------
 
 
@@ -632,25 +729,45 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
     visual record) via the same ``harness.screenshot`` machinery
     ``test_screen_smoke.py`` already uses, into the same
     ``_screenshots`` directory.
+
+    Captures the appearance both before and after firing the theme id,
+    rather than only the raw post-fire value: macOS's own live-switch
+    contract (theme.py's own module docstring) forces ``IsDark()`` to
+    the requested value deterministically, but MSW's ``CannotChange``
+    contract only documents that it does not change at all -- an
+    invariant this caller can check without ever needing to know
+    either OS's actual, environment-dependent starting appearance.
     """
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
     harness.pump()
     try:
+        is_dark_before = wx.SystemSettings.GetAppearance().IsDark()
         _fire_menu_event(frame, ids.MI_THEME_DARK)
+        is_dark_after = wx.SystemSettings.GetAppearance().IsDark()
         saved = harness.screenshot(frame, _SCREENSHOT_DIR / "theme_dark.png")
         return {
-            "is_dark": wx.SystemSettings.GetAppearance().IsDark(),
+            "is_dark_after": is_dark_after,
+            "appearance_unchanged": is_dark_after == is_dark_before,
             "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_DARK),
+            "notice_after": frame.GetStatusBar().GetStatusText(0),
             "screenshot_exists": saved.exists(),
         }
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 def _theme_light_round_trip() -> dict[str, Any]:
-    """Dark then Light: SystemAppearance and the radio flip back."""
+    """Dark then Light: SystemAppearance and the radio flip back.
+
+    Captures the pre-fire notice text too (see
+    :func:`_theme_dark_applies_at_runtime`'s own docstring for why):
+    MSW's ``CannotChange`` contract means the notice after this round
+    trip is never the generic stub, but *is* the same next-launch text
+    both times, so comparing to the untouched pre-fire text is not
+    enough on its own to prove a notice posted at all.
+    """
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
@@ -659,11 +776,12 @@ def _theme_light_round_trip() -> dict[str, Any]:
         _fire_menu_event(frame, ids.MI_THEME_DARK)
         _fire_menu_event(frame, ids.MI_THEME_LIGHT)
         return {
-            "is_dark": wx.SystemSettings.GetAppearance().IsDark(),
+            "is_dark_after": wx.SystemSettings.GetAppearance().IsDark(),
             "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_LIGHT),
+            "notice_after": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
@@ -700,13 +818,23 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
                 "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_SYSTEM),
             }
         finally:
-            harness.close_window(frame)
+            _close_without_prompt(frame)
     finally:
         theme.apply = original_apply
 
 
 def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, Any]:
-    """Theme ids post no notice (Ok); mi_zoom_110 still posts one."""
+    """Theme ids post no stub notice (Ok/CannotChange); zoom still does.
+
+    Returns the raw post-fire theme notice text too, not only whether
+    it changed: MSW's ``CannotChange`` contract means firing the theme
+    id *does* change the status bar on Windows (to the documented
+    next-launch text), so "unchanged" alone would read as a false
+    positive there for the one fact this scenario actually needs to
+    prove on every platform -- that the theme id's own notice, if any,
+    is never the generic ``route.label — not yet implemented`` stub
+    ``mi_zoom_110`` posts.
+    """
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
@@ -719,10 +847,11 @@ def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, An
         after_zoom = frame.GetStatusBar().GetStatusText(0)
         return {
             "theme_notice_unchanged": after_theme == before,
+            "theme_notice_after": after_theme,
             "zoom_stub_notice": after_zoom,
         }
     finally:
-        harness.close_window(frame)
+        _close_without_prompt(frame)
 
 
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
@@ -748,6 +877,8 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
         _session_end_confirmed_then_close_destroys_once
     ),
     "forced_close_destroys_without_dialog": _forced_close_destroys_without_dialog,
+    "windows_close_cancelled_stays": _windows_close_cancelled_stays,
+    "windows_close_confirmed_destroys": _windows_close_confirmed_destroys,
     "theme_dark_applies_at_runtime": _theme_dark_applies_at_runtime,
     "theme_light_round_trip": _theme_light_round_trip,
     "theme_system_reapplies_on_sys_colour_changed": (
@@ -779,11 +910,17 @@ def main(argv: list[str]) -> int:
 
     The JSON line on stdout *is* this program's whole contract with
     its parent (module docstring) -- printing it is not debug output
-    left behind, it is the point.
+    left behind, it is the point. ``faulthandler.enable()`` runs
+    first, before anything else here (module docstring): a native
+    crash later in this process still writes a Python traceback to
+    stderr instead of leaving the parent with only a bare non-zero
+    exit code.
     """
+    faulthandler.enable()
     if len(argv) != _EXPECTED_ARGC:
         print(  # noqa: T201 -- the child's entire contract with its parent
-            json.dumps({"ok": False, "error": "usage: <script> <scenario>", "data": None})
+            json.dumps({"ok": False, "error": "usage: <script> <scenario>", "data": None}),
+            flush=True,
         )
         return 2
     # Bound to a name for the rest of main(): an unbound App is
@@ -795,7 +932,10 @@ def main(argv: list[str]) -> int:
     app = app_module.build_app()  # noqa: F841 -- kept alive by this binding, never read
     wx.Log.SetActiveTarget(wx.LogStderr())
     result = _run(argv[1])
-    print(json.dumps(result))  # noqa: T201 -- the child's entire contract with its parent
+    # flush=True: measured on windows-latest CI (module docstring), a
+    # child killed by the parent's timeout can otherwise never flush
+    # this, its one and only line of output, out of the pipe at all.
+    print(json.dumps(result), flush=True)  # noqa: T201 -- the child's entire contract
     return 0 if result["ok"] else 1
 
 
