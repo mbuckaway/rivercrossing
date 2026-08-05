@@ -201,9 +201,9 @@ Exit criteria settings persist across relaunch · theme matrix verified per-OS �
 
 E9 · Packaging & release — external creds live here, last
 
-Installables and the full-dress rehearsal: PyInstaller apps, Inno Setup .exe (per-user, unsigned) and notarized .dmg, CI stages 5–6, the complete acceptance race, and the nightly seeded run.
+Installables and the full-dress rehearsal: PyInstaller apps, NSIS .exe (per-user, unsigned — Phase 9: NSIS replaces Inno Setup) and notarized .dmg, CI stages 5–6, the complete acceptance race, and the nightly seeded run.
 
-- **E9.1 Bundles** — E9.1.1 harden the E1.6.1 dev-bundle specs into release bundles (assets, templates, guide, WAVs complete; smoke: launch packaged app, open a ride); E9.1.2 Inno installer; E9.1.3 dmgbuild + Developer ID codesign + notarization — *owned externally: org supplies Apple cert/creds; interface = CI secrets contract defined in E1.1.2; until provided, stage produces unsigned artifacts and the gate is advisory.*
+- **E9.1 Bundles** — E9.1.1 harden the E1.6.1 dev-bundle specs into release bundles (assets, templates, guide, WAVs complete; smoke: launch packaged app, open a ride); E9.1.2 NSIS installer; E9.1.3 dmgbuild + Developer ID codesign + notarization — *owned externally: org supplies Apple cert/creds; interface = CI secrets contract defined in E1.1.2; until provided, stage produces unsigned artifacts and the gate is advisory.*
 
 - **E9.2 Acceptance** — E9.2.1 full race R-74: CSV in, hundreds of typed crossings, stop/continue, kill+relaunch, quit+relaunch, finish, all four exports verified; E9.2.2 nightly seeded race, failures file the seed (R-77); E9.2.3 release drafting on version tags.
 
