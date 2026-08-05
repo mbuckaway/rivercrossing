@@ -29,7 +29,7 @@ from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.data_source import RiderRow, RideSummary, StandingsRow
-from rivercrossing.ui.views import _support, results_win, ride_library, rider_editor
+from rivercrossing.ui.views import _support, entry_detail, results_win, ride_library, rider_editor
 from rivercrossing.ui.views.entry_detail import COL_CARD as LAPS_COL_CARD
 from rivercrossing.ui.views.entry_detail import EntryDetailDialog
 from rivercrossing.ui.views.results_win import ResultsWindow
@@ -346,20 +346,24 @@ def test_entry_detail_fits_within_1366x768(shared_entry_detail: EntryDetailDialo
     assert size.height <= MAX_SCREEN_HEIGHT
 
 
-def test_entry_detail_minimum_size_stays_meaningfully_above_the_empty_dataview_floor(
+def test_entry_detail_applies_the_measured_minimum_width(
     shared_entry_detail: EntryDetailDialog,
 ) -> None:
-    """D16: no canvas width is stated; Fit() must not collapse.
+    """D16: no canvas width is stated; the floor is now forced.
 
-    xrc-windows.md's own D16 note: an empty DataView contributes
-    almost no best size, which is exactly why an under-engineered
-    version of this dialog would measure roughly half its real
-    width. 700px is comfortably above that collapsed size and below
-    this task's own measured 726px result.
+    Measured on windows-latest CI (run 31015653629): Fit() alone
+    landed on 650px there, Segoe UI's button metrics fitting
+    narrower than macOS's Fit()-derived 726px. The width is now
+    forced before Fit(), exactly like ride_library/rider_editor/
+    results_win already force their canvas widths (D16). This
+    assertion's red state is only visible on windows-latest: on
+    macOS, Fit() alone already lands on entry_detail.MIN_SIZE[0],
+    so nothing appears to change locally -- the accepted repo
+    precedent for a platform-only fix.
     """
     size = shared_entry_detail.dialog.GetSize()
 
-    assert size.width >= 700
+    assert size.width == entry_detail.MIN_SIZE[0]
 
 
 # ------------------------------------------------------ results_frame
