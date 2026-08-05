@@ -32,19 +32,17 @@ never forked: forking a process that may already have an initialised
 ``wx_app`` fixture usually already has one. Measured (a throwaway
 sampling script, per this repo's convention): even fully isolated,
 that hazard still shows up at a real per-*spawn* rate for one of the
-three original scenarios, so :func:`_run_scenario` also retries the
-spawn itself, not only relying on the child's own in-process retry.
+three original scenarios, so :func:`scenario_runner.run_scenario` also
+retries the spawn itself, not only relying on the child's own
+in-process retry.
 """
 
-import json
 import re
-import subprocess
-import sys
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import harness
 import pytest
+import scenario_runner
 import wx.dataview
 
 from rivercrossing.demo import DemoDataSource
@@ -70,10 +68,6 @@ CANVAS_FEED_PLATES = ("123", "77", "45", "212", "8")
 CANVAS_COUNTERS = ("1 124", "1 092", "42", "41/108")
 INFOBAR_NAMES = (RESUME_INFOBAR, REOPENED_INFOBAR, FINISHED_INFOBAR)
 
-SCENARIOS_SCRIPT = Path(__file__).resolve().parent / "console_subprocess_scenarios.py"
-SCENARIO_TIMEOUT_SECONDS = 30
-SCENARIO_SPAWN_ATTEMPTS = 3
-
 
 @pytest.fixture(scope="module")
 def shared_console(xrc_resource: object) -> MainFrame:
@@ -93,85 +87,6 @@ def shared_console(xrc_resource: object) -> MainFrame:
         yield console
     finally:
         harness.close_window(window)
-
-
-def _spawn_scenario(name: str) -> subprocess.CompletedProcess[str]:
-    """Spawn one fresh interpreter running scenario *name*.
-
-    Always ``subprocess`` (spawn), never ``os.fork``: forking a
-    process that may already have an initialised ``NSApplication``
-    is unsafe on macOS, and this session's own ``wx_app`` fixture
-    usually already has one.
-    """
-    return subprocess.run(  # noqa: S603 -- sys.executable + a fixed repo-local script path
-        [sys.executable, str(SCENARIOS_SCRIPT), name],
-        capture_output=True,
-        text=True,
-        timeout=SCENARIO_TIMEOUT_SECONDS,
-        check=False,
-    )
-
-
-def _decode_scenario_output(
-    name: str, completed: subprocess.CompletedProcess[str]
-) -> dict[str, Any]:
-    """Decode *completed*'s stdout into the scenario's JSON envelope.
-
-    Always returns a dict carrying "ok"/"error"/"data"/"context" --
-    even when stdout holds no parseable JSON at all -- so a failure
-    message never needs a second code path for "the child produced
-    nothing useful".
-    """
-    context = (
-        f"scenario={name!r} returncode={completed.returncode}\n"
-        f"--- child stdout ---\n{completed.stdout}\n"
-        f"--- child stderr ---\n{completed.stderr}"
-    )
-    last_line = next(
-        (line for line in reversed(completed.stdout.splitlines()) if line.strip()), ""
-    )
-    try:
-        result = json.loads(last_line)
-    except json.JSONDecodeError as exc:
-        return {
-            "ok": False,
-            "error": f"no parseable JSON on stdout: {exc}",
-            "data": None,
-            "context": context,
-        }
-    result["context"] = context
-    return result
-
-
-def _run_scenario(name: str) -> dict[str, Any]:
-    """Run scenario *name* in a fresh interpreter; decode its result.
-
-    Retries the *spawn* itself, on top of
-    ``console_subprocess_scenarios.py``'s own in-process retry of the
-    sash sequence: measured, a whole process launch can rarely land
-    on a memory layout where every one of its in-process attempts
-    fails, and a fresh spawn gets an independent layout. Returns the
-    first successful attempt's envelope, or the last attempt's
-    (failing) one if every spawn failed.
-    """
-    result: dict[str, Any] = {"ok": False, "error": "no attempt ran", "data": None, "context": ""}
-    for _attempt in range(SCENARIO_SPAWN_ATTEMPTS):
-        try:
-            completed = _spawn_scenario(name)
-        except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout or ""
-            stderr = exc.stderr or ""
-            result = {
-                "ok": False,
-                "error": f"child timed out after {SCENARIO_TIMEOUT_SECONDS}s",
-                "data": None,
-                "context": f"scenario={name!r}\nstdout={stdout}\nstderr={stderr}",
-            }
-            continue
-        result = _decode_scenario_output(name, completed)
-        if result["ok"]:
-            return result
-    return result
 
 
 def _feed_plates(model: Any) -> tuple[str, ...]:  # noqa: ANN401 -- wx ships no stubs
@@ -269,7 +184,7 @@ def test_main_frame_sash_position_round_trips_across_a_simulated_relaunch() -> N
     spawned interpreter (module docstring): this is the one scenario
     of the three that measurably needs it.
     """
-    result = _run_scenario("sash_round_trip")
+    result = scenario_runner.run_scenario("sash_round_trip")
 
     assert result["ok"], result["context"]
     assert result["data"]["restored_sash"] == 300, result["context"]
@@ -284,7 +199,7 @@ def test_main_frame_hide_times_removes_lap_time_and_total_columns_both_ways() ->
     Runs in its own spawned interpreter (module docstring), like the
     other two state-mutating scenarios.
     """
-    result = _run_scenario("hide_times_columns_round_trip")
+    result = scenario_runner.run_scenario("hide_times_columns_round_trip")
 
     assert result["ok"], result["context"]
     assert result["data"]["before"] == list(feed_model.COLUMN_LABELS), result["context"]
@@ -298,7 +213,7 @@ def test_main_frame_hide_times_leaves_the_clock_labels_shown() -> None:
     Runs in its own spawned interpreter (module docstring), like the
     other two state-mutating scenarios.
     """
-    result = _run_scenario("hide_times_leaves_clock_shown")
+    result = scenario_runner.run_scenario("hide_times_leaves_clock_shown")
 
     assert result["ok"], result["context"]
     assert result["data"]["clock_elapsed_shown"] is True, result["context"]
@@ -383,7 +298,7 @@ def test_main_frame_set_state_enables_or_disables_plate_input_and_record_btn_tog
     state`` mutates controls the shared, read-only ``shared_console``
     fixture forbids mutating.
     """
-    result = _run_scenario("state_enablement_round_trip")
+    result = scenario_runner.run_scenario("state_enablement_round_trip")
 
     assert result["ok"], result["context"]
     assert result["data"]["running"] == [True, True], result["context"]
@@ -397,7 +312,7 @@ def test_main_frame_plate_entry_round_trip_records_once_clears_and_refocuses() -
     app bootstrap and a real ``EVT_TEXT_ENTER`` cannot run against
     the shared ``shared_console`` fixture.
     """
-    result = _run_scenario("plate_entry_round_trip")
+    result = scenario_runner.run_scenario("plate_entry_round_trip")
 
     assert result["ok"], result["context"]
     expected_notice = "Plate 123 — recording engine lands in EPIC 4"
@@ -413,7 +328,7 @@ def test_main_frame_record_btn_click_records_once_clears_and_refocuses() -> None
     Runs in its own spawned interpreter (module docstring), like the
     Enter round trip above.
     """
-    result = _run_scenario("record_btn_click_records_once")
+    result = scenario_runner.run_scenario("record_btn_click_records_once")
 
     assert result["ok"], result["context"]
     expected_notice = "Plate 77 — recording engine lands in EPIC 4"
@@ -429,7 +344,7 @@ def test_build_main_window_starts_the_console_in_the_running_state() -> None:
     Runs in its own spawned interpreter (module docstring): drives
     the real ``build_main_window`` bootstrap, not a bare ``MainFrame``.
     """
-    result = _run_scenario("console_starts_in_running_state")
+    result = scenario_runner.run_scenario("console_starts_in_running_state")
 
     assert result["ok"], result["context"]
     assert result["data"]["plate_enabled"] is True, result["context"]
