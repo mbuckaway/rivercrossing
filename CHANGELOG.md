@@ -7,7 +7,20 @@ All notable changes to RiverCrossing are recorded here. The format follows
 ## [Unreleased]
 
 Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish, Phase 9
-Windows-installer and Phase 10 Windows-parity follow-ups.
+Windows-installer, Phase 10 Windows-parity and Phase 11 tagged-release follow-ups.
+
+### Added — Phase 11 (tagged releases)
+
+- **A version tag now publishes the release with both installers.** Tagging previously built
+  nothing — no workflow listened to tags (the v0.1.1 release shipped with zero assets, on code
+  still versioned 0.1.0). `ci.yml` now triggers on `v*` tags: the tag runs the full two-OS
+  gauntlet and, only when green, a new stage-6 `release` job publishes the GitHub release with
+  `RiverCrossing-<version>-macos.dmg`, `RiverCrossing-<version>-windows-setup.exe` and
+  `SHA256SUMS.txt` (auto-generated notes). The job hard-fails when the tag does not match
+  `rivercrossing.__version__`, so a mistagged push produces a red run instead of a wrong-artifact
+  release. Signing remains EPIC 9 — the published installers are the unsigned R-01 builds.
+- `__version__` bumped to **0.1.2** (0.1.1 is retired: its tag was cut over 0.1.0 code before the
+  automation existed).
 
 ### Changed — Phase 10 (Windows parity)
 

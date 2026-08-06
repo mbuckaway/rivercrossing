@@ -49,10 +49,11 @@ rivercrossing            # or: python -m rivercrossing
 Every CI run builds an unsigned Windows installer, `RiverCrossing-<version>-setup.exe`, and uploads it
 as a build artifact.
 
-1. Open the newest **CI** run on the
-   [Actions](https://github.com/mbuckaway/rivercrossing/actions) page. Download the
-   **rivercrossing-setup-windows** artifact and unzip it. Downloading artifacts needs a GitHub login
-   (any account).
+1. Download `RiverCrossing-<version>-windows-setup.exe` from the newest
+   [Release](https://github.com/mbuckaway/rivercrossing/releases) — no GitHub login needed.
+   Between releases, the newest **CI** run on the
+   [Actions](https://github.com/mbuckaway/rivercrossing/actions) page carries the same installer
+   as the **rivercrossing-setup-windows** artifact (unzip it; artifacts need a GitHub login).
 2. Run the setup executable. **SmartScreen warns that the app is unrecognised** — the installer is
    unsigned by decision until EPIC 9 (R-01). Click **More info**, then **Run anyway**.
 3. The app installs per-user — no administrator prompt — under
