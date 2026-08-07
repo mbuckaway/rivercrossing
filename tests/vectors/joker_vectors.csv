@@ -1,0 +1,29 @@
+cards,expected_class,expected_tiebreak,expected_joker_ranks,expected_joker_codes,description
+AS AD AH AC JK,FIVE_OF_A_KIND,14,ACE,,joker maximizes to a 5th ace (duplicate-legal); asserts maximization not uniqueness
+9S 9D 9H 9C JK,FIVE_OF_A_KIND,9,NINE,,spec section 5's own five-of-a-kind example
+AS KS QS JS JK,ROYAL_FLUSH,7462,TEN,TS,joker completes the royal flush in spades
+8H 7H 6H 5H JK,STRAIGHT_FLUSH,7457,NINE,9H,joker=9H (not 4H) maximizes to a 9-high straight flush
+AS 2S 3S 4S JK,STRAIGHT_FLUSH,7453,FIVE,5S,joker=5S completes the wheel straight flush; beats an ace-high flush
+QS QD QH 7C JK,QUADS,7422,QUEEN,QC,joker completes quad queens
+JS JD 4H 4C JK,FULL_HOUSE,7251,JACK,,joker plays a third jack; jacks-over-fours beats fours-over-jacks
+KS JS 8S 6S JK,FLUSH,7080,ACE,AS,joker=AS maximizes the flush kicker
+9S 8D 7H 6C JK,STRAIGHT,5859,TEN,,joker=T beats joker=5 for a 10-high straight
+AS 2D 3H 4C JK,STRAIGHT,5854,FIVE,,joker=5 completes the wheel straight
+9S 8D 6H 5C JK,STRAIGHT,5858,SEVEN,,joker=7 fills the inside straight
+JS TD 9H 8C JK,STRAIGHT,5861,QUEEN,,joker=Q beats joker=7 for a queen-high straight
+9S 8S 7S 5S JK,STRAIGHT_FLUSH,7457,SIX,6S,joker=6S; straight flush beats an ace-high flush alternative
+7S 7D KH QC JK,TRIPS,5380,SEVEN,,joker plays a third seven
+AS AD KH QC JK,TRIPS,5853,ACE,,joker plays a third ace; a joker on a pair never yields two pair
+AS KD 9H 5C JK,PAIR,4107,ACE,,joker pairs the ace; pair is the maximum achievable here
+AS AD AH JK JK,FIVE_OF_A_KIND,14,ACE;ACE,,two jokers make five aces
+9S 9D 9H JK JK,FIVE_OF_A_KIND,9,NINE;NINE,,two jokers make five nines
+AS KS QS JK JK,ROYAL_FLUSH,7462,JACK;TEN,JS;TS,two jokers complete the royal flush in spades
+7D 6D 5D JK JK,STRAIGHT_FLUSH,7457,NINE;EIGHT,9D;8D,two jokers extend to a 9-high straight flush
+AH 2H 3H JK JK,STRAIGHT_FLUSH,7453,FIVE;FOUR,5H;4H,two jokers complete the wheel straight flush
+QS JS 9S JK JK,STRAIGHT_FLUSH,7461,KING;TEN,KS;TS,two jokers reach a king-high straight flush; royal is out of reach because the natural nine blocks it
+KS KD 2H JK JK,QUADS,7429,KING;KING,KC;KH,two jokers make quad kings (the only 2 unused king suits); beats the two-over-kings full house alternative
+KS 7D 2H JK JK,TRIPS,5732,KING;KING,,two jokers make trip kings the highest available rank
+9S 8D 7H JK JK,STRAIGHT,5860,JACK;TEN,,two jokers extend upward to a jack-high straight
+AS AD JK JK JK,FIVE_OF_A_KIND,14,ACE;ACE;ACE,,three jokers make five aces
+AS JK JK JK JK,FIVE_OF_A_KIND,14,ACE;ACE;ACE;ACE,,four jokers make five aces
+JK JK JK JK JK,FIVE_OF_A_KIND,14,ACE;ACE;ACE;ACE;ACE,,five jokers make five aces per spec section 5's pseudocode shortcut
