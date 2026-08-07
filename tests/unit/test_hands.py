@@ -31,13 +31,13 @@ import re
 import time
 from collections import Counter
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, cast
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from rivercrossing.cards import Card, Rank, Suit
+from rivercrossing.cards import Card, Rank, Shoe, Suit
 from rivercrossing.hands import (
     NATURAL_HAND_SIZE,
     NATURAL_RANK_COUNT,
@@ -309,7 +309,7 @@ def test_eval5_joker_vector_matches_authored_class_tiebreak_and_ranks(
 
     assert evaluated.cls.name == row.expected_class
     assert evaluated.tiebreak == row.expected_tiebreak
-    joker_ranks = tuple(card.rank.name for card in evaluated.jokers_played_as)
+    joker_ranks = tuple(cast("Rank", card.rank).name for card in evaluated.jokers_played_as)
     assert joker_ranks == row.expected_joker_ranks
 
 
@@ -574,3 +574,121 @@ def test_best_hand_field_of_180_entries_by_12_cards_scores_within_measured_budge
 
     assert len(field) == 180
     assert elapsed < 1.0  # R-42: the whole field scores in under 1 second
+
+
+# ------------------------------------- E2.3.1: uncapped pooled budgets
+
+
+# R-16 makes uncapped rider-pooled the DEFAULT plate model: a 3-10
+# rider team over the 6h window pools 30-120+ cards. Measured on the
+# unfixed evaluator: n=30 -> 0.57s, n=40 -> 2.6s, n=50 -> 8.5s,
+# n=60 -> 22s (this machine: 21.4s at the seed below) -- the C(n, 5-j)
+# natural-subset search's own pruning (_relevant_naturals /
+# _plausible_flush_suits) silently saturates past ~20 cards, so every
+# suit looks flush-plausible and nothing is pruned at all. Both seeds
+# are chosen (not the first tried) to deal zero jokers: a joker count
+# near NATURAL_HAND_SIZE shrinks the natural-subset size (5 - jokers)
+# back down to trivial, which would mask the defect rather than pin it.
+_POOLED_SCALE_BUDGETS = [(60, 20260867, 0.1), (120, 20260809, 0.2)]
+
+
+@pytest.mark.parametrize(("card_count", "seed", "budget_seconds"), _POOLED_SCALE_BUDGETS)
+def test_best_hand_pooled_scale_completes_within_measured_budget(
+    card_count: int, seed: int, budget_seconds: float
+) -> None:
+    """A pooled-team hand of card_count cards scores within its budget.
+
+    Today's evaluator fails this by two orders of magnitude at n=60
+    (measured ~21-22s against a 0.1s budget); n=120's C(120,5) blowup
+    is steeper still, pinning that the rewrite tames the growth curve,
+    not just the single n=60 case.
+    """
+    shoe = Shoe(decks=8, jokers_per_deck=2, seed=seed)
+    cards = [shoe.deal()[0] for _ in range(card_count)]
+
+    start = time.perf_counter()
+    best_hand(cards)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < budget_seconds
+
+
+def _exhaustive_best_hand(cards: list[Card]) -> EvaluatedHand:
+    """Compute the ORIGINAL exhaustive subset+substitution search.
+
+    Deliberately independent of every one of hands.py's own (now
+    removed) pruning helpers: every C(len(naturals), 5-j) natural
+    subset, crossed with every full substitution of the j joker slots
+    from all 52 real cards -- the ground truth ``best_hand``'s
+    analytic construction must reproduce, computed a way that could
+    never share a pruning bug with the code under test.
+    """
+    naturals = [card for card in cards if not card.joker]
+    joker_count = len(cards) - len(naturals)
+    need = NATURAL_HAND_SIZE - joker_count
+    fills = (
+        list(itertools.combinations_with_replacement(_ALL_52_NATURAL_CARDS, joker_count))
+        if joker_count
+        else [()]
+    )
+    candidates = (
+        eval5((*subset, *fill))
+        for subset in itertools.combinations(naturals, need)
+        for fill in fills
+    )
+    return max(candidates, key=lambda hand: (hand.cls, hand.tiebreak))
+
+
+# (seed, card_count, joker_count) -- n spans 5..12, jokers 0..3, chosen
+# to keep the *oracle's* own O(C(n-j,5-j) * C(52+j-1,j)) cost bounded:
+# n=12 with j=3 alone would need ~893k eval5 calls just for the oracle,
+# so the widest n only pairs with j<=2 here.
+_POOLED_EQUIVALENCE_BATTERY = [
+    (1, 5, 0),
+    (2, 5, 3),
+    (3, 7, 1),
+    (4, 7, 2),
+    (5, 9, 0),
+    (6, 9, 2),
+    (7, 10, 1),
+    (8, 12, 0),
+    (9, 12, 1),
+    (10, 12, 2),
+]
+
+
+def _duplicate_bearing_hand(seed: int, card_count: int, joker_count: int) -> list[Card]:
+    """Draw card_count cards, joker_count jokers, with replacement.
+
+    Sampling with replacement over all 52 naturals deliberately allows
+    duplicates -- a multi-deck shoe can legally deal the same code
+    twice (module docstring's physical-cards rule).
+    """
+    rng = random.Random(seed)  # noqa: S311 -- a seeded test fixture, not a security use
+    naturals = [rng.choice(_ALL_52_NATURAL_CARDS) for _ in range(card_count - joker_count)]
+    jokers = [Card(rank=None, suit=None, joker=True) for _ in range(joker_count)]
+    return [*naturals, *jokers]
+
+
+@pytest.mark.parametrize(
+    ("seed", "card_count", "joker_count"), _POOLED_EQUIVALENCE_BATTERY, ids=str
+)
+def test_best_hand_matches_exhaustive_oracle_across_seeded_multi_deck_draws(
+    seed: int, card_count: int, joker_count: int
+) -> None:
+    """best_hand's (cls, tiebreak) matches the true, unpruned best-of-N.
+
+    Freezes correctness across the rewrite: today's pruned subset
+    search can silently drop a natural card a winning straight or
+    flush needed once the pool's overall rank span exceeds
+    ``_STRAIGHT_SPAN`` (measured: seeds 4 and 5 below reach a real
+    straight the pruned search misses entirely, settling for trips
+    instead) -- a correctness bug, not merely a speed one, that this
+    oracle catches independently of the growth-budget tests above.
+    """
+    cards = _duplicate_bearing_hand(seed, card_count, joker_count)
+    expected = _exhaustive_best_hand(cards)
+
+    result = best_hand(cards)
+
+    assert (result.cls, result.tiebreak) == (expected.cls, expected.tiebreak)

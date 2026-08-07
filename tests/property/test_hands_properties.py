@@ -18,11 +18,13 @@ unbounded, since a 5-card wild search is cheap regardless of joker
 count (at most 5 cards are ever in play).
 """
 
+import itertools
+
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
 from rivercrossing.cards import Card, Rank, Suit
-from rivercrossing.hands import EvaluatedHand, best_hand, compare, eval5
+from rivercrossing.hands import NATURAL_HAND_SIZE, EvaluatedHand, best_hand, compare, eval5
 
 _RANKS: tuple[Rank, ...] = tuple(Rank)
 _SUITS: tuple[Suit, ...] = tuple(Suit)
@@ -30,6 +32,7 @@ _SUITS: tuple[Suit, ...] = tuple(Suit)
 _NATURAL_CARD = st.builds(Card, rank=st.sampled_from(_RANKS), suit=st.sampled_from(_SUITS))
 _JOKER_CARD = st.just(Card(rank=None, suit=None, joker=True))
 _ANY_CARD = _NATURAL_CARD | _JOKER_CARD
+_ALL_52_NATURAL_CARDS = tuple(Card(rank=rank, suit=suit) for rank in _RANKS for suit in _SUITS)
 
 _FIVE_CARD_HANDS = st.lists(_ANY_CARD, min_size=5, max_size=5)
 
@@ -200,3 +203,63 @@ def test_best_hand_best5_and_jokers_round_trip_preserving_evaluation(cards: list
     assert tuple(roundtripped_best5) == original.best5
     assert tuple(roundtripped_jokers) == original.jokers_played_as
     assert (reevaluated.cls, reevaluated.tiebreak) == (original.cls, original.tiebreak)
+
+
+# -------------------------------- E2.3.1: exhaustive-oracle equivalence
+
+
+@st.composite
+def _small_pooled_hand(draw: st.DrawFn) -> list[Card]:
+    """Draw a 5..7 card hand, joker count capped at 2.
+
+    The oracle's own O(C(n-j,5-j) * C(52+j-1,j)) cost, not
+    ``best_hand``'s, is what bounds this range: every example must
+    stay cheap enough to brute-force once per Hypothesis run (mirrors
+    ``tests/unit/test_hands.py``'s own equivalence battery bounds).
+    """
+    card_count = draw(st.integers(min_value=5, max_value=7))
+    joker_count = draw(st.integers(min_value=0, max_value=2))
+    naturals = draw(
+        st.lists(
+            _NATURAL_CARD,
+            min_size=card_count - joker_count,
+            max_size=card_count - joker_count,
+        )
+    )
+    jokers = [Card(rank=None, suit=None, joker=True) for _ in range(joker_count)]
+    return [*naturals, *jokers]
+
+
+def _exhaustive_best_hand(cards: list[Card]) -> EvaluatedHand:
+    """Compute every natural subset x every joker substitution.
+
+    Deliberately independent of any of ``hands.py``'s own pruning
+    helpers (``tests/unit/test_hands.py``'s own oracle, same
+    rationale) -- the ground truth ``best_hand``'s analytic
+    construction must reproduce.
+    """
+    naturals = [card for card in cards if not card.joker]
+    joker_count = len(cards) - len(naturals)
+    need = NATURAL_HAND_SIZE - joker_count
+    fills = (
+        list(itertools.combinations_with_replacement(_ALL_52_NATURAL_CARDS, joker_count))
+        if joker_count
+        else [()]
+    )
+    candidates = (
+        eval5((*subset, *fill))
+        for subset in itertools.combinations(naturals, need)
+        for fill in fills
+    )
+    return max(candidates, key=lambda hand: (hand.cls, hand.tiebreak))
+
+
+@given(cards=_small_pooled_hand())
+@settings(max_examples=25, deadline=None)
+def test_best_hand_matches_exhaustive_oracle_for_small_pools(cards: list[Card]) -> None:
+    """best_hand agrees with the unpruned oracle on every small pool."""
+    expected = _exhaustive_best_hand(cards)
+
+    result = best_hand(cards)
+
+    assert (result.cls, result.tiebreak) == (expected.cls, expected.tiebreak)
