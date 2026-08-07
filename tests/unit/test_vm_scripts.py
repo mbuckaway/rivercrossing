@@ -356,3 +356,51 @@ def test_run_script_exits_124_when_guest_run_hangs(tmp_path: Path) -> None:
 
     assert run.returncode == 124, run.output
     assert elapsed_seconds < 15
+
+
+_PIPED_RUN_HARD_TIMEOUT_SECONDS = 30
+_PIPED_RUN_BOUND_SECONDS = 8
+
+
+def test_run_script_releases_stdout_promptly_when_piped(tmp_path: Path) -> None:
+    """A real piped invocation must not block on the watchdog's sleep.
+
+    Production defect, not just a test-harness pitfall:
+    ``scripts/run_functional_tests_vm.sh 2>&1 | tee run.log`` pipes
+    stdout/stderr for real. Once the guest run finishes, ``kill
+    "${watchdog_pid}"`` (line 214) kills the watchdog's subshell
+    while it is still blocked in its own ``sleep "${timeout_secs}"``
+    (line 90); that subshell dies, but the ``sleep`` it forked is
+    orphaned and keeps running for the rest of RIVERCROSSING_VM_
+    TIMEOUT, still holding the inherited pipe's write end open. A
+    piped reader (a real shell pipeline, or Python's own
+    ``communicate()``) cannot see EOF, and therefore cannot finish
+    draining the pipe, until that orphan also exits -- even though
+    the script process itself already exited with its real code
+    seconds earlier. This pins release time only; the sentinel bug
+    already covers the wrong exit code separately.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_stub(bin_dir, "tart", _TART_STUB)
+    _write_stub(bin_dir, "ssh", _SSH_SUCCEED_STUB)
+    _write_stub(bin_dir, "rsync", _RSYNC_STUB)
+
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(  # noqa: S603 -- fixed repo-local script path, stubbed PATH
+            [str(_RUN_VM_PATH)],
+            cwd=_REPO_ROOT,
+            env=_stub_env(bin_dir, "15"),
+            capture_output=True,
+            text=True,
+            timeout=_PIPED_RUN_HARD_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            f"piped stdout was not released within {_PIPED_RUN_HARD_TIMEOUT_SECONDS}s: {exc}"
+        )
+    elapsed_seconds = time.monotonic() - started
+
+    assert elapsed_seconds < _PIPED_RUN_BOUND_SECONDS, completed.stdout + completed.stderr
