@@ -94,6 +94,51 @@ best_hand(cards):                # n ≤ ~15
 # whole 180-entry field well under a second.
 ```
 
+A joker always plays as whichever natural card — or, with more than one joker, whichever combination of natural cards — turns the hand into the best hand reachable, never the first legal completion. A joker may duplicate a card already held elsewhere in the same hand: the multi-deck shoe (§4) means a repeated card is not a foul, and refusing to reuse a suit just because it appears elsewhere in the hand would silently settle for a worse hand than the cards actually support. The table below is the joker vector set the startup self-test checks (§5's own "known vectors" line, above); `tests/vectors/joker_vectors.csv` encodes it row for row.
+
+*One joker*
+
+| Natural cards | Best hand | Joker plays as |
+|---|---|---|
+| A A A A | Five of a Kind, aces | a fifth ace (any suit — duplicate-legal) |
+| 9 9 9 9 | Five of a Kind, nines | a fifth nine |
+| A K Q J suited | Royal Flush | 10 of the same suit |
+| 8 7 6 5 suited | Straight Flush, 9-high | 9 of the same suit — not 4, which only reaches 8-high |
+| A 2 3 4 suited | Straight Flush, 5-high (the wheel) | 5 of the same suit — beats stopping at an ace-high flush |
+| Q Q Q 7 | Four of a Kind, queens | the fourth queen |
+| J J 4 4 | Full House, jacks over fours | a third jack — jacks-over-fours beats fours-over-jacks |
+| K J 8 6 suited | Flush, ace-high | an ace of the same suit, maximizing the kicker |
+| 9 8 7 6 | Straight, 10-high | 10 — not 5, which only reaches 9-high |
+| A 2 3 4 | Straight, 5-high (the wheel) | 5 |
+| 9 8 6 5 | Straight, 9-high | 7, filling the inside gap |
+| J 10 9 8 | Straight, queen-high | queen — not 7, which only reaches jack-high |
+| 9 8 7 5 suited | Straight Flush, 9-high | 6 of the same suit — beats stopping at an ace-high flush |
+| 7 7 K Q | Three of a Kind, sevens | a third seven |
+| A A K Q | Three of a Kind, aces | a third ace — a joker on a pair never falls back to two pair |
+| A K 9 5 | One Pair, aces | a second ace, the highest pair reachable here |
+
+*Two jokers*
+
+| Natural cards | Best hand | Jokers play as |
+|---|---|---|
+| A A A | Five of a Kind, aces | two more aces |
+| 9 9 9 | Five of a Kind, nines | two more nines |
+| A K Q suited | Royal Flush | jack and 10 of the same suit |
+| 7 6 5 suited | Straight Flush, 9-high | 9 and 8 of the same suit |
+| A 2 3 suited | Straight Flush, 5-high (the wheel) | 5 and 4 of the same suit |
+| Q J 9 suited | Straight Flush, king-high | king and 10 of the same suit — the fixed natural 9 puts a royal out of reach |
+| K K 2 | Four of a Kind, kings | the two remaining kings — beats stopping at a full house, twos over kings |
+| K 7 2 | Three of a Kind, kings | two more kings, the highest rank available |
+| 9 8 7 | Straight, jack-high | jack and 10 |
+
+*Three or more jokers*
+
+| Natural cards | Best hand |
+|---|---|
+| A A | Five of a Kind, aces |
+| A | Five of a Kind, aces |
+| (none) | Five of a Kind, aces — the `j >= 5` shortcut above |
+
 **Card cap X** (optional per ride): only the first X dealt cards score; later laps still count for laps/time. Entries holding fewer than 5 cards still rank: their cards form the best partial hand, and a missing kicker always ranks below any present one (a 4-card ace-high sits under every 5-card ace-high). **Ties** between byte-identical hand ranks resolve by the ride's ordered rules — ① most laps ② shortest total time ③ high-card draw at the venue (app flags “draw required”). The order is editable after the finish; standings re-run instantly.
 
 ### 6 · Timing rules
