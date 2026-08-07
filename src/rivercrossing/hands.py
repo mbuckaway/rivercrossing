@@ -42,7 +42,7 @@ from phevaluator.evaluator import evaluate_cards
 from rivercrossing.cards import Card, Rank, Suit
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
 NATURAL_HAND_SIZE = 5
 # spec section 5: "the 7,462 distinct natural ranks are stored as one
@@ -269,6 +269,10 @@ def _natural_ranks(cards: Sequence[Card]) -> list[int]:
 
     Narrows ``Rank | None`` for mypy: every caller here already only
     ever holds natural (non-joker) cards, which always carry a rank.
+    A dict keyed by ``Card`` was measured *slower* here than this
+    direct attribute read -- unlike :func:`_phevaluator_card_id`
+    below, one ``.value`` access has less work to save than hashing
+    a whole ``Card`` costs to look one up.
     """
     return [cast("Rank", card.rank).value for card in cards]
 
@@ -287,18 +291,46 @@ _PHEVALUATOR_SUIT_INDEX: dict[Suit, int] = {
     Suit.SPADES: 3,
 }
 
+# Precomputed once for all 52 natural cards -- there are only ever 52
+# to id -- rather than recomputing the rank/suit arithmetic (and its
+# enum-attribute lookups) on every call: this runs on every wild-
+# search candidate, and a dict lookup measurably beats that on the
+# R-42 180x12 field budget (profiled: ~1.5M calls in one field pass).
+_PHEVALUATOR_ID_BY_CARD: dict[Card, int] = {
+    card: (cast("Rank", card.rank).value - Rank.TWO.value) * len(Suit)
+    + _PHEVALUATOR_SUIT_INDEX[cast("Suit", card.suit)]
+    for card in _ALL_NATURAL_CARDS
+}
+
 
 def _phevaluator_card_id(card: Card) -> int:
-    """Compute phevaluator's native card id, no string round trip.
+    """Look up phevaluator's native card id for *card*.
 
     ``Card.code()`` followed by phevaluator's own string parser reaches
-    the exact same id; skipping the format-then-reparse round trip
-    matters here because this runs on every wild-search candidate
+    the exact same id; skipping the format-then-reparse round trip,
+    and the per-call arithmetic in favour of a precomputed table,
+    both matter here because this runs on every wild-search candidate
     (R-42's 180x12 field budget).
     """
-    rank = cast("Rank", card.rank)
-    suit = cast("Suit", card.suit)
-    return (rank.value - Rank.TWO.value) * len(Suit) + _PHEVALUATOR_SUIT_INDEX[suit]
+    return _PHEVALUATOR_ID_BY_CARD[card]
+
+
+_ClsTiebreak = tuple[HandClass, tuple[int, ...]]
+
+
+def _classify_pattern_cards(cards: Sequence[Card]) -> _ClsTiebreak:
+    """Classify 0..5 natural cards, first principles, cls+tiebreak only.
+
+    :func:`_fill_score`'s per-candidate hot loop (R-42's 180x12 field
+    budget) never needs the full :class:`EvaluatedHand` wrapper it
+    would otherwise discard immediately -- only the ``(cls,
+    tiebreak)`` pair that decides which candidate wins -- so this is
+    the shared computation both it and :func:`_evaluate_pattern`
+    (the public-shaped wrapper) build on.
+    """
+    ranks = _natural_ranks(cards)
+    cls = classify_pattern(ranks, _natural_suits(cards))
+    return cls, _kicker_tiebreak(cls, ranks)
 
 
 def _evaluate_pattern(cards: Sequence[Card]) -> EvaluatedHand:
@@ -309,11 +341,22 @@ def _evaluate_pattern(cards: Sequence[Card]) -> EvaluatedHand:
     (:func:`classify_pattern`'s module docstring covers both), and a
     wild search's own candidate scoring, all cheap regardless.
     """
-    ranks = _natural_ranks(cards)
-    cls = classify_pattern(ranks, _natural_suits(cards))
-    return EvaluatedHand(
-        cls=cls, tiebreak=_kicker_tiebreak(cls, ranks), best5=tuple(cards), jokers_played_as=()
-    )
+    cls, tiebreak = _classify_pattern_cards(cards)
+    return EvaluatedHand(cls=cls, tiebreak=tiebreak, best5=tuple(cards), jokers_played_as=())
+
+
+def _classify_natural_five(cards: Sequence[Card]) -> _ClsTiebreak:
+    """Classify 5 pairwise-distinct natural cards, cls+tiebreak only.
+
+    Callers must ensure the 5 codes are pairwise distinct (see
+    :func:`_evaluate_natural_five`, the public-shaped wrapper this
+    shares its computation with); :func:`_fill_score`'s hot loop is
+    the reason this skips building an :class:`EvaluatedHand` (see
+    :func:`_classify_pattern_cards`'s docstring, same rationale).
+    """
+    natural_rank: int = evaluate_cards(*(_phevaluator_card_id(card) for card in cards))
+    cls = _classify(natural_rank)
+    return cls, _kicker_tiebreak(cls, _natural_ranks(cards))
 
 
 def _evaluate_natural_five(cards: Sequence[Card]) -> EvaluatedHand:
@@ -325,10 +368,7 @@ def _evaluate_natural_five(cards: Sequence[Card]) -> EvaluatedHand:
     entry point; this direct call is only for the rank-sweep and
     joker-vector fast paths, which already know their input is clean.
     """
-    natural_rank: int = evaluate_cards(*(_phevaluator_card_id(card) for card in cards))
-    cls = _classify(natural_rank)
-    ranks = _natural_ranks(cards)
-    tiebreak = _kicker_tiebreak(cls, ranks)
+    cls, tiebreak = _classify_natural_five(cards)
     return EvaluatedHand(cls=cls, tiebreak=tiebreak, best5=tuple(cards), jokers_played_as=())
 
 
@@ -395,13 +435,15 @@ def _fill_score(
 ) -> _FillScore:
     """Score one candidate wild fill, combined with *naturals*.
 
-    Dispatches to phevaluator's fast path itself, rather than through
-    :func:`_evaluate_five_naturals`, so the duplicate check this
-    function needs anyway for its own tie-break flag is computed only
-    once per candidate, not twice (R-42's 180x12 field budget feels
-    that on a hot loop this size). *allow_fast_path* is False for a
-    partial hand (module docstring of :func:`_partial_hand`): fewer
-    than 5 cards is never something phevaluator can evaluate at all.
+    Inlines the duplicate check and rank extraction in one pass over
+    the combined 5 cards, rather than calling
+    :func:`_classify_natural_five`/:func:`_classify_pattern_cards`
+    (each of which would redo both from scratch): this is the
+    innermost loop of the whole wild search, called once per
+    candidate fill (R-42's 180x12 field budget). *allow_fast_path* is
+    False for a partial hand (module docstring of
+    :func:`_partial_hand`): fewer than 5 cards is never something
+    phevaluator can evaluate at all.
 
     The trailing "is this combination duplicate-free" flag is a pure
     tie-break preference, never part of the stored ``EvaluatedHand``:
@@ -413,12 +455,18 @@ def _fill_score(
     :func:`_uniform_natural_rank` before this search ever runs.
     """
     combined = (*naturals, *fill)
-    duplicate_free = _is_duplicate_free(combined)
+    seen: set[tuple[Rank | None, Suit | None]] = set()
+    ranks: list[int] = []
+    for card in combined:
+        seen.add((card.rank, card.suit))
+        ranks.append(cast("Rank", card.rank).value)
+    duplicate_free = len(seen) == len(combined)
     if allow_fast_path and duplicate_free:
-        evaluated = _evaluate_natural_five(combined)
+        natural_rank: int = evaluate_cards(*(_PHEVALUATOR_ID_BY_CARD[card] for card in combined))
+        cls = _classify(natural_rank)
     else:
-        evaluated = _evaluate_pattern(combined)
-    return (evaluated.cls, evaluated.tiebreak, duplicate_free)
+        cls = classify_pattern(ranks, _natural_suits(combined))
+    return (cls, _kicker_tiebreak(cls, ranks), duplicate_free)
 
 
 def _straight_completion_ranks(natural_ranks: Sequence[int]) -> frozenset[int]:
@@ -486,6 +534,49 @@ def _pruned_wild_candidates(naturals: Sequence[Card], joker_count: int) -> tuple
     )
 
 
+def _pruned_wild_candidates_for_scoring(
+    naturals: Sequence[Card], joker_count: int
+) -> tuple[Card, ...]:
+    """Build a scoring-only wild-fill candidate set, smaller still.
+
+    Only ever used by :func:`_score_natural_subset` (``best_hand``'s
+    cached subset search), which unlike :func:`eval5` never surfaces
+    which exact suit a joker resolved to -- only the resulting
+    ``(cls, tiebreak)``. :func:`_pruned_wild_candidates`'s own
+    docstring already establishes that a rank-matching candidate's
+    suit can never change its class or tiebreak (only a
+    flush-plausible suit's exact identity can), so this keeps one
+    representative suit per candidate rank instead of all four, on
+    top of the full suit range for any flush-plausible suit --
+    cutting the C(m, j) search :func:`_best_fill_from_candidates` runs
+    by roughly ``len(Suit)`` per joker slot (R-42's 180x12 field
+    budget: this is the search's own dominant cost, profiled).
+    """
+    natural_ranks = [card.rank for card in naturals if card.rank is not None]
+    rank_values = [rank.value for rank in natural_ranks]
+    candidate_ranks = (
+        set(natural_ranks)
+        | {Rank(value) for value in _straight_completion_ranks(rank_values)}
+        | {Rank.ACE}
+    )
+    representative_suit = next(iter(Suit))
+    rank_candidates = tuple(Card(rank=rank, suit=representative_suit) for rank in candidate_ranks)
+    flush_suits = _plausible_flush_suits(naturals, joker_count)
+    if not flush_suits:
+        return rank_candidates
+    flush_candidates = tuple(card for card in _ALL_NATURAL_CARDS if card.suit in flush_suits)
+    return rank_candidates + flush_candidates
+
+
+def _best_fill(
+    combos: Iterable[tuple[Card, ...]], naturals: Sequence[Card], *, allow_fast_path: bool
+) -> tuple[Card, ...]:
+    """Keep the best-scoring candidate fill from *combos*."""
+    return max(
+        combos, key=lambda fill: _fill_score(naturals, fill, allow_fast_path=allow_fast_path)
+    )
+
+
 def _search_best_fill(
     naturals: Sequence[Card], joker_count: int, *, allow_fast_path: bool
 ) -> tuple[Card, ...]:
@@ -500,16 +591,19 @@ def _search_best_fill(
     when filling to 5 cards (4 would mean 1 natural, always uniform)
     and at most 2 when filling a shorter partial hand (3 would mean 1
     natural). Candidates are pruned per :func:`_pruned_wild_candidates`
-    -- typically under 30 rather than the full 52 -- since
-    ``best_hand``'s C(n, k) outer subset loop calls this once per
-    subset (R-42's 180x12 field budget needs it small).
+    -- typically under 30 rather than the full 52.
+
+    ``best_hand``'s own N-card subset search does *not* come through
+    here -- :func:`_score_natural_subset` uses a further-reduced
+    candidate set of its own
+    (:func:`_pruned_wild_candidates_for_scoring`), safe only where
+    the exact suit a joker resolves to is never observed (unlike
+    this function's two callers, both of which return that suit to a
+    caller that may display it).
     """
-    candidates = itertools.combinations_with_replacement(
-        _pruned_wild_candidates(naturals, joker_count), joker_count
-    )
-    return max(
-        candidates, key=lambda fill: _fill_score(naturals, fill, allow_fast_path=allow_fast_path)
-    )
+    candidates = _pruned_wild_candidates(naturals, joker_count)
+    combos = itertools.combinations_with_replacement(candidates, joker_count)
+    return _best_fill(combos, naturals, allow_fast_path=allow_fast_path)
 
 
 def _evaluate_with_wild_cards(
@@ -616,6 +710,72 @@ def _relevant_naturals(naturals: Sequence[Card], joker_count: int) -> tuple[Card
     )
 
 
+def _canonical_naturals(naturals: Sequence[Card]) -> tuple[Card, ...]:
+    """Sort *naturals* into one fixed, rank-then-suit order.
+
+    Every function a subset score depends on --
+    :func:`_evaluate_five_naturals`, :func:`_uniform_natural_rank`,
+    :func:`_best_fill` -- cares only about *naturals*'s rank/suit
+    multiset, never its original order (module docstring), so this
+    turns two subsets that are equal as multisets into one identical
+    cache key for :func:`_score_natural_subset`.
+    """
+    return tuple(
+        sorted(
+            naturals,
+            key=lambda card: (cast("Rank", card.rank).value, cast("Suit", card.suit).value),
+        )
+    )
+
+
+_SubsetScore = tuple[HandClass, tuple[int, ...], tuple[Card, ...]]
+_SubsetCache = dict[tuple[tuple[Card, ...], int], _SubsetScore]
+
+
+def _score_natural_subset(
+    naturals: Sequence[Card], joker_count: int, cache: _SubsetCache
+) -> _SubsetScore:
+    """Score *naturals* plus *joker_count* wild cards, cache the result.
+
+    ``best_hand``'s own C(n, k) subset loop revisits the exact same
+    rank/suit multiset constantly whenever its pool holds duplicate-
+    legal cards (a birthday-paradox certainty in a 13-rank pool at
+    12 cards) -- this collapses that repeated work behind
+    :func:`_canonical_naturals`. *cache* is scoped to one ``best_hand``
+    call, not module-global: the redundancy worth collapsing is
+    within one entry's own search, not across different entries'
+    largely-unrelated hands, so this never accumulates memory across
+    a session (R-42's 180x12 field budget).
+
+    The zero-joker case bypasses the cache entirely: measured, a
+    duplicate 5-card natural multiset is uncommon enough (a 52-card
+    pool, not a 13-rank one) that canonicalizing and hashing every
+    subset costs more than the cache hits it buys back -- unlike the
+    wild-search case below, where one avoided search is worth far
+    more than one sort.
+    """
+    if joker_count == 0:
+        evaluated = _evaluate_five_naturals(naturals)
+        return (evaluated.cls, evaluated.tiebreak, ())
+    key = (_canonical_naturals(naturals), joker_count)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    canonical, _ = key
+    uniform_rank = _uniform_natural_rank(canonical)
+    if uniform_rank is not None:
+        hand = _five_of_a_kind_hand(canonical, uniform_rank, joker_count)
+        score: _SubsetScore = (hand.cls, hand.tiebreak, hand.jokers_played_as)
+    else:
+        candidates = _pruned_wild_candidates_for_scoring(canonical, joker_count)
+        combos = itertools.combinations_with_replacement(candidates, joker_count)
+        fill = _best_fill(combos, canonical, allow_fast_path=True)
+        evaluated = _evaluate_five_naturals((*canonical, *fill))
+        score = (evaluated.cls, evaluated.tiebreak, fill)
+    cache[key] = score
+    return score
+
+
 def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
     """Find the best 5-card hand within *cards* (spec section 5).
 
@@ -646,8 +806,12 @@ def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
         return _five_of_a_kind_hand(chosen, Rank.ACE, NATURAL_HAND_SIZE)
     relevant = _relevant_naturals(naturals, len(jokers))
     subsets = itertools.combinations(relevant, NATURAL_HAND_SIZE - len(jokers))
-    candidates = (eval5((*subset, *jokers)) for subset in subsets)
-    return max(candidates, key=lambda hand: (hand.cls, hand.tiebreak))
+    cache: _SubsetCache = {}
+    scored = ((subset, _score_natural_subset(subset, len(jokers), cache)) for subset in subsets)
+    best_subset, (cls, tiebreak, fill) = max(scored, key=lambda item: (item[1][0], item[1][1]))
+    return EvaluatedHand(
+        cls=cls, tiebreak=tiebreak, best5=(*best_subset, *jokers), jokers_played_as=fill
+    )
 
 
 def compare(a: EvaluatedHand, b: EvaluatedHand) -> int:
