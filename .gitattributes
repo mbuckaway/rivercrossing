@@ -1,0 +1,5 @@
+# Generated vector fixtures are compared byte-for-byte against their
+# generator's output (LF), so git must never rewrite their line endings
+# on checkout -- Windows autocrlf turned them into CRLF and broke the
+# regeneration honesty test on windows-latest.
+tests/vectors/*.csv text eol=lf
