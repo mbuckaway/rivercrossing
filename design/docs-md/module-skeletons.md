@@ -26,7 +26,7 @@ rivercrossing/
 ├── README.md · LICENSE · CHANGELOG.md
 ├── .github/workflows/
 │   ├── ci.yml                  # §14 six-stage matrix: windows-latest + macos-latest
-│   └── release.yml             # tag → PyInstaller → NSIS .exe / notarized .dmg
+│   └── release.yml             # tag → PyInstaller → NSIS .exe / notarized .dmg (the unsigned tag release lives in ci.yml since Phase 11; this file arrives with EPIC 9 signing)
 ├── installers/
 │   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec; branded icons since Phase 8)
 │   ├── windows.nsi             # NSIS, per-user, unsigned (exists — Phase 9; NSIS replaces Inno Setup, R-01); Authenticode in release.yml (E9.1.2)

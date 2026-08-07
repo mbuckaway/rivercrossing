@@ -152,6 +152,19 @@ every outcome.
 Measured quirk, encoded in `noxfile.py` and the smoke tests: `makensis` crashes with `std::bad_alloc`
 when `LANG`/`LC_ALL` are unset (NSIS bug 1165), so every invocation forces a UTF-8 locale.
 
+## Releasing
+
+A version tag is the whole release procedure — the pipeline does the rest (spec §14 stage 6,
+unsigned until EPIC 9):
+
+1. Bump `__version__` in `src/rivercrossing/__init__.py` and add the version's CHANGELOG section.
+2. Merge to `master` through a PR (the tag must sit on gated code).
+3. `git tag v<version> && git push origin v<version>` — the exact `v<version>` spelling matters:
+   the release job fails on a tag that does not match `rivercrossing.__version__`.
+4. The tag runs the full two-OS gauntlet; when green, the `release` job publishes the GitHub
+   release with `RiverCrossing-<version>-macos.dmg`, `RiverCrossing-<version>-windows-setup.exe`
+   and `SHA256SUMS.txt`. Nothing publishes if any gate is red.
+
 ## CI secrets contract
 
 Named here so the release lane in EPIC 9 has a defined interface. The organisation supplies the values;

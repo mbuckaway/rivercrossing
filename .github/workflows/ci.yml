@@ -1,9 +1,11 @@
 # RiverCrossing CI — the six-stage gauntlet from design/docs-md/spec.md §14.
 #
 # EPIC 1 wires stages 1, 2, 3 and 5. Stage 4 (Acceptance) needs the full race,
-# which arrives in EPIC 9; stage 6 (Package/signing) is EPIC 9 too. Phase 9
-# added the unsigned per-user NSIS installer to the Windows stage-5 leg
-# (the unsigned half of E9.1.2); Authenticode stays stage 6.
+# which arrives in EPIC 9. Phase 9 added the unsigned per-user NSIS installer
+# to the Windows stage-5 leg (the unsigned half of E9.1.2); Phase 11 added the
+# unsigned half of stage 6 -- a version tag runs every wired stage and, when
+# green, publishes the GitHub release with both unsigned installers and
+# checksums. Signing (Authenticode, Developer ID + notarytool) stays EPIC 9.
 #
 # **Both platforms gate** (spec §14, R-75). The EPIC 1 deviation that made
 # macOS the only gate — no Windows test machine existed — was reversed in
@@ -18,6 +20,7 @@ name: CI
 on:
   push:
     branches: ["master", "topic/**"]
+    tags: ["v*"]
   pull_request:
     branches: ["master"]
 
@@ -165,6 +168,14 @@ jobs:
           name: rivercrossing-devbundle-macos
           path: dist/**
           if-no-files-found: ignore
+      # The release job needs just the DMG -- its own artifact spares it
+      # a 118 MB devbundle download for one file.
+      - name: Upload the DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-dmg
+          path: dist/RiverCrossing-*.dmg
+          if-no-files-found: error
 
   # ----------------------------------------------------- stage 5 · Windows
   # The unsigned half of E9.1.2 (Phase 9), blocking since Phase 10: build
@@ -220,3 +231,53 @@ jobs:
             build/winsetup-logs/**
             *.png
           if-no-files-found: ignore
+
+  # ---------------------------------------------------- stage 6 · release
+  # Phase 11 (the unsigned half of stage 6): a version tag that survives
+  # the full gauntlet publishes the GitHub release with both unsigned
+  # installers and their checksums, named in the platform-tagged style the
+  # v0.1.0 release established. The guard fails the job -- publishing
+  # nothing -- when the tag does not match rivercrossing.__version__
+  # (v0.1.1 was tagged over 0.1.0 code and shipped empty; never again).
+  # Signing remains stage 6 / EPIC 9.
+  release:
+    name: "6 · Publish release (tags)"
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [static, unit, functional, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches rivercrossing.__version__
+        run: |
+          version="$(python3 -c "import sys; sys.path.insert(0, 'src'); import rivercrossing; print(rivercrossing.__version__)")"
+          if [ "${GITHUB_REF_NAME}" != "v${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match rivercrossing.__version__ ${version} -- bump the version before tagging" >&2
+            exit 1
+          fi
+      - name: Download the DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: rivercrossing-dmg
+          path: assets
+      - name: Download the Windows installer
+        uses: actions/download-artifact@v4
+        with:
+          name: rivercrossing-setup-windows
+          path: assets
+      - name: Assemble the assets with checksums
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cd assets
+          mv "RiverCrossing-${version}.dmg" "RiverCrossing-${version}-macos.dmg"
+          mv "RiverCrossing-${version}-setup.exe" "RiverCrossing-${version}-windows-setup.exe"
+          sha256sum "RiverCrossing-${version}-macos.dmg" \
+            "RiverCrossing-${version}-windows-setup.exe" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" \
+            --generate-notes assets/*
