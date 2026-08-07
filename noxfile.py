@@ -66,7 +66,7 @@ def importlint(session):
 def unit(session):
     """Run the headless unit suite with the coverage gate."""
     session.install(DEV)
-    session.run("pytest", "tests/unit", "-m", "not functional", *session.posargs)
+    session.run("pytest", "tests/unit", "tests/property", "-m", "not functional", *session.posargs)
 
 
 @nox.session(python=PYTHON)
