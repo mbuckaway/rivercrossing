@@ -65,25 +65,40 @@ ensure_template_cloned() {
 }
 
 #######################################
-# Poll `tart ip NAME` until it answers or attempts are exhausted.
+# Poll `tart ip NAME` then the guest's sshd until reachable, bounded.
+# A key-only success check cannot double as this readiness probe: on
+# first-ever setup the key exists locally but is not yet installed in
+# the guest, so key auth never succeeds before ssh-copy-id runs it.
+# Treat "sshd answered but rejected the key" (stderr's "Permission
+# denied") as reachable too -- ssh-copy-id can proceed from there --
+# and only a still-refused or timed-out connection as not ready yet.
+# Globals:
+#   VM_SSH_KEY
 # Arguments:
 #   VM name
 # Outputs:
 #   Writes the IP address to stdout on success
 # Returns:
-#   0 with the IP on stdout, 1 if the VM never answered
+#   0 with the IP on stdout, 1 if the guest never became reachable
 #######################################
 wait_for_vm_ip() {
   local vm_name="$1"
   local attempt=0
   local max_attempts=60
   local ip
+  local probe_output
 
   while (( attempt < max_attempts )); do
     ip="$(tart ip "${vm_name}" 2>/dev/null)"
     if [[ -n "${ip}" ]]; then
-      echo "${ip}"
-      return 0
+      if probe_output="$(ssh -i "${VM_SSH_KEY}" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 "admin@${ip}" true 2>&1)"; then
+        echo "${ip}"
+        return 0
+      fi
+      if [[ "${probe_output}" == *"Permission denied"* ]]; then
+        echo "${ip}"
+        return 0
+      fi
     fi
     sleep 5
     (( attempt += 1 ))
@@ -168,16 +183,19 @@ main() {
     exit 1
   fi
 
-  echo "Booting ${TEMPLATE_NAME} (windowed; first boot must be visible)..."
-  tart run "${TEMPLATE_NAME}" &
-
-  local vm_ip
-  if ! vm_ip="$(wait_for_vm_ip "${TEMPLATE_NAME}")"; then
-    err "${TEMPLATE_NAME} never answered 'tart ip'"
+  if ! ensure_ssh_key; then
     exit 1
   fi
 
-  if ! ensure_ssh_key; then
+  # Headless: RiverCrossing needs no TCC grants, so nothing requires a
+  # visible first boot. The only interaction left is the ssh-copy-id
+  # password prompt below, in the terminal.
+  echo "Booting ${TEMPLATE_NAME} (headless)..."
+  tart run --no-graphics "${TEMPLATE_NAME}" &
+
+  local vm_ip
+  if ! vm_ip="$(wait_for_vm_ip "${TEMPLATE_NAME}")"; then
+    err "${TEMPLATE_NAME} never answered 'tart ip' or its ssh port"
     exit 1
   fi
 
@@ -208,6 +226,12 @@ main() {
   if ! ssh_guest "${vm_ip}" "${venv_cmd}"; then
     err "guest venv setup failed"
     exit 1
+  fi
+
+  # Flush guest disk state before stopping: measured an authorized_keys
+  # write lost when `tart stop` ran before the guest had synced it.
+  if ! ssh_guest "${vm_ip}" "sync"; then
+    err "guest 'sync' failed (continuing to tart stop anyway)"
   fi
 
   if ! tart stop "${TEMPLATE_NAME}"; then
