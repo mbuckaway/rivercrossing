@@ -38,6 +38,7 @@ dependencies = [
     "wxPython~=4.3.1",
     "fpdf2",
     "jinja2",
+    "phevaluator",
 ]
 
 [project.optional-dependencies]
@@ -160,6 +161,11 @@ warn_unreachable = true
 [[tool.mypy.overrides]]
 # wxPython ships no type information.
 module = ["wx.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# phevaluator 0.6.0 ships no py.typed marker (spec §5's chosen evaluator).
+module = ["phevaluator.*"]
 ignore_missing_imports = true
 
 # ----------------------------------------------------------------- pytest
