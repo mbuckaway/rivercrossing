@@ -15,13 +15,22 @@ Every test below depends on ``_read_script``, which calls
 nsi.py's ``nsi_text`` fixture uses for installers/windows.nsi. That
 failure, and the plain ``assert script_path.is_file()`` failures
 below, are this module's RED state.
+
+The trailing "behavioral" tests run the real run_functional_tests_
+vm.sh under a stub-tool ``PATH`` sandbox (``tart``/``ssh``/``rsync``
+stand-ins on a ``tmp_path`` bin directory prepended to ``PATH``): no
+substring pin can see that the watchdog sentinel is created by
+``mktemp`` itself and only ever truncated, never removed before its
+own existence check, so a clean run still reads back exit 124.
 """
 
 import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -205,3 +214,145 @@ def test_run_vm_script_pulls_screenshots_back_after_the_run(run_vm_text: str) ->
 def test_run_vm_script_documents_each_exit_code(run_vm_text: str, exit_code_text: str) -> None:
     """The comment block names every exit code an operator sees."""
     assert exit_code_text in run_vm_text
+
+
+# --------------------- behavioral: run_functional_tests_vm.sh
+
+# `tart list`/`tart ip` answer with fixed values; every other tart
+# subcommand (clone/stop/delete/run) falls through the unmatched case
+# straight to the trailing `exit 0`.
+_TART_STUB = """\
+#!/bin/bash
+case "$1" in
+  list)
+    echo "rivercrossing-func-template"
+    ;;
+  ip)
+    echo "127.0.0.1"
+    ;;
+esac
+exit 0
+"""
+
+_RSYNC_STUB = """\
+#!/bin/bash
+exit 0
+"""
+
+_SSH_SUCCEED_STUB = """\
+#!/bin/bash
+exit 0
+"""
+
+# The reachability probe (`ssh ... true`) and the guest pytest
+# invocation share one binary; only the pytest command line names
+# "pytest", so that is what tells the two apart. `exec sleep` (not a
+# plain `sleep` statement) replaces this stub's own process image:
+# measured, a plain `sleep 20` left an orphaned grandchild behind once
+# the watchdog's SIGTERM killed the stub's bash process, and that
+# orphan -- inheriting the same stdout/stderr pipe -- kept subprocess.
+# run(capture_output=True) blocking for the full 20s despite the
+# script itself already having exited. `exec` makes this stub die
+# exactly the way a real ssh binary would.
+_SSH_HANG_ON_PYTEST_STUB = """\
+#!/bin/bash
+if [[ "$*" == *pytest* ]]; then
+  exec sleep 20
+fi
+exit 0
+"""
+
+_STUB_SUBPROCESS_TIMEOUT_SECONDS = 60
+
+
+def _write_stub(bin_dir: Path, name: str, script: str) -> None:
+    """Write an executable stub named *name* into *bin_dir*."""
+    stub_path = bin_dir / name
+    stub_path.write_text(script, encoding="utf-8")
+    stub_path.chmod(0o755)
+
+
+def _stub_env(bin_dir: Path, vm_timeout_seconds: str) -> dict[str, str]:
+    """Copy os.environ with *bin_dir* first on PATH; set the timeout.
+
+    HOME stays real: the script only reads ``~/.ssh`` path strings to
+    build an ``-i`` flag, and ``ssh`` itself is stubbed, so no real key
+    is ever touched.
+    """
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env["RIVERCROSSING_VM_TIMEOUT"] = vm_timeout_seconds
+    return env
+
+
+class _ScriptRun(NamedTuple):
+    """A finished run_functional_tests_vm.sh invocation."""
+
+    returncode: int
+    output: str
+
+
+def _run_with_stubs(bin_dir: Path, vm_timeout_seconds: str, tmp_path: Path) -> _ScriptRun:
+    """Run run_functional_tests_vm.sh against the stubbed tool PATH.
+
+    stdout/stderr go to a real file, never a pipe. A killed stub can
+    leave an unwaited grandchild running (the watchdog's own ``sleep``
+    becomes exactly this once its subshell is SIGTERM'd) that still
+    holds the same fd open; measured, with
+    ``subprocess.run(capture_output=True)`` that orphan's inherited
+    pipe end kept Python blocked reading for its full remaining
+    sleep, tens of seconds after the script itself had already exited
+    with its real return code. A regular file has no "wait for every
+    writer to close" semantics, so this returns the moment the script
+    process itself does.
+    """
+    log_path = tmp_path / "run.log"
+    with log_path.open("w", encoding="utf-8") as log_file:
+        result = subprocess.run(  # noqa: S603 -- fixed repo-local script path, stubbed PATH
+            [str(_RUN_VM_PATH)],
+            cwd=_REPO_ROOT,
+            env=_stub_env(bin_dir, vm_timeout_seconds),
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            timeout=_STUB_SUBPROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+    return _ScriptRun(result.returncode, log_path.read_text(encoding="utf-8"))
+
+
+def test_run_script_exits_zero_when_guest_run_succeeds(tmp_path: Path) -> None:
+    """A clean run should exit 0 -- it instead reads back exit 124.
+
+    scripts/run_functional_tests_vm.sh's sentinel file is created by
+    ``mktemp`` itself (line 198) and only ever truncated by the
+    watchdog (line 92), never removed beforehand, so its later
+    existence check (line 217) is true whether or not the watchdog
+    fired. Every tool stub here succeeds instantly, so nothing should
+    ever trip the watchdog; this pins that the bug still reports a
+    timeout.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_stub(bin_dir, "tart", _TART_STUB)
+    _write_stub(bin_dir, "ssh", _SSH_SUCCEED_STUB)
+    _write_stub(bin_dir, "rsync", _RSYNC_STUB)
+
+    run = _run_with_stubs(bin_dir, "30", tmp_path)
+
+    assert run.returncode == 0, run.output
+
+
+def test_run_script_exits_124_when_guest_run_hangs(tmp_path: Path) -> None:
+    """The watchdog kills a guest run that outlives the timeout."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_stub(bin_dir, "tart", _TART_STUB)
+    _write_stub(bin_dir, "ssh", _SSH_HANG_ON_PYTEST_STUB)
+    _write_stub(bin_dir, "rsync", _RSYNC_STUB)
+
+    started = time.monotonic()
+    run = _run_with_stubs(bin_dir, "2", tmp_path)
+    elapsed_seconds = time.monotonic() - started
+
+    assert run.returncode == 124, run.output
+    assert elapsed_seconds < 15
