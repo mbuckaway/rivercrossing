@@ -21,13 +21,22 @@ hand's class and tiebreak always compare consistently regardless of
 which path produced it. ``tools/gen_rank_vectors.py`` imports
 ``classify_pattern`` rather than keeping its own copy.
 
-``best_hand`` is the best-5-of-N search (E2.1.3): 5 or more cards search
-every 5-of-N natural subset with every joker kept in play (spec
-section 5's ``best_hand`` pseudocode -- a wild never hurts); fewer than
-5 cards score as the best *partial* hand those cards can make, and a
-missing kicker always ranks below a present one. Card cap X is a
-caller concern (R-13): slice to the first X dealt cards before calling
-``best_hand``, and the later, non-scoring cards are simply not passed.
+``best_hand`` finds the best 5-of-N hand with every joker kept in play
+(spec section 5's ``best_hand`` pseudocode -- a wild never hurts). For
+5 or more cards (E2.3.1) it builds one candidate 5-card hand per
+reachable :class:`HandClass` shape directly from rank/suit counts --
+never by enumerating C(n, 5-j) natural subsets -- so it stays linear
+in the pool size: R-16's uncapped rider-pooled default can hand this
+30-120+ cards over a 6h ride, where the original subset enumeration's
+own pruning (rank/suit "plausibility" heuristics sized for a 5-card
+window) silently stopped pruning anything past ~20 cards and both
+grew unusably slow *and*, independently, could drop a straight- or
+flush-completing card the pruned subset search never considered.
+Fewer than 5 cards score as the best *partial* hand those cards can
+make (E2.1.3), and a missing kicker always ranks below a present one.
+Card cap X is a caller concern (R-13): slice to the first X dealt
+cards before calling ``best_hand``, and the later, non-scoring cards
+are simply not passed.
 """
 
 import bisect
@@ -56,6 +65,26 @@ _STRAIGHT_SPAN = 4
 _WHEEL_RANKS = (2, 3, 4, 5, 14)
 _WHEEL_HIGH = 5
 _ROYAL_RANKS = (10, 11, 12, 13, 14)
+
+
+def _straight_windows() -> tuple[tuple[int, frozenset[int]], ...]:
+    """List every straight's (high card, its rank values), high to low.
+
+    Ace-high (royal, when flushed) down through 6-high, then the wheel
+    last -- the one straight whose ace plays low (:data:`_WHEEL_RANKS`
+    / :data:`_WHEEL_HIGH`). :func:`best_hand`'s straight and straight-
+    flush searches both slide over this same fixed list of the 10
+    possible straights (matching the sweep's own STRAIGHT_FLUSH_OR_
+    ROYAL count of 10) rather than each computing it independently.
+    """
+    windows = [
+        (high, frozenset(range(high - _STRAIGHT_SPAN, high + 1))) for high in range(14, 5, -1)
+    ]
+    windows.append((_WHEEL_HIGH, frozenset(_WHEEL_RANKS)))
+    return tuple(windows)
+
+
+_STRAIGHT_WINDOWS = _straight_windows()
 
 
 class HandClass(IntEnum):
@@ -478,11 +507,11 @@ def _straight_completion_ranks(natural_ranks: Sequence[int]) -> frozenset[int]:
     needs its own check -- the ace sits at value 14, nowhere near the
     low end numerically, even though it plays low there.
 
-    Both callers only ever reach this with at least one rank already
-    (:func:`_pruned_wild_candidates` and :func:`_relevant_naturals`
-    only run once at least one natural card is known to exist), so an
-    empty *natural_ranks* is a genuine invariant violation, not a
-    case to handle quietly -- ``min()``/``max()`` raise on it.
+    Its one caller, :func:`_pruned_wild_candidates`, only ever reaches
+    this with at least one rank already (it only runs once at least
+    one natural card is known to exist), so an empty *natural_ranks*
+    is a genuine invariant violation, not a case to handle quietly --
+    ``min()``/``max()`` raise on it.
     """
     completions: set[int] = set()
     if set(natural_ranks) <= set(_WHEEL_RANKS):
@@ -534,40 +563,6 @@ def _pruned_wild_candidates(naturals: Sequence[Card], joker_count: int) -> tuple
     )
 
 
-def _pruned_wild_candidates_for_scoring(
-    naturals: Sequence[Card], joker_count: int
-) -> tuple[Card, ...]:
-    """Build a scoring-only wild-fill candidate set, smaller still.
-
-    Only ever used by :func:`_score_natural_subset` (``best_hand``'s
-    cached subset search), which unlike :func:`eval5` never surfaces
-    which exact suit a joker resolved to -- only the resulting
-    ``(cls, tiebreak)``. :func:`_pruned_wild_candidates`'s own
-    docstring already establishes that a rank-matching candidate's
-    suit can never change its class or tiebreak (only a
-    flush-plausible suit's exact identity can), so this keeps one
-    representative suit per candidate rank instead of all four, on
-    top of the full suit range for any flush-plausible suit --
-    cutting the C(m, j) search :func:`_best_fill_from_candidates` runs
-    by roughly ``len(Suit)`` per joker slot (R-42's 180x12 field
-    budget: this is the search's own dominant cost, profiled).
-    """
-    natural_ranks = [card.rank for card in naturals if card.rank is not None]
-    rank_values = [rank.value for rank in natural_ranks]
-    candidate_ranks = (
-        set(natural_ranks)
-        | {Rank(value) for value in _straight_completion_ranks(rank_values)}
-        | {Rank.ACE}
-    )
-    representative_suit = next(iter(Suit))
-    rank_candidates = tuple(Card(rank=rank, suit=representative_suit) for rank in candidate_ranks)
-    flush_suits = _plausible_flush_suits(naturals, joker_count)
-    if not flush_suits:
-        return rank_candidates
-    flush_candidates = tuple(card for card in _ALL_NATURAL_CARDS if card.suit in flush_suits)
-    return rank_candidates + flush_candidates
-
-
 def _best_fill(
     combos: Iterable[tuple[Card, ...]], naturals: Sequence[Card], *, allow_fast_path: bool
 ) -> tuple[Card, ...]:
@@ -593,13 +588,9 @@ def _search_best_fill(
     natural). Candidates are pruned per :func:`_pruned_wild_candidates`
     -- typically under 30 rather than the full 52.
 
-    ``best_hand``'s own N-card subset search does *not* come through
-    here -- :func:`_score_natural_subset` uses a further-reduced
-    candidate set of its own
-    (:func:`_pruned_wild_candidates_for_scoring`), safe only where
-    the exact suit a joker resolves to is never observed (unlike
-    this function's two callers, both of which return that suit to a
-    caller that may display it).
+    ``best_hand``'s own N-card path does not come through here at all
+    (module docstring): it builds each candidate hand directly from
+    rank/suit counts rather than searching wild-fill combinations.
     """
     candidates = _pruned_wild_candidates(naturals, joker_count)
     combos = itertools.combinations_with_replacement(candidates, joker_count)
@@ -675,105 +666,234 @@ def _partial_hand(cards: Sequence[Card]) -> EvaluatedHand:
     )
 
 
-def _relevant_naturals(naturals: Sequence[Card], joker_count: int) -> tuple[Card, ...]:
-    """Prune *naturals* to the ones a winning 5-card subset could use.
+def _rank_slots(group_sizes: Sequence[int]) -> tuple[int, ...]:
+    """Return *group_sizes* padded with single-card kicker slots to 5.
 
-    Mirrors :func:`_pruned_wild_candidates`'s reasoning, turned around
-    for choosing *which naturals* the outer subset search bothers
-    with (``best_hand``'s C(n, k) subset loop otherwise multiplies
-    against every wild-search call -- R-42's 180x12 field budget
-    needs this too, not just the wild search). A natural only ever
-    earns a place in the best subset by (a) sharing a rank with
-    another natural (growing a pair/trips/quads), (b) sitting in the
-    straight-completion range for the pool's overall rank spread, (c)
-    holding a suit that could plausibly complete a flush, or (d)
-    simply ranking among the highest available plain kickers -- kept
-    by original list position, not value, so a duplicate-legal repeat
-    is never silently collapsed into "the same" candidate.
+    E.g. ``(4,)`` (quads) becomes ``(4, 1)``; ``(3, 2)`` (full house)
+    stays ``(3, 2)`` with no kickers at all.
     """
-    need = NATURAL_HAND_SIZE - joker_count
-    rank_counts = Counter(card.rank for card in naturals)
-    all_rank_values = [card.rank.value for card in naturals if card.rank is not None]
-    straight_ranks = {Rank(value) for value in _straight_completion_ranks(all_rank_values)}
-    flush_suits = _plausible_flush_suits(naturals, joker_count)
-    by_rank_desc = sorted(
-        range(len(naturals)), key=lambda i: cast("Rank", naturals[i].rank).value, reverse=True
-    )
-    top_kicker_indices = set(by_rank_desc[:need])
-    return tuple(
-        card
-        for index, card in enumerate(naturals)
-        if rank_counts[card.rank] > 1
-        or card.rank in straight_ranks
-        or card.suit in flush_suits
-        or index in top_kicker_indices
-    )
+    kicker_count = NATURAL_HAND_SIZE - sum(group_sizes)
+    return (*group_sizes, *([1] * kicker_count))
 
 
-def _canonical_naturals(naturals: Sequence[Card]) -> tuple[Card, ...]:
-    """Sort *naturals* into one fixed, rank-then-suit order.
+_RankAssignment = tuple[Rank, int, int]  # (rank, naturals used, jokers used)
 
-    Every function a subset score depends on --
-    :func:`_evaluate_five_naturals`, :func:`_uniform_natural_rank`,
-    :func:`_best_fill` -- cares only about *naturals*'s rank/suit
-    multiset, never its original order (module docstring), so this
-    turns two subsets that are equal as multisets into one identical
-    cache key for :func:`_score_natural_subset`.
+
+def _greedy_rank_assignment(
+    rank_counts: Counter[Rank], slots: Sequence[int], joker_count: int
+) -> list[_RankAssignment] | None:
+    """Assign each of *slots* the highest still-unused reachable rank.
+
+    Returns one ``(rank, naturals_used, jokers_used)`` triple per
+    slot in *slots*'s own order, spending the fewest jokers each slot
+    needs, or ``None`` if *slots* cannot all be filled within
+    *joker_count* jokers at all.
+
+    *slots* must already be sorted largest-first:
+    :func:`_kicker_tiebreak` always sorts a hand's rank groups by
+    ``(count, rank)`` descending, so a bigger group's rank outranks a
+    smaller group's regardless of either rank's value. Claiming the
+    highest reachable rank for whichever slot is currently largest
+    (and therefore highest-priority) can never be improved on by any
+    other choice for that slot: an exchange argument -- swapping it
+    for a lower rank there could only ever help a lower-priority
+    slot, which can never outweigh a loss at the higher-priority
+    position it would create.
     """
-    return tuple(
-        sorted(
-            naturals,
-            key=lambda card: (cast("Rank", card.rank).value, cast("Suit", card.suit).value),
+    used: set[Rank] = set()
+    jokers_left = joker_count
+    assignment: list[_RankAssignment] = []
+    for size in slots:
+        for rank in sorted(Rank, reverse=True):
+            if rank in used:
+                continue
+            have = rank_counts.get(rank, 0)
+            cost = max(0, size - have)
+            if cost <= jokers_left:
+                assignment.append((rank, min(have, size), cost))
+                used.add(rank)
+                jokers_left -= cost
+                break
+        else:
+            return None
+    return assignment
+
+
+def _spend_leftover_jokers(
+    assignment: Sequence[_RankAssignment], leftover: int
+) -> list[_RankAssignment]:
+    """Convert *leftover* natural card slots in *assignment* to jokers.
+
+    Every joker in the pool always plays (module docstring), so any
+    left over once a class's minimum joker cost is paid must still
+    land somewhere in the final 5 cards. Re-labelling an already-
+    decided rank's natural card as a joker of that same rank changes
+    nothing about the class or tiebreak -- a joker can always stand in
+    for the natural card it replaces (E2.1.2's own wild-fill rule).
+    """
+    remaining = leftover
+    spent: list[_RankAssignment] = []
+    for rank, naturals_used, jokers_used in assignment:
+        take = min(remaining, naturals_used)
+        spent.append((rank, naturals_used - take, jokers_used + take))
+        remaining -= take
+    return spent
+
+
+def _evaluate_candidate(
+    chosen_naturals: Sequence[Card], jokers_played_as: Sequence[Card], jokers: Sequence[Card]
+) -> EvaluatedHand:
+    """Score one candidate's chosen cards and wrap it for ``best_hand``.
+
+    Shared tail for every ``best_hand`` candidate builder below: each
+    already knows its own chosen naturals and joker resolutions, but
+    always finishes the same way -- re-evaluate the actual 5 cards
+    (never trust a builder's own targeted label) and wrap the result
+    with the *original* joker placeholders in ``best5`` (module
+    docstring: ``jokers_played_as`` holds the resolution, ``best5``
+    keeps the raw joker markers).
+    """
+    evaluated = _evaluate_five_naturals((*chosen_naturals, *jokers_played_as))
+    return EvaluatedHand(
+        cls=evaluated.cls,
+        tiebreak=evaluated.tiebreak,
+        best5=(*chosen_naturals, *jokers),
+        jokers_played_as=tuple(jokers_played_as),
+    )
+
+
+def _grouped_candidate(
+    naturals: Sequence[Card], jokers: Sequence[Card], group_sizes: Sequence[int]
+) -> EvaluatedHand | None:
+    """Build the best 5-card hand shaped like *group_sizes*, if any.
+
+    Covers every :class:`HandClass` built from rank-count groups plus
+    plain kickers -- ``(5,)`` is FIVE_OF_A_KIND, ``(4,)`` QUADS,
+    ``(3, 2)`` FULL_HOUSE, ``(3,)`` TRIPS, ``(2, 2)`` TWO_PAIR,
+    ``(2,)`` PAIR, and ``()`` HIGH_CARD (5 plain kickers, always
+    reachable) -- via the one shared greedy in
+    :func:`_greedy_rank_assignment`. The actual 5 cards are always
+    re-evaluated through :func:`_evaluate_five_naturals` rather than
+    trusting the targeted shape's label, so a coincidental better
+    class (e.g. this "quads" candidate's kicker happening to complete
+    a fifth card of the same rank) is scored for what it truly is.
+    """
+    joker_count = len(jokers)
+    rank_counts = Counter(card.rank for card in naturals if card.rank is not None)
+    assignment = _greedy_rank_assignment(rank_counts, _rank_slots(group_sizes), joker_count)
+    if assignment is None:
+        return None
+    spent_jokers = sum(jokers_used for _, _, jokers_used in assignment)
+    assignment = _spend_leftover_jokers(assignment, joker_count - spent_jokers)
+
+    naturals_by_rank: dict[Rank, list[Card]] = {}
+    for card in naturals:
+        naturals_by_rank.setdefault(cast("Rank", card.rank), []).append(card)
+
+    chosen_naturals: list[Card] = []
+    jokers_played_as: list[Card] = []
+    for rank, naturals_used, jokers_used in assignment:
+        chosen_naturals.extend(naturals_by_rank.get(rank, [])[:naturals_used])
+        jokers_played_as.extend(Card(rank=rank, suit=suit) for suit in _cycle_suits(jokers_used))
+
+    return _evaluate_candidate(chosen_naturals, jokers_played_as, jokers)
+
+
+def _straight_flush_candidate(
+    naturals: Sequence[Card], jokers: Sequence[Card]
+) -> EvaluatedHand | None:
+    """Best straight flush (royal included) reachable in any one suit.
+
+    Slides :data:`_STRAIGHT_WINDOWS` -- highest first -- over each
+    suit's own distinct natural ranks; a suit reaches a window once it
+    already covers enough of that window's 5 ranks to leave only the
+    jokers on hand to fill the rest. The highest window any suit
+    reaches wins, so every suit is checked even after one already
+    reaches a window, unlike :func:`_straight_candidate`'s single
+    global search.
+    """
+    need = NATURAL_HAND_SIZE - len(jokers)
+    best: tuple[int, Suit, frozenset[int]] | None = None
+    for suit in Suit:
+        suited_ranks = {cast("Rank", card.rank).value for card in naturals if card.suit == suit}
+        for high, window in _STRAIGHT_WINDOWS:
+            if len(suited_ranks & window) >= need:
+                if best is None or high > best[0]:
+                    best = (high, suit, window)
+                break  # windows are highest-first: this suit can do no better.
+    if best is None:
+        return None
+    _, suit, window = best
+    suited_naturals = {
+        cast("Rank", card.rank).value: card for card in naturals if card.suit == suit
+    }
+    covered = sorted(window & suited_naturals.keys(), reverse=True)[:need]
+    chosen_naturals = [suited_naturals[value] for value in covered]
+    missing = sorted(window - set(covered), reverse=True)
+    jokers_played_as = [Card(rank=Rank(value), suit=suit) for value in missing]
+    return _evaluate_candidate(chosen_naturals, jokers_played_as, jokers)
+
+
+def _flush_candidate(naturals: Sequence[Card], jokers: Sequence[Card]) -> EvaluatedHand | None:
+    """Best flush reachable: any suit with enough naturals plus jokers.
+
+    A flush's kickers compare by raw rank alone (module docstring), so
+    among a suit's own naturals the top ``need`` by rank -- duplicates
+    included, physical-cards semantics -- always maximizes that suit's
+    result; every joker then plays as an ace of that suit, which is
+    always at least as good as any other fill and duplicate-legal even
+    when the suit already holds a natural ace (E2.1.2's own "K J 8 6
+    suited" vector: an ace, maximizing the kicker, full stop).
+    """
+    need = NATURAL_HAND_SIZE - len(jokers)
+    best: tuple[Suit, list[Card]] | None = None
+    for suit in Suit:
+        suited = sorted(
+            (card for card in naturals if card.suit == suit),
+            key=lambda card: cast("Rank", card.rank).value,
+            reverse=True,
         )
-    )
+        if len(suited) < need:
+            continue
+        chosen = suited[:need]
+        if best is None or _natural_ranks(chosen) > _natural_ranks(best[1]):
+            best = (suit, chosen)
+    if best is None:
+        return None
+    suit, chosen_naturals = best
+    jokers_played_as = [Card(rank=Rank.ACE, suit=suit) for _ in jokers]
+    return _evaluate_candidate(chosen_naturals, jokers_played_as, jokers)
 
 
-_SubsetScore = tuple[HandClass, tuple[int, ...], tuple[Card, ...]]
-_SubsetCache = dict[tuple[tuple[Card, ...], int], _SubsetScore]
+def _straight_candidate(naturals: Sequence[Card], jokers: Sequence[Card]) -> EvaluatedHand | None:
+    """Best plain straight reachable, any suit, over the global ranks.
 
-
-def _score_natural_subset(
-    naturals: Sequence[Card], joker_count: int, cache: _SubsetCache
-) -> _SubsetScore:
-    """Score *naturals* plus *joker_count* wild cards, cache the result.
-
-    ``best_hand``'s own C(n, k) subset loop revisits the exact same
-    rank/suit multiset constantly whenever its pool holds duplicate-
-    legal cards (a birthday-paradox certainty in a 13-rank pool at
-    12 cards) -- this collapses that repeated work behind
-    :func:`_canonical_naturals`. *cache* is scoped to one ``best_hand``
-    call, not module-global: the redundancy worth collapsing is
-    within one entry's own search, not across different entries'
-    largely-unrelated hands, so this never accumulates memory across
-    a session (R-42's 180x12 field budget).
-
-    The zero-joker case bypasses the cache entirely: measured, a
-    duplicate 5-card natural multiset is uncommon enough (a 52-card
-    pool, not a 13-rank one) that canonicalizing and hashing every
-    subset costs more than the cache hits it buys back -- unlike the
-    wild-search case below, where one avoided search is worth far
-    more than one sort.
+    Unlike :func:`_straight_flush_candidate`, suit never matters here,
+    so this only needs *one* global rank-presence set and returns as
+    soon as the (highest-first) window search finds a reachable one.
     """
-    if joker_count == 0:
-        evaluated = _evaluate_five_naturals(naturals)
-        return (evaluated.cls, evaluated.tiebreak, ())
-    key = (_canonical_naturals(naturals), joker_count)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached
-    canonical, _ = key
-    uniform_rank = _uniform_natural_rank(canonical)
-    if uniform_rank is not None:
-        hand = _five_of_a_kind_hand(canonical, uniform_rank, joker_count)
-        score: _SubsetScore = (hand.cls, hand.tiebreak, hand.jokers_played_as)
-    else:
-        candidates = _pruned_wild_candidates_for_scoring(canonical, joker_count)
-        combos = itertools.combinations_with_replacement(candidates, joker_count)
-        fill = _best_fill(combos, canonical, allow_fast_path=True)
-        evaluated = _evaluate_five_naturals((*canonical, *fill))
-        score = (evaluated.cls, evaluated.tiebreak, fill)
-    cache[key] = score
-    return score
+    need = NATURAL_HAND_SIZE - len(jokers)
+    naturals_by_value = {cast("Rank", card.rank).value: card for card in naturals}
+    present = naturals_by_value.keys()
+    for _high, window in _STRAIGHT_WINDOWS:
+        covered = window & present
+        if len(covered) < need:
+            continue
+        chosen_values = sorted(covered, reverse=True)[:need]
+        chosen_naturals = [naturals_by_value[value] for value in chosen_values]
+        missing = sorted(window - set(chosen_values), reverse=True)
+        jokers_played_as = [
+            Card(rank=Rank(value), suit=suit)
+            for value, suit in zip(missing, _cycle_suits(len(missing)), strict=True)
+        ]
+        return _evaluate_candidate(chosen_naturals, jokers_played_as, jokers)
+    return None
+
+
+# One candidate per rank-count shape (:func:`_grouped_candidate`'s own
+# docstring), largest group first, high card last as the universal
+# fallback -- every shape here always sums its groups to at most 5.
+_GROUP_SHAPES: tuple[tuple[int, ...], ...] = ((5,), (4,), (3, 2), (3,), (2, 2), (2,), ())
 
 
 def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
@@ -785,9 +905,11 @@ def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
             best partial hand those cards can make -- a missing
             kicker always ranks below a present one, however good the
             rest of the hand is (:func:`_partial_hand`). 5 or more
-            cards search every 5-of-N natural subset with every joker
-            kept in play (spec section 5's own pseudocode comment: "a
-            wild never hurts -> all jokers play").
+            cards build the best 5-card hand with every joker kept in
+            play (spec section 5's own pseudocode comment: "a wild
+            never hurts -> all jokers play"), one directly-constructed
+            candidate per reachable :class:`HandClass` shape (module
+            docstring) rather than by enumerating natural subsets.
 
     Returns:
         The best :class:`EvaluatedHand` reachable from *cards*.
@@ -804,14 +926,14 @@ def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
     if len(jokers) >= NATURAL_HAND_SIZE:
         chosen = tuple(jokers[:NATURAL_HAND_SIZE])
         return _five_of_a_kind_hand(chosen, Rank.ACE, NATURAL_HAND_SIZE)
-    relevant = _relevant_naturals(naturals, len(jokers))
-    subsets = itertools.combinations(relevant, NATURAL_HAND_SIZE - len(jokers))
-    cache: _SubsetCache = {}
-    scored = ((subset, _score_natural_subset(subset, len(jokers), cache)) for subset in subsets)
-    best_subset, (cls, tiebreak, fill) = max(scored, key=lambda item: (item[1][0], item[1][1]))
-    return EvaluatedHand(
-        cls=cls, tiebreak=tiebreak, best5=(*best_subset, *jokers), jokers_played_as=fill
+    candidates = (
+        _straight_flush_candidate(naturals, jokers),
+        _flush_candidate(naturals, jokers),
+        _straight_candidate(naturals, jokers),
+        *(_grouped_candidate(naturals, jokers, shape) for shape in _GROUP_SHAPES),
     )
+    reachable = [candidate for candidate in candidates if candidate is not None]
+    return max(reachable, key=lambda hand: (hand.cls, hand.tiebreak))
 
 
 def compare(a: EvaluatedHand, b: EvaluatedHand) -> int:
