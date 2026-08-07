@@ -32,7 +32,53 @@ nox -s winsetup winsetup_smoke                # stage 5 · unsigned Windows inst
 nox                                           # stages 1 + 2
 ```
 
-Stage 3 needs a **real desktop session** — no virtual display. It cannot run headless.
+Stage 3 needs a **real desktop session** — no virtual display. It cannot run headless. On macOS,
+run it inside the Tart VM (next section): a bare `nox -s functional` on a Mac refuses unless
+`RIVERCROSSING_HOST_FUNCTIONAL=1` is set. CI is exempt — the hosted runners set `CI`.
+
+## macOS functional tests — run them in a VM
+
+Stage 3 opens all 23 windows for real. On your own Mac that takes over the desktop: the windows
+steal focus while you type, and a crashed run can leave the session in a bad state (measured on a
+sibling project — a crashed GUI suite left a synthesized key auto-repeating into every app). A
+local [Tart](https://tart.run/) VM isolates the run: the guest has its own WindowServer, so
+nothing touches your session. Isolation contains a crash; it does not cure one.
+
+One-time setup — the base image download is about 25 GB:
+
+```bash
+brew install openai/tools/tart      # Tart moved from Cirrus Labs to OpenAI in 2026
+scripts/setup_functional_vm.sh      # clone the base image, size it, provision, install deps
+```
+
+The setup script boots the template windowed once and asks for the guest password (`admin`)
+during `ssh-copy-id`. Every later run is non-interactive.
+
+Each run:
+
+```bash
+scripts/run_functional_tests_vm.sh
+```
+
+The run script clones the template (APFS copy-on-write — seconds), boots it headless, pushes the
+worktree with rsync over ssh, runs the same pytest command as CI stage 3, pulls
+`tests/functional/_screenshots/` back, and deletes the clone. A crashed run dies with its clone.
+
+| Exit code | Meaning |
+|---|---|
+| 2 | `tart` is not installed |
+| 3 | the template VM is missing — run `scripts/setup_functional_vm.sh` |
+| 124 | watchdog timeout (`RIVERCROSSING_VM_TIMEOUT`, default 1800 s) |
+| other | the guest pytest exit code, passed through |
+
+- The guest needs no Accessibility or Screen Recording grants: the harness injects wx events
+  directly and screenshots through a `MemoryDC` — no OS-level input, no `screencapture`.
+- To force a host-desktop run (CI-parity debugging): `RIVERCROSSING_HOST_FUNCTIONAL=1 nox -s
+  functional`.
+- VM sizing: `RIVERCROSSING_VM_CPU` (default 4) and `RIVERCROSSING_VM_MEMORY` (default 8192 MB),
+  read by the setup script.
+- License: Tart ships under FSL-1.1-ALv2 — free for this local-dev use. Review the license before
+  any org-wide or CI adoption.
 
 ## The gates (CI blocks merge)
 

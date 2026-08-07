@@ -9,6 +9,17 @@ All notable changes to RiverCrossing are recorded here. The format follows
 Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish, Phase 9
 Windows-installer, Phase 10 Windows-parity and Phase 11 tagged-release follow-ups.
 
+### Added — macOS VM functional-test lane
+
+- **Local macOS functional runs now go through a disposable Tart VM.** The suite opens 23 real
+  windows and used to take over the developer's desktop; a crashed run could foul the session
+  (measured on a sibling project). `scripts/setup_functional_vm.sh` provisions a reusable
+  template once; `scripts/run_functional_tests_vm.sh` clones it per run (APFS copy-on-write),
+  runs the CI stage-3 pytest command headless in the guest, pulls the screenshots back, and
+  deletes the clone. A bare `nox -s functional` on a Mac now refuses unless
+  `RIVERCROSSING_HOST_FUNCTIONAL=1` is set (CI is exempt via `CI`). Local-dev only — CI stage 3
+  is unchanged on both hosted runners.
+
 ### Added — Phase 11 (tagged releases)
 
 - **A version tag now publishes the release with both installers.** Tagging previously built
