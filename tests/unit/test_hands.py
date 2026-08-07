@@ -544,27 +544,15 @@ def test_best_hand_adding_a_card_never_lowers_the_result(cards: list[Card], extr
 
 
 def test_best_hand_field_of_180_entries_by_12_cards_scores_within_measured_budget() -> None:
-    """The whole 180x12 field scores in a bounded, measured time.
+    """The whole 180x12 field scores in under 1 second (R-42).
 
     Seeded, duplicates and jokers included: an 8-deck/2-jokers-per-deck
     shoe (spec section 4's own example) has 16 jokers among 432 cards,
     so a 12-card sample draws one with roughly that same probability.
-
-    R-42/the brief's own "Done when" line names < 1 s. Measured on this
-    implementation: ~2.2s, not < 1s -- disputed and reported rather
-    than silently weakened or hidden (see this task's final report).
-    Root cause: with only 13 ranks and 12 cards per entry, a rank
-    collision (pair-or-better) is likely by the birthday paradox, so
-    ``_relevant_naturals``'s pruning keeps most of an entry's naturals
-    for most entries -- correct, but with much less headroom than a
-    hand that rarely collides would give it. Closing the remaining
-    gap needs a further algorithmic change (constructing candidate
-    subsets directly per rank-group, including multi-group ones like
-    full house, instead of enumerating C(n, k) at all), which is a
-    bigger, higher-risk redesign than this session extends to
-    correctness-test before committing. The bound below is the
-    measured ceiling plus headroom, not the brief's target, so this
-    test still catches a future regression.
+    R-42 is a MUST and this bound is the requirement itself, not a
+    measured ceiling with headroom -- CI runners are slower than a
+    development machine, so the implementation must clear this with
+    real margin, not just on the fastest hardware available.
     """
     rng = random.Random(20260807)  # noqa: S311 -- a seeded test fixture, not a security use
     deck_codes = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
@@ -585,4 +573,4 @@ def test_best_hand_field_of_180_entries_by_12_cards_scores_within_measured_budge
     elapsed = time.perf_counter() - start
 
     assert len(field) == 180
-    assert elapsed < 3.0  # measured ceiling with headroom -- see docstring
+    assert elapsed < 1.0  # R-42: the whole field scores in under 1 second
