@@ -199,6 +199,10 @@ main() {
     err "could not create watchdog sentinel file"
     exit 1
   fi
+  # mktemp above creates the file; remove it so its later existence
+  # check means "the watchdog fired" (it recreates the path with
+  # `: > "${sentinel}"`), not "mktemp ran".
+  rm -f "${sentinel}"
 
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
     "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python -m pytest tests/functional --no-cov -n auto --dist loadfile --reruns 1" &
@@ -211,6 +215,13 @@ main() {
   wait "${run_pid}"
   rc=$?
 
+  # Order matters: kill the watchdog's own sleep child (by parent pid)
+  # before the watchdog subshell itself. Once the subshell is gone,
+  # its sleep is reparented to launchd and `-P "${watchdog_pid}"` can
+  # no longer find it, leaving it to hold stdout/stderr open for the
+  # rest of RIVERCROSSING_VM_TIMEOUT even though this script has
+  # already exited (macOS has no timeout(1) to manage this for us).
+  pkill -P "${watchdog_pid}" 2>/dev/null
   kill "${watchdog_pid}" 2>/dev/null
   wait "${watchdog_pid}" 2>/dev/null
 
