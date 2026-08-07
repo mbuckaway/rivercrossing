@@ -72,7 +72,13 @@ worktree with rsync over ssh, runs the same pytest command as CI stage 3, pulls
 | other | the guest pytest exit code, passed through |
 
 - The guest needs no Accessibility or Screen Recording grants: the harness injects wx events
-  directly and screenshots through a `MemoryDC` — no OS-level input, no `screencapture`.
+  directly and screenshots through a `MemoryDC` — no OS-level input, no `screencapture`. (The
+  `macos-*-base` images would tolerate TCC-gated tooling anyway: they ship SIP-disabled and
+  pre-seed Accessibility/PostEvent/ScreenCapture grants for ssh-launched automation, and they
+  auto-login `admin` into a real Aqua session. One Sequoia+ limit: Screen Recording never works
+  for an ad-hoc-signed venv python — shell out to `/usr/sbin/screencapture` if ever needed.)
+- WARNING: never pass `--vnc` or `--vnc-experimental` to `tart run` without `--no-graphics` —
+  those flags open Screen Sharing.app on the host desktop, defeating the isolation.
 - To force a host-desktop run (CI-parity debugging): `RIVERCROSSING_HOST_FUNCTIONAL=1 nox -s
   functional`.
 - VM sizing: `RIVERCROSSING_VM_CPU` (default 4) and `RIVERCROSSING_VM_MEMORY` (default 8192 MB),
