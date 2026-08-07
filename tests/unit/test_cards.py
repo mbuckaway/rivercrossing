@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Unit tests for rivercrossing.cards's Shoe (E2.2.1).
+"""Unit tests for rivercrossing.cards's Shoe (E2.2.1, E2.2.2).
 
 Spec section 4 is this task's specification: a shoe is
 ``decks * (52 + jokers_per_deck)`` cards, Fisher-Yates shuffled
@@ -14,6 +14,14 @@ Seed 8843 throughout is the exact worked example on the main
 frame's own status bar ("Shoe cycle 1 - seed 8843",
 xrc-windows.md section A), and 2 decks / 2 jokers-per-deck / 108
 total cards is task-briefs.md's own E2.2.1 worked example.
+
+E2.2.2's composition-count matrix is the parametrized test at the
+bottom of this file, over every decks/jokers_per_deck combination
+the #setupdlg Cards fieldset offers (jokers_per_deck in {0, 2, 4}
+per R-13; decks_spin is a free spinner, xrc-windows.md section B).
+Its Hypothesis properties live in
+tests/property/test_cards_properties.py instead (module-skeletons
+S5 names that directory for shoe determinism properties).
 """
 
 import re
@@ -309,3 +317,37 @@ def test_shoe_restitute_after_close_raises_shoe_closed_error() -> None:
 
     with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
         shoe.restitute(dealt_card)
+
+
+# ----------------------------------- E2.2.2 composition-count matrix
+
+
+@pytest.mark.parametrize(
+    ("decks", "jokers_per_deck"),
+    [
+        (1, 0),
+        (1, 2),
+        (1, 4),
+        (2, 0),
+        (2, 2),
+        (2, 4),
+        (4, 0),
+        (4, 2),
+        (4, 4),
+        (8, 0),
+        (8, 2),
+        (8, 4),
+    ],
+)
+def test_shoe_composition_matches_every_ride_setup_cards_config(
+    decks: int, jokers_per_deck: int
+) -> None:
+    """Every #setupdlg Cards config (R-13) deals the expected counts."""
+    shoe = Shoe(decks=decks, jokers_per_deck=jokers_per_deck, seed=_SEED)
+
+    dealt = _deal_all(shoe)
+    naturals, joker_count = _composition(dealt)
+
+    assert len(dealt) == decks * (52 + jokers_per_deck)
+    assert joker_count == decks * jokers_per_deck
+    assert set(naturals.values()) == {decks}
