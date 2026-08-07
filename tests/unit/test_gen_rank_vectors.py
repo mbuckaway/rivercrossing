@@ -10,9 +10,7 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
 
-_GEN_RANK_VECTORS_PATH = (
-    Path(__file__).resolve().parents[2] / "tools" / "gen_rank_vectors.py"
-)
+_GEN_RANK_VECTORS_PATH = Path(__file__).resolve().parents[2] / "tools" / "gen_rank_vectors.py"
 
 
 def _load_gen_rank_vectors(path: Path) -> ModuleType:

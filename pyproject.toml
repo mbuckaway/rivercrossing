@@ -237,6 +237,8 @@ source_modules = [
     "rivercrossing.ride",
     "rivercrossing.htmlexport",
     "rivercrossing.demo",
+    "rivercrossing.cards",
+    "rivercrossing.hands",
 ]
 forbidden_modules = ["wx"]
 

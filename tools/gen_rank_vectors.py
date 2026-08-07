@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Generate the E2.1.1 rank sweep fixture (tests/vectors/rank_sweep.csv).
+"""Generate the E2.1.1 rank sweep fixture, tests/vectors/rank_sweep.csv.
 
 Every one of phevaluator's 7,462 distinct natural 5-card ranks gets
 exactly one representative row: a 5-card hand, its phevaluator rank,
@@ -20,11 +20,13 @@ import argparse
 import itertools
 import sys
 from collections import Counter
-from collections.abc import Iterator, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import TYPE_CHECKING, NamedTuple
 
 from phevaluator.evaluator import evaluate_cards
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
 
 _ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = _ROOT / "tests" / "vectors" / "rank_sweep.csv"
@@ -37,6 +39,13 @@ _SUIT_LETTERS = "CDHS"
 DECK: tuple[str, ...] = tuple(rank + suit for rank in _RANK_LETTERS for suit in _SUIT_LETTERS)
 
 _CSV_HEADER = ("cards", "rank", "hand_class")
+_HAND_SIZE = 5
+# A straight's 5 distinct ranks span this many values (e.g. 6-2=4 for
+# 2-3-4-5-6); the wheel (A-2-3-4-5) is the one straight that doesn't
+# and is checked for separately.
+_STRAIGHT_SPAN = 4
+_WHEEL_RANKS = [2, 3, 4, 5, 14]
+_ROYAL_RANKS = [10, 11, 12, 13, 14]
 
 
 class RankVectorRow(NamedTuple):
@@ -57,34 +66,37 @@ def classify_natural_hand(ranks: Sequence[int], suits: Sequence[str]) -> str:
     """
     is_flush = len(set(suits)) == 1
     distinct_ranks = sorted(set(ranks))
-    is_wheel = distinct_ranks == [2, 3, 4, 5, 14]
+    is_wheel = distinct_ranks == _WHEEL_RANKS
     is_straight = is_wheel or (
-        len(distinct_ranks) == 5 and distinct_ranks[-1] - distinct_ranks[0] == 4
+        len(distinct_ranks) == _HAND_SIZE
+        and distinct_ranks[-1] - distinct_ranks[0] == _STRAIGHT_SPAN
     )
-    is_royal = distinct_ranks == [10, 11, 12, 13, 14]
+    is_royal = distinct_ranks == _ROYAL_RANKS
     counts = sorted(Counter(ranks).values(), reverse=True)
 
     if is_straight and is_flush:
-        return "ROYAL_FLUSH" if is_royal else "STRAIGHT_FLUSH"
-    if counts == [4, 1]:
-        return "QUADS"
-    if counts == [3, 2]:
-        return "FULL_HOUSE"
-    if is_flush:
-        return "FLUSH"
-    if is_straight:
-        return "STRAIGHT"
-    if counts == [3, 1, 1]:
-        return "TRIPS"
-    if counts == [2, 2, 1]:
-        return "TWO_PAIR"
-    if counts == [2, 1, 1, 1]:
-        return "PAIR"
-    return "HIGH_CARD"
+        label = "ROYAL_FLUSH" if is_royal else "STRAIGHT_FLUSH"
+    elif counts == [4, 1]:
+        label = "QUADS"
+    elif counts == [3, 2]:
+        label = "FULL_HOUSE"
+    elif is_flush:
+        label = "FLUSH"
+    elif is_straight:
+        label = "STRAIGHT"
+    elif counts == [3, 1, 1]:
+        label = "TRIPS"
+    elif counts == [2, 2, 1]:
+        label = "TWO_PAIR"
+    elif counts == [2, 1, 1, 1]:
+        label = "PAIR"
+    else:
+        label = "HIGH_CARD"
+    return label
 
 
 def _enumerate_five_card_hands() -> Iterator[tuple[str, ...]]:
-    """Yield every one of the C(52,5) five-card hands, in a fixed order."""
+    """Yield every C(52,5) five-card hand, in one fixed order."""
     return itertools.combinations(DECK, 5)
 
 
@@ -108,7 +120,7 @@ def enumerate_representative_hands() -> list[RankVectorRow]:
 
 
 def render_csv(rows: Sequence[RankVectorRow]) -> str:
-    """Render *rows* as CSV text, header first, ``\\n`` line endings."""
+    r"""Render *rows* as CSV text, header first, ``\n`` line endings."""
     lines = [",".join(_CSV_HEADER)]
     lines.extend(f"{row.cards},{row.rank},{row.hand_class}" for row in rows)
     return "\n".join(lines) + "\n"
