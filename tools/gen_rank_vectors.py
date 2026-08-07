@@ -4,10 +4,12 @@
 Every one of phevaluator's 7,462 distinct natural 5-card ranks gets
 exactly one representative row: a 5-card hand, its phevaluator rank,
 and its hand class. The rank comes from phevaluator (the same library
-``rivercrossing.hands.eval5`` wraps); the hand class is computed
+``rivercrossing.hands.eval5`` wraps); the hand class comes from
+``rivercrossing.hands.classify_pattern``, which computes it
 independently, from the cards' own rank-multiset/flush/straight
 pattern, so this fixture can catch a bug in ``eval5``'s own
-phevaluator-rank-to-class table rather than merely restate it.
+phevaluator-rank-to-class table rather than merely restate it -- never
+by asking ``eval5`` (or anything phevaluator-backed) directly.
 
     python tools/gen_rank_vectors.py             # regenerate the CSV
     python tools/gen_rank_vectors.py --out PATH  # write elsewhere
@@ -19,11 +21,12 @@ check that regenerating it reproduces the committed file byte-for-byte.
 import argparse
 import itertools
 import sys
-from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple
 
 from phevaluator.evaluator import evaluate_cards
+
+from rivercrossing.hands import classify_pattern
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
@@ -39,13 +42,6 @@ _SUIT_LETTERS = "CDHS"
 DECK: tuple[str, ...] = tuple(rank + suit for rank in _RANK_LETTERS for suit in _SUIT_LETTERS)
 
 _CSV_HEADER = ("cards", "rank", "hand_class")
-_HAND_SIZE = 5
-# A straight's 5 distinct ranks span this many values (e.g. 6-2=4 for
-# 2-3-4-5-6); the wheel (A-2-3-4-5) is the one straight that doesn't
-# and is checked for separately.
-_STRAIGHT_SPAN = 4
-_WHEEL_RANKS = [2, 3, 4, 5, 14]
-_ROYAL_RANKS = [10, 11, 12, 13, 14]
 
 
 class RankVectorRow(NamedTuple):
@@ -54,45 +50,6 @@ class RankVectorRow(NamedTuple):
     cards: str
     rank: int
     hand_class: str
-
-
-def classify_natural_hand(ranks: Sequence[int], suits: Sequence[str]) -> str:
-    """Classify a 5-card hand from its own ranks and suits.
-
-    Independent of phevaluator: a flush is 5 matching suits, a
-    straight is 5 consecutive rank values (or the wheel, A-2-3-4-5),
-    and the rest follows the rank-value multiset -- never consults a
-    phevaluator rank, so it can independently confirm one.
-    """
-    is_flush = len(set(suits)) == 1
-    distinct_ranks = sorted(set(ranks))
-    is_wheel = distinct_ranks == _WHEEL_RANKS
-    is_straight = is_wheel or (
-        len(distinct_ranks) == _HAND_SIZE
-        and distinct_ranks[-1] - distinct_ranks[0] == _STRAIGHT_SPAN
-    )
-    is_royal = distinct_ranks == _ROYAL_RANKS
-    counts = sorted(Counter(ranks).values(), reverse=True)
-
-    if is_straight and is_flush:
-        label = "ROYAL_FLUSH" if is_royal else "STRAIGHT_FLUSH"
-    elif counts == [4, 1]:
-        label = "QUADS"
-    elif counts == [3, 2]:
-        label = "FULL_HOUSE"
-    elif is_flush:
-        label = "FLUSH"
-    elif is_straight:
-        label = "STRAIGHT"
-    elif counts == [3, 1, 1]:
-        label = "TRIPS"
-    elif counts == [2, 2, 1]:
-        label = "TWO_PAIR"
-    elif counts == [2, 1, 1, 1]:
-        label = "PAIR"
-    else:
-        label = "HIGH_CARD"
-    return label
 
 
 def _enumerate_five_card_hands() -> Iterator[tuple[str, ...]]:
@@ -114,7 +71,7 @@ def enumerate_representative_hands() -> list[RankVectorRow]:
             continue
         ranks = [_RANK_VALUES[code[0]] for code in combo]
         suits = [code[1] for code in combo]
-        hand_class = classify_natural_hand(ranks, suits)
+        hand_class = classify_pattern(ranks, suits).name
         by_rank[rank] = RankVectorRow(cards=" ".join(combo), rank=rank, hand_class=hand_class)
     return [by_rank[rank] for rank in sorted(by_rank)]
 

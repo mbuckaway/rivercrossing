@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Best-of-5 poker hand evaluation, natural and wild (spec section 5).
+"""Best hand from 0..N cards: natural, wild or duplicate (spec S5).
 
 ``eval5`` wraps phevaluator's natural-card evaluator -- spec section 5's
 algorithm sketch names it explicitly -- with a table-driven mapping from
@@ -7,15 +7,35 @@ its 7,462 distinct ranks onto this project's local :class:`HandClass`
 ordering, a Royal-Flush-above-Straight-Flush split that phevaluator
 itself does not make, and (E2.1.2) a five-of-a-kind check ranked above
 every natural hand: jokers are wild and always resolve to whichever
-natural completion maximizes the hand (spec section 5's ``best_hand``
-pseudocode, restricted here to exactly 5 cards -- best-of-N is E2.1.3).
+natural completion maximizes the hand.
+
+Physical-cards semantics (E2.1.3, spec section 5): a multi-deck shoe can
+legally deal one entry two identical cards, so a "natural" 5-card hand
+is not always 5 pairwise-distinct codes -- 9H 9H is simply a pair of
+nines, and 9H 9H KH QH 2H is a king-high flush whose kickers happen to
+include a paired card. phevaluator's native evaluator is undefined
+(observed to segfault) on a repeated card id, so any hand with one
+takes ``classify_pattern``'s first-principles path instead of
+phevaluator's; both paths feed the same :func:`_kicker_tiebreak`, so a
+hand's class and tiebreak always compare consistently regardless of
+which path produced it. ``tools/gen_rank_vectors.py`` imports
+``classify_pattern`` rather than keeping its own copy.
+
+``best_hand`` is the best-5-of-N search (E2.1.3): 5 or more cards search
+every 5-of-N natural subset with every joker kept in play (spec
+section 5's ``best_hand`` pseudocode -- a wild never hurts); fewer than
+5 cards score as the best *partial* hand those cards can make, and a
+missing kicker always ranks below a present one. Card cap X is a
+caller concern (R-13): slice to the first X dealt cards before calling
+``best_hand``, and the later, non-scoring cards are simply not passed.
 """
 
 import bisect
 import itertools
+from collections import Counter
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from phevaluator.evaluator import evaluate_cards
 
@@ -29,14 +49,23 @@ NATURAL_HAND_SIZE = 5
 # integer per entry".
 NATURAL_RANK_COUNT = 7462
 
+# A straight's 5 distinct ranks span this many values (e.g. 6-2=4 for
+# 2-3-4-5-6); the wheel (A-2-3-4-5) is the one straight that doesn't,
+# and always plays as a 5-high straight, never ace-high.
+_STRAIGHT_SPAN = 4
+_WHEEL_RANKS = (2, 3, 4, 5, 14)
+_WHEEL_HIGH = 5
+_ROYAL_RANKS = (10, 11, 12, 13, 14)
+
 
 class HandClass(IntEnum):
     """Hand categories, worst to best (spec section 5 table, reversed).
 
     Values increase with strength, so a plain ``IntEnum`` comparison
-    already orders hand classes correctly. ``FIVE_OF_A_KIND`` needs at
-    least one joker (E2.1.2); :func:`eval5` never produces it from 5
-    natural cards.
+    already orders hand classes correctly. ``FIVE_OF_A_KIND`` needs
+    either a joker (E2.1.2) or 5 physically identical cards from a
+    multi-deck shoe (E2.1.3); :func:`eval5` never produces it from 5
+    pairwise-distinct natural cards.
     """
 
     HIGH_CARD = 1
@@ -56,18 +85,15 @@ class HandClass(IntEnum):
 class EvaluatedHand:
     """One evaluated hand; ``(cls, tiebreak)`` totally orders hands.
 
-    For every class but ``FIVE_OF_A_KIND``, ``tiebreak`` inverts
-    phevaluator's rank so plain tuple comparison of ``(cls,
-    tiebreak)`` already puts the better hand higher: phevaluator
-    numbers hands 1 (best) through 7,462 (worst), the opposite of this
-    project's "higher sorts better" convention, so this stores
-    ``NATURAL_RANK_COUNT + 1 - natural_rank`` instead of the raw
-    phevaluator number. ``FIVE_OF_A_KIND`` has no phevaluator rank at
-    all (a real deck has no fifth copy of a card); its tiebreak is
-    simply the quint's own :class:`~rivercrossing.cards.Rank` value
-    (2-14) -- a different, smaller scale that never needs to compare
-    against another class's tiebreak, since ``cls`` alone already
-    separates it from everything else.
+    ``tiebreak`` always leads with the card count, then the standard
+    ordered-rank (kicker) comparison for ``cls`` (see
+    :func:`_kicker_tiebreak`): the count prefix is what makes a
+    shorter partial hand always sort below a longer one of the same
+    class, whatever its kickers (spec section 5's partial-hand rule --
+    "a 4-card ace-high sits under every 5-card ace-high"). Both the
+    phevaluator-backed fast path and the first-principles path (E2.1.3
+    module docstring) emit tiebreaks on this same shape, so a hand
+    from either path compares correctly against the other.
     """
 
     cls: HandClass
@@ -83,7 +109,7 @@ class InvalidHandError(ValueError):
 # phevaluator/treys' published rank partitioning (verified empirically
 # against representative hands of every class -- see test_hands.py):
 # each entry's rank is <= its upper bound and > the previous one's.
-_UPPER_BOUNDS = (1, 10, 166, 322, 1599, 1609, 2467, 3325, 6185, 7462)
+_UPPER_BOUNDS = (1, 10, 166, 322, 1599, 1609, 2467, 3325, 6185, NATURAL_RANK_COUNT)
 _CLASS_BY_UPPER_BOUND = (
     HandClass.ROYAL_FLUSH,
     HandClass.STRAIGHT_FLUSH,
@@ -98,13 +124,127 @@ _CLASS_BY_UPPER_BOUND = (
 )
 
 # Rank-descending, then Suit's own declaration order within a rank --
-# the fixed candidate order the wild search below walks. Combined with
-# `combinations_with_replacement`'s index-order guarantee, this is also
-# what makes a multi-joker resolution's *order* deterministic: the
+# the fixed candidate order every wild search below walks. Combined
+# with `combinations_with_replacement`'s index-order guarantee, this is
+# also what makes a multi-joker resolution's *order* deterministic: the
 # higher-ranked (then lower-suit-index) card always comes first.
 _ALL_NATURAL_CARDS: tuple[Card, ...] = tuple(
     Card(rank=rank, suit=suit) for rank in sorted(Rank, reverse=True) for suit in Suit
 )
+
+
+_QUADS_COUNT = 4
+_TRIPS_COUNT = 3
+_PAIR_COUNT = 2
+
+
+def _straight_high(ranks: Sequence[int]) -> int | None:
+    """Return a straight's high card, or None if *ranks* isn't one.
+
+    Exactly 5 distinct, consecutive ranks -- or the wheel, A-2-3-4-5,
+    which plays as a 5-high straight, never ace-high.
+    """
+    distinct = sorted(set(ranks))
+    if tuple(distinct) == _WHEEL_RANKS:
+        return _WHEEL_HIGH
+    if len(distinct) == NATURAL_HAND_SIZE and distinct[-1] - distinct[0] == _STRAIGHT_SPAN:
+        return distinct[-1]
+    return None
+
+
+def _classify_by_counts(counts: Sequence[int]) -> HandClass:
+    """Classify by rank-count pattern alone, no flush or straight."""
+    if counts[0] == _QUADS_COUNT:
+        label = HandClass.QUADS
+    elif counts[:2] == [_TRIPS_COUNT, _PAIR_COUNT]:
+        label = HandClass.FULL_HOUSE
+    elif counts[0] == _TRIPS_COUNT:
+        label = HandClass.TRIPS
+    elif counts[:2] == [_PAIR_COUNT, _PAIR_COUNT]:
+        label = HandClass.TWO_PAIR
+    elif counts[0] == _PAIR_COUNT:
+        label = HandClass.PAIR
+    else:
+        label = HandClass.HIGH_CARD
+    return label
+
+
+def classify_pattern(ranks: Sequence[int], suits: Sequence[str]) -> HandClass:
+    """Classify a 0..5-card rank/suit pattern, first principles.
+
+    Independent of phevaluator: a flush is 5 matching suits, a
+    straight is 5 consecutive rank values (or the wheel, A-2-3-4-5),
+    and the rest follows the rank-value multiset -- never consults a
+    phevaluator rank, so it can independently confirm one. Duplicate
+    ranks and suits are not a foul (physical-cards semantics, module
+    docstring): 5 cards sharing one rank is FIVE_OF_A_KIND, and a
+    flush's "5 matching suits" is exactly as true when 2 of those 5
+    happen to be the same physical card.
+
+    Fewer than 5 ranks can never be a flush or a straight -- both
+    inherently need all 5 cards to exist at all (spec section 5's
+    partial-hand rule) -- so this only ever falls through to
+    :func:`_classify_by_counts` for a short hand. A straight and a
+    rank-count pattern (quads, full house, trips, two pair, pair)
+    never both apply -- a straight needs 5 distinct ranks -- so their
+    relative check order here does not affect the result.
+    """
+    if not ranks:
+        return HandClass.HIGH_CARD
+    counts = sorted(Counter(ranks).values(), reverse=True)
+    if counts[0] >= NATURAL_HAND_SIZE:
+        return HandClass.FIVE_OF_A_KIND
+
+    is_full_hand = len(ranks) == NATURAL_HAND_SIZE
+    is_flush = is_full_hand and len(set(suits)) == 1
+    straight_high = _straight_high(ranks) if is_full_hand else None
+    by_counts = _classify_by_counts(counts)
+
+    if straight_high is not None and is_flush:
+        is_royal = tuple(sorted(set(ranks))) == _ROYAL_RANKS
+        label = HandClass.ROYAL_FLUSH if is_royal else HandClass.STRAIGHT_FLUSH
+    elif by_counts in (HandClass.QUADS, HandClass.FULL_HOUSE):
+        label = by_counts
+    elif is_flush:
+        label = HandClass.FLUSH
+    elif straight_high is not None:
+        label = HandClass.STRAIGHT
+    else:
+        label = by_counts
+    return label
+
+
+def _kicker_tiebreak(cls: HandClass, ranks: Sequence[int]) -> tuple[int, ...]:
+    """Compute the count-then-kicker tiebreak tuple for *ranks*.
+
+    The leading element is always the card count (see
+    ``EvaluatedHand``'s own docstring for why); the rest follows each
+    class's usual ordered-rank comparison.
+
+    HIGH_CARD and FLUSH compare by raw rank value alone: neither class
+    is *about* a same-rank group (a flush is just 5 cards of one suit,
+    duplicate-legal ranks included -- physical-cards semantics), so a
+    physically-paired card within one must never outrank a genuinely
+    higher single card the way it would for PAIR/TRIPS/etc. (module
+    docstring's own king-high-flush-with-paired-nines example). The
+    two straight classes only ever differ by their high card (mindful
+    of the wheel), and ROYAL_FLUSH never varies at all. Every other
+    class -- the ones actually built from a same-rank group -- ranks
+    by (how many of a rank, how high that rank is), the standard
+    poker kicker order.
+    """
+    count = len(ranks)
+    if not ranks or cls == HandClass.ROYAL_FLUSH:
+        return (count,)
+    if cls in (HandClass.STRAIGHT, HandClass.STRAIGHT_FLUSH):
+        # cls already confirms ranks form a straight, so this is never
+        # None here -- the cast documents that to mypy.
+        return (count, cast("int", _straight_high(ranks)))
+    if cls in (HandClass.HIGH_CARD, HandClass.FLUSH):
+        return (count, *sorted(ranks, reverse=True))
+    rank_counts = Counter(ranks)
+    ordered = sorted(rank_counts, key=lambda rank: (rank_counts[rank], rank), reverse=True)
+    return (count, *ordered)
 
 
 def _classify(natural_rank: int) -> HandClass:
@@ -113,35 +253,110 @@ def _classify(natural_rank: int) -> HandClass:
     return _CLASS_BY_UPPER_BOUND[index]
 
 
-def _evaluate_natural_five(cards: Sequence[Card]) -> EvaluatedHand:
-    """Evaluate 5 natural (joker-free) cards via phevaluator.
+def _is_duplicate_free(cards: Sequence[Card]) -> bool:
+    """Report whether *cards* are pairwise-distinct codes.
 
-    Callers must ensure the 5 codes are pairwise distinct: phevaluator's
-    native evaluator is undefined -- observed to segfault -- on a
-    repeated card id, and no legal *natural* hand has one. The wild
-    search below filters candidates before ever reaching this
-    function; natural (0-joker) callers only ever pass a real 5-card
-    hand, whose codes are already distinct by construction.
+    Compares ``(rank, suit)`` pairs rather than calling ``.code()``:
+    this runs on every wild-search candidate (spec section 5's
+    performance budget, R-42), and skipping the string formatting
+    matters at that volume.
     """
-    natural_rank: int = evaluate_cards(*(card.code() for card in cards))
-    tiebreak = (NATURAL_RANK_COUNT + 1 - natural_rank,)
+    return len({(card.rank, card.suit) for card in cards}) == len(cards)
+
+
+def _natural_ranks(cards: Sequence[Card]) -> list[int]:
+    """List each natural card's rank value.
+
+    Narrows ``Rank | None`` for mypy: every caller here already only
+    ever holds natural (non-joker) cards, which always carry a rank.
+    """
+    return [cast("Rank", card.rank).value for card in cards]
+
+
+def _natural_suits(cards: Sequence[Card]) -> list[str]:
+    """List each natural card's suit value (mypy narrowing above)."""
+    return [cast("Suit", card.suit).value for card in cards]
+
+
+# phevaluator's own native card id: rank_index (0 for Two .. 12 for
+# Ace) * 4 + suit_index, verified against phevaluator.card.Card.to_id.
+_PHEVALUATOR_SUIT_INDEX: dict[Suit, int] = {
+    Suit.CLUBS: 0,
+    Suit.DIAMONDS: 1,
+    Suit.HEARTS: 2,
+    Suit.SPADES: 3,
+}
+
+
+def _phevaluator_card_id(card: Card) -> int:
+    """Compute phevaluator's native card id, no string round trip.
+
+    ``Card.code()`` followed by phevaluator's own string parser reaches
+    the exact same id; skipping the format-then-reparse round trip
+    matters here because this runs on every wild-search candidate
+    (R-42's 180x12 field budget).
+    """
+    rank = cast("Rank", card.rank)
+    suit = cast("Suit", card.suit)
+    return (rank.value - Rank.TWO.value) * len(Suit) + _PHEVALUATOR_SUIT_INDEX[suit]
+
+
+def _evaluate_pattern(cards: Sequence[Card]) -> EvaluatedHand:
+    """Evaluate 0..5 natural (joker-free) cards, first principles.
+
+    No phevaluator fast path here: this always serves either a
+    fewer-than-5-card partial hand or a duplicate-bearing 5-card one
+    (:func:`classify_pattern`'s module docstring covers both), and a
+    wild search's own candidate scoring, all cheap regardless.
+    """
+    ranks = _natural_ranks(cards)
+    cls = classify_pattern(ranks, _natural_suits(cards))
     return EvaluatedHand(
-        cls=_classify(natural_rank),
-        tiebreak=tiebreak,
-        best5=tuple(cards),
-        jokers_played_as=(),
+        cls=cls, tiebreak=_kicker_tiebreak(cls, ranks), best5=tuple(cards), jokers_played_as=()
     )
 
 
-def _five_of_a_kind_rank(naturals: Sequence[Card]) -> Rank | None:
-    """Return the rank a wild expansion could reach five-of-a-kind at.
+def _evaluate_natural_five(cards: Sequence[Card]) -> EvaluatedHand:
+    """Evaluate 5 pairwise-distinct natural cards via phevaluator.
 
-    Reachable exactly when every natural card already shares one rank
-    (trivially true with 0 or 1 naturals): the jokers can always
-    duplicate a suit to fill the rest (duplicate-legal, spec section 4's
-    multi-deck shoe). With no naturals at all, Ace is the unconstrained
-    best choice -- spec section 5's ``j >= 5 -> FIVE_OF_KIND(Ace)``
-    shortcut falls out of this same rule with no extra branch.
+    Callers must ensure the 5 codes are pairwise distinct: phevaluator's
+    native evaluator is undefined -- observed to segfault -- on a
+    repeated card id. :func:`_evaluate_five_naturals` is the safe
+    entry point; this direct call is only for the rank-sweep and
+    joker-vector fast paths, which already know their input is clean.
+    """
+    natural_rank: int = evaluate_cards(*(_phevaluator_card_id(card) for card in cards))
+    cls = _classify(natural_rank)
+    ranks = _natural_ranks(cards)
+    tiebreak = _kicker_tiebreak(cls, ranks)
+    return EvaluatedHand(cls=cls, tiebreak=tiebreak, best5=tuple(cards), jokers_played_as=())
+
+
+def _evaluate_five_naturals(cards: Sequence[Card]) -> EvaluatedHand:
+    """Evaluate exactly 5 natural (joker-free) cards, safely.
+
+    Distinct-code hands take phevaluator's fast native path;
+    everything else -- legal under physical-cards semantics (module
+    docstring) -- takes the first-principles path instead.
+    """
+    if _is_duplicate_free(cards):
+        return _evaluate_natural_five(cards)
+    return _evaluate_pattern(cards)
+
+
+def _uniform_natural_rank(naturals: Sequence[Card]) -> Rank | None:
+    """Return the one rank every natural card already shares, if any.
+
+    True trivially with 0 or 1 naturals. A wild search can always
+    reach every remaining card of that rank -- duplicating a suit is
+    legal (physical-cards semantics) -- so whenever this returns a
+    rank, matching every joker to it is unconditionally optimal:
+    HandClass always dominates any kicker, so growing this rank's
+    group (pair -> trips -> quads -> five-of-a-kind) beats any
+    alternative regardless of what other ranks might offer. With no
+    naturals at all, Ace is the unconstrained best choice -- spec
+    section 5's ``j >= 5 -> FIVE_OF_KIND(Ace)`` shortcut falls out of
+    this same rule with no extra branch.
     """
     ranks = {card.rank for card in naturals}
     if len(ranks) > 1:
@@ -153,9 +368,9 @@ def _cycle_suits(count: int) -> tuple[Suit, ...]:
     """Pick *count* suits, cycling Suit's declaration order.
 
     Only used where a joker's exact suit is display-only and can never
-    change the hand's class or tiebreak (five-of-a-kind: any suit
-    reaches the same quint). Duplicates are legal (R1 of the joker
-    vector table).
+    change the hand's class or tiebreak (matching an already-uniform
+    rank: any suit reaches the same group). Duplicates are legal (R1
+    of the joker vector table).
     """
     suits = tuple(Suit)
     return tuple(suits[index % len(suits)] for index in range(count))
@@ -166,64 +381,148 @@ def _five_of_a_kind_hand(cards: Sequence[Card], rank: Rank, joker_count: int) ->
     jokers_played_as = tuple(Card(rank=rank, suit=suit) for suit in _cycle_suits(joker_count))
     return EvaluatedHand(
         cls=HandClass.FIVE_OF_A_KIND,
-        tiebreak=(rank.value,),
+        tiebreak=(NATURAL_HAND_SIZE, rank.value),
         best5=tuple(cards),
         jokers_played_as=jokers_played_as,
     )
 
 
-def _is_duplicate_free(cards: Sequence[Card]) -> bool:
-    """Report whether *cards* are 5 pairwise-distinct codes."""
-    return len({card.code() for card in cards}) == NATURAL_HAND_SIZE
+_FillScore = tuple[HandClass, tuple[int, ...], bool]
 
 
-_NaturalScore = tuple[HandClass, tuple[int, ...]]
+def _fill_score(
+    naturals: Sequence[Card], fill: Sequence[Card], *, allow_fast_path: bool
+) -> _FillScore:
+    """Score one candidate wild fill, combined with *naturals*.
 
+    Dispatches to phevaluator's fast path itself, rather than through
+    :func:`_evaluate_five_naturals`, so the duplicate check this
+    function needs anyway for its own tie-break flag is computed only
+    once per candidate, not twice (R-42's 180x12 field budget feels
+    that on a hot loop this size). *allow_fast_path* is False for a
+    partial hand (module docstring of :func:`_partial_hand`): fewer
+    than 5 cards is never something phevaluator can evaluate at all.
 
-def _natural_score(naturals: Sequence[Card], fill: Sequence[Card]) -> _NaturalScore:
-    """Score one candidate wild fill by its class and tiebreak."""
-    evaluated = _evaluate_natural_five((*naturals, *fill))
-    return (evaluated.cls, evaluated.tiebreak)
-
-
-def _best_wild_fill(naturals: Sequence[Card], joker_count: int) -> tuple[Card, ...]:
-    """Search every distinct way to fill *joker_count* wild slots.
-
-    Candidates are the full 52-card deck (spec section 5 explicitly
-    allows this: "52 also fine" -- pruning to ranks-in-hand,
-    straight-completers, suits-present and aces is the alternative it
-    names, not a requirement). A combination containing a repeated
-    card is skipped: it is never optimal here (this function only
-    runs once :func:`_five_of_a_kind_rank` has ruled out
-    five-of-a-kind, the one class where an exact duplicate helps) and
-    passing one to phevaluator is unsafe (see
-    :func:`_evaluate_natural_five`).
-
-    This function is only ever called with 1-3 jokers: 4 jokers means
-    exactly 1 natural card, always rank-homogeneous with itself, so
-    :func:`_five_of_a_kind_rank` always short-circuits first. Worst
-    case is 3 jokers, C(54, 3) = 24,804 native evaluator calls --
-    comfortably fast.
+    The trailing "is this combination duplicate-free" flag is a pure
+    tie-break preference, never part of the stored ``EvaluatedHand``:
+    once a rank group's size is decided, which exact suit fills it
+    never changes class or tiebreak, so among equally-scoring fills
+    this prefers a fresh card over reusing one already in the hand.
+    Reaching for a duplicate is never *necessary* here -- the one
+    class where it can be (five-of-a-kind) is decided by
+    :func:`_uniform_natural_rank` before this search ever runs.
     """
-    candidates = itertools.combinations_with_replacement(_ALL_NATURAL_CARDS, joker_count)
-    valid_fills = [fill for fill in candidates if _is_duplicate_free((*naturals, *fill))]
-    return max(valid_fills, key=lambda fill: _natural_score(naturals, fill))
+    combined = (*naturals, *fill)
+    duplicate_free = _is_duplicate_free(combined)
+    if allow_fast_path and duplicate_free:
+        evaluated = _evaluate_natural_five(combined)
+    else:
+        evaluated = _evaluate_pattern(combined)
+    return (evaluated.cls, evaluated.tiebreak, duplicate_free)
+
+
+def _straight_completion_ranks(natural_ranks: Sequence[int]) -> frozenset[int]:
+    """List ranks that could complete or extend a straight in ranks.
+
+    A straight needs 5 consecutive values spanning at most
+    ``_STRAIGHT_SPAN``; every rank within that span of either end of
+    the naturals is a plausible completion. The wheel (A-2-3-4-5)
+    needs its own check -- the ace sits at value 14, nowhere near the
+    low end numerically, even though it plays low there.
+
+    Both callers only ever reach this with at least one rank already
+    (:func:`_pruned_wild_candidates` and :func:`_relevant_naturals`
+    only run once at least one natural card is known to exist), so an
+    empty *natural_ranks* is a genuine invariant violation, not a
+    case to handle quietly -- ``min()``/``max()`` raise on it.
+    """
+    completions: set[int] = set()
+    if set(natural_ranks) <= set(_WHEEL_RANKS):
+        completions |= set(_WHEEL_RANKS)
+    low, high = min(natural_ranks), max(natural_ranks)
+    if high - low <= _STRAIGHT_SPAN:
+        completions |= set(range(max(2, high - _STRAIGHT_SPAN), min(14, low + _STRAIGHT_SPAN) + 1))
+    return frozenset(completions)
+
+
+def _plausible_flush_suits(naturals: Sequence[Card], joker_count: int) -> frozenset[Suit]:
+    """List suits with enough natural cards to plausibly reach a flush.
+
+    A flush needs 5 cards of one suit; if a suit's natural count plus
+    every remaining joker still falls short, pursuing it can never
+    help, so it is not worth a candidate at all.
+    """
+    suit_counts = Counter(card.suit for card in naturals if card.suit is not None)
+    return frozenset(
+        suit for suit, count in suit_counts.items() if count + joker_count >= NATURAL_HAND_SIZE
+    )
+
+
+def _pruned_wild_candidates(naturals: Sequence[Card], joker_count: int) -> tuple[Card, ...]:
+    """Build a small, sufficient wild-fill candidate set for *naturals*.
+
+    Spec section 5's own pruning heuristic: "ranks in subset,
+    straight-completing ranks, suits present ... aces". The only ways
+    a wild card can ever raise a hand's class are growing an existing
+    rank's group, completing a straight, or completing a flush;
+    anything else can only ever match the best possible plain kicker,
+    which an ace, crossed with every suit (suit never matters for a
+    rank group or a plain straight), already is. Filtering
+    ``_ALL_NATURAL_CARDS`` instead of building a fresh set keeps this
+    in that same fixed, deterministic order.
+    """
+    natural_ranks = [card.rank for card in naturals if card.rank is not None]
+    rank_values = [rank.value for rank in natural_ranks]
+    candidate_ranks = (
+        set(natural_ranks)
+        | {Rank(value) for value in _straight_completion_ranks(rank_values)}
+        | {Rank.ACE}
+    )
+    flush_suits = _plausible_flush_suits(naturals, joker_count)
+    return tuple(
+        card
+        for card in _ALL_NATURAL_CARDS
+        if card.rank in candidate_ranks or card.suit in flush_suits
+    )
+
+
+def _search_best_fill(
+    naturals: Sequence[Card], joker_count: int, *, allow_fast_path: bool
+) -> tuple[Card, ...]:
+    """Search every way to fill *joker_count* wild slots, keep the best.
+
+    Shared by eval5's exactly-5-card wild search and best_hand's
+    partial-hand wild search; *allow_fast_path* is the only
+    difference (see :func:`_fill_score`). Only ever called once
+    :func:`_uniform_natural_rank` has ruled out the
+    unconditionally-optimal shortcut, so *naturals* always has 2+
+    distinct ranks -- meaning at most 3 jokers reach this function
+    when filling to 5 cards (4 would mean 1 natural, always uniform)
+    and at most 2 when filling a shorter partial hand (3 would mean 1
+    natural). Candidates are pruned per :func:`_pruned_wild_candidates`
+    -- typically under 30 rather than the full 52 -- since
+    ``best_hand``'s C(n, k) outer subset loop calls this once per
+    subset (R-42's 180x12 field budget needs it small).
+    """
+    candidates = itertools.combinations_with_replacement(
+        _pruned_wild_candidates(naturals, joker_count), joker_count
+    )
+    return max(
+        candidates, key=lambda fill: _fill_score(naturals, fill, allow_fast_path=allow_fast_path)
+    )
 
 
 def _evaluate_with_wild_cards(
     cards: Sequence[Card], naturals: Sequence[Card], joker_count: int
 ) -> EvaluatedHand:
-    """Resolve 1+ jokers to whichever completion maximizes the hand."""
-    five_kind_rank = _five_of_a_kind_rank(naturals)
-    if five_kind_rank is not None:
-        return _five_of_a_kind_hand(cards, five_kind_rank, joker_count)
-    fill = _best_wild_fill(naturals, joker_count)
-    natural_result = _evaluate_natural_five((*naturals, *fill))
+    """Resolve 1+ jokers to whatever completion maximizes the hand."""
+    uniform_rank = _uniform_natural_rank(naturals)
+    if uniform_rank is not None:
+        return _five_of_a_kind_hand(cards, uniform_rank, joker_count)
+    fill = _search_best_fill(naturals, joker_count, allow_fast_path=True)
+    result = _evaluate_five_naturals((*naturals, *fill))
     return EvaluatedHand(
-        cls=natural_result.cls,
-        tiebreak=natural_result.tiebreak,
-        best5=tuple(cards),
-        jokers_played_as=fill,
+        cls=result.cls, tiebreak=result.tiebreak, best5=tuple(cards), jokers_played_as=fill
     )
 
 
@@ -238,7 +537,10 @@ def eval5(cards: Sequence[Card]) -> EvaluatedHand:
     """Evaluate exactly 5 cards, natural or wild, into an EvaluatedHand.
 
     Args:
-        cards: Exactly 5 cards; any number of them may be jokers.
+        cards: Exactly 5 cards; any number of them may be jokers, and
+            any number of the natural ones may repeat a code (a
+            multi-deck shoe can legally deal one entry two identical
+            cards -- module docstring).
 
     Returns:
         The evaluated hand: its class, tiebreak score, the original 5
@@ -253,8 +555,99 @@ def eval5(cards: Sequence[Card]) -> EvaluatedHand:
     naturals = [card for card in cards if not card.joker]
     joker_count = len(cards) - len(naturals)
     if joker_count == 0:
-        return _evaluate_natural_five(cards)
+        return _evaluate_five_naturals(cards)
     return _evaluate_with_wild_cards(cards, naturals, joker_count)
+
+
+def _partial_hand(cards: Sequence[Card]) -> EvaluatedHand:
+    """Evaluate a 0..4 card hand -- spec section 5's partial-hand rule.
+
+    Never a flush or straight (both need all 5 cards to exist at
+    all -- :func:`classify_pattern`'s module docstring): the only
+    thing a joker can do here is grow an existing natural rank's
+    group, or -- with no natural anchor -- become an ace, exactly the
+    same unconditionally-optimal shortcut :func:`eval5` uses.
+    """
+    naturals = [card for card in cards if not card.joker]
+    joker_count = len(cards) - len(naturals)
+    uniform_rank = _uniform_natural_rank(naturals)
+    if uniform_rank is not None:
+        fill = tuple(Card(rank=uniform_rank, suit=suit) for suit in _cycle_suits(joker_count))
+    else:
+        fill = _search_best_fill(naturals, joker_count, allow_fast_path=False)
+    result = _evaluate_pattern((*naturals, *fill))
+    return EvaluatedHand(
+        cls=result.cls, tiebreak=result.tiebreak, best5=tuple(cards), jokers_played_as=fill
+    )
+
+
+def _relevant_naturals(naturals: Sequence[Card], joker_count: int) -> tuple[Card, ...]:
+    """Prune *naturals* to the ones a winning 5-card subset could use.
+
+    Mirrors :func:`_pruned_wild_candidates`'s reasoning, turned around
+    for choosing *which naturals* the outer subset search bothers
+    with (``best_hand``'s C(n, k) subset loop otherwise multiplies
+    against every wild-search call -- R-42's 180x12 field budget
+    needs this too, not just the wild search). A natural only ever
+    earns a place in the best subset by (a) sharing a rank with
+    another natural (growing a pair/trips/quads), (b) sitting in the
+    straight-completion range for the pool's overall rank spread, (c)
+    holding a suit that could plausibly complete a flush, or (d)
+    simply ranking among the highest available plain kickers -- kept
+    by original list position, not value, so a duplicate-legal repeat
+    is never silently collapsed into "the same" candidate.
+    """
+    need = NATURAL_HAND_SIZE - joker_count
+    rank_counts = Counter(card.rank for card in naturals)
+    all_rank_values = [card.rank.value for card in naturals if card.rank is not None]
+    straight_ranks = {Rank(value) for value in _straight_completion_ranks(all_rank_values)}
+    flush_suits = _plausible_flush_suits(naturals, joker_count)
+    by_rank_desc = sorted(
+        range(len(naturals)), key=lambda i: cast("Rank", naturals[i].rank).value, reverse=True
+    )
+    top_kicker_indices = set(by_rank_desc[:need])
+    return tuple(
+        card
+        for index, card in enumerate(naturals)
+        if rank_counts[card.rank] > 1
+        or card.rank in straight_ranks
+        or card.suit in flush_suits
+        or index in top_kicker_indices
+    )
+
+
+def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
+    """Find the best 5-card hand within *cards* (spec section 5).
+
+    Args:
+        cards: 0 or more cards, any number of them jokers or
+            duplicate-legal repeats. Fewer than 5 cards score as the
+            best partial hand those cards can make -- a missing
+            kicker always ranks below a present one, however good the
+            rest of the hand is (:func:`_partial_hand`). 5 or more
+            cards search every 5-of-N natural subset with every joker
+            kept in play (spec section 5's own pseudocode comment: "a
+            wild never hurts -> all jokers play").
+
+    Returns:
+        The best :class:`EvaluatedHand` reachable from *cards*.
+
+    Card cap X is a caller concern, not a parameter here (R-13): score
+    the first X dealt cards by slicing *cards* before calling this
+    function; later laps still count for laps/time even once they
+    stop scoring.
+    """
+    if len(cards) < NATURAL_HAND_SIZE:
+        return _partial_hand(cards)
+    naturals = [card for card in cards if not card.joker]
+    jokers = [card for card in cards if card.joker]
+    if len(jokers) >= NATURAL_HAND_SIZE:
+        chosen = tuple(jokers[:NATURAL_HAND_SIZE])
+        return _five_of_a_kind_hand(chosen, Rank.ACE, NATURAL_HAND_SIZE)
+    relevant = _relevant_naturals(naturals, len(jokers))
+    subsets = itertools.combinations(relevant, NATURAL_HAND_SIZE - len(jokers))
+    candidates = (eval5((*subset, *jokers)) for subset in subsets)
+    return max(candidates, key=lambda hand: (hand.cls, hand.tiebreak))
 
 
 def compare(a: EvaluatedHand, b: EvaluatedHand) -> int:
