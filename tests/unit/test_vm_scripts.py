@@ -111,6 +111,22 @@ def _rsync_lines(text: str) -> str:
     return "\n".join(lines)
 
 
+def _ssh_lines(text: str) -> str:
+    """Every line mentioning ssh, joined -- scopes the readiness pin."""
+    lines = [line for line in text.splitlines() if "ssh" in line]
+    if not lines:
+        pytest.fail("no ssh invocation found in scripts/setup_functional_vm.sh")
+    return "\n".join(lines)
+
+
+def _tart_run_lines(text: str) -> str:
+    """Every line invoking `tart run`, joined -- scopes the boot pin."""
+    lines = [line for line in text.splitlines() if "tart run" in line]
+    if not lines:
+        pytest.fail("no `tart run` invocation found in scripts/setup_functional_vm.sh")
+    return "\n".join(lines)
+
+
 @pytest.fixture(scope="module")
 def shellcheck_path() -> str:
     """Return the shellcheck binary, skipping if none is installed."""
@@ -179,6 +195,34 @@ def test_vm_script_passes_shellcheck(shellcheck_path: str, script_path: Path) ->
 def test_setup_vm_script_references_required_directive(setup_vm_text: str, substring: str) -> None:
     """Every tart/brew/venv directive the setup script needs appears."""
     assert substring in setup_vm_text
+
+
+def test_setup_script_waits_for_ssh_reachability(setup_vm_text: str) -> None:
+    """The boot-wait path must probe ssh, not just poll `tart ip`.
+
+    Measured: setup's wait_for_vm_ip only polls `tart ip`, so
+    ssh-copy-id fired before the guest's sshd was actually up and the
+    script died ("ssh-copy-id to admin@192.168.64.2 failed"). run_
+    functional_tests_vm.sh's wait_for_guest already probes ssh with a
+    ConnectTimeout before trusting the IP; setup needs the same shape.
+    """
+    ssh_lines = _ssh_lines(setup_vm_text)
+
+    assert "ConnectTimeout" in ssh_lines
+
+
+def test_setup_script_boots_headless(setup_vm_text: str) -> None:
+    """The template's first boot must be headless, not windowed.
+
+    RiverCrossing needs no TCC grants, so there is no reason for a
+    visible first boot; the per-run `tart run` in run_functional_
+    tests_vm.sh already carries `--no-graphics` (test_run_vm_script_
+    references_required_directive pins that one), and the template's
+    one-time boot in setup needs the same flag.
+    """
+    tart_run_lines = _tart_run_lines(setup_vm_text)
+
+    assert "--no-graphics" in tart_run_lines
 
 
 # ----------------------------- scripts/run_functional_tests_vm.sh
