@@ -51,8 +51,8 @@ brew install openai/tools/tart      # Tart moved from Cirrus Labs to OpenAI in 2
 scripts/setup_functional_vm.sh      # clone the base image, size it, provision, install deps
 ```
 
-The setup script boots the template windowed once and asks for the guest password (`admin`)
-during `ssh-copy-id`. Every later run is non-interactive.
+The setup script boots the template headless and asks for the guest password (`admin`) in the
+terminal during `ssh-copy-id`. Every later run is non-interactive, and no VM window ever opens.
 
 Each run:
 
@@ -79,6 +79,18 @@ worktree with rsync over ssh, runs the same pytest command as CI stage 3, pulls
   read by the setup script.
 - License: Tart ships under FSL-1.1-ALv2 — free for this local-dev use. Review the license before
   any org-wide or CI adoption.
+
+Measured on 2026-08-07 (Apple Silicon host, Tart 2.35.0, `macos-tahoe-base` guest):
+
+- Image download: 27.1 GB compressed; the template VM allocates 50 GB and uses ~31 GB.
+- Full run cycle (clone → boot → rsync → suite → pull → delete): **43 s** wall clock.
+- Suite inside the guest: **678 passed, 45 skipped in 20.4 s** (`-n auto`, 4 vCPUs) — the same
+  pass count as CI stage 3; the skips are the normal platform skips.
+- No Accessibility or Screen Recording prompts appeared — the no-TCC analysis holds.
+- A dropped network connection mid-pull is safe: pulled layers are cached, so re-running
+  `tart clone` (or the setup script) resumes in seconds.
+- The guest filesystem is synced before `tart stop` — a fast stop without it was measured to
+  lose a just-written `authorized_keys`.
 
 ## The gates (CI blocks merge)
 
