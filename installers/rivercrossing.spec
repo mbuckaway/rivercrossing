@@ -28,6 +28,11 @@ both of which resolve assets relative to the package -- only find
 anything if the data sits on that same relative path. That same
 call verifies the manifest first, which is what makes a missing
 asset fail *this build* rather than the app's first paint.
+``vector_data_entries`` does the same for the two evaluator
+self-test CSVs (E2.4.1, R-44): they ship at ``rivercrossing/...``
+directly, a sibling of ``ui/``, matching where
+``rivercrossing.hands`` resolves them relative to its own
+``__file__``.
 
 **The UI is reached by name, not by import.** Windows come from XRC
 at runtime, so PyInstaller's import graph cannot see most of the
@@ -45,7 +50,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
 
 import rivercrossing  # noqa: E402 -- check_asset_manifest puts src/ on the path
-from check_asset_manifest import data_entries  # noqa: E402 -- needs the path above
+from check_asset_manifest import (  # noqa: E402 -- needs the path above
+    data_entries,
+    vector_data_entries,
+)
 
 APP_NAME = "RiverCrossing"  # the .app and its display name
 EXE_NAME = "rivercrossing"  # the executable and the onedir folder
@@ -55,7 +63,8 @@ EXE_NAME = "rivercrossing"  # the executable and the onedir folder
 BUNDLE_ID = "io.github.mbuckaway.rivercrossing"
 
 ENTRY_SCRIPT = ROOT / "src" / "rivercrossing" / "__main__.py"
-UI_DIR = ROOT / "src" / "rivercrossing" / "ui"
+PACKAGE_DIR = ROOT / "src" / "rivercrossing"
+UI_DIR = PACKAGE_DIR / "ui"
 
 # Committed generated artifacts (P8-D5); tools/gen_app_icons.py
 # regenerates them from installers/branding/svg/*.svg.
@@ -112,7 +121,7 @@ INFO_PLIST = {
 analysis = Analysis(  # noqa: F821 -- PyInstaller injects Analysis
     [str(ENTRY_SCRIPT)],
     pathex=[str(ROOT / "src")],
-    datas=data_entries(UI_DIR),
+    datas=[*data_entries(UI_DIR), *vector_data_entries(PACKAGE_DIR)],
     hiddenimports=HIDDEN_IMPORTS,
 )
 

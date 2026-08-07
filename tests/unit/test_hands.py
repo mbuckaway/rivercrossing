@@ -1,26 +1,36 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Unit tests for rivercrossing.hands (E2.1.1, E2.1.2, E2.1.3).
+"""Unit tests for rivercrossing.hands (E2.1.1, E2.1.2, E2.1.3, E2.4.1).
 
-``tests/vectors/rank_sweep.csv`` (tools/gen_rank_vectors.py) is E2.1.1's
-specification: one representative 5-card hand per phevaluator rank, all
-7,462 of them, with a hand class computed independently of phevaluator
-(module docstring there; tests/unit/test_gen_rank_vectors.py covers the
-generator itself). The sweep test below is that task's named
-acceptance test -- "all 7,462 distinct ranks hit exactly once across
-the class sweep" -- everything else in that section pins the other
-brief-named behaviours (the wheel, flush over straight, the negative
-card-count case) plus the card model this module consumes.
+``src/rivercrossing/vectors/rank_sweep.csv`` (tools/gen_rank_vectors.py)
+is E2.1.1's specification: one representative 5-card hand per
+phevaluator rank, all 7,462 of them, with a hand class computed
+independently of phevaluator (module docstring there;
+tests/unit/test_gen_rank_vectors.py covers the generator itself). The
+sweep test below is that task's named acceptance test -- "all 7,462
+distinct ranks hit exactly once across the class sweep" -- everything
+else in that section pins the other brief-named behaviours (the
+wheel, flush over straight, the negative card-count case) plus the
+card model this module consumes.
 
-``tests/vectors/joker_vectors.csv`` is E2.1.2's specification: 28
-hand-authored wild-card vectors (spec section 5's joker layer), each
-row's expected class/tiebreak/resolution reasoned from the spec, not
-from this module -- see the CSV's own description column and
-design/docs-md/spec.md section 5's joker vector table.
+``src/rivercrossing/vectors/joker_vectors.csv`` is E2.1.2's
+specification: 28 hand-authored wild-card vectors (spec section 5's
+joker layer), each row's expected class/tiebreak/resolution reasoned
+from the spec, not from this module -- see the CSV's own description
+column and design/docs-md/spec.md section 5's joker vector table.
+E2.4.1 (spec section 12, R-44) moved both CSVs from ``tests/vectors/``
+into the package itself, as data ``rivercrossing.hands.self_test``
+loads at runtime, so the bundled app can self-test at launch with no
+``tests/`` tree riding along.
 
 E2.1.3 adds physical-cards duplicate handling (the segfault regression
 below), ``best_hand``'s best-5-of-N search, its partial-hand rule for
 fewer than 5 cards, and the card-cap fixtures -- all per spec section 5
 and the ruling recorded in design/docs-md/spec.md.
+
+E2.4.1 adds the evaluator self-test suite itself: :func:`self_test`
+re-runs the same rank sweep and joker vectors through a monkeypatchable
+loader seam, so a corrupted table can be proven to fail the report
+rather than merely trusted to pass it.
 """
 
 import csv
@@ -37,6 +47,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from rivercrossing import hands
 from rivercrossing.cards import Card, Rank, Shoe, Suit
 from rivercrossing.hands import (
     NATURAL_HAND_SIZE,
@@ -44,14 +55,17 @@ from rivercrossing.hands import (
     EvaluatedHand,
     HandClass,
     InvalidHandError,
+    SelfTestCheck,
+    SelfTestReport,
     _kicker_tiebreak,
     best_hand,
     classify_pattern,
     compare,
     eval5,
+    self_test,
 )
 
-_VECTORS_DIR = Path(__file__).resolve().parents[2] / "tests" / "vectors"
+_VECTORS_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "vectors"
 _RANK_SWEEP_CSV = _VECTORS_DIR / "rank_sweep.csv"
 _JOKER_VECTORS_CSV = _VECTORS_DIR / "joker_vectors.csv"
 
@@ -692,3 +706,180 @@ def test_best_hand_matches_exhaustive_oracle_across_seeded_multi_deck_draws(
     result = best_hand(cards)
 
     assert (result.cls, result.tiebreak) == (expected.cls, expected.tiebreak)
+
+
+# ------------------------------------------------- E2.4.1: self_test
+
+
+def test_self_test_given_the_real_vectors_reports_all_four_checks_passed() -> None:
+    """The real shipped vectors keep every self-test check green."""
+    report = self_test()
+
+    assert report.passed is True
+    assert len(report.checks) == 4
+
+
+def test_self_test_check_names_match_the_selftest_dlg_canvas_order() -> None:
+    """The four checks appear in xrc-windows.md's own fixed order."""
+    report = self_test()
+
+    assert tuple(check.name for check in report.checks) == (
+        "7,462 distinct ranks",
+        "Joker vector table (28)",
+        "Five-of-a-kind ordering",
+        "Whole-field 180×12 timing",  # noqa: RUF001 -- xrc-windows.md's frozen text
+    )
+
+
+def test_self_test_field_timing_check_detail_reports_seconds_under_budget() -> None:
+    """The field check's own detail is an "N.NN s" duration (R-42)."""
+    report = self_test()
+    timing_check = report.checks[3]
+
+    assert re.fullmatch(r"\d+\.\d{2} s", timing_check.detail)
+    assert timing_check.duration_seconds < 1.0
+
+
+def test_self_test_five_of_a_kind_check_passes_with_no_timing_detail() -> None:
+    """Check (c) carries no timing detail -- only check (d) does."""
+    report = self_test()
+
+    assert report.checks[2].passed is True
+    assert report.checks[2].detail == ""
+
+
+def test_self_test_report_passed_true_when_every_check_passed() -> None:
+    """SelfTestReport.passed is True when every check passed."""
+    check = SelfTestCheck(name="x", passed=True, duration_seconds=0.0, detail="")
+    report = SelfTestReport(checks=(check,))
+
+    assert report.passed is True
+
+
+def test_self_test_report_passed_false_when_any_check_failed() -> None:
+    """SelfTestReport.passed is False when any single check failed."""
+    passing = SelfTestCheck(name="x", passed=True, duration_seconds=0.0, detail="")
+    failing = SelfTestCheck(name="y", passed=False, duration_seconds=0.0, detail="")
+    report = SelfTestReport(checks=(passing, failing))
+
+    assert report.passed is False
+
+
+def test_self_test_corrupted_rank_sweep_short_table_fails_that_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wrong-length rank-sweep table fails the sweep check.
+
+    Exercises the sweep check's ``and``'s left operand: the row-count
+    mismatch alone fails this, before any rank is even compared (T-3;
+    the same-length corruption below exercises the right operand).
+    """
+    monkeypatch.setattr(hands, "_load_rank_sweep_vectors", lambda: (("2C 3D 4H 5S 6C", 1),))
+
+    report = self_test()
+
+    assert report.checks[0].passed is False
+    assert report.passed is False
+
+
+def test_self_test_corrupted_rank_sweep_duplicate_rank_fails_that_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-length table with a duplicated rank still fails.
+
+    The row count still matches NATURAL_RANK_COUNT, so only the
+    ordering comparison (the ``and``'s right operand) can fail this.
+    """
+    real_rows = hands._load_rank_sweep_vectors()
+    corrupted = list(real_rows)
+    corrupted[1] = (corrupted[1][0], corrupted[0][1])  # duplicate row 0's rank onto row 1
+    monkeypatch.setattr(hands, "_load_rank_sweep_vectors", lambda: tuple(corrupted))
+
+    report = self_test()
+
+    assert report.checks[0].passed is False
+    assert len(corrupted) == NATURAL_RANK_COUNT
+
+
+def test_self_test_corrupted_joker_vectors_short_table_fails_that_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty joker-vector table fails the joker-vector check.
+
+    Exercises that check's ``and``'s left operand (T-3; the wrong-
+    class corruption below exercises the right operand).
+    """
+    monkeypatch.setattr(hands, "_load_joker_vectors", lambda: ())
+
+    report = self_test()
+
+    assert report.checks[1].passed is False
+    assert report.passed is False
+
+
+def test_self_test_corrupted_joker_vectors_wrong_class_fails_that_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A same-length table with one wrong expected class still fails."""
+    real_rows = hands._load_joker_vectors()
+    bad_row = real_rows[0]
+    corrupted = (
+        hands._JokerVector(
+            cards=bad_row.cards,
+            expected_class="HIGH_CARD",
+            expected_tiebreak=bad_row.expected_tiebreak,
+        ),
+        *real_rows[1:],
+    )
+    monkeypatch.setattr(hands, "_load_joker_vectors", lambda: corrupted)
+
+    report = self_test()
+
+    assert report.checks[1].passed is False
+    assert len(corrupted) == len(real_rows)
+
+
+def test_self_test_corrupted_joker_vectors_wrong_tiebreak_fails_that_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A right expected class but wrong tiebreak still fails the check.
+
+    Exercises the mismatch filter's ``or``'s right operand (T-3): the
+    class-mismatch test above only ever exercises its left operand,
+    since a class mismatch short-circuits before the tiebreak compare.
+    """
+    real_rows = hands._load_joker_vectors()
+    bad_row = real_rows[0]
+    corrupted = (
+        hands._JokerVector(
+            cards=bad_row.cards,
+            expected_class=bad_row.expected_class,
+            expected_tiebreak=(*bad_row.expected_tiebreak, 999),
+        ),
+        *real_rows[1:],
+    )
+    monkeypatch.setattr(hands, "_load_joker_vectors", lambda: corrupted)
+
+    report = self_test()
+
+    assert report.checks[1].passed is False
+
+
+def test_check_field_timing_given_a_slow_clock_reports_fail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A measured duration at/above the R-42 budget fails this check.
+
+    Monkeypatches ``time.perf_counter`` -- an allowed clock seam, the
+    same category as ``datetime.now`` -- instead of actually running
+    slowly, so the budget comparison's false branch is exercised
+    deterministically (T-3): the true branch is already covered by
+    ``test_self_test_field_timing_check_detail_reports_seconds_under_budget``.
+    """
+    values = iter([0.0, 1.5])
+    monkeypatch.setattr(hands.time, "perf_counter", lambda: next(values))
+
+    passed, detail = hands._check_field_timing()
+
+    assert passed is False
+    assert detail == "1.50 s"

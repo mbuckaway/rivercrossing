@@ -81,6 +81,7 @@ rivercrossing = [
     "ui/xrc/*.xrc",
     "ui/assets/cards/*.png",
     "ui/assets/sounds/*.wav",
+    "vectors/*.csv",
 ]
 
 # ----------------------------------------------------------------- ruff

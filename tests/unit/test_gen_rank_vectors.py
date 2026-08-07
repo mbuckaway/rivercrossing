@@ -26,7 +26,9 @@ def _load_gen_rank_vectors(path: Path) -> ModuleType:
 
 gen_rank_vectors = _load_gen_rank_vectors(_GEN_RANK_VECTORS_PATH)
 
-_COMMITTED_CSV = Path(__file__).resolve().parents[2] / "tests" / "vectors" / "rank_sweep.csv"
+_COMMITTED_CSV = (
+    Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "vectors" / "rank_sweep.csv"
+)
 
 
 def test_write_rank_vectors_regeneration_matches_committed_csv_byte_for_byte(
@@ -36,8 +38,9 @@ def test_write_rank_vectors_regeneration_matches_committed_csv_byte_for_byte(
 
     Enumerating all C(52,5) hands is deterministic given a fixed deck
     order (module docstring), so a fresh run must match the file
-    already committed at ``tests/vectors/rank_sweep.csv`` byte for
-    byte -- the same honesty check test_ids_gen.py runs on ids.py.
+    already committed at ``src/rivercrossing/vectors/rank_sweep.csv``
+    byte for byte -- the same honesty check test_ids_gen.py runs on
+    ids.py.
     """
     out_path = tmp_path / "rank_sweep.csv"
 

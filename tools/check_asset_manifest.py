@@ -14,6 +14,12 @@ card bitmaps from ``cards_imagelist``'s own deck keys and scales,
 and the three WAV cues from spec.md section 10. A listing would
 happily agree with a tree that had lost a file.
 
+:func:`vector_data_entries` is the same idea for a second, separate
+manifest: the two evaluator self-test CSVs (E2.4.1, R-44) ship at the
+package *root* rather than under ``ui/``, so they get their own small
+manifest instead of a root-level entry inside ``required_assets()``,
+whose every other entry is ``ui/``-relative.
+
 Run it directly to check a tree without waiting for a build::
 
     python tools/check_asset_manifest.py
@@ -39,6 +45,7 @@ from rivercrossing.ui.cards_imagelist import (  # noqa: E402 -- needs the path a
 )
 
 DEFAULT_UI_DIR = _ROOT / "src" / "rivercrossing" / "ui"
+DEFAULT_PACKAGE_DIR = _ROOT / "src" / "rivercrossing"
 
 XRC_SUBDIR = "xrc"
 CARDS_SUBDIR = "assets/cards"
@@ -67,6 +74,18 @@ REQUIRED_SOUNDS: tuple[str, ...] = ("error.wav", "flagged.wav", "recorded.wav")
 # ``cards_imagelist.cards_dir()`` and ``harness.xrc_directory()``
 # resolve only if the assets sit on that same relative path.
 PACKAGE_DEST = "rivercrossing/ui"
+
+# E2.4.1 (spec section 12, R-44): the evaluator self-test's own vector
+# CSVs, moved into the package so a bundled app can self-test at
+# launch with no ``tests/`` tree riding along. These ship at the
+# package *root* (``rivercrossing.hands`` resolves them relative to
+# its own ``__file__``, a sibling of ``ui/``) -- a separate manifest
+# from ``required_assets()``/``data_entries()`` above, which are all
+# ``ui/``-relative, rather than folding a root-level asset into a dict
+# whose every other entry (and destination) is scoped one level down.
+VECTORS_SUBDIR = "vectors"
+REQUIRED_VECTORS: tuple[str, ...] = ("joker_vectors.csv", "rank_sweep.csv")
+VECTORS_PACKAGE_DEST = "rivercrossing"
 
 
 class MissingAssetError(FileNotFoundError):
@@ -139,6 +158,39 @@ def data_entries(ui_dir: Path) -> list[tuple[str, str]]:
         (str(ui_dir / subdir / name), f"{PACKAGE_DEST}/{subdir}")
         for subdir, names in required_assets().items()
         for name in names
+    ]
+
+
+def missing_vectors(package_dir: Path) -> tuple[str, ...]:
+    """List every required vector CSV absent from *package_dir*."""
+    return tuple(
+        f"{VECTORS_SUBDIR}/{name}"
+        for name in REQUIRED_VECTORS
+        if not (package_dir / VECTORS_SUBDIR / name).is_file()
+    )
+
+
+def verify_vectors(package_dir: Path) -> None:
+    """Assert *package_dir* ships every self-test vector CSV.
+
+    Raises:
+        MissingAssetError: Naming every absent file.
+    """
+    missing = missing_vectors(package_dir)
+    if missing:
+        raise MissingAssetError(f"vectors missing from {package_dir}: {', '.join(missing)}")
+
+
+def vector_data_entries(package_dir: Path) -> list[tuple[str, str]]:
+    """Return PyInstaller ``(source, destination)`` pairs, vectors.
+
+    Raises:
+        MissingAssetError: If any required vector CSV is absent.
+    """
+    verify_vectors(package_dir)
+    return [
+        (str(package_dir / VECTORS_SUBDIR / name), VECTORS_PACKAGE_DEST)
+        for name in REQUIRED_VECTORS
     ]
 
 

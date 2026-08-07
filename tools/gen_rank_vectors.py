@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Generate the E2.1.1 rank sweep fixture, tests/vectors/rank_sweep.csv.
+"""Generate the E2.1.1 rank sweep fixture, vectors/rank_sweep.csv.
 
 Every one of phevaluator's 7,462 distinct natural 5-card ranks gets
 exactly one representative row: a 5-card hand, its phevaluator rank,
@@ -10,6 +10,12 @@ independently, from the cards' own rank-multiset/flush/straight
 pattern, so this fixture can catch a bug in ``eval5``'s own
 phevaluator-rank-to-class table rather than merely restate it -- never
 by asking ``eval5`` (or anything phevaluator-backed) directly.
+
+E2.4.1 moved the committed CSV into ``src/rivercrossing/vectors/`` (a
+package data directory, no ``__init__.py``, mirroring
+``ui/assets/cards/``) so the shipped app can run its own self-test at
+launch (R-44, ``rivercrossing.hands.self_test``) without ``tests/``
+riding along in a frozen bundle.
 
     python tools/gen_rank_vectors.py             # regenerate the CSV
     python tools/gen_rank_vectors.py --out PATH  # write elsewhere
@@ -32,7 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
 _ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUT = _ROOT / "tests" / "vectors" / "rank_sweep.csv"
+DEFAULT_OUT = _ROOT / "src" / "rivercrossing" / "vectors" / "rank_sweep.csv"
 
 # Rank letters low to high; phevaluator and rivercrossing.cards.Card
 # both use this same alphabet, so these codes parse with either.

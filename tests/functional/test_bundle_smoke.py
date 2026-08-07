@@ -61,6 +61,7 @@ pytestmark = pytest.mark.functional
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_UI = ROOT / "src" / "rivercrossing" / "ui"
+SOURCE_PACKAGE = ROOT / "src" / "rivercrossing"
 DIST = ROOT / "dist"
 SPEC = ROOT / "installers" / "rivercrossing.spec"
 
@@ -90,6 +91,7 @@ BUILD_TIMEOUT_SECONDS = 180
 EXPECTED_XRC_FILES = 9
 EXPECTED_CARD_BITMAPS = 106
 EXPECTED_WAV_CUES = 3
+EXPECTED_VECTOR_CSVS = 2
 
 
 def _load_check_asset_manifest() -> ModuleType:
@@ -249,6 +251,71 @@ def test_verify_assets_given_a_renamed_xrc_file_names_the_original_name(tmp_path
 
     with pytest.raises(manifest.MissingAssetError, match=re.escape("xrc/dialogs.xrc")):
         manifest.verify_assets(tmp_path / "ui")
+
+
+# ------------------------------------------------- the vectors manifest
+
+# E2.4.1 (spec section 12, R-44): the evaluator self-test's own vector
+# CSVs, packaged separately from required_assets() above since they
+# ship at the package root rather than under ui/.
+
+
+def test_required_vectors_declares_the_two_self_test_csvs() -> None:
+    """A vector CSV disappearing must shrink this, not the suite."""
+    assert len(manifest.REQUIRED_VECTORS) == EXPECTED_VECTOR_CSVS
+
+
+def test_source_tree_vector_names_match_the_required_manifest_exactly() -> None:
+    """Sets, not counts: a renamed CSV leaves the sets unequal."""
+    assert _names_present(SOURCE_PACKAGE, manifest.VECTORS_SUBDIR) == set(
+        manifest.REQUIRED_VECTORS
+    )
+
+
+def test_missing_vectors_given_the_real_source_tree_finds_nothing_absent() -> None:
+    """The tree both the wheel and the bundle are built from."""
+    assert manifest.missing_vectors(SOURCE_PACKAGE) == ()
+
+
+def test_vector_data_entries_maps_both_csvs_onto_the_package_root() -> None:
+    """PyInstaller datas must land the CSVs at ``rivercrossing/...``.
+
+    ``rivercrossing.hands`` resolves ``vectors/`` relative to its own
+    ``__file__``, a sibling of ``ui/`` -- not under it.
+    """
+    destinations = {
+        destination for _source, destination in manifest.vector_data_entries(SOURCE_PACKAGE)
+    }
+
+    assert destinations == {manifest.VECTORS_PACKAGE_DEST}
+
+
+def test_vector_data_entries_names_the_two_csv_source_files() -> None:
+    """Per-file entries, so the manifest *is* the bundle's contents."""
+    entries = manifest.vector_data_entries(SOURCE_PACKAGE)
+    sources = [Path(source) for source, _destination in entries]
+
+    assert sorted(path.name for path in sources) == sorted(manifest.REQUIRED_VECTORS)
+
+
+def test_verify_vectors_given_a_deleted_csv_names_the_missing_file(tmp_path: Path) -> None:
+    """T-5 negative: the raise carries the path, not just a count."""
+    shutil.copytree(SOURCE_PACKAGE / manifest.VECTORS_SUBDIR, tmp_path / "vectors")
+    (tmp_path / "vectors" / "rank_sweep.csv").unlink()
+
+    with pytest.raises(manifest.MissingAssetError, match=re.escape("vectors/rank_sweep.csv")):
+        manifest.verify_vectors(tmp_path)
+
+
+def test_vector_data_entries_given_a_missing_csv_raises_instead_of_listing_entries(
+    tmp_path: Path,
+) -> None:
+    """The spec cannot obtain vector datas without passing the check."""
+    shutil.copytree(SOURCE_PACKAGE / manifest.VECTORS_SUBDIR, tmp_path / "vectors")
+    (tmp_path / "vectors" / "joker_vectors.csv").unlink()
+
+    with pytest.raises(manifest.MissingAssetError, match=re.escape("vectors/joker_vectors.csv")):
+        manifest.vector_data_entries(tmp_path)
 
 
 def test_data_entries_given_a_missing_asset_raises_instead_of_listing_entries(
