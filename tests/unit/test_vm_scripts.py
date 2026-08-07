@@ -28,6 +28,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import NamedTuple
@@ -364,16 +365,21 @@ def _run_with_stubs(bin_dir: Path, vm_timeout_seconds: str, tmp_path: Path) -> _
     return _ScriptRun(result.returncode, log_path.read_text(encoding="utf-8"))
 
 
-def test_run_script_exits_zero_when_guest_run_succeeds(tmp_path: Path) -> None:
-    """A clean run should exit 0 -- it instead reads back exit 124.
+# The scripts under test are macOS-only Tart tooling; executing them
+# (and their bash tool stubs) needs a POSIX shell, absent on Windows.
+_POSIX_ONLY = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the VM lane scripts are macOS tooling; the stub sandbox needs a POSIX shell",
+)
 
-    scripts/run_functional_tests_vm.sh's sentinel file is created by
-    ``mktemp`` itself (line 198) and only ever truncated by the
-    watchdog (line 92), never removed beforehand, so its later
-    existence check (line 217) is true whether or not the watchdog
-    fired. Every tool stub here succeeds instantly, so nothing should
-    ever trip the watchdog; this pins that the bug still reports a
-    timeout.
+
+@_POSIX_ONLY
+def test_run_script_exits_zero_when_guest_run_succeeds(tmp_path: Path) -> None:
+    """A clean run exits 0 and never trips the watchdog.
+
+    Regression pin: the sentinel file used to be created by ``mktemp``
+    itself and only truncated by the watchdog, so the timeout check
+    reported exit 124 on every run, clean or not.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -386,6 +392,7 @@ def test_run_script_exits_zero_when_guest_run_succeeds(tmp_path: Path) -> None:
     assert run.returncode == 0, run.output
 
 
+@_POSIX_ONLY
 def test_run_script_exits_124_when_guest_run_hangs(tmp_path: Path) -> None:
     """The watchdog kills a guest run that outlives the timeout."""
     bin_dir = tmp_path / "bin"
@@ -406,6 +413,7 @@ _PIPED_RUN_HARD_TIMEOUT_SECONDS = 30
 _PIPED_RUN_BOUND_SECONDS = 8
 
 
+@_POSIX_ONLY
 def test_run_script_releases_stdout_promptly_when_piped(tmp_path: Path) -> None:
     """A real piped invocation must not block on the watchdog's sleep.
 
