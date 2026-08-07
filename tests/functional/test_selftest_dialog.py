@@ -12,6 +12,7 @@ E2.4.1's unit suite (``tests/unit/test_hands.py``) already pins
 headless -- this file is the same claim, through the real dialog.
 """
 
+import re
 from typing import Any
 
 import harness
@@ -22,6 +23,13 @@ from rivercrossing.ui import ids
 from rivercrossing.ui.views.selftest import SelfTestDialog
 
 pytestmark = pytest.mark.functional
+
+# The whole-field timing line's own detail is a freshly *measured*
+# duration (hands.py's self_test()), which legitimately differs
+# between two real runs -- normalized away before comparing two
+# renders for equality (see test_selftest_dlg_rerun_btn_reruns_and_
+# refreshes_the_output), never before comparing a single render.
+_DURATION_TOKEN = re.compile(r"\d+\.\d+ s")
 
 
 def _show(xrc_resource: Any) -> tuple[Any, SelfTestDialog]:  # noqa: ANN401 -- wx ships no stubs
@@ -36,6 +44,11 @@ def _show(xrc_resource: Any) -> tuple[Any, SelfTestDialog]:  # noqa: ANN401 -- w
 def _output_lines(dialog: Any) -> list[str]:  # noqa: ANN401 -- wx ships no stubs
     """Split ``selftest_output``'s current text into its own lines."""
     return harness.find_control(dialog, ids.SELFTEST_OUTPUT).GetValue().splitlines()
+
+
+def _normalize_duration(line: str) -> str:
+    """Replace a rendered "N.NN s" duration with a stable token."""
+    return _DURATION_TOKEN.sub("<duration>", line)
 
 
 def test_selftest_dlg_runs_the_real_suite_and_every_line_ends_pass(
@@ -57,9 +70,18 @@ def test_selftest_dlg_runs_the_real_suite_and_every_line_ends_pass(
 def test_selftest_dlg_rerun_btn_reruns_and_refreshes_the_output(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """Clicking rerun_btn reruns the real suite, re-rendering it."""
+    """Clicking rerun_btn reruns the real suite, re-rendering it.
+
+    Each run measures the whole-field timing check's own duration
+    fresh, so the rendered detail legitimately differs run to run
+    (measured: 0.03 s vs 0.11 s in the CI VM) -- lines are compared
+    with that one token normalized away, pinning full re-render
+    semantics (same four names, same shape, same PASS status)
+    without depending on wall-clock equality between two real runs.
+    """
     dialog, view = _show(xrc_resource)
     first_lines = _output_lines(dialog)
+    first_report = view.presenter.report
 
     try:
         harness.click(dialog, ids.RERUN_BTN)
@@ -68,7 +90,10 @@ def test_selftest_dlg_rerun_btn_reruns_and_refreshes_the_output(
         harness.close_window(dialog)
 
     assert view.presenter.report.passed is True
-    assert second_lines == first_lines
+    assert view.presenter.report is not first_report
+    assert [_normalize_duration(line) for line in second_lines] == [
+        _normalize_duration(line) for line in first_lines
+    ]
     assert all(line.endswith("PASS") for line in second_lines)
 
 
