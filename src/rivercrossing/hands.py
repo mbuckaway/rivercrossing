@@ -40,10 +40,14 @@ are simply not passed.
 """
 
 import bisect
+import csv
 import itertools
+import random
+import time
 from collections import Counter
 from dataclasses import dataclass
 from enum import IntEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from phevaluator.evaluator import evaluate_cards
@@ -51,7 +55,7 @@ from phevaluator.evaluator import evaluate_cards
 from rivercrossing.cards import Card, Rank, Suit
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
 NATURAL_HAND_SIZE = 5
 # spec section 5: "the 7,462 distinct natural ranks are stored as one
@@ -950,3 +954,203 @@ def compare(a: EvaluatedHand, b: EvaluatedHand) -> int:
     if key_a > key_b:
         return 1
     return 0
+
+
+# ------------------------------------------- E2.4.1: the self-test
+
+# The two vector CSVs ship inside the package (a sibling data
+# directory, no __init__.py, mirroring ui/assets/cards/) so the
+# bundled app can run this suite at launch with no ``tests/`` tree
+# riding along (spec section 12, R-44).
+_VECTORS_DIR = Path(__file__).resolve().parent / "vectors"
+
+_RANK_SWEEP_CHECK_NAME = "7,462 distinct ranks"
+_JOKER_VECTOR_CHECK_NAME = "Joker vector table (28)"
+_FIVE_OF_A_KIND_CHECK_NAME = "Five-of-a-kind ordering"
+# The multiplication-sign glyph is xrc-windows.md's own frozen
+# selftest_dlg canvas text, transcribed verbatim.
+_FIELD_TIMING_CHECK_NAME = "Whole-field 180×12 timing"  # noqa: RUF001
+
+_JOKER_VECTOR_COUNT = 28
+
+# The R-42 field-timing fixture, reused verbatim from its own unit
+# test (test_best_hand_field_of_180_entries_by_12_cards_scores_
+# within_measured_budget) so this check measures the identical
+# seeded shape, not a different sample that could happen to be easier.
+_FIELD_ENTRIES = 180
+_FIELD_CARDS_PER_ENTRY = 12
+_FIELD_TIMING_BUDGET_SECONDS = 1.0
+_FIELD_SEED = 20260807
+_FIELD_JOKER_PROBABILITY = 16 / 432
+
+
+@dataclass(frozen=True)
+class SelfTestCheck:
+    """One evaluator self-test line (spec section 12, selftest_dlg).
+
+    ``detail`` carries the canvas's own extra column -- only the
+    whole-field timing check fills it, with its own measured duration
+    ("0.31 s"); every other check's detail is empty.
+    """
+
+    name: str
+    passed: bool
+    duration_seconds: float
+    detail: str
+
+
+@dataclass(frozen=True)
+class SelfTestReport:
+    """The evaluator self-test result.
+
+    ``checks`` holds one :class:`SelfTestCheck` per selftest_dlg
+    canvas line, in that same fixed order.
+    """
+
+    checks: tuple[SelfTestCheck, ...]
+
+    @property
+    def passed(self) -> bool:
+        """Return whether every check in this report passed."""
+        return all(check.passed for check in self.checks)
+
+
+def _load_rank_sweep_vectors() -> tuple[tuple[str, int], ...]:
+    """Load the shipped rank-sweep CSV as ``(cards, rank)`` pairs.
+
+    The self-test's own seam over ``vectors/rank_sweep.csv``: a test
+    monkeypatches this function -- never a "test mode" flag on the
+    check itself -- to prove the sweep check genuinely fails against
+    a corrupted table.
+    """
+    path = _VECTORS_DIR / "rank_sweep.csv"
+    with path.open(encoding="utf-8", newline="") as handle:
+        return tuple((row["cards"], int(row["rank"])) for row in csv.DictReader(handle))
+
+
+@dataclass(frozen=True)
+class _JokerVector:
+    """One shipped joker-vector row (self-test's own shape)."""
+
+    cards: str
+    expected_class: str
+    expected_tiebreak: tuple[int, ...]
+
+
+def _load_joker_vectors() -> tuple[_JokerVector, ...]:
+    """Load the shipped joker-vector CSV.
+
+    See :func:`_load_rank_sweep_vectors` for why this is its own
+    monkeypatchable loader rather than a check reading the file
+    directly.
+    """
+    path = _VECTORS_DIR / "joker_vectors.csv"
+    with path.open(encoding="utf-8", newline="") as handle:
+        return tuple(
+            _JokerVector(
+                cards=row["cards"],
+                expected_class=row["expected_class"],
+                expected_tiebreak=tuple(int(part) for part in row["expected_tiebreak"].split(";")),
+            )
+            for row in csv.DictReader(handle)
+        )
+
+
+def _check_rank_sweep() -> tuple[bool, str]:
+    """Check (a): every shipped rank-sweep row is distinct, in order.
+
+    Re-derives the same ordering proof test_hands.py's own sweep test
+    runs: evaluate every row through :func:`eval5`, sort by
+    ``(cls, tiebreak)``, and require the recorded ranks to come back
+    as exactly ``1..NATURAL_RANK_COUNT`` -- no gap, no repeat.
+    """
+    rows = _load_rank_sweep_vectors()
+    evaluated = [
+        (eval5([Card.parse(code) for code in cards.split()]), rank) for cards, rank in rows
+    ]
+    ordered = sorted(evaluated, key=lambda pair: (pair[0].cls, pair[0].tiebreak), reverse=True)
+    ranks_in_order = [rank for _, rank in ordered]
+    passed = len(rows) == NATURAL_RANK_COUNT and ranks_in_order == list(
+        range(1, NATURAL_RANK_COUNT + 1)
+    )
+    return passed, ""
+
+
+def _check_joker_vectors() -> tuple[bool, str]:
+    """Check (b): every joker vector matches its class/tiebreak."""
+    rows = _load_joker_vectors()
+    mismatched = [
+        row
+        for row in rows
+        if (evaluated := eval5([Card.parse(code) for code in row.cards.split()])).cls.name
+        != row.expected_class
+        or evaluated.tiebreak != row.expected_tiebreak
+    ]
+    passed = len(rows) == _JOKER_VECTOR_COUNT and not mismatched
+    return passed, ""
+
+
+def _check_five_of_a_kind_ordering() -> tuple[bool, str]:
+    """Check (c): a wild five-of-a-kind beats a royal flush."""
+    five_of_a_kind = eval5([Card.parse(code) for code in ["AS", "AD", "AH", "AC", "JK"]])
+    royal_flush = eval5([Card.parse(code) for code in ["AS", "KS", "QS", "JS", "TS"]])
+    return compare(five_of_a_kind, royal_flush) == 1, ""
+
+
+def _seeded_field() -> list[list[Card]]:
+    """Build the R-42 180x12 field, same seed/shape as its own test."""
+    rng = random.Random(_FIELD_SEED)  # noqa: S311 -- a deterministic self-test fixture
+    deck_codes = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
+    return [
+        [
+            Card(rank=None, suit=None, joker=True)
+            if rng.random() < _FIELD_JOKER_PROBABILITY
+            else Card.parse(rng.choice(deck_codes))
+            for _ in range(_FIELD_CARDS_PER_ENTRY)
+        ]
+        for _ in range(_FIELD_ENTRIES)
+    ]
+
+
+def _check_field_timing() -> tuple[bool, str]:
+    """Check (d): the 180x12 field scores within its R-42 budget."""
+    field = _seeded_field()
+    start = time.perf_counter()
+    for entry in field:
+        best_hand(entry)
+    elapsed = time.perf_counter() - start
+    return elapsed < _FIELD_TIMING_BUDGET_SECONDS, f"{elapsed:.2f} s"
+
+
+def _run_check(name: str, check: Callable[[], tuple[bool, str]]) -> SelfTestCheck:
+    """Run *check*, timed, and wrap the result in a SelfTestCheck."""
+    start = time.perf_counter()
+    passed, detail = check()
+    duration = time.perf_counter() - start
+    return SelfTestCheck(name=name, passed=passed, duration_seconds=duration, detail=detail)
+
+
+def self_test() -> SelfTestReport:
+    """Run the evaluator self-test suite (spec section 12, R-44).
+
+    Four independently-timed checks, in the selftest_dlg canvas's own
+    order: the 7,462-rank sweep, the 28 authored joker vectors,
+    five-of-a-kind ranking above the royal flush, and the whole
+    180x12 field scoring inside its R-42 budget. The two vector-CSV
+    checks read through :func:`_load_rank_sweep_vectors` /
+    :func:`_load_joker_vectors`, so a corrupted table genuinely turns
+    that check red rather than being trusted unread.
+
+    Wired to both app launch and Help ▸ Run Evaluator Self-test;
+    a failing report blocks Finish (E6.4.3, module-skeletons.md S4).
+
+    Returns:
+        The full :class:`SelfTestReport`, one check per canvas line.
+    """
+    checks = (
+        _run_check(_RANK_SWEEP_CHECK_NAME, _check_rank_sweep),
+        _run_check(_JOKER_VECTOR_CHECK_NAME, _check_joker_vectors),
+        _run_check(_FIVE_OF_A_KIND_CHECK_NAME, _check_five_of_a_kind_ordering),
+        _run_check(_FIELD_TIMING_CHECK_NAME, _check_field_timing),
+    )
+    return SelfTestReport(checks=checks)
