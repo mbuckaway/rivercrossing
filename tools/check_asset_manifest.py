@@ -85,7 +85,14 @@ PACKAGE_DEST = "rivercrossing/ui"
 # whose every other entry (and destination) is scoped one level down.
 VECTORS_SUBDIR = "vectors"
 REQUIRED_VECTORS: tuple[str, ...] = ("joker_vectors.csv", "rank_sweep.csv")
-VECTORS_PACKAGE_DEST = "rivercrossing"
+# PyInstaller's own datas contract: the destination is the containing
+# folder a source lands in, not the file's own final path -- so this
+# must include the vectors leaf itself, matching PACKAGE_DEST's own
+# shape above. Measured: naming only the bare package root here put
+# both CSVs one directory too high once bundled, and hands.py's own
+# loader never found them there -- a launch-time crash, not the
+# build-time failure E1.6.1's own goal asks for (missed once here).
+VECTORS_PACKAGE_DEST = f"rivercrossing/{VECTORS_SUBDIR}"
 
 
 class MissingAssetError(FileNotFoundError):
