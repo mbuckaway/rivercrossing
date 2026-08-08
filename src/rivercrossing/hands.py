@@ -348,24 +348,6 @@ def _phevaluator_card_id(card: Card) -> int:
     return _PHEVALUATOR_ID_BY_CARD[card]
 
 
-_ClsTiebreak = tuple[HandClass, tuple[int, ...]]
-
-
-def _classify_pattern_cards(cards: Sequence[Card]) -> _ClsTiebreak:
-    """Classify 0..5 natural cards, first principles, cls+tiebreak only.
-
-    :func:`_fill_score`'s per-candidate hot loop (R-42's 180x12 field
-    budget) never needs the full :class:`EvaluatedHand` wrapper it
-    would otherwise discard immediately -- only the ``(cls,
-    tiebreak)`` pair that decides which candidate wins -- so this is
-    the shared computation both it and :func:`_evaluate_pattern`
-    (the public-shaped wrapper) build on.
-    """
-    ranks = _natural_ranks(cards)
-    cls = classify_pattern(ranks, _natural_suits(cards))
-    return cls, _kicker_tiebreak(cls, ranks)
-
-
 def _evaluate_pattern(cards: Sequence[Card]) -> EvaluatedHand:
     """Evaluate 0..5 natural (joker-free) cards, first principles.
 
@@ -374,34 +356,9 @@ def _evaluate_pattern(cards: Sequence[Card]) -> EvaluatedHand:
     (:func:`classify_pattern`'s module docstring covers both), and a
     wild search's own candidate scoring, all cheap regardless.
     """
-    cls, tiebreak = _classify_pattern_cards(cards)
-    return EvaluatedHand(cls=cls, tiebreak=tiebreak, best5=tuple(cards), jokers_played_as=())
-
-
-def _classify_natural_five(cards: Sequence[Card]) -> _ClsTiebreak:
-    """Classify 5 pairwise-distinct natural cards, cls+tiebreak only.
-
-    Callers must ensure the 5 codes are pairwise distinct (see
-    :func:`_evaluate_natural_five`, the public-shaped wrapper this
-    shares its computation with); :func:`_fill_score`'s hot loop is
-    the reason this skips building an :class:`EvaluatedHand` (see
-    :func:`_classify_pattern_cards`'s docstring, same rationale).
-    """
-    natural_rank: int = evaluate_cards(*(_phevaluator_card_id(card) for card in cards))
-    cls = _classify(natural_rank)
-    return cls, _kicker_tiebreak(cls, _natural_ranks(cards))
-
-
-def _evaluate_natural_five(cards: Sequence[Card]) -> EvaluatedHand:
-    """Evaluate 5 pairwise-distinct natural cards via phevaluator.
-
-    Callers must ensure the 5 codes are pairwise distinct: phevaluator's
-    native evaluator is undefined -- observed to segfault -- on a
-    repeated card id. :func:`_evaluate_five_naturals` is the safe
-    entry point; this direct call is only for the rank-sweep and
-    joker-vector fast paths, which already know their input is clean.
-    """
-    cls, tiebreak = _classify_natural_five(cards)
+    ranks = _natural_ranks(cards)
+    cls = classify_pattern(ranks, _natural_suits(cards))
+    tiebreak = _kicker_tiebreak(cls, ranks)
     return EvaluatedHand(cls=cls, tiebreak=tiebreak, best5=tuple(cards), jokers_played_as=())
 
 
@@ -410,11 +367,17 @@ def _evaluate_five_naturals(cards: Sequence[Card]) -> EvaluatedHand:
 
     Distinct-code hands take phevaluator's fast native path;
     everything else -- legal under physical-cards semantics (module
-    docstring) -- takes the first-principles path instead.
+    docstring) -- takes :func:`_evaluate_pattern`'s first-principles
+    path instead. phevaluator's native evaluator is undefined --
+    observed to segfault -- on a repeated card id, which is exactly
+    what :func:`_is_duplicate_free` rules out before this reaches it.
     """
-    if _is_duplicate_free(cards):
-        return _evaluate_natural_five(cards)
-    return _evaluate_pattern(cards)
+    if not _is_duplicate_free(cards):
+        return _evaluate_pattern(cards)
+    natural_rank: int = evaluate_cards(*(_phevaluator_card_id(card) for card in cards))
+    cls = _classify(natural_rank)
+    tiebreak = _kicker_tiebreak(cls, _natural_ranks(cards))
+    return EvaluatedHand(cls=cls, tiebreak=tiebreak, best5=tuple(cards), jokers_played_as=())
 
 
 def _uniform_natural_rank(naturals: Sequence[Card]) -> Rank | None:
@@ -470,13 +433,13 @@ def _fill_score(
 
     Inlines the duplicate check and rank extraction in one pass over
     the combined 5 cards, rather than calling
-    :func:`_classify_natural_five`/:func:`_classify_pattern_cards`
-    (each of which would redo both from scratch): this is the
-    innermost loop of the whole wild search, called once per
-    candidate fill (R-42's 180x12 field budget). *allow_fast_path* is
-    False for a partial hand (module docstring of
-    :func:`_partial_hand`): fewer than 5 cards is never something
-    phevaluator can evaluate at all.
+    :func:`_evaluate_five_naturals`/:func:`_evaluate_pattern` (each of
+    which would redo both from scratch and build an unneeded
+    ``EvaluatedHand``): this is the innermost loop of the whole wild
+    search, called once per candidate fill (R-42's 180x12 field
+    budget). *allow_fast_path* is False for a partial hand (module
+    docstring of :func:`_partial_hand`): fewer than 5 cards is never
+    something phevaluator can evaluate at all.
 
     The trailing "is this combination duplicate-free" flag is a pure
     tie-break preference, never part of the stored ``EvaluatedHand``:
