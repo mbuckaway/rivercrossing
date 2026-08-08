@@ -382,6 +382,45 @@ def test_main_given_a_missing_asset_names_it_on_stderr_and_returns_one(
     assert "xrc/main.xrc" in capsys.readouterr().err
 
 
+def test_main_given_a_complete_tree_also_reports_the_vector_count(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The CLI's success line names the vector CSVs too, not only ui/.
+
+    ``--package-dir`` defaults to :data:`manifest.DEFAULT_PACKAGE_DIR`
+    (previously dead code, referenced nowhere) the same way
+    ``--ui-dir`` defaults to :data:`manifest.DEFAULT_UI_DIR`.
+    """
+    exit_code = manifest.main(["--ui-dir", str(SOURCE_UI), "--package-dir", str(SOURCE_PACKAGE)])
+
+    expected = f"all {len(manifest.REQUIRED_VECTORS)} required vectors present"
+    assert exit_code == 0
+    assert expected in capsys.readouterr().out
+
+
+def test_main_given_missing_vectors_names_them_on_stderr_and_returns_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-5: a tree missing both self-test CSVs must not exit 0.
+
+    Empirically proven gap this closes: ``main()`` used to call only
+    ``verify_assets``, so a package dir missing both
+    ``rank_sweep.csv`` and ``joker_vectors.csv`` previously passed
+    with exit 0 -- silently shipping a bundle that crashes at launch
+    with ``FileNotFoundError`` (the same failure the built-bundle
+    fix above closes at the packaging-spec level).
+    """
+    package_dir = tmp_path / "package"
+    (package_dir / manifest.VECTORS_SUBDIR).mkdir(parents=True)
+
+    exit_code = manifest.main(["--ui-dir", str(SOURCE_UI), "--package-dir", str(package_dir)])
+
+    stderr = capsys.readouterr().err
+    assert exit_code == 1
+    assert "vectors/rank_sweep.csv" in stderr
+    assert "vectors/joker_vectors.csv" in stderr
+
+
 # ----------------------------------------------------- the built bundle
 
 
