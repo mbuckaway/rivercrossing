@@ -13,6 +13,7 @@ drift. Sessions map onto the CI stages in spec.md section 14:
 Run `nox -l` to list them, `nox -s <name>` to run one.
 """
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -100,6 +101,13 @@ def functional(session):
     --forked would be the wrong tool on macOS: forking a process that
     has already initialised NSApplication is not safe.
     """
+    sys.path.insert(0, str(ROOT))
+    from tools.functional_gate import host_functional_run_allowed  # noqa: PLC0415
+
+    allowed, message = host_functional_run_allowed(sys.platform, os.environ)
+    if not allowed:
+        session.error(message)
+
     session.install(DEV)
     session.run(
         "pytest",

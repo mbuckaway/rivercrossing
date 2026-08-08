@@ -32,7 +32,71 @@ nox -s winsetup winsetup_smoke                # stage 5 · unsigned Windows inst
 nox                                           # stages 1 + 2
 ```
 
-Stage 3 needs a **real desktop session** — no virtual display. It cannot run headless.
+Stage 3 needs a **real desktop session** — no virtual display. It cannot run headless. On macOS,
+run it inside the Tart VM (next section): a bare `nox -s functional` on a Mac refuses unless
+`RIVERCROSSING_HOST_FUNCTIONAL=1` is set. CI is exempt — the hosted runners set `CI`.
+
+## macOS functional tests — run them in a VM
+
+Stage 3 opens all 23 windows for real. On your own Mac that takes over the desktop: the windows
+steal focus while you type, and a crashed run can leave the session in a bad state (measured on a
+sibling project — a crashed GUI suite left a synthesized key auto-repeating into every app). A
+local [Tart](https://tart.run/) VM isolates the run: the guest has its own WindowServer, so
+nothing touches your session. Isolation contains a crash; it does not cure one.
+
+One-time setup — the base image download is about 25 GB:
+
+```bash
+brew install openai/tools/tart      # Tart moved from Cirrus Labs to OpenAI in 2026
+scripts/setup_functional_vm.sh      # clone the base image, size it, provision, install deps
+```
+
+The setup script boots the template headless and asks for the guest password (`admin`) in the
+terminal during `ssh-copy-id`. Every later run is non-interactive, and no VM window ever opens.
+
+Each run:
+
+```bash
+scripts/run_functional_tests_vm.sh
+```
+
+The run script clones the template (APFS copy-on-write — seconds), boots it headless, pushes the
+worktree with rsync over ssh, runs the same pytest command as CI stage 3, pulls
+`tests/functional/_screenshots/` back, and deletes the clone. A crashed run dies with its clone.
+
+| Exit code | Meaning |
+|---|---|
+| 2 | `tart` is not installed |
+| 3 | the template VM is missing — run `scripts/setup_functional_vm.sh` |
+| 124 | watchdog timeout (`RIVERCROSSING_VM_TIMEOUT`, default 1800 s) |
+| other | the guest pytest exit code, passed through |
+
+- The guest needs no Accessibility or Screen Recording grants: the harness injects wx events
+  directly and screenshots through a `MemoryDC` — no OS-level input, no `screencapture`. (The
+  `macos-*-base` images would tolerate TCC-gated tooling anyway: they ship SIP-disabled and
+  pre-seed Accessibility/PostEvent/ScreenCapture grants for ssh-launched automation, and they
+  auto-login `admin` into a real Aqua session. One Sequoia+ limit: Screen Recording never works
+  for an ad-hoc-signed venv python — shell out to `/usr/sbin/screencapture` if ever needed.)
+- WARNING: never pass `--vnc` or `--vnc-experimental` to `tart run` without `--no-graphics` —
+  those flags open Screen Sharing.app on the host desktop, defeating the isolation.
+- To force a host-desktop run (CI-parity debugging): `RIVERCROSSING_HOST_FUNCTIONAL=1 nox -s
+  functional`.
+- VM sizing: `RIVERCROSSING_VM_CPU` (default 4) and `RIVERCROSSING_VM_MEMORY` (default 8192 MB),
+  read by the setup script.
+- License: Tart ships under FSL-1.1-ALv2 — free for this local-dev use. Review the license before
+  any org-wide or CI adoption.
+
+Measured on 2026-08-07 (Apple Silicon host, Tart 2.35.0, `macos-tahoe-base` guest):
+
+- Image download: 27.1 GB compressed; the template VM allocates 50 GB and uses ~31 GB.
+- Full run cycle (clone → boot → rsync → suite → pull → delete): **43 s** wall clock.
+- Suite inside the guest: **678 passed, 45 skipped in 20.4 s** (`-n auto`, 4 vCPUs) — the same
+  pass count as CI stage 3; the skips are the normal platform skips.
+- No Accessibility or Screen Recording prompts appeared — the no-TCC analysis holds.
+- A dropped network connection mid-pull is safe: pulled layers are cached, so re-running
+  `tart clone` (or the setup script) resumes in seconds.
+- The guest filesystem is synced before `tart stop` — a fast stop without it was measured to
+  lose a just-written `authorized_keys`.
 
 ## The gates (CI blocks merge)
 

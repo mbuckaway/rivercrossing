@@ -94,6 +94,10 @@ Source files carry a single SPDX line and no other licence header:
 - Destroy windows explicitly. `Destroy()` is deferred, so a stale window can still answer
   `FindWindowByName` in the same process and silently contaminate the next assertion.
 - Use event-driven waits, never bare `sleep`.
+- On macOS, run the functional suite in the Tart VM: `scripts/run_functional_tests_vm.sh`. The
+  suite opens 23 real windows and takes over the host desktop, so a bare `nox -s functional`
+  refuses on a Mac unless `RIVERCROSSING_HOST_FUNCTIONAL=1` is set (CI is exempt). Setup and exit
+  codes: CONTRIBUTING.md.
 
 ---
 
