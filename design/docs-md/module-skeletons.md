@@ -115,6 +115,9 @@ class Shoe:                   # deterministic multi-deck shoe
     reshuffle() -> None                 # new cycle; audit caller logs it (§4)
     remaining: int · dealt: int · cycle: int
     Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int) -> Shoe
+    restitute(card: Card) -> None       # Ctrl+Z: the last-dealt card returns to the front (E2.2.1)
+    close() -> None                     # ride Finish locks the shoe; deal/reshuffle/restitute
+                                        # raise ShoeClosedError afterwards (E2.2.1)
 # invariant: same (config, seed) ⇒ identical deal sequence (R-40)
 ```
 
@@ -229,7 +232,8 @@ tests/
 │   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py
 │   ├── test_store.py · test_csvio.py · test_htmlexport.py · test_pdfexport.py
 │   └── presenters/            # FakeView-driven presenter tests — still no wx
-├── vectors/                   # 7,462-rank sweep data + joker vector table (R-44/72)
+├── (vectors: src/rivercrossing/vectors/ — the 7,462-rank sweep + joker table ship as package
+│                              #   data so the launch self-test reads them from the app, R-44/72)
 ├── property/                  # Hypothesis: hands invariants, shoe determinism
 ├── simulations/               # seeded whole rides: 180×6 h, both entry modes,
 │   └── test_simulated_rides.py#   both plate models, 0/2/4 jokers, cap on/off (§12)

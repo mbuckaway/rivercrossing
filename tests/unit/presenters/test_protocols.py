@@ -70,6 +70,7 @@ _PRESENTER_MODULES = (
     "rivercrossing.ui.presenters.library",
     "rivercrossing.ui.presenters.results",
     "rivercrossing.ui.presenters.riders",
+    "rivercrossing.ui.presenters.selftest",
     "rivercrossing.ui.presenters.settings",
     "rivercrossing.ui.presenters.setup",
 )

@@ -53,6 +53,7 @@ from rivercrossing.ui.presenters.riders import (
     RidersPresenter,
     RidersView,
 )
+from rivercrossing.ui.presenters.selftest import SelfTestPresenter, SelfTestView
 from rivercrossing.ui.presenters.settings import AppSettings, SettingsPresenter, SettingsView
 from rivercrossing.ui.presenters.setup import SetupPresenter, SetupView
 
@@ -81,6 +82,8 @@ __all__ = [
     "RiderRow",
     "RidersPresenter",
     "RidersView",
+    "SelfTestPresenter",
+    "SelfTestView",
     "SettingsPresenter",
     "SettingsView",
     "SetupPresenter",

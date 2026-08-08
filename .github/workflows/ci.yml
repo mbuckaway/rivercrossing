@@ -83,7 +83,7 @@ jobs:
       - name: Install
         run: uv pip install --system -e ".[dev]"
       - name: pytest (coverage gate >= 90% line and branch)
-        run: pytest tests/unit -m "not functional"
+        run: pytest tests/unit tests/property tests/simulations -m "not functional"
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4

@@ -224,6 +224,7 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
     from rivercrossing.ui.views.results_win import ResultsWindow  # noqa: PLC0415
     from rivercrossing.ui.views.ride_library import RideLibrary  # noqa: PLC0415
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415
+    from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         RideLibrary(window, data_source=context.data_source)
@@ -233,6 +234,8 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
         EntryDetailDialog(window, _ENTRY_DETAIL_DEMO_PLATE, data_source=context.data_source)
     elif route.target == ids.RESULTS_FRAME:
         ResultsWindow(window, data_source=context.data_source)
+    elif route.target == ids.SELFTEST_DLG:
+        SelfTestDialog(window)
 
 
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
@@ -448,6 +451,35 @@ def _bind_routes(context: _RouteContext) -> None:
             context.frame.Bind(wx.EVT_MENU, handler, id=wx.xrc.XRCID(item_id))
 
 
+def _run_launch_self_test(context: _RouteContext) -> None:
+    """Run the R-44 evaluator self-test at launch (spec section 12).
+
+    ``SelfTestDialog`` already runs the real suite once as part of
+    its own construction (its presenter's ``__init__``), so this
+    reuses that one run rather than calling ``self_test()`` again
+    separately: a green report never shows the dialog at all -- the
+    launch hook stays silent -- and only a red one pops the modal a
+    scorer must dismiss before continuing. The BLOCKING half of R-44
+    ("failure blocks finishing a ride") is EPIC 6's; this only makes
+    the hook itself exist and run (E2.4.1's own scope note).
+    """
+    from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
+
+    window = context.resource.LoadDialog(None, ids.SELFTEST_DLG)
+    view = SelfTestDialog(window)
+    if view.presenter.report.passed:
+        window.Destroy()
+        return
+
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    try:
+        dialogs.run_dialog(window, opener=context.frame)
+    finally:
+        if not window.IsBeingDeleted():
+            window.Destroy()
+
+
 def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Build and wire ``main_frame``, complete but not yet shown.
 
@@ -512,6 +544,7 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     _bind_routes(context)
     _bind_process_quit_paths(context)
     _bind_theme(context)
+    _run_launch_self_test(context)
 
     return frame
 

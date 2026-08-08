@@ -14,10 +14,22 @@ card bitmaps from ``cards_imagelist``'s own deck keys and scales,
 and the three WAV cues from spec.md section 10. A listing would
 happily agree with a tree that had lost a file.
 
+:func:`vector_data_entries` is the same idea for a second, separate
+manifest: the two evaluator self-test CSVs (E2.4.1, R-44) ship at the
+package *root* rather than under ``ui/``, so they get their own small
+manifest instead of a root-level entry inside ``required_assets()``,
+whose every other entry is ``ui/``-relative.
+
 Run it directly to check a tree without waiting for a build::
 
     python tools/check_asset_manifest.py
     python tools/check_asset_manifest.py --ui-dir path/to/ui
+    python tools/check_asset_manifest.py --package-dir path/to/pkg
+
+``main()`` checks both manifests -- ``verify_assets`` and
+``verify_vectors`` -- so a tree missing either the ``ui/`` assets or
+the two self-test vector CSVs fails this direct check the same way
+it would fail the real build.
 """
 
 import argparse
@@ -39,6 +51,7 @@ from rivercrossing.ui.cards_imagelist import (  # noqa: E402 -- needs the path a
 )
 
 DEFAULT_UI_DIR = _ROOT / "src" / "rivercrossing" / "ui"
+DEFAULT_PACKAGE_DIR = _ROOT / "src" / "rivercrossing"
 
 XRC_SUBDIR = "xrc"
 CARDS_SUBDIR = "assets/cards"
@@ -67,6 +80,25 @@ REQUIRED_SOUNDS: tuple[str, ...] = ("error.wav", "flagged.wav", "recorded.wav")
 # ``cards_imagelist.cards_dir()`` and ``harness.xrc_directory()``
 # resolve only if the assets sit on that same relative path.
 PACKAGE_DEST = "rivercrossing/ui"
+
+# E2.4.1 (spec section 12, R-44): the evaluator self-test's own vector
+# CSVs, moved into the package so a bundled app can self-test at
+# launch with no ``tests/`` tree riding along. These ship at the
+# package *root* (``rivercrossing.hands`` resolves them relative to
+# its own ``__file__``, a sibling of ``ui/``) -- a separate manifest
+# from ``required_assets()``/``data_entries()`` above, which are all
+# ``ui/``-relative, rather than folding a root-level asset into a dict
+# whose every other entry (and destination) is scoped one level down.
+VECTORS_SUBDIR = "vectors"
+REQUIRED_VECTORS: tuple[str, ...] = ("joker_vectors.csv", "rank_sweep.csv")
+# PyInstaller's own datas contract: the destination is the containing
+# folder a source lands in, not the file's own final path -- so this
+# must include the vectors leaf itself, matching PACKAGE_DEST's own
+# shape above. Measured: naming only the bare package root here put
+# both CSVs one directory too high once bundled, and hands.py's own
+# loader never found them there -- a launch-time crash, not the
+# build-time failure E1.6.1's own goal asks for (missed once here).
+VECTORS_PACKAGE_DEST = f"rivercrossing/{VECTORS_SUBDIR}"
 
 
 class MissingAssetError(FileNotFoundError):
@@ -142,22 +174,58 @@ def data_entries(ui_dir: Path) -> list[tuple[str, str]]:
     ]
 
 
+def missing_vectors(package_dir: Path) -> tuple[str, ...]:
+    """List every required vector CSV absent from *package_dir*."""
+    return tuple(
+        f"{VECTORS_SUBDIR}/{name}"
+        for name in REQUIRED_VECTORS
+        if not (package_dir / VECTORS_SUBDIR / name).is_file()
+    )
+
+
+def verify_vectors(package_dir: Path) -> None:
+    """Assert *package_dir* ships every self-test vector CSV.
+
+    Raises:
+        MissingAssetError: Naming every absent file.
+    """
+    missing = missing_vectors(package_dir)
+    if missing:
+        raise MissingAssetError(f"vectors missing from {package_dir}: {', '.join(missing)}")
+
+
+def vector_data_entries(package_dir: Path) -> list[tuple[str, str]]:
+    """Return PyInstaller ``(source, destination)`` pairs, vectors.
+
+    Raises:
+        MissingAssetError: If any required vector CSV is absent.
+    """
+    verify_vectors(package_dir)
+    return [
+        (str(package_dir / VECTORS_SUBDIR / name), VECTORS_PACKAGE_DEST)
+        for name in REQUIRED_VECTORS
+    ]
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the ``--ui-dir`` argument parser."""
+    """Build the ``--ui-dir``/``--package-dir`` argument parser."""
     parser = argparse.ArgumentParser(description="Check the bundle asset manifest.")
     parser.add_argument("--ui-dir", type=Path, default=DEFAULT_UI_DIR)
+    parser.add_argument("--package-dir", type=Path, default=DEFAULT_PACKAGE_DIR)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Report any missing asset in the given tree; 0 if complete."""
+    """Check both trees for a missing asset or vector; 0 if complete."""
     args = _build_parser().parse_args(argv)
     try:
         verify_assets(args.ui_dir)
+        verify_vectors(args.package_dir)
     except MissingAssetError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"{args.ui_dir}: all {len(required_relative_paths())} required assets present")
+    print(f"{args.package_dir}: all {len(REQUIRED_VECTORS)} required vectors present")
     return 0
 
 

@@ -38,6 +38,7 @@ dependencies = [
     "wxPython~=4.3.1",
     "fpdf2",
     "jinja2",
+    "phevaluator",
 ]
 
 [project.optional-dependencies]
@@ -80,6 +81,7 @@ rivercrossing = [
     "ui/xrc/*.xrc",
     "ui/assets/cards/*.png",
     "ui/assets/sounds/*.wav",
+    "vectors/*.csv",
 ]
 
 # ----------------------------------------------------------------- ruff
@@ -162,6 +164,11 @@ warn_unreachable = true
 module = ["wx.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# phevaluator 0.6.0 ships no py.typed marker (spec §5's chosen evaluator).
+module = ["phevaluator.*"]
+ignore_missing_imports = true
+
 # ----------------------------------------------------------------- pytest
 
 [tool.pytest.ini_options]
@@ -231,6 +238,8 @@ source_modules = [
     "rivercrossing.ride",
     "rivercrossing.htmlexport",
     "rivercrossing.demo",
+    "rivercrossing.cards",
+    "rivercrossing.hands",
 ]
 forbidden_modules = ["wx"]
 

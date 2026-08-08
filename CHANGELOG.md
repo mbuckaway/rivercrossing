@@ -6,8 +6,35 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
-Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish, Phase 9
-Windows-installer, Phase 10 Windows-parity and Phase 11 tagged-release follow-ups.
+EPIC 2 of 9 — the deal & score engine — on top of EPIC 1's runnable UI shell.
+
+### Added — EPIC 2 (deal & score engine)
+
+- **The poker heart is live.** `rivercrossing.hands`: a 7,462-rank five-card evaluator over
+  `phevaluator` with a fully-wild joker layer (five of a kind above royal flush), best-5-of-N for
+  any pool size, the partial-hand rule, and card-cap-by-slicing (R-13, R-40…R-44, R-72).
+  `rivercrossing.cards`: the seeded Fisher-Yates `Shoe` with deal-index audit,
+  exhaustion → derived-seed reshuffle cycles, undo restitution, close-on-finish, and `replay`.
+- **Two spec gaps were found, ruled on, and written back.** Within-entry duplicate cards
+  (multi-deck) rank as physical cards — two identical nines are a pair, five same-rank cards are
+  five of a kind, wild or natural. The previously-referenced 28-row joker vector table now
+  actually exists: authored, shipped, and recorded in spec §5.
+- **The evaluator constructs hands analytically** (one candidate per hand class from rank
+  multiplicities and per-suit windows) instead of enumerating subsets: subset enumeration
+  saturated its own pruning past ~20 pooled cards — measured 22 s for one 60-card team hand, and
+  it silently dropped straight-completing cards (a real mis-scoring, caught by the simulation
+  suite's scoping spike and a brute-force oracle). Now: a 60-card pool in ~0.25 ms, the whole
+  180×12 field in ~16 ms (R-42's < 1 s with 60× margin).
+- **Whole-ride confidence**: seeded simulations (180 entries × 6 h; solo, mixed-pooled,
+  mixed-relay) assert exact shoe accounting across reshuffle cycles, evaluable hands for every
+  pool (largest simulated team pool: 113 cards, uncapped per R-16), and the out-lapping-rider
+  pooling rule. Hypothesis property suites fuzz evaluator invariants and shoe determinism.
+- **Help ▸ Run Evaluator Self-test is real** (R-44): `hands.self_test()` — the finish-gate hook
+  EPIC 6 will consume — runs the rank sweep, the 28 joker vectors, five-of-a-kind ordering and
+  the field-timing budget in ~0.1 s; `selftest_dlg` renders it live with rerun, and a failed
+  check surfaces the dialog at launch. The vector CSVs ship inside the package
+  (`rivercrossing/vectors/`) so the frozen app self-tests against the same data the tests use.
+- `__version__` bumped to **0.2.0**.
 
 ### Added — macOS VM functional-test lane
 
@@ -19,6 +46,11 @@ Windows-installer, Phase 10 Windows-parity and Phase 11 tagged-release follow-up
   deletes the clone. A bare `nox -s functional` on a Mac now refuses unless
   `RIVERCROSSING_HOST_FUNCTIONAL=1` is set (CI is exempt via `CI`). Local-dev only — CI stage 3
   is unchanged on both hosted runners.
+
+### EPIC 1 (shipped as v0.1.2)
+
+Working EPIC 1 of 9 — the runnable UI shell (D1), plus the Phase 8 D1-polish, Phase 9
+Windows-installer, Phase 10 Windows-parity and Phase 11 tagged-release follow-ups.
 
 ### Added — Phase 11 (tagged releases)
 

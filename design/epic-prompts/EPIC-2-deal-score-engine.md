@@ -14,7 +14,7 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 
 ## Step 1 — read these first, fully, in this order
 1. `docs-md/spec.md §4 (shoe) + §5 (algorithm, joker vector table, five-of-a-kind rule)`
-1. `docs-md/requirements.md R-13, R-16, R-40…R-46`
+1. `docs-md/requirements.md R-13, R-16, R-40…R-44, R-72`
 1. `docs-md/task-briefs.md → E2 briefs (E2.1.1 … E2.4.1)`
 1. `docs-md/module-skeletons.md` — cards.py / hands.py / standings.py APIs
 

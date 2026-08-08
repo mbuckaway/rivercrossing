@@ -61,6 +61,7 @@ pytestmark = pytest.mark.functional
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_UI = ROOT / "src" / "rivercrossing" / "ui"
+SOURCE_PACKAGE = ROOT / "src" / "rivercrossing"
 DIST = ROOT / "dist"
 SPEC = ROOT / "installers" / "rivercrossing.spec"
 
@@ -73,6 +74,14 @@ SHIPPED_UI_DIRS = (ONEDIR_UI, APP_UI) if sys.platform == "darwin" else (ONEDIR_U
 # The copy inside the artifact a user launches, so the copy of the
 # .xrc files the 23-window load test drives.
 LAUNCHED_UI_DIR = SHIPPED_UI_DIRS[-1]
+
+# The package root each layout ships -- one level up from *_UI above --
+# where the E2.4.1 vector CSVs land (a sibling of ui/, not under it).
+ONEDIR_PACKAGE = ONEDIR_UI.parent
+APP_PACKAGE = APP_UI.parent
+SHIPPED_PACKAGE_DIRS = (
+    (ONEDIR_PACKAGE, APP_PACKAGE) if sys.platform == "darwin" else (ONEDIR_PACKAGE,)
+)
 
 EXECUTABLES = {
     "darwin": DIST / "RiverCrossing.app" / "Contents" / "MacOS" / "rivercrossing",
@@ -90,6 +99,7 @@ BUILD_TIMEOUT_SECONDS = 180
 EXPECTED_XRC_FILES = 9
 EXPECTED_CARD_BITMAPS = 106
 EXPECTED_WAV_CUES = 3
+EXPECTED_VECTOR_CSVS = 2
 
 
 def _load_check_asset_manifest() -> ModuleType:
@@ -146,6 +156,16 @@ def _digests(ui_dir: Path) -> dict[str, str]:
     return {
         relative: hashlib.sha256((ui_dir / relative).read_bytes()).hexdigest()
         for relative in manifest.required_relative_paths()
+    }
+
+
+def _vector_digests(package_dir: Path) -> dict[str, str]:
+    """Map every required vector CSV's own name to its sha256."""
+    return {
+        name: hashlib.sha256(
+            (package_dir / manifest.VECTORS_SUBDIR / name).read_bytes()
+        ).hexdigest()
+        for name in manifest.REQUIRED_VECTORS
     }
 
 
@@ -251,6 +271,77 @@ def test_verify_assets_given_a_renamed_xrc_file_names_the_original_name(tmp_path
         manifest.verify_assets(tmp_path / "ui")
 
 
+# ------------------------------------------------- the vectors manifest
+
+# E2.4.1 (spec section 12, R-44): the evaluator self-test's own vector
+# CSVs, packaged separately from required_assets() above since they
+# ship at the package root rather than under ui/.
+
+
+def test_required_vectors_declares_the_two_self_test_csvs() -> None:
+    """A vector CSV disappearing must shrink this, not the suite."""
+    assert len(manifest.REQUIRED_VECTORS) == EXPECTED_VECTOR_CSVS
+
+
+def test_source_tree_vector_names_match_the_required_manifest_exactly() -> None:
+    """Sets, not counts: a renamed CSV leaves the sets unequal."""
+    assert _names_present(SOURCE_PACKAGE, manifest.VECTORS_SUBDIR) == set(
+        manifest.REQUIRED_VECTORS
+    )
+
+
+def test_missing_vectors_given_the_real_source_tree_finds_nothing_absent() -> None:
+    """The tree both the wheel and the bundle are built from."""
+    assert manifest.missing_vectors(SOURCE_PACKAGE) == ()
+
+
+def test_vector_data_entries_maps_both_csvs_onto_the_package_root() -> None:
+    """PyInstaller datas must land the CSVs under a vectors/ dir.
+
+    Pinned to the literal string, not ``manifest.VECTORS_PACKAGE_DEST``
+    itself: a destination that PyInstaller's own ``datas`` docs call
+    the *containing folder* a source lands in, so ``"rivercrossing"``
+    alone (rather than ``"rivercrossing/vectors"``) drops both CSVs
+    one directory too high -- exactly the mistake that put
+    ``rank_sweep.csv`` at ``_internal/rivercrossing/rank_sweep.csv``
+    instead of ``_internal/rivercrossing/vectors/rank_sweep.csv`` and
+    crashed the bundle at launch with ``FileNotFoundError``.
+    """
+    destinations = {
+        destination for _source, destination in manifest.vector_data_entries(SOURCE_PACKAGE)
+    }
+
+    assert destinations == {"rivercrossing/vectors"}
+
+
+def test_vector_data_entries_names_the_two_csv_source_files() -> None:
+    """Per-file entries, so the manifest *is* the bundle's contents."""
+    entries = manifest.vector_data_entries(SOURCE_PACKAGE)
+    sources = [Path(source) for source, _destination in entries]
+
+    assert sorted(path.name for path in sources) == sorted(manifest.REQUIRED_VECTORS)
+
+
+def test_verify_vectors_given_a_deleted_csv_names_the_missing_file(tmp_path: Path) -> None:
+    """T-5 negative: the raise carries the path, not just a count."""
+    shutil.copytree(SOURCE_PACKAGE / manifest.VECTORS_SUBDIR, tmp_path / "vectors")
+    (tmp_path / "vectors" / "rank_sweep.csv").unlink()
+
+    with pytest.raises(manifest.MissingAssetError, match=re.escape("vectors/rank_sweep.csv")):
+        manifest.verify_vectors(tmp_path)
+
+
+def test_vector_data_entries_given_a_missing_csv_raises_instead_of_listing_entries(
+    tmp_path: Path,
+) -> None:
+    """The spec cannot obtain vector datas without passing the check."""
+    shutil.copytree(SOURCE_PACKAGE / manifest.VECTORS_SUBDIR, tmp_path / "vectors")
+    (tmp_path / "vectors" / "joker_vectors.csv").unlink()
+
+    with pytest.raises(manifest.MissingAssetError, match=re.escape("vectors/joker_vectors.csv")):
+        manifest.vector_data_entries(tmp_path)
+
+
 def test_data_entries_given_a_missing_asset_raises_instead_of_listing_entries(
     tmp_path: Path,
 ) -> None:
@@ -291,6 +382,45 @@ def test_main_given_a_missing_asset_names_it_on_stderr_and_returns_one(
     assert "xrc/main.xrc" in capsys.readouterr().err
 
 
+def test_main_given_a_complete_tree_also_reports_the_vector_count(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The CLI's success line names the vector CSVs too, not only ui/.
+
+    ``--package-dir`` defaults to :data:`manifest.DEFAULT_PACKAGE_DIR`
+    (previously dead code, referenced nowhere) the same way
+    ``--ui-dir`` defaults to :data:`manifest.DEFAULT_UI_DIR`.
+    """
+    exit_code = manifest.main(["--ui-dir", str(SOURCE_UI), "--package-dir", str(SOURCE_PACKAGE)])
+
+    expected = f"all {len(manifest.REQUIRED_VECTORS)} required vectors present"
+    assert exit_code == 0
+    assert expected in capsys.readouterr().out
+
+
+def test_main_given_missing_vectors_names_them_on_stderr_and_returns_one(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """T-5: a tree missing both self-test CSVs must not exit 0.
+
+    Empirically proven gap this closes: ``main()`` used to call only
+    ``verify_assets``, so a package dir missing both
+    ``rank_sweep.csv`` and ``joker_vectors.csv`` previously passed
+    with exit 0 -- silently shipping a bundle that crashes at launch
+    with ``FileNotFoundError`` (the same failure the built-bundle
+    fix above closes at the packaging-spec level).
+    """
+    package_dir = tmp_path / "package"
+    (package_dir / manifest.VECTORS_SUBDIR).mkdir(parents=True)
+
+    exit_code = manifest.main(["--ui-dir", str(SOURCE_UI), "--package-dir", str(package_dir)])
+
+    stderr = capsys.readouterr().err
+    assert exit_code == 1
+    assert "vectors/rank_sweep.csv" in stderr
+    assert "vectors/joker_vectors.csv" in stderr
+
+
 # ----------------------------------------------------- the built bundle
 
 
@@ -301,6 +431,15 @@ def bundle_ui_dirs() -> tuple[Path, ...]:
     if absent:
         pytest.skip(f"no built bundle -- run `nox -s bundle` first; missing {', '.join(absent)}")
     return SHIPPED_UI_DIRS
+
+
+@pytest.fixture(scope="module")
+def bundle_package_dirs() -> tuple[Path, ...]:
+    """Every built layout's packaged ``rivercrossing`` package root."""
+    absent = [str(path) for path in SHIPPED_PACKAGE_DIRS if not path.is_dir()]
+    if absent:
+        pytest.skip(f"no built bundle -- run `nox -s bundle` first; missing {', '.join(absent)}")
+    return SHIPPED_PACKAGE_DIRS
 
 
 @pytest.fixture(scope="module")
@@ -366,6 +505,37 @@ def test_bundled_asset_bytes_are_identical_to_the_source_tree(
     assert {ui_dir: _digests(ui_dir) for ui_dir in bundle_ui_dirs} == dict.fromkeys(
         bundle_ui_dirs, expected
     )
+
+
+def test_bundled_vector_names_match_the_required_manifest_exactly(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """Both self-test CSVs land under the package root's own vectors/.
+
+    A wrong ``VECTORS_PACKAGE_DEST`` (e.g. the containing-folder
+    mistake this test's sibling below pins) would either miss this
+    directory entirely or leave it empty -- this is the on-disk,
+    built-bundle catch the ui/xrc assets already have.
+    """
+    packaged = {
+        package_dir: _names_present(package_dir, manifest.VECTORS_SUBDIR)
+        for package_dir in bundle_package_dirs
+    }
+
+    assert packaged == {
+        package_dir: set(manifest.REQUIRED_VECTORS) for package_dir in bundle_package_dirs
+    }
+
+
+def test_bundled_vector_bytes_are_identical_to_the_source_tree(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """Content, not just presence: no truncation, no re-encoding."""
+    expected = _vector_digests(SOURCE_PACKAGE)
+
+    assert {
+        package_dir: _vector_digests(package_dir) for package_dir in bundle_package_dirs
+    } == dict.fromkeys(bundle_package_dirs, expected)
 
 
 @pytest.mark.parametrize("spec", pages.WINDOWS, ids=lambda spec: spec.name)
