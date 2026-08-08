@@ -35,7 +35,9 @@ from rivercrossing.roster import (
     RosterError,
 )
 
-_NAME = st.text(alphabet=st.characters(min_codepoint=97, max_codepoint=122), min_size=1, max_size=6)
+_NAME = st.text(
+    alphabet=st.characters(min_codepoint=97, max_codepoint=122), min_size=1, max_size=6
+)
 _PLATE = st.integers(min_value=1, max_value=12).map(str)
 _TEAM_RIDER_COUNT = st.integers(min_value=1, max_value=5)
 _INDEX = st.integers(min_value=0, max_value=20)
@@ -51,7 +53,7 @@ class _CreateSolo:
 
 @dataclass(frozen=True)
 class _CreateTeam:
-    """A generated create_team_entry() call (rider_count may be invalid)."""
+    """A generated create_team_entry() call (size may be invalid)."""
 
     display_name: str
     rider_names: tuple[str, ...]
@@ -60,7 +62,7 @@ class _CreateTeam:
 
 @dataclass(frozen=True)
 class _MoveRider:
-    """A generated move_rider() call, indices wrapped onto live entries."""
+    """A generated move_rider() call, indices wrap onto entries."""
 
     from_index: int
     rider_index: int
@@ -69,7 +71,7 @@ class _MoveRider:
 
 @st.composite
 def _create_team_action(draw: st.DrawFn) -> _CreateTeam:
-    """Build one _CreateTeam action with a random (possibly invalid) size."""
+    """Build one _CreateTeam action with a random rider count."""
     rider_count = draw(_TEAM_RIDER_COUNT)
     names = tuple(draw(_NAME) for _ in range(rider_count))
     plates = tuple(draw(_PLATE) for _ in range(rider_count))
@@ -97,7 +99,7 @@ def _apply_move(roster: Roster, action: _MoveRider) -> None:
 
 
 def _apply(roster: Roster, action: _CreateSolo | _CreateTeam | _MoveRider) -> None:
-    """Apply *action* to *roster*, treating a rejected mutation as a no-op."""
+    """Apply *action*, treating a rejected mutation as a no-op."""
     try:
         if isinstance(action, _CreateSolo):
             roster.create_solo_entry(name=action.name, plate=action.plate)
@@ -113,25 +115,31 @@ def _apply(roster: Roster, action: _CreateSolo | _CreateTeam | _MoveRider) -> No
         return
 
 
-def _run_sequence(
-    roster: Roster, actions: list[_CreateSolo | _CreateTeam | _MoveRider]
-) -> None:
+def _run_sequence(roster: Roster, actions: list[_CreateSolo | _CreateTeam | _MoveRider]) -> None:
     """Replay *actions* against *roster* in order."""
     for action in actions:
         _apply(roster, action)
 
 
 def _assert_plate_and_team_size_invariants(roster: Roster) -> None:
-    """Assert no plate repeats and every entry's team_size is in bounds."""
-    plates_seen: list[str] = []
+    """Assert no *cross-entry* plate repeats; sizes in bounds.
+
+    Each entry contributes its own plate plus its riders' plates as
+    one set, deduplicating a pooled entry's derived plate against
+    its own adopted rider's plate (S1's intended, not a collision);
+    ``claimed`` must stay disjoint across *different* entries.
+    """
+    claimed: set[str] = set()
     for entry in roster.entries:
-        plates_seen.append(entry.plate)
-        plates_seen.extend(rider.plate for rider in entry.riders if rider.plate is not None)
+        entry_plates = {entry.plate} | {
+            rider.plate for rider in entry.riders if rider.plate is not None
+        }
+        assert claimed.isdisjoint(entry_plates)
+        claimed |= entry_plates
         if entry.type is EntryType.SOLO:
             assert entry.team_size == 1
         else:
             assert MIN_TEAM_SIZE <= entry.team_size <= roster.max_team_size
-    assert len(plates_seen) == len(set(plates_seen))
 
 
 @given(actions=st.lists(_ACTION, max_size=15))
@@ -139,8 +147,10 @@ def _assert_plate_and_team_size_invariants(roster: Roster) -> None:
 def test_roster_any_valid_mutation_sequence_preserves_plate_and_size_invariants(
     actions: list[_CreateSolo | _CreateTeam | _MoveRider],
 ) -> None:
-    """Any sequence of (accepted) mutations keeps plates unique and sizes in bounds."""
-    roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=6, plate_model=PlateModel.RIDER_POOLED)
+    """Any accepted mutation sequence keeps plates/sizes valid."""
+    roster = Roster(
+        entry_mode=EntryMode.MIXED, max_team_size=6, plate_model=PlateModel.RIDER_POOLED
+    )
 
     _run_sequence(roster, actions)
 
@@ -158,7 +168,7 @@ def _fill_relay_plates(roster: Roster, plates: list[int]) -> None:
 def test_roster_next_free_plate_never_collides_with_a_plate_already_in_use(
     plates: list[int],
 ) -> None:
-    """next_free_plate() is never one of the plates already registered."""
+    """next_free_plate() never repeats a plate already in use."""
     roster = Roster(plate_model=PlateModel.TEAM_RELAY)
     _fill_relay_plates(roster, plates)
 

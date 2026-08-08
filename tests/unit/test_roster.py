@@ -15,12 +15,15 @@ is red until rivercrossing/roster.py lands.
 """
 
 import re
+from typing import TYPE_CHECKING
 
 import pytest
 
 from rivercrossing.roster import (
-    AuditEvent,
     DEFAULT_MAX_TEAM_SIZE,
+    MAX_TEAM_SIZE_LIMIT,
+    MIN_TEAM_SIZE,
+    AuditEvent,
     DuplicatePlateError,
     Entry,
     EntryMode,
@@ -28,8 +31,6 @@ from rivercrossing.roster import (
     EntryStatus,
     EntryType,
     InvalidMoveError,
-    MAX_TEAM_SIZE_LIMIT,
-    MIN_TEAM_SIZE,
     PlateModel,
     PlateShapeError,
     Rider,
@@ -39,7 +40,10 @@ from rivercrossing.roster import (
     TeamSizeError,
 )
 
-# --------------------------------------------------------------- defaults
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+# ----------------------------------------------------------- defaults
 
 
 def test_roster_bare_construction_defaults_to_solo_only() -> None:
@@ -57,42 +61,32 @@ def test_roster_bare_construction_defaults_max_team_size_to_four() -> None:
 
 
 def test_roster_bare_construction_defaults_plate_model_to_rider_pooled() -> None:
-    """A bare Roster() defaults plate_model to rider_pooled (spec S1)."""
+    """rider_pooled is the default plate_model (spec S1)."""
     roster = Roster()
 
     assert roster.plate_model == PlateModel.RIDER_POOLED
 
 
 def test_roster_bare_construction_starts_with_no_entries_or_audit_events() -> None:
-    """A fresh Roster starts with empty entries and an empty audit log."""
+    """A fresh Roster starts empty: no entries, no audit log."""
     roster = Roster()
 
     assert (roster.entries, roster.audit_log) == ((), ())
 
 
-# --------------------------------------------- max_team_size construction bound
+# ------------------------------------------------ max_team_size bound
 
 
-@pytest.mark.parametrize(
-    ("max_team_size", "expect_error"),
-    [
-        (1, True),  # min - 1
-        (2, False),  # min
-        (3, False),  # min + 1
-        (9, False),  # max - 1
-        (10, False),  # max
-        (11, True),  # max + 1
-    ],
-)
-def test_roster_construction_max_team_size_boundary(
-    max_team_size: int, expect_error: bool
-) -> None:
-    """max_team_size outside 2..10 raises TeamSizeError at construction."""
-    if expect_error:
-        with pytest.raises(TeamSizeError, match=re.escape("max_team_size")):
-            Roster(max_team_size=max_team_size)
-        return
+@pytest.mark.parametrize("max_team_size", [1, 11])  # min - 1, max + 1
+def test_roster_construction_max_team_size_out_of_range_raises(max_team_size: int) -> None:
+    """max_team_size outside 2..10 raises at construction."""
+    with pytest.raises(TeamSizeError, match=re.escape("max_team_size")):
+        Roster(max_team_size=max_team_size)
 
+
+@pytest.mark.parametrize("max_team_size", [2, 3, 9, 10])  # min, min+1, max-1, max
+def test_roster_construction_max_team_size_in_range_is_accepted(max_team_size: int) -> None:
+    """max_team_size within 2..10 is accepted as given."""
     roster = Roster(max_team_size=max_team_size)
 
     assert roster.max_team_size == max_team_size
@@ -107,7 +101,7 @@ def test_roster_construction_max_team_size_limit_matches_hard_ceiling() -> None:
 
 
 def test_create_solo_entry_relay_stores_plate_on_entry_not_rider() -> None:
-    """team_relay: the entry carries the plate; its rider carries none."""
+    """team_relay: the entry carries the plate; rider carries none."""
     roster = Roster(plate_model=PlateModel.TEAM_RELAY)
 
     entry = roster.create_solo_entry(name="Alex", plate="12")
@@ -116,7 +110,7 @@ def test_create_solo_entry_relay_stores_plate_on_entry_not_rider() -> None:
 
 
 def test_create_solo_entry_pooled_derives_entry_plate_from_its_rider() -> None:
-    """rider_pooled: a solo entry's plate equals its rider's own plate."""
+    """rider_pooled: a solo entry's plate is its rider's plate."""
     roster = Roster(plate_model=PlateModel.RIDER_POOLED)
 
     entry = roster.create_solo_entry(name="Alex", plate="12")
@@ -125,7 +119,7 @@ def test_create_solo_entry_pooled_derives_entry_plate_from_its_rider() -> None:
 
 
 def test_create_solo_entry_sets_display_name_type_and_default_status() -> None:
-    """A new solo entry's display_name/type/status/notes are as given."""
+    """A new solo entry's display_name/type/status/notes match input."""
     roster = Roster()
 
     entry = roster.create_solo_entry(name="Alex", plate="12")
@@ -157,7 +151,7 @@ def test_create_solo_entry_appends_entry_to_roster_entries() -> None:
 
 
 def test_create_solo_entry_appends_one_audit_event_with_action_and_plate() -> None:
-    """create_solo_entry logs one audit event naming the action and plate."""
+    """create_solo_entry logs one event naming action and plate."""
     roster = Roster()
 
     roster.create_solo_entry(name="Alex", plate="12")
@@ -171,7 +165,7 @@ def test_create_solo_entry_appends_one_audit_event_with_action_and_plate() -> No
 
 
 def test_create_team_entry_relay_carries_plate_on_entry_and_clears_riders() -> None:
-    """team_relay: a team's plate lives on the entry; riders carry none."""
+    """team_relay: a team's plate lives on the entry, not riders."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
     riders = [Rider(name="Alex"), Rider(name="Bo")]
 
@@ -181,7 +175,7 @@ def test_create_team_entry_relay_carries_plate_on_entry_and_clears_riders() -> N
 
 
 def test_create_team_entry_pooled_adopts_lowest_numbered_rider_plate() -> None:
-    """rider_pooled: a team's plate is its lowest-numbered rider's plate."""
+    """rider_pooled: a team's plate is its lowest rider's plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     riders = [Rider(name="Alex", plate="45"), Rider(name="Bo", plate="9")]
 
@@ -191,7 +185,7 @@ def test_create_team_entry_pooled_adopts_lowest_numbered_rider_plate() -> None:
 
 
 def test_create_team_entry_sets_display_name_type_and_default_status() -> None:
-    """A new team entry's display_name/type/status/notes are as given."""
+    """A new team entry's display_name/type/status/notes match input."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     riders = [Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")]
 
@@ -206,7 +200,7 @@ def test_create_team_entry_sets_display_name_type_and_default_status() -> None:
 
 
 def test_create_team_entry_appends_one_audit_event_with_team_size() -> None:
-    """create_team_entry logs one audit event naming plate/name/team_size."""
+    """create_team_entry logs one event naming plate/name/size."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     riders = [Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")]
 
@@ -220,25 +214,21 @@ def test_create_team_entry_appends_one_audit_event_with_team_size() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("rider_count", "expect_error"),
-    [
-        (1, True),  # min - 1
-        (2, False),  # min
-        (3, False),  # min + 1 == max - 1 (max_team_size=4 default)
-        (4, False),  # max
-        (5, True),  # max + 1
-    ],
-)
-def test_create_team_entry_team_size_boundary(rider_count: int, expect_error: bool) -> None:
-    """Team size outside 2..max_team_size(default 4) raises TeamSizeError."""
+@pytest.mark.parametrize("rider_count", [1, 5])  # min - 1, max + 1 (max_team_size=4 default)
+def test_create_team_entry_team_size_out_of_range_raises(rider_count: int) -> None:
+    """Team size outside 2..max_team_size(4) raises TeamSizeError."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     riders = [Rider(name=f"r{i}", plate=str(i)) for i in range(rider_count)]
 
-    if expect_error:
-        with pytest.raises(TeamSizeError, match=re.escape("team size")):
-            roster.create_team_entry(display_name="Team A", riders=riders)
-        return
+    with pytest.raises(TeamSizeError, match=re.escape("team size")):
+        roster.create_team_entry(display_name="Team A", riders=riders)
+
+
+@pytest.mark.parametrize("rider_count", [2, 3, 4])  # min, min+1==max-1, max
+def test_create_team_entry_team_size_in_range_is_accepted(rider_count: int) -> None:
+    """Team size within 2..max_team_size(4) is accepted as given."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    riders = [Rider(name=f"r{i}", plate=str(i)) for i in range(rider_count)]
 
     entry = roster.create_team_entry(display_name="Team A", riders=riders)
 
@@ -246,7 +236,7 @@ def test_create_team_entry_team_size_boundary(rider_count: int, expect_error: bo
 
 
 def test_create_team_entry_eleven_riders_at_the_hard_ceiling_raises() -> None:
-    """An 11-rider team exceeds both max_team_size(<=10) and the hard 10 cap."""
+    """An 11-rider team exceeds max_team_size and the hard cap."""
     roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=MAX_TEAM_SIZE_LIMIT)
     riders = [Rider(name=f"r{i}", plate=str(i)) for i in range(11)]
 
@@ -275,7 +265,7 @@ def test_create_solo_entry_on_solo_only_ride_succeeds() -> None:
     assert entry.type == EntryType.SOLO
 
 
-# ------------------------------------------------------------ plate shapes
+# ------------------------------------------------------- plate shapes
 
 
 def test_create_team_entry_relay_without_a_plate_raises_plate_shape_error() -> None:
@@ -288,7 +278,7 @@ def test_create_team_entry_relay_without_a_plate_raises_plate_shape_error() -> N
 
 
 def test_create_team_entry_pooled_with_a_riderless_plate_raises_plate_shape_error() -> None:
-    """rider_pooled requires every team member to already carry a plate."""
+    """rider_pooled requires every team member to carry a plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     riders = [Rider(name="Alex", plate="1"), Rider(name="Bo")]
 
@@ -296,11 +286,11 @@ def test_create_team_entry_pooled_with_a_riderless_plate_raises_plate_shape_erro
         roster.create_team_entry(display_name="Team A", riders=riders)
 
 
-# --------------------------------------------------------- duplicate plates
+# --------------------------------------------------- duplicate plates
 
 
 def test_create_solo_entry_duplicate_of_existing_entry_plate_raises() -> None:
-    """A new solo plate colliding with an existing entry's plate raises."""
+    """A new solo plate matching an existing entry's plate raises."""
     roster = Roster()
     roster.create_solo_entry(name="Alex", plate="12")
 
@@ -309,7 +299,7 @@ def test_create_solo_entry_duplicate_of_existing_entry_plate_raises() -> None:
 
 
 def test_create_team_entry_rider_plate_colliding_with_existing_rider_raises() -> None:
-    """A new team's rider plate colliding with an existing rider raises."""
+    """A new team's rider plate matching an existing rider raises."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     roster.create_solo_entry(name="Alex", plate="12")
     riders = [Rider(name="Bo", plate="12"), Rider(name="Cy", plate="13")]
@@ -319,7 +309,7 @@ def test_create_team_entry_rider_plate_colliding_with_existing_rider_raises() ->
 
 
 def test_create_team_entry_rider_plate_colliding_with_another_teams_rider_raises() -> None:
-    """A new team's rider plate colliding with a different team's rider raises."""
+    """A new team's rider matching a different team's rider raises."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Team A", riders=[Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")]
@@ -333,7 +323,7 @@ def test_create_team_entry_rider_plate_colliding_with_another_teams_rider_raises
 
 
 def test_create_team_entry_two_riders_sharing_a_plate_within_one_call_raises() -> None:
-    """Two riders in the *same* new team sharing a plate raises (rider-rider)."""
+    """Two riders in one new team sharing a plate raises."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     riders = [Rider(name="Alex", plate="5"), Rider(name="Bo", plate="5")]
 
@@ -342,7 +332,7 @@ def test_create_team_entry_two_riders_sharing_a_plate_within_one_call_raises() -
 
 
 def test_create_solo_entry_plate_matching_an_existing_pooled_teams_own_plate_raises() -> None:
-    """A solo plate colliding with a pooled team's derived entry plate raises."""
+    """A solo plate matching a pooled team's derived plate raises."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     riders = [Rider(name="Alex", plate="3"), Rider(name="Bo", plate="9")]
     roster.create_team_entry(display_name="Team A", riders=riders)
@@ -351,7 +341,13 @@ def test_create_solo_entry_plate_matching_an_existing_pooled_teams_own_plate_rai
         roster.create_solo_entry(name="Cy", plate="3")
 
 
-# --------------------------------------------------------- next_free_plate
+# ---------------------------------------------------- next_free_plate
+
+
+def _register_plates(roster: Roster, plates: Sequence[str]) -> None:
+    """Create one relay-or-pooled solo entry per plate in *plates*."""
+    for plate in plates:
+        roster.create_solo_entry(name="rider", plate=plate)
 
 
 def test_next_free_plate_on_an_empty_roster_returns_one() -> None:
@@ -364,8 +360,7 @@ def test_next_free_plate_on_an_empty_roster_returns_one() -> None:
 def test_next_free_plate_is_one_past_the_highest_numeric_plate_in_use() -> None:
     """next_free_plate is (highest numeric plate in use) + 1."""
     roster = Roster()
-    for plate in ("77", "78", "123", "212"):
-        roster.create_solo_entry(name="rider", plate=plate)
+    _register_plates(roster, ("77", "78", "123", "212"))
 
     assert roster.next_free_plate() == "213"
 
@@ -379,7 +374,7 @@ def test_next_free_plate_ignores_non_numeric_plates() -> None:
 
 
 def test_next_free_plate_considers_both_entry_and_rider_plate_namespaces() -> None:
-    """next_free_plate spans the entry-plate and pooled rider-plate namespace."""
+    """next_free_plate spans both the entry and rider plate spaces."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     riders = [Rider(name="Alex", plate="3"), Rider(name="Bo", plate="50")]
     roster.create_team_entry(display_name="Team A", riders=riders)
@@ -387,7 +382,7 @@ def test_next_free_plate_considers_both_entry_and_rider_plate_namespaces() -> No
     assert roster.next_free_plate() == "51"
 
 
-# --------------------------------------------------------------- update_entry
+# ------------------------------------------------------- update_entry
 
 
 def test_update_entry_display_name_only_renames_and_leaves_notes_unchanged() -> None:
@@ -401,7 +396,7 @@ def test_update_entry_display_name_only_renames_and_leaves_notes_unchanged() -> 
 
 
 def test_update_entry_notes_only_updates_notes_and_leaves_name_unchanged() -> None:
-    """update_entry(notes=...) edits notes without touching display_name."""
+    """update_entry(notes=...) edits notes, name unchanged."""
     roster = Roster()
     entry = roster.create_solo_entry(name="Alex", plate="1")
 
@@ -411,7 +406,7 @@ def test_update_entry_notes_only_updates_notes_and_leaves_name_unchanged() -> No
 
 
 def test_update_entry_appends_an_audit_event_with_the_changed_fields() -> None:
-    """update_entry logs one audit event carrying the fields that changed."""
+    """update_entry logs one event carrying the changed fields."""
     roster = Roster()
     entry = roster.create_solo_entry(name="Alex", plate="1")
 
@@ -432,7 +427,7 @@ def test_update_entry_unknown_entry_raises_entry_not_found_error() -> None:
         roster.update_entry(foreign, display_name="Nope")
 
 
-# --------------------------------------------------------------- delete_entry
+# ------------------------------------------------------- delete_entry
 
 
 def test_delete_entry_removes_it_from_roster_entries() -> None:
@@ -446,7 +441,7 @@ def test_delete_entry_removes_it_from_roster_entries() -> None:
 
 
 def test_delete_entry_appends_an_audit_event() -> None:
-    """delete_entry logs one audit event naming plate and display_name."""
+    """delete_entry logs one event naming plate and display_name."""
     roster = Roster()
     entry = roster.create_solo_entry(name="Alex", plate="1")
 
@@ -477,7 +472,7 @@ def test_delete_entry_unknown_entry_raises_entry_not_found_error() -> None:
         roster.delete_entry(foreign)
 
 
-# ---------------------------------------------------------------- move_rider
+# --------------------------------------------------------- move_rider
 
 
 def test_move_rider_relocates_rider_between_two_team_entries() -> None:
@@ -500,7 +495,7 @@ def test_move_rider_pooled_carries_the_riders_own_plate_along() -> None:
     """A moved rider's own plate travels with them (R-17), unchanged."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     alex = Rider(name="Alex", plate="1")
-    team_a = roster.create_team_entry(
+    roster.create_team_entry(
         display_name="Team A",
         riders=[alex, Rider(name="Bo", plate="2"), Rider(name="El", plate="3")],
     )
@@ -514,7 +509,7 @@ def test_move_rider_pooled_carries_the_riders_own_plate_along() -> None:
 
 
 def test_move_rider_pooled_recomputes_both_teams_derived_plate() -> None:
-    """A pooled move re-derives both teams' lowest-numbered-rider plate."""
+    """A pooled move re-derives both teams' lowest rider plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     alex = Rider(name="Alex", plate="1")
     team_a = roster.create_team_entry(
@@ -531,7 +526,7 @@ def test_move_rider_pooled_recomputes_both_teams_derived_plate() -> None:
 
 
 def test_move_rider_appends_an_audit_event_naming_both_entries() -> None:
-    """move_rider logs one audit event naming the rider and both plates."""
+    """move_rider logs one event naming the rider and both plates."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     alex = Rider(name="Alex", plate="1")
     roster.create_team_entry(
@@ -551,7 +546,7 @@ def test_move_rider_appends_an_audit_event_naming_both_entries() -> None:
 
 
 def test_move_rider_dropping_source_team_below_minimum_raises_invalid_move_error() -> None:
-    """Moving the second rider out of a 2-rider team raises (min size 2)."""
+    """Moving the 2nd rider out of a 2-rider team raises."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     alex = Rider(name="Alex", plate="1")
     roster.create_team_entry(display_name="Team A", riders=[alex, Rider(name="Bo", plate="2")])
@@ -609,7 +604,7 @@ def test_move_rider_unknown_destination_entry_raises_entry_not_found_error() -> 
 
 
 def test_move_rider_out_of_a_solo_entry_raises_invalid_move_error() -> None:
-    """move_rider on a solo entry's rider raises (solo is exactly 1 rider)."""
+    """move_rider on a solo rider raises (solo is 1 rider)."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     solo = roster.create_solo_entry(name="Alex", plate="1")
     team_b = roster.create_team_entry(
@@ -621,7 +616,7 @@ def test_move_rider_out_of_a_solo_entry_raises_invalid_move_error() -> None:
 
 
 def test_move_rider_into_a_solo_entry_raises_invalid_move_error() -> None:
-    """move_rider(to_entry=<solo entry>) raises (solo is exactly 1 rider)."""
+    """move_rider(to_entry=<solo>) raises (solo is 1 rider)."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     alex = Rider(name="Alex", plate="1")
     roster.create_team_entry(display_name="Team A", riders=[alex, Rider(name="Bo", plate="2")])
@@ -631,7 +626,7 @@ def test_move_rider_into_a_solo_entry_raises_invalid_move_error() -> None:
         roster.move_rider(alex, to_entry=solo)
 
 
-# --------------------------------------------------------------- audit_log
+# ---------------------------------------------------------- audit_log
 
 
 def test_audit_log_records_events_in_the_order_the_mutations_happened() -> None:
