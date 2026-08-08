@@ -240,6 +240,7 @@ source_modules = [
     "rivercrossing.demo",
     "rivercrossing.cards",
     "rivercrossing.hands",
+    "rivercrossing.roster",
 ]
 forbidden_modules = ["wx"]
 
@@ -256,5 +257,6 @@ source_modules = [
     "rivercrossing.htmlexport",
     "rivercrossing.ui.presenters",
     "rivercrossing.ui.views",
+    "rivercrossing.roster",
 ]
 forbidden_modules = ["rivercrossing.demo"]
