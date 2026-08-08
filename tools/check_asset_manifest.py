@@ -24,6 +24,12 @@ Run it directly to check a tree without waiting for a build::
 
     python tools/check_asset_manifest.py
     python tools/check_asset_manifest.py --ui-dir path/to/ui
+    python tools/check_asset_manifest.py --package-dir path/to/pkg
+
+``main()`` checks both manifests -- ``verify_assets`` and
+``verify_vectors`` -- so a tree missing either the ``ui/`` assets or
+the two self-test vector CSVs fails this direct check the same way
+it would fail the real build.
 """
 
 import argparse
@@ -202,21 +208,24 @@ def vector_data_entries(package_dir: Path) -> list[tuple[str, str]]:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    """Build the ``--ui-dir`` argument parser."""
+    """Build the ``--ui-dir``/``--package-dir`` argument parser."""
     parser = argparse.ArgumentParser(description="Check the bundle asset manifest.")
     parser.add_argument("--ui-dir", type=Path, default=DEFAULT_UI_DIR)
+    parser.add_argument("--package-dir", type=Path, default=DEFAULT_PACKAGE_DIR)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Report any missing asset in the given tree; 0 if complete."""
+    """Check both trees for a missing asset or vector; 0 if complete."""
     args = _build_parser().parse_args(argv)
     try:
         verify_assets(args.ui_dir)
+        verify_vectors(args.package_dir)
     except MissingAssetError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"{args.ui_dir}: all {len(required_relative_paths())} required assets present")
+    print(f"{args.package_dir}: all {len(REQUIRED_VECTORS)} required vectors present")
     return 0
 
 
