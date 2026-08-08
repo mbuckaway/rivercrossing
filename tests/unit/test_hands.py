@@ -88,7 +88,7 @@ _SWEEP_BUDGET_SECONDS = 5.0
 
 
 class _RankSweepRow(NamedTuple):
-    """One row of tests/vectors/rank_sweep.csv."""
+    """One row of src/rivercrossing/vectors/rank_sweep.csv."""
 
     cards: str
     rank: int
@@ -271,7 +271,7 @@ def test_card_parse_round_trips_every_code(card: Card) -> None:
 
 
 class _JokerVectorRow(NamedTuple):
-    """One row of tests/vectors/joker_vectors.csv."""
+    """One row of src/rivercrossing/vectors/joker_vectors.csv."""
 
     cards: str
     expected_class: str

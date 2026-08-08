@@ -109,8 +109,9 @@ class ShoeEmpty(Exception):  # noqa: N818 -- frozen name, module-skeletons.md S4
 class ShoeClosedError(Exception):
     """Raised by any Shoe mutation once Shoe.close() has run.
 
-    Ride Finish closes the shoe (module-skeletons.md S4); nothing
-    may deal, reshuffle or undo against it after that point.
+    Ride Finish closes the shoe (task-briefs.md E2.2.1's own negative
+    case, "deal after close raises"); nothing may deal, reshuffle or
+    undo against it after that point.
     """
 
 
@@ -236,7 +237,7 @@ class Shoe:
         self._dealt = 0
 
     def close(self) -> None:
-        """Close the shoe; ride Finish calls this (module-skeletons S4).
+        """Close the shoe; ride Finish calls this (task-briefs E2.2.1).
 
         Every later :meth:`deal`, :meth:`reshuffle` or
         :meth:`restitute` call raises :class:`ShoeClosedError`.
