@@ -76,7 +76,7 @@ The shoe is `deck_count × (52 + jokers_per_deck)` cards (default 8 decks × 2 j
 Within a class, standard kicker comparison — the 7,462 distinct natural ranks are stored as one integer per entry, so sorting the field is a plain sort. Ship the rank table locally; self-test on startup against known vectors (wheel straight, joker five-of-a-kind, …).
 
 ```
-best_hand(cards):                # n ≤ ~15
+best_hand(cards):                # any n — R-16 pools are uncapped
   naturals, j = split_jokers(cards)
   if j >= 5: return FIVE_OF_KIND(Ace)
   best = -inf
@@ -94,7 +94,14 @@ best_hand(cards):                # n ≤ ~15
 # whole 180-entry field well under a second.
 ```
 
-A joker always plays as whichever natural card — or, with more than one joker, whichever combination of natural cards — turns the hand into the best hand reachable, never the first legal completion. A joker may duplicate a card already held elsewhere in the same hand: the multi-deck shoe (§4) means a repeated card is not a foul, and refusing to reuse a suit just because it appears elsewhere in the hand would silently settle for a worse hand than the cards actually support. The table below is the joker vector set the startup self-test checks (§5's own "known vectors" line, above); `tests/vectors/joker_vectors.csv` encodes it row for row.
+The sketch defines the semantics; the shipped evaluator does not enumerate subsets. It builds one
+candidate hand per hand class directly from rank multiplicities and per-suit straight windows
+(jokers fill greedily), then takes the best — so an uncapped pooled hand (R-16) evaluates in O(n).
+Measured: a 60-card pool in under a millisecond, the whole 180×12 field in ~16 ms. Subset
+enumeration saturated its own pruning past ~20 cards and silently dropped straight-completing
+cards — both measured before the rewrite.
+
+A joker always plays as whichever natural card — or, with more than one joker, whichever combination of natural cards — turns the hand into the best hand reachable, never the first legal completion. A joker may duplicate a card already held elsewhere in the same hand: the multi-deck shoe (§4) means a repeated card is not a foul, and refusing to reuse a suit just because it appears elsewhere in the hand would silently settle for a worse hand than the cards actually support. The table below is the joker vector set the startup self-test checks (§5's own "known vectors" line, above); `src/rivercrossing/vectors/joker_vectors.csv` encodes it row for row and ships as package data, so the installed app's launch self-test reads the same file the tests do (R-44).
 
 *One joker*
 

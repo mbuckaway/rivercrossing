@@ -121,6 +121,8 @@ The poker heart goes live: seeded shoe and the best-5-of-N evaluator with jokers
 
 Exit criteria vectors + properties + sims green at gates · selftest_dlg green from real evaluator on both OSes · evaluation of 180×12 cards < 1 s in CI.
 
+Shipped in v0.2. Both spec gaps found during the build were resolved and written back: within-entry duplicates rank as physical cards, and the 28-row joker vector table now lives in §5 (shipped as package data for R-44). The evaluator constructs hands analytically, so R-16's uncapped pools evaluate in O(n) — the field scores in ~16 ms; subset enumeration proved both slow and, past ~20 cards, wrong. The shoe gained the two members the briefs demanded (restitute, close — §S4).
+
 E3 · Roster — riders, teams, CSV
 
 Real rider/team management replaces demo roster: unique plates, solo default, teams 2–10 with rider-pooled (default) or team-plate model, editable right up to start (R-17), CSV round-trip with preview-then-commit.
@@ -214,7 +216,7 @@ Exit criteria installers install and run on clean Windows 11 + macOS images · a
 | EPIC | Requirements | Design ground truth |
 |---|---|---|
 | E1 | R-01/02/05, R-70/73/75/76 | XRC canvas (all 23 windows) · Spec §13–§15b |
-| E2 | R-40…44, R-72 | Spec §5 · selftest_dlg · tests/vectors |
+| E2 | R-40…44, R-72 | Spec §5 · selftest_dlg · src/rivercrossing/vectors |
 | E3 | R-11/12/15/17, R-20/21/22 | rider_editor_dlg, csv_preview_dlg · Spec §7 |
 | E4 | R-13/16, R-30…36 (undo = R-33; audio cues live in R-31) | main_frame states · Spec §2–§4 |
 | E5 | R-50…54, R-18 | resume/exit/continue dialogs, library · Spec §6/§9 |
