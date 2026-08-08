@@ -145,9 +145,19 @@ def test_eval5_sweep_matches_every_committed_rank_within_budget() -> None:
         evaluated_by_row, key=lambda pair: (pair[0].cls, pair[0].tiebreak), reverse=True
     )
     ranks_in_hand_order = [row.rank for _, row in best_to_worst]
+    keys = [(hand.cls, hand.tiebreak) for hand, _ in evaluated_by_row]
 
     assert len(rows) == NATURAL_RANK_COUNT
     assert ranks_in_hand_order == list(range(1, NATURAL_RANK_COUNT + 1))
+    # Distinctness is not implied by the line above: sorted() is
+    # stable, so two rows whose (cls, tiebreak) collapse to an equal
+    # key keep the CSV's own already-sorted order and this list would
+    # still read back as 1..7462 -- a regression that collapses
+    # distinct ranks into ties could never fail the check above.
+    # Proven: temporarily dropping TWO_PAIR's kicker in
+    # _kicker_tiebreak collapsed 7,462 keys to 6,682 distinct ones
+    # while the assertion above stayed green.
+    assert len(set(keys)) == NATURAL_RANK_COUNT
     assert elapsed < _SWEEP_BUDGET_SECONDS
 
 
