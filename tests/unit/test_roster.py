@@ -12,6 +12,13 @@ solo-only ride -- all raise.
 
 Written FIRST, against a module that does not exist yet: this file
 is red until rivercrossing/roster.py lands.
+
+E3.1.2 (below) extends this same file with the lock matrix's own
+suite: per-(status, plate_model) coverage for
+``can_edit_structure``/``can_delete_entry``/``can_move_rider``, the
+task brief's two named scenarios -- post-start relay lock, post-start
+pooled audited moves -- and the permanent has-data delete guard
+(R-15/R-17).
 """
 
 import re
@@ -19,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from rivercrossing.ride import RideStatus
 from rivercrossing.roster import (
     DEFAULT_MAX_TEAM_SIZE,
     MAX_TEAM_SIZE_LIMIT,
@@ -31,6 +39,7 @@ from rivercrossing.roster import (
     EntryStatus,
     EntryType,
     InvalidMoveError,
+    LockedError,
     PlateModel,
     PlateShapeError,
     Rider,
@@ -38,6 +47,11 @@ from rivercrossing.roster import (
     Roster,
     SoloOnlyRideError,
     TeamSizeError,
+    can_add_entry,
+    can_delete_entry,
+    can_edit_structure,
+    can_fix_name,
+    can_move_rider,
 )
 
 if TYPE_CHECKING:
@@ -72,6 +86,13 @@ def test_roster_bare_construction_starts_with_no_entries_or_audit_events() -> No
     roster = Roster()
 
     assert (roster.entries, roster.audit_log) == ((), ())
+
+
+def test_roster_bare_construction_defaults_status_to_draft() -> None:
+    """A bare Roster() starts in DRAFT (E4 owns transitions, E3.1.2)."""
+    roster = Roster()
+
+    assert roster.status == RideStatus.DRAFT
 
 
 # ------------------------------------------------ max_team_size bound
@@ -626,6 +647,18 @@ def test_move_rider_into_a_solo_entry_raises_invalid_move_error() -> None:
         roster.move_rider(alex, to_entry=solo)
 
 
+def test_move_rider_between_two_solo_entries_raises_invalid_move_error() -> None:
+    """Both endpoints solo (not just one) still raises -- decision-table
+    gap closed: from_entry.type/to_entry.type both fail the TEAM check.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    solo_a = roster.create_solo_entry(name="Alex", plate="1")
+    solo_b = roster.create_solo_entry(name="Bo", plate="2")
+
+    with pytest.raises(InvalidMoveError, match=re.escape("team entries")):
+        roster.move_rider(solo_a.riders[0], to_entry=solo_b)
+
+
 # ---------------------------------------------------------- audit_log
 
 
@@ -638,3 +671,301 @@ def test_audit_log_records_events_in_the_order_the_mutations_happened() -> None:
     actions = [event.action for event in roster.audit_log]
 
     assert actions == ["create_solo_entry", "create_solo_entry"]
+
+
+# ============================================================ E3.1.2
+# Lock matrix: editability by (status, plate_model, has_data) -- R-15/17.
+
+# --------------------------------------------- can_edit_structure
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (RideStatus.DRAFT, True),
+        (RideStatus.RUNNING, False),
+        (RideStatus.FINISHED, False),
+        (RideStatus.REOPENED, False),
+    ],
+)
+def test_can_edit_structure_by_status_matches_draft_only_rule(
+    status: RideStatus, expected: bool
+) -> None:
+    """Structure edits are DRAFT-only, for either plate model (R-15)."""
+    assert can_edit_structure(status) == expected
+
+
+# ----------------------------------------------- can_delete_entry
+
+
+@pytest.mark.parametrize(
+    ("status", "has_data", "expected"),
+    [
+        (RideStatus.DRAFT, False, True),
+        (RideStatus.DRAFT, True, False),
+        (RideStatus.RUNNING, False, False),
+        (RideStatus.RUNNING, True, False),
+        (RideStatus.FINISHED, False, False),
+        (RideStatus.FINISHED, True, False),
+        (RideStatus.REOPENED, False, False),
+        (RideStatus.REOPENED, True, False),
+    ],
+)
+def test_can_delete_entry_by_status_and_has_data_matches_r15(
+    status: RideStatus, has_data: bool, expected: bool
+) -> None:
+    """Delete is DRAFT-only, and never allowed once data exists (R-15)."""
+    assert can_delete_entry(status, has_data=has_data) == expected
+
+
+# ------------------------------------------------- can_move_rider
+
+
+@pytest.mark.parametrize(
+    ("status", "plate_model", "expected"),
+    [
+        (RideStatus.DRAFT, PlateModel.RIDER_POOLED, True),
+        (RideStatus.DRAFT, PlateModel.TEAM_RELAY, True),
+        (RideStatus.RUNNING, PlateModel.RIDER_POOLED, True),
+        (RideStatus.RUNNING, PlateModel.TEAM_RELAY, False),
+        (RideStatus.FINISHED, PlateModel.RIDER_POOLED, False),
+        (RideStatus.FINISHED, PlateModel.TEAM_RELAY, False),
+        (RideStatus.REOPENED, PlateModel.RIDER_POOLED, True),
+        (RideStatus.REOPENED, PlateModel.TEAM_RELAY, False),
+    ],
+)
+def test_can_move_rider_by_status_and_plate_model_matches_r17(
+    status: RideStatus, plate_model: PlateModel, expected: bool
+) -> None:
+    """DRAFT always allows a move; relay never allows one once
+    started; pooled stays open while RUNNING or REOPENED, and closes
+    at FINISHED (R-17).
+    """
+    assert can_move_rider(status, plate_model) == expected
+
+
+# ------------------------------------------ can_add_entry / can_fix_name
+
+
+def test_can_add_entry_always_returns_true() -> None:
+    """A new plate may be entered in any ride state (xrc-windows.md
+    "ride open (new plates any time)").
+    """
+    assert can_add_entry() is True
+
+
+def test_can_fix_name_always_returns_true() -> None:
+    """A name-spelling fix is allowed in any ride state (spec S3)."""
+    assert can_fix_name() is True
+
+
+# -------------------------------------------------- Roster.status
+
+
+def test_roster_status_setter_updates_status() -> None:
+    """Setting status stores the new value verbatim (E4 owns
+    transition legality; Roster is mechanics only).
+    """
+    roster = Roster()
+
+    roster.status = RideStatus.RUNNING
+
+    assert roster.status == RideStatus.RUNNING
+
+
+# ------------------------------------- delete_entry: DRAFT free edit
+
+
+def test_delete_entry_in_draft_removes_entry_with_no_data() -> None:
+    """DRAFT stays fully editable, including delete (R-15)."""
+    roster = Roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+
+    roster.delete_entry(entry)
+
+    assert roster.entries == ()
+
+
+# -------------------------------- delete_entry: post-start lock (R-15)
+
+
+def test_delete_entry_after_start_on_relay_ride_raises_locked_error() -> None:
+    """Delete is refused once a relay ride leaves DRAFT (R-15)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("no longer be deleted")):
+        roster.delete_entry(entry)
+
+
+def test_delete_entry_after_start_on_pooled_ride_raises_locked_error() -> None:
+    """Pooled unlocks moves only; delete stays locked once RUNNING (R-15)."""
+    roster = Roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("no longer be deleted")):
+        roster.delete_entry(entry)
+
+
+# ------------------------------------- delete_entry: has_data guard
+
+
+@pytest.mark.parametrize(
+    "status",
+    [RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED],
+)
+def test_delete_entry_with_recorded_data_raises_locked_error_in_every_state(
+    status: RideStatus,
+) -> None:
+    """An entry with recorded data is never deletable (R-15), in any
+    ride state -- DNF or void is the only path.
+    """
+    roster = Roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+    roster.mark_has_data(entry)
+    roster.status = status
+
+    with pytest.raises(LockedError, match=re.escape("recorded data")):
+        roster.delete_entry(entry)
+
+
+def test_entry_with_recorded_data_can_still_be_marked_dnf() -> None:
+    """Blocking delete never blocks the DNF/void path itself (R-15)."""
+    roster = Roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+    roster.mark_has_data(entry)
+
+    entry.status = EntryStatus.DNF
+
+    assert entry.status == EntryStatus.DNF
+
+
+# --------------------------------------------------- mark_has_data
+
+
+def test_entry_has_data_defaults_to_false() -> None:
+    """A freshly created entry starts with has_data False."""
+    roster = Roster()
+
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+
+    assert entry.has_data is False
+
+
+def test_mark_has_data_sets_the_flag_and_appends_an_audit_event() -> None:
+    """mark_has_data flips has_data True and logs one event (E3.1.2)."""
+    roster = Roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+
+    roster.mark_has_data(entry)
+
+    assert (entry.has_data, roster.audit_log[-1]) == (
+        True,
+        AuditEvent(action="mark_has_data", payload={"plate": "1"}),
+    )
+
+
+def test_mark_has_data_unknown_entry_raises_entry_not_found_error() -> None:
+    """mark_has_data on a foreign entry raises (mirrors other mutators)."""
+    roster = Roster()
+    foreign = Entry(plate="999", display_name="Ghost", type=EntryType.SOLO)
+
+    with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
+        roster.mark_has_data(foreign)
+
+
+# ----------------------------- move_rider: post-start relay lock (R-17)
+
+
+def test_move_rider_after_start_on_relay_ride_raises_locked_error() -> None:
+    """Relay keeps the start lock: moves are refused once RUNNING (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    alex = Rider(name="Alex")
+    roster.create_team_entry(display_name="Team A", riders=[alex, Rider(name="Bo")], plate="1")
+    team_b = roster.create_team_entry(
+        display_name="Team B", riders=[Rider(name="Cy"), Rider(name="Do")], plate="2"
+    )
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("locked")):
+        roster.move_rider(alex, to_entry=team_b)
+
+
+def test_move_rider_reopened_on_relay_ride_raises_locked_error() -> None:
+    """Relay's start lock outlasts even a REOPENED correction (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    alex = Rider(name="Alex")
+    roster.create_team_entry(display_name="Team A", riders=[alex, Rider(name="Bo")], plate="1")
+    team_b = roster.create_team_entry(
+        display_name="Team B", riders=[Rider(name="Cy"), Rider(name="Do")], plate="2"
+    )
+    roster.status = RideStatus.REOPENED
+
+    with pytest.raises(LockedError, match=re.escape("locked")):
+        roster.move_rider(alex, to_entry=team_b)
+
+
+# ---------------------- move_rider: post-start pooled audited moves (R-17)
+
+
+def test_move_rider_after_start_on_pooled_ride_succeeds_and_audits_move() -> None:
+    """Pooled stays open while RUNNING: the move logs rider + both
+    (recomputed) plates, tracing exactly who moved from where to
+    where (R-17).
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    alex = Rider(name="Alex", plate="1")
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(name="Bo", plate="2"), Rider(name="El", plate="3")],
+    )
+    team_b = roster.create_team_entry(
+        display_name="Team B", riders=[Rider(name="Cy", plate="10"), Rider(name="Do", plate="11")]
+    )
+    roster.status = RideStatus.RUNNING
+
+    roster.move_rider(alex, to_entry=team_b)
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="move_rider",
+        payload={"rider_name": "Alex", "from_plate": "2", "to_plate": "1"},
+    )
+
+
+def test_move_rider_reopened_on_pooled_ride_succeeds_as_a_correction() -> None:
+    """REOPENED is the corrections door for pooled moves (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    alex = Rider(name="Alex", plate="1")
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(name="Bo", plate="2"), Rider(name="El", plate="3")],
+    )
+    team_b = roster.create_team_entry(
+        display_name="Team B", riders=[Rider(name="Cy", plate="10"), Rider(name="Do", plate="11")]
+    )
+    roster.status = RideStatus.REOPENED
+
+    roster.move_rider(alex, to_entry=team_b)
+
+    assert alex in team_b.riders
+
+
+def test_move_rider_finished_on_pooled_ride_raises_locked_error() -> None:
+    """FINISHED closes the pooled moves door until reopened -- it is
+    neither RUNNING nor REOPENED (R-17).
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    alex = Rider(name="Alex", plate="1")
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(name="Bo", plate="2"), Rider(name="El", plate="3")],
+    )
+    team_b = roster.create_team_entry(
+        display_name="Team B", riders=[Rider(name="Cy", plate="10"), Rider(name="Do", plate="11")]
+    )
+    roster.status = RideStatus.FINISHED
+
+    with pytest.raises(LockedError, match=re.escape("locked")):
+        roster.move_rider(alex, to_entry=team_b)
