@@ -75,6 +75,14 @@ SHIPPED_UI_DIRS = (ONEDIR_UI, APP_UI) if sys.platform == "darwin" else (ONEDIR_U
 # .xrc files the 23-window load test drives.
 LAUNCHED_UI_DIR = SHIPPED_UI_DIRS[-1]
 
+# The package root each layout ships -- one level up from *_UI above --
+# where the E2.4.1 vector CSVs land (a sibling of ui/, not under it).
+ONEDIR_PACKAGE = ONEDIR_UI.parent
+APP_PACKAGE = APP_UI.parent
+SHIPPED_PACKAGE_DIRS = (
+    (ONEDIR_PACKAGE, APP_PACKAGE) if sys.platform == "darwin" else (ONEDIR_PACKAGE,)
+)
+
 EXECUTABLES = {
     "darwin": DIST / "RiverCrossing.app" / "Contents" / "MacOS" / "rivercrossing",
     "win32": DIST / "rivercrossing" / "rivercrossing.exe",
@@ -148,6 +156,16 @@ def _digests(ui_dir: Path) -> dict[str, str]:
     return {
         relative: hashlib.sha256((ui_dir / relative).read_bytes()).hexdigest()
         for relative in manifest.required_relative_paths()
+    }
+
+
+def _vector_digests(package_dir: Path) -> dict[str, str]:
+    """Map every required vector CSV's own name to its sha256."""
+    return {
+        name: hashlib.sha256(
+            (package_dir / manifest.VECTORS_SUBDIR / name).read_bytes()
+        ).hexdigest()
+        for name in manifest.REQUIRED_VECTORS
     }
 
 
@@ -278,16 +296,22 @@ def test_missing_vectors_given_the_real_source_tree_finds_nothing_absent() -> No
 
 
 def test_vector_data_entries_maps_both_csvs_onto_the_package_root() -> None:
-    """PyInstaller datas must land the CSVs at ``rivercrossing/...``.
+    """PyInstaller datas must land the CSVs under a vectors/ dir.
 
-    ``rivercrossing.hands`` resolves ``vectors/`` relative to its own
-    ``__file__``, a sibling of ``ui/`` -- not under it.
+    Pinned to the literal string, not ``manifest.VECTORS_PACKAGE_DEST``
+    itself: a destination that PyInstaller's own ``datas`` docs call
+    the *containing folder* a source lands in, so ``"rivercrossing"``
+    alone (rather than ``"rivercrossing/vectors"``) drops both CSVs
+    one directory too high -- exactly the mistake that put
+    ``rank_sweep.csv`` at ``_internal/rivercrossing/rank_sweep.csv``
+    instead of ``_internal/rivercrossing/vectors/rank_sweep.csv`` and
+    crashed the bundle at launch with ``FileNotFoundError``.
     """
     destinations = {
         destination for _source, destination in manifest.vector_data_entries(SOURCE_PACKAGE)
     }
 
-    assert destinations == {manifest.VECTORS_PACKAGE_DEST}
+    assert destinations == {"rivercrossing/vectors"}
 
 
 def test_vector_data_entries_names_the_two_csv_source_files() -> None:
@@ -371,6 +395,15 @@ def bundle_ui_dirs() -> tuple[Path, ...]:
 
 
 @pytest.fixture(scope="module")
+def bundle_package_dirs() -> tuple[Path, ...]:
+    """Every built layout's packaged ``rivercrossing`` package root."""
+    absent = [str(path) for path in SHIPPED_PACKAGE_DIRS if not path.is_dir()]
+    if absent:
+        pytest.skip(f"no built bundle -- run `nox -s bundle` first; missing {', '.join(absent)}")
+    return SHIPPED_PACKAGE_DIRS
+
+
+@pytest.fixture(scope="module")
 def bundle_executable() -> Path:
     """Return this platform's built executable."""
     executable = EXECUTABLES.get(sys.platform)
@@ -433,6 +466,37 @@ def test_bundled_asset_bytes_are_identical_to_the_source_tree(
     assert {ui_dir: _digests(ui_dir) for ui_dir in bundle_ui_dirs} == dict.fromkeys(
         bundle_ui_dirs, expected
     )
+
+
+def test_bundled_vector_names_match_the_required_manifest_exactly(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """Both self-test CSVs land under the package root's own vectors/.
+
+    A wrong ``VECTORS_PACKAGE_DEST`` (e.g. the containing-folder
+    mistake this test's sibling below pins) would either miss this
+    directory entirely or leave it empty -- this is the on-disk,
+    built-bundle catch the ui/xrc assets already have.
+    """
+    packaged = {
+        package_dir: _names_present(package_dir, manifest.VECTORS_SUBDIR)
+        for package_dir in bundle_package_dirs
+    }
+
+    assert packaged == {
+        package_dir: set(manifest.REQUIRED_VECTORS) for package_dir in bundle_package_dirs
+    }
+
+
+def test_bundled_vector_bytes_are_identical_to_the_source_tree(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """Content, not just presence: no truncation, no re-encoding."""
+    expected = _vector_digests(SOURCE_PACKAGE)
+
+    assert {
+        package_dir: _vector_digests(package_dir) for package_dir in bundle_package_dirs
+    } == dict.fromkeys(bundle_package_dirs, expected)
 
 
 @pytest.mark.parametrize("spec", pages.WINDOWS, ids=lambda spec: spec.name)
