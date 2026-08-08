@@ -16,9 +16,13 @@ Store is the persistence layer these dataclasses feed once it lands
 (module-skeletons.md S4's ``schema.py`` names the same ``entries``/
 ``riders`` tables this module's fields mirror). :class:`Roster`
 enforces the hard rules -- plate uniqueness, team size, plate shape,
-solo-only rides -- and appends one :class:`AuditEvent` per mutation;
-state-based editability (DRAFT free edit, the relay start lock, when
-a pooled move is allowed) is E3.1.2's lock matrix, not this module.
+solo-only rides -- and appends one :class:`AuditEvent` per mutation.
+State-based editability (DRAFT free edit, the relay start lock, when
+a pooled move is allowed, and the permanent has-data delete guard) is
+this module's lock matrix (E3.1.2, R-15/R-17): ``can_edit_structure``,
+``can_delete_entry``, ``can_move_rider``, ``can_add_entry`` and
+``can_fix_name``, consulted by :meth:`Roster.delete_entry` and
+:meth:`Roster.move_rider`.
 
 ``Entry`` and ``Rider`` compare by identity, not by field value
 (``eq=False``): they are living records a caller holds a reference
@@ -30,6 +34,8 @@ relay ride, both plate-less, must never compare equal to each other.
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
+
+from rivercrossing.ride import RideStatus
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -114,6 +120,16 @@ class InvalidMoveError(RosterError):
     """move_rider() would violate a structural entry invariant."""
 
 
+class LockedError(RosterError):
+    """A mutation is refused by the lock matrix (E3.1.2, R-15/R-17).
+
+    Raised by :meth:`Roster.delete_entry` once the ride has left
+    DRAFT, or when the entry already carries recorded data in any
+    state, and by :meth:`Roster.move_rider` whenever the current
+    (status, plate_model) cell of the lock matrix forbids the move.
+    """
+
+
 @dataclass(eq=False)
 class Rider:
     """One rider (spec S2 ``rider`` table: name, plate, sort_order).
@@ -136,7 +152,10 @@ class Entry:
     ``plate`` is always populated: directly, under
     ``PlateModel.TEAM_RELAY``, or derived from ``riders`` under
     ``PlateModel.RIDER_POOLED`` (S1). ``riders`` holds exactly one
-    member for a solo entry, two or more for a team.
+    member for a solo entry, two or more for a team. ``has_data`` is
+    E3.1.2's permanent delete guard (R-15): once
+    :meth:`Roster.mark_has_data` sets it, ``delete_entry`` refuses in
+    every ride state -- DNF or void is the only path from there.
     """
 
     plate: str
@@ -145,6 +164,7 @@ class Entry:
     riders: list[Rider] = field(default_factory=list)
     status: EntryStatus = EntryStatus.ACTIVE
     notes: str = ""
+    has_data: bool = False
 
     @property
     def team_size(self) -> int:
@@ -170,15 +190,71 @@ def _lowest_plate(plates: Iterable[str]) -> str:
     return min(plates, key=int)
 
 
+def can_edit_structure(status: RideStatus) -> bool:
+    """Return True when structure edits may proceed (R-15).
+
+    Membership, plate and type edits, and delete, are DRAFT-only,
+    for either plate model (spec S3).
+    """
+    return status is RideStatus.DRAFT
+
+
+def can_delete_entry(status: RideStatus, *, has_data: bool) -> bool:
+    """Return True when delete_entry() may remove the entry (R-15).
+
+    An entry carrying recorded data is never deletable, in any
+    state; otherwise deletion follows the same DRAFT-only rule as
+    any other structural edit.
+    """
+    if has_data:
+        return False
+    return can_edit_structure(status)
+
+
+def can_move_rider(status: RideStatus, plate_model: PlateModel) -> bool:
+    """Return True when move_rider() may relocate a rider (R-17).
+
+    DRAFT allows every move, for either plate model. Once started,
+    ``team_relay`` keeps the start lock permanently -- the plate
+    *is* the team's identity -- while ``rider_pooled`` stays open
+    for audited moves while RUNNING and, as a correction, once
+    REOPENED; FINISHED closes that door until reopened.
+    """
+    if status is RideStatus.DRAFT:
+        return True
+    if plate_model is PlateModel.TEAM_RELAY:
+        return False
+    return status in (RideStatus.RUNNING, RideStatus.REOPENED)
+
+
+def can_add_entry() -> bool:
+    """Return True: a new plate may be entered in any ride state.
+
+    xrc-windows.md: "ride open (new plates any time)".
+    """
+    return True
+
+
+def can_fix_name() -> bool:
+    """Return True: a name-spelling fix is allowed in any state.
+
+    Spec S3's "name fixes" stay open regardless of ride status.
+    """
+    return True
+
+
 class Roster:
     """The entries and riders of one ride, with S1/S2's hard rules.
 
     ``entry_mode``, ``max_team_size`` and ``plate_model`` are the
     ride-wide settings spec S1 and R-11/R-12/R-16 describe; every
     mutation validates against them and appends one
-    :class:`AuditEvent` to :attr:`audit_log`. This is a store-less,
-    in-memory model -- EPIC 5's Store persists it; state-based
-    editability (DRAFT, the relay start lock) is E3.1.2.
+    :class:`AuditEvent` to :attr:`audit_log`. ``status`` (default
+    DRAFT) is this ride's lifecycle state -- E4's engine owns which
+    transitions are legal; this class only reads it, through the
+    module-level lock matrix, to decide what :meth:`delete_entry` and
+    :meth:`move_rider` currently allow (E3.1.2, R-15/R-17). This is a
+    store-less, in-memory model -- EPIC 5's Store persists it.
     """
 
     def __init__(
@@ -202,6 +278,7 @@ class Roster:
         self._entry_mode = entry_mode
         self._max_team_size = max_team_size
         self._plate_model = plate_model
+        self._status = RideStatus.DRAFT
         self._entries: list[Entry] = []
         self._audit_log: list[AuditEvent] = []
 
@@ -219,6 +296,21 @@ class Roster:
     def plate_model(self) -> PlateModel:
         """Return this ride's plate policy (R-16)."""
         return self._plate_model
+
+    @property
+    def status(self) -> RideStatus:
+        """Return this roster's ride-lifecycle state (spec S3)."""
+        return self._status
+
+    @status.setter
+    def status(self, value: RideStatus) -> None:
+        """Set this roster's ride-lifecycle state.
+
+        Mechanics only: E4's ride engine owns which transitions are
+        legal (spec S3); this setter just records the current state
+        for the lock matrix to consult.
+        """
+        self._status = value
 
     @property
     def entries(self) -> tuple[Entry, ...]:
@@ -307,29 +399,52 @@ class Roster:
         self._log("update_entry", payload)
 
     def delete_entry(self, entry: Entry) -> None:
-        """Delete *entry* (mechanics only; lock rules are E3.1.2).
+        """Delete *entry* if the lock matrix currently allows it.
+
+        Raises:
+            EntryNotFoundError: *entry* is not a member of this
+                roster.
+            LockedError: *entry* carries recorded data (DNF or void
+                it instead), or the ride has left DRAFT (E3.1.2,
+                R-15).
+        """
+        self._require_known_entry(entry)
+        if not can_delete_entry(self._status, has_data=entry.has_data):
+            raise LockedError(self._delete_refusal(entry))
+        self._entries.remove(entry)
+        self._log("delete_entry", {"plate": entry.plate, "display_name": entry.display_name})
+
+    def mark_has_data(self, entry: Entry) -> None:
+        """Flag *entry* as carrying recorded data (E3.1.2, R-15).
+
+        E4's ride engine calls this once an entry's first crossing or
+        card lands; from that point ``delete_entry`` refuses in every
+        ride state -- DNF or void becomes the only path.
 
         Raises:
             EntryNotFoundError: *entry* is not a member of this
                 roster.
         """
         self._require_known_entry(entry)
-        self._entries.remove(entry)
-        self._log("delete_entry", {"plate": entry.plate, "display_name": entry.display_name})
+        entry.has_data = True
+        self._log("mark_has_data", {"plate": entry.plate})
 
     def move_rider(self, rider: Rider, *, to_entry: Entry) -> None:
-        """Move *rider* onto *to_entry* (mechanics + audit only, R-17).
+        """Move *rider* onto *to_entry* if the lock matrix allows it.
 
         Both entries must be type TEAM -- a solo entry's one rider
         is fixed by definition (S1) -- and the move must keep both
-        team sizes within 2..max_team_size (R-12); state-based lock
-        rules (relay's start lock, when a pooled move is allowed)
-        are E3.1.2, not this task.
+        team sizes within 2..max_team_size (R-12). Whether a move
+        may even be attempted depends on the ride's current
+        (status, plate_model) cell of the lock matrix (E3.1.2,
+        R-17): :func:`can_move_rider`.
 
         Raises:
             RiderNotFoundError: *rider* is not on any entry here.
             EntryNotFoundError: *to_entry* is not a member of this
                 roster.
+            LockedError: the lock matrix forbids a move in the
+                ride's current state and plate model.
             InvalidMoveError: either entry is not type TEAM, or the
                 move would breach a team size bound.
         """
@@ -338,6 +453,9 @@ class Roster:
             msg = "rider is not on any entry in this roster"
             raise RiderNotFoundError(msg)
         self._require_known_entry(to_entry)
+        if not can_move_rider(self._status, self._plate_model):
+            msg = f"rider moves are locked for a {self._plate_model} ride once {self._status}"
+            raise LockedError(msg)
         if from_entry.type is not EntryType.TEAM or to_entry.type is not EntryType.TEAM:
             msg = "move_rider requires both entries to be team entries"
             raise InvalidMoveError(msg)
@@ -405,10 +523,24 @@ class Roster:
         in_use = self._plates_in_use()
         seen: set[str] = set()
         for plate in plates:
+            # logic-coverage-exempt: T-13 -- the (plate in in_use AND
+            # plate in seen) row is unreachable by construction.
+            # in_use is fixed before this loop starts, so any plate
+            # value that satisfies "in in_use" always raises on its
+            # own first occurrence, before that same value could ever
+            # have been added to "seen" for a later occurrence of it
+            # to observe. The two conditions cannot both be True for
+            # one evaluation of this line.
             if plate in in_use or plate in seen:
                 msg = f"plate {plate!r} is already in use"
                 raise DuplicatePlateError(msg)
             seen.add(plate)
+
+    def _delete_refusal(self, entry: Entry) -> str:
+        """Return why *entry* is currently undeletable (R-15)."""
+        if entry.has_data:
+            return "entry has recorded data; DNF or void it instead of deleting"
+        return f"entries can no longer be deleted once the ride is {self._status}"
 
     def _require_known_entry(self, entry: Entry) -> None:
         """Raise EntryNotFoundError unless *entry* is a member here."""

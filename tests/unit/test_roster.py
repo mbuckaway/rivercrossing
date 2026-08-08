@@ -648,9 +648,7 @@ def test_move_rider_into_a_solo_entry_raises_invalid_move_error() -> None:
 
 
 def test_move_rider_between_two_solo_entries_raises_invalid_move_error() -> None:
-    """Both endpoints solo (not just one) still raises -- decision-table
-    gap closed: from_entry.type/to_entry.type both fail the TEAM check.
-    """
+    """Both endpoints solo still raises the same error (R-17)."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     solo_a = roster.create_solo_entry(name="Alex", plate="1")
     solo_b = roster.create_solo_entry(name="Bo", plate="2")
@@ -674,7 +672,7 @@ def test_audit_log_records_events_in_the_order_the_mutations_happened() -> None:
 
 
 # ============================================================ E3.1.2
-# Lock matrix: editability by (status, plate_model, has_data) -- R-15/17.
+# Lock matrix: editability by (status, plate_model, has_data), R-15/17.
 
 # --------------------------------------------- can_edit_structure
 
@@ -689,9 +687,9 @@ def test_audit_log_records_events_in_the_order_the_mutations_happened() -> None:
     ],
 )
 def test_can_edit_structure_by_status_matches_draft_only_rule(
-    status: RideStatus, expected: bool
+    status: RideStatus, *, expected: bool
 ) -> None:
-    """Structure edits are DRAFT-only, for either plate model (R-15)."""
+    """Structure edits are DRAFT-only, for either plate model."""
     assert can_edit_structure(status) == expected
 
 
@@ -712,9 +710,9 @@ def test_can_edit_structure_by_status_matches_draft_only_rule(
     ],
 )
 def test_can_delete_entry_by_status_and_has_data_matches_r15(
-    status: RideStatus, has_data: bool, expected: bool
+    status: RideStatus, *, has_data: bool, expected: bool
 ) -> None:
-    """Delete is DRAFT-only, and never allowed once data exists (R-15)."""
+    """Delete is DRAFT-only; never allowed once data exists (R-15)."""
     assert can_delete_entry(status, has_data=has_data) == expected
 
 
@@ -735,21 +733,23 @@ def test_can_delete_entry_by_status_and_has_data_matches_r15(
     ],
 )
 def test_can_move_rider_by_status_and_plate_model_matches_r17(
-    status: RideStatus, plate_model: PlateModel, expected: bool
+    status: RideStatus, plate_model: PlateModel, *, expected: bool
 ) -> None:
-    """DRAFT always allows a move; relay never allows one once
-    started; pooled stays open while RUNNING or REOPENED, and closes
-    at FINISHED (R-17).
+    """DRAFT always allows a move; relay never once started.
+
+    Pooled stays open while RUNNING or REOPENED, and closes at
+    FINISHED (R-17).
     """
     assert can_move_rider(status, plate_model) == expected
 
 
-# ------------------------------------------ can_add_entry / can_fix_name
+# ---------------------------------- can_add_entry / can_fix_name
 
 
 def test_can_add_entry_always_returns_true() -> None:
-    """A new plate may be entered in any ride state (xrc-windows.md
-    "ride open (new plates any time)").
+    """A new plate may be entered in any ride state.
+
+    xrc-windows.md: "ride open (new plates any time)".
     """
     assert can_add_entry() is True
 
@@ -763,8 +763,9 @@ def test_can_fix_name_always_returns_true() -> None:
 
 
 def test_roster_status_setter_updates_status() -> None:
-    """Setting status stores the new value verbatim (E4 owns
-    transition legality; Roster is mechanics only).
+    """Setting status stores the new value verbatim.
+
+    E4 owns transition legality; Roster is mechanics only.
     """
     roster = Roster()
 
@@ -800,7 +801,7 @@ def test_delete_entry_after_start_on_relay_ride_raises_locked_error() -> None:
 
 
 def test_delete_entry_after_start_on_pooled_ride_raises_locked_error() -> None:
-    """Pooled unlocks moves only; delete stays locked once RUNNING (R-15)."""
+    """Pooled unlocks moves only; delete stays locked (R-15)."""
     roster = Roster()
     entry = roster.create_solo_entry(name="Alex", plate="1")
     roster.status = RideStatus.RUNNING
@@ -819,8 +820,9 @@ def test_delete_entry_after_start_on_pooled_ride_raises_locked_error() -> None:
 def test_delete_entry_with_recorded_data_raises_locked_error_in_every_state(
     status: RideStatus,
 ) -> None:
-    """An entry with recorded data is never deletable (R-15), in any
-    ride state -- DNF or void is the only path.
+    """An entry with recorded data is never deletable (R-15).
+
+    Not in any ride state -- DNF or void is the only path.
     """
     roster = Roster()
     entry = roster.create_solo_entry(name="Alex", plate="1")
@@ -868,7 +870,7 @@ def test_mark_has_data_sets_the_flag_and_appends_an_audit_event() -> None:
 
 
 def test_mark_has_data_unknown_entry_raises_entry_not_found_error() -> None:
-    """mark_has_data on a foreign entry raises (mirrors other mutators)."""
+    """mark_has_data on a foreign entry raises (mirrors mutators)."""
     roster = Roster()
     foreign = Entry(plate="999", display_name="Ghost", type=EntryType.SOLO)
 
@@ -880,7 +882,7 @@ def test_mark_has_data_unknown_entry_raises_entry_not_found_error() -> None:
 
 
 def test_move_rider_after_start_on_relay_ride_raises_locked_error() -> None:
-    """Relay keeps the start lock: moves are refused once RUNNING (R-17)."""
+    """Relay keeps the start lock: moves refused once RUNNING (R-17)."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
     alex = Rider(name="Alex")
     roster.create_team_entry(display_name="Team A", riders=[alex, Rider(name="Bo")], plate="1")
@@ -907,13 +909,13 @@ def test_move_rider_reopened_on_relay_ride_raises_locked_error() -> None:
         roster.move_rider(alex, to_entry=team_b)
 
 
-# ---------------------- move_rider: post-start pooled audited moves (R-17)
+# ---------------- move_rider: post-start pooled audited moves (R-17)
 
 
 def test_move_rider_after_start_on_pooled_ride_succeeds_and_audits_move() -> None:
-    """Pooled stays open while RUNNING: the move logs rider + both
-    (recomputed) plates, tracing exactly who moved from where to
-    where (R-17).
+    """Pooled stays open while RUNNING: the move logs rider + plates.
+
+    Traces exactly who moved from where to where (R-17).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     alex = Rider(name="Alex", plate="1")
@@ -953,8 +955,9 @@ def test_move_rider_reopened_on_pooled_ride_succeeds_as_a_correction() -> None:
 
 
 def test_move_rider_finished_on_pooled_ride_raises_locked_error() -> None:
-    """FINISHED closes the pooled moves door until reopened -- it is
-    neither RUNNING nor REOPENED (R-17).
+    """FINISHED closes the pooled moves door until reopened.
+
+    It is neither RUNNING nor REOPENED (R-17).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     alex = Rider(name="Alex", plate="1")
