@@ -452,7 +452,7 @@ def test_mi_import_csv_given_a_picked_path_shows_it_decorated(
     monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
     captured: dict[str, str] = {}
 
-    def _capture_summary(dialog: Any, _opener: Any) -> int:  # noqa: ANN401
+    def _capture_summary(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
         captured["summary"] = harness.find_control(dialog, ids.SUMMARY_LBL).GetLabelText()
         return wx.ID_CANCEL
 
@@ -477,7 +477,7 @@ def test_mi_import_csv_import_click_commits_into_the_shared_roster(
     """
     monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
 
-    def _click_import(dialog: Any, _opener: Any) -> int:  # noqa: ANN401
+    def _click_import(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
         harness.click(dialog, "wxID_OK")
         return wx.ID_OK
 
@@ -486,7 +486,7 @@ def test_mi_import_csv_import_click_commits_into_the_shared_roster(
 
     captured: dict[str, set[str]] = {}
 
-    def _capture_plates(dialog: Any, _opener: Any) -> int:  # noqa: ANN401
+    def _capture_plates(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
         model = harness.find_control(dialog, ids.RIDERS_LIST).GetModel()
         captured["plates"] = {model.GetValueByRow(row, 0) for row in range(model.GetCount())}
         return wx.ID_CANCEL
