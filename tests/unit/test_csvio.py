@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Unit tests for rivercrossing.csvio (E3.3.1 preview, E3.3.2 commit).
+"""Unit tests for rivercrossing.csvio (E3.3.1 preview, E3.3.2-3 commit).
 
 Spec S7's column spec and R-21 are this task's specification, narrowed
 by task-briefs.md's own named cases: ``preview`` never writes anything
@@ -7,10 +7,13 @@ by task-briefs.md's own named cases: ``preview`` never writes anything
 rider/team counts plus a per-row conflict list before ``commit``
 applies them. ``commit`` refuses outright while any conflict remains
 (nothing mutated), otherwise matches on plate (update in place),
-inserts new plates, and -- in DRAFT, or for a rider_pooled ride's own
-team-to-team moves while RUNNING/REOPENED (spec S7:171) -- reshapes
-team membership through the roster's own mutators, so every change is
-audit-logged.
+inserts new plates, and reshapes team membership through the
+roster's own mutators (so every change is audit-logged) subject to
+the ride's lock matrix: DRAFT reshapes freely, including a pooled
+team<->solo conversion; once started, relay keeps its permanent lock
+while pooled keeps team-to-team moves *and* a brand-new plate joining
+an existing team open through RUNNING/REOPENED (spec S7:171/177) --
+only a solo<->team *conversion* stays DRAFT-only past that point.
 
 E3.3.2's binding semantics change one piece of E3.3.1 behaviour: a CSV
 plate that already matches an existing roster entry is no longer a
@@ -18,7 +21,11 @@ plate that already matches an existing roster entry is no longer a
 ``test_preview_relay_plate_colliding_with_an_existing_roster_entry_is_flagged``
 became
 ``test_preview_relay_plate_matching_an_existing_roster_entry_is_not_a_conflict``
-below; duplicate detection now only fires within one file.
+below; duplicate detection now only fires within one file. The
+pooled-reshape follow-on (``add_rider_to_team``/``extract_rider_to_solo``
+landing in roster.py) turns three former "unsupported, always
+conflicts" tests into DRAFT-allowed scenarios, each now paired with a
+RUNNING/FINISHED variant that still conflicts, naming the lock.
 
 Fixtures live in ``tests/unit/fixtures/csv/``: ``clean_180.csv`` is
 the EPIC-shaped clean sample (team_relay, 120 solo + 15 team4 rows =
@@ -28,9 +35,9 @@ rider_pooled equivalent (4 solos + two teams via team_name grouping);
 ``team_under_min_pooled.csv`` are minimal negatives, each producing
 exactly one named conflict at a pinned row. Every other conflict shape
 (unknown type, a malformed/mismatched header, an empty file, a blank
-pooled name, the E3.3.2 status/reshape conflicts) is built inline
-against ``tmp_path`` or a directly-seeded roster -- small enough not
-to need a committed fixture of its own.
+pooled name, the status/reshape conflicts) is built inline against
+``tmp_path`` or a directly-seeded roster -- small enough not to need a
+committed fixture of its own.
 
 Written FIRST, against a module that does not exist yet: this file is
 red until rivercrossing/csvio.py lands.
@@ -68,10 +75,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "csv"
 _HEADER_PROBLEM = "missing or malformed header for this ride's plate model"
 _STRUCTURAL_PROBLEM = "only new plates or name fixes are allowed"
 _MOVE_NOT_ALLOWED_PROBLEM = "team change requires DRAFT, RUNNING or REOPENED"
-_TEAM_TO_SOLO_PROBLEM = "converting a team member to a solo entry via CSV import is not supported"
-_JOIN_UNSUPPORTED_PROBLEM = (
-    "adding a new or currently-solo rider into a team via CSV import is not yet supported"
-)
+_TEAM_TO_SOLO_LOCKED_PROBLEM = "converting a team member to a solo entry requires DRAFT"
+_SOLO_TO_TEAM_LOCKED_PROBLEM = "converting a solo rider into a team member requires DRAFT"
 
 # ------------------------------------------------------------- helpers
 
@@ -1057,14 +1062,11 @@ def test_preview_pooled_moved_rider_while_finished_is_a_conflict(tmp_path: Path)
     assert _MOVE_NOT_ALLOWED_PROBLEM in result.conflicts[0].problem
 
 
-# ---------------------------------- preview: unsupported pooled shapes
+# ------------------------------------- pooled reshape via re-import
 
 
-def test_preview_pooled_team_member_reclassified_solo_is_a_conflict(
-    tmp_path: Path,
-) -> None:
-    """Demoting a team member to solo has no commit() primitive yet."""
-    roster = _pooled_roster()
+def _wolves_of_three(roster: Roster) -> None:
+    """Seed *roster* with a single team, Wolves{Bo,Cy,Zed}."""
     roster.create_team_entry(
         display_name="Wolves",
         riders=[
@@ -1073,57 +1075,325 @@ def test_preview_pooled_team_member_reclassified_solo_is_a_conflict(
             Rider(name="Zed", plate="4"),
         ],
     )
+
+
+def _bo_goes_solo_csv(tmp_path: Path) -> Path:
+    """Write the re-import file dropping Bo(2) out of Wolves to solo."""
     lines = [
         _POOLED_HEADER_LINE,
         _pooled_line(_PooledRow("2", "Bo")),
         _pooled_line(_PooledRow("3", "Cy", "Wolves")),
         _pooled_line(_PooledRow("4", "Zed", "Wolves")),
     ]
-    path = _write_csv(tmp_path, lines)
-
-    result = preview(path, roster)
-
-    assert result.conflicts == (ImportConflict(row=2, problem=_TEAM_TO_SOLO_PROBLEM),)
+    return _write_csv(tmp_path, lines)
 
 
-def test_preview_pooled_new_rider_joining_an_existing_team_is_a_conflict(
+def test_preview_pooled_team_member_reclassified_solo_is_not_a_conflict_in_draft(
     tmp_path: Path,
 ) -> None:
-    """Adding a brand-new rider into an existing team is unsupported."""
+    """DRAFT allows a team member's row to drop to solo (S1)."""
     roster = _pooled_roster()
+    _wolves_of_three(roster)
+
+    result = preview(_bo_goes_solo_csv(tmp_path), roster)
+
+    assert result.conflicts == ()
+
+
+def test_preview_pooled_team_member_reclassified_solo_while_running_conflicts(
+    tmp_path: Path,
+) -> None:
+    """RUNNING still refuses the same team->solo conversion (S1)."""
+    roster = _pooled_roster()
+    _wolves_of_three(roster)
+    roster.status = RideStatus.RUNNING
+
+    result = preview(_bo_goes_solo_csv(tmp_path), roster)
+
+    assert len(result.conflicts) == 1
+    assert _TEAM_TO_SOLO_LOCKED_PROBLEM in result.conflicts[0].problem
+
+
+def test_commit_pooled_team_member_reclassified_solo_extracts_in_draft(
+    tmp_path: Path,
+) -> None:
+    """commit() extracts Bo to his own solo entry via extract_rider_to_solo."""
+    roster = _pooled_roster()
+    _wolves_of_three(roster)
+    result = preview(_bo_goes_solo_csv(tmp_path), roster)
+
+    report = commit(result)
+
+    wolves = next(e for e in roster.entries if e.display_name == "Wolves")
+    bo = next(e for e in roster.entries if e.display_name == "Bo")
+    assert (
+        [r.name for r in wolves.riders],
+        (bo.plate, bo.type, [r.name for r in bo.riders]),
+        report.extracted_count,
+    ) == (["Cy", "Zed"], ("2", EntryType.SOLO, ["Bo"]), 1)
+
+
+def test_commit_pooled_team_member_reclassified_solo_appends_extract_audit_event(
+    tmp_path: Path,
+) -> None:
+    """The extraction is audited with the rider's name and new plate."""
+    roster = _pooled_roster()
+    _wolves_of_three(roster)
+    result = preview(_bo_goes_solo_csv(tmp_path), roster)
+
+    report = commit(result)
+
+    assert [(e.action, e.payload["rider_name"]) for e in report.audit_events] == [
+        ("extract_rider_to_solo", "Bo")
+    ]
+
+
+def _falcons_of_two(roster: Roster) -> None:
+    """Seed *roster* with a single team, Falcons{Do,El}."""
     roster.create_team_entry(
         display_name="Falcons",
         riders=[Rider(name="Do", plate="5"), Rider(name="El", plate="6")],
     )
+
+
+def _fay_joins_falcons_csv(tmp_path: Path) -> Path:
+    """Write the re-import file adding a brand-new rider Fay(99) to Falcons."""
     lines = [
         _POOLED_HEADER_LINE,
         _pooled_line(_PooledRow("5", "Do", "Falcons")),
         _pooled_line(_PooledRow("6", "El", "Falcons")),
         _pooled_line(_PooledRow("99", "Fay", "Falcons")),
     ]
-    path = _write_csv(tmp_path, lines)
-
-    result = preview(path, roster)
-
-    assert result.conflicts == (ImportConflict(row=4, problem=_JOIN_UNSUPPORTED_PROBLEM),)
+    return _write_csv(tmp_path, lines)
 
 
-def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_is_a_conflict(
+def test_preview_pooled_new_rider_joining_an_existing_team_is_not_a_conflict_in_draft(
     tmp_path: Path,
 ) -> None:
-    """Folding a solo rider into a brand-new team is unsupported."""
+    """DRAFT allows a brand-new plate to land straight on a team."""
+    roster = _pooled_roster()
+    _falcons_of_two(roster)
+
+    result = preview(_fay_joins_falcons_csv(tmp_path), roster)
+
+    assert result.conflicts == ()
+
+
+def test_preview_pooled_new_rider_joining_an_existing_team_while_running_is_not_a_conflict(
+    tmp_path: Path,
+) -> None:
+    """RUNNING keeps this open too (add_rider_to_team's own carve-out)."""
+    roster = _pooled_roster()
+    _falcons_of_two(roster)
+    roster.status = RideStatus.RUNNING
+
+    result = preview(_fay_joins_falcons_csv(tmp_path), roster)
+
+    assert result.conflicts == ()
+
+
+def test_preview_pooled_new_rider_joining_an_existing_team_while_finished_conflicts(
+    tmp_path: Path,
+) -> None:
+    """FINISHED closes the door on this too (can_move_rider is False)."""
+    roster = _pooled_roster()
+    _falcons_of_two(roster)
+    roster.status = RideStatus.FINISHED
+
+    result = preview(_fay_joins_falcons_csv(tmp_path), roster)
+
+    assert len(result.conflicts) == 1
+    assert _MOVE_NOT_ALLOWED_PROBLEM in result.conflicts[0].problem
+
+
+def test_commit_pooled_new_rider_joining_an_existing_team_in_draft(
+    tmp_path: Path,
+) -> None:
+    """commit() adds Fay onto Falcons via add_rider_to_team."""
+    roster = _pooled_roster()
+    _falcons_of_two(roster)
+    result = preview(_fay_joins_falcons_csv(tmp_path), roster)
+
+    report = commit(result)
+
+    falcons = roster.entries[0]
+    assert ([r.name for r in falcons.riders], report.joined_count) == (
+        ["Do", "El", "Fay"],
+        1,
+    )
+
+
+def test_commit_pooled_new_rider_joining_an_existing_team_while_running(
+    tmp_path: Path,
+) -> None:
+    """The same join applies while RUNNING too."""
+    roster = _pooled_roster()
+    _falcons_of_two(roster)
+    roster.status = RideStatus.RUNNING
+    result = preview(_fay_joins_falcons_csv(tmp_path), roster)
+
+    report = commit(result)
+
+    assert report.joined_count == 1
+
+
+def _alex_joins_falcons_csv(tmp_path: Path) -> Path:
+    """Write the re-import file moving solo Alex(1) onto Falcons."""
+    lines = [
+        _POOLED_HEADER_LINE,
+        _pooled_line(_PooledRow("5", "Do", "Falcons")),
+        _pooled_line(_PooledRow("6", "El", "Falcons")),
+        _pooled_line(_PooledRow("1", "Alex", "Falcons")),
+    ]
+    return _write_csv(tmp_path, lines)
+
+
+def test_preview_pooled_solo_rider_joining_an_existing_team_is_not_a_conflict_in_draft(
+    tmp_path: Path,
+) -> None:
+    """DRAFT allows a currently-solo rider to convert onto a team."""
     roster = _pooled_roster()
     roster.create_solo_entry(name="Alex", plate="1")
+    _falcons_of_two(roster)
+
+    result = preview(_alex_joins_falcons_csv(tmp_path), roster)
+
+    assert result.conflicts == ()
+
+
+def test_preview_pooled_solo_rider_joining_an_existing_team_while_running_conflicts(
+    tmp_path: Path,
+) -> None:
+    """RUNNING refuses the solo->team conversion (the carve-out).
+
+    ``add_rider_to_team``'s RUNNING carve-out only covers a brand-new
+    plate, not a currently-solo rider converting.
+    """
+    roster = _pooled_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+    _falcons_of_two(roster)
+    roster.status = RideStatus.RUNNING
+
+    result = preview(_alex_joins_falcons_csv(tmp_path), roster)
+
+    assert len(result.conflicts) == 1
+    assert _SOLO_TO_TEAM_LOCKED_PROBLEM in result.conflicts[0].problem
+
+
+def test_commit_pooled_solo_rider_joining_an_existing_team_in_draft(
+    tmp_path: Path,
+) -> None:
+    """commit() dissolves Alex's solo entry and joins him onto Falcons."""
+    roster = _pooled_roster()
+    alex = roster.create_solo_entry(name="Alex", plate="1")
+    _falcons_of_two(roster)
+    result = preview(_alex_joins_falcons_csv(tmp_path), roster)
+
+    report = commit(result)
+
+    falcons = next(e for e in roster.entries if e.display_name == "Falcons")
+    assert (alex in roster.entries, [r.name for r in falcons.riders], report.joined_count) == (
+        False,
+        ["Do", "El", "Alex"],
+        1,
+    )
+
+
+def test_commit_pooled_solo_rider_joining_an_existing_team_audits_both_steps(
+    tmp_path: Path,
+) -> None:
+    """Dissolving the solo entry and joining the team are both audited."""
+    roster = _pooled_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+    _falcons_of_two(roster)
+    result = preview(_alex_joins_falcons_csv(tmp_path), roster)
+
+    report = commit(result)
+
+    assert [event.action for event in report.audit_events] == [
+        "delete_entry",
+        "add_rider_to_team",
+    ]
+
+
+def _newbies_forming_csv(tmp_path: Path) -> Path:
+    """Write a fresh-team file pairing solo Alex(1) with new Newby(50)."""
     lines = [
         _POOLED_HEADER_LINE,
         _pooled_line(_PooledRow("1", "Alex", "Newbies")),
         _pooled_line(_PooledRow("50", "Newby", "Newbies")),
     ]
+    return _write_csv(tmp_path, lines)
+
+
+def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_in_draft(
+    tmp_path: Path,
+) -> None:
+    """DRAFT allows folding a solo rider into a brand-new team."""
+    roster = _pooled_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    result = preview(_newbies_forming_csv(tmp_path), roster)
+
+    assert result.conflicts == ()
+
+
+def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_while_running_conflicts(
+    tmp_path: Path,
+) -> None:
+    """RUNNING refuses it too.
+
+    Forming a team needs no lock of its own, but the solo->team
+    conversion folded into it is DRAFT-only regardless.
+    """
+    roster = _pooled_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+    roster.status = RideStatus.RUNNING
+
+    result = preview(_newbies_forming_csv(tmp_path), roster)
+
+    assert len(result.conflicts) == 1
+    assert _SOLO_TO_TEAM_LOCKED_PROBLEM in result.conflicts[0].problem
+
+
+def test_commit_pooled_promoting_a_solo_rider_into_a_fresh_team_in_draft(
+    tmp_path: Path,
+) -> None:
+    """commit() dissolves Alex's solo entry into the new Newbies team."""
+    roster = _pooled_roster()
+    alex = roster.create_solo_entry(name="Alex", plate="1")
+    result = preview(_newbies_forming_csv(tmp_path), roster)
+
+    report = commit(result)
+
+    newbies = roster.entries[0]
+    assert (
+        alex in roster.entries,
+        [r.name for r in newbies.riders],
+        (report.inserted_count, report.joined_count, report.extracted_count),
+    ) == (False, ["Alex", "Newby"], (1, 0, 0))
+
+
+def test_preview_pooled_team_over_max_reports_team_over_max_conflict(
+    tmp_path: Path,
+) -> None:
+    """A pooled group larger than max_team_size(4) is also a conflict."""
+    lines = [
+        _POOLED_HEADER_LINE,
+        _pooled_line(_PooledRow("1", "A", "Big")),
+        _pooled_line(_PooledRow("2", "B", "Big")),
+        _pooled_line(_PooledRow("3", "C", "Big")),
+        _pooled_line(_PooledRow("4", "D", "Big")),
+        _pooled_line(_PooledRow("5", "E", "Big")),
+    ]
     path = _write_csv(tmp_path, lines)
+    roster = _pooled_roster()
 
     result = preview(path, roster)
 
-    assert result.conflicts == (ImportConflict(row=2, problem=_JOIN_UNSUPPORTED_PROBLEM),)
+    assert result.conflicts == (
+        ImportConflict(row=2, problem="team of 5 riders exceeds the maximum of 4 (team-over-max)"),
+    )
 
 
 # ------------------------------------------------- preview: notes join
