@@ -25,21 +25,24 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
   since a failed XRC load still names the resource it could not find.
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
-``quit_flow``, ``theme``, ``rivercrossing.demo``,
-:func:`~rivercrossing.ui.require_wx`) are imported at module scope, so
-this module itself stays importable even when wx cannot be (mirrors
-the guard the original stub's own docstring already promised). Every
+``quit_flow``, ``theme``, ``rivercrossing.demo``, ``rivercrossing.
+roster`` -- E3.2's seeded rider roster, :func:`~rivercrossing.ui.
+require_wx`) are imported at module scope, so this module itself
+stays importable even when wx cannot be (mirrors the guard the
+original stub's own docstring already promised). Every
 wx-touching name -- ``wx`` itself, its ``xrc`` submodule, the view
 classes, and the ``RiverCrossingApp`` subclass :func:`build_app`
 builds -- is imported/defined inside the function that first needs
 it, each behind its own :func:`require_wx` call.
 """
 
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
 
@@ -49,6 +52,10 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import DataSource
 
 __all__ = ["build_app", "build_main_window", "main"]
+
+# E3.2's seeded roster (R-20): every mixed ride this app opens is
+# rider_pooled with room for teams up to this size.
+_SEEDED_MAX_TEAM_SIZE = 4
 
 # Riders > Entry Detail... has no plate to open with until a real ride
 # exists (EPIC 4+); "77" is the only plate rivercrossing.demo carries
@@ -75,6 +82,10 @@ class _RouteContext:
         frame: ``main_frame``.
         resource: The loaded ``wx.xrc.XmlResource``.
         data_source: The demo/live display-data seam.
+        roster: The seeded, in-memory :class:`~rivercrossing.roster.
+            Roster` ``rider_editor_dlg`` reads and writes directly
+            (E3.2) -- unlike every other window here, it is not a
+            ``data_source`` projection, so it is threaded separately.
         app: The live ``wx.App`` -- carries ``really_quitting`` (the
             flag :func:`_on_query_end_session`/the exit route set so
             :func:`_on_main_frame_close` never re-opens a confirm
@@ -87,8 +98,36 @@ class _RouteContext:
     frame: Any
     resource: Any
     data_source: DataSource
+    roster: Roster
     app: Any
     theme_controller: theme.ThemeController
+
+
+def _seed_roster(data_source: DataSource) -> Roster:
+    """Build the mixed, rider_pooled Roster ``rider_editor_dlg`` opens.
+
+    Converts *data_source*'s ``riders()`` rows (``rivercrossing.demo``
+    today, E1.2.4) into a real, in-memory :class:`~rivercrossing.
+    roster.Roster`: a row with no team becomes a solo entry, and a run
+    of rows sharing one team name becomes that team's entry --
+    ``itertools.groupby`` keeps demo.py's own row order (R-20), since
+    every window that renders these rows already requires a team's
+    members to sit together. This keeps demo.py the one place these
+    fixture names/plates are written; nothing here repeats them.
+    """
+    roster = Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        max_team_size=_SEEDED_MAX_TEAM_SIZE,
+    )
+    for team_name, rows in itertools.groupby(data_source.riders(), key=lambda row: row.team):
+        if team_name is None:
+            for row in rows:
+                roster.create_solo_entry(name=row.name, plate=row.plate)
+            continue
+        riders = [Rider(name=row.name, plate=row.plate) for row in rows]
+        roster.create_team_entry(display_name=team_name, riders=riders)
+    return roster
 
 
 def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
@@ -229,7 +268,7 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
     if route.target == ids.RIDE_LIBRARY_DLG:
         RideLibrary(window, data_source=context.data_source)
     elif route.target == ids.RIDER_EDITOR_DLG:
-        RiderEditor(window, data_source=context.data_source)
+        RiderEditor(window, roster=context.roster)
     elif route.target == ids.ENTRY_DETAIL_DLG:
         EntryDetailDialog(window, _ENTRY_DETAIL_DEMO_PLATE, data_source=context.data_source)
     elif route.target == ids.RESULTS_FRAME:
@@ -538,6 +577,7 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
         frame=frame,
         resource=resource,
         data_source=data_source,
+        roster=_seed_roster(data_source),
         app=app,
         theme_controller=theme_controller,
     )
