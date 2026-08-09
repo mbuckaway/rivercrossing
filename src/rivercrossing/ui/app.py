@@ -277,6 +277,29 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
         SelfTestDialog(window)
 
 
+def _apply_dialog_defaults(window: Any, route: commands.MenuRoute) -> None:  # noqa: ANN401
+    """Apply *route.target*'s recorded default-button/first-field.
+
+    ``views.dialogs.DEFAULT_BUTTON_DECISIONS``/``FORM_FIRST_FIELDS``
+    are the one place these E1.5.3/spec.md §13 per-dialog decisions
+    are recorded; a no-op for any target with no entry (most dialogs
+    already declare their own ``<default>`` in XRC and need no
+    first-field override). This is what actually applies them when a
+    real menu route opens the dialog -- the E1.5.3 gap this closes
+    left ``dialogs.set_default_button``/``set_initial_focus`` proven
+    only against a raw, directly-loaded XRC dialog, never through the
+    app's own route path.
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    default_button = dialogs.default_button_for(route.target)
+    if default_button is not None:
+        dialogs.set_default_button(window, default_button)
+    first_field = dialogs.first_field_for(route.target)
+    if first_field is not None:
+        dialogs.set_initial_focus(window, first_field)
+
+
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     """Open *route*'s target window, or notice its absence (D1).
 
@@ -299,6 +322,7 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         return
 
     _decorate(context, window, route)
+    _apply_dialog_defaults(window, route)
     if is_frame:
         window.Show()
         window.Raise()

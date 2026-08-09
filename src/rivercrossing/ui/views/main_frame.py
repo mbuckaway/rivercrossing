@@ -254,9 +254,18 @@ class MainFrame:
         already inserted), so the three stack in call order. A fresh
         ``wx.InfoBar`` starts hidden (measured) -- nothing further is
         needed for R-73's "hidden by default".
+
+        Measured (wxPython 4.3.1 / wxWidgets 3.3.3, macOS, a throwaway
+        probe script per this repo's convention, first reproduced
+        wiring ``rider_editor_dlg``'s ``roster_infobar``, E3.2):
+        ``Dismiss()``/``ShowMessage()`` on a ``wx.InfoBar`` with its
+        default slide effect never returns, shown or not -- disabling
+        both effects here is what keeps a future ``ShowMessage()``/
+        ``Dismiss()`` call on any of these three safe.
         """
         bar = wx.InfoBar(self.frame)
         bar.SetName(name)
+        bar.SetShowHideEffects(wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
         self.frame.GetSizer().Insert(self._next_infobar_slot, bar, 0, wx.EXPAND)
         self._next_infobar_slot += 1
         return bar
