@@ -598,8 +598,8 @@ def test_on_save_given_a_duplicate_pooled_plate_shows_validation_not_crash() -> 
     assert view.calls == [("show_validation", ("plate '78' is already in use",))]
 
 
-def test_on_save_given_a_relay_team_member_leaves_the_shared_plate_unchanged() -> None:
-    """Save cannot replate a relay member: no mutator exists (E3.2)."""
+def test_on_save_given_a_relay_team_member_changes_the_teams_plate() -> None:
+    """Save on a relay team member updates the team's shared plate."""
     roster = _draft_relay_roster()
     presenter = RidersPresenter(RecordingRidersView(), roster)
     presenter.on_row_selected(0)  # A. Roy
@@ -607,7 +607,73 @@ def test_on_save_given_a_relay_team_member_leaves_the_shared_plate_unchanged() -
     presenter.on_save(RiderFormValues(plate="99", name="Alex Roy", team="Trail Blazers"))
 
     entry = roster.entries[0]
-    assert (entry.plate, entry.riders[0].name) == ("77", "Alex Roy")
+    assert (entry.plate, [r.plate for r in entry.riders]) == ("99", [None, None])
+
+
+def test_on_save_given_a_duplicate_relay_plate_shows_validation_not_crash() -> None:
+    """A colliding plate on a relay team also refuses (E3.2)."""
+    roster = _draft_relay_roster()
+    roster.create_solo_entry(name="Sam Ellis", plate="123")
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)  # A. Roy, on the relay team (plate 77)
+    view.calls.clear()
+
+    presenter.on_save(RiderFormValues(plate="123", name="A. Roy", team="Trail Blazers"))
+
+    assert view.calls == [("show_validation", ("plate '123' is already in use",))]
+
+
+def test_on_save_given_a_duplicate_relay_plate_leaves_the_plate_unchanged() -> None:
+    """A refused relay plate change leaves the plate as it was."""
+    roster = _draft_relay_roster()
+    roster.create_solo_entry(name="Sam Ellis", plate="123")
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter.on_row_selected(0)
+
+    presenter.on_save(RiderFormValues(plate="123", name="A. Roy", team="Trail Blazers"))
+
+    assert roster.entries[0].plate == "77"
+
+
+def test_on_save_given_a_post_start_relay_plate_change_shows_validation() -> None:
+    """A relay plate change after start refuses via show_validation."""
+    roster = _draft_relay_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    roster.status = RideStatus.RUNNING
+    view.calls.clear()
+
+    presenter.on_save(RiderFormValues(plate="99", name="A. Roy", team="Trail Blazers"))
+
+    assert view.calls == [
+        ("show_validation", ("plates cannot be changed once the ride is running",))
+    ]
+
+
+def test_on_save_given_the_same_relay_plate_stays_a_silent_no_op() -> None:
+    """Resubmitting a relay team's own plate saves as a normal no-op."""
+    roster = _draft_relay_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_save(RiderFormValues(plate="77", name="Alex Roy", team="Trail Blazers"))
+
+    assert view.calls == [
+        (
+            "show_riders",
+            (
+                [
+                    RiderRow(plate="77", name="Alex Roy", team="Trail Blazers"),
+                    RiderRow(plate="77", name="K. Singh", team="Trail Blazers"),
+                ],
+            ),
+        ),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers", NEW_TEAM_CHOICE],)),
+    ]
 
 
 def test_on_save_refreshes_the_rows_after_renaming() -> None:
