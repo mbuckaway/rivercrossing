@@ -102,8 +102,6 @@ Sponsor strips on published results (v2) · age/category fields — excluded by 
 
 ### Open questions
 
-**Deck-count default.** Spec §4 states 8 decks (432 cards for a 180-entry field); the XRC canvas draws 2 in `decks_spin`. Unresolved, and deliberately not picked here: the XRC declares no value, the presenter supplies it, so the ride-setup work in E3/E4 chooses the number and amends whichever of the two is wrong.
-
-Otherwise none. (All resolved: pooled card entitlement — uncapped, one card per lap, any rider may out-lap their teammates (R-16) · ride deletion — yes, type-to-confirm (R-18) · Windows unsigned / macOS Developer ID (R-01) · categories — excluded entirely.)
+None. (All resolved: pooled card entitlement — uncapped, one card per lap, any rider may out-lap their teammates (R-16) · ride deletion — yes, type-to-confirm (R-18) · Windows unsigned / macOS Developer ID (R-01) · categories — excluded entirely · deck-count default — 8, chosen by the E3.5 ride-setup work; the presenter supplies it, Spec §4 stands and the canvas's 2 was a mock artifact.)
 
 Companions: [engineering spec](spec.md) · [XRC windows](xrc-windows.md) · [module skeletons](module-skeletons.md) · [UI designs (retired)](ui-designs-retired.md) · [HTML results sample](../exports/epic-2026-results.html) ([no-times](../exports/epic-2026-results-no-times.html)).

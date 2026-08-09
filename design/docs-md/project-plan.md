@@ -36,7 +36,7 @@ Parallelization: after E1 exits, E2 and E3 run in parallel; E6/E7/E8 parallel af
 
 ### 3 · Coding standards & gates
 
-Adopted verbatim from the repo's quality gauntlet — Spec §12 (TDD + harness), §14 (six CI stages), Requirements R-70…77. Standards files (created in E1.1, canonical thereafter): `pyproject.toml` ([tool.ruff] all-rules baseline, [tool.mypy] strict, [tool.coverage] gates), `.github/workflows/ci.yml`, `CONTRIBUTING.md` (this §2/§3 distilled). Gates: **≥ 90% line and ≥ 90% branch** on core modules (cards, hands, standings, ride, store, csvio, htmlexport, pdfexport — per R-71 "coverage ≥ 90%", applied to both meters; branch coverage via `coverage --branch`), Hypothesis property suites where §11 names them, headless core (wx imports forbidden outside `rivercrossing.ui` — import-linter contract). Python 3.14 · wxPython ~=4.3.1 (wxWidgets 3.3.3) · Jinja2 · fpdf2 · stdlib sqlite3.
+Adopted verbatim from the repo's quality gauntlet — Spec §12 (TDD + harness), §14 (six CI stages), Requirements R-70…77. Standards files (created in E1.1, canonical thereafter): `pyproject.toml` ([tool.ruff] all-rules baseline, [tool.mypy] strict, [tool.coverage] gates), `.github/workflows/ci.yml`, `CONTRIBUTING.md` (this §2/§3 distilled). Gates: **≥ 90% line and ≥ 90% branch** on core modules (cards, hands, standings, ride, roster, store, csvio, htmlexport, pdfexport — per R-71 "coverage ≥ 90%", applied to both meters; branch coverage via `coverage --branch`), Hypothesis property suites where §11 names them, headless core (wx imports forbidden outside `rivercrossing.ui` — import-linter contract). Python 3.14 · wxPython ~=4.3.1 (wxWidgets 3.3.3) · Jinja2 · fpdf2 · stdlib sqlite3.
 
 ### 4 · UI / functional test strategy (wxPython)
 
@@ -135,7 +135,11 @@ Real rider/team management replaces demo roster: unique plates, solo default, te
 
 - **E3.4 UI** — E3.4.1 csv_preview_dlg wired (Import disabled while conflicts > 0); E3.4.2 rider_editor solo-only variant (Team column hidden).
 
+- **E3.5 Ride setup** *(added scope, approved 2026-08-08)* — E3.5.1 SetupPresenter builds a validated RideConfig (deck default 8); E3.5.2 RideSetup view + harness suite (defaults, enablement, R-17 lock).
+
 Exit criteria 180-rider EPIC CSV imports clean · conflicts block commit · teams reshape until start · editor fully live on real store-less models · demo roster unused on these screens.
+
+Shipped in v0.3. The models found a home: the briefs' test_roster.py targeted a module no skeleton named, so the "store-less models" above became rivercrossing.roster (written into §S2–S4, Spec §11 and the §3 gate list). The build's design silences were resolved by decision and written back where each belongs: teams may be size 1 while DRAFT (R-12's floor moved to CSV commit and ride start), entry and rider plates share one namespace with pooled teams adopting their lowest rider plate, next-free plate = highest + 1, an emptied entry dissolves, pooled team notes join with "; ", team_name is the pooled merge key, "New team…" prompts with the native text-entry dialog, refused edits render on the code-side roster_infobar/csv_infobar, and the deck default is 8. ride_setup_dlg shipped here as approved extra scope (E3.5): SetupPresenter + RideSetup build a validated RideConfig, now defined beside RideStatus in ride.py for E4's engine. The editor's own import/export buttons and the File-menu routes share one CSV flow, and every dialog opened from a real menu route now receives its recorded default button and first-field focus (closing the E1.5.3 gap).
 
 E4 · Live ride (in-memory)
 
@@ -217,7 +221,7 @@ Exit criteria installers install and run on clean Windows 11 + macOS images · a
 |---|---|---|
 | E1 | R-01/02/05, R-70/73/75/76 | XRC canvas (all 23 windows) · Spec §13–§15b |
 | E2 | R-40…44, R-72 | Spec §5 · selftest_dlg · src/rivercrossing/vectors |
-| E3 | R-11/12/15/17, R-20/21/22 | rider_editor_dlg, csv_preview_dlg · Spec §7 |
+| E3 | R-11/12/15/17, R-20/21/22 · R-16 plate shapes + R-13 setup UI (dealing and shoe wiring stay E4) | rider_editor_dlg, csv_preview_dlg, ride_setup_dlg · Spec §7 |
 | E4 | R-13/16, R-30…36 (undo = R-33; audio cues live in R-31) | main_frame states · Spec §2–§4 |
 | E5 | R-50…54, R-18 | resume/exit/continue dialogs, library · Spec §6/§9 |
 | E6 | R-14, R-60…63 | results_frame · golden samples + Jinja templates · UI Designs 5a–5d · Spec §8/§8b |

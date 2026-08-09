@@ -42,7 +42,8 @@ rivercrossing/
 │   ├── cards.py                # card model + seeded Shoe
 │   ├── hands.py                # poker evaluator: eval5 + wild layer + ranking table
 │   ├── standings.py            # ordering, tie-breaks ①②③, leaderboards
-│   ├── ride.py                 # state machine, crossings, timing, undo
+│   ├── ride.py                 # state machine, crossings, timing, undo; RideConfig (E3.5)
+│   ├── roster.py               # in-memory entries/riders/teams + lock matrix (§1–§2, E3)
 │   ├── store/
 │   │   ├── __init__.py         # Store facade (public API)
 │   │   ├── schema.py           # DDL v1 + PRAGMAs (WAL, foreign_keys)
@@ -89,8 +90,10 @@ Strictly bottom-up; each module goes red→green→refactor before the next star
 2 hands ── no deps                        (pure algorithm; vectors + Hypothesis + brute force)
 3 standings ─→ hands                     (ranking + tie-breaks over evaluated hands)
 4 ride ─→ cards                          (state machine deals via Shoe; no DB, no wx)
-5 store ─→ ride, cards                   (persists events; replays them back into RideEngine)
-6 csvio ─→ store models
+4b roster ─→ ride                        (E3's store-less models: entries/riders/teams, the
+                                          lock matrix, audited mutations the store later persists)
+5 store ─→ ride, cards, roster           (persists events; replays them back into RideEngine)
+6 csvio ─→ roster
 7 htmlexport / 8 pdfexport ─→ standings, store models
 9 ui.presenters ─→ ride, store, standings, csvio, exports
 10 ui.views + app ─→ presenters, theme, sound, ids   (wx enters here, nowhere else)
@@ -154,6 +157,12 @@ rivercrossing.ride — state machine & timing (§3/§6 · R-30…36)
 
 ```
 class RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
+@dataclass RideConfig(name, event_date, venue, lap_km, organizer, scorer, planned_start,
+                      planned_duration_s, min_lap_s, entry_mode, plate_model,
+                      max_team_size=4, deck_count=8, jokers_per_deck=2, max_cards=None,
+                      tiebreak_order=("laps","total_time","high_card"), logo_path=None)
+    # §2 ride-row setup fields; defined here since E3.5, built by ride_setup_dlg,
+    # consumed by RideEngine below; EPIC 6's standings imports the tiebreak spellings
 class RideEngine:             # pure; wall-clock injected for tests
     __init__(config: RideConfig, shoe: Shoe, clock: Callable[[], datetime])
     start(at: datetime | None = None) -> Event          # button or retro time (R-30)
@@ -168,6 +177,26 @@ class RideEngine:             # pure; wall-clock injected for tests
     state: RideStatus · elapsed() · remaining() · on_course: int
     snapshot() -> list[EntryResult]                     # feeds standings live
 # every mutation returns an Event the store persists; engine rebuilds via replay(events)
+```
+
+rivercrossing.roster — in-memory roster & lock matrix (§1–§2 · R-11/12/15/17/20 · E3)
+
+```
+class EntryMode(StrEnum): SOLO MIXED · class PlateModel(StrEnum): RIDER_POOLED TEAM_RELAY
+@dataclass Entry(plate, display_name, type, riders, status, notes)   # identity, not value
+@dataclass Rider(name, plate: str | None, sort_order)
+class Roster:                 # one ride's entries/riders; status set by the E4 engine
+    __init__(*, entry_mode=SOLO, max_team_size=4, plate_model=RIDER_POOLED)
+    create_solo_entry · create_team_entry · create_team_entry_of_one · add_rider_to_team
+    move_rider · extract_rider_to_solo · update_entry · delete_entry · mark_has_data
+    change_solo_plate · change_pooled_rider_plate · change_team_plate
+    next_free_plate() -> str                       # highest numeric + 1
+    validate_for_start() -> list[StartViolation]   # R-12's floor, checked at start
+    entries · audit_log · status                   # audit events persist via the E5 store
+can_edit_structure(status) · can_delete_entry(status, has_data)
+can_move_rider(status, plate_model) · can_add_entry() · can_fix_name()
+# one plate namespace per ride; a pooled team entry adopts its lowest rider plate;
+# teams may be size 1 while DRAFT — the floor is enforced at CSV commit and ride start
 ```
 
 rivercrossing.store — persistence (§2/§9 · R-50…54)
@@ -190,8 +219,11 @@ schema.py: rides · entries · riders · crossings · cards · audit · sessions
 rivercrossing.csvio / htmlexport / pdfexport (§7/§8/§8b · R-21/61/62/63)
 
 ```
-csvio.preview(path, ride) -> ImportPreview      # counts + conflicts; writes nothing
+csvio.preview(path, ride) -> ImportPreview      # counts + conflicts; writes nothing;
+                                                #   ride = the Roster aggregate until E5's Store
 csvio.commit(preview) -> ImportReport · csvio.export(ride, path) -> None
+    # commit applies through the roster's own audited mutators, atomically;
+    # ImportReport carries inserted/updated/moved/extracted/joined counts + the audit events
 @dataclass ExportOptions(show_times=False, laps_board=True, time_board=False,
                         full_field=True, all_cards=True, lap_km=8.0)  # times hidden by default (R-63)
 htmlexport.render(ride, placed, opts) -> str    # Jinja2 (autoescape, StrictUndefined),
@@ -229,12 +261,13 @@ sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   # §10 cues, settings toggl
 ```
 tests/
 ├── unit/                      # per core module, headless, coverage ≥ 90% (R-71)
-│   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py
+│   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py · test_roster.py
 │   ├── test_store.py · test_csvio.py · test_htmlexport.py · test_pdfexport.py
 │   └── presenters/            # FakeView-driven presenter tests — still no wx
 ├── (vectors: src/rivercrossing/vectors/ — the 7,462-rank sweep + joker table ship as package
 │                              #   data so the launch self-test reads them from the app, R-44/72)
-├── property/                  # Hypothesis: hands invariants, shoe determinism
+├── property/                  # Hypothesis: hands invariants, shoe determinism,
+│                              #   roster mutation sequences, csv round-trip identity
 ├── simulations/               # seeded whole rides: 180×6 h, both entry modes,
 │   └── test_simulated_rides.py#   both plate models, 0/2/4 jokers, cap on/off (§12)
 ├── functional/                # real wx, driven via ids.py + direct event injection (§12)
