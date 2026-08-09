@@ -1047,3 +1047,30 @@ def test_on_export_csv_writes_the_rosters_own_header(tmp_path: Path) -> None:
     presenter.on_export_csv(path)
 
     assert path.read_text(encoding="utf-8").splitlines()[0] == "plate,name,team_name,notes"
+
+
+# ------------------------------------------------------------ refresh
+
+
+def test_riders_presenter_refresh_re_renders_rows_and_team_choices() -> None:
+    """RiderEditor's own import_btn calls this after a commit (E3.4).
+
+    A public counterpart to the private ``_refresh_rows()`` every
+    other handler already calls -- the one entry point a caller
+    outside this presenter (``RiderEditor``'s own click handler,
+    after a *different* ``RidersPresenter`` instance committed a CSV
+    import through ``csv_preview_dlg``) can use to catch this
+    editor's own view up with the roster it never itself wrote to.
+    """
+    roster = Roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    roster.create_solo_entry(name="Alex Ferreira", plate="1")
+    view.calls.clear()
+
+    presenter.refresh()
+
+    assert view.calls == [
+        ("show_riders", ([RiderRow(plate="1", name="Alex Ferreira", team=None)],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE],)),
+    ]

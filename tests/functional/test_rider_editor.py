@@ -20,6 +20,7 @@ CLAUDE.md's removable-seam note) even though ``ui.views``/
 """
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import harness
@@ -27,11 +28,13 @@ import pytest
 import wx
 import wx.dataview
 
+from rivercrossing import csvio
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.roster import Roster
 from rivercrossing.ui import ids
 from rivercrossing.ui.app import _seed_roster
 from rivercrossing.ui.presenters.riders import NEW_TEAM_CHOICE, SOLO_TEAM_CHOICE, CsvPreview
+from rivercrossing.ui.views import dialogs, rider_editor
 from rivercrossing.ui.views.rider_editor import COL_TEAM, ROSTER_INFOBAR, RiderEditor
 
 if TYPE_CHECKING:
@@ -46,6 +49,13 @@ _SEEDED_ROWS = (
     ("77", "A. Roy", "Trail Blazers"),
     ("78", "K. Singh", "Trail Blazers"),
     ("212", "M. Chen", "—"),
+)
+
+# test_csvio.py's own fixture home (its module docstring), reused here
+# rather than re-derived -- test_app_bootstrap.py's mi_import_csv pins
+# already exercise the identical file through the menu route.
+_CLEAN_POOLED_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "unit" / "fixtures" / "csv" / "clean_pooled.csv"
 )
 
 
@@ -458,3 +468,107 @@ def test_rider_editor_dlg_set_import_enabled_raises_not_implemented_naming_e3_4(
             view.set_import_enabled(enabled=True)
     finally:
         harness.close_window(dialog)
+
+
+# --------------------------------------------- editor's own csv buttons
+# (E3.4's own follow-on, R-73: every frozen control must be drivable,
+# not only the two menu routes.)
+
+
+def test_rider_editor_dlg_import_btn_with_a_clean_fixture_adds_its_rows(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """import_btn runs the identical picker->preview->commit flow.
+
+    ``rider_editor.run_csv_import_flow`` is mi_import_csv's own route
+    handler's one call too (test_app_bootstrap.py's own pins) -- this
+    proves the *other* caller: clicking "Import CSV…" commits into
+    the same roster this still-open editor reads, then re-renders its
+    own rows from it, exactly as if it had just been reopened.
+    """
+    roster = _seed_roster(DemoDataSource())
+    dialog, _view = _show(xrc_resource, roster)
+    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+
+    def _click_import(preview_dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+        harness.click(preview_dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _click_import)
+
+    try:
+        harness.click(dialog, ids.IMPORT_BTN)
+        rows = _rider_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert ("1", "Alex Ferreira", "—") in rows
+    assert len(rows) == len(_SEEDED_ROWS) + 9
+
+
+def test_rider_editor_dlg_import_btn_given_a_cancelled_picker_is_a_no_op(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-briefs.md's own "cancelled picker = no dialog" (E3.4)."""
+    roster = _seed_roster(DemoDataSource())
+    dialog, _view = _show(xrc_resource, roster)
+    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: None)
+    before = len(wx.GetTopLevelWindows())
+
+    try:
+        harness.click(dialog, ids.IMPORT_BTN)
+        rows = _rider_list_rows(dialog)
+        after = len(wx.GetTopLevelWindows())
+    finally:
+        harness.close_window(dialog)
+
+    assert rows == _SEEDED_ROWS
+    assert after == before
+
+
+def test_rider_editor_dlg_export_btn_writes_a_file_that_repreviews_clean(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """export_btn runs the identical picker->write flow (E3.4).
+
+    ``rider_editor.run_csv_export_flow`` is mi_export_csv's own route
+    handler's one call too -- re-previewing the written file against
+    a fresh roster (never the one just exported) proves the file's
+    own header/rows round-trip clean, not only that a file exists.
+    """
+    roster = _seed_roster(DemoDataSource())
+    dialog, _view = _show(xrc_resource, roster)
+    export_path = tmp_path / "export.csv"
+    monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: export_path)
+
+    try:
+        harness.click(dialog, ids.EXPORT_BTN)
+        preview = csvio.preview(export_path, Roster())
+    finally:
+        harness.close_window(dialog)
+
+    assert export_path.exists()
+    assert preview.conflicts == ()
+
+
+def test_rider_editor_dlg_export_btn_given_a_cancelled_picker_is_a_no_op(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A cancelled save picker writes nothing, silently (E3.4)."""
+    roster = _seed_roster(DemoDataSource())
+    dialog, _view = _show(xrc_resource, roster)
+    export_path = tmp_path / "export.csv"
+    monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: None)
+
+    try:
+        harness.click(dialog, ids.EXPORT_BTN)
+    finally:
+        harness.close_window(dialog)
+
+    assert export_path.exists() is False
