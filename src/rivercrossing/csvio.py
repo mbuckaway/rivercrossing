@@ -43,15 +43,19 @@ absent from the file is left alone** -- neither the spec nor commit
 ever deletes on that basis; only DNF/void (E4) or the rider editor
 remove an entry with no matching row.
 
-**Two reshape shapes remain unsupported by commit, and are always
-preview conflicts, in every status (see the two functions above the
-pooled assembler for exactly which check names them)**: converting an
-existing team member into a solo entry, and adding a brand-new or
-currently-solo rider directly onto an existing (or freshly forming)
-pooled team. Neither has a roster.py primitive that applies it audited
-and atomically; :meth:`~rivercrossing.roster.Roster.move_rider` only
-relocates a rider who is already on some *other* team. Closing this
-gap is flagged for a follow-up decision, not attempted here.
+**Pooled team<->solo conversions are DRAFT-only (the pooled-reshape
+follow-on).** A team member's row losing its team_name applies via
+:meth:`~rivercrossing.roster.Roster.extract_rider_to_solo`; a
+brand-new or currently-solo rider's row gaining one applies via
+:meth:`~rivercrossing.roster.Roster.add_rider_to_team` (a solo rider's
+own entry is dissolved first). Both are gated by
+:func:`~rivercrossing.roster.can_edit_structure` -- DRAFT only, spec
+S1's "convert solo <-> team ... before start" -- **except** a
+brand-new plate landing straight on an *existing* team, which stays
+open through RUNNING/REOPENED via
+:func:`~rivercrossing.roster.can_move_rider`'s own carve-out, same as
+a team-to-team move. A conversion the current status locks becomes a
+conflict at preview time instead of a partial or unaudited mutation.
 
 **Pooled team notes (decided 2026-08-09).** On import, a team's
 ``notes`` is every non-empty member row's own notes, joined with
@@ -86,10 +90,6 @@ if TYPE_CHECKING:
 
 _HEADER_PROBLEM = "missing or malformed header for this ride's plate model"
 _MISSING_NAME_PROBLEM = "missing name"
-_TEAM_TO_SOLO_PROBLEM = "converting a team member to a solo entry via CSV import is not supported"
-_JOIN_UNSUPPORTED_PROBLEM = (
-    "adding a new or currently-solo rider into a team via CSV import is not yet supported"
-)
 _POOLED_HEADER = ("plate", "name", "team_name", "notes")
 _TEAM_TYPE_PATTERN = re.compile(r"team(\d+)")
 
@@ -190,6 +190,13 @@ class ImportPreview:
 class ImportReport:
     """What commit() actually did, for E3.4's dialog to display (R-21).
 
+    ``extracted_count`` counts a pooled team member turned into their
+    own solo entry (``extract_rider_to_solo``); ``joined_count``
+    counts a brand-new or converted-from-solo rider added onto an
+    *existing* pooled team (``add_rider_to_team``) -- a rider folded
+    into a *freshly created* team counts under ``inserted_count``
+    instead, same as any other new team's initial members. Both are
+    always 0 for team_relay, which has neither operation.
     ``audit_events`` is the exact slice of ``ride.audit_log`` commit()
     appended, in order -- so a caller can show a human-readable
     summary without re-deriving it from ``ride`` afterwards.
@@ -198,6 +205,8 @@ class ImportReport:
     inserted_count: int
     updated_count: int
     moved_count: int
+    extracted_count: int
+    joined_count: int
     audit_events: tuple[AuditEvent, ...]
 
 
@@ -257,13 +266,15 @@ def commit(preview: ImportPreview) -> ImportReport:
     before = len(ride.audit_log)
     if ride.plate_model is PlateModel.TEAM_RELAY:
         inserted, updated = _commit_relay(ride, preview.entries)
-        moved = 0
+        moved = extracted = joined = 0
     else:
-        inserted, updated, moved = _commit_pooled(ride, preview.entries)
+        inserted, updated, moved, extracted, joined = _commit_pooled(ride, preview.entries)
     return ImportReport(
         inserted_count=inserted,
         updated_count=updated,
         moved_count=moved,
+        extracted_count=extracted,
+        joined_count=joined,
         audit_events=ride.audit_log[before:],
     )
 
@@ -479,8 +490,9 @@ def _preview_pooled(reader: csv.DictReader[str], path: Path, ride: Roster) -> Im
             and not team_name
             and owner is not None
             and owner[0].type is EntryType.TEAM
+            and not can_edit_structure(ride.status)
         ):
-            problem = _TEAM_TO_SOLO_PROBLEM
+            problem = _team_to_solo_problem(ride.status)
         if problem is not None:
             conflicts.append(ImportConflict(row=row_num, problem=problem))
         seen_plates.add(plate)
@@ -551,6 +563,13 @@ def _assemble_pooled_teams(
                 ImportConflict(row=rows[0][0], problem=_team_under_min_problem(riders))
             )
             continue
+        if len(riders) > ride.max_team_size:
+            conflicts.append(
+                ImportConflict(
+                    row=rows[0][0], problem=_team_over_max_problem(riders, ride.max_team_size)
+                )
+            )
+            continue
         conflicts.extend(_pooled_team_structural_conflicts(rows, existing_index, ride.status))
     return tuple(entries), conflicts
 
@@ -560,9 +579,24 @@ def _team_under_min_problem(riders: Sequence[ParsedRider]) -> str:
     return f"team of {len(riders)} rider is below the minimum of {MIN_TEAM_SIZE} (team-under-min)"
 
 
+def _team_over_max_problem(riders: Sequence[ParsedRider], max_team_size: int) -> str:
+    """Return the team-over-max conflict text for *riders* (R-12)."""
+    return f"team of {len(riders)} riders exceeds the maximum of {max_team_size} (team-over-max)"
+
+
 def _pooled_move_problem(status: RideStatus) -> str:
     """Return the conflict text for a pooled move *status* disallows."""
     return f"team change requires DRAFT, RUNNING or REOPENED (ride is {status})"
+
+
+def _team_to_solo_problem(status: RideStatus) -> str:
+    """Return the conflict text for a team->solo *status* locks out."""
+    return f"converting a team member to a solo entry requires DRAFT (ride is {status})"
+
+
+def _solo_to_team_problem(status: RideStatus) -> str:
+    """Return the conflict text for a solo->team *status* locks out."""
+    return f"converting a solo rider into a team member requires DRAFT (ride is {status})"
 
 
 def _pooled_team_structural_conflicts(
@@ -575,10 +609,10 @@ def _pooled_team_structural_conflicts(
     A member already on the resolved target needs nothing. One
     already on a *different* existing team is a real move, gated by
     :func:`~rivercrossing.roster.can_move_rider` (spec S7:171's pooled
-    exception). Anything else reaching an existing or forming target
-    -- a brand-new plate, or a currently-solo rider -- has no
-    supported commit() primitive yet (module docstring) and always
-    conflicts, in every status.
+    exception, also covering a brand-new plate landing straight on an
+    existing team). A currently-solo rider converting into a team
+    member is gated by :func:`~rivercrossing.roster.can_edit_structure`
+    instead -- DRAFT only, in every case, existing or forming target.
     """
     riders = [rider for _, rider, _ in rows]
     target = _pooled_team_target(existing_index, riders)
@@ -591,8 +625,14 @@ def _pooled_team_structural_conflicts(
             if not can_move_rider(status, PlateModel.RIDER_POOLED):
                 conflicts.append(ImportConflict(row=row_num, problem=_pooled_move_problem(status)))
             continue
-        if target is not None or owner is not None:
-            conflicts.append(ImportConflict(row=row_num, problem=_JOIN_UNSUPPORTED_PROBLEM))
+        if owner is not None:  # currently solo, converting to a team member
+            if not can_edit_structure(status):
+                conflicts.append(
+                    ImportConflict(row=row_num, problem=_solo_to_team_problem(status))
+                )
+            continue
+        if target is not None and not can_move_rider(status, PlateModel.RIDER_POOLED):
+            conflicts.append(ImportConflict(row=row_num, problem=_pooled_move_problem(status)))
     return conflicts
 
 
@@ -605,25 +645,23 @@ class _PooledCtx:
     inserted: int = 0
     updated: int = 0
     moved: int = 0
+    extracted: int = 0
+    joined: int = 0
 
 
-def _commit_pooled(ride: Roster, entries: Sequence[ParsedEntry]) -> tuple[int, int, int]:
-    """Apply every parsed pooled entry: insert, rename, or move it."""
+def _commit_pooled(ride: Roster, entries: Sequence[ParsedEntry]) -> tuple[int, int, int, int, int]:
+    """Apply every parsed pooled entry: insert, rename, move, join."""
     ctx = _PooledCtx(ride=ride, index=_pooled_owner_index(ride))
     for parsed in entries:
         if parsed.type is EntryType.SOLO:
             _commit_pooled_solo(ctx, parsed)
         else:
             _commit_pooled_team(ctx, parsed)
-    return ctx.inserted, ctx.updated, ctx.moved
+    return ctx.inserted, ctx.updated, ctx.moved, ctx.extracted, ctx.joined
 
 
 def _commit_pooled_solo(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
-    """Insert a brand-new pooled solo entry, or rename an existing one.
-
-    preview() rejects a team->solo demotion (no roster.py primitive
-    applies it), so *owner* here is never a TEAM entry.
-    """
+    """Insert, rename, or extract-to-solo a matched pooled solo row."""
     owner = ctx.index.get(parsed.plate)
     if owner is None:
         entry = ctx.ride.create_solo_entry(name=parsed.display_name, plate=parsed.plate)
@@ -632,7 +670,14 @@ def _commit_pooled_solo(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
         ctx.index[parsed.plate] = (entry, entry.riders[0])
         ctx.inserted += 1
         return
-    existing_entry, _existing_rider = owner
+    existing_entry, existing_rider = owner
+    if existing_entry.type is EntryType.TEAM:
+        entry = ctx.ride.extract_rider_to_solo(existing_rider)
+        if _update_name_notes(ctx.ride, entry, parsed):
+            ctx.updated += 1
+        ctx.index[parsed.plate] = (entry, existing_rider)
+        ctx.extracted += 1
+        return
     if _update_name_notes(ctx.ride, existing_entry, parsed):
         ctx.updated += 1
 
@@ -649,13 +694,26 @@ def _commit_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
 
 
 def _form_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
-    """Create a brand-new pooled team from entirely-new riders.
+    """Create a brand-new pooled team from new and/or converted riders.
 
-    preview() rejects any group that mixes in a currently-solo rider
-    (no roster.py primitive promotes one into a fresh team yet), so
-    every member reaching here is genuinely new.
+    A currently-solo member's own solo entry is dissolved first, then
+    its existing :class:`~rivercrossing.roster.Rider` object joins the
+    new team's initial roster (no rename, same identity); a brand-new
+    plate gets a fresh one. Either way the team itself is new, so
+    every member here counts under ``inserted``, not ``joined`` --
+    matching how a wholly-new team's members were never counted per
+    rider either.
     """
-    riders = [Rider(name=rider.name, plate=rider.plate) for rider in parsed.riders]
+    riders: list[Rider] = []
+    for parsed_rider in parsed.riders:
+        plate = cast("str", parsed_rider.plate)
+        owner = ctx.index.get(plate)
+        if owner is None:
+            riders.append(Rider(name=parsed_rider.name, plate=plate))
+        else:
+            old_entry, old_rider = owner
+            ctx.ride.delete_entry(old_entry)
+            riders.append(old_rider)
     entry = ctx.ride.create_team_entry(display_name=parsed.display_name, riders=riders)
     if parsed.notes:
         ctx.ride.update_entry(entry, notes=parsed.notes)
@@ -665,19 +723,33 @@ def _form_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
 
 
 def _join_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry, target: Entry) -> None:
-    """Move every parsed rider not already on *target* onto it.
+    """Move, convert, or add every parsed rider not already on *target*.
 
-    preview() only lets a rider reach here already belonging to a
-    *different* existing team (no roster.py primitive adds a
-    brand-new or solo rider directly onto an existing team yet).
+    A rider already on a *different* team moves there
+    (``move_rider``); a currently-solo rider has their own entry
+    dissolved first, then joins with their existing identity kept; a
+    brand-new plate gets a fresh :class:`~rivercrossing.roster.Rider`
+    -- both of the latter two via ``add_rider_to_team``.
     """
-    for rider in parsed.riders:
-        # preview() guarantees every member here already has a plate on
-        # record -- see this function's own docstring.
-        plate = cast("str", rider.plate)
-        entry, old_rider = ctx.index[plate]
-        if entry is target:
+    for parsed_rider in parsed.riders:
+        plate = cast("str", parsed_rider.plate)
+        owner = ctx.index.get(plate)
+        if owner is not None and owner[0] is target:
             continue
-        ctx.ride.move_rider(old_rider, to_entry=target)
-        ctx.index[plate] = (target, old_rider)
-        ctx.moved += 1
+        if owner is not None and owner[0].type is EntryType.TEAM:
+            _, old_rider = owner
+            ctx.ride.move_rider(old_rider, to_entry=target)
+            ctx.index[plate] = (target, old_rider)
+            ctx.moved += 1
+            continue
+        if owner is not None:
+            old_entry, old_rider = owner
+            ctx.ride.delete_entry(old_entry)
+            ctx.ride.add_rider_to_team(old_rider, to_entry=target)
+            ctx.index[plate] = (target, old_rider)
+            ctx.joined += 1
+            continue
+        new_rider = Rider(name=parsed_rider.name, plate=plate)
+        ctx.ride.add_rider_to_team(new_rider, to_entry=target)
+        ctx.index[plate] = (target, new_rider)
+        ctx.joined += 1

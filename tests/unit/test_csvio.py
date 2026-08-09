@@ -22,10 +22,11 @@ plate that already matches an existing roster entry is no longer a
 became
 ``test_preview_relay_plate_matching_an_existing_roster_entry_is_not_a_conflict``
 below; duplicate detection now only fires within one file. The
-pooled-reshape follow-on (``add_rider_to_team``/``extract_rider_to_solo``
-landing in roster.py) turns three former "unsupported, always
-conflicts" tests into DRAFT-allowed scenarios, each now paired with a
-RUNNING/FINISHED variant that still conflicts, naming the lock.
+pooled-reshape follow-on (``add_rider_to_team``/
+``extract_rider_to_solo`` landing in roster.py) turns three former
+"unsupported, always conflicts" tests into DRAFT-allowed scenarios,
+each paired with a RUNNING/FINISHED variant that still conflicts,
+naming the lock.
 
 Fixtures live in ``tests/unit/fixtures/csv/``: ``clean_180.csv`` is
 the EPIC-shaped clean sample (team_relay, 120 solo + 15 team4 rows =
@@ -1117,7 +1118,7 @@ def test_preview_pooled_team_member_reclassified_solo_while_running_conflicts(
 def test_commit_pooled_team_member_reclassified_solo_extracts_in_draft(
     tmp_path: Path,
 ) -> None:
-    """commit() extracts Bo to his own solo entry via extract_rider_to_solo."""
+    """commit() extracts Bo onto his own solo entry (S1)."""
     roster = _pooled_roster()
     _wolves_of_three(roster)
     result = preview(_bo_goes_solo_csv(tmp_path), roster)
@@ -1148,6 +1149,30 @@ def test_commit_pooled_team_member_reclassified_solo_appends_extract_audit_event
     ]
 
 
+def test_commit_pooled_team_member_reclassified_solo_also_applies_a_rename(
+    tmp_path: Path,
+) -> None:
+    """A row dropping to solo and renaming applies both changes."""
+    roster = _pooled_roster()
+    _wolves_of_three(roster)
+    lines = [
+        _POOLED_HEADER_LINE,
+        _pooled_line(_PooledRow("2", "Bobby")),
+        _pooled_line(_PooledRow("3", "Cy", "Wolves")),
+        _pooled_line(_PooledRow("4", "Zed", "Wolves")),
+    ]
+    result = preview(_write_csv(tmp_path, lines), roster)
+
+    report = commit(result)
+
+    bobby = next(e for e in roster.entries if e.plate == "2")
+    assert (bobby.display_name, report.extracted_count, report.updated_count) == (
+        "Bobby",
+        1,
+        1,
+    )
+
+
 def _falcons_of_two(roster: Roster) -> None:
     """Seed *roster* with a single team, Falcons{Do,El}."""
     roster.create_team_entry(
@@ -1157,7 +1182,7 @@ def _falcons_of_two(roster: Roster) -> None:
 
 
 def _fay_joins_falcons_csv(tmp_path: Path) -> Path:
-    """Write the re-import file adding a brand-new rider Fay(99) to Falcons."""
+    """Write a re-import file adding rider Fay(99) to Falcons."""
     lines = [
         _POOLED_HEADER_LINE,
         _pooled_line(_PooledRow("5", "Do", "Falcons")),
@@ -1182,7 +1207,7 @@ def test_preview_pooled_new_rider_joining_an_existing_team_is_not_a_conflict_in_
 def test_preview_pooled_new_rider_joining_an_existing_team_while_running_is_not_a_conflict(
     tmp_path: Path,
 ) -> None:
-    """RUNNING keeps this open too (add_rider_to_team's own carve-out)."""
+    """RUNNING keeps this open too (add_rider_to_team's carve-out)."""
     roster = _pooled_roster()
     _falcons_of_two(roster)
     roster.status = RideStatus.RUNNING
@@ -1195,7 +1220,7 @@ def test_preview_pooled_new_rider_joining_an_existing_team_while_running_is_not_
 def test_preview_pooled_new_rider_joining_an_existing_team_while_finished_conflicts(
     tmp_path: Path,
 ) -> None:
-    """FINISHED closes the door on this too (can_move_rider is False)."""
+    """FINISHED closes this door too (can_move_rider is False here)."""
     roster = _pooled_roster()
     _falcons_of_two(roster)
     roster.status = RideStatus.FINISHED
@@ -1283,7 +1308,7 @@ def test_preview_pooled_solo_rider_joining_an_existing_team_while_running_confli
 def test_commit_pooled_solo_rider_joining_an_existing_team_in_draft(
     tmp_path: Path,
 ) -> None:
-    """commit() dissolves Alex's solo entry and joins him onto Falcons."""
+    """commit() dissolves Alex's solo entry, joins him onto Falcons."""
     roster = _pooled_roster()
     alex = roster.create_solo_entry(name="Alex", plate="1")
     _falcons_of_two(roster)
@@ -1302,7 +1327,7 @@ def test_commit_pooled_solo_rider_joining_an_existing_team_in_draft(
 def test_commit_pooled_solo_rider_joining_an_existing_team_audits_both_steps(
     tmp_path: Path,
 ) -> None:
-    """Dissolving the solo entry and joining the team are both audited."""
+    """Dissolving the solo entry and the join are both audited."""
     roster = _pooled_roster()
     roster.create_solo_entry(name="Alex", plate="1")
     _falcons_of_two(roster)
@@ -1317,7 +1342,7 @@ def test_commit_pooled_solo_rider_joining_an_existing_team_audits_both_steps(
 
 
 def _newbies_forming_csv(tmp_path: Path) -> Path:
-    """Write a fresh-team file pairing solo Alex(1) with new Newby(50)."""
+    """Write a fresh-team file pairing solo Alex(1) with Newby(50)."""
     lines = [
         _POOLED_HEADER_LINE,
         _pooled_line(_PooledRow("1", "Alex", "Newbies")),
@@ -1359,7 +1384,7 @@ def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_while_running_c
 def test_commit_pooled_promoting_a_solo_rider_into_a_fresh_team_in_draft(
     tmp_path: Path,
 ) -> None:
-    """commit() dissolves Alex's solo entry into the new Newbies team."""
+    """commit() dissolves Alex's solo entry into the Newbies team."""
     roster = _pooled_roster()
     alex = roster.create_solo_entry(name="Alex", plate="1")
     result = preview(_newbies_forming_csv(tmp_path), roster)
@@ -1377,7 +1402,7 @@ def test_commit_pooled_promoting_a_solo_rider_into_a_fresh_team_in_draft(
 def test_preview_pooled_team_over_max_reports_team_over_max_conflict(
     tmp_path: Path,
 ) -> None:
-    """A pooled group larger than max_team_size(4) is also a conflict."""
+    """A pooled group over max_team_size(4) is also a conflict."""
     lines = [
         _POOLED_HEADER_LINE,
         _pooled_line(_PooledRow("1", "A", "Big")),
