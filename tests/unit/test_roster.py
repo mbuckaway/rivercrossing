@@ -1444,7 +1444,7 @@ def test_change_team_plate_duplicate_raises_duplicate_plate_error() -> None:
 
 
 def test_change_team_plate_on_a_pooled_team_raises_plate_shape_error() -> None:
-    """A pooled team's plate is derived; refuses with a clear pointer."""
+    """A pooled team's derived plate refuses, naming the right call."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     entry = roster.create_team_entry(
         display_name="Team A",
