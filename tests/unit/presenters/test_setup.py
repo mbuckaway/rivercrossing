@@ -174,6 +174,23 @@ def test_setup_presenter_init_given_mixed_roster_enables_team_fields() -> None:
     assert ("set_team_fields_enabled", (True,)) in view.calls
 
 
+def test_setup_presenter_init_given_locked_relay_also_disables_team_fields() -> None:
+    """A locked group disables team_size_spin/relay_radio too (R-17).
+
+    Guards the exact overlap measured in test_ride_setup.py's own
+    functional suite: set_team_fields_enabled and set_entry_locked
+    both used to touch team_size_spin/relay_radio, and whichever ran
+    last silently undid the other -- a mixed+relay+RUNNING roster is
+    the one case where "entry_mode is MIXED" (True) and "locked"
+    (True) disagree about these two controls' own enabled state.
+    """
+    view = RecordingSetupView()
+
+    SetupPresenter(view, _mixed_relay_roster(RideStatus.RUNNING))
+
+    assert ("set_team_fields_enabled", (False,)) in view.calls
+
+
 # --- entry/plate-model lock: status x plate_model (E3.5's own matrix) -
 
 

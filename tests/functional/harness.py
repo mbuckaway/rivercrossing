@@ -71,6 +71,7 @@ __all__ = [
     "run_modal",
     "screenshot",
     "select_choice",
+    "select_radio",
     "select_row",
     "type_text",
     "xrc_directory",
@@ -242,6 +243,29 @@ def select_choice(window: Any, name: str, item_label: str) -> None:  # noqa: ANN
         raise ValueError(f"choice {name!r} has no item labelled {item_label!r}")
     control.SetSelection(index)
     event = wx.CommandEvent(wx.EVT_CHOICE.typeId, control.GetId())
+    event.SetEventObject(control)
+    control.GetEventHandler().ProcessEvent(event)
+    pump()
+
+
+def select_radio(window: Any, name: str) -> None:  # noqa: ANN401
+    """Select the ``wx.RadioButton`` named *name*, firing its event.
+
+    ``wx.RadioButton.SetValue(True)`` clears every other member of
+    its own XRC-declared group (documented wx behaviour: setting one
+    radio's value clears its siblings), but -- the same silence
+    :func:`select_choice`'s own docstring notes for ``wx.Choice``
+    -- it does not itself generate a ``wx.EVT_RADIOBUTTON`` (measured).
+    The event a real click would generate is posted directly instead,
+    this module's one working mechanism (module docstring).
+
+    Raises:
+        ControlNotFoundError: If *name* does not resolve inside
+            *window*.
+    """
+    control = find_control(window, name)
+    control.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+    event = wx.CommandEvent(wx.EVT_RADIOBUTTON.typeId, control.GetId())
     event.SetEventObject(control)
     control.GetEventHandler().ProcessEvent(event)
     pump()
