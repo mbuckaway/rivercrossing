@@ -22,12 +22,26 @@ its two siblings), so the transient must itself be type TEAM. A
 refused join rolls the transient team back with ``delete_entry`` so
 the roster stays truly unchanged.
 
+E3.4 extends the same class with csv_preview_dlg's own three entry
+points (``on_pick_csv_import``/``on_confirm_csv_import``/
+``on_export_csv``), rather than a second presenter class: the brief's
+own "csv_preview_dlg wired" scope shares one roster and one lock
+matrix with the rider editor, and ``RidersView`` already carried
+``show_csv_preview``/``set_import_enabled`` from E1.2.3 for exactly
+this. csv_preview_dlg's own view (``ui.views.rider_editor.
+CsvPreviewDialog``) pairs with a *second* ``RidersPresenter``
+instance over the same live roster, constructed with ``load=False``
+(this class's own ``__init__`` docstring) -- it never implements
+the rider-editor half of ``RidersView`` for real, the mirror image
+of ``RiderEditor``'s own E3.2-era CSV stubs.
+
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
+from rivercrossing import csvio
 from rivercrossing.roster import (
     EntryMode,
     EntryType,
@@ -40,6 +54,8 @@ from rivercrossing.roster import (
 from rivercrossing.ui.presenters.data_source import RiderRow
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from rivercrossing.roster import Entry, Roster
 
 # team_choice's two frozen sentinel entries (xrc-windows.md's Rider
@@ -165,12 +181,28 @@ class RidersPresenter:
     replate on Save).
     """
 
-    def __init__(self, view: RidersView, roster: Roster) -> None:
-        """Store the view and roster this presenter drives, and load."""
+    def __init__(self, view: RidersView, roster: Roster, *, load: bool = True) -> None:
+        """Store the view and roster this presenter drives, and load.
+
+        Args:
+            view: The rider-editor or csv-preview view driving this
+                roster (module docstring).
+            roster: The in-memory roster this presenter reads/writes.
+            load: Renders rider_editor_dlg's own initial state
+                (``_load()``) when ``True`` (the default, unchanged
+                for every existing caller). ``CsvPreviewDialog``
+                passes ``False``: its view never implements
+                ``show_riders``/``show_team_choices``/
+                ``set_team_ui_visible``/``show_form``/
+                ``set_delete_enabled`` for real, so nothing may call
+                them.
+        """
         self.view = view
         self.roster = roster
         self._selected: tuple[Entry, Rider] | None = None
-        self._load()
+        self._csv_preview: csvio.ImportPreview | None = None
+        if load:
+            self._load()
 
     def on_row_selected(self, index: int) -> None:
         """Fill the form from riders_list row *index* (R-20)."""
@@ -241,6 +273,58 @@ class RidersPresenter:
             return
         self._refresh_rows()
         self._show_add_form()
+
+    def on_pick_csv_import(self, path: Path) -> None:
+        """Preview *path* against this roster; render it (E3.4, R-21).
+
+        Nothing is written -- :func:`~rivercrossing.csvio.preview`'s
+        own contract. An unreadable *path* propagates as ``OSError``
+        (csvio's own module docstring); the view's own picker seam
+        (a real ``wx.FD_FILE_MUST_EXIST`` file dialog) already
+        guards against that in practice, so this handler does not
+        catch it.
+        """
+        self._csv_preview = csvio.preview(path, self.roster)
+        conflicts = tuple(
+            CsvConflict(row=conflict.row, problem=conflict.problem)
+            for conflict in self._csv_preview.conflicts
+        )
+        summary = (
+            f"{path.name} → {self._csv_preview.rider_count} riders · "
+            f"{self._csv_preview.team_count} teams · {len(conflicts)} conflicts"
+        )
+        self.view.show_csv_preview(CsvPreview(summary=summary, conflicts=conflicts))
+        self.view.set_import_enabled(enabled=len(conflicts) == 0)
+
+    def on_confirm_csv_import(self) -> bool:
+        """Commit the last previewed import (E3.4, R-21).
+
+        A no-op returning ``False`` if nothing was ever previewed.
+        A refusal (the roster changed since preview, so conflicts
+        are present after all) shows via
+        :meth:`RidersView.show_validation` and returns ``False``,
+        never raising past this handler -- mirroring
+        :meth:`on_add`/:meth:`on_save`/:meth:`on_delete`'s own
+        refusal shape. Returns ``True`` once the commit actually
+        applied, so :class:`~rivercrossing.ui.views.rider_editor.
+        CsvPreviewDialog` knows whether to end its own modal loop.
+
+        Returns:
+            Whether the import actually committed.
+        """
+        if self._csv_preview is None:
+            return False
+        try:
+            csvio.commit(self._csv_preview)
+        except csvio.ImportConflictsPresentError as exc:
+            self.view.show_validation(str(exc))
+            return False
+        self._refresh_rows()
+        return True
+
+    def on_export_csv(self, path: Path) -> None:
+        """Export this roster to *path* as CSV (E3.4, R-21)."""
+        csvio.export(self.roster, path)
 
     def _create_entry(self, form: RiderFormValues) -> bool:
         """Create *form*'s entry; False if new-team prompt cancels."""
