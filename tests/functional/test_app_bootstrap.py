@@ -37,7 +37,7 @@ import wx.xrc
 
 from rivercrossing.ui import accelerators, commands, ids
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.views import dialogs, rider_editor
 
 pytestmark = pytest.mark.functional
 
@@ -365,16 +365,18 @@ def test_open_target_applies_the_recorded_default_button(
     precedent ``test_exit_route_no_longer_posts_the_not_yet_
     implemented_stub`` uses for the identical reason: ``ShowModal()``
     would otherwise block forever with no user present. By the time
-    it runs, ``_open_target``'s own ``_apply_dialog_defaults`` call
-    has already set the real default, so the captured name is a
-    genuine structural fact, not a proxy. ``csv_preview_dlg``'s own
-    row needs one more seam: ``_pick_import_path`` monkeypatched to a
-    committed fixture, since E3.4 made that dialog's own route run a
-    picker before it opens at all -- harmless for the other three
-    rows, which never call it.
+    it runs, the real default is already set -- ``_open_target``'s
+    own ``_apply_dialog_defaults`` call for the other three rows,
+    ``run_csv_import_flow``'s own identical lookup (``ui.views.
+    rider_editor``) for ``csv_preview_dlg`` -- so the captured name
+    is a genuine structural fact, not a proxy. ``csv_preview_dlg``'s
+    own row needs one more seam: ``_pick_import_path`` monkeypatched
+    to a committed fixture, since E3.4 made that dialog's own route
+    run a picker before it opens at all -- harmless for the other
+    three rows, which never call it.
     """
     dialog_name, control_name = decision
-    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
     captured: dict[str, str | None] = {}
 
     # "opener" (not "_opener"): every call site names it as a keyword
@@ -436,7 +438,7 @@ def test_mi_import_csv_given_a_cancelled_picker_opens_no_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """task-briefs.md's own "cancelled picker = no dialog" (E3.4)."""
-    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: None)
+    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: None)
     before = len(wx.GetTopLevelWindows())
 
     _fire_menu_event(firing_frame, "mi_import_csv")
@@ -449,7 +451,7 @@ def test_mi_import_csv_given_a_picked_path_shows_it_decorated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Menu -> picker -> csv_preview_dlg opens decorated (E3.4)."""
-    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
     captured: dict[str, str] = {}
 
     def _capture_summary(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
@@ -475,7 +477,7 @@ def test_mi_import_csv_import_click_commits_into_the_shared_roster(
     monkeypatched ``run_dialog``), then open ``rider_editor_dlg`` via
     ``mi_rider_editor`` and read its own ``riders_list``.
     """
-    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
 
     def _click_import(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
         harness.click(dialog, "wxID_OK")
@@ -502,7 +504,7 @@ def test_mi_export_csv_given_a_cancelled_picker_is_a_silent_no_op(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A cancelled save picker changes nothing, silently (E3.4)."""
-    monkeypatch.setattr(app_module, "_pick_export_path", lambda _parent: None)
+    monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: None)
     before = firing_frame.GetStatusBar().GetStatusText()
 
     _fire_menu_event(firing_frame, "mi_export_csv")
@@ -517,7 +519,7 @@ def test_mi_export_csv_given_a_picked_path_writes_the_rosters_own_header(
 ) -> None:
     """Menu -> save picker -> csvio.export writes the real file."""
     export_path = tmp_path / "export.csv"
-    monkeypatch.setattr(app_module, "_pick_export_path", lambda _parent: export_path)
+    monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: export_path)
 
     _fire_menu_event(firing_frame, "mi_export_csv")
 

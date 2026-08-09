@@ -40,13 +40,17 @@ into it -- and both disable ``wx.InfoBar``'s default slide effect
 that module's docstring for why it used to be duplicated here.
 """
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import wx
 import wx.dataview
+import wx.xrc
 
+from rivercrossing import csvio
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.riders import RiderFormValues, RidersPresenter
+from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import associate_model, find_control
 
 if TYPE_CHECKING:
@@ -73,6 +77,8 @@ __all__ = [
     "RiderEditor",
     "RidersListModel",
     "format_team",
+    "run_csv_export_flow",
+    "run_csv_import_flow",
 ]
 
 COL_PLATE = 0
@@ -195,6 +201,8 @@ class RiderEditor:
         self.add_btn = self._find(ids.ADD_BTN, wx.Button)
         self.save_btn = self._find(ids.SAVE_BTN, wx.Button)
         self.delete_btn = self._find(ids.DELETE_BTN, wx.Button)
+        self.import_btn = self._find(ids.IMPORT_BTN, wx.Button)
+        self.export_btn = self._find(ids.EXPORT_BTN, wx.Button)
 
         self.roster_infobar = self._build_infobar()
 
@@ -260,6 +268,8 @@ class RiderEditor:
         self.dialog.Bind(wx.EVT_BUTTON, self._on_add, self.add_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_save, self.save_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_delete, self.delete_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_import_click, self.import_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_export_click, self.export_btn)
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.riders_list
         )
@@ -291,6 +301,25 @@ class RiderEditor:
         """Handle ``delete_btn``: forward to the presenter."""
         event.Skip()
         self.presenter.on_delete()
+
+    def _on_import_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``import_btn``: the identical flow as mi_import_csv.
+
+        On an actual commit, refreshes this still-open editor's own
+        rows/team_choice via :meth:`RidersPresenter.refresh` --
+        :func:`run_csv_import_flow` commits through ``csv_preview_
+        dlg``'s own, *different* ``RidersPresenter`` instance
+        (module docstring's mirror-image split), so nothing else
+        would tell this open editor the roster changed underneath it.
+        """
+        event.Skip()
+        if run_csv_import_flow(self.dialog, self.presenter.roster):
+            self.presenter.refresh()
+
+    def _on_export_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``export_btn``: the same flow as mi_export_csv."""
+        event.Skip()
+        run_csv_export_flow(self.dialog, self.presenter.roster)
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``riders_list`` selection: forward its row index.
@@ -596,3 +625,115 @@ class CsvPreviewDialog:
                 called on this pairing) would ever need it.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+
+# ---------------------------------------------------- shared csv flows
+#
+# The one place both ``ui.app``'s own mi_import_csv/mi_export_csv
+# route handlers and RiderEditor's own import_btn/export_btn run
+# their picker -> preview/write flow through (E3.4's own follow-on
+# "one source of truth" design constraint). Hosted here, not
+# ``ui.app`` -- the obvious home, since the route handlers already
+# lived there -- because a view importing ``ui.app`` back would give
+# ``rivercrossing.ui.views`` a transitive import of ``rivercrossing.
+# demo`` through ``ui.app``'s own module-level import of it, breaking
+# "only the app bootstrap imports rivercrossing.demo" (measured with
+# ``lint-imports`` while wiring this follow-on). Not the presenter
+# either: ``RidersPresenter`` may never import wx (R-71), and loading/
+# showing ``csv_preview_dlg`` is unavoidably wx-touching. ``ui.app``
+# keeps calling these two functions with a deferred, function-scoped
+# import -- the same way it already reaches every other view class in
+# this package.
+
+
+def _pick_import_path(parent: wx.Window) -> Path | None:
+    """Ask the operator which CSV to import, or ``None`` if cancelled.
+
+    A thin ``wx.FileDialog`` seam: tests monkeypatch this function
+    itself (module-level) rather than ever driving the native picker,
+    which no test in this suite can do (harness.py's own module
+    docstring).
+    """
+    with wx.FileDialog(
+        parent,
+        message="Import Riders CSV",
+        wildcard="CSV files (*.csv)|*.csv",
+        style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+    ) as picker:
+        if picker.ShowModal() != wx.ID_OK:
+            return None
+        return Path(picker.GetPath())
+
+
+def _pick_export_path(parent: wx.Window) -> Path | None:
+    """Ask the operator where to save the exported CSV, or ``None``.
+
+    The save-mode sibling of :func:`_pick_import_path`; the same
+    monkeypatch-able seam applies.
+    """
+    with wx.FileDialog(
+        parent,
+        message="Export Riders CSV",
+        wildcard="CSV files (*.csv)|*.csv",
+        style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+    ) as picker:
+        if picker.ShowModal() != wx.ID_OK:
+            return None
+        return Path(picker.GetPath())
+
+
+def run_csv_import_flow(parent: wx.Window, roster: Roster) -> bool:
+    """Pick a CSV, preview it, let the operator Import or Cancel.
+
+    A cancelled picker opens no window at all (task-briefs.md's own
+    "cancelled picker = no dialog"). A picked path opens
+    ``csv_preview_dlg`` decorated with :class:`CsvPreviewDialog`,
+    already previewing it, so ``wxID_OK``'s enabled state is correct
+    the moment the operator can see the dialog.
+
+    Args:
+        parent: The window to parent the native picker on, and to
+            return focus to once ``csv_preview_dlg`` ends (module
+            banner comment above).
+        roster: The roster a clean Import commits into.
+
+    Returns:
+        Whether an import actually committed -- a caller with its
+        own rows to refresh (:class:`RiderEditor`'s own
+        ``import_btn``) uses this to know whether to.
+    """
+    path = _pick_import_path(parent)
+    if path is None:
+        return False
+    window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.CSV_PREVIEW_DLG)
+    if window is None:
+        return False
+
+    view = CsvPreviewDialog(window, roster=roster)
+    view.presenter.on_pick_csv_import(path)
+    default_button = dialogs.default_button_for(ids.CSV_PREVIEW_DLG)
+    if default_button is not None:
+        dialogs.set_default_button(window, default_button)
+    try:
+        result = dialogs.run_dialog(window, opener=parent)
+    finally:
+        if not window.IsBeingDeleted():
+            window.Destroy()
+    ok_id: int = wx.ID_OK  # mypy: an int-typed local isolates wx's own Any
+    return result == ok_id
+
+
+def run_csv_export_flow(parent: wx.Window, roster: Roster) -> Path | None:
+    """Pick a save path, then write *roster* there as CSV (E3.4).
+
+    The save-mode sibling of :func:`run_csv_import_flow`. A cancelled
+    picker is a silent no-op.
+
+    Returns:
+        The path written, or ``None`` if the picker was cancelled.
+    """
+    path = _pick_export_path(parent)
+    if path is None:
+        return None
+    csvio.export(roster, path)
+    return path

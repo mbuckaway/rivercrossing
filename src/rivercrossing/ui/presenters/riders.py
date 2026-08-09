@@ -332,6 +332,19 @@ class RidersPresenter:
         """Export this roster to *path* as CSV (E3.4, R-21)."""
         csvio.export(self.roster, path)
 
+    def refresh(self) -> None:
+        """Re-render riders_list/team_choice from the roster (E3.4).
+
+        A public counterpart to :meth:`_refresh_rows`: the one entry
+        point a caller outside this presenter uses to catch this
+        view up with a roster change it never itself made --
+        ``RiderEditor``'s own ``import_btn`` handler calls this after
+        a *different* ``RidersPresenter`` instance (``csv_preview_
+        dlg``'s own, ``load=False``) commits a CSV import into the
+        same roster.
+        """
+        self._refresh_rows()
+
     def _create_entry(self, form: RiderFormValues) -> bool:
         """Create *form*'s entry; False if new-team prompt cancels."""
         if form.team == SOLO_TEAM_CHOICE:

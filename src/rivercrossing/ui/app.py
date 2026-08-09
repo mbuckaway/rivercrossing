@@ -26,15 +26,21 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
 ``quit_flow``, ``theme``, ``rivercrossing.demo``, ``rivercrossing.
-roster`` -- E3.2's seeded rider roster, ``rivercrossing.csvio`` --
-E3.4's Import/Export Riders CSV… routes, :func:`~rivercrossing.ui.
+roster`` -- E3.2's seeded rider roster, :func:`~rivercrossing.ui.
 require_wx`) are imported at module scope, so this module itself
 stays importable even when wx cannot be (mirrors the guard the
 original stub's own docstring already promised). Every
 wx-touching name -- ``wx`` itself, its ``xrc`` submodule, the view
 classes, and the ``RiverCrossingApp`` subclass :func:`build_app`
 builds -- is imported/defined inside the function that first needs
-it, each behind its own :func:`require_wx` call.
+it, each behind its own :func:`require_wx` call. E3.4's Import/Export
+Riders CSV… routes (``_handle_import_csv``/``_handle_export_csv``)
+are two more such deferred names: both delegate straight to
+``rivercrossing.ui.views.rider_editor``'s own shared flow functions,
+the one place that route and ``rider_editor_dlg``'s own import_btn/
+export_btn both run the picker -> preview/write flow through (that
+module's own banner comment explains why it is hosted there, not
+here).
 """
 
 import itertools
@@ -42,7 +48,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from rivercrossing import csvio
 from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, theme
@@ -302,90 +307,33 @@ def _apply_dialog_defaults(window: Any, route: commands.MenuRoute) -> None:  # n
         dialogs.set_initial_focus(window, first_field)
 
 
-def _pick_import_path(parent: Any) -> Path | None:  # noqa: ANN401 -- wx ships no stubs
-    """Ask the operator which CSV to import, or ``None`` if cancelled.
+def _handle_import_csv(context: _RouteContext) -> None:
+    """File ▸ Import Riders CSV…: run the shared flow (E3.4).
 
-    A thin ``wx.FileDialog`` seam: tests monkeypatch this function
-    itself (module-level, the same pattern ``test_app_bootstrap.py``
-    already uses for ``dialogs.run_dialog``) rather than ever driving
-    the native picker, which no test in this suite can do (harness.py's
-    own module docstring).
+    The route's own target stays ``csv_preview_dlg`` (commands.py
+    unchanged) -- :func:`~rivercrossing.ui.views.rider_editor.
+    run_csv_import_flow` is the one place this route handler and
+    ``rider_editor_dlg``'s own ``import_btn`` both run the picker ->
+    preview -> commit flow through (that module's own banner comment
+    explains why it is hosted there, not here).
     """
-    wx = require_wx()
-    with wx.FileDialog(
-        parent,
-        message="Import Riders CSV",
-        wildcard="CSV files (*.csv)|*.csv",
-        style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
-    ) as picker:
-        if picker.ShowModal() != wx.ID_OK:
-            return None
-        return Path(picker.GetPath())
+    from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
 
-
-def _pick_export_path(parent: Any) -> Path | None:  # noqa: ANN401 -- wx ships no stubs
-    """Ask the operator where to save the exported CSV, or ``None``.
-
-    The save-mode sibling of :func:`_pick_import_path`; the same
-    monkeypatch-able seam applies.
-    """
-    wx = require_wx()
-    with wx.FileDialog(
-        parent,
-        message="Export Riders CSV",
-        wildcard="CSV files (*.csv)|*.csv",
-        style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
-    ) as picker:
-        if picker.ShowModal() != wx.ID_OK:
-            return None
-        return Path(picker.GetPath())
-
-
-def _handle_import_csv(context: _RouteContext, route: commands.MenuRoute) -> None:
-    """File ▸ Import Riders CSV…: pick a file, then preview it (E3.4).
-
-    A cancelled picker opens nothing at all (task-briefs.md's own
-    "cancelled picker = no dialog") -- the route's own target stays
-    ``csv_preview_dlg`` (commands.py unchanged), but the picker runs
-    *before* it loads. ``CsvPreviewDialog`` previews the picked path
-    immediately, so ``wxID_OK``'s enabled state is already correct
-    the moment the operator can see the dialog.
-    """
-    path = _pick_import_path(context.frame)
-    if path is None:
-        return
-    window = context.resource.LoadDialog(None, route.target)
-    if window is None:
-        context.frame.SetStatusText(f"{route.label} — no window authored yet")
-        return
-
-    from rivercrossing.ui.views.rider_editor import CsvPreviewDialog  # noqa: PLC0415
-
-    view = CsvPreviewDialog(window, roster=context.roster)
-    view.presenter.on_pick_csv_import(path)
-    _apply_dialog_defaults(window, route)
-
-    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
-
-    try:
-        dialogs.run_dialog(window, opener=context.frame)
-    finally:
-        if not window.IsBeingDeleted():
-            window.Destroy()
+    rider_editor.run_csv_import_flow(context.frame, context.roster)
 
 
 def _handle_export_csv(context: _RouteContext) -> None:
-    """File ▸ Export Riders CSV…: pick a save path, then write it.
+    """File ▸ Export Riders CSV…: run the shared flow (E3.4).
 
     No window opens for this ``COMMAND`` row (spec.md §15's own
     "OS-native ... dialog, no app window") -- a cancelled picker is a
     silent no-op, the same shape :func:`_handle_import_csv` uses.
     """
-    path = _pick_export_path(context.frame)
-    if path is None:
-        return
-    csvio.export(context.roster, path)
-    context.frame.SetStatusText(f"Exported {path.name}")
+    from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
+
+    path = rider_editor.run_csv_export_flow(context.frame, context.roster)
+    if path is not None:
+        context.frame.SetStatusText(f"Exported {path.name}")
 
 
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
@@ -588,7 +536,7 @@ def _make_route_handler(
     if route.target == "export_riders_csv":
         return lambda _event: _handle_export_csv(context)
     if route.target == ids.CSV_PREVIEW_DLG:
-        return lambda _event: _handle_import_csv(context, route)
+        return lambda _event: _handle_import_csv(context)
     if route.kind is commands.TargetKind.COMMAND:
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     return lambda _event: _open_target(context, route)
