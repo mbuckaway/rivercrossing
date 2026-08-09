@@ -241,6 +241,7 @@ source_modules = [
     "rivercrossing.cards",
     "rivercrossing.hands",
     "rivercrossing.roster",
+    "rivercrossing.csvio",
 ]
 forbidden_modules = ["wx"]
 
@@ -258,5 +259,6 @@ source_modules = [
     "rivercrossing.ui.presenters",
     "rivercrossing.ui.views",
     "rivercrossing.roster",
+    "rivercrossing.csvio",
 ]
 forbidden_modules = ["rivercrossing.demo"]
