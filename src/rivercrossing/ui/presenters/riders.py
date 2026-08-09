@@ -22,11 +22,6 @@ its two siblings), so the transient must itself be type TEAM. A
 refused join rolls the transient team back with ``delete_entry`` so
 the roster stays truly unchanged.
 
-**Known gap:** ``Roster`` ships ``change_solo_plate`` and
-``change_pooled_rider_plate`` but no relay-team-plate mutator, so
-Save cannot replate a team_relay member from this dialog -- the name
-still updates; the plate silently does not (tested, not a crash).
-
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
 
@@ -298,17 +293,15 @@ class RidersPresenter:
         )
 
     def _apply_plate_change(self, entry: Entry, rider: Rider, plate: str) -> None:
-        """Change *entry*/*rider*'s plate to *plate*, if it differs.
-
-        team_relay team members have no per-member plate mutator
-        (see the module docstring); Save leaves theirs untouched.
-        """
+        """Change *entry*/*rider*'s plate to *plate*, if it differs."""
         if entry.type is EntryType.SOLO:
             if plate != entry.plate:
                 self.roster.change_solo_plate(entry, plate=plate)
-            return
-        if self.roster.plate_model is PlateModel.RIDER_POOLED and plate != rider.plate:
-            self.roster.change_pooled_rider_plate(rider, plate=plate)
+        elif self.roster.plate_model is PlateModel.RIDER_POOLED:
+            if plate != rider.plate:
+                self.roster.change_pooled_rider_plate(rider, plate=plate)
+        elif plate != entry.plate:
+            self.roster.change_team_plate(entry, plate=plate)
 
     def _load(self) -> None:
         """Render the editor's full initial state from the roster."""
