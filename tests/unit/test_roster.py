@@ -1471,3 +1471,281 @@ def test_change_team_plate_unknown_entry_raises_entry_not_found_error() -> None:
 
     with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
         roster.change_team_plate(foreign, plate="9")
+
+
+# -------------------------------------------------- add_rider_to_team
+
+
+def test_add_rider_to_team_pooled_appends_and_recomputes_plate() -> None:
+    """A pooled add appends the rider and re-derives the team plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="5"), Rider(name="Bo", plate="9")]
+    )
+    cy = Rider(name="Cy", plate="1")
+
+    roster.add_rider_to_team(cy, to_entry=team)
+
+    assert (cy in team.riders, team.plate) == (True, "1")
+
+
+def test_add_rider_to_team_relay_clears_the_riders_plate() -> None:
+    """team_relay: an added rider is cleared to plateless (S1)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="1"
+    )
+    cy = Rider(name="Cy", plate="9")
+
+    roster.add_rider_to_team(cy, to_entry=team)
+
+    assert (cy in team.riders, cy.plate) == (True, None)
+
+
+def test_add_rider_to_team_appends_an_audit_event() -> None:
+    """add_rider_to_team logs the rider and the target team."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="5"), Rider(name="Bo", plate="9")]
+    )
+    cy = Rider(name="Cy", plate="1")
+
+    roster.add_rider_to_team(cy, to_entry=team)
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="add_rider_to_team",
+        payload={
+            "rider_name": "Cy",
+            "rider_plate": "1",
+            "to_plate": "1",
+            "display_name": "Team A",
+        },
+    )
+
+
+def test_add_rider_to_team_pooled_running_succeeds() -> None:
+    """Pooled stays open while RUNNING for new-plate adds (S7:171)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="5"), Rider(name="Bo", plate="9")]
+    )
+    roster.status = RideStatus.RUNNING
+    cy = Rider(name="Cy", plate="1")
+
+    roster.add_rider_to_team(cy, to_entry=team)
+
+    assert cy in team.riders
+
+
+def test_add_rider_to_team_pooled_reopened_succeeds() -> None:
+    """REOPENED is the corrections door for pooled adds too (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="5"), Rider(name="Bo", plate="9")]
+    )
+    roster.status = RideStatus.REOPENED
+    cy = Rider(name="Cy", plate="1")
+
+    roster.add_rider_to_team(cy, to_entry=team)
+
+    assert cy in team.riders
+
+
+def test_add_rider_to_team_relay_running_raises_locked_error() -> None:
+    """Relay keeps the start lock: adds refuse once RUNNING (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="1"
+    )
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("locked")):
+        roster.add_rider_to_team(Rider(name="Cy"), to_entry=team)
+
+
+def test_add_rider_to_team_pooled_finished_raises_locked_error() -> None:
+    """FINISHED closes the pooled adds door until reopened (R-17)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="5"), Rider(name="Bo", plate="9")]
+    )
+    roster.status = RideStatus.FINISHED
+
+    with pytest.raises(LockedError, match=re.escape("locked")):
+        roster.add_rider_to_team(Rider(name="Cy", plate="1"), to_entry=team)
+
+
+def test_add_rider_to_team_on_a_solo_entry_raises_invalid_move_error() -> None:
+    """add_rider_to_team refuses a solo entry (S1: one fixed rider)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    solo = roster.create_solo_entry(name="Alex", plate="1")
+
+    with pytest.raises(InvalidMoveError, match=re.escape("team entry")):
+        roster.add_rider_to_team(Rider(name="Cy", plate="2"), to_entry=solo)
+
+
+def test_add_rider_to_team_at_max_size_raises_team_size_error() -> None:
+    """Adding onto a team already at max_team_size raises (R-12)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=2)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")]
+    )
+
+    with pytest.raises(TeamSizeError, match=re.escape("team size")):
+        roster.add_rider_to_team(Rider(name="Cy", plate="3"), to_entry=team)
+
+
+def test_add_rider_to_team_rider_already_on_an_entry_raises_invalid_move_error() -> None:
+    """An already-placed rider must move via move_rider instead."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team_a = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")]
+    )
+    team_b = roster.create_team_entry(
+        display_name="Team B", riders=[Rider(name="Cy", plate="3"), Rider(name="Do", plate="4")]
+    )
+
+    with pytest.raises(InvalidMoveError, match=re.escape("move_rider")):
+        roster.add_rider_to_team(team_a.riders[0], to_entry=team_b)
+
+
+def test_add_rider_to_team_pooled_duplicate_plate_raises_duplicate_plate_error() -> None:
+    """A colliding plate refuses the add (R-20's one namespace)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")]
+    )
+
+    with pytest.raises(DuplicatePlateError, match=re.escape("1")):
+        roster.add_rider_to_team(Rider(name="Cy", plate="1"), to_entry=team)
+
+
+def test_add_rider_to_team_pooled_riderless_plate_raises_plate_shape_error() -> None:
+    """rider_pooled requires the new rider to already carry a plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")]
+    )
+
+    with pytest.raises(PlateShapeError, match=re.escape("rider_pooled")):
+        roster.add_rider_to_team(Rider(name="Cy"), to_entry=team)
+
+
+def test_add_rider_to_team_unknown_entry_raises_entry_not_found_error() -> None:
+    """add_rider_to_team(to_entry=foreign) raises."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    foreign = Entry(plate="999", display_name="Ghost", type=EntryType.TEAM)
+
+    with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
+        roster.add_rider_to_team(Rider(name="Cy", plate="1"), to_entry=foreign)
+
+
+# ---------------------------------------------- extract_rider_to_solo
+
+
+def test_extract_rider_to_solo_creates_a_solo_entry_with_the_riders_plate() -> None:
+    """Extracting a team member gives them their own solo entry."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(name="Alex", plate="5")
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(name="Bo", plate="9"), Rider(name="Cy", plate="1")],
+    )
+
+    solo = roster.extract_rider_to_solo(alex)
+
+    assert (solo.type, solo.plate, solo.riders) == (EntryType.SOLO, "5", [alex])
+
+
+def test_extract_rider_to_solo_recomputes_the_source_teams_plate() -> None:
+    """The team left behind re-derives its own lowest rider plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(name="Alex", plate="1")
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(name="Bo", plate="9"), Rider(name="Cy", plate="5")],
+    )
+
+    roster.extract_rider_to_solo(alex)
+
+    assert team.plate == "5"
+
+
+def test_extract_rider_to_solo_appends_an_audit_event() -> None:
+    """extract_rider_to_solo logs rider name, plate, and old team."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(name="Alex", plate="5")
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(name="Bo", plate="9"), Rider(name="Cy", plate="1")],
+    )
+
+    roster.extract_rider_to_solo(alex)
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="extract_rider_to_solo",
+        payload={"rider_name": "Alex", "plate": "5", "from_display_name": "Team A"},
+    )
+
+
+def test_extract_rider_to_solo_last_rider_dissolves_the_source_team() -> None:
+    """Extracting a size-1 team's only rider dissolves that team."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(name="Alex", plate="1")
+    team = roster.create_team_entry_of_one(display_name="Team A", rider=alex)
+
+    roster.extract_rider_to_solo(alex)
+
+    assert team not in roster.entries
+
+
+def test_extract_rider_to_solo_dissolve_appends_a_dissolve_team_entry_audit_event() -> None:
+    """The dissolved team's plate/name are logged for traceability."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(name="Alex", plate="1")
+    roster.create_team_entry_of_one(display_name="Team A", rider=alex)
+
+    roster.extract_rider_to_solo(alex)
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="dissolve_team_entry", payload={"plate": "1", "display_name": "Team A"}
+    )
+
+
+def test_extract_rider_to_solo_after_start_raises_locked_error() -> None:
+    """Conversions are DRAFT-only; R-17's carve-out is moves only."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(name="Alex", plate="5")
+    roster.create_team_entry(display_name="Team A", riders=[alex, Rider(name="Bo", plate="9")])
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("running")):
+        roster.extract_rider_to_solo(alex)
+
+
+def test_extract_rider_to_solo_on_a_relay_team_raises_plate_shape_error() -> None:
+    """team_relay riders have no plate identity to extract (S1)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    alex = Rider(name="Alex")
+    roster.create_team_entry(display_name="Team A", riders=[alex, Rider(name="Bo")], plate="1")
+
+    with pytest.raises(PlateShapeError, match=re.escape("rider_pooled")):
+        roster.extract_rider_to_solo(alex)
+
+
+def test_extract_rider_to_solo_on_an_already_solo_rider_raises_plate_shape_error() -> None:
+    """A rider already solo has nothing to extract from."""
+    roster = Roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+
+    with pytest.raises(PlateShapeError, match=re.escape("team member")):
+        roster.extract_rider_to_solo(entry.riders[0])
+
+
+def test_extract_rider_to_solo_unknown_rider_raises_rider_not_found_error() -> None:
+    """extract_rider_to_solo on a foreign rider raises."""
+    roster = Roster()
+    ghost = Rider(name="Ghost", plate="999")
+
+    with pytest.raises(RiderNotFoundError, match=re.escape("not on any entry")):
+        roster.extract_rider_to_solo(ghost)

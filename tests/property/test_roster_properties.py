@@ -20,6 +20,11 @@ against a fresh Roster, well inside a few seconds for the whole file.
 E3.2's 2026-08-09 follow-on decision relaxes the team-size lower
 bound this suite asserts: see ``_assert_plate_and_team_size_
 invariants``'s own docstring for why it is now 1, not 2.
+
+The pooled-reshape follow-on adds two more generated actions --
+``_AddRiderToTeam`` and ``_ExtractRiderToSolo`` -- exercising
+``add_rider_to_team`` and ``extract_rider_to_solo`` under the same
+long random sequences.
 """
 
 from __future__ import annotations
@@ -72,6 +77,26 @@ class _MoveRider:
     to_index: int
 
 
+@dataclass(frozen=True)
+class _AddRiderToTeam:
+    """A generated add_rider_to_team() call, entry index wraps."""
+
+    rider_name: str
+    rider_plate: str
+    to_index: int
+
+
+@dataclass(frozen=True)
+class _ExtractRiderToSolo:
+    """A generated extract_rider_to_solo() call, indices wrap."""
+
+    from_index: int
+    rider_index: int
+
+
+_Action = _CreateSolo | _CreateTeam | _MoveRider | _AddRiderToTeam | _ExtractRiderToSolo
+
+
 @st.composite
 def _create_team_action(draw: st.DrawFn) -> _CreateTeam:
     """Build one _CreateTeam action with a random rider count."""
@@ -85,6 +110,8 @@ _ACTION = st.one_of(
     st.builds(_CreateSolo, name=_NAME, plate=_PLATE),
     _create_team_action(),
     st.builds(_MoveRider, from_index=_INDEX, rider_index=_INDEX, to_index=_INDEX),
+    st.builds(_AddRiderToTeam, rider_name=_NAME, rider_plate=_PLATE, to_index=_INDEX),
+    st.builds(_ExtractRiderToSolo, from_index=_INDEX, rider_index=_INDEX),
 )
 
 
@@ -101,7 +128,29 @@ def _apply_move(roster: Roster, action: _MoveRider) -> None:
     roster.move_rider(rider, to_entry=to_entry)
 
 
-def _apply(roster: Roster, action: _CreateSolo | _CreateTeam | _MoveRider) -> None:
+def _apply_add(roster: Roster, action: _AddRiderToTeam) -> None:
+    """Replay *action* against whichever live entry it wraps onto."""
+    entries = roster.entries
+    if not entries:
+        return
+    to_entry = entries[action.to_index % len(entries)]
+    rider = Rider(name=action.rider_name, plate=action.rider_plate)
+    roster.add_rider_to_team(rider, to_entry=to_entry)
+
+
+def _apply_extract(roster: Roster, action: _ExtractRiderToSolo) -> None:
+    """Replay *action* against whichever live rider it wraps onto."""
+    entries = roster.entries
+    if not entries:
+        return
+    from_entry = entries[action.from_index % len(entries)]
+    if not from_entry.riders:
+        return
+    rider = from_entry.riders[action.rider_index % len(from_entry.riders)]
+    roster.extract_rider_to_solo(rider)
+
+
+def _apply(roster: Roster, action: _Action) -> None:
     """Apply *action*, treating a rejected mutation as a no-op."""
     try:
         if isinstance(action, _CreateSolo):
@@ -112,13 +161,17 @@ def _apply(roster: Roster, action: _CreateSolo | _CreateTeam | _MoveRider) -> No
                 for name, plate in zip(action.rider_names, action.plates, strict=True)
             ]
             roster.create_team_entry(display_name=action.display_name, riders=riders)
-        else:
+        elif isinstance(action, _MoveRider):
             _apply_move(roster, action)
+        elif isinstance(action, _AddRiderToTeam):
+            _apply_add(roster, action)
+        else:
+            _apply_extract(roster, action)
     except RosterError:
         return
 
 
-def _run_sequence(roster: Roster, actions: list[_CreateSolo | _CreateTeam | _MoveRider]) -> None:
+def _run_sequence(roster: Roster, actions: list[_Action]) -> None:
     """Replay *actions* against *roster* in order."""
     for action in actions:
         _apply(roster, action)
@@ -155,7 +208,7 @@ def _assert_plate_and_team_size_invariants(roster: Roster) -> None:
 @given(actions=st.lists(_ACTION, max_size=15))
 @settings(max_examples=100, deadline=None)
 def test_roster_any_valid_mutation_sequence_preserves_plate_and_size_invariants(
-    actions: list[_CreateSolo | _CreateTeam | _MoveRider],
+    actions: list[_Action],
 ) -> None:
     """Any accepted mutation sequence keeps plates/sizes valid."""
     roster = Roster(
