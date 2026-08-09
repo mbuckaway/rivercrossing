@@ -16,6 +16,10 @@ not about every generated action succeeding.
 Example counts stay modest to match tests/property/test_cards_
 properties.py's own budget: each example replays up to 15 actions
 against a fresh Roster, well inside a few seconds for the whole file.
+
+E3.2's 2026-08-09 follow-on decision relaxes the team-size lower
+bound this suite asserts: see ``_assert_plate_and_team_size_
+invariants``'s own docstring for why it is now 1, not 2.
 """
 
 from __future__ import annotations
@@ -26,7 +30,6 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from rivercrossing.roster import (
-    MIN_TEAM_SIZE,
     EntryMode,
     EntryType,
     PlateModel,
@@ -128,6 +131,13 @@ def _assert_plate_and_team_size_invariants(roster: Roster) -> None:
     one set, deduplicating a pooled entry's derived plate against
     its own adopted rider's plate (S1's intended, not a collision);
     ``claimed`` must stay disjoint across *different* entries.
+
+    A team's lower bound is 1, not ``MIN_TEAM_SIZE`` (2): the
+    2026-08-09 follow-on decision allows a transient size-1 team in
+    DRAFT (move_rider dissolves it outright at size 0, so it never
+    lingers in ``roster.entries``); the 2-rider floor moves to
+    ``validate_for_start()``, a start-time check this sequence-replay
+    property does not call. The upper bound is unchanged.
     """
     claimed: set[str] = set()
     for entry in roster.entries:
@@ -139,7 +149,7 @@ def _assert_plate_and_team_size_invariants(roster: Roster) -> None:
         if entry.type is EntryType.SOLO:
             assert entry.team_size == 1
         else:
-            assert MIN_TEAM_SIZE <= entry.team_size <= roster.max_team_size
+            assert 1 <= entry.team_size <= roster.max_team_size
 
 
 @given(actions=st.lists(_ACTION, max_size=15))
