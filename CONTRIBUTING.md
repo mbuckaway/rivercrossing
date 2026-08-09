@@ -122,6 +122,10 @@ failure artifacts as macOS.
   tests is rejected (R-70).
 - **One task = one unit of work.** Task ids come from `design/docs-md/task-briefs.md`; the tests each
   brief names *are* the specification. Do not invent extra scope.
+- **Committed test fixtures live beside their suite.** CSV import fixtures are in
+  `tests/unit/fixtures/csv/` (the clean-180 EPIC-shaped file plus the named negatives), the
+  id-generator fixtures in `tests/unit/fixtures/ids/`, and the golden card vectors ship inside the
+  package (`src/rivercrossing/vectors/`) so the app self-tests against the same data.
 - **The design docs are the contract.** If something is not in them, ask. If two of them disagree, stop
   and ask — do not pick a reading and proceed.
 - **XRC names are frozen** (`spec.md` §15b). Tests find widgets by them, so a rename is a breaking
