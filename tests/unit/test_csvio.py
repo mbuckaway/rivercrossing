@@ -59,6 +59,7 @@ from rivercrossing.csvio import (
     ParsedEntry,
     ParsedRider,
     commit,
+    export,
     preview,
 )
 from rivercrossing.ride import RideStatus
@@ -1438,3 +1439,126 @@ def test_preview_pooled_team_notes_join_non_empty_member_notes(tmp_path: Path) -
     result = preview(path, roster)
 
     assert result.entries[0].notes == "flat tire; spare batteries"
+
+
+# ======================================================== E3.3.3 export
+
+
+def _read_lines(path: Path) -> list[str]:
+    r"""Return *path*'s content as clean lines (no \r\n artifacts)."""
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+def test_export_relay_empty_roster_writes_header_only_file(tmp_path: Path) -> None:
+    """An empty relay roster exports to exactly one header line."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+
+    export(roster, path)
+
+    assert _read_lines(path) == [_relay_header(DEFAULT_MAX_TEAM_SIZE)]
+
+
+def test_export_pooled_empty_roster_writes_header_only_file(tmp_path: Path) -> None:
+    """An empty pooled roster exports to exactly one header line."""
+    path = tmp_path / "out.csv"
+    roster = _pooled_roster()
+
+    export(roster, path)
+
+    assert _read_lines(path) == [_POOLED_HEADER_LINE]
+
+
+def test_export_relay_header_matches_the_rides_own_max_team_size(tmp_path: Path) -> None:
+    """The exported relay header sizes rider_1..N to the ride's max."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster(max_team_size=2)
+
+    export(roster, path)
+
+    assert _read_lines(path) == ["plate,entry_name,type,rider_1,rider_2,notes"]
+
+
+def test_export_relay_solo_entry_writes_one_row(tmp_path: Path) -> None:
+    """A relay solo entry exports as one solo row, riders blank."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    export(roster, path)
+
+    assert _read_lines(path)[1] == "1,Alex,solo,,,,,"
+
+
+def test_export_relay_team_entry_writes_type_and_rider_columns(tmp_path: Path) -> None:
+    """A relay team entry exports its type and member names in order."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Bo"), Rider(name="Cy")], plate="7"
+    )
+
+    export(roster, path)
+
+    assert _read_lines(path)[1] == "7,Team A,team2,Bo,Cy,,,"
+
+
+def test_export_relay_entry_notes_land_in_the_final_column(tmp_path: Path) -> None:
+    """A relay entry's notes are the CSV row's final column."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+    roster.update_entry(entry, notes="late scratch")
+
+    export(roster, path)
+
+    assert _read_lines(path)[1] == "1,Alex,solo,,,,,late scratch"
+
+
+def test_export_pooled_solo_entry_writes_its_own_notes(tmp_path: Path) -> None:
+    """A pooled solo entry's one row carries its own notes."""
+    path = tmp_path / "out.csv"
+    roster = _pooled_roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+    roster.update_entry(entry, notes="late scratch")
+
+    export(roster, path)
+
+    assert _read_lines(path)[1] == "1,Alex,,late scratch"
+
+
+def test_export_pooled_team_writes_notes_on_first_row_only(tmp_path: Path) -> None:
+    """A pooled team's notes land on its first member row only."""
+    path = tmp_path / "out.csv"
+    roster = _pooled_roster()
+    entry = roster.create_team_entry(
+        display_name="Wolves",
+        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3")],
+    )
+    roster.update_entry(entry, notes="flat tire; spare batteries")
+
+    export(roster, path)
+
+    assert _read_lines(path)[1:3] == [
+        "2,Bo,Wolves,flat tire; spare batteries",
+        "3,Cy,Wolves,",
+    ]
+
+
+def test_export_then_preview_reimports_a_pooled_team_with_zero_conflicts(
+    tmp_path: Path,
+) -> None:
+    """A worked example: export, then re-preview a fresh roster."""
+    path = tmp_path / "out.csv"
+    source = _pooled_roster()
+    source.create_solo_entry(name="Alex", plate="1")
+    source.create_team_entry(
+        display_name="Wolves",
+        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3")],
+    )
+    export(source, path)
+    target = _pooled_roster()
+
+    result = preview(path, target)
+
+    assert (result.rider_count, result.team_count, result.conflicts) == (3, 1, ())
