@@ -50,13 +50,13 @@ from rivercrossing.ui.presenters import (
     RideSummary,
     SettingsPresenter,
     SettingsView,
-    SetupPresenter,
     SetupView,
     StandingsRow,
 )
 
 if TYPE_CHECKING:
     from rivercrossing.htmlexport import ExportOptions
+    from rivercrossing.roster import EntryMode, PlateModel
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -113,6 +113,17 @@ class FakeSetupView:
         """No-op fake."""
 
     def set_entry_locked(self, *, locked: bool) -> None:
+        """No-op fake."""
+
+    def show_deck_count(self, count: int) -> None:
+        """No-op fake."""
+
+    def show_entry_settings(
+        self, *, entry_mode: EntryMode, max_team_size: int, plate_model: PlateModel
+    ) -> None:
+        """No-op fake."""
+
+    def show_validation(self, message: str) -> None:
         """No-op fake."""
 
 
@@ -301,7 +312,6 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
     ("presenter_cls", "view"),
     [
         (ConsolePresenter, FakeConsoleView()),
-        (SetupPresenter, FakeSetupView()),
         (ResultsPresenter, FakeResultsView()),
         (LibraryPresenter, FakeLibraryView()),
         (DetailPresenter, FakeDetailView()),
@@ -314,9 +324,10 @@ def test_presenter_holds_the_view_and_data_source_it_was_given(
 ) -> None:
     """Every presenter stores the exact view and data source given.
 
-    ``RidersPresenter`` is excluded: since E3.2.1/E3.2.2 it takes
-    ``(view, roster)`` instead -- covered by its own dedicated suite,
-    ``tests/unit/presenters/test_riders.py``.
+    ``RidersPresenter`` and ``SetupPresenter`` are excluded: since
+    E3.2.1/E3.2.2 (riders) and E3.5.1 (setup) they take ``(view,
+    roster)`` instead -- each covered by its own dedicated suite,
+    ``tests/unit/presenters/test_riders.py``/``test_setup.py``.
     """
     data_source = FakeDataSource()
 
