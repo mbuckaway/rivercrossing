@@ -1375,3 +1375,99 @@ def test_change_pooled_rider_plate_unknown_rider_raises_rider_not_found_error() 
 
     with pytest.raises(RiderNotFoundError, match=re.escape("not on any entry")):
         roster.change_pooled_rider_plate(ghost, plate="9")
+
+
+# --------------------------------------------------- change_team_plate
+
+
+def test_change_team_plate_relay_updates_the_entry_plate() -> None:
+    """team_relay: the team's plate changes; riders stay plateless."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="1"
+    )
+
+    roster.change_team_plate(entry, plate="9")
+
+    assert (entry.plate, [r.plate for r in entry.riders]) == ("9", [None, None])
+
+
+def test_change_team_plate_to_its_own_current_value_is_a_no_op() -> None:
+    """Setting the same plate back is a no-op, not a collision."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="1"
+    )
+
+    roster.change_team_plate(entry, plate="1")
+
+    assert entry.plate == "1"
+
+
+def test_change_team_plate_appends_an_audit_event() -> None:
+    """change_team_plate logs the display_name and both plates."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="1"
+    )
+
+    roster.change_team_plate(entry, plate="9")
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="change_team_plate",
+        payload={"display_name": "Team A", "old_plate": "1", "new_plate": "9"},
+    )
+
+
+def test_change_team_plate_after_start_raises_locked_error() -> None:
+    """Plates lock at start along with everything else (spec S3:46)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="1"
+    )
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("running")):
+        roster.change_team_plate(entry, plate="9")
+
+
+def test_change_team_plate_duplicate_raises_duplicate_plate_error() -> None:
+    """A plate already claimed elsewhere still refuses the change."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_solo_entry(name="Cy", plate="3")
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="1"
+    )
+
+    with pytest.raises(DuplicatePlateError, match=re.escape("3")):
+        roster.change_team_plate(entry, plate="3")
+
+
+def test_change_team_plate_on_a_pooled_team_raises_plate_shape_error() -> None:
+    """A pooled team's plate is derived; refuses with a clear pointer."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    entry = roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(name="Alex", plate="1"), Rider(name="Bo", plate="2")],
+    )
+
+    with pytest.raises(PlateShapeError, match=re.escape("change_pooled_rider_plate")):
+        roster.change_team_plate(entry, plate="9")
+
+
+def test_change_team_plate_on_a_solo_entry_raises_plate_shape_error() -> None:
+    """A solo entry's plate goes through change_solo_plate instead."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+
+    with pytest.raises(PlateShapeError, match=re.escape("change_solo_plate")):
+        roster.change_team_plate(entry, plate="9")
+
+
+def test_change_team_plate_unknown_entry_raises_entry_not_found_error() -> None:
+    """change_team_plate on an entry foreign to this roster raises."""
+    roster = Roster()
+    foreign = Entry(plate="999", display_name="Ghost", type=EntryType.TEAM)
+
+    with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
+        roster.change_team_plate(foreign, plate="9")
