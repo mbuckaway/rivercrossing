@@ -309,6 +309,13 @@ class RidersPresenter:
         applied, so :class:`~rivercrossing.ui.views.rider_editor.
         CsvPreviewDialog` knows whether to end its own modal loop.
 
+        Never re-renders ``riders_list``/``team_choice`` on success:
+        this method's only real caller, ``CsvPreviewDialog``, never
+        implements those ``RidersView`` members (module docstring's
+        mirror-image split) -- a live ``RiderEditor`` sees the
+        imported roster next time it is (re)opened,
+        :meth:`__init__` reading it fresh.
+
         Returns:
             Whether the import actually committed.
         """
@@ -319,7 +326,6 @@ class RidersPresenter:
         except csvio.ImportConflictsPresentError as exc:
             self.view.show_validation(str(exc))
             return False
-        self._refresh_rows()
         return True
 
     def on_export_csv(self, path: Path) -> None:

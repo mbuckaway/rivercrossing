@@ -1,27 +1,40 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""``RiderEditor``: ``rider_editor_dlg`` (1d/2b), live on a real Roster.
+"""``RiderEditor``/``CsvPreviewDialog``: 1d/2b and 3e, on a real Roster.
 
-E1.5.2 wired this dialog to a display-only ``DataSource`` projection
-of the demo rows. E3.2.1/E3.2.2 replaced that with a real, in-memory
-:class:`~rivercrossing.roster.Roster` that ``RidersPresenter`` (``ui.
-presenters.riders``) reads and writes directly -- this module is the
-matching wx half: it now takes ``roster=`` instead of ``data_source=``,
-constructs ``RidersPresenter`` itself (mirroring ``views/selftest.py``'s
-own presenter-inside-the-view wiring), and binds Add/Save/Delete/row
-selection to it. ``show_csv_preview``/``set_import_enabled`` exist only
-to satisfy the ``RidersView`` Protocol -- ``csv_preview_dlg`` itself is
-wired in E3.4.
+E1.5.2 wired ``rider_editor_dlg`` to a display-only ``DataSource``
+projection of the demo rows. E3.2.1/E3.2.2 replaced that with a real,
+in-memory :class:`~rivercrossing.roster.Roster` that
+``RidersPresenter`` (``ui.presenters.riders``) reads and writes
+directly -- :class:`RiderEditor` takes ``roster=`` instead of
+``data_source=``, constructs its own ``RidersPresenter`` (mirroring
+``views/selftest.py``'s presenter-inside-the-view wiring), and binds
+Add/Save/Delete/row selection to it. E3.4 adds
+:class:`CsvPreviewDialog` for ``csv_preview_dlg``: a *second* view,
+pairing with a *second* ``RidersPresenter`` instance over the same
+live roster, constructed with ``load=False`` (that class's own
+``__init__`` docstring). Each view implements exactly one half of
+``RidersView`` for real and raises ``NotImplementedError`` naming
+the other -- :class:`RiderEditor` never renders
+``summary_lbl``/``conflicts_list`` (it has none), and
+:class:`CsvPreviewDialog` never renders
+``riders_list``/``team_choice`` (it has none either); this is the
+honest mirror image, not a gap.
 
 xrc-windows.md section C's code-side footnote puts ``riders_list``'s
 rows, its Team column's solo-only visibility, ``team_choice``'s
 content and ``delete_btn``'s has-data gate in code -- ``riders.xrc``'s
 own header explains why (``wxDataViewListCtrl`` would overwrite the
 frozen name). A duplicate-plate or other refused operation renders as
-a code-side ``wxInfoBar`` named :data:`ROSTER_INFOBAR` -- the same
+a code-side ``wxInfoBar`` (:data:`ROSTER_INFOBAR` on ``rider_editor_
+dlg``, :data:`CSV_INFOBAR` on ``csv_preview_dlg``) -- the same
 measured pattern ``views/main_frame.py``'s ``_build_infobar`` uses,
-except ``riders.xrc``'s already-authored top sizer has no reserved
-InfoBar slot (it predates this decision), so the InfoBar is wrapped
-around the existing sizer instead of inserted into it.
+except neither of these two dialogs' already-authored top sizer has a
+reserved InfoBar slot (they predate this decision), so each InfoBar is
+wrapped around its own dialog's existing sizer instead of inserted
+into it -- and both disable ``wx.InfoBar``'s default slide effect
+(``SetShowHideEffects``), measured to hang ``ShowMessage()``/
+``Dismiss()`` on this build otherwise (first found wiring
+``ROSTER_INFOBAR``, E3.2's follow-on sweep).
 
 ``_find`` is shared via ``ui.views._support.find_control`` -- see
 that module's docstring for why it used to be duplicated here.
@@ -41,16 +54,22 @@ if TYPE_CHECKING:
 
     from rivercrossing.roster import Roster
     from rivercrossing.ui.presenters.data_source import RiderRow
-    from rivercrossing.ui.presenters.riders import CsvPreview
+    from rivercrossing.ui.presenters.riders import CsvConflict, CsvPreview
 
 __all__ = [
     "COLUMN_LABELS",
     "COL_NAME",
     "COL_PLATE",
+    "COL_PROBLEM",
+    "COL_ROW",
     "COL_TEAM",
+    "CONFLICT_COLUMN_LABELS",
+    "CSV_INFOBAR",
     "MIN_SIZE",
     "ROSTER_INFOBAR",
     "SOLO_TEAM_TEXT",
+    "CsvConflictsListModel",
+    "CsvPreviewDialog",
     "RiderEditor",
     "RidersListModel",
     "format_team",
@@ -63,20 +82,38 @@ COL_TEAM = 2
 # xrc-windows.md C's exact column order: "Plate | Name | Team".
 COLUMN_LABELS: tuple[str, ...] = ("Plate", "Name", "Team")
 
+COL_ROW = 0
+COL_PROBLEM = 1
+
+# xrc-windows.md C's csv_preview_dlg mock: "Row | Problem".
+CONFLICT_COLUMN_LABELS: tuple[str, ...] = ("Row", "Problem")
+
 # The canvas's own dash for a solo rider's Team cell
 # ("123 Sam Ellis —").
 SOLO_TEAM_TEXT = "—"
 
-# ui/ids.py is generated from the .xrc files (R-05); this name never
-# appears there since XRC cannot author a wxInfoBar at all
+# ui/ids.py is generated from the .xrc files (R-05); these two names
+# never appear there since XRC cannot author a wxInfoBar at all
 # (xrc-windows.md's own code-side footnote, main_frame.py's precedent).
 ROSTER_INFOBAR = "roster_infobar"
+CSV_INFOBAR = "csv_infobar"
 
 # D16: the canvas draws this dialog at 640px; XRC has no window-level
 # minsize (riders.xrc's own header notes this and defers to code).
 # Height is Fit()'s own measurement of the real, demo-populated
 # sizer content -- see this task's own report for how it was measured.
 MIN_SIZE = (640, 281)
+
+# The two NotImplementedError messages each view class's own "wrong
+# half" of RidersView raises (module docstring) -- each keeps "E3.4"
+# as a substring so the already-pinned functional tests naming it
+# stay valid unchanged.
+_CSV_PREVIEW_NOT_IMPLEMENTED = (
+    "csv_preview_dlg is decorated by CsvPreviewDialog, not RiderEditor (E3.4)"
+)
+_RIDER_EDITOR_NOT_IMPLEMENTED = (
+    "rider_editor_dlg is decorated by RiderEditor, not CsvPreviewDialog (E3.4)"
+)
 
 
 def format_team(row: RiderRow) -> str:
@@ -292,22 +329,24 @@ class RiderEditor:
         self.delete_btn.Enable(enabled)
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
-        """Render ``csv_preview_dlg``; not this task's own scope.
+        """Render ``csv_preview_dlg``; that dialog's own job.
 
         Raises:
-            NotImplementedError: Always -- ``csv_preview_dlg`` itself
-                is wired in task E3.4.
+            NotImplementedError: Always -- ``CsvPreviewDialog``
+                implements this for real; ``rider_editor_dlg`` has
+                no ``summary_lbl``/``conflicts_list`` of its own.
         """
-        raise NotImplementedError("csv_preview_dlg wiring lands in task E3.4")
+        raise NotImplementedError(_CSV_PREVIEW_NOT_IMPLEMENTED)
 
     def set_import_enabled(self, *, enabled: bool) -> None:
-        """Gate ``csv_preview_dlg``'s Import; not this task's own scope.
+        """Gate ``csv_preview_dlg``'s Import; that dialog's own job.
 
         Raises:
-            NotImplementedError: Always -- ``csv_preview_dlg`` itself
-                is wired in task E3.4.
+            NotImplementedError: Always -- ``CsvPreviewDialog``
+                implements this for real; ``rider_editor_dlg`` has
+                no ``wxID_OK`` of its own.
         """
-        raise NotImplementedError("csv_preview_dlg wiring lands in task E3.4")
+        raise NotImplementedError(_CSV_PREVIEW_NOT_IMPLEMENTED)
 
     def show_form(self, *, plate: str, name: str, team: str) -> None:
         """Fill plate_input/name_input/team_choice (R-20)."""
@@ -366,3 +405,194 @@ class RiderEditor:
         """
         self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
         self.dialog.Fit()
+
+
+class CsvConflictsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
+    """Read-only model over ``CsvConflict`` rows, ``conflicts_list``.
+
+    ``# type: ignore[misc]``: wx ships no stubs, so mypy refuses to
+    subclass ``Any`` -- the same unavoidable annotation
+    ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
+    """
+
+    def __init__(self, conflicts: Sequence[CsvConflict]) -> None:
+        """Wrap *conflicts* in ``preview()``'s own row order."""
+        super().__init__(len(conflicts))
+        self._conflicts = tuple(conflicts)
+
+    def GetColumnCount(self) -> int:
+        """Return the conflicts list's fixed two columns."""
+        return len(CONFLICT_COLUMN_LABELS)
+
+    def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
+        """Return "string" -- every conflicts_list column is text."""
+        return "string"
+
+    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
+        """Return the cell value at *row*/*col*."""
+        conflict = self._conflicts[row]
+        return str(conflict.row) if col == COL_ROW else conflict.problem
+
+
+class CsvPreviewDialog:
+    """Code-side behaviour for ``csv_preview_dlg`` (3e, R-21, E3.4).
+
+    Implements ``RidersView``'s CSV trio for real (module docstring)
+    over its own :class:`~rivercrossing.ui.presenters.riders.
+    RidersPresenter` pairing, constructed with ``load=False`` since
+    this dialog has no rider_editor_dlg controls to render.
+    """
+
+    def __init__(self, dialog: wx.Dialog, *, roster: Roster) -> None:
+        """Decorate an already-loaded ``csv_preview_dlg`` window.
+
+        Args:
+            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
+                app bootstrap) already loaded from ``riders.xrc``.
+            roster: The in-memory roster a picked file previews
+                against and, on Import, commits into -- the same
+                roster a live ``RiderEditor`` reads, if one happens
+                to be open (module docstring's own mirror-image note).
+        """
+        self.dialog = dialog
+
+        self.summary_lbl = self._find(ids.SUMMARY_LBL, wx.StaticText)
+        self.conflicts_list = self._find(ids.CONFLICTS_LIST, wx.dataview.DataViewCtrl)
+        self._build_columns()
+        self._model: CsvConflictsListModel = CsvConflictsListModel(())
+
+        self.ok_btn = self._find("wxID_OK", wx.Button)
+
+        self.csv_infobar = self._build_infobar()
+
+        self.presenter = RidersPresenter(self, roster, load=False)
+
+        self._bind_events()
+
+    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
+        """Resolve one of this dialog's own child controls by name.
+
+        See :func:`find_control`'s docstring (``ui.views._support``)
+        for the full measured reasoning this mirrors.
+
+        Raises:
+            LookupError: If *name* does not resolve to an
+                *expected_type* instance inside this dialog, even
+                after settling.
+        """
+        return find_control(self.dialog, name, expected_type)
+
+    def _build_columns(self) -> None:
+        """Append ``conflicts_list``'s two columns in canvas order."""
+        for col, label in enumerate(CONFLICT_COLUMN_LABELS):
+            self.conflicts_list.AppendTextColumn(label, col)
+
+    def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
+        """Build the code-side :data:`CSV_INFOBAR`, wrapped on top.
+
+        See :meth:`RiderEditor._build_infobar`'s docstring for the
+        measured slide-effect hang this mirrors -- the reason it
+        disables both show/hide effects too.
+        """
+        bar = wx.InfoBar(self.dialog)
+        bar.SetName(CSV_INFOBAR)
+        bar.SetShowHideEffects(wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
+        content = self.dialog.GetSizer()
+        outer = wx.BoxSizer(wx.VERTICAL)
+        outer.Add(bar, 0, wx.EXPAND)
+        outer.Add(content, 1, wx.EXPAND)
+        self.dialog.SetSizer(outer, deleteOld=False)
+        return bar
+
+    def _bind_events(self) -> None:
+        """Forward ``wxID_OK`` straight to the presenter."""
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_import, self.ok_btn)
+
+    def _on_import(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
+        """Handle ``wxID_OK`` ("Import"): commit, then close if it did.
+
+        Measured: ``wxID_OK`` is a stock id wx auto-binds to
+        ``EndModal(wx.ID_OK)`` on any ``EVT_BUTTON`` whose handler
+        calls ``event.Skip()`` -- unlike ``add_btn``/``save_btn``
+        (plain custom ids, ``MainFrame.wire_entry``'s own analogous
+        note about ``record_btn``), so *event* is never skipped
+        here: this handler is the only thing allowed to decide
+        whether the dialog closes. A refused commit (module
+        docstring: conflicts present after all) leaves the dialog
+        open, showing why on :data:`CSV_INFOBAR`, so the operator can
+        Cancel or re-pick a file -- never a silent, unexplained
+        non-close.
+        """
+        if self.presenter.on_confirm_csv_import():
+            self.dialog.EndModal(wx.ID_OK)
+
+    def show_csv_preview(self, preview: CsvPreview) -> None:
+        """Render *preview*'s summary and conflicts (``RidersView``)."""
+        self.csv_infobar.Dismiss()
+        self.summary_lbl.SetLabel(preview.summary)
+        self._model = CsvConflictsListModel(preview.conflicts)
+        associate_model(self.conflicts_list, self._model)
+
+    def set_import_enabled(self, *, enabled: bool) -> None:
+        """Gate ``wxID_OK`` on *enabled* (``RidersView``, R-21)."""
+        self.ok_btn.Enable(enabled)
+
+    def show_validation(self, message: str) -> None:
+        """Show *message* on :data:`CSV_INFOBAR` (``RidersView``)."""
+        self.csv_infobar.ShowMessage(message, wx.ICON_WARNING)
+        self.dialog.Layout()
+
+    def show_riders(self, rows: list[RiderRow]) -> None:
+        """Render ``riders_list``; that dialog's own job.
+
+        Raises:
+            NotImplementedError: Always -- ``RiderEditor`` implements
+                this for real; ``csv_preview_dlg`` has no
+                ``riders_list`` of its own.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+    def show_team_choices(self, names: list[str]) -> None:
+        """Replace ``team_choice``'s content; that dialog's own job.
+
+        Raises:
+            NotImplementedError: Always -- ``csv_preview_dlg`` has no
+                ``team_choice`` of its own.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+    def set_delete_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``delete_btn``; that dialog's own job.
+
+        Raises:
+            NotImplementedError: Always -- ``csv_preview_dlg`` has no
+                ``delete_btn`` of its own.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+    def show_form(self, *, plate: str, name: str, team: str) -> None:
+        """Fill plate_input/name_input/team_choice; that dialog's job.
+
+        Raises:
+            NotImplementedError: Always -- ``csv_preview_dlg`` has no
+                form fields of its own.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Show/hide team_choice + the Team column; that dialog's job.
+
+        Raises:
+            NotImplementedError: Always -- ``csv_preview_dlg`` has
+                neither.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+    def prompt_new_team_name(self) -> str | None:
+        """Ask for a new team's name; that dialog's own job.
+
+        Raises:
+            NotImplementedError: Always -- only ``on_add`` (never
+                called on this pairing) would ever need it.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
