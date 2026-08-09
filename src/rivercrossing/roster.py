@@ -30,8 +30,10 @@ time, so ``create_team_entry_of_one`` and ``move_rider`` allow a
 transient size-1 team while DRAFT (the last rider leaving one
 dissolves it); ``validate_for_start`` reports every team still
 below the floor. The same decision makes plates editable in DRAFT
-for a solo entry (``change_solo_plate``) or a pooled team member
-(``change_pooled_rider_plate``).
+for a solo entry (``change_solo_plate``), a pooled team member
+(``change_pooled_rider_plate``) or a relay team
+(``change_team_plate`` -- spec S3:46's "fully editable" derived
+rule, no separate decision needed).
 
 ``Entry`` and ``Rider`` compare by identity, not by field value
 (``eq=False``): they are living records a caller holds a reference
@@ -546,6 +548,44 @@ class Roster:
         self._log(
             "change_pooled_rider_plate",
             {"rider_name": rider.name, "old_plate": old_plate, "new_plate": plate},
+        )
+
+    def change_team_plate(self, entry: Entry, *, plate: str) -> None:
+        """Change a team_relay team's plate (S1, R-20, spec S3:46).
+
+        A ``rider_pooled`` team has no settable plate of its own --
+        it is derived from its riders' plates; change a member's
+        own plate with :meth:`change_pooled_rider_plate` instead. A
+        solo entry's plate goes through :meth:`change_solo_plate`.
+
+        Raises:
+            EntryNotFoundError: *entry* is not a member of this
+                roster.
+            LockedError: the ride has left DRAFT.
+            PlateShapeError: *entry* is not type TEAM, or this
+                ride's plate_model is not team_relay.
+            DuplicatePlateError: *plate* collides with an existing
+                entry's or rider's plate.
+        """
+        self._require_known_entry(entry)
+        if not can_edit_structure(self._status):
+            msg = f"plates cannot be changed once the ride is {self._status}"
+            raise LockedError(msg)
+        if entry.type is not EntryType.TEAM:
+            msg = "change_team_plate requires a team entry; use change_solo_plate"
+            raise PlateShapeError(msg)
+        if self._plate_model is not PlateModel.TEAM_RELAY:
+            msg = (
+                "a rider_pooled team's plate is derived from its riders; "
+                "use change_pooled_rider_plate instead"
+            )
+            raise PlateShapeError(msg)
+        old_plate = entry.plate
+        self._require_plate_free_for_change(plate, exclude=old_plate)
+        entry.plate = plate
+        self._log(
+            "change_team_plate",
+            {"display_name": entry.display_name, "old_plate": old_plate, "new_plate": plate},
         )
 
     def delete_entry(self, entry: Entry) -> None:
