@@ -25,7 +25,7 @@ existing team, rolling the transient team back on a refused move.
 from __future__ import annotations
 
 import string
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 from hypothesis import given
 from hypothesis import strategies as st
@@ -36,14 +36,18 @@ from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.presenters.riders import (
     NEW_TEAM_CHOICE,
     SOLO_TEAM_CHOICE,
+    CsvConflict,
+    CsvPreview,
     RiderFormValues,
     RidersPresenter,
     _rider_rows,
     _team_choices,
 )
 
-if TYPE_CHECKING:
-    from rivercrossing.ui.presenters.riders import CsvPreview
+# tests/unit/fixtures/csv/ is test_csvio.py's own fixture home (its
+# module docstring); reused here rather than re-derived, per E3.4's
+# own brief.
+_FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "csv"
 
 # ------------------------------------------------------------- fixtures
 
@@ -833,3 +837,209 @@ def test_rider_rows_given_n_teams_returns_one_row_per_rider(team_names: list[str
     rows = _rider_rows(roster)
 
     assert len(rows) == sum(len(entry.riders) for entry in roster.entries)
+
+
+# ------------------------------------------------- skipping the render
+
+
+def test_riders_presenter_given_load_false_skips_the_initial_render() -> None:
+    """csv_preview_dlg's own pairing skips rider_editor's own render.
+
+    Its view never implements show_riders/show_team_choices/
+    set_team_ui_visible/show_form/set_delete_enabled for real (E3.4's
+    own NotImplementedError stubs, the mirror image of
+    RiderEditor's), so ``_load()`` must never call them.
+    """
+    view = RecordingRidersView()
+
+    RidersPresenter(view, Roster(), load=False)
+
+    assert view.calls == []
+
+
+# --------------------------------------------------- picking a csv file
+
+
+def _write_pooled_csv(directory: Path, rows: str) -> Path:
+    """Write a minimal rider_pooled CSV fixture; return its path."""
+    path = directory / "riders.csv"
+    path.write_text(f"plate,name,team_name,notes\n{rows}", encoding="utf-8")
+    return path
+
+
+def test_on_pick_csv_import_given_a_clean_file_shows_the_exact_summary(
+    tmp_path: Path,
+) -> None:
+    """R-21: "<name> -> N riders x M teams x K conflicts" (E3.4)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n2,Bo Lindqvist,,\n")
+
+    presenter.on_pick_csv_import(path)
+
+    assert (
+        "show_csv_preview",
+        (CsvPreview(summary="riders.csv → 2 riders · 0 teams · 0 conflicts", conflicts=()),),
+    ) in view.calls
+
+
+def test_on_pick_csv_import_given_a_clean_file_enables_import() -> None:
+    """wxID_OK gates on conflicts == 0, per the E1 view-model (R-21)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    presenter.on_pick_csv_import(_FIXTURES / "clean_pooled.csv")
+
+    assert ("set_import_enabled", (True,)) in view.calls
+
+
+def test_on_pick_csv_import_given_clean_pooled_fixture_shows_its_known_counts() -> None:
+    """clean_pooled.csv: 4 solo + Falcons(3) + Hawks(2) = 9 riders."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    presenter.on_pick_csv_import(_FIXTURES / "clean_pooled.csv")
+
+    assert (
+        "show_csv_preview",
+        (CsvPreview(summary="clean_pooled.csv → 9 riders · 2 teams · 0 conflicts", conflicts=()),),
+    ) in view.calls
+
+
+def test_on_pick_csv_import_given_a_conflicted_file_shows_the_conflict_row() -> None:
+    """dup_plate.csv: one duplicate-plate conflict at its second row."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(plate_model=PlateModel.TEAM_RELAY), load=False)
+
+    presenter.on_pick_csv_import(_FIXTURES / "dup_plate.csv")
+
+    assert (
+        "show_csv_preview",
+        (
+            CsvPreview(
+                summary="dup_plate.csv → 2 riders · 0 teams · 1 conflicts",
+                conflicts=(CsvConflict(row=3, problem="duplicate plate 1"),),
+            ),
+        ),
+    ) in view.calls
+
+
+def test_on_pick_csv_import_given_a_conflicted_file_disables_import() -> None:
+    """wxID_OK stays disabled while any conflict remains (R-21)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(plate_model=PlateModel.TEAM_RELAY), load=False)
+
+    presenter.on_pick_csv_import(_FIXTURES / "dup_plate.csv")
+
+    assert ("set_import_enabled", (False,)) in view.calls
+
+
+def test_on_pick_csv_import_given_a_header_only_file_shows_zero_of_everything(
+    tmp_path: Path,
+) -> None:
+    """T-4 collection boundary: a header-only file previews clean."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    path = _write_pooled_csv(tmp_path, rows="")
+
+    presenter.on_pick_csv_import(path)
+
+    assert (
+        "show_csv_preview",
+        (CsvPreview(summary="riders.csv → 0 riders · 0 teams · 0 conflicts", conflicts=()),),
+    ) in view.calls
+
+
+# -------------------------------------------- confirming a csv import
+
+
+def test_on_confirm_csv_import_given_no_prior_preview_is_a_safe_no_op() -> None:
+    """T-3: on_confirm_csv_import's own guard, never crashing (E3.4)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    result = presenter.on_confirm_csv_import()
+
+    assert result is False
+
+
+def test_on_confirm_csv_import_given_a_clean_preview_applies_it_to_the_roster(
+    tmp_path: Path,
+) -> None:
+    """A clean commit inserts the file's riders into the roster."""
+    roster = Roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster, load=False)
+    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n2,Bo Lindqvist,,\n")
+    presenter.on_pick_csv_import(path)
+
+    result = presenter.on_confirm_csv_import()
+
+    assert result is True
+    assert [entry.display_name for entry in roster.entries] == ["Alex Ferreira", "Bo Lindqvist"]
+
+
+def test_on_confirm_csv_import_given_a_clean_preview_refreshes_the_rows(
+    tmp_path: Path,
+) -> None:
+    """A successful commit re-renders riders_list/team_choice (R-20)."""
+    roster = Roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster, load=False)
+    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n")
+    presenter.on_pick_csv_import(path)
+    view.calls.clear()
+
+    presenter.on_confirm_csv_import()
+
+    assert view.calls == [
+        ("show_riders", ([RiderRow(plate="1", name="Alex Ferreira", team=None)],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE],)),
+    ]
+
+
+def test_on_confirm_csv_import_given_conflicts_present_shows_validation_not_crash(
+    tmp_path: Path,
+) -> None:
+    """A refused commit (conflicts present) shows the reason (E3.4)."""
+    roster = Roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster, load=False)
+    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n1,Bo Lindqvist,,\n")
+    presenter.on_pick_csv_import(path)
+    view.calls.clear()
+
+    result = presenter.on_confirm_csv_import()
+
+    assert result is False
+    assert view.calls == [
+        ("show_validation", ("1 conflict(s) must be resolved before importing",))
+    ]
+
+
+def test_on_confirm_csv_import_given_conflicts_present_leaves_the_roster_unchanged(
+    tmp_path: Path,
+) -> None:
+    """A refused commit mutates nothing (a state, not a call, check)."""
+    roster = Roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster, load=False)
+    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n1,Bo Lindqvist,,\n")
+    presenter.on_pick_csv_import(path)
+
+    presenter.on_confirm_csv_import()
+
+    assert roster.entries == ()
+
+
+# -------------------------------------------------------- on_export_csv
+
+
+def test_on_export_csv_writes_the_rosters_own_header(tmp_path: Path) -> None:
+    """on_export_csv delegates straight to csvio.export (R-21)."""
+    roster = Roster()
+    roster.create_solo_entry(name="Alex Ferreira", plate="1")
+    presenter = RidersPresenter(RecordingRidersView(), roster, load=False)
+    path = tmp_path / "export.csv"
+
+    presenter.on_export_csv(path)
+
+    assert path.read_text(encoding="utf-8").splitlines()[0] == "plate,name,team_name,notes"
