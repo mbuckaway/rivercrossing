@@ -58,7 +58,7 @@ from rivercrossing.ui.presenters.riders import (
 )
 from rivercrossing.ui.presenters.selftest import SelfTestPresenter, SelfTestView
 from rivercrossing.ui.presenters.settings import AppSettings, SettingsPresenter, SettingsView
-from rivercrossing.ui.presenters.setup import SetupPresenter, SetupView
+from rivercrossing.ui.presenters.setup import SetupFormValues, SetupPresenter, SetupView
 
 __all__ = [
     "NEW_TEAM_CHOICE",
@@ -92,6 +92,7 @@ __all__ = [
     "SelfTestView",
     "SettingsPresenter",
     "SettingsView",
+    "SetupFormValues",
     "SetupPresenter",
     "SetupView",
     "StandingsRow",

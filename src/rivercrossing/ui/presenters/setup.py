@@ -89,11 +89,21 @@ class SetupView(Protocol):
     """View surface for the ride setup dialog (ride_setup_dlg, 7a)."""
 
     def set_team_fields_enabled(self, *, enabled: bool) -> None:
-        """Enable relay_radio/team_size_spin when mixed_radio is set."""
+        """Enable relay_radio/team_size_spin (mixed_radio AND unlocked).
+
+        The one place these two controls' own enabled state is ever
+        set -- ``set_entry_locked`` never touches them (its own
+        docstring).
+        """
         ...
 
     def set_entry_locked(self, *, locked: bool) -> None:
-        """Lock the entry/plate-model group (relay post-start, R-17)."""
+        """Lock solo_radio/mixed_radio/pooled_radio (relay post-start).
+
+        Never touches relay_radio/team_size_spin: those are
+        ``set_team_fields_enabled``'s own exclusive scope, which
+        already folds *locked* into its own argument.
+        """
         ...
 
     def show_deck_count(self, count: int) -> None:
@@ -158,15 +168,26 @@ class SetupPresenter:
         self._load()
 
     def _load(self) -> None:
-        """Render ride_setup_dlg's initial state (module docstring)."""
+        """Render ride_setup_dlg's initial state (module docstring).
+
+        ``set_team_fields_enabled``'s own argument folds in *locked*
+        too (measured bug, fixed here): ``relay_radio``/
+        ``team_size_spin`` are ``SetupView.set_team_fields_enabled``'s
+        exclusive scope, never ``set_entry_locked``'s -- calling both
+        independently, in either order, let whichever ran last
+        silently undo the other's effect on those two controls.
+        """
         self.view.show_deck_count(DEFAULT_DECK_COUNT)
         self.view.show_entry_settings(
             entry_mode=self.roster.entry_mode,
             max_team_size=self.roster.max_team_size,
             plate_model=self.roster.plate_model,
         )
-        self.view.set_team_fields_enabled(enabled=self.roster.entry_mode is EntryMode.MIXED)
-        self.view.set_entry_locked(locked=self._entry_locked())
+        locked = self._entry_locked()
+        self.view.set_team_fields_enabled(
+            enabled=self.roster.entry_mode is EntryMode.MIXED and not locked
+        )
+        self.view.set_entry_locked(locked=locked)
 
     def _entry_locked(self) -> bool:
         """Return whether the entry/plate-model group should lock.

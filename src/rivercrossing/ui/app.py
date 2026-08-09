@@ -262,13 +262,14 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
     """Bind *window*'s code-side view class, if *route.target* has one.
 
     Plain XRC dialogs with no code-side view class (D1's remaining
-    forms -- ride setup, settings, audit trail and the correction
-    dialogs) need nothing further here; they already carry their own
-    canvas defaults from their own ``.xrc`` authoring.
+    forms -- settings, audit trail and the correction dialogs) need
+    nothing further here; they already carry their own canvas
+    defaults from their own ``.xrc`` authoring.
     """
     from rivercrossing.ui.views.entry_detail import EntryDetailDialog  # noqa: PLC0415
     from rivercrossing.ui.views.results_win import ResultsWindow  # noqa: PLC0415
     from rivercrossing.ui.views.ride_library import RideLibrary  # noqa: PLC0415
+    from rivercrossing.ui.views.ride_setup import RideSetup  # noqa: PLC0415
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
@@ -276,6 +277,8 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
         RideLibrary(window, data_source=context.data_source)
     elif route.target == ids.RIDER_EDITOR_DLG:
         RiderEditor(window, roster=context.roster)
+    elif route.target == ids.RIDE_SETUP_DLG:
+        RideSetup(window, roster=context.roster)
     elif route.target == ids.ENTRY_DETAIL_DLG:
         EntryDetailDialog(window, _ENTRY_DETAIL_DEMO_PLATE, data_source=context.data_source)
     elif route.target == ids.RESULTS_FRAME:
