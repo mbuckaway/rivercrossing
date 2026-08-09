@@ -38,7 +38,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "csv"
 
 _HEADER_PROBLEM = "missing or malformed header for this ride's plate model"
 
-# --------------------------------------------------------------- helpers
+# ------------------------------------------------------------- helpers
 
 
 def _relay_roster(*, max_team_size: int = DEFAULT_MAX_TEAM_SIZE) -> Roster:
@@ -49,7 +49,7 @@ def _relay_roster(*, max_team_size: int = DEFAULT_MAX_TEAM_SIZE) -> Roster:
 
 
 def _pooled_roster(*, max_team_size: int = DEFAULT_MAX_TEAM_SIZE) -> Roster:
-    """Build a mixed, rider_pooled roster for preview()'s *ride* param."""
+    """Build a mixed, rider_pooled roster for preview()'s *ride*."""
     return Roster(
         entry_mode=EntryMode.MIXED,
         plate_model=PlateModel.RIDER_POOLED,
@@ -90,7 +90,7 @@ def _relay_line(row: _RelayRow, *, max_team_size: int) -> str:
 
 
 def test_preview_clean_180_reports_exact_counts_and_no_conflicts() -> None:
-    """The EPIC-shaped clean fixture previews as 180 riders/15 teams/0 conflicts."""
+    """The EPIC-shaped fixture: 180 riders, 15 teams, no conflicts."""
     roster = _relay_roster()
 
     result = preview(FIXTURES / "clean_180.csv", roster)
@@ -108,7 +108,7 @@ def test_preview_clean_180_entries_count_matches_135_rows() -> None:
 
 
 def test_preview_clean_pooled_reports_exact_counts_and_no_conflicts() -> None:
-    """The clean pooled sample previews as 9 riders/2 teams/0 conflicts."""
+    """The pooled sample previews as 9 riders/2 teams/0 conflicts."""
     roster = _pooled_roster()
 
     result = preview(FIXTURES / "clean_pooled.csv", roster)
@@ -117,7 +117,7 @@ def test_preview_clean_pooled_reports_exact_counts_and_no_conflicts() -> None:
 
 
 def test_preview_pooled_clean_sample_falcons_entry_derives_plate_from_lowest_rider() -> None:
-    """rider_pooled: a team's plate is its lowest-numbered rider's plate (S1)."""
+    """rider_pooled: a team's plate is its lowest rider's plate (S1)."""
     roster = _pooled_roster()
 
     result = preview(FIXTURES / "clean_pooled.csv", roster)
@@ -177,7 +177,7 @@ def test_preview_team_over_max_fixture_reports_exactly_one_conflict_at_row_2() -
 
 
 def test_preview_team_under_min_pooled_fixture_reports_exactly_one_conflict_at_row_5() -> None:
-    """The lone "Solo Team" rider is the only conflict (team-under-min)."""
+    """The lone "Solo Team" rider is the only conflict found here."""
     roster = _pooled_roster()
 
     result = preview(FIXTURES / "team_under_min_pooled.csv", roster)
@@ -199,7 +199,7 @@ def test_preview_team_under_min_pooled_fixture_reports_exactly_one_conflict_at_r
 def test_preview_relay_unknown_type_value_is_a_shape_conflict_excluded_from_counts(
     tmp_path: Path,
 ) -> None:
-    """An unrecognized type token conflicts and is excluded from counts."""
+    """An unrecognized type token conflicts, excluded from counts."""
     row = _relay_line(
         _RelayRow(plate="1", entry_name="Alex", type_field="triple"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -217,7 +217,7 @@ def test_preview_relay_unknown_type_value_is_a_shape_conflict_excluded_from_coun
 
 
 def test_preview_relay_ride_with_pooled_header_reports_header_conflict(tmp_path: Path) -> None:
-    """A pooled-shaped header on a relay ride is a header conflict, not a crash."""
+    """A pooled-shaped header on a relay ride conflicts, not crashes."""
     path = _write_csv(tmp_path, ["plate,name,team_name,notes", "1,Alex,,"])
     roster = _relay_roster()
 
@@ -230,7 +230,7 @@ def test_preview_relay_ride_with_pooled_header_reports_header_conflict(tmp_path:
 
 
 def test_preview_pooled_ride_with_relay_header_reports_header_conflict(tmp_path: Path) -> None:
-    """A relay-shaped header on a pooled ride is also a header conflict."""
+    """A relay-shaped header on a pooled ride also conflicts."""
     row = _relay_line(
         _RelayRow(plate="1", entry_name="Alex", type_field="solo"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -247,7 +247,7 @@ def test_preview_pooled_ride_with_relay_header_reports_header_conflict(tmp_path:
 
 
 def test_preview_empty_file_reports_header_conflict(tmp_path: Path) -> None:
-    """A zero-byte file has no header at all -- reported, not a crash."""
+    """A zero-byte file has no header -- reported, not a crash."""
     path = tmp_path / "riders.csv"
     path.write_text("", encoding="utf-8")
     roster = _relay_roster()
@@ -261,7 +261,7 @@ def test_preview_empty_file_reports_header_conflict(tmp_path: Path) -> None:
 
 
 def test_preview_pooled_row_with_blank_name_reports_missing_name(tmp_path: Path) -> None:
-    """A blank rider name in the pooled form is a missing-name conflict."""
+    """A blank rider name in the pooled form is missing-name too."""
     path = _write_csv(tmp_path, ["plate,name,team_name,notes", "1,,,"])
     roster = _pooled_roster()
 
@@ -276,7 +276,7 @@ def test_preview_pooled_row_with_blank_name_reports_missing_name(tmp_path: Path)
 def test_preview_relay_team_row_with_a_blank_rider_slot_reports_missing_name(
     tmp_path: Path,
 ) -> None:
-    """A blank rider_i within a well-shaped teamN row is missing-name too."""
+    """A blank rider_i within a well-shaped teamN row also conflicts."""
     row = "121,Big Team,team2,Alex,,,,"
     path = _write_csv(tmp_path, [_relay_header(DEFAULT_MAX_TEAM_SIZE), row])
     roster = _relay_roster()
@@ -289,7 +289,7 @@ def test_preview_relay_team_row_with_a_blank_rider_slot_reports_missing_name(
 def test_preview_relay_plate_colliding_with_an_existing_roster_entry_is_flagged(
     tmp_path: Path,
 ) -> None:
-    """A CSV plate already claimed on the target roster is a duplicate too."""
+    """A CSV plate already on the target roster is a duplicate too."""
     roster = _relay_roster()
     roster.create_solo_entry(name="Existing Rider", plate="1")
     row = _relay_line(
@@ -306,7 +306,7 @@ def test_preview_relay_plate_colliding_with_an_existing_roster_entry_is_flagged(
 def test_preview_row_with_both_missing_name_and_duplicate_plate_reports_missing_name_only(
     tmp_path: Path,
 ) -> None:
-    """Missing name takes priority; at most one conflict is reported per row."""
+    """Missing name wins; at most one conflict is reported per row."""
     row1 = _relay_line(
         _RelayRow(plate="1", entry_name="Alex", type_field="solo"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -326,7 +326,7 @@ def test_preview_row_with_both_missing_name_and_duplicate_plate_reports_missing_
 def test_preview_relay_file_with_two_independent_conflicts_reports_both(
     tmp_path: Path,
 ) -> None:
-    """Multiple independent conflicts across a file all appear, in row order."""
+    """Independent conflicts across a file all appear, in row order."""
     row1 = _relay_line(
         _RelayRow(plate="1", entry_name="Alex", type_field="triple"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -352,7 +352,7 @@ def test_preview_relay_file_with_two_independent_conflicts_reports_both(
 def test_preview_relay_solo_row_parses_into_one_rider_named_like_the_entry(
     tmp_path: Path,
 ) -> None:
-    """A solo row's one rider takes the entry's own display name (S1)."""
+    """A solo row's rider takes the entry's own display name (S1)."""
     row = _relay_line(
         _RelayRow(plate="9", entry_name="Marc Tremblay", type_field="solo", notes="late scratch"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -373,12 +373,28 @@ def test_preview_relay_solo_row_parses_into_one_rider_named_like_the_entry(
     )
 
 
-def test_preview_relay_team_row_riders_carry_no_plate_of_their_own(tmp_path: Path) -> None:
-    """team_relay: the entry's plate is direct; its riders carry none (S1)."""
-    row = _relay_line(
-        _RelayRow(
-            plate="7", entry_name="Team A", type_field="team2", rider_names=("Alex", "Bo")
+def test_preview_pooled_solo_row_carries_its_own_notes_onto_the_entry(tmp_path: Path) -> None:
+    """A pooled solo row's notes map 1:1 onto its one-rider entry."""
+    path = _write_csv(tmp_path, ["plate,name,team_name,notes", "5,Alex Ferreira,,late scratch"])
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert result.entries == (
+        ParsedEntry(
+            plate="5",
+            display_name="Alex Ferreira",
+            type=EntryType.SOLO,
+            riders=(ParsedRider(name="Alex Ferreira", plate="5"),),
+            notes="late scratch",
         ),
+    )
+
+
+def test_preview_relay_team_row_riders_carry_no_plate_of_their_own(tmp_path: Path) -> None:
+    """team_relay: plates are direct; the entry's riders carry none."""
+    row = _relay_line(
+        _RelayRow(plate="7", entry_name="Team A", type_field="team2", rider_names=("Alex", "Bo")),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
     )
     path = _write_csv(tmp_path, [_relay_header(DEFAULT_MAX_TEAM_SIZE), row])
@@ -423,7 +439,7 @@ def test_preview_does_not_mutate_the_target_roster() -> None:
 
 
 def test_preview_records_the_given_source_path_and_ride() -> None:
-    """ImportPreview carries the exact path and roster it was built from."""
+    """ImportPreview carries the exact path and roster it came from."""
     roster = _relay_roster()
     path = FIXTURES / "clean_180.csv"
 
@@ -457,12 +473,16 @@ def test_preview_missing_file_raises_file_not_found_error(tmp_path: Path) -> Non
 def test_preview_relay_team_size_boundary_flags_outside_2_to_max(
     tmp_path: Path, *, team_size: int, expect_conflict: bool
 ) -> None:
-    """teamN outside 2..max_team_size(4) is the only boundary that conflicts."""
+    """TeamN outside 2..max_team_size(4) is the only conflicting N."""
     filled = min(team_size, DEFAULT_MAX_TEAM_SIZE)
     rider_names = tuple(f"Rider{i}" for i in range(1, filled + 1))
     row = _relay_line(
-        _RelayRow(plate="121", entry_name="Big Team", type_field=f"team{team_size}",
-                   rider_names=rider_names),
+        _RelayRow(
+            plate="121",
+            entry_name="Big Team",
+            type_field=f"team{team_size}",
+            rider_names=rider_names,
+        ),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
     )
     path = _write_csv(tmp_path, [_relay_header(DEFAULT_MAX_TEAM_SIZE), row])
@@ -476,7 +496,7 @@ def test_preview_relay_team_size_boundary_flags_outside_2_to_max(
 def test_preview_team_over_a_configured_max_of_two_uses_the_rides_own_max(
     tmp_path: Path,
 ) -> None:
-    """The conflict message names the ride's configured max, not a constant."""
+    """The conflict message names the ride's own max, not a constant."""
     row = _relay_line(
         _RelayRow(
             plate="1", entry_name="Team A", type_field="team3", rider_names=("Alex", "Bo", "Cy")
@@ -493,7 +513,7 @@ def test_preview_team_over_a_configured_max_of_two_uses_the_rides_own_max(
     )
 
 
-# ========================================================== T-7 property
+# ======================================================== T-7 property
 
 
 @given(row_count=st.integers(min_value=1, max_value=30))
@@ -501,7 +521,7 @@ def test_preview_team_over_a_configured_max_of_two_uses_the_rides_own_max(
 def test_preview_relay_clean_solo_rows_rider_count_matches_generated_row_count(
     row_count: int,
 ) -> None:
-    """rider_count always equals the number of clean solo rows fed in (T-7)."""
+    """rider_count always equals the clean solo rows given (T-7)."""
     header = _relay_header(DEFAULT_MAX_TEAM_SIZE)
     rows = [
         _relay_line(
