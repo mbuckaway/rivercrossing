@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""CSV roster import: preview-then-commit (spec S7, R-21, E3.3.1-2).
+"""CSV roster import/export: preview-then-commit (spec S7, R-21, E3.3).
 
 Spec section 7 defines two CSV shapes, selected by the target ride's
 plate model (S1): ``team_relay``'s
@@ -59,9 +59,23 @@ conflict at preview time instead of a partial or unaudited mutation.
 
 **Pooled team notes (decided 2026-08-09).** On import, a team's
 ``notes`` is every non-empty member row's own notes, joined with
-``"; "`` in file order -- no member's note is silently dropped. Export
-(E3.3.3) is expected to write that joined value back onto the team's
-first row only, leaving the other member rows' notes blank.
+``"; "`` in file order -- no member's note is silently dropped.
+:func:`export` writes that joined value back onto the team's first
+row only, leaving the other member rows' notes blank -- so a
+commit-then-export-then-preview round trip reproduces the same
+``notes`` string.
+
+**Export (E3.3.3).** ``export(ride, path)`` writes *ride*'s current
+roster in the same shape :func:`preview` reads, selected by
+``ride.plate_model`` -- an export of a conflict-free preview's target
+therefore previews clean again (spec §7's own "export mirrors the
+columns"; task-briefs.md E3.3.3's round-trip property). **A finished
+ride's extra columns -- laps, cards, best_hand, total_time -- are
+out of scope here**: they need EPIC 6's standings module, which this
+one does not depend on. ``export`` writes only the roster's own
+columns (plate/entry_name-or-name/type-or-team_name/riders/notes),
+regardless of ``ride.status``; no placeholder values are invented for
+the columns that need standings.
 """
 
 import csv
@@ -277,6 +291,57 @@ def commit(preview: ImportPreview) -> ImportReport:
         joined_count=joined,
         audit_events=ride.audit_log[before:],
     )
+
+
+def export(ride: Roster, path: Path) -> None:
+    """Write *ride*'s current roster to *path* as CSV (R-21, spec S7).
+
+    The header and column shape match *ride*'s plate_model exactly --
+    the same shape :func:`preview` requires -- so re-importing the
+    result against an equivalent roster previews with zero conflicts
+    (module docstring's round-trip note; EPIC 6's standings columns
+    are out of scope, see the module docstring).
+
+    Args:
+        ride: The roster to export. Never mutated.
+        path: The file to write. Overwritten if it already exists.
+    """
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(_expected_header(ride))
+        if ride.plate_model is PlateModel.TEAM_RELAY:
+            for entry in ride.entries:
+                writer.writerow(_relay_export_row(entry, ride.max_team_size))
+        else:
+            for entry in ride.entries:
+                writer.writerows(_pooled_export_rows(entry))
+
+
+def _relay_export_row(entry: Entry, max_team_size: int) -> list[str]:
+    """Return one team_relay CSV row for *entry* (spec S7)."""
+    if entry.type is EntryType.SOLO:
+        type_field = "solo"
+        names: list[str] = []
+    else:
+        type_field = f"team{len(entry.riders)}"
+        names = [rider.name for rider in entry.riders]
+    slots = [*names, *([""] * (max_team_size - len(names)))]
+    return [entry.plate, entry.display_name, type_field, *slots, entry.notes]
+
+
+def _pooled_export_rows(entry: Entry) -> list[list[str]]:
+    """Return one rider_pooled CSV row per *entry*'s rider (spec S7).
+
+    A team's ``notes`` is written on its first row only -- the export
+    half of the notes-join rule (module docstring) -- so re-importing
+    joins it right back onto that one value; a solo entry has only
+    the one row, so its own notes always land on it.
+    """
+    team_name = entry.display_name if entry.type is EntryType.TEAM else ""
+    return [
+        [cast("str", rider.plate), rider.name, team_name, entry.notes if index == 0 else ""]
+        for index, rider in enumerate(entry.riders)
+    ]
 
 
 def _expected_header(ride: Roster) -> list[str]:
