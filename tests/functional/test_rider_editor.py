@@ -24,6 +24,8 @@ from typing import Any
 
 import harness
 import pytest
+import wx
+import wx.dataview
 
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.roster import Roster
@@ -70,6 +72,32 @@ def _team_choice_items(dialog: Any) -> list[str]:  # noqa: ANN401 -- wx ships no
 def _plate_input_value(dialog: Any) -> str:  # noqa: ANN401 -- wx ships no stubs
     """Return plate_input's current text."""
     return harness.find_control(dialog, ids.PLATE_INPUT).GetValue()
+
+
+# --------------------------------------------------- roster_infobar
+
+
+def test_rider_editor_dlg_infobar_disables_show_hide_effects(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """roster_infobar disables both slide effects (E3.2 follow-on).
+
+    Measured (wxPython 4.3.1 / wxWidgets 3.3.3, macOS): ``Dismiss()``/
+    ``ShowMessage()`` on a ``wx.InfoBar`` with its default slide
+    effect never returns, shown or not -- ``_build_infobar``'s own
+    docstring. ``test_console_demo.py``'s sibling pin covers the
+    same fix on ``main_frame.py``'s three InfoBars.
+    """
+    roster = _seed_roster(DemoDataSource())
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        bar = harness.find_control(dialog, ROSTER_INFOBAR)
+        effects = (bar.GetShowEffect(), bar.GetHideEffect())
+    finally:
+        harness.close_window(dialog)
+
+    assert effects == (wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
 
 
 # ------------------------------------------------------------- opening
@@ -239,6 +267,66 @@ def test_rider_editor_dlg_delete_btn_disabled_once_the_entry_has_data(
         harness.close_window(dialog)
 
     assert delete_enabled is False
+
+
+def test_rider_editor_dlg_deleting_the_only_entry_empties_the_list_and_choice(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """T-4: show_riders([]) and the bare two-sentinel team_choice.
+
+    A single-entry roster's own delete drives ``show_riders`` to an
+    empty ``riders_list`` and ``show_team_choices`` to its smallest
+    real content (no teams at all) -- proven at the view, not only
+    at the presenter (``test_riders.py``'s own empty-roster proof).
+    """
+    roster = Roster()
+    roster.create_solo_entry(name="Solo One", plate="1")
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        harness.select_row(dialog, ids.RIDERS_LIST, 0)
+        harness.click(dialog, ids.DELETE_BTN)
+        rows = _rider_list_rows(dialog)
+        team_items = _team_choice_items(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert rows == ()
+    assert team_items == [SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE]
+
+
+def test_rider_editor_dlg_stale_row_selection_event_is_a_safe_no_op(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A selection-changed event with nothing selected is a no-op.
+
+    Selects the seeded roster's only entry, then deletes it --
+    ``show_riders`` associates a fresh, empty model, which carries no
+    selection forward (measured), so ``riders_list.GetSelection()``
+    is genuinely invalid afterwards. Posting a second selection-
+    changed event in that state must not crash ``_on_row_selected``'s
+    own ``item.IsOk()`` guard, and must leave the (still empty) list
+    exactly as the delete left it.
+    """
+    roster = Roster()
+    roster.create_solo_entry(name="Solo One", plate="1")
+    dialog, view = _show(xrc_resource, roster)
+
+    try:
+        harness.select_row(dialog, ids.RIDERS_LIST, 0)
+        harness.click(dialog, ids.DELETE_BTN)
+        stale_event = wx.dataview.DataViewEvent(
+            wx.dataview.wxEVT_DATAVIEW_SELECTION_CHANGED,
+            view.riders_list,
+            wx.dataview.NullDataViewItem,
+        )
+        view.riders_list.GetEventHandler().ProcessEvent(stale_event)
+        harness.pump()
+        rows = _rider_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert rows == ()
 
 
 # ------------------------------------------------------------- new team

@@ -303,15 +303,109 @@ def test_exit_route_no_longer_posts_the_not_yet_implemented_stub(
     and after firing ``wxID_EXIT`` must be identical, and the frame
     must still be alive: proof the special-cased handler ran instead
     of the generic COMMAND stub, which would have overwritten it with
-    "Exit — not yet implemented".
+    "Exit — not yet implemented". The replacement's second parameter
+    must be named exactly ``opener`` (every call site passes it as
+    ``opener=``, ``app.py``'s own ``_confirm_quit``/``_open_target``):
+    a ``_opener``-named one silently never runs at all, since wx
+    swallows the ``TypeError`` an unmatched keyword raises inside an
+    ``EVT_MENU`` handler rather than propagating it here -- measured
+    while wiring E3.2's follow-on sweep, and the reason this test's
+    own assertion held even while its replacement was never called.
     """
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, _opener: wx.ID_CANCEL)
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: wx.ID_CANCEL)  # noqa: ARG005
     before = firing_frame.GetStatusBar().GetStatusText()
 
     _fire_menu_event(firing_frame, "wxID_EXIT")
 
     after = (firing_frame.GetStatusBar().GetStatusText(), firing_frame.IsBeingDeleted())
     assert after == (before, False)
+
+
+# --- E1.5.3 gap closed: the app's own route path applies the ------
+# --- recorded default button / initial-focus decisions (E3.2) -----
+
+
+def _menu_item_id_for_target(target: str) -> str:
+    """Return the first ``ROUTE_TABLE`` item id that opens *target*.
+
+    Derived from ``commands.ROUTE_TABLE`` itself rather than a second,
+    hand-written mapping, so this can never drift from the one place
+    routes are actually declared.
+    """
+    return next(route.ids[0] for route in commands.ROUTE_TABLE if route.target == target)
+
+
+@pytest.mark.parametrize("decision", dialogs.DEFAULT_BUTTON_DECISIONS, ids=lambda d: d[0])
+def test_open_target_applies_the_recorded_default_button(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+    decision: tuple[str, str],
+) -> None:
+    """A real menu route applies the default-button decision too.
+
+    Not only a direct ``dialogs.set_default_button`` call
+    (test_dialog_behavior.py's own pin on the identical table this
+    parametrizes) -- ``dialogs.run_dialog`` is monkeypatched to
+    capture ``GetDefaultItem()`` and return immediately, the same
+    precedent ``test_exit_route_no_longer_posts_the_not_yet_
+    implemented_stub`` uses for the identical reason: ``ShowModal()``
+    would otherwise block forever with no user present. By the time
+    it runs, ``_open_target``'s own ``_apply_dialog_defaults`` call
+    has already set the real default, so the captured name is a
+    genuine structural fact, not a proxy.
+    """
+    dialog_name, control_name = decision
+    captured: dict[str, str | None] = {}
+
+    # "opener" (not "_opener"): every call site names it as a keyword
+    # (app.py's own module docstring), and a mismatched replacement
+    # parameter name raises TypeError at the call boundary that wx
+    # silently swallows inside an EVT_MENU handler rather than
+    # propagating -- test_exit_route_no_longer_posts_the_not_yet_
+    # implemented_stub's own docstring records the same finding.
+    def _capture_default(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+        default_item = dialog.GetDefaultItem()
+        captured["name"] = default_item.GetName() if default_item is not None else None
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _capture_default)
+
+    _fire_menu_event(firing_frame, _menu_item_id_for_target(dialog_name))
+
+    assert captured["name"] == control_name
+
+
+@pytest.mark.parametrize("decision", dialogs.FORM_FIRST_FIELDS, ids=lambda d: d[0])
+def test_open_target_applies_the_recorded_initial_focus(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+    decision: tuple[str, str],
+) -> None:
+    """A real menu route applies the initial-focus decision too.
+
+    Not only a direct ``dialogs.set_initial_focus`` call
+    (test_dialog_behavior.py's own pin on the identical table this
+    parametrizes) -- ``set_initial_focus`` is spied with a call-
+    through wrapper (the real ``SetFocus()`` still runs) rather than
+    probing resulting OS focus, which ``test_dialog_behavior.py``'s
+    own module docstring documents as unobservable in this harness
+    session.
+    """
+    dialog_name, field_name = decision
+    calls: list[tuple[str, str]] = []
+    original_set_initial_focus = dialogs.set_initial_focus
+
+    def _spy_set_initial_focus(dialog: Any, control_name: str) -> None:  # noqa: ANN401
+        calls.append((dialog.GetName(), control_name))
+        original_set_initial_focus(dialog, control_name)
+
+    monkeypatch.setattr(dialogs, "set_initial_focus", _spy_set_initial_focus)
+    # "opener" (not "_opener"): _capture_default's own comment above.
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: wx.ID_CANCEL)  # noqa: ARG005
+
+    _fire_menu_event(firing_frame, _menu_item_id_for_target(dialog_name))
+
+    assert calls == [(dialog_name, field_name)]
 
 
 # --- negative: main() must show the frame before it can block ----

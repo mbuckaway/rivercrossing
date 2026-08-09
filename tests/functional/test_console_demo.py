@@ -174,6 +174,30 @@ def test_main_frame_infobar_resolves_by_name_and_starts_hidden(
     assert (bar.GetName(), bar.IsShown()) == (name, False)
 
 
+@pytest.mark.parametrize("name", INFOBAR_NAMES)
+def test_main_frame_infobar_disables_show_hide_effects(
+    shared_console: MainFrame, name: str
+) -> None:
+    """Every code-side InfoBar disables its default slide effect.
+
+    Measured (wxPython 4.3.1 / wxWidgets 3.3.3, macOS, a throwaway
+    probe script per this repo's convention, first reproduced while
+    wiring ``rider_editor_dlg``'s ``roster_infobar``, E3.2):
+    ``Dismiss()``/``ShowMessage()`` on a ``wx.InfoBar`` with its
+    default slide effect never returns, dialog or frame shown or
+    not. Every code-side InfoBar this app builds must disable both
+    effects at construction, or its first real message hangs the
+    process with no user present to recover it -- this is the pin
+    that keeps ``main_frame.py``'s ``_build_infobar`` fix applied;
+    ``test_rider_editor.py``'s sibling pin covers ``roster_infobar``.
+    """
+    bar = harness.find_control(shared_console.frame, name)
+
+    effects = (bar.GetShowEffect(), bar.GetHideEffect())
+
+    assert effects == (wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
+
+
 # --- splitter sash persistence (CODINGSTANDARDS-UX-DESKTOP.md §6) -----
 
 

@@ -143,6 +143,12 @@ def test_app_module_source_constructs_demodatasource_exactly_once() -> None:
 
 # --- _seed_roster: the demo rows -> a real Roster (E3.2) -----------
 
+# T-7 (Hypothesis): declined -- demo._RIDERS is one fixed, four-row
+# constant this function is never called with anything else, so the
+# three enumerated cases below already exhaust its real input space;
+# a generated-roster property would only restate _team_choices'/
+# _rider_rows' own Hypothesis coverage (test_riders.py) one layer up.
+
 
 def test_seed_roster_given_demo_rows_builds_entries_matching_the_fixture_order() -> None:
     """Two solo entries and one pooled team, in demo._RIDERS's order."""

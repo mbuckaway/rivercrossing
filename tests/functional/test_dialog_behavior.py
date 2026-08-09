@@ -476,15 +476,7 @@ def test_dialog_default_item_is_none_before_set_default_button_is_applied(
     assert default_item is None
 
 
-_DEFAULT_BUTTON_DECISIONS = (
-    (ids.RIDE_SETUP_DLG, pages.WX_ID_OK),
-    (ids.CSV_PREVIEW_DLG, pages.WX_ID_OK),
-    (ids.ENTRY_DETAIL_DLG, pages.WX_ID_CLOSE),
-    (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
-)
-
-
-@pytest.mark.parametrize(("dialog_name", "control_name"), _DEFAULT_BUTTON_DECISIONS)
+@pytest.mark.parametrize(("dialog_name", "control_name"), dialogs.DEFAULT_BUTTON_DECISIONS)
 def test_set_default_button_makes_it_the_dialogs_default(
     dialog_name: str, control_name: str, xrc_resource: object
 ) -> None:
@@ -494,7 +486,9 @@ def test_set_default_button_makes_it_the_dialogs_default(
     primary); ``entry_detail_dlg`` -> ``wxID_CLOSE`` (a read-only
     view whose actions are explicit buttons, not a submit). The
     fourth, ``rider_editor_dlg``, is pinned in its own dedicated
-    test below rather than only here.
+    test below rather than only here. This table lives in
+    ``dialogs.py`` -- ``test_app_bootstrap.py`` asserts the app's
+    own route path applies the identical table, never a copy.
     """
     dialog = _show(xrc_resource, dialog_name)
     dialogs.set_default_button(dialog, control_name)
@@ -588,17 +582,8 @@ def test_destructive_confirm_default_item_is_cancel(
 
 # --------------------------------------------- form dialog first focus
 
-_FORM_FIRST_FIELDS = (
-    (ids.SET_START_DLG, ids.START_DATE_PICKER),
-    (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
-    (ids.REASSIGN_DLG, ids.NEW_PLATE_INPUT),
-    (ids.MANUAL_DEAL_DLG, ids.PLATE_INPUT),
-    (ids.RIDE_SETUP_DLG, ids.NAME_INPUT),
-    (ids.RIDER_EDITOR_DLG, ids.PLATE_INPUT),
-)
 
-
-@pytest.mark.parametrize(("dialog_name", "field_name"), _FORM_FIRST_FIELDS)
+@pytest.mark.parametrize(("dialog_name", "field_name"), dialogs.FORM_FIRST_FIELDS)
 def test_set_initial_focus_calls_setfocus_on_first_field(
     dialog_name: str, field_name: str, xrc_resource: object
 ) -> None:
@@ -607,7 +592,9 @@ def test_set_initial_focus_calls_setfocus_on_first_field(
     Genuinely observed at the level this suite controls: our own
     :func:`dialogs.set_initial_focus` calls ``SetFocus()`` on the
     named control -- a spy on that instance's bound method, not a
-    claim about resulting OS focus (module docstring).
+    claim about resulting OS focus (module docstring). This table
+    lives in ``dialogs.py`` -- ``test_app_bootstrap.py`` asserts the
+    app's own route path applies the identical table, never a copy.
     """
     dialog = _show(xrc_resource, dialog_name)
     field = harness.find_control(dialog, field_name)
