@@ -35,6 +35,12 @@ for a solo entry (``change_solo_plate``), a pooled team member
 (``change_team_plate`` -- spec S3:46's "fully editable" derived
 rule, no separate decision needed).
 
+The pooled-reshape follow-on closes csvio's two remaining gaps
+(spec S1's "move riders ... convert solo <-> team ... before
+start"): ``add_rider_to_team`` attaches a brand-new or currently-
+solo rider straight onto a team, and ``extract_rider_to_solo``
+converts a pooled team member into their own solo entry.
+
 ``Entry`` and ``Rider`` compare by identity, not by field value
 (``eq=False``): they are living records a caller holds a reference
 to across renames and moves, not interchangeable values like
@@ -670,6 +676,113 @@ class Roster:
         )
         if not from_entry.riders:
             self._dissolve_entry(from_entry)
+
+    def add_rider_to_team(self, rider: Rider, *, to_entry: Entry) -> None:
+        """Attach *rider*, not yet on any entry, onto *to_entry*.
+
+        Closes csvio's two pooled-reshape gaps (spec S7:171/177): a
+        brand-new plate landing straight on a team, and a
+        currently-solo rider joining one. Gated by
+        :func:`can_move_rider` alone -- its own DRAFT branch already
+        covers every case :func:`can_edit_structure` would add.
+        ``rider_pooled`` requires *rider* to already carry a unique
+        plate and recomputes the team's adopted lowest plate;
+        ``team_relay`` clears *rider* to plateless (S1).
+
+        Raises:
+            InvalidMoveError: *rider* is already on some entry (use
+                :meth:`move_rider` instead), or *to_entry* is not
+                type TEAM.
+            EntryNotFoundError: *to_entry* is not a member of this
+                roster.
+            LockedError: the lock matrix forbids the add in the
+                ride's current state and plate model.
+            TeamSizeError: the add would exceed max_team_size.
+            PlateShapeError: rider_pooled and *rider* carries no
+                plate.
+            DuplicatePlateError: *rider*'s plate collides with an
+                existing entry's or rider's plate.
+        """
+        if self._find_owning_entry(rider) is not None:
+            msg = "rider is already on an entry; use move_rider instead"
+            raise InvalidMoveError(msg)
+        self._require_known_entry(to_entry)
+        if not can_move_rider(self._status, self._plate_model):
+            msg = f"rider moves are locked for a {self._plate_model} ride once {self._status}"
+            raise LockedError(msg)
+        if to_entry.type is not EntryType.TEAM:
+            msg = "add_rider_to_team requires a team entry"
+            raise InvalidMoveError(msg)
+        if len(to_entry.riders) + 1 > self._max_team_size:
+            msg = (
+                f"team size must be at most {self._max_team_size}, got {len(to_entry.riders) + 1}"
+            )
+            raise TeamSizeError(msg)
+        if self._plate_model is PlateModel.RIDER_POOLED:
+            if rider.plate is None:
+                msg = "rider_pooled riders must each carry a plate"
+                raise PlateShapeError(msg)
+            self._require_plates_free([rider.plate])
+        else:
+            rider.plate = None
+        to_entry.riders.append(rider)
+        self._recompute_pooled_plate(to_entry)
+        self._log(
+            "add_rider_to_team",
+            {
+                "rider_name": rider.name,
+                "rider_plate": rider.plate,
+                "to_plate": to_entry.plate,
+                "display_name": to_entry.display_name,
+            },
+        )
+
+    def extract_rider_to_solo(self, rider: Rider) -> Entry:
+        """Convert a rider_pooled team member into their own solo entry.
+
+        Spec S1 scopes team<->solo conversions to pre-start; R-17's
+        running carve-out covers only moves between teams, not this.
+        *rider*'s own plate becomes the new entry's; the source team
+        recomputes its adopted plate, and dissolves outright if
+        *rider* was its last member (:meth:`_dissolve_entry`).
+
+        Raises:
+            RiderNotFoundError: *rider* is not on any entry here.
+            LockedError: the ride has left DRAFT.
+            PlateShapeError: this ride's plate_model is not
+                rider_pooled, or *rider*'s entry is not type TEAM.
+        """
+        entry = self._find_owning_entry(rider)
+        if entry is None:
+            msg = "rider is not on any entry in this roster"
+            raise RiderNotFoundError(msg)
+        if not can_edit_structure(self._status):
+            msg = f"a rider cannot be extracted to solo once the ride is {self._status}"
+            raise LockedError(msg)
+        if self._plate_model is not PlateModel.RIDER_POOLED or entry.type is not EntryType.TEAM:
+            msg = "extract_rider_to_solo requires a rider_pooled team member"
+            raise PlateShapeError(msg)
+        entry.riders.remove(rider)
+        solo = Entry(
+            plate=cast("str", rider.plate),
+            display_name=rider.name,
+            type=EntryType.SOLO,
+            riders=[rider],
+        )
+        self._entries.append(solo)
+        if entry.riders:
+            self._recompute_pooled_plate(entry)
+        self._log(
+            "extract_rider_to_solo",
+            {
+                "rider_name": rider.name,
+                "plate": solo.plate,
+                "from_display_name": entry.display_name,
+            },
+        )
+        if not entry.riders:
+            self._dissolve_entry(entry)
+        return solo
 
     def _shape_and_validate(self, riders: Sequence[Rider], plate: str | None) -> str:
         """Resolve riders'/plate's shape; return the entry's plate.
