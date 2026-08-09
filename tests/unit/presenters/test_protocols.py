@@ -46,7 +46,6 @@ from rivercrossing.ui.presenters import (
     ResultsPresenter,
     ResultsView,
     RiderRow,
-    RidersPresenter,
     RidersView,
     RideSummary,
     SettingsPresenter,
@@ -134,6 +133,19 @@ class FakeRidersView:
 
     def set_import_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
+
+    def show_form(self, *, plate: str, name: str, team: str) -> None:
+        """No-op fake."""
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """No-op fake."""
+
+    def show_validation(self, message: str) -> None:
+        """No-op fake."""
+
+    def prompt_new_team_name(self) -> str | None:
+        """No-op fake."""
+        return None
 
 
 class FakeResultsView:
@@ -290,7 +302,6 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
     [
         (ConsolePresenter, FakeConsoleView()),
         (SetupPresenter, FakeSetupView()),
-        (RidersPresenter, FakeRidersView()),
         (ResultsPresenter, FakeResultsView()),
         (LibraryPresenter, FakeLibraryView()),
         (DetailPresenter, FakeDetailView()),
@@ -301,7 +312,12 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
 def test_presenter_holds_the_view_and_data_source_it_was_given(
     presenter_cls: type, view: object
 ) -> None:
-    """Every presenter stores the exact view and data source given."""
+    """Every presenter stores the exact view and data source given.
+
+    ``RidersPresenter`` is excluded: since E3.2.1/E3.2.2 it takes
+    ``(view, roster)`` instead -- covered by its own dedicated suite,
+    ``tests/unit/presenters/test_riders.py``.
+    """
     data_source = FakeDataSource()
 
     presenter = presenter_cls(view, data_source)
