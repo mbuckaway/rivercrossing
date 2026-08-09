@@ -132,7 +132,7 @@ class _PooledRow(NamedTuple):
 
 def _pooled_line(row: _PooledRow) -> str:
     """Render *row* as one rider_pooled CSV line (spec S7)."""
-    return ",".join([row.plate, row.name, row.team_name, row.notes])
+    return f"{row.plate},{row.name},{row.team_name},{row.notes}"
 
 
 _POOLED_HEADER_LINE = "plate,name,team_name,notes"
@@ -627,9 +627,7 @@ def test_commit_relay_inserts_every_new_plate_and_reports_counts(tmp_path: Path)
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
     )
     row2 = _relay_line(
-        _RelayRow(
-            plate="2", entry_name="Team A", type_field="team2", rider_names=("Bo", "Cy")
-        ),
+        _RelayRow(plate="2", entry_name="Team A", type_field="team2", rider_names=("Bo", "Cy")),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
     )
     path = _write_csv(tmp_path, [_relay_header(DEFAULT_MAX_TEAM_SIZE), row1, row2])
@@ -644,9 +642,7 @@ def test_commit_relay_inserts_every_new_plate_and_reports_counts(tmp_path: Path)
 def test_commit_relay_insert_creates_matching_roster_entries(tmp_path: Path) -> None:
     """The inserted relay entries carry the file's own plate/riders."""
     row = _relay_line(
-        _RelayRow(
-            plate="2", entry_name="Team A", type_field="team2", rider_names=("Bo", "Cy")
-        ),
+        _RelayRow(plate="2", entry_name="Team A", type_field="team2", rider_names=("Bo", "Cy")),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
     )
     path = _write_csv(tmp_path, [_relay_header(DEFAULT_MAX_TEAM_SIZE), row])
@@ -709,13 +705,46 @@ def test_commit_relay_insert_with_notes_sets_them_on_the_new_entry(tmp_path: Pat
     assert roster.entries[0].notes == "late scratch"
 
 
-# ------------------------------------------------- commit: name/notes update
+def test_commit_pooled_insert_with_notes_sets_them_on_the_new_solo_entry(
+    tmp_path: Path,
+) -> None:
+    """An inserted pooled solo entry's own row notes land on it too."""
+    path = _write_csv(
+        tmp_path, [_POOLED_HEADER_LINE, _pooled_line(_PooledRow("1", "Alex", "", "late scratch"))]
+    )
+    roster = _pooled_roster()
+    result = preview(path, roster)
+
+    commit(result)
+
+    assert roster.entries[0].notes == "late scratch"
+
+
+def test_commit_pooled_forming_a_new_team_with_notes_joins_and_sets_them(
+    tmp_path: Path,
+) -> None:
+    """A freshly formed team's per-member notes join onto the entry."""
+    lines = [
+        _POOLED_HEADER_LINE,
+        _pooled_line(_PooledRow("2", "Bo", "Wolves", "flat tire")),
+        _pooled_line(_PooledRow("3", "Cy", "Wolves", "spare batteries")),
+    ]
+    path = _write_csv(tmp_path, lines)
+    roster = _pooled_roster()
+    result = preview(path, roster)
+
+    commit(result)
+
+    assert roster.entries[0].notes == "flat tire; spare batteries"
+
+
+# -------------------------------------------- commit: name/notes update
 
 
 def test_commit_relay_matched_plate_renames_the_existing_entry_in_place(
     tmp_path: Path,
 ) -> None:
-    """A matched relay plate with only a name change updates in place."""
+    """A matched relay plate with only a name change updates it."""
     roster = _relay_roster()
     entry = roster.create_solo_entry(name="Alex", plate="1")
     row = _relay_line(
@@ -746,10 +775,26 @@ def test_commit_pooled_matched_solo_plate_renames_in_place(tmp_path: Path) -> No
     assert (entry.display_name, report.updated_count) == ("Alexandra", 1)
 
 
+def test_commit_pooled_matched_solo_plate_notes_only_change_updates_in_place(
+    tmp_path: Path,
+) -> None:
+    """A matched pooled solo plate with only a notes change updates."""
+    roster = _pooled_roster()
+    entry = roster.create_solo_entry(name="Alex", plate="1")
+    path = _write_csv(
+        tmp_path, [_POOLED_HEADER_LINE, _pooled_line(_PooledRow("1", "Alex", "", "flat tire"))]
+    )
+    result = preview(path, roster)
+
+    report = commit(result)
+
+    assert (entry.notes, report.updated_count) == ("flat tire", 1)
+
+
 def test_commit_relay_matched_plate_with_no_changes_reports_zero_updates(
     tmp_path: Path,
 ) -> None:
-    """A re-import that changes nothing updates nothing (no audit noise)."""
+    """A re-import that changes nothing updates nothing (no noise)."""
     roster = _relay_roster()
     roster.create_solo_entry(name="Alex", plate="1")
     row = _relay_line(
@@ -764,20 +809,22 @@ def test_commit_relay_matched_plate_with_no_changes_reports_zero_updates(
     assert (report.inserted_count, report.updated_count, report.audit_events) == (0, 0, ())
 
 
-# ------------------------------------------------- commit: relay reshape
+# ---------------------------------------------- commit: relay reshape
 
 
 def test_commit_relay_matched_plate_composition_change_reshapes_in_draft(
     tmp_path: Path,
 ) -> None:
-    """A matched relay plate with a changed roster is reshaped (spec S7)."""
+    """A matched relay plate with a changed roster is reshaped (S7)."""
     roster = _relay_roster()
     roster.create_team_entry(
         display_name="Team X", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="10"
     )
     row = _relay_line(
         _RelayRow(
-            plate="10", entry_name="Team X", type_field="team3",
+            plate="10",
+            entry_name="Team X",
+            type_field="team3",
             rider_names=("Alex", "Bo", "Cy"),
         ),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -793,10 +840,28 @@ def test_commit_relay_matched_plate_composition_change_reshapes_in_draft(
     )
 
 
+def test_commit_relay_matched_plate_type_change_from_solo_to_team_reshapes(
+    tmp_path: Path,
+) -> None:
+    """A matched plate switching solo<->team is a composition change."""
+    roster = _relay_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+    row = _relay_line(
+        _RelayRow(plate="1", entry_name="Team A", type_field="team2", rider_names=("Alex", "Bo")),
+        max_team_size=DEFAULT_MAX_TEAM_SIZE,
+    )
+    path = _write_csv(tmp_path, [_relay_header(DEFAULT_MAX_TEAM_SIZE), row])
+    result = preview(path, roster)
+
+    report = commit(result)
+
+    assert (roster.entries[0].type, report.updated_count) == (EntryType.TEAM, 1)
+
+
 def test_preview_relay_matched_plate_composition_change_while_running_conflicts(
     tmp_path: Path,
 ) -> None:
-    """The same reshape is a conflict once the ride is RUNNING (spec S7)."""
+    """The same reshape is a conflict once the ride is RUNNING (S7)."""
     roster = _relay_roster()
     roster.create_team_entry(
         display_name="Team X", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="10"
@@ -804,7 +869,9 @@ def test_preview_relay_matched_plate_composition_change_while_running_conflicts(
     roster.status = RideStatus.RUNNING
     row = _relay_line(
         _RelayRow(
-            plate="10", entry_name="Team X", type_field="team3",
+            plate="10",
+            entry_name="Team X",
+            type_field="team3",
             rider_names=("Alex", "Bo", "Cy"),
         ),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -818,7 +885,7 @@ def test_preview_relay_matched_plate_composition_change_while_running_conflicts(
 
 
 def test_commit_relay_structural_change_while_running_refuses(tmp_path: Path) -> None:
-    """commit() refuses the RUNNING structural conflict above, unmutated."""
+    """commit() refuses the RUNNING structural conflict, unmutated."""
     roster = _relay_roster()
     roster.create_team_entry(
         display_name="Team X", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="10"
@@ -826,7 +893,9 @@ def test_commit_relay_structural_change_while_running_refuses(tmp_path: Path) ->
     roster.status = RideStatus.RUNNING
     row = _relay_line(
         _RelayRow(
-            plate="10", entry_name="Team X", type_field="team3",
+            plate="10",
+            entry_name="Team X",
+            type_field="team3",
             rider_names=("Alex", "Bo", "Cy"),
         ),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -844,7 +913,7 @@ def test_commit_relay_structural_change_while_running_refuses(tmp_path: Path) ->
 def test_preview_relay_new_plate_insert_while_running_is_not_a_conflict(
     tmp_path: Path,
 ) -> None:
-    """RUNNING still allows a brand-new plate (spec S7's "add new plates")."""
+    """RUNNING still allows a brand-new plate ("add new plates")."""
     roster = _relay_roster()
     roster.status = RideStatus.RUNNING
     row = _relay_line(
@@ -862,11 +931,15 @@ def test_preview_relay_new_plate_insert_while_running_is_not_a_conflict(
 
 
 def _seed_wolves_and_falcons(roster: Roster) -> None:
-    """Seed *roster* with Wolves{Bo,Cy,Zed} and Falcons{Do,El} (E3.3.2)."""
+    """Seed *roster* with Wolves{Bo,Cy,Zed} and Falcons{Do,El}."""
     roster.create_solo_entry(name="Alex", plate="1")
     roster.create_team_entry(
         display_name="Wolves",
-        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3"), Rider(name="Zed", plate="4")],
+        riders=[
+            Rider(name="Bo", plate="2"),
+            Rider(name="Cy", plate="3"),
+            Rider(name="Zed", plate="4"),
+        ],
     )
     roster.create_team_entry(
         display_name="Falcons",
@@ -900,7 +973,11 @@ def test_commit_pooled_moved_rider_updates_team_membership_in_draft(
 
     wolves = next(e for e in roster.entries if e.display_name == "Wolves")
     falcons = next(e for e in roster.entries if e.display_name == "Falcons")
-    assert ([r.name for r in wolves.riders], [r.name for r in falcons.riders], report.moved_count) == (
+    assert (
+        [r.name for r in wolves.riders],
+        [r.name for r in falcons.riders],
+        report.moved_count,
+    ) == (
         ["Cy", "Zed"],
         ["Do", "El", "Bo"],
         1,
@@ -917,8 +994,30 @@ def test_commit_pooled_moved_rider_appends_one_move_rider_audit_event(
 
     report = commit(result)
 
-    assert [event.action for event in report.audit_events] == ["move_rider"]
-    assert report.audit_events[0].payload["rider_name"] == "Bo"
+    assert [(e.action, e.payload["rider_name"]) for e in report.audit_events] == [
+        ("move_rider", "Bo")
+    ]
+
+
+def test_commit_pooled_team_move_also_updates_the_targets_notes(tmp_path: Path) -> None:
+    """A move that also carries a new team note updates the target."""
+    roster = _pooled_roster()
+    _seed_wolves_and_falcons(roster)
+    lines = [
+        _POOLED_HEADER_LINE,
+        _pooled_line(_PooledRow("1", "Alex")),
+        _pooled_line(_PooledRow("2", "Bo", "Falcons")),
+        _pooled_line(_PooledRow("3", "Cy", "Wolves")),
+        _pooled_line(_PooledRow("4", "Zed", "Wolves")),
+        _pooled_line(_PooledRow("5", "Do", "Falcons", "flat tire")),
+        _pooled_line(_PooledRow("6", "El", "Falcons")),
+    ]
+    result = preview(_write_csv(tmp_path, lines), roster)
+
+    report = commit(result)
+
+    falcons = next(e for e in roster.entries if e.display_name == "Falcons")
+    assert (falcons.notes, report.moved_count, report.updated_count) == ("flat tire", 1, 1)
 
 
 def test_preview_pooled_moved_rider_while_running_is_not_a_conflict(
@@ -947,7 +1046,7 @@ def test_commit_pooled_moved_rider_while_running_succeeds(tmp_path: Path) -> Non
 
 
 def test_preview_pooled_moved_rider_while_finished_is_a_conflict(tmp_path: Path) -> None:
-    """FINISHED closes the pooled move door too (mirrors R-17's matrix)."""
+    """FINISHED closes the pooled move door too (mirrors R-17)."""
     roster = _pooled_roster()
     _seed_wolves_and_falcons(roster)
     roster.status = RideStatus.FINISHED
@@ -958,7 +1057,7 @@ def test_preview_pooled_moved_rider_while_finished_is_a_conflict(tmp_path: Path)
     assert _MOVE_NOT_ALLOWED_PROBLEM in result.conflicts[0].problem
 
 
-# ------------------------------------- preview: unsupported pooled shapes
+# ---------------------------------- preview: unsupported pooled shapes
 
 
 def test_preview_pooled_team_member_reclassified_solo_is_a_conflict(
@@ -968,7 +1067,11 @@ def test_preview_pooled_team_member_reclassified_solo_is_a_conflict(
     roster = _pooled_roster()
     roster.create_team_entry(
         display_name="Wolves",
-        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3"), Rider(name="Zed", plate="4")],
+        riders=[
+            Rider(name="Bo", plate="2"),
+            Rider(name="Cy", plate="3"),
+            Rider(name="Zed", plate="4"),
+        ],
     )
     lines = [
         _POOLED_HEADER_LINE,
@@ -986,7 +1089,7 @@ def test_preview_pooled_team_member_reclassified_solo_is_a_conflict(
 def test_preview_pooled_new_rider_joining_an_existing_team_is_a_conflict(
     tmp_path: Path,
 ) -> None:
-    """Adding a brand-new rider straight into an existing team is unsupported."""
+    """Adding a brand-new rider into an existing team is unsupported."""
     roster = _pooled_roster()
     roster.create_team_entry(
         display_name="Falcons",
@@ -1008,7 +1111,7 @@ def test_preview_pooled_new_rider_joining_an_existing_team_is_a_conflict(
 def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_is_a_conflict(
     tmp_path: Path,
 ) -> None:
-    """Folding an existing solo rider into a brand-new team is unsupported."""
+    """Folding a solo rider into a brand-new team is unsupported."""
     roster = _pooled_roster()
     roster.create_solo_entry(name="Alex", plate="1")
     lines = [
@@ -1027,7 +1130,7 @@ def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_is_a_conflict(
 
 
 def test_preview_pooled_team_notes_join_non_empty_member_notes(tmp_path: Path) -> None:
-    """A team's notes join every non-empty member note with '; ' (2026-08-09)."""
+    """A team's notes join every non-empty member note with '; '."""
     lines = [
         _POOLED_HEADER_LINE,
         _pooled_line(_PooledRow("1", "Bo", "Wolves", "flat tire")),
