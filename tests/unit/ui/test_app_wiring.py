@@ -16,6 +16,8 @@ import inspect
 import sys
 from typing import TYPE_CHECKING
 
+from rivercrossing.demo import DemoDataSource
+from rivercrossing.roster import EntryMode, EntryType, PlateModel
 from rivercrossing.ui import app
 
 if TYPE_CHECKING:
@@ -137,6 +139,43 @@ def test_app_module_source_constructs_demodatasource_exactly_once() -> None:
     source = inspect.getsource(app)
 
     assert _demo_construction_count(source) == 1
+
+
+# --- _seed_roster: the demo rows -> a real Roster (E3.2) -----------
+
+
+def test_seed_roster_given_demo_rows_builds_entries_matching_the_fixture_order() -> None:
+    """Two solo entries and one pooled team, in demo._RIDERS's order."""
+    roster = app._seed_roster(DemoDataSource())
+
+    shape = [
+        (entry.type, entry.plate, entry.display_name, [rider.name for rider in entry.riders])
+        for entry in roster.entries
+    ]
+
+    assert shape == [
+        (EntryType.SOLO, "123", "Sam Ellis", ["Sam Ellis"]),
+        (EntryType.TEAM, "77", "Trail Blazers", ["A. Roy", "K. Singh"]),
+        (EntryType.SOLO, "212", "M. Chen", ["M. Chen"]),
+    ]
+
+
+def test_seed_roster_gives_every_pooled_team_rider_their_own_plate() -> None:
+    """rider_pooled: each Trail Blazers rider keeps their own plate."""
+    roster = app._seed_roster(DemoDataSource())
+
+    team = roster.entries[1]
+
+    assert [rider.plate for rider in team.riders] == ["77", "78"]
+
+
+def test_seed_roster_uses_mixed_entry_mode_pooled_plates_and_max_team_size_four() -> None:
+    """The seeded ride's own settings (E3.2's approved decision)."""
+    roster = app._seed_roster(DemoDataSource())
+
+    settings = (roster.entry_mode, roster.plate_model, roster.max_team_size)
+
+    assert settings == (EntryMode.MIXED, PlateModel.RIDER_POOLED, 4)
 
 
 # --- build_main_window is importable alongside main() --------------

@@ -36,11 +36,7 @@ from rivercrossing.ui.views.results_win import (
     format_card,
 )
 from rivercrossing.ui.views.ride_library import format_ride_status
-from rivercrossing.ui.views.rider_editor import (
-    SOLO_TEAM_TEXT,
-    format_team,
-    is_solo_only,
-)
+from rivercrossing.ui.views.rider_editor import SOLO_TEAM_TEXT, format_team
 
 # --- ride_library.format_ride_status ----------------------------------
 
@@ -68,7 +64,7 @@ def test_format_ride_status_given_any_status_is_idempotent_uppercase(status: Rid
     assert text == text.upper()
 
 
-# --- rider_editor.format_team / is_solo_only ----------------------
+# --- rider_editor.format_team ---------------------------------------
 
 
 def _rider(*, plate: str = "1", name: str = "Rider", team: str | None = None) -> RiderRow:
@@ -97,47 +93,6 @@ def test_format_team_given_any_non_none_team_returns_it_unchanged(team: str) -> 
     row = _rider(team=team)
 
     assert format_team(row) == team
-
-
-SOLO_ONLY_CASES = (
-    ((), True),  # T-4 collection boundary: empty
-    ((_rider(team=None),), True),  # T-4 collection boundary: single, solo
-    ((_rider(team="Trail Blazers"),), False),  # T-4 collection boundary: single, teamed
-    (
-        (_rider(plate="1", team=None), _rider(plate="2", team=None), _rider(plate="3", team=None)),
-        True,
-    ),  # T-4 collection boundary: many, all solo
-    (
-        (
-            _rider(plate="123", team=None),
-            _rider(plate="77", team="Trail Blazers"),
-            _rider(plate="78", team="Trail Blazers"),
-            _rider(plate="212", team=None),
-        ),
-        False,
-    ),  # the exact demo fixture shape: mixed
-)
-
-
-@pytest.mark.parametrize(("rows", "expected"), SOLO_ONLY_CASES)
-def test_is_solo_only_given_rows_matches_whether_every_team_is_none(
-    rows: tuple[RiderRow, ...],
-    expected: bool,  # noqa: FBT001
-) -> None:
-    """riders_list's Team column hides exactly when this is True."""
-    assert is_solo_only(rows) is expected
-
-
-@given(st.lists(st.one_of(st.none(), st.text(min_size=1, max_size=10)), max_size=15))
-def test_is_solo_only_given_arbitrary_teams_agrees_with_the_any_team_definition(
-    teams: list[str | None],
-) -> None:
-    """Property: solo-only iff no row carries a real team name."""
-    rows = tuple(_rider(plate=str(index), team=team) for index, team in enumerate(teams))
-
-    result = is_solo_only(rows)
-
-    assert result == (not any(team is not None for team in teams))
 
 
 # --- results_win.format_card ---------------------------------------

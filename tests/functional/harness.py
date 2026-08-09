@@ -70,6 +70,8 @@ __all__ = [
     "pump",
     "run_modal",
     "screenshot",
+    "select_choice",
+    "select_row",
     "type_text",
     "xrc_directory",
 ]
@@ -215,6 +217,52 @@ def type_text(window: Any, name: str, text: str) -> None:  # noqa: ANN401
     """
     control = find_control(window, name)
     control.SetValue(text)
+    pump()
+
+
+def select_choice(window: Any, name: str, item_label: str) -> None:  # noqa: ANN401
+    """Select *item_label* in the ``wx.Choice`` named *name*.
+
+    ``wx.Choice.SetSelection`` does not itself generate a
+    ``wx.EVT_CHOICE`` (documented wx behaviour, the same silence
+    :func:`click`'s own docstring notes for a plain ``SetValue``
+    on a button) -- the event a real selection would generate is
+    posted directly instead, this module's one working mechanism
+    (module docstring).
+
+    Raises:
+        ControlNotFoundError: If *name* does not resolve inside
+            *window*.
+        ValueError: If *item_label* is not one of the choice's
+            current items.
+    """
+    control = find_control(window, name)
+    index = control.FindString(item_label)
+    if index == wx.NOT_FOUND:
+        raise ValueError(f"choice {name!r} has no item labelled {item_label!r}")
+    control.SetSelection(index)
+    event = wx.CommandEvent(wx.EVT_CHOICE.typeId, control.GetId())
+    event.SetEventObject(control)
+    control.GetEventHandler().ProcessEvent(event)
+    pump()
+
+
+def select_row(window: Any, name: str, row: int) -> None:  # noqa: ANN401
+    """Select *row* in the ``wx.dataview.DataViewCtrl`` named *name*.
+
+    Measured (the opposite of :func:`select_choice`'s own
+    ``wx.Choice.SetSelection`` finding): ``DataViewCtrl.Select``
+    already fires ``wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED`` on
+    this wx build by itself, so nothing further is posted here --
+    doing so would deliver the handler twice for one selection.
+
+    Raises:
+        ControlNotFoundError: If *name* does not resolve inside
+            *window*.
+    """
+    control = find_control(window, name)
+    item = control.GetModel().GetItem(row)
+    control.Select(item)
     pump()
 
 

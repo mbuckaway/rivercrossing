@@ -27,8 +27,10 @@ import pytest
 
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
+from rivercrossing.roster import Roster
 from rivercrossing.ui import ids
-from rivercrossing.ui.presenters.data_source import RiderRow, RideSummary, StandingsRow
+from rivercrossing.ui.app import _seed_roster
+from rivercrossing.ui.presenters.data_source import RideSummary, StandingsRow
 from rivercrossing.ui.views import _support, entry_detail, results_win, ride_library, rider_editor
 from rivercrossing.ui.views.entry_detail import COL_CARD as LAPS_COL_CARD
 from rivercrossing.ui.views.entry_detail import EntryDetailDialog
@@ -105,7 +107,7 @@ def shared_rider_editor(xrc_resource: object) -> RiderEditor:
     window.Show()
     window.Layout()
     harness.pump()
-    view = RiderEditor(window, data_source=DemoDataSource())
+    view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
     try:
         yield view
     finally:
@@ -227,18 +229,17 @@ def test_rider_editor_team_column_is_shown_for_the_demos_mixed_roster(
 def test_rider_editor_team_column_is_hidden_for_a_solo_only_roster(
     xrc_resource: object,
 ) -> None:
-    """Req 3: a solo-only mock hides the Team column entirely."""
-
-    class _SoloOnlySource:
-        def riders(self) -> list[RiderRow]:
-            return [RiderRow(plate="1", name="Solo One"), RiderRow(plate="2", name="Solo Two")]
+    """Req 3: a solo-only roster hides the Team column entirely."""
+    roster = Roster()
+    roster.create_solo_entry(name="Solo One", plate="1")
+    roster.create_solo_entry(name="Solo Two", plate="2")
 
     window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     window.Show()
     harness.pump()
 
     try:
-        view = RiderEditor(window, data_source=_SoloOnlySource())
+        view = RiderEditor(window, roster=roster)
         hidden = view.riders_list.GetColumn(COL_TEAM).IsHidden()
     finally:
         harness.close_window(window)
@@ -537,7 +538,7 @@ def test_rider_editor_show_riders_repaints_the_list_after_associating_its_model(
     refresh, update = _spy_repaint(control)
 
     try:
-        view = RiderEditor(window, data_source=DemoDataSource())
+        view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
         row_count = view.riders_list.GetModel().GetCount()
     finally:
         harness.close_window(window)
