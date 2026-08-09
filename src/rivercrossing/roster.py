@@ -24,6 +24,15 @@ this module's lock matrix (E3.1.2, R-15/R-17): ``can_edit_structure``,
 ``can_fix_name``, consulted by :meth:`Roster.delete_entry` and
 :meth:`Roster.move_rider`.
 
+E3.2's 2026-08-09 follow-on decision relaxes the 2..max_team_size
+floor to a start-time check: rider_editor_dlg adds one rider at a
+time, so ``create_team_entry_of_one`` and ``move_rider`` allow a
+transient size-1 team while DRAFT (the last rider leaving one
+dissolves it); ``validate_for_start`` reports every team still
+below the floor. The same decision makes plates editable in DRAFT
+for a solo entry (``change_solo_plate``) or a pooled team member
+(``change_pooled_rider_plate``).
+
 ``Entry`` and ``Rider`` compare by identity, not by field value
 (``eq=False``): they are living records a caller holds a reference
 to across renames and moves, not interchangeable values like
@@ -185,6 +194,19 @@ class AuditEvent:
     payload: Mapping[str, object]
 
 
+@dataclass(frozen=True)
+class StartViolation:
+    """One reason :meth:`Roster.validate_for_start` refuses a start.
+
+    ``entry`` is the exact offending :class:`Entry` -- not a plate or
+    name snapshot -- so a caller can trace straight back to the row
+    that needs fixing (E4's start gate, E3.3's CSV commit).
+    """
+
+    entry: Entry
+    reason: str
+
+
 def _lowest_plate(plates: Iterable[str]) -> str:
     """Return the numerically lowest of *plates* (S1's "adopts...")."""
     return min(plates, key=int)
@@ -331,6 +353,28 @@ class Roster:
         numeric = [int(plate) for plate in self._plates_in_use() if plate.isdigit()]
         return str(max(numeric, default=0) + 1)
 
+    def validate_for_start(self) -> list[StartViolation]:
+        """Return every reason this roster is not ready to start.
+
+        The one rule the 2026-08-09 follow-on decision defers to
+        start time: a team below :data:`MIN_TEAM_SIZE` riders,
+        transiently allowed in DRAFT (:meth:`create_team_entry_of_one`,
+        :meth:`move_rider`) but never once the ride starts. The
+        upper bound is never deferred -- :meth:`create_team_entry`
+        and :meth:`move_rider` both enforce it immediately -- so it
+        needs no check here. E4's start gate and E3.3's CSV commit
+        call this before their own transition; nothing else is
+        checked.
+        """
+        return [
+            StartViolation(
+                entry=entry,
+                reason=f"team size must be at least {MIN_TEAM_SIZE}, got {entry.team_size}",
+            )
+            for entry in self._entries
+            if entry.type is EntryType.TEAM and entry.team_size < MIN_TEAM_SIZE
+        ]
+
     def create_solo_entry(self, *, name: str, plate: str) -> Entry:
         """Create a solo entry for *name*, plated per S1's plate model.
 
@@ -379,6 +423,44 @@ class Roster:
         )
         return entry
 
+    def create_team_entry_of_one(
+        self, *, display_name: str, rider: Rider, plate: str | None = None
+    ) -> Entry:
+        """Create a team of exactly one rider -- transient, DRAFT only.
+
+        rider_editor_dlg's Add/Save form carries a single rider at a
+        time; the 2026-08-09 follow-on decision permits this
+        transient size-1 team while the ride stays in DRAFT,
+        deferring R-12's 2..max_team_size floor to a start-time
+        check (:meth:`validate_for_start`) rather than a construction
+        invariant. :meth:`create_team_entry` (the CSV bulk path)
+        keeps its own 2..max_team_size contract, unchanged.
+
+        Raises:
+            LockedError: the ride has left DRAFT.
+            SoloOnlyRideError: this ride's entry_mode is solo-only.
+            PlateShapeError: *rider*/*plate* violate the ride's
+                plate_model shape.
+            DuplicatePlateError: a resolved plate collides with an
+                existing entry's or rider's plate.
+        """
+        if not can_edit_structure(self._status):
+            msg = f"a new team cannot be started once the ride is {self._status}"
+            raise LockedError(msg)
+        if self._entry_mode is EntryMode.SOLO:
+            msg = "this ride is solo-only; team entries are not allowed"
+            raise SoloOnlyRideError(msg)
+        entry_plate = self._shape_and_validate([rider], plate)
+        entry = Entry(
+            plate=entry_plate, display_name=display_name, type=EntryType.TEAM, riders=[rider]
+        )
+        self._entries.append(entry)
+        self._log(
+            "create_team_entry_of_one",
+            {"plate": entry.plate, "display_name": display_name, "team_size": 1},
+        )
+        return entry
+
     def update_entry(
         self, entry: Entry, *, display_name: str | None = None, notes: str | None = None
     ) -> None:
@@ -397,6 +479,74 @@ class Roster:
             entry.notes = notes
             payload["notes"] = notes
         self._log("update_entry", payload)
+
+    def change_solo_plate(self, entry: Entry, *, plate: str) -> None:
+        """Change a solo entry's plate, in either plate model (R-20).
+
+        ``team_relay``: sets the entry's own plate directly -- its
+        one rider stays plateless (S1). ``rider_pooled``: sets the
+        rider's plate too, so entry and rider stay in lock-step.
+        Plates lock at start along with membership (spec S3:46).
+
+        Raises:
+            EntryNotFoundError: *entry* is not a member of this
+                roster.
+            LockedError: the ride has left DRAFT.
+            PlateShapeError: *entry* is not type SOLO.
+            DuplicatePlateError: *plate* collides with an existing
+                entry's or rider's plate.
+        """
+        self._require_known_entry(entry)
+        if not can_edit_structure(self._status):
+            msg = f"plates cannot be changed once the ride is {self._status}"
+            raise LockedError(msg)
+        if entry.type is not EntryType.SOLO:
+            msg = "change_solo_plate requires a solo entry"
+            raise PlateShapeError(msg)
+        old_plate = entry.plate
+        self._require_plate_free_for_change(plate, exclude=old_plate)
+        entry.plate = plate
+        if self._plate_model is PlateModel.RIDER_POOLED:
+            entry.riders[0].plate = plate
+        self._log(
+            "change_solo_plate",
+            {"display_name": entry.display_name, "old_plate": old_plate, "new_plate": plate},
+        )
+
+    def change_pooled_rider_plate(self, rider: Rider, *, plate: str) -> None:
+        """Change one rider_pooled team member's own plate (S1, R-20).
+
+        Recomputes the owning team's derived plate afterwards --
+        S1's "adopts the lowest-numbered rider's plate." A solo
+        entry's own rider is out of scope here; use
+        :meth:`change_solo_plate` instead.
+
+        Raises:
+            RiderNotFoundError: *rider* is not on any entry here.
+            LockedError: the ride has left DRAFT.
+            PlateShapeError: this ride's plate_model is not
+                rider_pooled, or *rider* is not on a team member.
+            DuplicatePlateError: *plate* collides with an existing
+                entry's or rider's plate.
+        """
+        entry = self._find_owning_entry(rider)
+        if entry is None:
+            msg = "rider is not on any entry in this roster"
+            raise RiderNotFoundError(msg)
+        if not can_edit_structure(self._status):
+            msg = f"plates cannot be changed once the ride is {self._status}"
+            raise LockedError(msg)
+        if self._plate_model is not PlateModel.RIDER_POOLED or entry.type is not EntryType.TEAM:
+            msg = "change_pooled_rider_plate requires a rider_pooled team member"
+            raise PlateShapeError(msg)
+        old_plate = cast("str", rider.plate)
+        self._require_plate_free_for_change(plate, exclude=old_plate)
+        rider.plate = plate
+        self._recompute_pooled_plate(entry)
+        self._log(
+            "change_pooled_rider_plate",
+            {"rider_name": rider.name, "old_plate": old_plate, "new_plate": plate},
+        )
 
     def delete_entry(self, entry: Entry) -> None:
         """Delete *entry* if the lock matrix currently allows it.
@@ -433,11 +583,17 @@ class Roster:
         """Move *rider* onto *to_entry* if the lock matrix allows it.
 
         Both entries must be type TEAM -- a solo entry's one rider
-        is fixed by definition (S1) -- and the move must keep both
-        team sizes within 2..max_team_size (R-12). Whether a move
-        may even be attempted depends on the ride's current
-        (status, plate_model) cell of the lock matrix (E3.1.2,
-        R-17): :func:`can_move_rider`.
+        is fixed by definition (S1) -- and the move must keep the
+        destination within max_team_size (R-12). The source team's
+        lower bound is a start-time check now
+        (:meth:`validate_for_start`), not a move_rider invariant
+        (2026-08-09 follow-on decision): dropping to a transient
+        size-1 team succeeds; dropping its last rider dissolves the
+        now-empty entry outright (:meth:`_dissolve_entry`) rather
+        than leaving a size-0 team with no plate owner (spec S2).
+        Whether a move may even be attempted depends on the ride's
+        current (status, plate_model) cell of the lock matrix
+        (E3.1.2, R-17): :func:`can_move_rider`.
 
         Raises:
             RiderNotFoundError: *rider* is not on any entry here.
@@ -446,7 +602,7 @@ class Roster:
             LockedError: the lock matrix forbids a move in the
                 ride's current state and plate model.
             InvalidMoveError: either entry is not type TEAM, or the
-                move would breach a team size bound.
+                move would exceed the destination's max size.
         """
         from_entry = self._find_owning_entry(rider)
         if from_entry is None:
@@ -459,21 +615,21 @@ class Roster:
         if from_entry.type is not EntryType.TEAM or to_entry.type is not EntryType.TEAM:
             msg = "move_rider requires both entries to be team entries"
             raise InvalidMoveError(msg)
-        if len(from_entry.riders) - 1 < MIN_TEAM_SIZE:
-            msg = "move would drop the source team below its minimum size"
-            raise InvalidMoveError(msg)
         if len(to_entry.riders) + 1 > self._max_team_size:
             msg = "move would exceed the destination team's max size"
             raise InvalidMoveError(msg)
 
         from_entry.riders.remove(rider)
         to_entry.riders.append(rider)
-        self._recompute_pooled_plate(from_entry)
+        if from_entry.riders:
+            self._recompute_pooled_plate(from_entry)
         self._recompute_pooled_plate(to_entry)
         self._log(
             "move_rider",
             {"rider_name": rider.name, "from_plate": from_entry.plate, "to_plate": to_entry.plate},
         )
+        if not from_entry.riders:
+            self._dissolve_entry(from_entry)
 
     def _shape_and_validate(self, riders: Sequence[Rider], plate: str | None) -> str:
         """Resolve riders'/plate's shape; return the entry's plate.
@@ -541,6 +697,28 @@ class Roster:
         if entry.has_data:
             return "entry has recorded data; DNF or void it instead of deleting"
         return f"entries can no longer be deleted once the ride is {self._status}"
+
+    def _dissolve_entry(self, entry: Entry) -> None:
+        """Remove *entry* once move_rider has emptied it (E3.2).
+
+        An empty team has no plate owner and no size-0 representation
+        (spec S2); it ceases to exist rather than lingering as an
+        empty row in :attr:`entries`.
+        """
+        self._entries.remove(entry)
+        self._log(
+            "dissolve_team_entry", {"plate": entry.plate, "display_name": entry.display_name}
+        )
+
+    def _require_plate_free_for_change(self, new_plate: str, *, exclude: str) -> None:
+        """Raise unless *new_plate* is free, or equal to *exclude*.
+
+        *exclude* is the plate's own current value: setting a plate
+        back to itself is a harmless no-op, not a collision with its
+        own prior claim.
+        """
+        if new_plate != exclude:
+            self._require_plates_free([new_plate])
 
     def _require_known_entry(self, entry: Entry) -> None:
         """Raise EntryNotFoundError unless *entry* is a member here."""
