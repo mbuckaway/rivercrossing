@@ -27,6 +27,7 @@ binding-removal proof over which bindings are still present.
 
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 import harness
@@ -48,6 +49,14 @@ MENU_BOUND_ACCELERATORS = tuple(
 )
 
 _PROBE_TIMEOUT_SECONDS = 20
+
+# test_csvio.py's own fixture home (its module docstring) -- reused
+# here rather than a tmp_path, so the E3.4 picker-seam tests below
+# stay within pytest's own 3-argument budget (CODINGSTANDARDS-
+# SIMPLECODE.md:154).
+_CLEAN_POOLED_FIXTURE = (
+    Path(__file__).resolve().parents[1] / "unit" / "fixtures" / "csv" / "clean_pooled.csv"
+)
 
 # Runs main() in a fresh interpreter with wx.App.MainLoop patched to
 # record whether main_frame was already shown before it can possibly
@@ -268,9 +277,15 @@ def test_accelerator_entries_entry_matches_its_own_table_row(
 def test_command_route_posts_a_not_yet_implemented_status_notice(
     firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """A COMMAND row with no engine yet still tells the operator so."""
-    route = commands.route_for_id("mi_export_csv")
-    _fire_menu_event(firing_frame, "mi_export_csv")
+    """A COMMAND row with no engine yet still tells the operator so.
+
+    ``mi_backup_now``, not ``mi_export_csv``: E3.4 gave the latter a
+    real handler (``_handle_export_csv``), so it no longer exercises
+    this generic fallback path at all -- its own dedicated tests live
+    alongside the import-CSV ones below.
+    """
+    route = commands.route_for_id("mi_backup_now")
+    _fire_menu_event(firing_frame, "mi_backup_now")
 
     status_text = firing_frame.GetStatusBar().GetStatusText()
 
@@ -352,9 +367,14 @@ def test_open_target_applies_the_recorded_default_button(
     would otherwise block forever with no user present. By the time
     it runs, ``_open_target``'s own ``_apply_dialog_defaults`` call
     has already set the real default, so the captured name is a
-    genuine structural fact, not a proxy.
+    genuine structural fact, not a proxy. ``csv_preview_dlg``'s own
+    row needs one more seam: ``_pick_import_path`` monkeypatched to a
+    committed fixture, since E3.4 made that dialog's own route run a
+    picker before it opens at all -- harmless for the other three
+    rows, which never call it.
     """
     dialog_name, control_name = decision
+    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
     captured: dict[str, str | None] = {}
 
     # "opener" (not "_opener"): every call site names it as a keyword
@@ -406,6 +426,102 @@ def test_open_target_applies_the_recorded_initial_focus(
     _fire_menu_event(firing_frame, _menu_item_id_for_target(dialog_name))
 
     assert calls == [(dialog_name, field_name)]
+
+
+# --- E3.4: File > Import/Export Riders CSV… -----------------------
+
+
+def test_mi_import_csv_given_a_cancelled_picker_opens_no_window(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """task-briefs.md's own "cancelled picker = no dialog" (E3.4)."""
+    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: None)
+    before = len(wx.GetTopLevelWindows())
+
+    _fire_menu_event(firing_frame, "mi_import_csv")
+
+    assert len(wx.GetTopLevelWindows()) == before
+
+
+def test_mi_import_csv_given_a_picked_path_shows_it_decorated(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Menu -> picker -> csv_preview_dlg opens decorated (E3.4)."""
+    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+    captured: dict[str, str] = {}
+
+    def _capture_summary(dialog: Any, _opener: Any) -> int:  # noqa: ANN401
+        captured["summary"] = harness.find_control(dialog, ids.SUMMARY_LBL).GetLabelText()
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _capture_summary)
+
+    _fire_menu_event(firing_frame, "mi_import_csv")
+
+    assert captured["summary"] == "clean_pooled.csv → 9 riders · 2 teams · 0 conflicts"
+
+
+def test_mi_import_csv_import_click_commits_into_the_shared_roster(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The committed roster is the same one rider_editor_dlg reads.
+
+    Proven end to end through the app's own two routes, never a
+    direct handle on ``_RouteContext.roster``: import clean_pooled.
+    csv via ``mi_import_csv`` (clicking wxID_OK for real inside the
+    monkeypatched ``run_dialog``), then open ``rider_editor_dlg`` via
+    ``mi_rider_editor`` and read its own ``riders_list``.
+    """
+    monkeypatch.setattr(app_module, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+
+    def _click_import(dialog: Any, _opener: Any) -> int:  # noqa: ANN401
+        harness.click(dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _click_import)
+    _fire_menu_event(firing_frame, "mi_import_csv")
+
+    captured: dict[str, set[str]] = {}
+
+    def _capture_plates(dialog: Any, _opener: Any) -> int:  # noqa: ANN401
+        model = harness.find_control(dialog, ids.RIDERS_LIST).GetModel()
+        captured["plates"] = {model.GetValueByRow(row, 0) for row in range(model.GetCount())}
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _capture_plates)
+    _fire_menu_event(firing_frame, "mi_rider_editor")
+
+    assert {"1", "2", "3", "4", "10", "11", "12", "20", "21"} <= captured["plates"]
+
+
+def test_mi_export_csv_given_a_cancelled_picker_is_a_silent_no_op(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled save picker changes nothing, silently (E3.4)."""
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _parent: None)
+    before = firing_frame.GetStatusBar().GetStatusText()
+
+    _fire_menu_event(firing_frame, "mi_export_csv")
+
+    assert firing_frame.GetStatusBar().GetStatusText() == before
+
+
+def test_mi_export_csv_given_a_picked_path_writes_the_rosters_own_header(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Menu -> save picker -> csvio.export writes the real file."""
+    export_path = tmp_path / "export.csv"
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _parent: export_path)
+
+    _fire_menu_event(firing_frame, "mi_export_csv")
+
+    assert export_path.read_text(encoding="utf-8").splitlines()[0] == "plate,name,team_name,notes"
 
 
 # --- negative: main() must show the frame before it can block ----

@@ -20,7 +20,7 @@ CLAUDE.md's removable-seam note) even though ``ui.views``/
 """
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import harness
 import pytest
@@ -33,6 +33,9 @@ from rivercrossing.ui import ids
 from rivercrossing.ui.app import _seed_roster
 from rivercrossing.ui.presenters.riders import NEW_TEAM_CHOICE, SOLO_TEAM_CHOICE, CsvPreview
 from rivercrossing.ui.views.rider_editor import COL_TEAM, ROSTER_INFOBAR, RiderEditor
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.functional
 
@@ -380,16 +383,40 @@ def test_rider_editor_dlg_new_team_flow_cancelled_creates_no_entry(
     assert rows == _SEEDED_ROWS
 
 
-# ------------------------------------------------------------ solo-only
+# -------------------------------------------------- solo/mixed variant
 
 
-def test_rider_editor_dlg_solo_only_roster_hides_the_team_column_and_choice(
-    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
-) -> None:
-    """R-11: a solo-only roster hides team_choice and Team column."""
+def _solo_only_roster() -> Roster:
+    """Return a bare, solo-only roster (E3.4.2's own "solo" case)."""
     roster = Roster()
     roster.create_solo_entry(name="Solo One", plate="1")
-    dialog, view = _show(xrc_resource, roster)
+    return roster
+
+
+def _mixed_roster() -> Roster:
+    """Return the seeded mixed roster (E3.4.2's own "mixed" case)."""
+    return _seed_roster(DemoDataSource())
+
+
+@pytest.mark.parametrize(
+    ("roster_factory", "expected_visible"),
+    [(_solo_only_roster, False), (_mixed_roster, True)],
+    ids=["solo_only", "mixed"],
+)
+def test_rider_editor_dlg_team_ui_visibility_matches_entry_mode(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    roster_factory: Callable[[], Roster],
+    expected_visible: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
+) -> None:
+    """R-11: Team column + team_choice visibility follows entry_mode.
+
+    E3.4.2's own "both states" harness assertion: solo-only hides
+    both; mixed shows both -- the editor's other flows (add/save/
+    delete/new-team) already run against the mixed roster throughout
+    this file's earlier tests, so "still work in mixed" is proven
+    there, not repeated here.
+    """
+    dialog, view = _show(xrc_resource, roster_factory())
 
     try:
         team_choice_shown = harness.find_control(dialog, ids.TEAM_CHOICE).IsShown()
@@ -397,8 +424,8 @@ def test_rider_editor_dlg_solo_only_roster_hides_the_team_column_and_choice(
     finally:
         harness.close_window(dialog)
 
-    assert team_choice_shown is False
-    assert column_hidden is True
+    assert team_choice_shown is expected_visible
+    assert column_hidden is not expected_visible
 
 
 # --------------------------------------------------- csv_preview_dlg

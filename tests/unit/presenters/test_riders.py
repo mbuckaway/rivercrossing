@@ -978,10 +978,17 @@ def test_on_confirm_csv_import_given_a_clean_preview_applies_it_to_the_roster(
     assert [entry.display_name for entry in roster.entries] == ["Alex Ferreira", "Bo Lindqvist"]
 
 
-def test_on_confirm_csv_import_given_a_clean_preview_refreshes_the_rows(
+def test_on_confirm_csv_import_given_a_clean_preview_makes_no_further_view_call(
     tmp_path: Path,
 ) -> None:
-    """A successful commit re-renders riders_list/team_choice (R-20)."""
+    """A successful commit calls no RidersView member at all (E3.4).
+
+    ``CsvPreviewDialog`` -- the only real caller -- never implements
+    ``show_riders``/``show_team_choices`` (module docstring's own
+    mirror-image split), so this handler must not call them: a live
+    ``RiderEditor`` sees the imported roster next time it is
+    (re)opened, ``RidersPresenter.__init__`` reading it fresh.
+    """
     roster = Roster()
     view = RecordingRidersView()
     presenter = RidersPresenter(view, roster, load=False)
@@ -991,10 +998,7 @@ def test_on_confirm_csv_import_given_a_clean_preview_refreshes_the_rows(
 
     presenter.on_confirm_csv_import()
 
-    assert view.calls == [
-        ("show_riders", ([RiderRow(plate="1", name="Alex Ferreira", team=None)],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE],)),
-    ]
+    assert view.calls == []
 
 
 def test_on_confirm_csv_import_given_conflicts_present_shows_validation_not_crash(
