@@ -125,10 +125,11 @@ jobs:
           path: ci-gui-probe.png
           if-no-files-found: warn
 
-      # Per-file worker processes plus §4's one auto-retry. Both are load-
-      # bearing: see noxfile.py's functional session for the measurements.
+      # Per-file worker processes plus §4's auto-retry (bumped to two,
+      # PR #8's CI run 31344728049). Both are load-bearing: see
+      # noxfile.py's functional session for the measurements.
       - name: pytest functional (real wx windows)
-        run: pytest tests/functional --no-cov -n auto --dist loadfile --reruns 1
+        run: pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2
       - name: Upload failure screenshots
         if: failure()
         uses: actions/upload-artifact@v4

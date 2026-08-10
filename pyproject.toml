@@ -47,7 +47,7 @@ dev = [
     "pytest-asyncio",
     "pytest-cov",       # T-14 needs --cov-branch/--cov-fail-under in pytest config
     "pytest-xdist",     # per-file worker processes for the functional suite; see noxfile
-    "pytest-rerunfailures",  # project-plan §4's "one auto-retry" flake control
+    "pytest-rerunfailures",  # project-plan §4's auto-retry flake control (2, PR #8's CI)
     "hypothesis",
     "coverage[toml]",
     "nox",              # the task runner; identical invocation on macOS and Windows

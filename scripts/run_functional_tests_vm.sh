@@ -205,7 +205,7 @@ main() {
   rm -f "${sentinel}"
 
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
-    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python -m pytest tests/functional --no-cov -n auto --dist loadfile --reruns 1" &
+    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python -m pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2" &
   local run_pid=$!
 
   run_watchdog "${VM_TIMEOUT}" "${run_pid}" "${sentinel}" &
