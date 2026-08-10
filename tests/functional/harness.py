@@ -64,6 +64,7 @@ __all__ = [
     "click",
     "close_window",
     "find_control",
+    "flush_deferred_deletions",
     "load_menubar",
     "load_window",
     "load_xrc_resources",
@@ -117,24 +118,81 @@ def load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs
     return resource
 
 
+_FLUSH_IDLE_ATTEMPTS = 25  # mirrors _CLOSE_SETTLE_ATTEMPTS / FIND_SETTLE_ATTEMPTS
+
+
+def flush_deferred_deletions() -> None:
+    """Flush wx's deferred-deletion queue by driving idle processing.
+
+    wxWidgets only frees a ``Destroy()``d window during idle
+    processing (``wxApp::ScheduleForDestruction`` ->
+    ``DeletePendingObjects``), and idle processing only runs once the
+    event queue drains. Measured (probe script, this task's own
+    scratchpad, cross-checked against PR #8's CI runs 31390187217 /
+    31390190295): with no ``MainLoop`` running,
+    ``wx.EventLoopBase.GetActive()`` is ``None``, and a bare
+    ``wx.SafeYield()`` reaps a deferred delete on an idle host but not
+    reliably under a hosted runner's load, where the queue never
+    drains far enough to reach idle. ``EventLoopBase.ProcessIdle()``
+    drives the idle machinery directly, without waiting for the queue
+    to drain first, and reaped the probe's own deferred delete on
+    every trial regardless of load. wxPython's own test framework
+    (``unittests/wtc.py``) documents the same requirement: without a
+    running ``MainLoop``, a useful ``Yield`` needs a created and
+    activated event loop first.
+
+    Creates and activates a throwaway loop only when none is already
+    active -- :func:`run_modal`'s own ``ShowModal`` call leaves one
+    active, and this must not disturb it -- so this is safe to call
+    from either context.
+    """
+    loop = wx.EventLoopBase.GetActive()
+    if loop is not None:
+        _drain_idle(loop)
+        return
+    loop = wx.GetApp().GetTraits().CreateEventLoop()
+    activator = wx.EventLoopActivator(loop)
+    try:
+        _drain_idle(loop)
+    finally:
+        del activator
+
+
+def _drain_idle(loop: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Yield *loop* once, then process its idle queue until it settles.
+
+    Bounded by :data:`_FLUSH_IDLE_ATTEMPTS`: ``ProcessIdle()`` reports
+    whether more idle work remains, and a source that never settles
+    must not hang the caller.
+    """
+    loop.YieldFor(wx.EVT_CATEGORY_ALL)
+    attempts = 0
+    while loop.ProcessIdle() and attempts < _FLUSH_IDLE_ATTEMPTS:
+        attempts += 1
+
+
 def pump() -> None:
-    """Process one round of the event queue.
+    """Process one round of the event queue, then flush deletions.
 
     The only wait primitive this harness uses (project-plan.md
     section 4: event-driven waits, never a bare ``sleep``). A
     deferred ``Destroy()`` and a posted ``CommandEvent`` both need
     one of these to actually take effect.
 
-    ``wx.SafeYield()``, not the plain ``wx.Yield()`` this used
-    before: measured (PR #8's CI, run 31344728049, hosted 3-core
-    runners at this suite's full 761-test size) -- ``ui.views.
-    _support.find_control``'s own settle retry already relies on
-    ``SafeYield`` specifically for the identical deferred-deletion
-    class of problem, never plain ``Yield``, and this is that same
-    fix applied at the one shared primitive every other wait in this
-    harness is built on, rather than re-applied at each call site.
+    ``wx.SafeYield()`` drains the event queue -- posted
+    ``CommandEvent``s among them -- the same call ``ui.views.
+    _support.find_control``'s own settle retry relies on for the
+    identical class of problem. It is not always enough on its own
+    for a deferred ``Destroy()``, though: measured (PR #8's CI runs
+    31390187217/31390190295), a hosted runner's event queue can
+    starve idle processing under load, so a bare ``SafeYield`` never
+    reaches the point wx actually frees a pending delete.
+    :func:`flush_deferred_deletions` is the mechanism that reaches it
+    regardless of queue load, so every call site that already pumps
+    -- this one included -- now gets it for free.
     """
     wx.SafeYield()
+    flush_deferred_deletions()
 
 
 def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN401
@@ -377,22 +435,38 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
     about-to-be-destroyed window -- the identical address-reuse risk
     ``ui.views._support.find_control``'s own ``FIND_SETTLE_ATTEMPTS``
     retry documents, applied here to closing instead of looking up.
-    This now loops on ``wx.SafeYield()`` -- the exact call
-    ``find_control``'s own retry already relies on, not the
-    ``wx.GetApp().ProcessIdle()`` first considered, which does not
-    exist on ``wx.App`` in this wx build (measured: ``wx.App`` has no
-    such method here) -- bounded by :data:`_CLOSE_SETTLE_ATTEMPTS`,
-    never a sleep, until *name* (captured before ``Close``/
-    ``Destroy``, never read from *window* again) resolves to nothing
-    or to a different window. It always returns rather than hang,
-    even if still unreaped when the bound is exhausted.
 
-    The caller must not touch *window* again after this returns:
-    once its deletion completes, the underlying C++ object is gone,
-    and any further method call on it -- even a harmless-looking
-    query -- segfaults the interpreter (measured). This function
-    itself only ever compares *window* by identity (``is``) once
-    ``Destroy()`` has run, never calling a method on it.
+    An earlier revision of this loop exited on
+    ``wx.Window.FindWindowByName(name) is window`` -- a Python
+    *wrapper* identity check -- and that turned out to be the
+    early-exit hole: PR #8's CI (runs 31390187217/31390190295) still
+    found a residual control after that loop returned. ``GetHandle()``
+    is compared instead: it reports the *native* handle the live C++
+    object itself owns, not something the Python binding's own
+    wrapper cache can misreport under the address-reuse churn
+    ``find_control``'s docstring already documents. No new window is
+    constructed while this loop runs, so *found*'s handle can only
+    stay equal to *handle* (``window``'s own C++ object, deletion
+    still pending) or genuinely differ (some other, already-existing
+    window now answering the same name) -- handle reuse cannot happen
+    inside the loop itself. The loop now calls
+    :func:`flush_deferred_deletions` -- proven to drain a hosted
+    runner's idle queue, superseding the bare ``wx.SafeYield()`` this
+    used before -- bounded by :data:`_CLOSE_SETTLE_ATTEMPTS`, never a
+    sleep, until *found* is ``None`` or its handle no longer matches
+    *handle* (both captured before ``Close``/``Destroy``). If *handle*
+    itself came back falsy before destruction, the handle comparison
+    is skipped and only ``found is None`` decides the exit. It always
+    returns rather than hang, even if still unreaped when the bound is
+    exhausted.
+
+    The caller must not touch *window* again after this returns: once
+    its deletion completes, the underlying C++ object is gone, and any
+    further method call on it -- even a harmless-looking query --
+    segfaults the interpreter (measured). *name* and *handle* are
+    captured before ``Destroy()`` runs and neither reads from *window*
+    again afterwards; every later query in the loop is against
+    *found*, a freshly resolved, live wrapper.
 
     Returns:
         ``Close()``'s return value. ``False`` would mean a bound
@@ -401,12 +475,17 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
         assert on rather than assumed.
     """
     name = window.GetName()
+    handle = window.GetHandle()
     closed = window.Close()
     if not window.IsBeingDeleted():
         window.Destroy()
     attempts = 0
-    while wx.Window.FindWindowByName(name) is window and attempts < _CLOSE_SETTLE_ATTEMPTS:
-        wx.SafeYield()
+    found = wx.Window.FindWindowByName(name)
+    while attempts < _CLOSE_SETTLE_ATTEMPTS:
+        if found is None or (handle and found.GetHandle() != handle):
+            break
+        flush_deferred_deletions()
+        found = wx.Window.FindWindowByName(name)
         attempts += 1
     pump()
     return closed
