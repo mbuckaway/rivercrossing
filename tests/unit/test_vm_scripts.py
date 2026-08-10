@@ -83,7 +83,7 @@ _RUN_VM_SUBSTRINGS = (
     "--no-graphics",
     "tart stop",
     "tart delete",
-    "pytest tests/functional --no-cov -n auto --dist loadfile --reruns 1",
+    "pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2",
     "RIVERCROSSING_VM_TIMEOUT",
     "1800",
     "exit 124",
