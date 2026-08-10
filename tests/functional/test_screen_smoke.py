@@ -122,6 +122,30 @@ def test_close_window_reaps_the_dialog_so_a_shared_name_no_longer_resolves(
     assert residual is None
 
 
+def test_close_window_reaps_every_cycle_of_thirty_rapid_open_closes(
+    xrc_resource: object,
+) -> None:
+    """Stress sibling: the reap must hold under load, not just once.
+
+    Hosted macOS CI failed this family near-every run at this
+    suite's full 761-test size on a 3-core runner, never locally on
+    the 4-CPU Tart VM -- a single dialog open/close proved nothing
+    about behaviour under sustained load. Thirty rapid cycles in one
+    process is the closest local approximation this harness can
+    reach: each iteration asserts the *previous* dialog's own name
+    is already gone before the next one opens, so a reap that only
+    sometimes keeps up would fail here well before cycle 30.
+    """
+    for _ in range(30):
+        dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
+        dialog.Show()
+        harness.pump()
+
+        harness.close_window(dialog)
+
+        assert harness.wx.Window.FindWindowByName(ids.MANUAL_DEAL_DLG) is None
+
+
 def test_type_text_given_a_string_updates_the_controls_value(xrc_resource: object) -> None:
     """Direct injection is measured reliable; the simulator is not."""
     dialog = harness.load_window(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)

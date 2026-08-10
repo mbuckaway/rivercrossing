@@ -348,19 +348,42 @@ def screenshot(window: Any, destination: Path) -> Path:  # noqa: ANN401
     return destination
 
 
+_CLOSE_SETTLE_ATTEMPTS = 25  # mirrors ui.views._support.FIND_SETTLE_ATTEMPTS
+
+
 def close_window(window: Any) -> bool:  # noqa: ANN401
-    """Close and destroy *window*, then let the deletion complete.
+    """Close and destroy *window*, then wait for it to actually reap.
 
     A dialog's default ``Close()`` only ``Hide()``s it -- unlike a
     frame, whose default handler destroys it outright (measured) --
-    so both cases are covered by checking ``IsBeingDeleted()``
-    before an explicit ``Destroy()``. The event loop is pumped
-    exactly once more after that.
+    so both cases are covered by checking ``IsBeingDeleted()`` before
+    an explicit ``Destroy()``.
+
+    Measured (hosted macOS CI, near-every run at this suite's full
+    761-test size on a 3-core runner -- the 4-CPU Tart VM this
+    project's own local runs use stays green): a single pump right
+    after ``Destroy()`` is not always enough idle time under load for
+    the deferred deletion to actually complete, so a later
+    ``FindWindowByName`` for the same name can still resolve the
+    about-to-be-destroyed window -- the identical address-reuse risk
+    ``ui.views._support.find_control``'s own ``FIND_SETTLE_ATTEMPTS``
+    retry documents, applied here to closing instead of looking up.
+    This now loops on ``wx.SafeYield()`` -- the exact call
+    ``find_control``'s own retry already relies on, not the
+    ``wx.GetApp().ProcessIdle()`` first considered, which does not
+    exist on ``wx.App`` in this wx build (measured: ``wx.App`` has no
+    such method here) -- bounded by :data:`_CLOSE_SETTLE_ATTEMPTS`,
+    never a sleep, until *name* (captured before ``Close``/
+    ``Destroy``, never read from *window* again) resolves to nothing
+    or to a different window. It always returns rather than hang,
+    even if still unreaped when the bound is exhausted.
 
     The caller must not touch *window* again after this returns:
-    once the pump completes a pending deletion, the underlying C++
-    object is gone, and any further method call on it -- even a
-    harmless-looking query -- segfaults the interpreter (measured).
+    once its deletion completes, the underlying C++ object is gone,
+    and any further method call on it -- even a harmless-looking
+    query -- segfaults the interpreter (measured). This function
+    itself only ever compares *window* by identity (``is``) once
+    ``Destroy()`` has run, never calling a method on it.
 
     Returns:
         ``Close()``'s return value. ``False`` would mean a bound
@@ -368,8 +391,13 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
         such handler, but the value is surfaced for the caller to
         assert on rather than assumed.
     """
+    name = window.GetName()
     closed = window.Close()
     if not window.IsBeingDeleted():
         window.Destroy()
+    attempts = 0
+    while wx.Window.FindWindowByName(name) is window and attempts < _CLOSE_SETTLE_ATTEMPTS:
+        wx.SafeYield()
+        attempts += 1
     pump()
     return closed
