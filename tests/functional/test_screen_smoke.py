@@ -122,6 +122,49 @@ def test_close_window_reaps_the_dialog_so_a_shared_name_no_longer_resolves(
     assert residual is None
 
 
+def test_flush_deferred_deletions_reaps_a_destroyed_dialog_in_one_call(
+    xrc_resource: object,
+) -> None:
+    """The new primitive alone, no prior yield, must flush a delete.
+
+    Isolates :func:`harness.flush_deferred_deletions` from every
+    other yield this suite already performs elsewhere: the dialog is
+    constructed and destroyed with no ``Show()``/``pump()`` call in
+    between, so a pass here can only be this one helper's own doing,
+    never residual idle time an earlier call happened to supply.
+    """
+    dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
+    name = dialog.GetName()
+    dialog.Destroy()
+
+    harness.flush_deferred_deletions()
+
+    residual = harness.wx.Window.FindWindowByName(name)
+    assert residual is None
+
+
+def test_flush_deferred_deletions_given_nothing_pending_leaves_windows_untouched(
+    xrc_resource: object,
+) -> None:
+    """A flush with no queued deletion must not disturb a live window.
+
+    Guards against an over-eager implementation that destroys or
+    hides something it was never asked to touch.
+    """
+    dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
+    dialog.Show()
+    harness.pump()
+    before = len(harness.wx.GetTopLevelWindows())
+
+    harness.flush_deferred_deletions()
+
+    try:
+        after = len(harness.wx.GetTopLevelWindows())
+    finally:
+        harness.close_window(dialog)
+    assert after == before
+
+
 def test_close_window_reaps_every_cycle_of_thirty_rapid_open_closes(
     xrc_resource: object,
 ) -> None:
