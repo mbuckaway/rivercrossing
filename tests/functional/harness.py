@@ -274,19 +274,35 @@ def select_radio(window: Any, name: str) -> None:  # noqa: ANN401
 def select_row(window: Any, name: str, row: int) -> None:  # noqa: ANN401
     """Select *row* in the ``wx.dataview.DataViewCtrl`` named *name*.
 
-    Measured (the opposite of :func:`select_choice`'s own
-    ``wx.Choice.SetSelection`` finding): ``DataViewCtrl.Select``
-    already fires ``wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED`` on
-    this wx build by itself, so nothing further is posted here --
-    doing so would deliver the handler twice for one selection.
+    Measured cross-platform (PR #8's CI, run 31344728049): on macOS,
+    ``DataViewCtrl.Select`` fires ``wx.dataview.
+    EVT_DATAVIEW_SELECTION_CHANGED`` on this wx build by itself, so an
+    earlier revision of this function posted nothing further. That
+    measurement turned out to be generic-control behaviour, not
+    universal: MSW's *native* ``DataViewCtrl`` follows wx's own
+    documented convention that a programmatic selection change emits
+    no event at all, so on windows-latest CI the presenter never saw
+    the selection and every save/delete-dependent test silently
+    no-op'd. The event is now posted unconditionally after ``Select``
+    -- the same ``wx.dataview.DataViewEvent(type, control, item)``
+    3-arg constructor E3.2's own probe already verified
+    (``test_rider_editor.py``'s stale-selection pin uses the
+    identical call) -- which double-fires the handler on macOS;
+    ``RidersPresenter.on_row_selected`` is idempotent by contract, and
+    the full VM suite stayed green with this change (this fix's own
+    gauntlet).
 
     Raises:
         ControlNotFoundError: If *name* does not resolve inside
             *window*.
     """
+    import wx.dataview  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
     control = find_control(window, name)
     item = control.GetModel().GetItem(row)
     control.Select(item)
+    event = wx.dataview.DataViewEvent(wx.dataview.wxEVT_DATAVIEW_SELECTION_CHANGED, control, item)
+    control.GetEventHandler().ProcessEvent(event)
     pump()
 
 

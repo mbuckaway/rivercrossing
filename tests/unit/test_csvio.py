@@ -514,12 +514,23 @@ def test_preview_records_the_given_source_path_and_ride() -> None:
 
 
 def test_preview_missing_file_raises_file_not_found_error(tmp_path: Path) -> None:
-    """A nonexistent path propagates FileNotFoundError, unwrapped."""
+    """A nonexistent path propagates FileNotFoundError, unwrapped.
+
+    Asserts ``.filename`` directly rather than matching the exception
+    message text: CPython's ``OSError.__str__`` embeds ``filename``
+    via ``repr()``, so on Windows every backslash in the path doubles
+    in the rendered message and ``re.escape(str(missing))`` never
+    matches it (CI run 31344728049, windows-latest only -- POSIX
+    paths have no backslashes to double, so macOS/Linux stayed green
+    with the old, message-matching form).
+    """
     roster = _relay_roster()
     missing = tmp_path / "does-not-exist.csv"
 
-    with pytest.raises(FileNotFoundError, match=re.escape(str(missing))):
+    with pytest.raises(FileNotFoundError) as excinfo:
         preview(missing, roster)
+
+    assert excinfo.value.filename == str(missing)
 
 
 # ==================================================== N boundary (T-4)
