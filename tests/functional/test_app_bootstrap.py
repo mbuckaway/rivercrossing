@@ -121,13 +121,34 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
         harness.close_window(frame)
 
 
+_MENU_EVENT_SETTLE_ATTEMPTS = 10
+
+
 def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Post a real ``EVT_MENU`` for *item_id* at *frame* and pump it."""
+    """Post a real ``EVT_MENU`` for *item_id* at *frame*, then settle.
+
+    Measured (PR #8's CI, run 31344728049, this suite's own scattered
+    residual churn): a route that opens *and* destroys a dialog
+    inside this same synchronous call (``mi_import_csv``'s own
+    picker -> preview -> commit flow, say) can leave that deletion
+    still pending when this returns, racing the very next
+    ``_fire_menu_event``'s own window construction. ``harness.
+    close_window``'s own deterministic reap does not cover this path:
+    production's own ``dialogs.run_dialog``/``_open_target`` destroy
+    their windows directly, never through that test-only helper. A
+    few bounded extra ``wx.SafeYield()`` cycles -- the same call
+    ``harness.py``'s own ``close_window``/``find_control`` retries
+    already rely on -- give any such deletion the extra idle time it
+    needs, without this helper needing to know which window (if any)
+    the fired route just destroyed.
+    """
     real_id = wx.xrc.XRCID(item_id)
     event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
     event.SetEventObject(frame)
     frame.GetEventHandler().ProcessEvent(event)
     harness.pump()
+    for _ in range(_MENU_EVENT_SETTLE_ATTEMPTS):
+        wx.SafeYield()
 
 
 # --- the menubar is attached (T-9) -------------------------------

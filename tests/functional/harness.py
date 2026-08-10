@@ -124,8 +124,17 @@ def pump() -> None:
     section 4: event-driven waits, never a bare ``sleep``). A
     deferred ``Destroy()`` and a posted ``CommandEvent`` both need
     one of these to actually take effect.
+
+    ``wx.SafeYield()``, not the plain ``wx.Yield()`` this used
+    before: measured (PR #8's CI, run 31344728049, hosted 3-core
+    runners at this suite's full 761-test size) -- ``ui.views.
+    _support.find_control``'s own settle retry already relies on
+    ``SafeYield`` specifically for the identical deferred-deletion
+    class of problem, never plain ``Yield``, and this is that same
+    fix applied at the one shared primitive every other wait in this
+    harness is built on, rather than re-applied at each call site.
     """
-    wx.Yield()
+    wx.SafeYield()
 
 
 def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN401
