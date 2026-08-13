@@ -61,7 +61,9 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     Raises:
         LookupError: If *name* does not resolve to an
             *expected_type* instance inside *window*, even after
-            settling.
+            settling. Names *window*'s own first-level children, so
+            a whole-subtree load gap (an ``XmlResource`` degradation)
+            reads differently from one missing control.
     """
     control = wx.Window.FindWindowByName(name, window)
     attempts = 0
@@ -70,10 +72,17 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         control = wx.Window.FindWindowByName(name, window)
         attempts += 1
     if not isinstance(control, expected_type):
+        children = [child.GetName() for child in window.GetChildren()]
         # LookupError, not TypeError: mirrors harness.py's own
         # ControlNotFoundError(LookupError) for the identical "name
-        # did not resolve inside this window" case.
-        raise LookupError(f"{window.GetName()} has no control named {name!r}")  # noqa: TRY004
+        # did not resolve inside this window" case. The child count
+        # and names tell a whole-subtree load gap (CI has seen three
+        # fresh loads of the same frame each missing a different
+        # control) apart from a single genuinely missing name.
+        raise LookupError(  # noqa: TRY004
+            f"{window.GetName()} has no control named {name!r} "
+            f"(first-level children: {len(children)} -- {children!r})"
+        )
     return control
 
 

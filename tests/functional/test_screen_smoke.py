@@ -109,17 +109,32 @@ def test_close_window_reaps_the_dialog_so_a_shared_name_no_longer_resolves(
     unreaped dialog keeps answering ``FindWindowByName`` in the same
     process (measured) and would leak into whichever later
     parametrized case happens to load next.
+
+    CI has pinned a failure here without saying which of the four
+    ``plate_input``-owning windows (``main.xrc``'s ``main_frame``,
+    this test's own ``manual_deal_dlg``, or ``riders.xrc``) the
+    residual actually belongs to. The assertion message below names
+    the culprit so the next hosted-CI failure is diagnosable instead
+    of repeating the same unattributed miss.
     """
     dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
     dialog.Show()
     harness.pump()
     control = harness.find_control(dialog, ids.PLATE_INPUT)
     assert control.GetName() == ids.PLATE_INPUT
+    control_handle = control.GetHandle()
 
     harness.close_window(dialog)
 
     residual = harness.wx.Window.FindWindowByName(ids.PLATE_INPUT)
-    assert residual is None
+    assert residual is None, (
+        f"residual name={residual.GetName()!r} "
+        f"owner={residual.GetTopLevelParent().GetName()!r} "
+        f"is_being_deleted={residual.IsBeingDeleted()!r} "
+        f"handle={residual.GetHandle()!r} "
+        f"is_this_dialogs_own_control={residual.GetHandle() == control_handle!r} "
+        f"active_loop={harness.wx.EventLoopBase.GetActive()!r}"
+    )
 
 
 def test_flush_deferred_deletions_reaps_a_destroyed_dialog_in_one_call(
@@ -183,10 +198,19 @@ def test_close_window_reaps_every_cycle_of_thirty_rapid_open_closes(
         dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
         dialog.Show()
         harness.pump()
+        dialog_handle = dialog.GetHandle()
 
         harness.close_window(dialog)
 
-        assert harness.wx.Window.FindWindowByName(ids.MANUAL_DEAL_DLG) is None
+        residual = harness.wx.Window.FindWindowByName(ids.MANUAL_DEAL_DLG)
+        assert residual is None, (
+            f"residual name={residual.GetName()!r} "
+            f"owner={residual.GetTopLevelParent().GetName()!r} "
+            f"is_being_deleted={residual.IsBeingDeleted()!r} "
+            f"handle={residual.GetHandle()!r} "
+            f"is_this_cycles_dialog={residual.GetHandle() == dialog_handle!r} "
+            f"active_loop={harness.wx.EventLoopBase.GetActive()!r}"
+        )
 
 
 def test_type_text_given_a_string_updates_the_controls_value(xrc_resource: object) -> None:
