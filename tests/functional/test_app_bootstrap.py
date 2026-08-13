@@ -137,16 +137,19 @@ def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx sh
     production's own ``dialogs.run_dialog``/``_open_target`` destroy
     their windows directly, never through that test-only helper.
 
-    The settle loop used to be bare ``wx.SafeYield()`` cycles. Measured
-    on PR #8's CI (runs 31390187217/31390190295), a hosted runner's
-    event queue can starve idle processing under load, so ``SafeYield``
-    alone never reached the point wx actually frees a pending delete --
-    the same finding ``harness.pump``'s own docstring records.
-    ``harness.pump`` (``SafeYield`` plus ``flush_deferred_deletions``,
-    which drives ``EventLoopBase.ProcessIdle()`` directly rather than
-    waiting on the queue to drain) replaces it at the identical bounded
-    count, so any such deletion gets deterministic idle time regardless
-    of runner load.
+    The settle loop calls :func:`harness.flush_deferred_deletions`
+    directly rather than ``harness.pump()``: measured on
+    windows-latest CI (run 31392502719), driving that flush from
+    every single ``harness.pump()`` call in the whole suite -- not
+    just here -- turned one functional job's normal ~90s runtime
+    into 5h59m28s before the 6-hour cap killed it, so ``harness.
+    pump`` (``harness.py``'s own module) no longer flushes on every
+    call. This loop's own deletions still need the deterministic
+    idle-processing drive ``harness.pump``'s docstring records --
+    only a bounded few calls per fired event, not one per pump call
+    across the whole suite -- so it keeps calling the flush
+    primitive explicitly instead of relying on ``harness.pump`` to
+    supply it.
     """
     real_id = wx.xrc.XRCID(item_id)
     event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
@@ -154,7 +157,7 @@ def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx sh
     frame.GetEventHandler().ProcessEvent(event)
     harness.pump()
     for _ in range(_MENU_EVENT_SETTLE_ATTEMPTS):
-        harness.pump()
+        harness.flush_deferred_deletions()
 
 
 # --- the menubar is attached (T-9) -------------------------------

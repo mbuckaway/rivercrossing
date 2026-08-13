@@ -118,7 +118,13 @@ def load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs
     return resource
 
 
-_FLUSH_IDLE_ATTEMPTS = 25  # mirrors _CLOSE_SETTLE_ATTEMPTS / FIND_SETTLE_ATTEMPTS
+# 5, not 25 (the _CLOSE_SETTLE_ATTEMPTS/FIND_SETTLE_ATTEMPTS mirror
+# this used to be): measured on windows-latest CI, MSW's own
+# UpdateUI idle chatter keeps ProcessIdle() reporting True almost
+# every pass, so a large bound multiplies cost without improving the
+# reap -- wxAppBase::ProcessIdle calls DeletePendingObjects
+# unconditionally on the very first pass regardless of the bound.
+_FLUSH_IDLE_ATTEMPTS = 5
 
 
 def flush_deferred_deletions() -> None:
@@ -172,12 +178,12 @@ def _drain_idle(loop: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
 
 
 def pump() -> None:
-    """Process one round of the event queue, then flush deletions.
+    """Process one round of the event queue.
 
     The only wait primitive this harness uses (project-plan.md
     section 4: event-driven waits, never a bare ``sleep``). A
-    deferred ``Destroy()`` and a posted ``CommandEvent`` both need
-    one of these to actually take effect.
+    posted ``CommandEvent`` needs one of these to actually take
+    effect.
 
     ``wx.SafeYield()`` drains the event queue -- posted
     ``CommandEvent``s among them -- the same call ``ui.views.
@@ -187,12 +193,21 @@ def pump() -> None:
     31390187217/31390190295), a hosted runner's event queue can
     starve idle processing under load, so a bare ``SafeYield`` never
     reaches the point wx actually frees a pending delete.
-    :func:`flush_deferred_deletions` is the mechanism that reaches it
-    regardless of queue load, so every call site that already pumps
-    -- this one included -- now gets it for free.
+
+    :func:`flush_deferred_deletions` reaches it regardless of queue
+    load, but this function no longer calls it: measured on
+    windows-latest CI (run 31392502719), driving it from every
+    single ``pump()`` call turned one functional job's normal ~90s
+    runtime into 5h59m28s before the 6-hour cap killed it. MSW's own
+    ``ProcessIdle()`` keeps reporting more idle work on almost every
+    pass (:data:`_FLUSH_IDLE_ATTEMPTS`'s own comment), so the bounded
+    drain was never cheap there, and multiplying it by every one of
+    this suite's thousands of ``pump()`` calls multiplied that cost
+    across the whole run. Only :func:`close_window`'s own settle
+    loop calls :func:`flush_deferred_deletions` now, at teardown,
+    where the call count is orders of magnitude smaller.
     """
     wx.SafeYield()
-    flush_deferred_deletions()
 
 
 def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN401
