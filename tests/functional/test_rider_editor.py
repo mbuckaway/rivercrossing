@@ -607,3 +607,39 @@ def test_show_closes_the_dialog_when_view_construction_raises(
         _show(xrc_resource, roster)
 
     assert wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG) is None
+
+
+def test_run_csv_import_flow_closes_the_dialog_when_view_construction_raises(
+    xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault A red: construction failure must not leak the dialog.
+
+    ``run_csv_import_flow`` loads ``csv_preview_dlg`` straight off the
+    process-global ``wx.xrc.XmlResource`` and constructs
+    ``CsvPreviewDialog`` (whose ``_find`` can exhaust its 25 retries
+    under hosted-runner load) *before* the ``try/finally`` that
+    destroys it -- a post-load raise leaks the dialog fully alive, is
+    rerun-masked by ``--reruns 2``, and later trips the reap pin.
+    ``CsvPreviewDialog`` is forced to raise here so the leak is
+    reproduced deterministically: red until the flow closes the dialog
+    on the way out.
+    """
+    roster = _seed_roster(DemoDataSource())
+    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+
+    def _construction_that_raises(*_args: Any, **_kwargs: Any) -> Any:  # noqa: ANN401
+        raise LookupError("simulated CsvPreviewDialog construction failure")
+
+    monkeypatch.setattr(rider_editor, "CsvPreviewDialog", _construction_that_raises)
+
+    parent = wx.Frame(None)
+    try:
+        with pytest.raises(
+            LookupError, match=re.escape("simulated CsvPreviewDialog construction failure")
+        ):
+            rider_editor.run_csv_import_flow(parent, roster)
+    finally:
+        harness.close_window(parent)
+
+    assert wx.Window.FindWindowByName(ids.CSV_PREVIEW_DLG) is None

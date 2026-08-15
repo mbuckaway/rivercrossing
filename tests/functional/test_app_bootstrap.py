@@ -25,6 +25,7 @@ event, kept separate so firing an event there can never race the
 binding-removal proof over which bindings are still present.
 """
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +36,8 @@ import pytest
 import wx
 import wx.xrc
 
-from rivercrossing.ui import accelerators, commands, ids
+from rivercrossing.demo import DemoDataSource
+from rivercrossing.ui import accelerators, commands, ids, theme
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui.views import dialogs, rider_editor
 
@@ -600,3 +602,87 @@ def test_main_shows_the_frame_before_entering_the_event_loop() -> None:
     result = _decode_probe_output(completed)
 
     assert (result["frame_shown_before_loop"], result["exit_code"]) == (True, 0), result["context"]
+
+
+# ------------------------------- Fault A: the load-construct seam
+# (hosted-runner red, deterministic here: _decorate/_apply_dialog_
+# defaults and SelfTestDialog construction run between the load and
+# the try/finally that destroys the window, and a raise there must
+# not leave the just-loaded window fully alive.)
+
+
+def _make_route_context(
+    frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    resource: object,
+) -> app_module._RouteContext:
+    """Build the context ``build_main_window`` threads to routes."""
+    return app_module._RouteContext(
+        frame=frame,
+        resource=resource,
+        data_source=DemoDataSource(),
+        roster=app_module._seed_roster(DemoDataSource()),
+        app=wx.GetApp(),
+        theme_controller=theme.ThemeController(wx.GetApp()),
+    )
+
+
+def test_open_target_closes_the_dialog_when_decorate_raises(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault A red: a decorate failure must not leak the loaded dialog.
+
+    ``_open_target`` loads *route.target*, then runs ``_decorate``
+    (which constructs the code-side view -- ``ui.views._support.
+    find_control`` can exhaust its 25 retries and raise a
+    ``LookupError`` under hosted-runner load) and ``_apply_dialog_
+    defaults`` *before* the ``try/finally`` that destroys the dialog.
+    A post-load raise therefore leaks it fully alive
+    (``is_being_deleted=False``), is rerun-masked by ``--reruns 2``,
+    and later trips the reap pin. ``_decorate`` is forced to raise
+    here so the leak is reproduced deterministically: red until
+    ``_open_target`` closes the dialog on the way out.
+    """
+    route = commands.route_for_id(_menu_item_id_for_target(ids.RIDER_EDITOR_DLG))
+    context = _make_route_context(firing_frame, xrc_resource)
+
+    def _decorate_that_raises(*_args: Any, **_kwargs: Any) -> None:  # noqa: ANN401
+        raise LookupError("simulated decorate failure")
+
+    monkeypatch.setattr(app_module, "_decorate", _decorate_that_raises)
+
+    with pytest.raises(LookupError, match=re.escape("simulated decorate failure")):
+        app_module._open_target(context, route)
+
+    assert wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG) is None
+
+
+def test_run_launch_self_test_closes_the_dialog_when_construction_raises(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault A red: SelfTestDialog construction failure must not leak.
+
+    ``_run_launch_self_test`` loads ``selftest_dlg`` and constructs
+    ``SelfTestDialog`` (whose ``_find`` -> ``ui.views._support.
+    find_control`` can raise under hosted-runner load) *before* the
+    ``try/finally`` that destroys the window, so a post-load raise
+    leaks it fully alive. ``SelfTestDialog`` is forced to raise here
+    so the leak is reproduced deterministically: red until the helper
+    closes the dialog on the way out.
+    """
+    from rivercrossing.ui.views import selftest  # noqa: PLC0415
+
+    context = _make_route_context(firing_frame, xrc_resource)
+
+    def _construction_that_raises(*_args: Any, **_kwargs: Any) -> Any:  # noqa: ANN401
+        raise LookupError("simulated selftest construction failure")
+
+    monkeypatch.setattr(selftest, "SelfTestDialog", _construction_that_raises)
+
+    with pytest.raises(LookupError, match=re.escape("simulated selftest construction failure")):
+        app_module._run_launch_self_test(context)
+
+    assert wx.Window.FindWindowByName(ids.SELFTEST_DLG) is None
