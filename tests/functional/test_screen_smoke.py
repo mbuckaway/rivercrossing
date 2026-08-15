@@ -16,7 +16,9 @@ non-resolution is asserted directly rather than silently omitted.
 """
 
 import re
+import types
 from pathlib import Path
+from typing import Any
 
 import harness
 import pages
@@ -317,3 +319,102 @@ def test_screenshot_given_an_unwritable_destination_raises_naming_it(
             harness.screenshot(dialog, blocked_destination)
     finally:
         harness.close_window(dialog)
+
+
+# ------------------------------- Fault B: the completeness guard
+# (hosted-runner red, deterministic here: the first LoadFrame is
+# forced to build a results_frame missing its two deep checkbox
+# controls -- the whole-subtree gap the process-global XmlResource
+# produced on windows-latest CI -- and load_window must detect it,
+# retry once from a fresh private resource, and otherwise fail loud.)
+
+
+def _broken_results_frame() -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Build a results_frame missing its two deep checkbox controls.
+
+    Loads from a private ``wx.xrc.XmlResource`` (never the process-
+    global one the whole suite shares) and destroys ``show_times_chk``/
+    ``time_board_chk`` -- the two controls ``results.xrc`` nests two
+    levels deep inside one staticbox -- reproducing the whole-subtree
+    gap Fault B saw on windows-latest CI: the frame keeps its other
+    first-level children and answers neither name. The caller owns the
+    returned frame.
+    """
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    resource = wx.xrc.XmlResource()
+    for path in sorted(harness.xrc_directory().glob("*.xrc")):
+        resource.Load(str(path))
+    frame = resource.LoadFrame(None, ids.RESULTS_FRAME)
+    for name in (ids.SHOW_TIMES_CHK, ids.TIME_BOARD_CHK):
+        harness.find_control(frame, name).Destroy()
+    return frame
+
+
+def _broken_results_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return a resource whose LoadFrame always builds a broken frame.
+
+    A fresh broken frame per call, so the guard's one retry rebuilds
+    an independent object (exactly as a real reload would).
+    """
+    return types.SimpleNamespace(
+        LoadFrame=lambda _parent, _name: _broken_results_frame(),
+        LoadDialog=lambda _parent, _name: None,
+    )
+
+
+def test_load_window_retries_once_when_the_first_frame_misses_deep_controls(
+    xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
+) -> None:
+    """Fault B red: a whole-subtree gap must not be returned silently.
+
+    Under worker load the process-global ``wx.xrc.XmlResource`` can
+    build an incomplete ``results_frame`` (missing ``show_times_chk``/
+    ``time_board_chk``, nested two levels deep -- documented at
+    ``ui/app.py``'s own ``_load_xrc_resources`` and ``ui/views/
+    _support.py``'s ``find_control``). ``harness.load_window`` must
+    detect the gap against ``pages.WINDOWS``' control contract, retry
+    once from a fresh private resource (``test_bundle_smoke.py``'s
+    ``bundled_xrc`` isolation pattern), and return the healthy rebuild.
+    The first load is forced broken here so the retry is exercised
+    deterministically: red until the guard exists, green once it
+    rebuilds.
+    """
+    broken = _broken_results_frame()
+    broken_resource = types.SimpleNamespace(
+        LoadFrame=lambda _parent, _name: broken,
+        LoadDialog=lambda _parent, _name: None,
+    )
+
+    window = harness.load_window(broken_resource, ids.RESULTS_FRAME, frame=True)
+    try:
+        deep = harness.find_control(window, ids.SHOW_TIMES_CHK)
+        other = harness.find_control(window, ids.TIME_BOARD_CHK)
+    finally:
+        harness.close_window(window)
+
+    assert deep.GetName() == ids.SHOW_TIMES_CHK
+    assert other.GetName() == ids.TIME_BOARD_CHK
+
+
+def test_load_window_raises_with_the_child_inventory_when_the_retry_also_fails(
+    xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault B red: a retry that is broken too fails loudly.
+
+    One retry only -- no sleeps, no broad loops (the fault brief):
+    when the fresh resource builds a second incomplete frame,
+    ``load_window`` raises with the first-level-child inventory
+    ``ui.views._support.find_control`` already produces, and neither
+    incomplete frame is left alive for the session-end sweep.
+    """
+    monkeypatch.setattr(harness, "_fresh_resource", _broken_results_resource)
+
+    with pytest.raises(
+        harness.ControlNotFoundError,
+        match=re.escape("results_frame has no control named 'show_times_chk'"),
+    ):
+        harness.load_window(_broken_results_resource(), ids.RESULTS_FRAME, frame=True)
+
+    assert harness.wx.Window.FindWindowByName(ids.RESULTS_FRAME) is None
