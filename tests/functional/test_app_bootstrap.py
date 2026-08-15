@@ -655,6 +655,11 @@ def test_open_target_closes_the_dialog_when_decorate_raises(
     with pytest.raises(LookupError, match=re.escape("simulated decorate failure")):
         app_module._open_target(context, route)
 
+    # ``Destroy()`` is deferred (measured -- harness.close_window's
+    # docstring): reap it before asserting, exactly as the reap pin's
+    # own settle does, or the pending deletion still answers
+    # ``FindWindowByName``.
+    harness.flush_deferred_deletions()
     assert wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG) is None
 
 
@@ -685,4 +690,9 @@ def test_run_launch_self_test_closes_the_dialog_when_construction_raises(
     with pytest.raises(LookupError, match=re.escape("simulated selftest construction failure")):
         app_module._run_launch_self_test(context)
 
+    # ``Destroy()`` is deferred (measured -- harness.close_window's
+    # docstring): reap it before asserting, exactly as the reap pin's
+    # own settle does, or the pending deletion still answers
+    # ``FindWindowByName``.
+    harness.flush_deferred_deletions()
     assert wx.Window.FindWindowByName(ids.SELFTEST_DLG) is None
