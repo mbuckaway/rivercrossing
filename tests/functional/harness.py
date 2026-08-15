@@ -210,13 +210,6 @@ def pump() -> None:
     wx.SafeYield()
 
 
-# A transient lookup gap on a freshly loaded window is the same
-# address-reuse corruption ``_support.find_control`` settles with
-# ``SafeYield``; only a gap that persists across the settle window is
-# the degraded-build case Fault B works around.
-_GUARD_SETTLE_ATTEMPTS = 25  # mirrors ui.views._support.FIND_SETTLE_ATTEMPTS
-
-
 def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN401
     """Load the top-level window called *name* from *resource*.
 
@@ -229,129 +222,19 @@ def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN40
             ``LoadDialog`` window.
 
     Returns:
-        The loaded, not-yet-shown window -- exactly the window
-        ``LoadFrame``/``LoadDialog`` constructed, never a
-        name-resolved lookup (Fault B, handoff 2026-08-13).
+        The loaded, not-yet-shown window.
 
     Raises:
         WindowLoadError: If *resource* has no window named *name*
             (``LoadFrame``/``LoadDialog`` return ``None`` rather
             than raise -- measured -- which would otherwise surface
             as a confusing ``AttributeError`` on first use).
-        ControlNotFoundError: If the loaded window fails to resolve
-            its spec'd control names (``pages.WINDOWS``, Fault B)
-            even after one rebuild from a fresh private resource.
-
-    Fault B: the process-global ``wx.xrc.XmlResource`` can build an
-    incomplete window under worker load -- a whole subtree missing
-    (CI has seen ``results_frame`` with an empty staticbox and
-    ``ride_setup_dlg`` missing its whole radio group; both OSes, at
-    fixture setup). The guard first applies the proven ``SafeYield``
-    settle (the ``_support.find_control`` remedy for a transient
-    lookup gap); only a gap that persists across the settle window is
-    treated as a degraded build, rebuilt once from a fresh private
-    resource (``test_bundle_smoke.py``'s ``bundled_xrc`` isolation
-    pattern). The replacement is built BEFORE the degraded original
-    is destroyed, so its controls cannot land on the original's
-    just-freed addresses (the wrapper-cache corruption
-    ``_support.find_control`` documents). One rebuild only; then fail
-    loudly with ``find_control``'s own first-level-child inventory.
-    Healthy windows never reach the rebuild, so the guard costs them
-    nothing.
     """
     window = resource.LoadFrame(None, name) if frame else resource.LoadDialog(None, name)
     if window is None:
         kind = "LoadFrame" if frame else "LoadDialog"
         raise WindowLoadError(f"{kind}(None, {name!r}) found no matching XRC resource")
-    if not _expected_controls_resolve(window, name):
-        for _ in range(_GUARD_SETTLE_ATTEMPTS):
-            wx.SafeYield()
-            if _expected_controls_resolve(window, name):
-                return window
-        fresh = _fresh_resource()
-        fresh_window = fresh.LoadFrame(None, name) if frame else fresh.LoadDialog(None, name)
-        if fresh_window is None:
-            _destroy_incomplete(window)
-            kind = "LoadFrame" if frame else "LoadDialog"
-            raise WindowLoadError(f"{kind}(None, {name!r}) found no matching XRC resource")
-        if not _expected_controls_resolve(fresh_window, name):
-            missing = _first_missing_control(fresh_window, name)
-            children = [child.GetName() for child in fresh_window.GetChildren()]
-            window_name = fresh_window.GetName()
-            _destroy_incomplete(fresh_window)
-            _destroy_incomplete(window)
-            raise ControlNotFoundError(
-                f"{window_name} has no control named {missing!r} "
-                f"(first-level children: {len(children)} -- {children!r})"
-            )
-        _destroy_incomplete(window)
-        return fresh_window
     return window
-
-
-def _fresh_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Return a private ``XmlResource`` loaded from every packaged .xrc.
-
-    The isolation pattern ``test_bundle_smoke.py``'s ``bundled_xrc``
-    fixture proves: a *new* ``XmlResource`` (never the process-wide
-    ``XmlResource.Get()`` singleton, whose degradation under worker
-    load is exactly what Fault B works around), loaded from the same
-    ``ui/xrc/*.xrc`` files :func:`load_xrc_resources` loads.
-    """
-    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
-
-    resource = wx.xrc.XmlResource()
-    for path in sorted(xrc_directory().glob("*.xrc")):
-        resource.Load(str(path))
-    return resource
-
-
-def _expected_controls_for(name: str) -> tuple[str, ...]:
-    """Return *name*'s spec'd control names, or ``()`` if none.
-
-    Fault B's completeness contract: ``pages.WINDOWS``' per-window
-    ``controls`` tuples are the frozen-name inventory the whole suite
-    already asserts. Imported here (function scope), not at module
-    scope: ``pages`` imports ``harness`` at module level, so a
-    module-level import here would be a cycle.
-    """
-    import pages  # noqa: PLC0415 -- cycle, see above
-
-    for spec in pages.WINDOWS:
-        if spec.name == name:
-            return spec.controls
-    return ()
-
-
-def _expected_controls_resolve(window: Any, name: str) -> bool:  # noqa: ANN401 -- wx ships no stubs
-    """Return whether every spec'd control of *name* resolves in it."""
-    return all(
-        wx.Window.FindWindowByName(control_name, window) is not None
-        for control_name in _expected_controls_for(name)
-    )
-
-
-def _first_missing_control(window: Any, name: str) -> str:  # noqa: ANN401 -- wx ships no stubs
-    """Return *name*'s first spec'd control missing from *window*."""
-    for control_name in _expected_controls_for(name):
-        if wx.Window.FindWindowByName(control_name, window) is None:
-            return control_name
-    return ""
-
-
-def _destroy_incomplete(window: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Destroy a just-loaded window that failed the completeness guard.
-
-    The window was never shown and carries no bound handlers, so
-    ``Destroy()`` is safe; :func:`flush_deferred_deletions` then reaps
-    the deferred deletion deterministically so the incomplete build
-    cannot linger into the session-end sweep. The caller must not
-    touch *window* after this returns -- the same reaped-object rule
-    :func:`close_window` documents.
-    """
-    if not window.IsBeingDeleted():
-        window.Destroy()
-    flush_deferred_deletions()
 
 
 def load_menubar(resource: Any, name: str) -> Any:  # noqa: ANN401
