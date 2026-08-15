@@ -754,3 +754,36 @@ def test_dialog_is_a_real_wx_dialog_so_tab_stays_trapped(
         harness.close_window(window)
 
     assert is_dialog is True
+
+
+# ------------------------------- Fault A: the load-construct seam
+# (hosted-runner red, deterministic here: pump() is forced to raise
+# between the load and the caller's try/finally, and the just-loaded
+# dialog must not be left fully alive -- see _show's guard.)
+
+
+def test_show_closes_the_dialog_when_a_post_load_step_raises(
+    xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault A red: a failure between load and try must not leak.
+
+    ``_show`` loads, shows and pumps *before* the test's own
+    ``try/finally``; under hosted-runner load a step between the load
+    and the caller's ``try`` can raise (the ``_support.find_control``
+    retry-exhaustion ``LookupError`` a caller's own view construction
+    raises through this same seam, for one) and the just-loaded dialog
+    then leaks fully alive, rerun-masked by ``--reruns 2``. Pump is
+    forced to raise here so the leak is reproduced deterministically:
+    red until ``_show`` closes the dialog on the way out.
+    """
+
+    def _pump_that_raises() -> None:
+        raise LookupError("simulated post-load failure")
+
+    monkeypatch.setattr(harness, "pump", _pump_that_raises)
+
+    with pytest.raises(LookupError, match=re.escape("simulated post-load failure")):
+        _show(xrc_resource, ids.RIDER_EDITOR_DLG)
+
+    assert wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG) is None

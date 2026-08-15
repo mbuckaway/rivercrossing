@@ -572,3 +572,38 @@ def test_rider_editor_dlg_export_btn_given_a_cancelled_picker_is_a_no_op(
         harness.close_window(dialog)
 
     assert export_path.exists() is False
+
+
+# ------------------------------- Fault A: the load-construct seam
+# (hosted-runner red, deterministic here: view construction is forced
+# to raise between the load and the caller's try/finally, and the
+# just-loaded dialog must not be left fully alive -- see _show's guard.)
+
+
+def test_show_closes_the_dialog_when_view_construction_raises(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault A red: a post-load failure must not leak the dialog.
+
+    ``_show`` loads the dialog, constructs ``RiderEditor`` (whose
+    ``_find`` -> ``ui.views._support.find_control`` can exhaust its 25
+    retries and raise a ``LookupError`` under hosted-runner load),
+    shows and pumps -- all before the test's own ``try/finally``. The
+    just-loaded dialog then leaks fully alive (``is_being_deleted=
+    False``), is rerun-masked by ``--reruns 2``, and later trips the
+    reap pin. ``find_control`` is forced to raise here so the leak is
+    reproduced deterministically: red until ``_show`` closes the
+    dialog on the way out.
+    """
+    roster = _seed_roster(DemoDataSource())
+
+    def _find_that_raises(*_args: Any, **_kwargs: Any) -> Any:  # noqa: ANN401
+        raise LookupError("simulated find_control failure")
+
+    monkeypatch.setattr(rider_editor, "find_control", _find_that_raises)
+
+    with pytest.raises(LookupError, match=re.escape("simulated find_control failure")):
+        _show(xrc_resource, roster)
+
+    assert wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG) is None
