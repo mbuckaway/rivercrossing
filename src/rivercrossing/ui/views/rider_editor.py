@@ -709,14 +709,19 @@ def run_csv_import_flow(parent: wx.Window, roster: Roster) -> bool:
     if window is None:
         return False
 
-    view = CsvPreviewDialog(window, roster=roster)
-    view.presenter.on_pick_csv_import(path)
-    default_button = dialogs.default_button_for(ids.CSV_PREVIEW_DLG)
-    if default_button is not None:
-        dialogs.set_default_button(window, default_button)
     try:
+        view = CsvPreviewDialog(window, roster=roster)
+        view.presenter.on_pick_csv_import(path)
+        default_button = dialogs.default_button_for(ids.CSV_PREVIEW_DLG)
+        if default_button is not None:
+            dialogs.set_default_button(window, default_button)
         result = dialogs.run_dialog(window, opener=parent)
     finally:
+        # Fault A: construction/preview now run inside the close guard
+        # -- a post-load raise (CsvPreviewDialog's _find can exhaust
+        # its 25 retries under hosted-runner load) must not leave the
+        # just-loaded dialog fully alive, rerun-masked until the reap
+        # pin catches it.
         if not window.IsBeingDeleted():
             window.Destroy()
     ok_id: int = wx.ID_OK  # mypy: an int-typed local isolates wx's own Any

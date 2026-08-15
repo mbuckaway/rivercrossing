@@ -360,8 +360,20 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         context.frame.SetStatusText(f"{route.label} — no window authored yet")
         return
 
-    _decorate(context, window, route)
-    _apply_dialog_defaults(window, route)
+    try:
+        _decorate(context, window, route)
+        _apply_dialog_defaults(window, route)
+    except Exception:
+        # Fault A: any post-load failure must close the just-loaded
+        # window before re-raising. _decorate's view construction runs
+        # before the dialog path's own try/finally below, and a raise
+        # there (find_control's 25-retry LookupError under load) used
+        # to leak the dialog fully alive, rerun-masked, until the reap
+        # pin caught it. A successfully shown frame stays open by
+        # design, so this guard only ever runs on the exception path.
+        if not window.IsBeingDeleted():
+            window.Destroy()
+        raise
     if is_frame:
         window.Show()
         window.Raise()
@@ -576,7 +588,14 @@ def _run_launch_self_test(context: _RouteContext) -> None:
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
     window = context.resource.LoadDialog(None, ids.SELFTEST_DLG)
-    view = SelfTestDialog(window)
+    try:
+        view = SelfTestDialog(window)
+    except Exception:
+        # Fault A: construction runs before the run_dialog try/finally
+        # below; a raise here must not leave the loaded dialog alive.
+        if not window.IsBeingDeleted():
+            window.Destroy()
+        raise
     if view.presenter.report.passed:
         window.Destroy()
         return
