@@ -103,8 +103,12 @@ _RIDE_NAME = "Club poker night"
 def _show(xrc_resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Load, show and pump *name* from *xrc_resource*."""
     dialog = harness.load_window(xrc_resource, name, frame=False)
-    dialog.Show()
-    harness.pump()
+    try:
+        dialog.Show()
+        harness.pump()
+    except Exception:  # Fault A: any post-load failure must close the dialog
+        harness.close_window(dialog)
+        raise
     return dialog
 
 

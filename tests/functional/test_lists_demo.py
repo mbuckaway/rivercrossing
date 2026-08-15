@@ -90,11 +90,11 @@ CANVAS_PUBLISH_DEFAULTS = (
 def shared_library(xrc_resource: object) -> RideLibrary:
     """One ``RideLibrary``, reused by every read-only assertion."""
     window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    view = RideLibrary(window, data_source=DemoDataSource())
     try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        view = RideLibrary(window, data_source=DemoDataSource())
         yield view
     finally:
         harness.close_window(window)
@@ -104,11 +104,11 @@ def shared_library(xrc_resource: object) -> RideLibrary:
 def shared_rider_editor(xrc_resource: object) -> RiderEditor:
     """One ``RiderEditor``, built against the demo's mixed roster."""
     window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
     try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
         yield view
     finally:
         harness.close_window(window)
@@ -118,11 +118,11 @@ def shared_rider_editor(xrc_resource: object) -> RiderEditor:
 def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
     """One ``EntryDetailDialog``, built for the demo's plate 77."""
     window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
     try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
         yield view
     finally:
         harness.close_window(window)
@@ -132,11 +132,11 @@ def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
 def shared_results(xrc_resource: object) -> ResultsWindow:
     """One ``ResultsWindow``, reused by every read-only assertion."""
     window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    view = ResultsWindow(window, data_source=DemoDataSource())
     try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        view = ResultsWindow(window, data_source=DemoDataSource())
         yield view
     finally:
         harness.close_window(window)
@@ -175,10 +175,9 @@ def test_ride_library_given_a_different_source_shows_its_rows_not_the_demo(
             ]
 
     window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
-    window.Show()
-    harness.pump()
-
     try:
+        window.Show()
+        harness.pump()
         view = RideLibrary(window, data_source=_StubSource())
         model = view.rides_list.GetModel()
         row = _model_row(model, 0, range(4))
@@ -235,10 +234,9 @@ def test_rider_editor_team_column_is_hidden_for_a_solo_only_roster(
     roster.create_solo_entry(name="Solo Two", plate="2")
 
     window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
-    window.Show()
-    harness.pump()
-
     try:
+        window.Show()
+        harness.pump()
         view = RiderEditor(window, roster=roster)
         hidden = view.riders_list.GetColumn(COL_TEAM).IsHidden()
     finally:
@@ -328,10 +326,9 @@ def test_entry_detail_card_images_defaults_to_the_shared_support_cache(
 def test_entry_detail_given_an_unknown_plate_raises_naming_it(xrc_resource: object) -> None:
     """T-5: ``DemoDataSource.entry_detail``'s only ``raise``."""
     window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
-    window.Show()
-    harness.pump()
-
     try:
+        window.Show()
+        harness.pump()
         expected = re.escape("no entry detail for plate 'no-such-plate'")
         with pytest.raises(LookupError, match=expected):
             EntryDetailDialog(window, "no-such-plate", data_source=DemoDataSource())
@@ -401,10 +398,9 @@ def test_results_window_given_a_different_source_shows_its_rows_not_the_demo(
             ]
 
     window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
-    window.Show()
-    harness.pump()
-
     try:
+        window.Show()
+        harness.pump()
         view = ResultsWindow(window, data_source=_StubSource())
         model = view.standings_list.GetModel()
         row = _model_row(model, 0, range(7))
@@ -511,12 +507,12 @@ def test_ride_library_show_rides_repaints_the_list_after_associating_its_model(
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
     window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
-    window.Show()
-    harness.pump()
-    control = harness.find_control(window, ids.RIDES_LIST)  # kept alive: _spy_repaint's docstring
-    refresh, update = _spy_repaint(control)
-
     try:
+        window.Show()
+        harness.pump()
+        # control kept alive: _spy_repaint's docstring.
+        control = harness.find_control(window, ids.RIDES_LIST)
+        refresh, update = _spy_repaint(control)
         view = RideLibrary(window, data_source=DemoDataSource())
         row_count = view.rides_list.GetModel().GetCount()
     finally:
@@ -532,12 +528,12 @@ def test_rider_editor_show_riders_repaints_the_list_after_associating_its_model(
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
     window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
-    window.Show()
-    harness.pump()
-    control = harness.find_control(window, ids.RIDERS_LIST)  # kept alive: _spy_repaint's docstring
-    refresh, update = _spy_repaint(control)
-
     try:
+        window.Show()
+        harness.pump()
+        # control kept alive: _spy_repaint's docstring.
+        control = harness.find_control(window, ids.RIDERS_LIST)
+        refresh, update = _spy_repaint(control)
         view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
         row_count = view.riders_list.GetModel().GetCount()
     finally:
@@ -557,15 +553,14 @@ def test_entry_detail_show_entry_repaints_both_dataviews_after_associating_model
     laps_list) in one call -- both must repaint.
     """
     window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
-    window.Show()
-    harness.pump()
-    # Both kept alive: _spy_repaint's docstring.
-    cards_control = harness.find_control(window, ids.CARDS_LIST)
-    laps_control = harness.find_control(window, ids.LAPS_LIST)
-    cards_refresh, cards_update = _spy_repaint(cards_control)
-    laps_refresh, laps_update = _spy_repaint(laps_control)
-
     try:
+        window.Show()
+        harness.pump()
+        # Both kept alive: _spy_repaint's docstring.
+        cards_control = harness.find_control(window, ids.CARDS_LIST)
+        laps_control = harness.find_control(window, ids.LAPS_LIST)
+        cards_refresh, cards_update = _spy_repaint(cards_control)
+        laps_refresh, laps_update = _spy_repaint(laps_control)
         view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
         cards_count = view.cards_list.GetModel().GetCount()
         laps_count = view.laps_list.GetModel().GetCount()
@@ -584,12 +579,12 @@ def test_results_window_show_standings_repaints_the_list_after_associating_its_m
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
     window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
-    window.Show()
-    harness.pump()
-    control = harness.find_control(window, ids.STANDINGS_LIST)  # kept alive: _spy_repaint's doc
-    refresh, update = _spy_repaint(control)
-
     try:
+        window.Show()
+        harness.pump()
+        # control kept alive: _spy_repaint's docstring.
+        control = harness.find_control(window, ids.STANDINGS_LIST)
+        refresh, update = _spy_repaint(control)
         view = ResultsWindow(window, data_source=DemoDataSource())
         row_count = view.standings_list.GetModel().GetCount()
     finally:

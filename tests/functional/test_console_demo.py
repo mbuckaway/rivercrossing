@@ -79,11 +79,11 @@ def shared_console(xrc_resource: object) -> MainFrame:
     (see the module docstring for why sharing matters here).
     """
     window = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    console = MainFrame(window, data_source=DemoDataSource())
     try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        console = MainFrame(window, data_source=DemoDataSource())
         yield console
     finally:
         harness.close_window(window)

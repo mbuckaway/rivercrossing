@@ -62,9 +62,13 @@ _CLEAN_POOLED_FIXTURE = (
 def _show(xrc_resource: Any, roster: Roster) -> tuple[Any, RiderEditor]:  # noqa: ANN401
     """Load rider_editor_dlg, wire it live over *roster*, show, pump."""
     dialog = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
-    view = RiderEditor(dialog, roster=roster)
-    dialog.Show()
-    harness.pump()
+    try:
+        view = RiderEditor(dialog, roster=roster)
+        dialog.Show()
+        harness.pump()
+    except Exception:  # Fault A: any post-load failure must close the dialog
+        harness.close_window(dialog)
+        raise
     return dialog, view
 
 
