@@ -78,7 +78,7 @@ def shared_console(xrc_resource: object) -> MainFrame:
     already sets once -- so one instance safely serves all of them
     (see the module docstring for why sharing matters here).
     """
-    window = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
+    window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     try:
         window.Show()
         window.Layout()

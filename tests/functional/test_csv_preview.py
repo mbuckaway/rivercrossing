@@ -33,7 +33,7 @@ def _write_pooled_csv(directory: Any, rows: str) -> Any:  # noqa: ANN401 -- wx s
 
 def _show(xrc_resource: Any, roster: Roster) -> tuple[Any, CsvPreviewDialog]:  # noqa: ANN401
     """Load csv_preview_dlg, wire it live over *roster*, show, pump."""
-    dialog = harness.load_window(xrc_resource, ids.CSV_PREVIEW_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.CSV_PREVIEW_DLG, frame=False)
     try:
         view = CsvPreviewDialog(dialog, roster=roster)
         dialog.Show()

@@ -58,7 +58,7 @@ XRC_ACCELERATOR_CASES = tuple(
 @pytest.fixture
 def frame_with_menubar(xrc_resource: object):
     """Load main_frame with its real menubar attached, then close it."""
-    frame = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
+    frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
     harness.pump()

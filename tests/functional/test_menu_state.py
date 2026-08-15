@@ -21,7 +21,7 @@ pytestmark = pytest.mark.functional
 
 def test_stop_button_starts_disarmed_in_the_authored_xrc(xrc_resource: object) -> None:
     """R-35: the console's Arm checkbox is unticked by default (§3)."""
-    frame = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
+    frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
 
     try:
         armed = harness.find_control(frame, ids.ARM_STOP_CHK).GetValue()

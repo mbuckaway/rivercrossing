@@ -35,7 +35,7 @@ _DURATION_TOKEN = re.compile(r"\d+\.\d+ s")
 
 def _show(xrc_resource: Any) -> tuple[Any, SelfTestDialog]:  # noqa: ANN401 -- wx ships no stubs
     """Load selftest_dlg, wire it live, show it, and pump once."""
-    dialog = harness.load_window(xrc_resource, ids.SELFTEST_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.SELFTEST_DLG, frame=False)
     try:
         view = SelfTestDialog(dialog)
         dialog.Show()

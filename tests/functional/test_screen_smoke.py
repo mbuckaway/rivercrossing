@@ -18,6 +18,7 @@ non-resolution is asserted directly rather than silently omitted.
 import re
 import types
 from pathlib import Path
+from typing import Any
 
 import harness
 import pages
@@ -68,7 +69,7 @@ def test_screen_loads_shows_resolves_names_places_buttons_and_closes_cleanly(
     spec: pages.WindowSpec, xrc_resource: object
 ) -> None:
     """Every frozen window: names resolve, buttons placed, it closes."""
-    window = harness.load_window(xrc_resource, spec.name, frame=spec.is_frame)
+    window = harness.load_window_verified(xrc_resource, spec.name, frame=spec.is_frame)
     window.Show()
     window.Layout()
     harness.pump()
@@ -88,7 +89,7 @@ def test_screen_loads_shows_resolves_names_places_buttons_and_closes_cleanly(
 
 def test_main_menubar_does_not_resolve_as_a_window_control(xrc_resource: object) -> None:
     """Measured: the menu-bar XRC handler drops the name on attach."""
-    frame = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
+    frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
     harness.pump()
@@ -118,7 +119,7 @@ def test_close_window_reaps_the_dialog_so_a_shared_name_no_longer_resolves(
     the culprit so the next hosted-CI failure is diagnosable instead
     of repeating the same unattributed miss.
     """
-    dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
     dialog.Show()
     harness.pump()
     control = harness.find_control(dialog, ids.PLATE_INPUT)
@@ -149,7 +150,7 @@ def test_flush_deferred_deletions_reaps_a_destroyed_dialog_in_one_call(
     between, so a pass here can only be this one helper's own doing,
     never residual idle time an earlier call happened to supply.
     """
-    dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
     name = dialog.GetName()
     dialog.Destroy()
 
@@ -167,7 +168,7 @@ def test_flush_deferred_deletions_given_nothing_pending_leaves_windows_untouched
     Guards against an over-eager implementation that destroys or
     hides something it was never asked to touch.
     """
-    dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
     dialog.Show()
     harness.pump()
     before = len(harness.wx.GetTopLevelWindows())
@@ -196,7 +197,7 @@ def test_close_window_reaps_every_cycle_of_thirty_rapid_open_closes(
     sometimes keeps up would fail here well before cycle 30.
     """
     for _ in range(30):
-        dialog = harness.load_window(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
+        dialog = harness.load_window_verified(xrc_resource, ids.MANUAL_DEAL_DLG, frame=False)
         dialog.Show()
         harness.pump()
         dialog_handle = dialog.GetHandle()
@@ -216,7 +217,7 @@ def test_close_window_reaps_every_cycle_of_thirty_rapid_open_closes(
 
 def test_type_text_given_a_string_updates_the_controls_value(xrc_resource: object) -> None:
     """Direct injection is measured reliable; the simulator is not."""
-    dialog = harness.load_window(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
     dialog.Show()
     harness.pump()
 
@@ -231,7 +232,7 @@ def test_type_text_given_a_string_updates_the_controls_value(xrc_resource: objec
 
 def test_click_given_a_stock_button_fires_its_bound_handler(xrc_resource: object) -> None:
     """Direct event injection delivers a real EVT_BUTTON (measured)."""
-    dialog = harness.load_window(xrc_resource, ids.STOP_CONFIRM_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.STOP_CONFIRM_DLG, frame=False)
     dialog.Show()
     harness.pump()
     fired_ids = []
@@ -249,7 +250,7 @@ def test_click_given_a_stock_button_fires_its_bound_handler(xrc_resource: object
 
 def test_run_modal_given_a_dismiss_id_returns_it_from_showmodal(xrc_resource: object) -> None:
     """The dialog-hook: ShowModal ends on its own, no user present."""
-    dialog = harness.load_window(xrc_resource, ids.FINISH_CONFIRM_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.FINISH_CONFIRM_DLG, frame=False)
 
     try:
         result = harness.run_modal(dialog, dismiss_with=harness.wx.ID_CANCEL)
@@ -266,7 +267,7 @@ def test_load_window_given_an_unknown_frame_name_raises_naming_the_lookup(
     """T-5: the ``LoadFrame`` branch of ``load_window``'s raise."""
     expected = re.escape("LoadFrame(None, 'no_such_frame')")
     with pytest.raises(harness.WindowLoadError, match=expected):
-        harness.load_window(xrc_resource, "no_such_frame", frame=True)
+        harness.load_window_verified(xrc_resource, "no_such_frame", frame=True)
 
 
 def test_load_window_given_an_unknown_dialog_name_raises_naming_the_lookup(
@@ -275,7 +276,7 @@ def test_load_window_given_an_unknown_dialog_name_raises_naming_the_lookup(
     """T-5: the ``LoadDialog`` branch of ``load_window``'s raise."""
     expected = re.escape("LoadDialog(None, 'no_such_dlg')")
     with pytest.raises(harness.WindowLoadError, match=expected):
-        harness.load_window(xrc_resource, "no_such_dlg", frame=False)
+        harness.load_window_verified(xrc_resource, "no_such_dlg", frame=False)
 
 
 def test_load_menubar_given_an_unknown_name_raises_naming_the_lookup(
@@ -291,7 +292,7 @@ def test_find_control_given_an_unknown_name_raises_naming_window_and_control(
     xrc_resource: object,
 ) -> None:
     """T-5: ``find_control``'s raise names the window and the miss."""
-    dialog = harness.load_window(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
 
     try:
         with pytest.raises(
@@ -307,7 +308,7 @@ def test_screenshot_given_an_unwritable_destination_raises_naming_it(
     xrc_resource: object, tmp_path: Path
 ) -> None:
     """T-5: ``screenshot``'s raise, forced by a directory as target."""
-    dialog = harness.load_window(xrc_resource, ids.ABOUT_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.ABOUT_DLG, frame=False)
     dialog.Show()
     harness.pump()
     blocked_destination = tmp_path / "shot.png"
@@ -320,12 +321,47 @@ def test_screenshot_given_an_unwritable_destination_raises_naming_it(
         harness.close_window(dialog)
 
 
-# ------------------------------- Fault B: load_window contract
-# (windows-latest CI saw results_frame built with a whole subtree
-# missing -- its staticbox empty -- under worker load. load_window
-# returns exactly what LoadFrame/LoadDialog constructed, never a
-# name-resolved stale frame, and an incomplete build surfaces through
-# find_control's own first-level-child inventory.)
+# ------------------------------- Fault B: the verified-load guard
+# (CI has measured the process-global XmlResource building a window
+# with a whole subtree skipped -- results_frame with an empty
+# staticbox, ride_setup_dlg missing its radio group, rider_editor_dlg
+# missing its action staticbox. load_window_verified detects the gap
+# against pages.WINDOWS' contract, rebuilds once from a fresh private
+# resource, and otherwise fails loud with the child inventory.)
+
+
+def _broken_results_frame() -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Build a results_frame missing its two deep checkbox controls.
+
+    Hand-built, not XRC-loaded-with-Destroy()ed-children: ``Destroy()``
+    is deferred, so a destroyed control still answers
+    ``FindWindowByName`` (measured -- ``harness.close_window``'s
+    docstring) and reading its name afterwards crashes the interpreter
+    (E1's reaped-object rule). Fault B's real symptom is a
+    *never-built* subtree -- an empty staticbox -- which is exactly
+    what this frame reproduces: the first-level children exist, the
+    two nested checkboxes never do. The caller owns the returned
+    frame and may destroy it safely.
+    """
+    import wx  # noqa: PLC0415 -- plain `import wx` is not a top-level import here
+
+    frame = wx.Frame(None, name=ids.RESULTS_FRAME)
+    for child_name in (
+        ids.TIEBREAK_LIST,
+        ids.REOPEN_BTN,
+        ids.STANDINGS_LIST,
+        ids.EXPORT_HTML_BTN,
+        ids.EXPORT_PDF_BTN,
+        ids.POSTER_BTN,
+        ids.EXPORT_CSV_BTN,
+    ):
+        wx.Window(frame, name=child_name)
+    # The empty staticbox the CI inventory showed as the unnamed
+    # ('-1') child -- present, holding none of the five checkboxes
+    # (results.xrc nests show_times_chk/time_board_chk two levels
+    # deep inside it).
+    wx.StaticBox(frame, label="")
+    return frame
 
 
 def test_load_window_returns_exactly_what_load_frame_constructed(
@@ -348,44 +384,62 @@ def test_load_window_returns_exactly_what_load_frame_constructed(
     assert harness.load_window(resource, ids.RESULTS_FRAME, frame=True) is sentinel
 
 
-def test_load_window_surfaces_an_incomplete_build_through_the_child_inventory(
+def test_load_window_verified_retries_once_when_the_first_frame_misses_deep_controls(
     xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
 ) -> None:
-    """Fault B diagnostic: a gap names the missing control.
+    """Fault B: a whole-subtree gap must not be returned silently.
 
-    The contract above means an incomplete build is returned as
-    constructed -- the caller's ``find_control`` then raises with the
-    first-level-child inventory (the message the windows-latest
-    failure carried), never a silently wrong window. A hand-built
-    frame missing the two deep checkboxes (``show_times_chk``/
-    ``time_board_chk``, nested two levels deep in ``results.xrc``)
-    reproduces the gap without destroying anything -- the E1
-    reaped-object rule forbids the Destroy()-based alternative.
+    ``load_window_verified`` detects the gap against
+    ``pages.WINDOWS``' control contract and rebuilds once from a
+    fresh private resource (``test_bundle_smoke.py``'s ``bundled_xrc``
+    isolation pattern). The first load is forced broken here so the
+    retry is exercised deterministically.
     """
-    import wx  # noqa: PLC0415 -- plain `import wx` is not a top-level import here
-
-    frame = wx.Frame(None, name=ids.RESULTS_FRAME)
-    for child_name in (
-        ids.TIEBREAK_LIST,
-        ids.REOPEN_BTN,
-        ids.STANDINGS_LIST,
-        ids.EXPORT_HTML_BTN,
-        ids.EXPORT_PDF_BTN,
-        ids.POSTER_BTN,
-        ids.EXPORT_CSV_BTN,
-    ):
-        wx.Window(frame, name=child_name)
-    resource = types.SimpleNamespace(
-        LoadFrame=lambda _parent, _name: frame,
+    broken = _broken_results_frame()
+    broken_resource = types.SimpleNamespace(
+        LoadFrame=lambda _parent, _name: broken,
         LoadDialog=lambda _parent, _name: None,
     )
 
-    window = harness.load_window(resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window_verified(broken_resource, ids.RESULTS_FRAME, frame=True)
     try:
-        with pytest.raises(
-            LookupError,
-            match=re.escape("has no control named 'show_times_chk'"),
-        ):
-            harness.find_control(window, ids.SHOW_TIMES_CHK)
+        deep = harness.find_control(window, ids.SHOW_TIMES_CHK)
+        other = harness.find_control(window, ids.TIME_BOARD_CHK)
+        assert deep.GetName() == ids.SHOW_TIMES_CHK
+        assert other.GetName() == ids.TIME_BOARD_CHK
     finally:
         harness.close_window(window)
+
+
+def test_load_window_verified_raises_with_the_child_inventory_when_the_retry_also_fails(
+    xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault B: a retry that is broken too fails loudly.
+
+    One rebuild only: when the fresh resource builds a second
+    incomplete frame, ``load_window_verified`` raises with the
+    first-level-child inventory ``ui.views._support.find_control``
+    already produces, and neither incomplete frame is left alive for
+    the session-end sweep.
+    """
+
+    def _broken_resource() -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            LoadFrame=lambda _parent, _name: _broken_results_frame(),
+            LoadDialog=lambda _parent, _name: None,
+        )
+
+    monkeypatch.setattr(harness, "_fresh_resource", _broken_resource)
+
+    with pytest.raises(
+        harness.ControlNotFoundError,
+        match=re.escape("results_frame has no control named 'show_times_chk'"),
+    ):
+        harness.load_window_verified(
+            _broken_resource(),
+            ids.RESULTS_FRAME,
+            frame=True,
+        )
+
+    assert harness.wx.Window.FindWindowByName(ids.RESULTS_FRAME) is None

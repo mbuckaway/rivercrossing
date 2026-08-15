@@ -34,7 +34,7 @@ pytestmark = pytest.mark.functional
 
 def _show(xrc_resource: Any, roster: Roster) -> tuple[Any, RideSetup]:  # noqa: ANN401
     """Load ride_setup_dlg, wire it live over *roster*, show, pump."""
-    dialog = harness.load_window(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
     try:
         view = RideSetup(dialog, roster=roster)
         dialog.Show()

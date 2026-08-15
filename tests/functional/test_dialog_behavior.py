@@ -102,7 +102,7 @@ _RIDE_NAME = "Club poker night"
 
 def _show(xrc_resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Load, show and pump *name* from *xrc_resource*."""
-    dialog = harness.load_window(xrc_resource, name, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, name, frame=False)
     try:
         dialog.Show()
         harness.pump()
@@ -750,7 +750,7 @@ def test_dialog_is_a_real_wx_dialog_so_tab_stays_trapped(
     first place -- every one of the 21 rows really is a
     ``wx.Dialog``, never a ``wx.Frame``.
     """
-    window = harness.load_window(xrc_resource, spec.name, frame=False)
+    window = harness.load_window_verified(xrc_resource, spec.name, frame=False)
 
     try:
         is_dialog = isinstance(window, wx.Dialog)

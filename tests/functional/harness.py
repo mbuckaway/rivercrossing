@@ -237,6 +237,109 @@ def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN40
     return window
 
 
+def load_window_verified(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN401
+    """Load *name* and verify its spec'd controls (Fault B).
+
+    Opt-in variant of :func:`load_window` for the sites that build a
+    window ONCE per file (the module-scoped ``shared_*`` fixtures) or
+    once per test (the ``_show`` helpers): CI has measured the
+    process-global ``wx.xrc.XmlResource`` building an incomplete
+    window under worker load -- a whole subtree skipped, different
+    per load (``results_frame`` with an empty staticbox,
+    ``ride_setup_dlg`` missing its radio group, ``rider_editor_dlg``
+    missing its whole action staticbox) -- and a degraded load errors
+    the whole module or the single test with no rerun able to absorb
+    it (the retry reloads from the same degraded singleton). The
+    window is verified against ``pages.WINDOWS``' per-window control
+    contract; only a genuinely incomplete build is rebuilt, once,
+    from a fresh private resource (``test_bundle_smoke.py``'s
+    ``bundled_xrc`` isolation pattern), built BEFORE the degraded
+    window is torn down so its controls cannot land on the degraded
+    window's just-freed addresses (the wrapper-cache corruption
+    ``_support.find_control`` documents). No settle loop: yielding
+    during the verification is exactly the event processing the
+    degradation hides in. Healthy builds cost one extra name-walk and
+    nothing else.
+
+    Raises:
+        WindowLoadError: If no window named *name* can be loaded.
+        ControlNotFoundError: If both the first load and the fresh
+            rebuild are incomplete; the message carries the rebuilt
+            window's first-level-child inventory.
+    """
+    window = load_window(resource, name, frame=frame)
+    if _expected_controls_resolve(window, name):
+        return window
+    fresh = _fresh_resource()
+    rebuilt = fresh.LoadFrame(None, name) if frame else fresh.LoadDialog(None, name)
+    if rebuilt is None:
+        close_window(window)
+        kind = "LoadFrame" if frame else "LoadDialog"
+        raise WindowLoadError(f"{kind}(None, {name!r}) found no matching XRC resource")
+    if not _expected_controls_resolve(rebuilt, name):
+        missing = _first_missing_control(rebuilt, name)
+        children = [child.GetName() for child in rebuilt.GetChildren()]
+        window_name = rebuilt.GetName()
+        close_window(rebuilt)
+        close_window(window)
+        raise ControlNotFoundError(
+            f"{window_name} has no control named {missing!r} "
+            f"(first-level children: {len(children)} -- {children!r})"
+        )
+    close_window(window)
+    return rebuilt
+
+
+def _fresh_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return a private ``XmlResource`` loaded from every packaged .xrc.
+
+    The isolation pattern ``test_bundle_smoke.py``'s ``bundled_xrc``
+    fixture proves: a *new* ``XmlResource`` (never the process-wide
+    ``XmlResource.Get()`` singleton, whose degraded builds under
+    worker load are what Fault B works around), loaded from the same
+    ``ui/xrc/*.xrc`` files :func:`load_xrc_resources` loads.
+    """
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    resource = wx.xrc.XmlResource()
+    for path in sorted(xrc_directory().glob("*.xrc")):
+        resource.Load(str(path))
+    return resource
+
+
+def _expected_controls_for(name: str) -> tuple[str, ...]:
+    """Return *name*'s spec'd control names, or ``()`` if none.
+
+    Fault B's completeness contract: ``pages.WINDOWS``' per-window
+    ``controls`` tuples are the frozen-name inventory the whole suite
+    already asserts. Imported here (function scope), not at module
+    scope: ``pages`` imports ``harness`` at module level, so a
+    module-level import here would be a cycle.
+    """
+    import pages  # noqa: PLC0415 -- cycle, see above
+
+    for spec in pages.WINDOWS:
+        if spec.name == name:
+            return spec.controls
+    return ()
+
+
+def _expected_controls_resolve(window: Any, name: str) -> bool:  # noqa: ANN401 -- wx ships no stubs
+    """Return whether every spec'd control of *name* resolves in it."""
+    return all(
+        wx.Window.FindWindowByName(control_name, window) is not None
+        for control_name in _expected_controls_for(name)
+    )
+
+
+def _first_missing_control(window: Any, name: str) -> str:  # noqa: ANN401 -- wx ships no stubs
+    """Return *name*'s first spec'd control missing from *window*."""
+    for control_name in _expected_controls_for(name):
+        if wx.Window.FindWindowByName(control_name, window) is None:
+            return control_name
+    return ""
+
+
 def load_menubar(resource: Any, name: str) -> Any:  # noqa: ANN401
     """Load the menu bar called *name* from *resource*.
 

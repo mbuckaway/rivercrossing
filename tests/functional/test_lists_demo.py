@@ -89,7 +89,7 @@ CANVAS_PUBLISH_DEFAULTS = (
 @pytest.fixture(scope="module")
 def shared_library(xrc_resource: object) -> RideLibrary:
     """One ``RideLibrary``, reused by every read-only assertion."""
-    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
     try:
         window.Show()
         window.Layout()
@@ -103,7 +103,7 @@ def shared_library(xrc_resource: object) -> RideLibrary:
 @pytest.fixture(scope="module")
 def shared_rider_editor(xrc_resource: object) -> RiderEditor:
     """One ``RiderEditor``, built against the demo's mixed roster."""
-    window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     try:
         window.Show()
         window.Layout()
@@ -117,7 +117,7 @@ def shared_rider_editor(xrc_resource: object) -> RiderEditor:
 @pytest.fixture(scope="module")
 def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
     """One ``EntryDetailDialog``, built for the demo's plate 77."""
-    window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
     try:
         window.Show()
         window.Layout()
@@ -131,7 +131,7 @@ def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
 @pytest.fixture(scope="module")
 def shared_results(xrc_resource: object) -> ResultsWindow:
     """One ``ResultsWindow``, reused by every read-only assertion."""
-    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
         window.Show()
         window.Layout()
@@ -174,7 +174,7 @@ def test_ride_library_given_a_different_source_shows_its_rows_not_the_demo(
                 )
             ]
 
-    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -233,7 +233,7 @@ def test_rider_editor_team_column_is_hidden_for_a_solo_only_roster(
     roster.create_solo_entry(name="Solo One", plate="1")
     roster.create_solo_entry(name="Solo Two", plate="2")
 
-    window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -325,7 +325,7 @@ def test_entry_detail_card_images_defaults_to_the_shared_support_cache(
 
 def test_entry_detail_given_an_unknown_plate_raises_naming_it(xrc_resource: object) -> None:
     """T-5: ``DemoDataSource.entry_detail``'s only ``raise``."""
-    window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -397,7 +397,7 @@ def test_results_window_given_a_different_source_shows_its_rows_not_the_demo(
                 )
             ]
 
-    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
         window.Show()
         harness.pump()
@@ -506,7 +506,7 @@ def test_ride_library_show_rides_repaints_the_list_after_associating_its_model(
     xrc_resource: object,
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
-    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -527,7 +527,7 @@ def test_rider_editor_show_riders_repaints_the_list_after_associating_its_model(
     xrc_resource: object,
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
-    window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -552,7 +552,7 @@ def test_entry_detail_show_entry_repaints_both_dataviews_after_associating_model
     ``show_entry`` associates two separate models (cards_list,
     laps_list) in one call -- both must repaint.
     """
-    window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
+    window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -578,7 +578,7 @@ def test_results_window_show_standings_repaints_the_list_after_associating_its_m
     xrc_resource: object,
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
-    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
         window.Show()
         harness.pump()
