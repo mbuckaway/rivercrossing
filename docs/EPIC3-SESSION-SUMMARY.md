@@ -1,5 +1,20 @@
 # EPIC 3 — Session Summary and Hand-off
 
+> **UPDATE 2026-08-15 — EPIC 3 close-out campaign (fix iterations 4–8).**
+> Head is now `5defd3d` (branch `topic/epic-3-roster-csv`, PR #8 still open,
+> mergeable, CI stage 3 red). **Fault A (the dialog leak) is FIXED and proven**
+> — every load+construct path closes its window on failure and a session-end
+> sweep asserts no top-level wx window survives (zero sweep failures in every
+> subsequent run, both OSes). **Fault B (stage-3 flakiness) is NOT fixed**: five
+> further iterations (4–8) failed to get stage 3 green on either OS; the full
+> record — mechanism, per-iteration results, what was tried and reverted, and
+> the remaining levers — is the addendum at the end of this file. Everything
+> below this block is the original 2026-08-13 handoff and is historical: the
+> "What is left" section's Fault A action list is obsolete (the leak is fixed),
+> the iteration counter there says "4-5 remain" but all 8 are now done, and
+> the test counts there (764/761) predate the campaign's additions (the suite
+> is now 822 items).
+
 **Written:** 2026-08-13 · **Branch:** `topic/epic-3-roster-csv` · **Head:** `690f88a` · **PR:** #8 (open, mergeable, zero review threads)
 **Purpose:** development moves to another machine. This file records what is done, what is left,
 and everything the next machine needs to resume. The full implementation plan (including the
@@ -583,3 +598,115 @@ reap), 4 (--reruns 1→2 at all three sites + red-first pin update).
   fix in-flight. **Progress note (2026-08-13): iterations 1-3 pushed (heads `20eacd2`,
   `b342bce`, `690f88a`); both remaining stage-3 faults are diagnosed — see "What is left"
   above. Iterations 4-5 remain.**
+
+---
+
+# Addendum (2026-08-15) — EPIC 3 close-out campaign, fix iterations 4–8
+
+This addendum records the outcome of the five CI-fix iterations that followed the
+original handoff. Everything above is the 2026-08-13 state; this is what happened
+next. **Bottom line: Fault A is fixed and proven; Fault B is not fixable by any
+in-process remedy tried, and stage 3 remains red on both OSes.**
+
+## Final state (head `5defd3d`, branch `topic/epic-3-roster-csv`)
+
+- **Shipped and kept:** Fault A fixes (leak-proof `_show` helpers and `app.py`
+  `_open_target`/`_run_launch_self_test`/`run_csv_import_flow` guards, commits
+  `141d7e3`/`eae4768`); the session-end top-level-window sweep (`9e35ce8`,
+  conftest); the bootstrap reap-settle fix (`096bd2a`); `load_window_verified`
+  opt-in completeness helper (`f1d0432`); the heavy-churn file split
+  (`test_app_bootstrap`/`test_lists_demo` → 5 files + `_lists_common.py`,
+  `5defd3d`); the spec §14 `--reruns 2` write-back (`559a7fd`).
+- **Added then reverted:** the in-`load_window` completeness guard (added
+  `b405fca`/`f8f12eb`, restored `381b78d`, reverted `05b1ac5` and, in the working
+  history, `20b89ee`) and the `find_control` idle-flush escalation
+  (`97ba224`/`f3a0660`, reverted `469d94f`/`adfa0a8`).
+- Stages 1, 2 and 5 are green on both OSes in all eight iterations; GitGuardian
+  clean; the macOS bundle smoke (PyInstaller `.app` + all 23 windows from the
+  packaged `.xrc`) passes locally in the Tart VM.
+- PR #8 is still `MERGEABLE` with zero review threads, but `mergeStateStatus:
+  UNSTABLE` — it cannot merge while stage 3 is red.
+
+## The mechanism (measured, both classes co-occur)
+
+The stage-3 failures are the wx wrapper-cache / `XmlResource` degradation this
+repo already documents (`ui/views/_support.py` `find_control` docstring:
+"known, reported residual risk, not silently swallowed"; `noxfile.py` functional
+docstring: "treat a green suite as bounded, not solved"). Two distinct classes,
+often on the same window build:
+
+1. **Wrapper-type corruption** — the control resolves by name (it is listed in
+   the first-level-children inventory) but `isinstance(control, expected_type)`
+   fails after 25 `SafeYield`s: a freshly-allocated control landed on an address
+   whose wrapper-cache entry still types it as a previously destroyed control.
+   Example: `ride_setup_dlg has no control named 'start_time_picker' (first-level
+   children: 24 -- [... 'start_time_picker' ...])`.
+2. **Missing subtree (partial XRC build)** — a contiguous block of controls is
+   never built; siblings resolve. The absent block is always one XRC subtree:
+   `results_frame`'s staticbox (8 first-level children, empty `'-1'` box),
+   `ride_setup_dlg`'s whole entry-group (radios/tiebreak/cap/decks missing),
+   `rider_editor_dlg`'s whole action staticbox (`add_btn`/`team_choice`/... gone;
+   only `riders_list`, import/export, close survive). This shape supports a
+   partial-load of the `XmlResource` rather than per-control address churn.
+
+Both classes appear on the same window; the class mix is stochastic run-to-run
+(it4 ≈88% class 2, it5 100% class 1, it6 ≈50/50, it7 ≈90% class 2, it8 100%
+class 1). Every failure across iterations 4–8 traces to these two classes —
+**zero genuine behaviour failures**. In particular the `KeyError: 'plates'` on
+`test_mi_import_csv_import_click_commits_into_the_shared_roster` is **not a
+product bug**: wx swallows the `LookupError` raised inside the menu handler
+(`RiderEditor.__init__` → `find_control`), the monkeypatched run-dialog never
+runs, `captured["plates"]` is never set, and the test surfaces `KeyError`.
+`src/` contains no `'plates'` key path.
+
+## Per-iteration results (stage 3, post-`--reruns 2`)
+
+| Iteration | Head | macOS | Windows | Notes |
+|---|---|---|---|---|
+| 4 — pre-guard | `096bd2a` | 20 failed | 17 failed + 3 errors | baseline; fast fixture-setup failures |
+| 5 — guard in `load_window` (25-SafeYield settle + one rebuild, build-before-destroy) | `381b78d` | 51 failed + 8 errors | 15 failed | guard's extra settle+rebuild churn amplifies; one macOS retry job was near-green: **1 failed + 773 passed** |
+| 6 — `load_window_verified` opt-in | `f1d0432` | 14 failed + 7 errors | 18 failed + 1 error | name-based verify is blind to class 1 |
+| 7 — + `find_control` idle-flush escalation | `f3a0660` | 25 failed | 16 failed | **Windows took 90 min (682 passed, 14 failed)** then was cancelled; escalation reverted, cause of the slowness unknown (no healthy Windows baseline) |
+| 8 — file split | `5defd3d` | 14–15 failed | failed | marginal improvement from 17–20, not green |
+
+Local 4-worker Tart VM: every variant, including the clean tree, sits in a noisy
+1–16-failure band — the degradation is roughly 20× more frequent on the 3-core
+hosted runners. `--reruns 2` cannot absorb it: reruns re-run in the same
+(poisoned) worker and module-scoped fixtures serve the same degraded window.
+
+## Why each in-process remedy failed
+
+- **Settle (`SafeYield` × 25, pre-existing `find_control` retry):** fixes class 1
+  at one-window-construction scale, not under sustained worker load; cannot build
+  class-2 missing subtrees at all.
+- **Rebuild from a fresh resource (guard, `load_window_verified`):** class 1 is
+  invisible to a name-based completeness check; and each degraded load now pays
+  +25 settles + a fresh build + 1–2 destroys, amplifying the very address-reuse
+  churn it works around (51-failure cascade in it5; the guard era's single
+  near-green run suggests the mechanism is churn-rate-dependent, not simply bad).
+- **Idle-flush escalation (`ProcessIdle`/`EventLoopActivator`):** no effect on the
+  corruption and made Windows impractically slow; reverted.
+- **File split:** reduces per-worker churn marginally (14–15 vs 17–20), nowhere
+  near the rerun-absorption threshold.
+
+## Remaining levers (speculative, not tried)
+
+- **Fresh-process rerun of failed files** — the corruption is process-granular;
+  a CI wrapper that re-executes a failed *file* in a freshly spawned pytest
+  process attacks it directly (there is an in-repo precedent: the console
+  subprocess scenarios re-spawn). The strongest untried lever.
+- **More workers than cores** (`-n 6` on the 3-core runners) — fewer files per
+  worker process; directionally right, but oversubscription contention is itself
+  a documented corruption trigger, so it may backfire.
+- **Splitting all churn-heavy files** — weak (it8 shows the marginal effect).
+
+## Open items for the next session
+
+- Stage 3 green on both OSes (blocks merge of PR #8, blocks v0.3.0 tagging).
+- Windows functional at >90 min is unpracticable — the it7 duration is
+  unexplained (no healthy Windows full-suite baseline exists).
+- The `KeyError`-masking of swallowed handler exceptions is worth a diagnostic
+  improvement (assert the route handler ran, or capture stderr) so a corrupted
+  route never reads as a product bug.
+- The suite is 822 items; the noxfile's "761-test size" and this file's
+  "764 functional tests" figures are stale.
