@@ -50,6 +50,7 @@ reproduced with throwaway scripts before being encoded here:
 """
 
 import gc
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,7 @@ __all__ = [
     "click",
     "close_window",
     "find_control",
+    "fire_menu_event",
     "flush_deferred_deletions",
     "load_menubar",
     "load_window",
@@ -633,3 +635,62 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
     if closed:
         gc.collect()
     return closed
+
+
+_MENU_EVENT_SETTLE_ATTEMPTS = 10
+
+
+def fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401
+    """Post a real ``EVT_MENU`` for *item_id* at *frame*, then settle.
+
+    The shared home of the two per-file ``_fire_menu_event`` helpers
+    the E3.2/E3.4 split left in ``test_app_bootstrap.py`` and
+    ``test_app_open_target.py``. (``console_subprocess_scenarios.py``
+    keeps its own simpler variant: it fires inside freshly spawned
+    interpreters, where process freshness makes retention moot.)
+
+    Measured (PR #8's CI, run 31344728049, this suite's own scattered
+    residual churn): a route that opens *and* destroys a dialog inside
+    this same synchronous call (``mi_import_csv``'s picker -> preview
+    -> commit flow, say) can leave that deletion still pending when
+    this returns, racing the very next call's own window construction.
+    ``harness.close_window``'s deterministic reap does not cover that
+    path: production's own ``dialogs.run_dialog``/``_open_target``
+    destroy their windows directly, never through that test-only
+    helper.
+
+    The settle loop calls :func:`flush_deferred_deletions` directly
+    rather than :func:`pump`: measured on windows-latest CI (run
+    31392502719), driving that flush from every ``pump()`` call in the
+    whole suite -- not just here -- turned one functional job's normal
+    ~90s runtime into 5h59m28s before the 6-hour cap killed it, so
+    ``pump`` no longer flushes on every call. This loop's own deletions
+    still need the deterministic idle-processing drive only a bounded
+    few calls per fired event, not one per pump call across the suite.
+
+    Finally, clears ``sys.last_type``/``sys.last_value``/
+    ``sys.last_traceback``/``sys.last_exc``. wx swallows a Python
+    exception raised inside a handler, and PyErr_Print then parks the
+    exception on ``sys`` (on Python 3.11+ under the ``last_exc`` name,
+    which also carries the traceback) -- the frame chain holds the
+    failing handler's view and every control wrapper it touches alive
+    for the rest of the process -- the "Python frames" signature the
+    2026-08-19 retention probe attributed to this exact path (Addendum
+    2, inventory item 1) -- so their SIP map entries never evict. The
+    clear runs in a ``finally`` whether or not a handler raised, and
+    it covers the app's own route path too: ``app.py``'s ``EVT_MENU``
+    bindings are the same events this posts at.
+    """
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    real_id = wx.xrc.XRCID(item_id)
+    event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
+    event.SetEventObject(frame)
+    try:
+        frame.GetEventHandler().ProcessEvent(event)
+        pump()
+        for _ in range(_MENU_EVENT_SETTLE_ATTEMPTS):
+            flush_deferred_deletions()
+    finally:
+        sys.last_type = sys.last_value = sys.last_traceback = None
+        sys.last_exc = None

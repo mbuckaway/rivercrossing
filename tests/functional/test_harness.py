@@ -44,8 +44,8 @@ pytestmark = pytest.mark.functional
 
 
 @pytest.fixture
-def event_frame(wx_app: object) -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """A plain frame to fire menu events at (no main_frame churn).
+def event_frame(wx_app: object) -> Any:  # noqa: ANN401, ARG001 -- ordering only, see docstring
+    """Return a plain frame to fire menu events at (no frame churn).
 
     ``fire_menu_event`` only needs a frame with a bound ``EVT_MENU``
     handler; a bare ``wx.Frame`` exercises the seam without decoding
@@ -118,7 +118,7 @@ def test_close_window_collects_a_cycle_between_a_view_and_its_controls(
     assert (view_ref(), control_ref()) == (None, None)
 
 
-# --- fire_menu_event's swallowed-traceback release (retention pin) ------
+# --- fire_menu_event's swallowed-traceback release (retention pin) --
 
 
 def test_fire_menu_event_clears_a_swallowed_handler_exception(
@@ -174,6 +174,7 @@ def test_fire_menu_event_releases_the_failing_handlers_frame_chain(
     the test clears ``state["marker"]`` before observing -- leaving
     the traceback's frame as the only possible holder.
     """
+
     class _Marker:
         pass
 

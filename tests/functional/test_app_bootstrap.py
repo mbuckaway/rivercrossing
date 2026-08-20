@@ -120,43 +120,18 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
         harness.close_window(frame)
 
 
-_MENU_EVENT_SETTLE_ATTEMPTS = 10
-
-
 def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx ships no stubs
     """Post a real ``EVT_MENU`` for *item_id* at *frame*, then settle.
 
-    Measured (PR #8's CI, run 31344728049, this suite's own scattered
-    residual churn): a route that opens *and* destroys a dialog
-    inside this same synchronous call (``mi_import_csv``'s own
-    picker -> preview -> commit flow, say) can leave that deletion
-    still pending when this returns, racing the very next
-    ``_fire_menu_event``'s own window construction. ``harness.
-    close_window``'s own deterministic reap does not cover this path:
-    production's own ``dialogs.run_dialog``/``_open_target`` destroy
-    their windows directly, never through that test-only helper.
-
-    The settle loop calls :func:`harness.flush_deferred_deletions`
-    directly rather than ``harness.pump()``: measured on
-    windows-latest CI (run 31392502719), driving that flush from
-    every single ``harness.pump()`` call in the whole suite -- not
-    just here -- turned one functional job's normal ~90s runtime
-    into 5h59m28s before the 6-hour cap killed it, so ``harness.
-    pump`` (``harness.py``'s own module) no longer flushes on every
-    call. This loop's own deletions still need the deterministic
-    idle-processing drive ``harness.pump``'s docstring records --
-    only a bounded few calls per fired event, not one per pump call
-    across the whole suite -- so it keeps calling the flush
-    primitive explicitly instead of relying on ``harness.pump`` to
-    supply it.
+    Delegates to :func:`harness.fire_menu_event`, the shared home of
+    this and ``test_app_open_target.py``'s identical helper: it posts
+    the event, settles (``flush_deferred_deletions``, bounded), and in
+    a ``finally`` clears ``sys.last_*`` so a swallowed handler
+    exception's traceback cannot keep its frame chain -- and the
+    view/controls it references -- alive for the rest of the process
+    (Phase 2 retention pin; ``harness.fire_menu_event``'s docstring).
     """
-    real_id = wx.xrc.XRCID(item_id)
-    event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
-    event.SetEventObject(frame)
-    frame.GetEventHandler().ProcessEvent(event)
-    harness.pump()
-    for _ in range(_MENU_EVENT_SETTLE_ATTEMPTS):
-        harness.flush_deferred_deletions()
+    harness.fire_menu_event(frame, item_id)
 
 
 # --- the menubar is attached (T-9) -------------------------------
