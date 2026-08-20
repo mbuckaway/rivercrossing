@@ -127,9 +127,13 @@ jobs:
 
       # Per-file worker processes plus §4's auto-retry (bumped to two,
       # PR #8's CI run 31344728049). Both are load-bearing: see
-      # noxfile.py's functional session for the measurements.
+      # noxfile.py's functional session for the measurements. --reruns 2
+      # cannot absorb the residual wx/SIP wrapper-cache corruption
+      # (process-granular, docs/EPIC3-SESSION-SUMMARY.md Addendum 2), so
+      # the command runs through tools/functional_rerun.py, which re-runs
+      # failed files in freshly spawned pytest processes.
       - name: pytest functional (real wx windows)
-        run: pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2
+        run: python tools/functional_rerun.py pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2
       - name: Upload failure screenshots
         if: failure()
         uses: actions/upload-artifact@v4

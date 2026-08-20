@@ -4,7 +4,8 @@
 # a disposable Tart macOS VM cloned from the rivercrossing-func-template
 # built by scripts/setup_functional_vm.sh. Each run clones the template
 # (APFS copy-on-write -- seconds, not minutes), pushes the current
-# worktree, runs pytest in the guest, pulls screenshots back, then
+# worktree, runs pytest in the guest through the fresh-process rerun
+# wrapper (tools/functional_rerun.py), pulls screenshots back, then
 # deletes the clone. The clone's own WindowServer means a crashed run
 # cannot foul the host desktop. Isolation contains crashes, it does not
 # cure them. Local-dev only -- CI is unaffected.
@@ -205,7 +206,7 @@ main() {
   rm -f "${sentinel}"
 
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
-    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python -m pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2" &
+    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python tools/functional_rerun.py pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2" &
   local run_pid=$!
 
   run_watchdog "${VM_TIMEOUT}" "${run_pid}" "${sentinel}" &
