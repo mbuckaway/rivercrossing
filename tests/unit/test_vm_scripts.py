@@ -85,7 +85,7 @@ _RUN_VM_SUBSTRINGS = (
     "tart delete",
     (
         ".venv/bin/python tools/functional_rerun.py pytest tests/functional "
-        "--no-cov -n auto --dist loadfile --reruns 2"
+        "-v --no-cov -n auto --dist loadfile --reruns 2"
     ),
     "RIVERCROSSING_VM_TIMEOUT",
     "1800",

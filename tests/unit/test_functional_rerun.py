@@ -49,6 +49,7 @@ if str(_REPO_ROOT) not in sys.path:
 _CMD = [
     "pytest",
     "tests/functional",
+    "-v",
     "--no-cov",
     "-n",
     "auto",
