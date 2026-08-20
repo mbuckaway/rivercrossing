@@ -41,13 +41,14 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     Measured (reproduced under load in this repo's own functional
     suite, many windows built and torn down in one session):
     wxPython wraps wx objects by C++ pointer identity, and when a
-    previous window's deletion is still pending, a freshly-
+    previous top-level window's deletion is pending (or a wrapper is
+    otherwise still alive after its C++ object was freed), a freshly-
     allocated control can land at an address the wrapper cache
-    still associates with a *different*, already-destroyed
-    control's Python class. Generic methods (``GetName()`` among
-    them) still dispatch through the real object's C++ vtable and
-    report correctly even then, so name alone does not catch this
-    -- only the wrapper's own Python *type* is wrong. Checking
+    still associates with a different, already-destroyed control's
+    Python class. Generic methods (``GetName()`` among them) still
+    dispatch through the real object's C++ vtable and report
+    correctly even then, so name alone does not catch this -- only
+    the wrapper's own Python *type* is wrong. Checking
     ``isinstance(control, expected_type)`` is what actually catches
     it, and ``wx.SafeYield()`` -- the same kind of pump
     ``harness.close_window`` uses to flush a deferred deletion --
@@ -58,10 +59,25 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     approaches that load, since each of these windows is built at
     most once.
 
+    Root cause (confirmed upstream, 2026-08): SIP's C++-pointer ->
+    Python-wrapper map retains its entry for as long as the Python
+    wrapper lives, and for C++-constructed objects (XRC-loaded
+    controls, ``FindWindowByName`` results) nothing notifies SIP when
+    the C++ object is destroyed -- so a wrapper that outlives its
+    object (a lingering reference, e.g. a retained view or a
+    swallowed-exception traceback) poisons every later allocation at
+    that address. No released wxPython fixes this (wxWidgets/Phoenix
+    #2931, Python-SIP/sip#113, wxWidgets/wxWidgets#26789); the
+    remedies are reference hygiene (drop the wrapper so its map entry
+    is evicted on dealloc) and process freshness (a fresh process has
+    a fresh map).
+
     Raises:
         LookupError: If *name* does not resolve to an
             *expected_type* instance inside *window*, even after
-            settling.
+            settling. Names *window*'s own first-level children, so
+            a whole-subtree load gap (an ``XmlResource`` degradation)
+            reads differently from one missing control.
     """
     control = wx.Window.FindWindowByName(name, window)
     attempts = 0
@@ -70,10 +86,17 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         control = wx.Window.FindWindowByName(name, window)
         attempts += 1
     if not isinstance(control, expected_type):
+        children = [child.GetName() for child in window.GetChildren()]
         # LookupError, not TypeError: mirrors harness.py's own
         # ControlNotFoundError(LookupError) for the identical "name
-        # did not resolve inside this window" case.
-        raise LookupError(f"{window.GetName()} has no control named {name!r}")  # noqa: TRY004
+        # did not resolve inside this window" case. The child count
+        # and names tell a whole-subtree load gap (CI has seen three
+        # fresh loads of the same frame each missing a different
+        # control) apart from a single genuinely missing name.
+        raise LookupError(  # noqa: TRY004
+            f"{window.GetName()} has no control named {name!r} "
+            f"(first-level children: {len(children)} -- {children!r})"
+        )
     return control
 
 

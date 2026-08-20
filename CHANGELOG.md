@@ -6,7 +6,36 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
-EPIC 2 of 9 — the deal & score engine — on top of EPIC 1's runnable UI shell.
+EPIC 3 of 9 — roster & CSV — on top of EPIC 2's deal & score engine and EPIC 1's runnable UI shell.
+
+### Added — EPIC 3 (roster & CSV)
+
+- **Real entries, riders and teams.** `rivercrossing.roster`: in-memory models for one ride with a
+  single plate namespace (a pooled team adopts its lowest rider's plate), the state × plate-model
+  lock matrix (R-15/R-17), audited mutations the EPIC 5 store will persist, next-free-plate
+  (highest + 1) and `validate_for_start` — R-12's team-size floor moved to CSV commit and ride
+  start, so the editor can assemble a team one rider at a time in DRAFT.
+- **The rider editor is live** (R-20): add/save/delete on the real roster, team_choice with
+  "New team…" (native name prompt), duplicate plates surface on a code-side `roster_infobar`
+  instead of crashing, the Team column and team UI hide on solo-only rides (R-11), and the
+  dialog's own Import/Export buttons share one CSV flow with the File menu.
+- **CSV import/export per spec §7** (R-21): `rivercrossing.csvio` previews counts and exact
+  per-row conflicts without writing anything, commits atomically through the roster's audited
+  mutators (insert, rename, team reshapes including solo ⇄ team conversion in DRAFT and the
+  RUNNING rider-pooled carve-outs), and exports either plate model's column form. A Hypothesis
+  property proves export → import is value-identical, teams included — it also caught that
+  `team_name` is the pooled merge key, now recorded in spec §7. `csv_preview_dlg` gates its stock
+  Import button while conflicts remain.
+- **Ride setup is live** (approved added scope, E3.5): `RideConfig` — defined beside `RideStatus`
+  for the EPIC 4 engine — built and validated by `SetupPresenter`/`RideSetup`, with deck
+  default 8 (closing the spec §4 open question), jokers 2, pooled and solo-only defaults, and the
+  R-17 entry-group lock.
+- **App-wide fixes surfaced by the build:** every dialog opened from a real menu route now gets
+  its recorded default button and first-field focus (closing the E1.5.3 gap); every code-side
+  wx.InfoBar disables its slide effect — the default effect hangs `ShowMessage()`/`Dismiss()` on
+  this wx build (measured); and a test-double parameter-name mismatch that wx silently swallowed
+  inside menu handlers was found and pinned.
+- `__version__` bumped to **0.3.0**.
 
 ### Added — EPIC 2 (deal & score engine)
 

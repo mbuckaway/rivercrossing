@@ -46,3 +46,5 @@ Per-task test lists live in `docs-md/task-briefs.md` under EPIC 3 — those name
 A 180-rider EPIC-shaped CSV imports cleanly; each malformed fixture reports exactly the expected conflicts and writes nothing; export → re-import is a value-identical round trip including teams; the editor enforces every lock in the matrix.
 
 When the exit criteria are met, update `docs-md/project-plan.md`'s EPIC 3 row with the shipped state and open the EPIC 4 handoff.
+
+> **Shipped 2026-08-09 (v0.3).** Built on one epic branch with red/green commits per task and a single PR — the same approved deviation from "one PR per task" as EPIC 2. ride_setup_dlg joined the scope by decision (E3.5 briefs in task-briefs.md), settling the deck default at 8. Every design silence found during the build is resolved in the amended docs; project-plan.md's E3 row carries the summary, and the stub-and-hand-off table now names the roster surface E4 consumes.

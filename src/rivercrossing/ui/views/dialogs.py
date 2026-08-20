@@ -36,28 +36,90 @@ tasks opening these dialogs would otherwise have to repeat 21 times:
   dialog's ``ShowModal`` through; it always restores focus to the
   caller-supplied *opener*, whichever way the dialog ends.
 
-Known gap, not invented around here: ``ride_setup_dlg``,
-``rider_editor_dlg``, ``csv_preview_dlg`` and ``entry_detail_dlg``
-carry no ``<default>`` button at all in their already-authored XRC,
-so "Enter activates the marked default button" has nothing to
-activate for these four. Deciding which button should become default
-is a per-dialog product call this module does not make; see the
-E1.5.3 report.
+``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg`` and
+``entry_detail_dlg`` carry no ``<default>`` button at all in their
+already-authored XRC, so "Enter activates the marked default button"
+has nothing to activate for these four --
+:data:`DEFAULT_BUTTON_DECISIONS` is the per-dialog product call
+(E1.5.3) that fills the gap, and :data:`FORM_FIRST_FIELDS` is
+spec.md §13's matching initial-focus decision for every form dialog,
+``rider_editor_dlg`` included. Both
+are the one place these decisions are recorded -- ``app.py``'s
+``_apply_dialog_defaults`` applies them when a real menu route opens
+the dialog, and ``tests/functional/test_dialog_behavior.py`` asserts
+them directly against a raw XRC-loaded dialog; neither copies the
+other's table.
 """
 
 from typing import Any
 
-from rivercrossing.ui import require_wx
+from rivercrossing.ui import ids, require_wx
 
 wx = require_wx()
 
 __all__ = [
+    "DEFAULT_BUTTON_DECISIONS",
+    "FORM_FIRST_FIELDS",
+    "WX_ID_CLOSE",
+    "WX_ID_OK",
     "MissingDialogControlError",
     "bind_delete_confirmation_gate",
+    "default_button_for",
+    "first_field_for",
     "run_dialog",
     "set_initial_focus",
     "wire_close_button",
 ]
+
+# Real XRC names FindWindowByName resolves, but excluded from ui/ids.py
+# by tools/gen_ids.py's STOCK_IDS set (spec.md §15b) -- the same two
+# stock ids tests/functional/pages.py names for the identical reason;
+# production code cannot import that test-only module, so these are
+# the one place it repeats the (immutable, wx-defined) literal.
+WX_ID_OK = "wxID_OK"
+WX_ID_CLOSE = "wxID_CLOSE"
+
+# E1.5.3's product decision: the four already-authored dialogs with no
+# XRC <default> each get one (module docstring). rider_editor_dlg's
+# own choice -- Save, not Close or Add -- is explained in
+# set_default_button's docstring.
+DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
+    (ids.RIDE_SETUP_DLG, WX_ID_OK),
+    (ids.CSV_PREVIEW_DLG, WX_ID_OK),
+    (ids.ENTRY_DETAIL_DLG, WX_ID_CLOSE),
+    (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
+)
+
+# spec.md §13's initial-focus decision for every form dialog: the
+# first input field, never the default button (set_initial_focus's
+# own docstring).
+FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
+    (ids.SET_START_DLG, ids.START_DATE_PICKER),
+    (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
+    (ids.REASSIGN_DLG, ids.NEW_PLATE_INPUT),
+    (ids.MANUAL_DEAL_DLG, ids.PLATE_INPUT),
+    (ids.RIDE_SETUP_DLG, ids.NAME_INPUT),
+    (ids.RIDER_EDITOR_DLG, ids.PLATE_INPUT),
+)
+
+
+def default_button_for(dialog_name: str) -> str | None:
+    """Return the recorded default button for *dialog_name*, if any.
+
+    ``None`` if *dialog_name* carries no recorded decision -- most
+    dialogs already declare their own ``<default>`` in XRC and need
+    none.
+    """
+    return next((btn for name, btn in DEFAULT_BUTTON_DECISIONS if name == dialog_name), None)
+
+
+def first_field_for(dialog_name: str) -> str | None:
+    """Return :data:`FORM_FIRST_FIELDS`'s entry for *dialog_name*.
+
+    ``None`` if *dialog_name* is not a form dialog with a recorded
+    first-field decision.
+    """
+    return next((field for name, field in FORM_FIRST_FIELDS if name == dialog_name), None)
 
 
 class MissingDialogControlError(LookupError):

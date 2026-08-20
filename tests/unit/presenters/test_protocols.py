@@ -46,18 +46,17 @@ from rivercrossing.ui.presenters import (
     ResultsPresenter,
     ResultsView,
     RiderRow,
-    RidersPresenter,
     RidersView,
     RideSummary,
     SettingsPresenter,
     SettingsView,
-    SetupPresenter,
     SetupView,
     StandingsRow,
 )
 
 if TYPE_CHECKING:
     from rivercrossing.htmlexport import ExportOptions
+    from rivercrossing.roster import EntryMode, PlateModel
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -116,6 +115,17 @@ class FakeSetupView:
     def set_entry_locked(self, *, locked: bool) -> None:
         """No-op fake."""
 
+    def show_deck_count(self, count: int) -> None:
+        """No-op fake."""
+
+    def show_entry_settings(
+        self, *, entry_mode: EntryMode, max_team_size: int, plate_model: PlateModel
+    ) -> None:
+        """No-op fake."""
+
+    def show_validation(self, message: str) -> None:
+        """No-op fake."""
+
 
 class FakeRidersView:
     """A complete ``RidersView`` implementation for headless tests."""
@@ -134,6 +144,19 @@ class FakeRidersView:
 
     def set_import_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
+
+    def show_form(self, *, plate: str, name: str, team: str) -> None:
+        """No-op fake."""
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """No-op fake."""
+
+    def show_validation(self, message: str) -> None:
+        """No-op fake."""
+
+    def prompt_new_team_name(self) -> str | None:
+        """No-op fake."""
+        return None
 
 
 class FakeResultsView:
@@ -289,8 +312,6 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
     ("presenter_cls", "view"),
     [
         (ConsolePresenter, FakeConsoleView()),
-        (SetupPresenter, FakeSetupView()),
-        (RidersPresenter, FakeRidersView()),
         (ResultsPresenter, FakeResultsView()),
         (LibraryPresenter, FakeLibraryView()),
         (DetailPresenter, FakeDetailView()),
@@ -301,7 +322,13 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
 def test_presenter_holds_the_view_and_data_source_it_was_given(
     presenter_cls: type, view: object
 ) -> None:
-    """Every presenter stores the exact view and data source given."""
+    """Every presenter stores the exact view and data source given.
+
+    ``RidersPresenter`` and ``SetupPresenter`` are excluded: since
+    E3.2.1/E3.2.2 (riders) and E3.5.1 (setup) they take ``(view,
+    roster)`` instead -- each covered by its own dedicated suite,
+    ``tests/unit/presenters/test_riders.py``/``test_setup.py``.
+    """
     data_source = FakeDataSource()
 
     presenter = presenter_cls(view, data_source)

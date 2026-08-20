@@ -11,6 +11,13 @@ loop runs does so in a fresh, spawned interpreter instead, following
 session's ``wx_app`` fixture already has a live ``wx.App``, and a
 second, unbound one is exactly the Phase-1 bug this task fixes).
 
+The route-firing tests that used to live here (E3.2 open-target
+defaults, E3.4 Import/Export Riders CSV, the Fault A no-leak pins)
+moved to ``test_app_open_target.py`` with their own module-scoped
+``firing_frame``: splitting the two heaviest functional files spreads
+per-worker window churn across ``--dist loadfile`` workers (the
+wrapper-cache corruption remedy).
+
 Two module-scoped fixtures, mirroring ``test_console_demo.py``'s own
 ``shared_console`` precedent for why sharing matters here: building
 ``main_frame`` decodes the 53-card imagelist and constructs every
@@ -20,8 +27,9 @@ hazard grows with how many windows one session builds and tears down
 read-only assertion below -- including the Unbind-based route-binding
 proof, which removes bindings but touches nothing else that the other
 read-only assertions care about. ``firing_frame`` is a second,
-independent instance for the two tests that post a real ``EVT_MENU``
-event, kept separate so firing an event there can never race the
+independent instance for the three tests that post a real
+``EVT_MENU`` event (the two status-notice routes and the Exit confirm
+flow), kept separate so firing an event there can never race the
 binding-removal proof over which bindings are still present.
 """
 
@@ -113,12 +121,17 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
 
 
 def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Post a real ``EVT_MENU`` for *item_id* at *frame* and pump it."""
-    real_id = wx.xrc.XRCID(item_id)
-    event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
-    event.SetEventObject(frame)
-    frame.GetEventHandler().ProcessEvent(event)
-    harness.pump()
+    """Post a real ``EVT_MENU`` for *item_id* at *frame*, then settle.
+
+    Delegates to :func:`harness.fire_menu_event`, the shared home of
+    this and ``test_app_open_target.py``'s identical helper: it posts
+    the event, settles (``flush_deferred_deletions``, bounded), and in
+    a ``finally`` clears ``sys.last_*`` so a swallowed handler
+    exception's traceback cannot keep its frame chain -- and the
+    view/controls it references -- alive for the rest of the process
+    (Phase 2 retention pin; ``harness.fire_menu_event``'s docstring).
+    """
+    harness.fire_menu_event(frame, item_id)
 
 
 # --- the menubar is attached (T-9) -------------------------------
@@ -268,9 +281,15 @@ def test_accelerator_entries_entry_matches_its_own_table_row(
 def test_command_route_posts_a_not_yet_implemented_status_notice(
     firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """A COMMAND row with no engine yet still tells the operator so."""
-    route = commands.route_for_id("mi_export_csv")
-    _fire_menu_event(firing_frame, "mi_export_csv")
+    """A COMMAND row with no engine yet still tells the operator so.
+
+    ``mi_backup_now``, not ``mi_export_csv``: E3.4 gave the latter a
+    real handler (``_handle_export_csv``), so it no longer exercises
+    this generic fallback path at all -- its own dedicated tests live
+    alongside the import-CSV ones below.
+    """
+    route = commands.route_for_id("mi_backup_now")
+    _fire_menu_event(firing_frame, "mi_backup_now")
 
     status_text = firing_frame.GetStatusBar().GetStatusText()
 
@@ -303,9 +322,16 @@ def test_exit_route_no_longer_posts_the_not_yet_implemented_stub(
     and after firing ``wxID_EXIT`` must be identical, and the frame
     must still be alive: proof the special-cased handler ran instead
     of the generic COMMAND stub, which would have overwritten it with
-    "Exit — not yet implemented".
+    "Exit — not yet implemented". The replacement's second parameter
+    must be named exactly ``opener`` (every call site passes it as
+    ``opener=``, ``app.py``'s own ``_confirm_quit``/``_open_target``):
+    a ``_opener``-named one silently never runs at all, since wx
+    swallows the ``TypeError`` an unmatched keyword raises inside an
+    ``EVT_MENU`` handler rather than propagating it here -- measured
+    while wiring E3.2's follow-on sweep, and the reason this test's
+    own assertion held even while its replacement was never called.
     """
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, _opener: wx.ID_CANCEL)
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: wx.ID_CANCEL)  # noqa: ARG005
     before = firing_frame.GetStatusBar().GetStatusText()
 
     _fire_menu_event(firing_frame, "wxID_EXIT")

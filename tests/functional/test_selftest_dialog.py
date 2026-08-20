@@ -17,6 +17,7 @@ from typing import Any
 
 import harness
 import pytest
+import wx
 
 from rivercrossing import hands
 from rivercrossing.ui import ids
@@ -34,10 +35,14 @@ _DURATION_TOKEN = re.compile(r"\d+\.\d+ s")
 
 def _show(xrc_resource: Any) -> tuple[Any, SelfTestDialog]:  # noqa: ANN401 -- wx ships no stubs
     """Load selftest_dlg, wire it live, show it, and pump once."""
-    dialog = harness.load_window(xrc_resource, ids.SELFTEST_DLG, frame=False)
-    view = SelfTestDialog(dialog)
-    dialog.Show()
-    harness.pump()
+    dialog = harness.load_window_verified(xrc_resource, ids.SELFTEST_DLG, frame=False)
+    try:
+        view = SelfTestDialog(dialog)
+        dialog.Show()
+        harness.pump()
+    except Exception:  # Fault A: any post-load failure must close the dialog
+        harness.close_window(dialog)
+        raise
     return dialog, view
 
 
@@ -118,3 +123,36 @@ def test_selftest_dlg_given_a_broken_rank_sweep_table_shows_a_fail_line(
 
     assert view.presenter.report.passed is False
     assert lines[0].endswith("FAIL")
+
+
+# ------------------------------- Fault A: the load-construct seam
+# (hosted-runner red, deterministic here: a post-load step is forced
+# to raise between the load and the caller's try/finally, and the
+# just-loaded dialog must not be left fully alive -- see _show's guard.)
+
+
+def test_show_closes_the_dialog_when_a_post_load_step_raises(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault A red: a failure between load and try must not leak.
+
+    ``_show`` loads, wires and pumps *before* the test's own
+    ``try/finally``; under hosted-runner load any step in that window
+    can raise (``ui.views._support.find_control``'s 25-retry
+    exhaustion ``LookupError``, for one) and the just-loaded dialog
+    then leaks fully alive, is rerun-masked by ``--reruns 2``, and
+    later trips the reap pin. Pump is forced to raise here so the leak
+    is reproduced deterministically: red until ``_show`` closes the
+    dialog on the way out.
+    """
+
+    def _pump_that_raises() -> None:
+        raise LookupError("simulated post-load failure")
+
+    monkeypatch.setattr(harness, "pump", _pump_that_raises)
+
+    with pytest.raises(LookupError, match=re.escape("simulated post-load failure")):
+        _show(xrc_resource)
+
+    assert wx.Window.FindWindowByName(ids.SELFTEST_DLG) is None

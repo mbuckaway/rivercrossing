@@ -25,21 +25,31 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
   since a failed XRC load still names the resource it could not find.
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
-``quit_flow``, ``theme``, ``rivercrossing.demo``,
-:func:`~rivercrossing.ui.require_wx`) are imported at module scope, so
-this module itself stays importable even when wx cannot be (mirrors
-the guard the original stub's own docstring already promised). Every
+``quit_flow``, ``theme``, ``rivercrossing.demo``, ``rivercrossing.
+roster`` -- E3.2's seeded rider roster, :func:`~rivercrossing.ui.
+require_wx`) are imported at module scope, so this module itself
+stays importable even when wx cannot be (mirrors the guard the
+original stub's own docstring already promised). Every
 wx-touching name -- ``wx`` itself, its ``xrc`` submodule, the view
 classes, and the ``RiverCrossingApp`` subclass :func:`build_app`
 builds -- is imported/defined inside the function that first needs
-it, each behind its own :func:`require_wx` call.
+it, each behind its own :func:`require_wx` call. E3.4's Import/Export
+Riders CSV… routes (``_handle_import_csv``/``_handle_export_csv``)
+are two more such deferred names: both delegate straight to
+``rivercrossing.ui.views.rider_editor``'s own shared flow functions,
+the one place that route and ``rider_editor_dlg``'s own import_btn/
+export_btn both run the picker -> preview/write flow through (that
+module's own banner comment explains why it is hosted there, not
+here).
 """
 
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
 
@@ -49,6 +59,10 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import DataSource
 
 __all__ = ["build_app", "build_main_window", "main"]
+
+# E3.2's seeded roster (R-20): every mixed ride this app opens is
+# rider_pooled with room for teams up to this size.
+_SEEDED_MAX_TEAM_SIZE = 4
 
 # Riders > Entry Detail... has no plate to open with until a real ride
 # exists (EPIC 4+); "77" is the only plate rivercrossing.demo carries
@@ -75,6 +89,10 @@ class _RouteContext:
         frame: ``main_frame``.
         resource: The loaded ``wx.xrc.XmlResource``.
         data_source: The demo/live display-data seam.
+        roster: The seeded, in-memory :class:`~rivercrossing.roster.
+            Roster` ``rider_editor_dlg`` reads and writes directly
+            (E3.2) -- unlike every other window here, it is not a
+            ``data_source`` projection, so it is threaded separately.
         app: The live ``wx.App`` -- carries ``really_quitting`` (the
             flag :func:`_on_query_end_session`/the exit route set so
             :func:`_on_main_frame_close` never re-opens a confirm
@@ -87,8 +105,36 @@ class _RouteContext:
     frame: Any
     resource: Any
     data_source: DataSource
+    roster: Roster
     app: Any
     theme_controller: theme.ThemeController
+
+
+def _seed_roster(data_source: DataSource) -> Roster:
+    """Build the mixed, rider_pooled Roster ``rider_editor_dlg`` opens.
+
+    Converts *data_source*'s ``riders()`` rows (``rivercrossing.demo``
+    today, E1.2.4) into a real, in-memory :class:`~rivercrossing.
+    roster.Roster`: a row with no team becomes a solo entry, and a run
+    of rows sharing one team name becomes that team's entry --
+    ``itertools.groupby`` keeps demo.py's own row order (R-20), since
+    every window that renders these rows already requires a team's
+    members to sit together. This keeps demo.py the one place these
+    fixture names/plates are written; nothing here repeats them.
+    """
+    roster = Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        max_team_size=_SEEDED_MAX_TEAM_SIZE,
+    )
+    for team_name, rows in itertools.groupby(data_source.riders(), key=lambda row: row.team):
+        if team_name is None:
+            for row in rows:
+                roster.create_solo_entry(name=row.name, plate=row.plate)
+            continue
+        riders = [Rider(name=row.name, plate=row.plate) for row in rows]
+        roster.create_team_entry(display_name=team_name, riders=riders)
+    return roster
 
 
 def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
@@ -216,26 +262,81 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
     """Bind *window*'s code-side view class, if *route.target* has one.
 
     Plain XRC dialogs with no code-side view class (D1's remaining
-    forms -- ride setup, settings, audit trail and the correction
-    dialogs) need nothing further here; they already carry their own
-    canvas defaults from their own ``.xrc`` authoring.
+    forms -- settings, audit trail and the correction dialogs) need
+    nothing further here; they already carry their own canvas
+    defaults from their own ``.xrc`` authoring.
     """
     from rivercrossing.ui.views.entry_detail import EntryDetailDialog  # noqa: PLC0415
     from rivercrossing.ui.views.results_win import ResultsWindow  # noqa: PLC0415
     from rivercrossing.ui.views.ride_library import RideLibrary  # noqa: PLC0415
+    from rivercrossing.ui.views.ride_setup import RideSetup  # noqa: PLC0415
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         RideLibrary(window, data_source=context.data_source)
     elif route.target == ids.RIDER_EDITOR_DLG:
-        RiderEditor(window, data_source=context.data_source)
+        RiderEditor(window, roster=context.roster)
+    elif route.target == ids.RIDE_SETUP_DLG:
+        RideSetup(window, roster=context.roster)
     elif route.target == ids.ENTRY_DETAIL_DLG:
         EntryDetailDialog(window, _ENTRY_DETAIL_DEMO_PLATE, data_source=context.data_source)
     elif route.target == ids.RESULTS_FRAME:
         ResultsWindow(window, data_source=context.data_source)
     elif route.target == ids.SELFTEST_DLG:
         SelfTestDialog(window)
+
+
+def _apply_dialog_defaults(window: Any, route: commands.MenuRoute) -> None:  # noqa: ANN401
+    """Apply *route.target*'s recorded default-button/first-field.
+
+    ``views.dialogs.DEFAULT_BUTTON_DECISIONS``/``FORM_FIRST_FIELDS``
+    are the one place these E1.5.3/spec.md §13 per-dialog decisions
+    are recorded; a no-op for any target with no entry (most dialogs
+    already declare their own ``<default>`` in XRC and need no
+    first-field override). This is what actually applies them when a
+    real menu route opens the dialog -- the E1.5.3 gap this closes
+    left ``dialogs.set_default_button``/``set_initial_focus`` proven
+    only against a raw, directly-loaded XRC dialog, never through the
+    app's own route path.
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    default_button = dialogs.default_button_for(route.target)
+    if default_button is not None:
+        dialogs.set_default_button(window, default_button)
+    first_field = dialogs.first_field_for(route.target)
+    if first_field is not None:
+        dialogs.set_initial_focus(window, first_field)
+
+
+def _handle_import_csv(context: _RouteContext) -> None:
+    """File ▸ Import Riders CSV…: run the shared flow (E3.4).
+
+    The route's own target stays ``csv_preview_dlg`` (commands.py
+    unchanged) -- :func:`~rivercrossing.ui.views.rider_editor.
+    run_csv_import_flow` is the one place this route handler and
+    ``rider_editor_dlg``'s own ``import_btn`` both run the picker ->
+    preview -> commit flow through (that module's own banner comment
+    explains why it is hosted there, not here).
+    """
+    from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
+
+    rider_editor.run_csv_import_flow(context.frame, context.roster)
+
+
+def _handle_export_csv(context: _RouteContext) -> None:
+    """File ▸ Export Riders CSV…: run the shared flow (E3.4).
+
+    No window opens for this ``COMMAND`` row (spec.md §15's own
+    "OS-native ... dialog, no app window") -- a cancelled picker is a
+    silent no-op, the same shape :func:`_handle_import_csv` uses.
+    """
+    from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
+
+    path = rider_editor.run_csv_export_flow(context.frame, context.roster)
+    if path is not None:
+        context.frame.SetStatusText(f"Exported {path.name}")
 
 
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
@@ -259,7 +360,20 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         context.frame.SetStatusText(f"{route.label} — no window authored yet")
         return
 
-    _decorate(context, window, route)
+    try:
+        _decorate(context, window, route)
+        _apply_dialog_defaults(window, route)
+    except Exception:
+        # Fault A: any post-load failure must close the just-loaded
+        # window before re-raising. _decorate's view construction runs
+        # before the dialog path's own try/finally below, and a raise
+        # there (find_control's 25-retry LookupError under load) used
+        # to leak the dialog fully alive, rerun-masked, until the reap
+        # pin caught it. A successfully shown frame stays open by
+        # design, so this guard only ever runs on the exception path.
+        if not window.IsBeingDeleted():
+            window.Destroy()
+        raise
     if is_frame:
         window.Show()
         window.Raise()
@@ -418,11 +532,15 @@ def _make_route_handler(
     stub below it. ``route.target == _VIEW_ROUTE_TARGET`` (the View
     row, P8-D4) dispatches further by *event*'s own id, inside
     :func:`_handle_view_row`, rather than by anything ``route`` alone
-    carries -- its 11 ids all share this one row. Every other
-    ``COMMAND`` row has no window to open and no ride engine yet to
-    run its real action (EPIC 4+); it posts a status-bar notice
-    instead of silently doing nothing. ``WINDOW``/``DIALOG`` rows
-    always attempt to open their target through :func:`_open_target`,
+    carries -- its 11 ids all share this one row. ``export_riders_csv``
+    (E3.4) is the one ``COMMAND`` row with a real action of its own,
+    ahead of the generic stub. ``csv_preview_dlg`` (E3.4) is the one
+    ``DIALOG`` target that needs a picker run before it opens, ahead
+    of :func:`_open_target`'s generic path. Every other ``COMMAND``
+    row has no window to open and no ride engine yet to run its real
+    action (EPIC 4+); it posts a status-bar notice instead of
+    silently doing nothing. Every other ``WINDOW``/``DIALOG`` row
+    always attempts to open its target through :func:`_open_target`,
     which posts the same kind of notice if that target has no frozen
     window yet.
     """
@@ -430,6 +548,10 @@ def _make_route_handler(
         return lambda _event: _handle_exit_route(context)
     if route.target == _VIEW_ROUTE_TARGET:
         return lambda event: _handle_view_row(context, route, event)
+    if route.target == "export_riders_csv":
+        return lambda _event: _handle_export_csv(context)
+    if route.target == ids.CSV_PREVIEW_DLG:
+        return lambda _event: _handle_import_csv(context)
     if route.kind is commands.TargetKind.COMMAND:
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     return lambda _event: _open_target(context, route)
@@ -466,7 +588,14 @@ def _run_launch_self_test(context: _RouteContext) -> None:
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
     window = context.resource.LoadDialog(None, ids.SELFTEST_DLG)
-    view = SelfTestDialog(window)
+    try:
+        view = SelfTestDialog(window)
+    except Exception:
+        # Fault A: construction runs before the run_dialog try/finally
+        # below; a raise here must not leave the loaded dialog alive.
+        if not window.IsBeingDeleted():
+            window.Destroy()
+        raise
     if view.presenter.report.passed:
         window.Destroy()
         return
@@ -538,6 +667,7 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
         frame=frame,
         resource=resource,
         data_source=data_source,
+        roster=_seed_roster(data_source),
         app=app,
         theme_controller=theme_controller,
     )

@@ -34,6 +34,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 | Accelerator table (single source) | E1.4.1 | E8.2.1 shortcuts_dlg rows |
 | PyInstaller dev-bundle specs | E1.6.1 | E9.1.1 hardens into release bundles + installers |
 | CI secrets contract (signing) | E1.1.2 (names them) | org supplies · E9.1.3 consumes |
+| Roster surface (roster.py: Roster, lock matrix, validate_for_start) · RideConfig (ride.py) · in-memory audit events | E3 | E4 engine (plate→entry resolution, has_data, start gate) · E5 store persists the events |
 
 ### E1 · Runnable UI shell (D1) — entry gate: none (first work)
 
@@ -104,6 +105,8 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 - **E3.3.3 Export round-trip** · Goal: export → import is identity. Tests first: property — random roster → export → preview shows 0 conflicts → commit → equal models. Done when: round-trip green incl. teams.
 
 - **E3.4.1 + E3.4.2 Preview dialog + solo variant** · Goal: csv_preview_dlg wired (Import disabled while conflicts>0 — stock wxID_OK gating) and editor solo/mixed presentation switch. Refs: #csvdlg footnote, R-11. Tests first: harness both states. Done when: green both OSes.
+
+- **E3.5.1 + E3.5.2 Ride setup live** *(added scope, approved 2026-08-08)* · Goal: ride_setup_dlg on a validated RideConfig. Refs: #setupdlg; R-11/12/13/16; Spec §2/§4. Tests first: RideConfig bounds in `tests/unit/test_ride.py`; presenter defaults (decks 8), enablement and the R-17 lock in `tests/unit/presenters/test_setup.py`; harness — defaults exact, mixed enables team fields, cap_chk gates cap_spin, OK builds the config, locked-relay variant. Done when: dialog green both OSes; §4's deck default recorded as 8.
 
 ### E4 · Live ride, in-memory — entry gate: E2 + E3 exits
 

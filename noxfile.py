@@ -96,15 +96,26 @@ def functional(session):
     constructions. Bounding each file to its own process took that
     to 6/6 clean runs.
 
-    Plus one auto-retry, which project-plan.md §4 adopts by name as
-    this suite's flake control. It is doing real work, not papering
-    over a mystery: after isolation the residual rate measured 1 bad
-    run in 10 (a failure or, once, a hang near completion), and with
-    the retry it measured 10/10 clean. The trigger is narrowed --
-    building a frame, moving a splitter sash, destroying it and
-    rebuilding fails ~1 in 6 even in a fresh process -- but the
-    underlying wx behaviour is not explained, so treat a green suite
-    as bounded, not solved.
+    Plus auto-retry, which project-plan.md §4 adopts by name as this
+    suite's flake control. It is doing real work, not papering over a
+    mystery: after isolation the residual rate measured 1 bad run in
+    10 (a failure or, once, a hang near completion), and one retry
+    then measured 10/10 clean. The trigger is narrowed -- building a
+    frame, moving a splitter sash, destroying it and rebuilding fails
+    ~1 in 6 even in a fresh process -- but the underlying wx behaviour
+    is not explained, so treat a green suite as bounded, not solved.
+    Bumped to two retries (PR #8's CI, run 31344728049): the hosted
+    3-core runners' own churn at this suite's full 761-test size
+    outran what one retry absorbed on the isolated cases this
+    docstring's own measurement covered; the local Tart VM (4 CPUs)
+    still runs clean without needing the second one.
+
+    --reruns 2 cannot absorb the residual wx/SIP wrapper-cache
+    corruption, which is process-granular: a rerun re-runs inside the
+    same poisoned worker (docs/EPIC3-SESSION-SUMMARY.md Addendum 2).
+    tools/functional_rerun.py therefore re-runs failed *files* in
+    freshly spawned pytest processes (same flags), up to twice, so a
+    fresh process gets a fresh wrapper map.
 
     --forked would be the wrong tool on macOS: forking a process that
     has already initialised NSApplication is not safe.
@@ -118,6 +129,8 @@ def functional(session):
 
     session.install(DEV)
     session.run(
+        "python",
+        str(ROOT / "tools" / "functional_rerun.py"),
         "pytest",
         "tests/functional",
         "--no-cov",
@@ -126,7 +139,7 @@ def functional(session):
         "--dist",
         "loadfile",
         "--reruns",
-        "1",
+        "2",
         *session.posargs,
     )
 

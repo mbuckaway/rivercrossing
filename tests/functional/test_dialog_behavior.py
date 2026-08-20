@@ -102,9 +102,13 @@ _RIDE_NAME = "Club poker night"
 
 def _show(xrc_resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Load, show and pump *name* from *xrc_resource*."""
-    dialog = harness.load_window(xrc_resource, name, frame=False)
-    dialog.Show()
-    harness.pump()
+    dialog = harness.load_window_verified(xrc_resource, name, frame=False)
+    try:
+        dialog.Show()
+        harness.pump()
+    except Exception:  # Fault A: any post-load failure must close the dialog
+        harness.close_window(dialog)
+        raise
     return dialog
 
 
@@ -476,15 +480,7 @@ def test_dialog_default_item_is_none_before_set_default_button_is_applied(
     assert default_item is None
 
 
-_DEFAULT_BUTTON_DECISIONS = (
-    (ids.RIDE_SETUP_DLG, pages.WX_ID_OK),
-    (ids.CSV_PREVIEW_DLG, pages.WX_ID_OK),
-    (ids.ENTRY_DETAIL_DLG, pages.WX_ID_CLOSE),
-    (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
-)
-
-
-@pytest.mark.parametrize(("dialog_name", "control_name"), _DEFAULT_BUTTON_DECISIONS)
+@pytest.mark.parametrize(("dialog_name", "control_name"), dialogs.DEFAULT_BUTTON_DECISIONS)
 def test_set_default_button_makes_it_the_dialogs_default(
     dialog_name: str, control_name: str, xrc_resource: object
 ) -> None:
@@ -494,7 +490,9 @@ def test_set_default_button_makes_it_the_dialogs_default(
     primary); ``entry_detail_dlg`` -> ``wxID_CLOSE`` (a read-only
     view whose actions are explicit buttons, not a submit). The
     fourth, ``rider_editor_dlg``, is pinned in its own dedicated
-    test below rather than only here.
+    test below rather than only here. This table lives in
+    ``dialogs.py`` -- ``test_app_bootstrap.py`` asserts the app's
+    own route path applies the identical table, never a copy.
     """
     dialog = _show(xrc_resource, dialog_name)
     dialogs.set_default_button(dialog, control_name)
@@ -588,17 +586,8 @@ def test_destructive_confirm_default_item_is_cancel(
 
 # --------------------------------------------- form dialog first focus
 
-_FORM_FIRST_FIELDS = (
-    (ids.SET_START_DLG, ids.START_DATE_PICKER),
-    (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
-    (ids.REASSIGN_DLG, ids.NEW_PLATE_INPUT),
-    (ids.MANUAL_DEAL_DLG, ids.PLATE_INPUT),
-    (ids.RIDE_SETUP_DLG, ids.NAME_INPUT),
-    (ids.RIDER_EDITOR_DLG, ids.PLATE_INPUT),
-)
 
-
-@pytest.mark.parametrize(("dialog_name", "field_name"), _FORM_FIRST_FIELDS)
+@pytest.mark.parametrize(("dialog_name", "field_name"), dialogs.FORM_FIRST_FIELDS)
 def test_set_initial_focus_calls_setfocus_on_first_field(
     dialog_name: str, field_name: str, xrc_resource: object
 ) -> None:
@@ -607,7 +596,9 @@ def test_set_initial_focus_calls_setfocus_on_first_field(
     Genuinely observed at the level this suite controls: our own
     :func:`dialogs.set_initial_focus` calls ``SetFocus()`` on the
     named control -- a spy on that instance's bound method, not a
-    claim about resulting OS focus (module docstring).
+    claim about resulting OS focus (module docstring). This table
+    lives in ``dialogs.py`` -- ``test_app_bootstrap.py`` asserts the
+    app's own route path applies the identical table, never a copy.
     """
     dialog = _show(xrc_resource, dialog_name)
     field = harness.find_control(dialog, field_name)
@@ -759,7 +750,7 @@ def test_dialog_is_a_real_wx_dialog_so_tab_stays_trapped(
     first place -- every one of the 21 rows really is a
     ``wx.Dialog``, never a ``wx.Frame``.
     """
-    window = harness.load_window(xrc_resource, spec.name, frame=False)
+    window = harness.load_window_verified(xrc_resource, spec.name, frame=False)
 
     try:
         is_dialog = isinstance(window, wx.Dialog)
@@ -767,3 +758,36 @@ def test_dialog_is_a_real_wx_dialog_so_tab_stays_trapped(
         harness.close_window(window)
 
     assert is_dialog is True
+
+
+# ------------------------------- Fault A: the load-construct seam
+# (hosted-runner red, deterministic here: pump() is forced to raise
+# between the load and the caller's try/finally, and the just-loaded
+# dialog must not be left fully alive -- see _show's guard.)
+
+
+def test_show_closes_the_dialog_when_a_post_load_step_raises(
+    xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fault A red: a failure between load and try must not leak.
+
+    ``_show`` loads, shows and pumps *before* the test's own
+    ``try/finally``; under hosted-runner load a step between the load
+    and the caller's ``try`` can raise (the ``_support.find_control``
+    retry-exhaustion ``LookupError`` a caller's own view construction
+    raises through this same seam, for one) and the just-loaded dialog
+    then leaks fully alive, rerun-masked by ``--reruns 2``. Pump is
+    forced to raise here so the leak is reproduced deterministically:
+    red until ``_show`` closes the dialog on the way out.
+    """
+
+    def _pump_that_raises() -> None:
+        raise LookupError("simulated post-load failure")
+
+    monkeypatch.setattr(harness, "pump", _pump_that_raises)
+
+    with pytest.raises(LookupError, match=re.escape("simulated post-load failure")):
+        _show(xrc_resource, ids.RIDER_EDITOR_DLG)
+
+    assert wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG) is None

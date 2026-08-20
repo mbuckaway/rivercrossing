@@ -60,3 +60,29 @@ def xrc_resource(wx_app: Any) -> Any:  # noqa: ANN401, ARG001
     ``wx.xrc.XmlResource`` decodes anything.
     """
     return harness.load_xrc_resources()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _assert_no_surviving_windows(wx_app: Any) -> Any:  # noqa: ANN401
+    """Fault A sweep: no top-level wx window may outlive the session.
+
+    A dialog whose load+construct path failed before its test's own
+    ``try/finally`` (the Fault A leak class) is rerun-masked by
+    ``--reruns 2`` but stays fully alive in the worker; the reap pin
+    only catches it if it later collides with a same-named lookup.
+    This per-worker-process end-of-suite check makes the leak itself
+    fail the run deterministically: ``wx.GetTopLevelWindows()`` must
+    be empty when the worker's tests are done. Autouse and session-
+    scoped so it runs in every worker with no test needing to ask for
+    it; depending on ``wx_app`` orders teardown so the app (and its
+    window registry) is still alive when the assertion runs -- this
+    fixture is finalized before ``wx_app`` itself is.
+    """
+    yield wx_app
+    wx = require_wx()
+    survivors = wx.GetTopLevelWindows()
+    assert not survivors, (
+        f"functional session ended with {len(survivors)} top-level wx "
+        f"window(s) still alive: {[w.GetName() for w in survivors]!r} -- "
+        "a load+construct path leaked (Fault A); fix the leak, never waive it"
+    )
