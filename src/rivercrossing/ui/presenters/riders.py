@@ -176,9 +176,10 @@ class RidersPresenter:
     """Presenter for the rider editor (rider_editor_dlg, R-11/15/20).
 
     See the module docstring for how team growth composes from
-    :class:`~rivercrossing.roster.Roster`'s shipped primitives, and
-    for the one remaining, honestly-tested gap (relay-team-member
-    replate on Save).
+    :class:`~rivercrossing.roster.Roster`'s shipped primitives; a relay
+    team member's plate change on Save routes through
+    ``_apply_plate_change`` → ``Roster.change_team_plate`` (covered by
+    ``test_on_save_given_a_relay_team_member_changes_the_teams_plate``).
     """
 
     def __init__(self, view: RidersView, roster: Roster, *, load: bool = True) -> None:
