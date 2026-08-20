@@ -282,6 +282,41 @@ def _recording_runner(
     return run, calls
 
 
+def test_spawn_runs_command_and_returns_exit_code(
+    rerun_module: ModuleType,
+) -> None:
+    """The real runner spawns subprocesses and captures output."""
+    completed = rerun_module._spawn([sys.executable, "-c", "import sys; sys.exit(0)"])
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+    assert completed.stderr == ""
+
+
+def test_rerun_failed_files_when_command_empty_runs_once(
+    rerun_module: ModuleType,
+) -> None:
+    """An empty argv still runs exactly one (degenerate) pass."""
+    runner, calls = _recording_runner([_completed(0, "")])
+
+    result = rerun_module.rerun_failed_files([], runner)
+
+    assert result == 0
+    assert calls == [[]]
+
+
+def test_rerun_failed_files_when_first_token_not_pytest_runs_verbatim(
+    rerun_module: ModuleType,
+) -> None:
+    """A non-pytest first token is not normalised; it runs as given."""
+    command = ["python", "-c", "pass"]
+    runner, calls = _recording_runner([_completed(0, "")])
+
+    result = rerun_module.rerun_failed_files(command, runner)
+
+    assert result == 0
+    assert calls == [command]
+
+
 def test_rerun_failed_files_when_initial_green_returns_zero_and_runs_once(
     rerun_module: ModuleType,
 ) -> None:
@@ -459,3 +494,16 @@ def test_rerun_failed_files_prints_progress_lines_to_stderr(
     assert "tests/functional/test_rider_editor.py" in captured.err
     assert "1 failed" in captured.out
     assert "800 passed" in captured.out
+
+
+def test_rerun_failed_files_echoes_stderr_to_stderr(
+    rerun_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pass's stderr is echoed to the wrapper's stderr."""
+    runner, _ = _recording_runner([_completed(0, "", "warn: fixture cleanup\n")])
+
+    result = rerun_module.rerun_failed_files(_CMD, runner)
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "warn: fixture cleanup" in captured.err
