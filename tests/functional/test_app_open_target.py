@@ -14,6 +14,7 @@ so this module carries its own ``firing_frame`` fixture and
 """
 
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -376,3 +377,51 @@ def test_run_launch_self_test_closes_the_dialog_when_construction_raises(
     # ``FindWindowByName``.
     harness.flush_deferred_deletions()
     assert wx.Window.FindWindowByName(ids.SELFTEST_DLG) is None
+
+
+# ------------------------------- Phase 2: swallowed-handler traceback
+# retention. app.py's own route path binds plain lambdas (harness.fire_
+# menu_event is the suite-side seam for firing them); when a handler
+# raises, wx swallows it and PyErr_Print parks the traceback on sys,
+# holding the lambda's frame -- and the _RouteContext (frame + roster)
+# it closes over -- alive for the rest of the process.
+
+
+def test_route_handler_raise_releases_the_app_route_frame_chain(
+    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    xrc_resource: object,
+) -> None:
+    """A swallowed route-handler exception leaves no sys.last_* traceback.
+
+    ``_make_route_handler`` returns lambdas closing over the
+    ``_RouteContext`` (frame + roster + data_source); if such a lambda
+    raises, the un-cleared ``sys.last_traceback`` keeps that whole
+    chain alive. The binding is swapped to a raising handler, fired
+    through the shared seam, then restored so no later test can trip
+    the raising seam.
+    """
+    real_id = wx.xrc.XRCID("mi_backup_now")
+    route = commands.route_for_id("mi_backup_now")
+
+    def _raising(_event: Any) -> None:  # noqa: ANN401
+        raise LookupError("swallowed route probe boom")
+
+    firing_frame.Unbind(wx.EVT_MENU, id=real_id)
+    firing_frame.Bind(wx.EVT_MENU, _raising, id=real_id)
+    sys.last_type = sys.last_value = sys.last_traceback = None
+    sys.last_exc = None
+
+    try:
+        harness.fire_menu_event(firing_frame, "mi_backup_now")
+    finally:
+        context = _make_route_context(firing_frame, xrc_resource)
+        firing_frame.Bind(
+            wx.EVT_MENU, app_module._make_route_handler(context, route), id=real_id
+        )
+
+    assert (sys.last_type, sys.last_value, sys.last_traceback, sys.last_exc) == (
+        None,
+        None,
+        None,
+        None,
+    )

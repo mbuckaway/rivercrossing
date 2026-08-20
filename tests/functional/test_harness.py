@@ -26,11 +26,14 @@ collectability via weakref -- never the map.
 """
 
 import gc
+import sys
 import weakref
+from typing import Any
 
 import harness
 import pytest
 import wx
+import wx.xrc
 
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
@@ -38,6 +41,21 @@ from rivercrossing.ui.app import _seed_roster
 from rivercrossing.ui.views.rider_editor import RiderEditor
 
 pytestmark = pytest.mark.functional
+
+
+@pytest.fixture
+def event_frame(wx_app: object) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """A plain frame to fire menu events at (no main_frame churn).
+
+    ``fire_menu_event`` only needs a frame with a bound ``EVT_MENU``
+    handler; a bare ``wx.Frame`` exercises the seam without decoding
+    the 53-card imagelist a ``main_frame`` build costs.
+    """
+    frame = wx.Frame(None, title="harness fire_menu_event probe")
+    try:
+        yield frame
+    finally:
+        harness.close_window(frame)
 
 
 # --- close_window's bounded gc.collect (Addendum 2 remedy (a)) ---
@@ -98,3 +116,80 @@ def test_close_window_collects_a_cycle_between_a_view_and_its_controls(
     harness.close_window(window)
 
     assert (view_ref(), control_ref()) == (None, None)
+
+
+# --- fire_menu_event's swallowed-traceback release (retention pin) ------
+
+
+def test_fire_menu_event_clears_a_swallowed_handler_exception(
+    event_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A raising handler is swallowed by wx; the seam drops sys.last_*.
+
+    wxPython's event dispatch catches a Python exception raised inside
+    a handler and calls PyErr_Print, which parks the traceback on
+    ``sys`` -- ``sys.last_type``/``sys.last_value``/
+    ``sys.last_traceback`` and, on Python 3.11+, ``sys.last_exc``,
+    which carries the exception's own ``__traceback__``. The
+    traceback holds the failing frame -- and, for app.py's route
+    lambdas, the ``_RouteContext`` (frame + roster) its closure keeps
+    -- alive for the rest of the process, so the wrapper-cache entries
+    for every control that frame touches never evict (the retention
+    probe's "Python frames" signature, 2026-08-19). The seam must
+    clear that state in a finally, whether or not the handler raised.
+    """
+    real_id = wx.xrc.XRCID("harness_probe_route")
+
+    def _raising(_event: Any) -> None:  # noqa: ANN401
+        raise LookupError("harness probe boom")
+
+    event_frame.Bind(wx.EVT_MENU, _raising, id=real_id)
+    sys.last_type = sys.last_value = sys.last_traceback = None
+    sys.last_exc = None
+
+    harness.fire_menu_event(event_frame, "harness_probe_route")
+
+    assert (sys.last_type, sys.last_value, sys.last_traceback, sys.last_exc) == (
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+def test_fire_menu_event_releases_the_failing_handlers_frame_chain(
+    event_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """The swallowed traceback must not keep the handler's refs alive.
+
+    Beyond the ``sys.last_*`` state itself: an object referenced by
+    the failing handler's frame must become collectable once the event
+    is fired through the seam -- the observable half of "the frame
+    chain is released". Without the clear, the traceback's frame
+    locals hold the reference and ``gc.collect()`` cannot reach it.
+
+    The marker is reached through *state*, not closed over directly:
+    a closure over the marker would hold it for as long as the
+    binding lives (``event_frame.Bind`` keeps the handler object), so
+    the test clears ``state["marker"]`` before observing -- leaving
+    the traceback's frame as the only possible holder.
+    """
+    class _Marker:
+        pass
+
+    state: dict[str, _Marker] = {"marker": _Marker()}
+    marker_ref = weakref.ref(state["marker"])
+    real_id = wx.xrc.XRCID("harness_probe_route")
+
+    def _raising_holding_marker(_event: Any) -> None:  # noqa: ANN401
+        _ = state["marker"]
+        raise LookupError("harness probe boom")
+
+    event_frame.Bind(wx.EVT_MENU, _raising_holding_marker, id=real_id)
+    sys.last_type = sys.last_value = sys.last_traceback = None
+
+    harness.fire_menu_event(event_frame, "harness_probe_route")
+
+    del state["marker"]
+    gc.collect()
+    assert marker_ref() is None
