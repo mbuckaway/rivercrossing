@@ -710,3 +710,16 @@ hosted runners. `--reruns 2` cannot absorb it: reruns re-run in the same
   route never reads as a product bug.
 - The suite is 822 items; the noxfile's "761-test size" and this file's
   "764 functional tests" figures are stale.
+
+### Addendum 2 (2026-08-19) — root cause confirmed upstream + diagnostic baseline
+
+**Fault B's class-1 mechanism is now authoritatively confirmed.** Primary-source research (wxPython 4.3.1 = SIP 6.15.1 + wxWidgets 3.3.3; reproduced on the repo's exact installed build) identified it as a known, OPEN upstream binding deficiency:
+
+- SIP's C++-pointer→Python-wrapper map retains an entry as long as the Python wrapper lives. For C++-constructed objects (XRC-loaded controls, `FindWindowByName` results — the `from_cpp` path), nothing notifies SIP when the C++ object is destroyed, so a wrapper that outlives its object poisons every later allocation at that address with the wrong Python class.
+- Sources, all verified live: Robin Dunn's forum explanation (discuss.wxpython.org/t/35137), wxWidgets/Phoenix#2931 (open), Python-SIP/sip#113 (open; Phil Thompson: a fix needs ABI v14, experimental), wxWidgets/wxWidgets#26789 (wxTrackable proposal; ABI break, 3.3.x only), Phoenix PR #2929 (merged 2026-08-11 — the workaround is call-site wrapper caching, not a mechanism fix), SIP `docs/api_13.rst` (`sipConvertFromType`: "If the C/C++ instance has already been wrapped then the result is a new reference to the existing object").
+- **No in-process repair exists.** SafeYield/Yield/ProcessIdle/event-loop-creation/`gc.collect` provably do not evict stale map entries (empirically: 4000/4000 wrong-type under tight churn; none cleared it). The only remedies are reference hygiene (drop wrappers so dealloc evicts the entry; retained wrappers → 2834/9000 failures vs released → 0/6000) and process freshness (a fresh process has a fresh map).
+- Class 2 (whole XRC subtree never built) has no authoritative upstream match; closest analog is XRC's silent error-and-skip (`wxLogError("Creating %s failed")` → node + subtree omitted).
+
+**Corrections to the suite's own causal documents (2026-08-19):** `harness.py`'s flush docstring is *substantially* correct — `wxTopLevelWindowBase::Destroy()` (frames/dialogs) defers via `wxPendingDelete`/`DeletePendingObjects` at idle, which the flush drives; only child windows' `Destroy()` is synchronous (`wincmn.cpp`); `DestroyLater` does not exist in 3.3.3. `_support.py`'s mechanism paragraph is confirmed. `wx.GetApp().ProcessIdle()` does not exist in 4.3.1.
+
+**Diagnostic baseline (2026-08-19, head 9df90ae, 4-worker Tart VM):** 26 failed + 1 error, 77 reruns absorbed. A retention probe on `find_control`'s failure path showed the stale wrappers are held by **the view objects** (`RideSetup`, `RiderEditor`, `CsvPreviewDialog`, `SelfTestDialog`) **and Python frames** — the signature of swallowed-handler-exception traceback retention (`sys.last_traceback` after the wx-handler `LookupError` path holds the failing frame, its `self` view, and all control wrappers alive indefinitely). Retention inventory for Phase 2 of the follow-up plan: (1) swallowed-`LookupError` tracebacks in the app-route/`_fire_menu_event` paths; (2) module-scoped fixture views held past teardown; (3) presenter/view objects holding controls after `close_window`.
