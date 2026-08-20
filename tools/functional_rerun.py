@@ -54,10 +54,13 @@ from typing import IO, cast
 
 _MAX_RERUNS = 2
 
-# Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); 3600
-# is a generous bound that turns a silent hang (3h20m observed in CI)
-# into a 1-hour bounded pass with a diagnostic.
-PASS_TIMEOUT_S = 3600
+# Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); the
+# first bounded Windows CI run (PR #9, 2026-08-20) reached 93% of 830
+# items in 19 s, then hung until the 3600 s bound killed it -- so a
+# healthy Windows pass is minutes, and 900 s turns a hang into a
+# quarter-hour bounded pass with a diagnostic that (with -v) names the
+# stalling test.
+PASS_TIMEOUT_S = 900
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _SUMMARY_NODE_RE = re.compile(r"(FAILED|ERROR) (.+?)(?: - |$)")
