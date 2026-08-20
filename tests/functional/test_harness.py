@@ -194,3 +194,72 @@ def test_fire_menu_event_releases_the_failing_handlers_frame_chain(
     del state["marker"]
     gc.collect()
     assert marker_ref() is None
+
+
+# --- Phase 3: wx log capture (Fault B class-2 visibility) ---
+
+
+def test_recent_wx_log_reports_a_log_line_emitted_during_a_load(
+    xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wx.LogError emitted while a window loads appears in the query.
+
+    Phase 3's class-2 diagnostic (Addendum 2): a degraded XRC load
+    reports its missing subtree with a one-line ``wxLogError("Creating
+    %s failed")`` that the session-wide ``wx.LogStderr()`` target
+    (conftest.py) sends to stderr where it is effectively invisible
+    mid-run. The harness must capture that line while the load runs and
+    expose it through ``recent_wx_log()`` so the failure is diagnosable
+    instead of surfacing only as a later stochastic LookupError. The
+    line is injected from the resource's own ``LoadDialog`` -- the same
+    method XRC's skip machinery logs through -- rather than emitted by
+    the test directly, so the capture is proven to span the load itself.
+    """
+    real_load_dialog = xrc_resource.LoadDialog
+
+    def _load_dialog(parent: Any, name: str) -> Any:  # noqa: ANN401 -- wx
+        wx.LogError(f"Creating {name} failed")
+        return real_load_dialog(parent, name)
+
+    monkeypatch.setattr(xrc_resource, "LoadDialog", _load_dialog)
+
+    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    harness.close_window(window)
+
+    captured = harness.recent_wx_log()
+    assert any(f"Creating {ids.RIDE_LIBRARY_DLG} failed" in line for line in captured)
+
+
+def test_recent_wx_log_resets_between_loads(
+    xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The query reflects only the most recent load, not earlier ones.
+
+    The capture is reset at the start of each load, so a line emitted
+    during the first load must not leak into the query after a second
+    load that emits nothing. This is the bound that keeps the diagnostic
+    cheap and local: ``recent_wx_log()`` always answers "what did the
+    last load log?", never "everything the session ever logged".
+    """
+    real_load_dialog = xrc_resource.LoadDialog
+    emitted: list[bool] = []
+
+    def _load_dialog(parent: Any, name: str) -> Any:  # noqa: ANN401 -- wx
+        if not emitted:
+            wx.LogError("first-load-only marker")
+            emitted.append(True)
+        return real_load_dialog(parent, name)
+
+    monkeypatch.setattr(xrc_resource, "LoadDialog", _load_dialog)
+
+    first = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    harness.close_window(first)
+    assert any("first-load-only marker" in line for line in harness.recent_wx_log())
+
+    second = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    harness.close_window(second)
+
+    captured = harness.recent_wx_log()
+    assert not any("first-load-only marker" in line for line in captured)
