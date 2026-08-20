@@ -49,10 +49,16 @@ reproduced with throwaway scripts before being encoded here:
   which only checks the method exists, not that it delivers).
 """
 
+from __future__ import annotations
+
 import gc
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import rivercrossing.ui as ui_package
 from rivercrossing.ui import require_wx
@@ -72,6 +78,7 @@ __all__ = [
     "load_window",
     "load_xrc_resources",
     "pump",
+    "recent_wx_log",
     "run_modal",
     "screenshot",
     "select_choice",
@@ -219,8 +226,103 @@ def pump() -> None:
     wx.SafeYield()
 
 
+# --- Phase 3: wx log capture (Fault B class-2 diagnostic) ---
+#
+# XRC's silent error-and-skip path (Addendum 2, class 2): when a nested
+# XRC node fails to create, wxWidgets logs one line -- "Creating %s
+# failed" -- and omits that node AND its subtree while the rest of the
+# tree loads. The suite's conftest redirects the active wx log target to
+# wx.LogStderr() for the whole session (an exit-hang fix), so that line
+# is effectively invisible mid-run and a missing subtree surfaces only
+# as a later stochastic find_control LookupError. These helpers capture
+# the lines a load emits into an in-memory buffer, queryable afterwards
+# via :func:`recent_wx_log` -- capture-and-surface ONLY, no behavior
+# change.
+
+_WX_LOG_MAX_LINES = 100
+"""Bound on :func:`recent_wx_log`'s lines (one load's output)."""
+
+
+class _WxLogCapture:
+    """Mutable capture state, kept off the module globals.
+
+    The buffer, the pre-capture log target, the nesting depth and the
+    captured lines are per-load state; a small state object (rather than
+    module-level ``global`` rebinding) keeps :func:`_wx_log_capture`
+    re-entrant without ``global`` statements.
+    """
+
+    def __init__(self) -> None:
+        self.buffer: Any | None = None
+        self.previous: Any | None = None
+        self.depth = 0
+        self.lines: tuple[str, ...] = ()
+
+
+_wx_capture = _WxLogCapture()
+
+
+@contextmanager
+def _wx_log_capture() -> Iterator[None]:
+    """Temporarily capture wx log output into an in-memory buffer.
+
+    While this context is active the active wx log target is a
+    ``wx.LogBuffer``, so a ``wxLogError`` a load emits (e.g. "Creating
+    %s failed") is stored instead of going straight to the suite's
+    ``wx.LogStderr()`` target; :func:`recent_wx_log` makes the stored
+    lines queryable afterwards.
+
+    Re-entrant: :func:`load_window_verified` opens a capture block and
+    calls :func:`load_window`, which opens its own, so the inner block
+    must not clear or restore anything until the outermost block ends --
+    a depth counter guards that. On the outermost exit the buffer's
+    lines are snapshotted BEFORE the target is reinstated: measured,
+    ``wxLogBuffer`` clears itself when the target switch flushes it, so
+    reading ``GetBuffer()`` after the restore would always be empty.
+    Restoring the pre-capture target (the session's ``wx.LogStderr()``)
+    keeps conftest's exit-hang fix intact and still delivers the
+    captured lines to stderr via that flush -- coexist, don't replace.
+    """
+    if _wx_capture.depth == 0:
+        if _wx_capture.buffer is None:
+            _wx_capture.buffer = wx.LogBuffer()
+        else:
+            _wx_capture.buffer.Clear()
+        _wx_capture.previous = wx.Log.GetActiveTarget()
+        wx.Log.SetActiveTarget(_wx_capture.buffer)
+    _wx_capture.depth += 1
+    try:
+        yield
+    finally:
+        _wx_capture.depth -= 1
+        if _wx_capture.depth == 0:
+            _wx_capture.lines = tuple(
+                line for line in _wx_capture.buffer.GetBuffer().splitlines() if line
+            )[-_WX_LOG_MAX_LINES:]
+            wx.Log.SetActiveTarget(_wx_capture.previous)
+            _wx_capture.previous = None
+
+
+def recent_wx_log() -> tuple[str, ...]:
+    """Return the wx log lines captured during the most recent load.
+
+    Phase 3's class-2 diagnostic query (Addendum 2): after a window load
+    or control lookup fails, callers can show the wx log lines XRC
+    emitted -- e.g. ``wxLogError("Creating %s failed")`` -- so a missing
+    subtree is diagnosable instead of surfacing only as a LookupError.
+    The capture is bounded (last :data:`_WX_LOG_MAX_LINES` lines) and
+    reset at the start of each :func:`load_window` /
+    :func:`load_window_verified` call, so this reflects only the most
+    recent load; ``()`` until the first load runs.
+    """
+    return _wx_capture.lines
+
+
 def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN401
     """Load the top-level window called *name* from *resource*.
+
+    Captures wx log output while the load runs, for
+    :func:`recent_wx_log`.
 
     Args:
         resource: The ``wx.xrc.XmlResource`` returned by
@@ -239,11 +341,12 @@ def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN40
             than raise -- measured -- which would otherwise surface
             as a confusing ``AttributeError`` on first use).
     """
-    window = resource.LoadFrame(None, name) if frame else resource.LoadDialog(None, name)
-    if window is None:
-        kind = "LoadFrame" if frame else "LoadDialog"
-        raise WindowLoadError(f"{kind}(None, {name!r}) found no matching XRC resource")
-    return window
+    with _wx_log_capture():
+        window = resource.LoadFrame(None, name) if frame else resource.LoadDialog(None, name)
+        if window is None:
+            kind = "LoadFrame" if frame else "LoadDialog"
+            raise WindowLoadError(f"{kind}(None, {name!r}) found no matching XRC resource")
+        return window
 
 
 def load_window_verified(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN401
@@ -275,28 +378,34 @@ def load_window_verified(resource: Any, name: str, *, frame: bool) -> Any:  # no
         ControlNotFoundError: If both the first load and the fresh
             rebuild are incomplete; the message carries the rebuilt
             window's first-level-child inventory.
+
+    Captures wx log output across the whole verify -- the first load,
+    the verification walk, and any fresh rebuild -- for
+    :func:`recent_wx_log`, so a degraded build's "Creating %s failed"
+    line is queryable even when the rebuild path runs.
     """
-    window = load_window(resource, name, frame=frame)
-    if _expected_controls_resolve(window, name):
-        return window
-    fresh = _fresh_resource()
-    rebuilt = fresh.LoadFrame(None, name) if frame else fresh.LoadDialog(None, name)
-    if rebuilt is None:
+    with _wx_log_capture():
+        window = load_window(resource, name, frame=frame)
+        if _expected_controls_resolve(window, name):
+            return window
+        fresh = _fresh_resource()
+        rebuilt = fresh.LoadFrame(None, name) if frame else fresh.LoadDialog(None, name)
+        if rebuilt is None:
+            close_window(window)
+            kind = "LoadFrame" if frame else "LoadDialog"
+            raise WindowLoadError(f"{kind}(None, {name!r}) found no matching XRC resource")
+        if not _expected_controls_resolve(rebuilt, name):
+            missing = _first_missing_control(rebuilt, name)
+            children = [child.GetName() for child in rebuilt.GetChildren()]
+            window_name = rebuilt.GetName()
+            close_window(rebuilt)
+            close_window(window)
+            raise ControlNotFoundError(
+                f"{window_name} has no control named {missing!r} "
+                f"(first-level children: {len(children)} -- {children!r})"
+            )
         close_window(window)
-        kind = "LoadFrame" if frame else "LoadDialog"
-        raise WindowLoadError(f"{kind}(None, {name!r}) found no matching XRC resource")
-    if not _expected_controls_resolve(rebuilt, name):
-        missing = _first_missing_control(rebuilt, name)
-        children = [child.GetName() for child in rebuilt.GetChildren()]
-        window_name = rebuilt.GetName()
-        close_window(rebuilt)
-        close_window(window)
-        raise ControlNotFoundError(
-            f"{window_name} has no control named {missing!r} "
-            f"(first-level children: {len(children)} -- {children!r})"
-        )
-    close_window(window)
-    return rebuilt
+        return rebuilt
 
 
 def _fresh_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs
