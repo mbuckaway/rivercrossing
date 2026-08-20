@@ -49,6 +49,7 @@ reproduced with throwaway scripts before being encoded here:
   which only checks the method exists, not that it delivers).
 """
 
+import gc
 from pathlib import Path
 from typing import Any
 
@@ -130,13 +131,19 @@ _FLUSH_IDLE_ATTEMPTS = 5
 def flush_deferred_deletions() -> None:
     """Flush wx's deferred-deletion queue by driving idle processing.
 
-    wxWidgets only frees a ``Destroy()``d window during idle
-    processing (``wxApp::ScheduleForDestruction`` ->
-    ``DeletePendingObjects``), and idle processing only runs once the
-    event queue drains. Measured (probe script, this task's own
-    scratchpad, cross-checked against PR #8's CI runs 31390187217 /
-    31390190295): with no ``MainLoop`` running,
-    ``wx.EventLoopBase.GetActive()`` is ``None``, and a bare
+    wxWidgets frees a ``Destroy()``d *top-level* window (frame or
+    dialog -- the windows this suite tears down) only during idle
+    processing: ``wxTopLevelWindowBase::Destroy()`` appends the
+    window to ``wxPendingDelete`` (the same list
+    ``wxApp::ScheduleForDestruction`` manages) and
+    ``wxAppConsoleBase::DeletePendingObjects()`` deletes it from
+    ``ProcessIdle()``. Child windows are the exception: their
+    ``Destroy()`` is a synchronous ``delete this`` (wxWidgets 3.3.3,
+    ``wincmn.cpp``; there is no ``DestroyLater`` in that release).
+    Idle processing only runs once the event queue drains. Measured
+    (probe script, this task's own scratchpad, cross-checked against
+    PR #8's CI runs 31390187217 / 31390190295): with no ``MainLoop``
+    running, ``wx.EventLoopBase.GetActive()`` is ``None``, and a bare
     ``wx.SafeYield()`` reaps a deferred delete on an idle host but not
     reliably under a hosted runner's load, where the queue never
     drains far enough to reach idle. ``EventLoopBase.ProcessIdle()``
@@ -591,6 +598,23 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
         handler vetoed the close; these raw XRC windows carry no
         such handler, but the value is surfaced for the caller to
         assert on rather than assumed.
+
+    When the close succeeded, ends with a bounded ``gc.collect()``:
+    the window's C++ object is gone by now, so any Python reference
+    cycle still linking its control wrappers -- a view's bound-method
+    handlers hold the view, which holds the controls (measured:
+    ``RiderEditor``; the retention probe 2026-08-19 found stale
+    wrappers held by the view objects) -- is unreachable and only a
+    collection can dealloc it. Dealloc is what evicts the wrapper's
+    entry from SIP's C++-pointer map, the one in-process remedy for
+    the address-reuse corruption :func:`find_control` documents
+    (Addendum 2: no repair exists; reference hygiene and process
+    freshness are the only levers). wxPython's own test framework
+    (``unittests/wtc.py``) ends its ``tearDown`` with the identical
+    explicit ``gc.collect()`` for the same reason. A vetoed close
+    (``Close()`` returning ``False``) skips the collection: the close
+    was refused, so the destruction -- and this call's cleanup -- did
+    not happen through the window's own close path.
     """
     name = window.GetName()
     handle = window.GetHandle()
@@ -606,4 +630,6 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
         found = wx.Window.FindWindowByName(name)
         attempts += 1
     pump()
+    if closed:
+        gc.collect()
     return closed

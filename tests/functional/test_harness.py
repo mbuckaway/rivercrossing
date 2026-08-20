@@ -27,7 +27,6 @@ collectability via weakref -- never the map.
 
 import gc
 import weakref
-from typing import Any
 
 import harness
 import pytest
@@ -41,7 +40,7 @@ from rivercrossing.ui.views.rider_editor import RiderEditor
 pytestmark = pytest.mark.functional
 
 
-# --- close_window's bounded gc.collect (Addendum 2 remedy (a)) ----------
+# --- close_window's bounded gc.collect (Addendum 2 remedy (a)) ---
 
 
 def test_close_window_calls_gc_collect_when_the_window_was_destroyed(
