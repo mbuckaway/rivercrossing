@@ -86,6 +86,12 @@ def shared_console(xrc_resource: object) -> MainFrame:
         console = MainFrame(window, data_source=DemoDataSource())
         yield console
     finally:
+        # Drop the view before the window dies (Phase 2 reference
+        # hygiene): the view holds every control wrapper, so leaving
+        # it alive past close_window would keep their SIP map entries
+        # from evicting (Addendum 2; pinned by
+        # test_harness.py's cycle test).
+        del console
         harness.close_window(window)
 
 

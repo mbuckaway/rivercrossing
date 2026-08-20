@@ -54,6 +54,9 @@ def shared_results(xrc_resource: object) -> ResultsWindow:
         view = ResultsWindow(window, data_source=DemoDataSource())
         yield view
     finally:
+        # Phase 2 reference hygiene: drop the view before the window
+        # dies (see test_console_demo.py's shared_console finally).
+        del view
         harness.close_window(window)
 
 

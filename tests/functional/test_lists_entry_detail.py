@@ -57,6 +57,9 @@ def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
         view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
         yield view
     finally:
+        # Phase 2 reference hygiene: drop the view before the window
+        # dies (see test_console_demo.py's shared_console finally).
+        del view
         harness.close_window(window)
 
 
