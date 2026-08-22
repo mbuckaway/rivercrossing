@@ -33,6 +33,16 @@ __all__ = ["run_scenario"]
 
 SCENARIOS_SCRIPT = Path(__file__).resolve().parent / "console_subprocess_scenarios.py"
 SCENARIO_TIMEOUT_SECONDS = 30
+# The scenario child self-terminates (os._exit(124)) after this many
+# seconds, dumping its thread stacks to stderr first. Measured on
+# windows-latest CI (PR #9, 2026-08-20): a hung scenario
+# (test_windows_close_confirmed_destroys_the_frame) stalled the whole
+# functional pass for > 900 s. The child must always die before
+# SCENARIO_TIMEOUT_SECONDS, so the parent's timeout-and-kill path
+# never engages for a hung scenario -- one fast, named failure instead
+# of a suite-stalling hang. Pinned by
+# tests/unit/test_scenario_runner.py.
+SCENARIO_CHILD_BOUND_SECONDS = SCENARIO_TIMEOUT_SECONDS - 5
 SCENARIO_SPAWN_ATTEMPTS = 3
 
 
