@@ -30,15 +30,37 @@ pass's pytest code when the rerun budget is exhausted, and any code
 outside {0, 1} (interrupt, internal error, xdist worker crash) is
 propagated unchanged without further reruns -- a genuine crash is
 never masked by a rerun.
+
+Each pass is bounded and streamed. ``_spawn`` merges the child's
+stdout/stderr into one pipe and a daemon reader thread echoes every
+line to the wrapper's stdout live, so progress is visible while the
+pass runs and a hang leaves its last lines in the log instead of
+nothing at all. If the child is still running after ``PASS_TIMEOUT_S``
+(3600s) it is killed and a diagnostic naming the elapsed time and the
+last ~20 lines is printed to stderr; the pass then reports exit code
+124, which is outside {0, 1} and is therefore propagated without a
+rerun, consistent with the crash rule above. Killing the wrapper's
+pytest process orphans its xdist workers, but they exit on their own
+once the controller's pipe closes.
 """
 
 import re
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import IO, cast
 
 _MAX_RERUNS = 2
+
+# Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); the
+# first bounded Windows CI run (PR #9, 2026-08-20) reached 93% of 830
+# items in 19 s, then hung until the 3600 s bound killed it -- so a
+# healthy Windows pass is minutes, and 900 s turns a hang into a
+# quarter-hour bounded pass with a diagnostic that (with -v) names the
+# stalling test.
+PASS_TIMEOUT_S = 900
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _SUMMARY_NODE_RE = re.compile(r"(FAILED|ERROR) (.+?)(?: - |$)")
@@ -69,10 +91,60 @@ def parse_summary(text: str) -> set[str]:
     return files
 
 
-def _spawn(command: list[str]) -> subprocess.CompletedProcess[str]:
-    """Run *command*, capturing stdout/stderr; never raise."""
-    return subprocess.run(  # noqa: S603 -- fixed dev tool argv from the caller
-        command, capture_output=True, text=True, check=False
+def _spawn(
+    command: list[str], *, timeout: float | None = PASS_TIMEOUT_S
+) -> subprocess.CompletedProcess[str]:
+    """Run *command*, streaming output live, bounded by *timeout*.
+
+    The child's stdout/stderr are merged into one pipe (pytest's ``-ra``
+    short summary is on stdout anyway) and a daemon reader thread echoes
+    each line to the wrapper's stdout as it arrives, so progress is
+    visible live rather than in one block after the child exits. If the
+    child is still running after *timeout* seconds it is killed, a
+    diagnostic naming the timeout and the last lines of output goes to
+    stderr, and the result reports exit code 124 -- outside {0, 1}, so
+    ``rerun_failed_files`` propagates it without a rerun, exactly like
+    a genuine crash. Never raises for child failures; on a healthy pass
+    the reader thread is joined and the full accumulated output is
+    returned.
+    """
+    proc = subprocess.Popen(  # noqa: S603 -- fixed dev tool argv from the caller
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    lines: list[str] = []
+
+    def _read() -> None:
+        stdout = cast("IO[str]", proc.stdout)
+        for line in stdout:
+            print(line, end="", flush=True)
+            lines.append(line)
+
+    reader = threading.Thread(target=_read, name="functional-rerun-stream", daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5)
+        reader.join(timeout=5)
+        tail = "".join(lines[-20:])
+        elapsed = cast("float", timeout)
+        print(
+            f"functional_rerun: pass exceeded {elapsed:.0f}s — "
+            "child terminated (last lines below)",
+            file=sys.stderr,
+        )
+        if tail:
+            print(tail, end="", file=sys.stderr)
+        return subprocess.CompletedProcess(
+            args=command, returncode=124, stdout="".join(lines), stderr=""
+        )
+    reader.join()
+    return subprocess.CompletedProcess(
+        args=command, returncode=proc.returncode, stdout="".join(lines), stderr=""
     )
 
 
@@ -128,10 +200,14 @@ def _rerunnable(files: list[str]) -> bool:
 def _run_pass(command: list[str], runner: _Runner, label: str) -> tuple[int, set[str]]:
     """Run one pass, echo its output, and report a progress line."""
     completed = runner(command)
-    if completed.stdout:
-        print(completed.stdout, end="", file=sys.stdout)
-    if completed.stderr:
-        print(completed.stderr, end="", file=sys.stderr)
+    if runner is not _spawn:
+        # Fake runners carry canned output that must still be echoed;
+        # the real _spawn already streams every line live, so echoing
+        # here would duplicate the pass's output.
+        if completed.stdout:
+            print(completed.stdout, end="", file=sys.stdout)
+        if completed.stderr:
+            print(completed.stderr, end="", file=sys.stderr)
     files = parse_summary(f"{completed.stdout}{completed.stderr}")
     print(
         f"functional_rerun: {label}: exit {completed.returncode}, "

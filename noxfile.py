@@ -133,6 +133,7 @@ def functional(session):
         str(ROOT / "tools" / "functional_rerun.py"),
         "pytest",
         "tests/functional",
+        "-v",
         "--no-cov",
         "-n",
         "auto",

@@ -49,6 +49,7 @@ if str(_REPO_ROOT) not in sys.path:
 _CMD = [
     "pytest",
     "tests/functional",
+    "-v",
     "--no-cov",
     "-n",
     "auto",
@@ -292,6 +293,93 @@ def test_spawn_runs_command_and_returns_exit_code(
     assert completed.stderr == ""
 
 
+def test_spawn_when_timeout_none_waits_forever_and_returns_exit_code(
+    rerun_module: ModuleType,
+) -> None:
+    """An explicit None timeout disables the bound.
+
+    A fast child still returns its exit code; None means wait forever.
+    """
+    completed = rerun_module._spawn(
+        [sys.executable, "-c", "import sys; sys.exit(0)"], timeout=None
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+
+
+def test_spawn_when_child_hangs_times_out_terminates_and_returns_124(
+    rerun_module: ModuleType,
+) -> None:
+    """A hung child is killed after the timeout and maps to exit 124.
+
+    Returning at all -- within ~1s of a 3600s sleep -- proves the
+    timeout fired and the child was terminated, not left running.
+    """
+    completed = rerun_module._spawn(
+        [sys.executable, "-c", "import time; time.sleep(3600)"], timeout=0.3
+    )
+
+    assert completed.returncode == 124
+    assert completed.stdout == ""
+
+
+def test_spawn_streams_output_live_and_preserves_partial_output_on_timeout(
+    rerun_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Output is streamed live to stdout and preserved on timeout.
+
+    The marker is flushed by the child immediately, then the child
+    sleeps: capture_output-style buffering would show nothing in
+    capsys, so the marker in ``out`` proves live streaming, and the
+    marker in ``completed.stdout`` proves the partial output survives
+    for parse_summary on a timed-out pass.
+    """
+    completed = rerun_module._spawn(
+        [
+            sys.executable,
+            "-c",
+            "import time; print('STREAMED_MARKER', flush=True); time.sleep(3600)",
+        ],
+        timeout=0.5,
+    )
+
+    captured = capsys.readouterr()
+    assert completed.returncode == 124
+    assert "STREAMED_MARKER" in captured.out
+    assert "STREAMED_MARKER" in completed.stdout
+
+
+def test_spawn_timeout_diagnostic_reports_elapsed_and_termination(
+    rerun_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A timeout leaves a named stderr diagnostic, not silence."""
+    completed = rerun_module._spawn(
+        [sys.executable, "-c", "import time; time.sleep(3600)"], timeout=0.3
+    )
+
+    captured = capsys.readouterr()
+    assert completed.returncode == 124
+    assert "pass exceeded" in captured.err
+    assert "child terminated" in captured.err
+
+
+def test_run_pass_when_real_spawn_streams_live_and_does_not_double_echo(
+    rerun_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Real _spawn streams live; _run_pass must not echo it again."""
+    result = rerun_module._run_pass(
+        [sys.executable, "-c", "print('REAL_PASS_MARKER')"],
+        rerun_module._spawn,
+        "solo",
+    )
+
+    captured = capsys.readouterr()
+    assert result == (0, set())
+    assert captured.out.count("REAL_PASS_MARKER") == 1
+    assert "solo: exit 0" in captured.err
+
+
 def test_rerun_failed_files_when_command_empty_runs_once(
     rerun_module: ModuleType,
 ) -> None:
@@ -329,11 +417,14 @@ def test_rerun_failed_files_when_initial_green_returns_zero_and_runs_once(
     assert calls == [_PASS1]
 
 
-@pytest.mark.parametrize("crash_code", [2, 3])
+@pytest.mark.parametrize("crash_code", [2, 3, 124])
 def test_rerun_failed_files_when_initial_crash_propagates_code_without_rerun(
     rerun_module: ModuleType, crash_code: int
 ) -> None:
-    """Exit codes outside {0, 1} are propagated, never rerun."""
+    """Exit codes outside {0, 1} propagate without rerun.
+
+    The bounded pass's timeout (124) is included in that set.
+    """
     runner, calls = _recording_runner([_completed(crash_code, "")])
 
     result = rerun_module.rerun_failed_files(_CMD, runner)

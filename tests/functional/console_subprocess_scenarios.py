@@ -91,12 +91,15 @@ case.
 
 import faulthandler
 import json
+import os
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import harness
 import pages
+import scenario_runner
 import wx
 import wx.xrc
 
@@ -917,6 +920,17 @@ def main(argv: list[str]) -> int:
     exit code.
     """
     faulthandler.enable()
+    # Hard bound on this child: a hung scenario must die with its
+    # thread stacks on stderr before the parent's
+    # SCENARIO_TIMEOUT_SECONDS (30 s) -- measured on windows-latest CI
+    # (PR #9): one hung scenario stalled the whole functional pass for
+    # > 900 s. dump_traceback_later is best-effort (it needs the GIL);
+    # the os._exit timer is the hard bound and does not. 124 mirrors
+    # the rerun wrapper's own timed-out exit code.
+    faulthandler.dump_traceback_later(scenario_runner.SCENARIO_CHILD_BOUND_SECONDS, exit=False)
+    threading.Timer(
+        scenario_runner.SCENARIO_CHILD_BOUND_SECONDS + 2, os._exit, args=(124,)
+    ).start()
     if len(argv) != _EXPECTED_ARGC:
         print(  # noqa: T201 -- the child's entire contract with its parent
             json.dumps({"ok": False, "error": "usage: <script> <scenario>", "data": None}),
