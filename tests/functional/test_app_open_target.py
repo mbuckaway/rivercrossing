@@ -1,18 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-wx tests for app.py's open-target and CSV routes (E3.2/E3.4).
+"""Real-wx tests for app.py's open-target route behavior (E1.5.3/E3.2).
 
-Split out of ``test_app_bootstrap.py`` (open-target defaults, the
-Import/Export Riders CSV picker flows, and the Fault A no-leak pins)
-so the two heaviest functional files spread their per-worker window
-churn across ``--dist loadfile`` workers (the wrapper-cache
-corruption remedy; see noxfile.py's own functional-session docstring
-for the measurement that motivates it). Everything here posts a real
-``EVT_MENU`` event at one module-scoped ``firing_frame`` and asserts
-on the window a route opens. Module fixtures are per-file by design,
-so this module carries its own ``firing_frame`` fixture; the
-``_fire_menu_event`` helper delegates to the shared
-``harness.fire_menu_event`` (which also clears ``sys.last_*`` after a
-swallowed handler exception, Phase 2).
+Split out of ``test_app_bootstrap.py`` (open-target defaults and the
+Fault A no-leak pins) so the heaviest functional files spread their
+per-worker window churn across ``--dist loadfile`` workers (the
+wrapper-cache corruption remedy; see noxfile.py's own functional-
+session docstring for the measurement that motivates it). Everything
+here posts a real ``EVT_MENU`` event at one module-scoped
+``firing_frame`` and asserts on the window a route opens. Module
+fixtures are per-file by design, so this module carries its own
+``firing_frame`` fixture; the ``_fire_menu_event`` helper delegates to
+the shared ``harness.fire_menu_event`` (which also clears
+``sys.last_*`` after a swallowed handler exception, Phase 2).
+
+The File ▸ Import/Export Riders CSV E2E flows lived here until
+2026-08-23, when the CSV-preview + rider-editor sequence was split out
+into ``test_csv_route_flows.py``: the combined file's ~15 per-process
+dialog loads crossed the measured degradation threshold on macOS CI
+(PR #9, run 32554309607) and the editor build failed after the preview
+loads. This file's remaining loads are the small confirm/form dialogs
+the route-defaults proofs parametrize over.
 """
 
 import re
@@ -164,102 +171,6 @@ def test_open_target_applies_the_recorded_initial_focus(
     _fire_menu_event(firing_frame, _menu_item_id_for_target(dialog_name))
 
     assert calls == [(dialog_name, field_name)]
-
-
-# --- E3.4: File > Import/Export Riders CSV… -----------------------
-
-
-def test_mi_import_csv_given_a_cancelled_picker_opens_no_window(
-    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """task-briefs.md's own "cancelled picker = no dialog" (E3.4)."""
-    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: None)
-    before = len(wx.GetTopLevelWindows())
-
-    _fire_menu_event(firing_frame, "mi_import_csv")
-
-    assert len(wx.GetTopLevelWindows()) == before
-
-
-def test_mi_import_csv_given_a_picked_path_shows_it_decorated(
-    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Menu -> picker -> csv_preview_dlg opens decorated (E3.4)."""
-    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
-    captured: dict[str, str] = {}
-
-    def _capture_summary(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        captured["summary"] = harness.find_control(dialog, ids.SUMMARY_LBL).GetLabelText()
-        return wx.ID_CANCEL
-
-    monkeypatch.setattr(dialogs, "run_dialog", _capture_summary)
-
-    _fire_menu_event(firing_frame, "mi_import_csv")
-
-    assert captured["summary"] == "clean_pooled.csv → 9 riders · 2 teams · 0 conflicts"
-
-
-def test_mi_import_csv_import_click_commits_into_the_shared_roster(
-    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The committed roster is the same one rider_editor_dlg reads.
-
-    Proven end to end through the app's own two routes, never a
-    direct handle on ``_RouteContext.roster``: import clean_pooled.
-    csv via ``mi_import_csv`` (clicking wxID_OK for real inside the
-    monkeypatched ``run_dialog``), then open ``rider_editor_dlg`` via
-    ``mi_rider_editor`` and read its own ``riders_list``.
-    """
-    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
-
-    def _click_import(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        harness.click(dialog, "wxID_OK")
-        return wx.ID_OK
-
-    monkeypatch.setattr(dialogs, "run_dialog", _click_import)
-    _fire_menu_event(firing_frame, "mi_import_csv")
-
-    captured: dict[str, set[str]] = {}
-
-    def _capture_plates(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        model = harness.find_control(dialog, ids.RIDERS_LIST).GetModel()
-        captured["plates"] = {model.GetValueByRow(row, 0) for row in range(model.GetCount())}
-        return wx.ID_CANCEL
-
-    monkeypatch.setattr(dialogs, "run_dialog", _capture_plates)
-    _fire_menu_event(firing_frame, "mi_rider_editor")
-
-    assert {"1", "2", "3", "4", "10", "11", "12", "20", "21"} <= captured["plates"]
-
-
-def test_mi_export_csv_given_a_cancelled_picker_is_a_silent_no_op(
-    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A cancelled save picker changes nothing, silently (E3.4)."""
-    monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: None)
-    before = firing_frame.GetStatusBar().GetStatusText()
-
-    _fire_menu_event(firing_frame, "mi_export_csv")
-
-    assert firing_frame.GetStatusBar().GetStatusText() == before
-
-
-def test_mi_export_csv_given_a_picked_path_writes_the_rosters_own_header(
-    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """Menu -> save picker -> csvio.export writes the real file."""
-    export_path = tmp_path / "export.csv"
-    monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: export_path)
-
-    _fire_menu_event(firing_frame, "mi_export_csv")
-
-    assert export_path.read_text(encoding="utf-8").splitlines()[0] == "plate,name,team_name,notes"
 
 
 # ------------------------------- Fault A: the load-construct seam
