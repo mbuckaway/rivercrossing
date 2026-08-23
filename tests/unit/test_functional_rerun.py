@@ -417,13 +417,16 @@ def test_rerun_failed_files_when_initial_green_returns_zero_and_runs_once(
     assert calls == [_PASS1]
 
 
-@pytest.mark.parametrize("crash_code", [2, 3, 124])
+@pytest.mark.parametrize("crash_code", [2, 3])
 def test_rerun_failed_files_when_initial_crash_propagates_code_without_rerun(
     rerun_module: ModuleType, crash_code: int
 ) -> None:
     """Exit codes outside {0, 1} propagate without rerun.
 
-    The bounded pass's timeout (124) is included in that set.
+    The bounded pass's timeout (124) is deliberately NOT in this set:
+    a hang is not a pytest crash, and the fresh-process whole-suite
+    fallback (test_rerun_failed_files_when_initial_pass_times_out_...)
+    is the one measured remedy for the corruption it signals.
     """
     runner, calls = _recording_runner([_completed(crash_code, "")])
 
@@ -431,6 +434,26 @@ def test_rerun_failed_files_when_initial_crash_propagates_code_without_rerun(
 
     assert result == crash_code
     assert calls == [_PASS1]
+
+
+def test_rerun_failed_files_when_initial_pass_times_out_falls_back_to_whole_suite(
+    rerun_module: ModuleType,
+) -> None:
+    """A timed-out pass (124, no summary) reruns the whole suite.
+
+    A hang produces no ``-ra`` summary to map to files (measured on
+    windows-latest CI, PR #9: the suite reached 97% then stalled in the
+    last window-heavy files until the pass bound killed it). The
+    fresh-process remedy is the only measured cure for the wx/SIP
+    corruption, so a 124 pass falls back to a whole-suite run in a
+    fresh process instead of failing bare.
+    """
+    runner, calls = _recording_runner([_completed(124, ""), _completed(0, "800 passed\n")])
+
+    result = rerun_module.rerun_failed_files(_CMD, runner)
+
+    assert result == 0
+    assert calls == [_PASS1, _PASS1]
 
 
 def test_rerun_failed_files_when_first_rerun_green_returns_zero(

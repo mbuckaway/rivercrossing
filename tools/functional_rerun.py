@@ -54,13 +54,13 @@ from typing import IO, cast
 
 _MAX_RERUNS = 2
 
-# Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); the
-# first bounded Windows CI run (PR #9, 2026-08-20) reached 93% of 830
-# items in 19 s, then hung until the 3600 s bound killed it -- so a
-# healthy Windows pass is minutes, and 900 s turns a hang into a
-# quarter-hour bounded pass with a diagnostic that (with -v) names the
-# stalling test.
-PASS_TIMEOUT_S = 900
+# Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); on
+# windows-latest CI (PR #9, 2026-08-23) the suite reached 97-98% of 830
+# items in ~40 s before stalling in the last window-heavy files -- so a
+# healthy Windows pass is a couple of minutes, and 300 s turns a hang
+# into a five-minute bounded pass whose timeout (124) triggers the
+# whole-suite fresh-process fallback in rerun_failed_files.
+PASS_TIMEOUT_S = 300
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _SUMMARY_NODE_RE = re.compile(r"(FAILED|ERROR) (.+?)(?: - |$)")
@@ -221,19 +221,22 @@ def rerun_failed_files(command: Sequence[str], runner: _Runner = _spawn) -> int:
     """Run a pytest command, rerunning failed files in fresh processes.
 
     Pass 1 runs the whole *command*. Exit 0 ends immediately; an exit
-    code outside {0, 1} is propagated unchanged. A 1 exit parses the
-    ``-ra`` summary and re-runs only the FAILED/ERROR files (same
-    flags) in a freshly spawned process, up to ``_MAX_RERUNS`` times,
-    returning 0 on the first fully green pass. When a pass's summary
-    cannot be mapped to re-runnable files, the whole suite is re-run
-    once instead, and that result is returned. Returns the final
-    pytest exit code.
+    code outside {0, 1} -- except the bounded pass's own 124 -- is
+    propagated unchanged. A 1 exit parses the ``-ra`` summary and
+    re-runs only the FAILED/ERROR files (same flags) in a freshly
+    spawned process, up to ``_MAX_RERUNS`` times, returning 0 on the
+    first fully green pass. When a pass's summary cannot be mapped to
+    re-runnable files -- including a timed-out pass (124), whose hang
+    produced no summary at all -- the whole suite is re-run once in a
+    fresh process (the one measured remedy for the wx/SIP wrapper-cache
+    corruption the hang signals), and that result is returned. Returns
+    the final pytest exit code.
     """
     program, args = _program_and_args(command)
     initial_rc, initial_files = _run_pass(program + args, runner, "initial")
     if initial_rc == 0:
         return 0
-    if initial_rc not in (0, 1):
+    if initial_rc not in (0, 1, 124):
         return initial_rc
 
     failed_files = sorted(initial_files)
@@ -249,7 +252,7 @@ def rerun_failed_files(command: Sequence[str], runner: _Runner = _spawn) -> int:
         )
         if pass_rc == 0:
             return 0
-        if pass_rc not in (0, 1):
+        if pass_rc not in (0, 1, 124):
             return pass_rc
         failed_files = sorted(pass_files)
     return pass_rc
