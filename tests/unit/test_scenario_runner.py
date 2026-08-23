@@ -86,3 +86,31 @@ def test_run_bounded_times_out_with_partial_output_when_pipes_stay_open(
 
     assert elapsed < 10, f"drain stalled {elapsed:.1f}s with the pipes held open"
     assert "CHILD_STARTED" in (excinfo.value.stdout or "")
+
+
+def test_run_bounded_returns_promptly_when_child_exits_but_grandchild_holds_pipes(
+    scenario_runner_module: ModuleType,
+) -> None:
+    """A clean child exit must not stall on its pipe-holder either.
+
+    The same pipe-holding grandchild (measured on windows-latest CI,
+    PR #9, test_windows_close_confirmed_destroys_the_frame) also
+    stalls the *normal-exit* path: after the child exits, the reader
+    threads never see EOF while the grandchild holds the write ends,
+    so an unbounded ``join()`` blocks forever and the whole pass dies
+    at the rerun wrapper's bound. The joins must be bounded on both
+    paths.
+    """
+    child = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+        "stdout=sys.stdout, stderr=sys.stderr); "
+        "print('CHILD_DONE', flush=True)"
+    )
+    start = time.monotonic()
+    completed = scenario_runner_module._run_bounded([sys.executable, "-c", child], timeout=5)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 10, f"normal-exit join stalled {elapsed:.1f}s with the pipes held open"
+    assert completed.returncode == 0
+    assert "CHILD_DONE" in completed.stdout
