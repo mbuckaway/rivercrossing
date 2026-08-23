@@ -114,9 +114,9 @@ def test_mi_import_csv_import_click_commits_into_the_shared_roster() -> None:
     """
     result = scenario_runner.run_scenario("csv_import_commit_reads_editor")
 
-    assert {"1", "2", "3", "4", "10", "11", "12", "20", "21"} <= set(
-        result["data"]["plates"]
-    ), result["context"]
+    assert {"1", "2", "3", "4", "10", "11", "12", "20", "21"} <= set(result["data"]["plates"]), (
+        result["context"]
+    )
 
 
 def test_mi_export_csv_given_a_cancelled_picker_is_a_silent_no_op(
