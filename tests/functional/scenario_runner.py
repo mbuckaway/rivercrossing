@@ -105,8 +105,13 @@ def _run_bounded(command: list[str], timeout: float) -> subprocess.CompletedProc
         raise subprocess.TimeoutExpired(
             proc.args, timeout, "".join(out_lines), "".join(err_lines)
         ) from None
-    tout.join()
-    terr.join()
+    # Bounded joins on the normal path too: a grandchild holding the
+    # write ends (measured on windows-latest CI, PR #9) keeps the
+    # readers from EOF, so an unbounded join here stalls the whole
+    # functional pass at the rerun wrapper's bound. The readers are
+    # daemon threads; the sinks already hold everything captured.
+    tout.join(timeout=2)
+    terr.join(timeout=2)
     return subprocess.CompletedProcess(
         proc.args, proc.returncode, "".join(out_lines), "".join(err_lines)
     )
