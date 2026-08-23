@@ -19,9 +19,11 @@ collection for the whole tests/unit session).
 
 from __future__ import annotations
 
+import subprocess
 import sys
+import time
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -36,9 +38,9 @@ if str(_FUNCTIONAL_DIR) not in sys.path:
 @pytest.fixture(scope="module")
 def scenario_runner_module() -> ModuleType:
     """Return tests/functional.scenario_runner, imported lazily."""
-    import scenario_runner  # noqa: PLC0415
+    import scenario_runner  # type: ignore[import-not-found]  # noqa: PLC0415
 
-    return scenario_runner
+    return cast("ModuleType", scenario_runner)
 
 
 def test_child_bound_fires_before_parent_timeout(scenario_runner_module: ModuleType) -> None:
@@ -58,3 +60,29 @@ def test_child_bound_fires_before_parent_timeout(scenario_runner_module: ModuleT
 def test_child_bound_is_positive(scenario_runner_module: ModuleType) -> None:
     """A bound of zero would fire before a healthy scenario can run."""
     assert scenario_runner_module.SCENARIO_CHILD_BOUND_SECONDS > 0
+
+
+def test_run_bounded_times_out_with_partial_output_when_pipes_stay_open(
+    scenario_runner_module: ModuleType,
+) -> None:
+    """A pipe-holding grandchild must not stall the bounded drain.
+
+    Measured on windows-latest CI (PR #9): a scenario child that died
+    mid-teardown left its stdout/stderr write ends open (a grandchild
+    process holding them), and stdlib ``subprocess.run``'s unbounded
+    post-kill drain stalled the whole functional pass for 900 s. The
+    drain must be bounded and still surface the child's partial output.
+    """
+    child = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+        "stdout=sys.stdout, stderr=sys.stderr); "
+        "print('CHILD_STARTED', flush=True); time.sleep(30)"
+    )
+    start = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired) as excinfo:
+        scenario_runner_module._run_bounded([sys.executable, "-c", child], timeout=0.5)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 10, f"drain stalled {elapsed:.1f}s with the pipes held open"
+    assert "CHILD_STARTED" in (excinfo.value.stdout or "")
