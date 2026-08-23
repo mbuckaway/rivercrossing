@@ -21,6 +21,7 @@ from typing import Any
 
 import harness
 import pytest
+import scenario_runner
 import wx
 
 from rivercrossing.ui import ids
@@ -91,10 +92,7 @@ def test_mi_import_csv_given_a_picked_path_shows_it_decorated(
     assert captured["summary"] == "clean_pooled.csv → 9 riders · 2 teams · 0 conflicts"
 
 
-def test_mi_import_csv_import_click_commits_into_the_shared_roster(
-    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_mi_import_csv_import_click_commits_into_the_shared_roster() -> None:
     """The committed roster is the same one rider_editor_dlg reads.
 
     Proven end to end through the app's own two routes, never a
@@ -102,27 +100,23 @@ def test_mi_import_csv_import_click_commits_into_the_shared_roster(
     csv via ``mi_import_csv`` (clicking wxID_OK for real inside the
     monkeypatched ``run_dialog``), then open ``rider_editor_dlg`` via
     ``mi_rider_editor`` and read its own ``riders_list``.
+
+    Runs as a subprocess scenario (``csv_import_commit_reads_editor``)
+    because the two riders.xrc dialog loads in sequence trigger the
+    documented SIP wrapper-cache degradation in a long-lived worker:
+    measured on macOS CI (PR #9, runs 32554309607 / 32650668444) the
+    second load built with the action staticbox missing, the editor
+    route's handler raised a swallowed ``LookupError``, and the
+    monkeypatched ``run_dialog`` never ran (``KeyError: 'plates'``) --
+    failing all three file-level reruns. A fresh interpreter per
+    attempt gets an independent memory layout (scenario_runner's own
+    rationale), the one measured remedy for that corruption.
     """
-    monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
+    result = scenario_runner.run_scenario("csv_import_commit_reads_editor")
 
-    def _click_import(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        harness.click(dialog, "wxID_OK")
-        return wx.ID_OK
-
-    monkeypatch.setattr(dialogs, "run_dialog", _click_import)
-    _fire_menu_event(firing_frame, "mi_import_csv")
-
-    captured: dict[str, set[str]] = {}
-
-    def _capture_plates(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        model = harness.find_control(dialog, ids.RIDERS_LIST).GetModel()
-        captured["plates"] = {model.GetValueByRow(row, 0) for row in range(model.GetCount())}
-        return wx.ID_CANCEL
-
-    monkeypatch.setattr(dialogs, "run_dialog", _capture_plates)
-    _fire_menu_event(firing_frame, "mi_rider_editor")
-
-    assert {"1", "2", "3", "4", "10", "11", "12", "20", "21"} <= captured["plates"]
+    assert {"1", "2", "3", "4", "10", "11", "12", "20", "21"} <= set(
+        result["data"]["plates"]
+    ), result["context"]
 
 
 def test_mi_export_csv_given_a_cancelled_picker_is_a_silent_no_op(

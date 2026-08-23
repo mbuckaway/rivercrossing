@@ -107,7 +107,7 @@ from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids, theme
-from rivercrossing.ui.views import MainFrame, dialogs
+from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -703,6 +703,62 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
     return {"frame_being_deleted": len(destroy_calls) > 0}
 
 
+def _csv_import_commit_reads_editor() -> dict[str, Any]:
+    """Import clean_pooled.csv via mi_import_csv, then read riders_list.
+
+    The E3.4 E2E proof that the committed roster is the same one the
+    editor reads. Runs in this fresh interpreter for a fourth reason:
+    measured on macOS CI (PR #9, runs 32554309607 and 32650668444),
+    the two riders.xrc dialog loads in sequence (csv_preview_dlg then
+    rider_editor_dlg) trigger the documented SIP wrapper-cache
+    degradation in the caller's long-lived worker -- the second load
+    builds with the whole action staticbox missing and
+    ``RiderEditor.__init__`` raises a ``LookupError`` the route
+    handler swallows, so the monkeypatched ``run_dialog`` never runs
+    and the caller sees ``KeyError: 'plates'``. A fresh interpreter
+    gets an independent memory layout (scenario_runner's own retry
+    rationale), which is the one measured remedy for that corruption
+    (docs/EPIC3-SESSION-SUMMARY.md, Addendum 2).
+    """
+    fixture = (
+        Path(__file__).resolve().parent.parent / "unit" / "fixtures" / "csv" / "clean_pooled.csv"
+    )
+    original_pick = rider_editor._pick_import_path
+    original_run_dialog = dialogs.run_dialog
+    frame: Any = None
+    try:
+        rider_editor._pick_import_path = lambda _parent: fixture
+
+        def _click_import(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+            harness.click(dialog, "wxID_OK")
+            return wx.ID_OK
+
+        dialogs.run_dialog = _click_import
+        frame = app_module.build_main_window(wx.GetApp())
+        _fire_menu_event(frame, "mi_import_csv")
+
+        plates: set[str] = set()
+
+        def _capture_plates(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+            model = harness.find_control(dialog, ids.RIDERS_LIST).GetModel()
+            plates.update(model.GetValueByRow(row, 0) for row in range(model.GetCount()))
+            return wx.ID_CANCEL
+
+        dialogs.run_dialog = _capture_plates
+        _fire_menu_event(frame, "mi_rider_editor")
+        return {"plates": sorted(plates)}
+    finally:
+        rider_editor._pick_import_path = original_pick
+        dialogs.run_dialog = original_run_dialog
+        if frame is not None:
+            # A live main_frame keeps a non-daemon thread alive at
+            # interpreter shutdown (measured: the child printed its
+            # JSON envelope, then hung until the 50s bound); close it
+            # without the quit confirm, exactly like the quit-flow
+            # scenarios do.
+            _close_without_prompt(frame)
+
+
 # --- Phase 8, task 8.6: live dark mode + menu radio defaults -------
 
 
@@ -882,6 +938,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "forced_close_destroys_without_dialog": _forced_close_destroys_without_dialog,
     "windows_close_cancelled_stays": _windows_close_cancelled_stays,
     "windows_close_confirmed_destroys": _windows_close_confirmed_destroys,
+    "csv_import_commit_reads_editor": _csv_import_commit_reads_editor,
     "theme_dark_applies_at_runtime": _theme_dark_applies_at_runtime,
     "theme_light_round_trip": _theme_light_round_trip,
     "theme_system_reapplies_on_sys_colour_changed": (
@@ -928,9 +985,15 @@ def main(argv: list[str]) -> int:
     # the os._exit timer is the hard bound and does not. 124 mirrors
     # the rerun wrapper's own timed-out exit code.
     faulthandler.dump_traceback_later(scenario_runner.SCENARIO_CHILD_BOUND_SECONDS, exit=False)
-    threading.Timer(
+    bound = threading.Timer(
         scenario_runner.SCENARIO_CHILD_BOUND_SECONDS + 2, os._exit, args=(124,)
-    ).start()
+    )
+    # A non-daemon timer keeps the interpreter's shutdown join alive
+    # for the whole bound (measured: every healthy scenario child hung
+    # ~bound-seconds at exit). Daemon means it fires only when the
+    # process is genuinely still alive -- i.e. hung.
+    bound.daemon = True
+    bound.start()
     if len(argv) != _EXPECTED_ARGC:
         print(  # noqa: T201 -- the child's entire contract with its parent
             json.dumps({"ok": False, "error": "usage: <script> <scenario>", "data": None}),
