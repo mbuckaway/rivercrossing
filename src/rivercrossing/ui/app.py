@@ -460,7 +460,11 @@ def _on_main_frame_close(context: _RouteContext, event: Any) -> None:  # noqa: A
     macOS never quits on the red X (P8-D2): it hides *context.frame*
     instead, leaving ``RiverCrossingApp.MacReopenApp`` a window to
     restore on a Dock-icon click. Windows has no equivalent hide
-    convention, so it runs the same confirm flow the menu does.
+    convention, so it runs the same confirm flow the menu does; on a
+    confirmed ``QUIT`` the destroy is deferred through
+    ``wx.CallAfter`` -- a synchronous ``Destroy()`` here, inside
+    ``EVT_CLOSE`` right after the confirm modal unwinds, deadlocks
+    wxMSW (measured on windows-latest CI).
     """
     wx = require_wx()
     if not event.CanVeto() or context.app.really_quitting:
@@ -472,7 +476,12 @@ def _on_main_frame_close(context: _RouteContext, event: Any) -> None:  # noqa: A
         return
     if _confirm_quit(context) is quit_flow.QuitOutcome.QUIT:
         context.app.really_quitting = True
-        context.frame.Destroy()
+        # wxMSW deadlock (measured on windows-latest CI): Destroy()
+        # called here -- synchronously inside EVT_CLOSE, right after
+        # the confirm modal unwinds -- hangs the app with the GIL
+        # held. Defer the destroy to the event loop, the same
+        # wx.CallAfter idiom run_modal uses.
+        wx.CallAfter(context.frame.Destroy)
     else:
         event.Veto()
 

@@ -685,8 +685,13 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
     firing a plain ``frame.Close()`` instead of the wxID_EXIT menu
     route (see :func:`_windows_close_cancelled_stays`'s own
     docstring): both reach ``_on_main_frame_close``'s non-mac branch,
-    which destroys *frame* directly on a confirmed ``QUIT`` outcome,
-    so no further cleanup close is needed here either.
+    which on a confirmed ``QUIT`` outcome defers the destroy through
+    ``wx.CallAfter`` -- a synchronous ``Destroy()`` inside
+    ``EVT_CLOSE`` right after the confirm modal unwinds deadlocks
+    wxMSW, the stage-3 failure this scenario exists to verify (only
+    runnable on windows-latest CI). The pump after ``Close()`` runs
+    that deferred destroy before the JSON envelope is printed, so no
+    further cleanup close is needed here either.
     """
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
@@ -700,6 +705,7 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
 
     wx.CallAfter(_click_quit)
     frame.Close()
+    harness.pump()  # run the deferred destroy the MSW fix schedules
     return {"frame_being_deleted": len(destroy_calls) > 0}
 
 
