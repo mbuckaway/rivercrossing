@@ -26,6 +26,7 @@ collectability via weakref -- never the map.
 """
 
 import gc
+import re
 import sys
 import weakref
 from typing import Any
@@ -263,3 +264,82 @@ def test_recent_wx_log_resets_between_loads(
 
     captured = harness.recent_wx_log()
     assert not any("first-load-only marker" in line for line in captured)
+
+
+# --- find_control's settle retry + stale-wrapper rejection ---------
+# Mirrors ui.views._support.find_control (windows-latest CI): under
+# the wx/SIP wrapper-cache corruption, FindWindowByName can miss or
+# answer with a stale-typed wrapper for a live control; the bounded
+# SafeYield retry settles it, and a wrong-typed wrapper is refused.
+
+
+def test_find_control_retries_until_the_control_appears(
+    xrc_resource: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A first-pass miss settles into the real control, not an error."""
+    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    real_find = wx.Window.FindWindowByName
+    lookups: list[str] = []
+    try:
+        with monkeypatch.context() as patched:
+
+            def _find(name: str, parent: Any = None) -> Any:  # noqa: ANN401 -- wx
+                lookups.append(name)
+                if len(lookups) < 3:
+                    return None
+                return real_find(name, parent)
+
+            patched.setattr(wx.Window, "FindWindowByName", _find)
+
+            control = harness.find_control(window, ids.RIDES_LIST)
+            observed = (control.GetName(), len(lookups))
+    finally:
+        harness.close_window(window)
+
+    assert observed == (ids.RIDES_LIST, 3)
+
+
+def test_find_control_raises_when_the_control_never_appears(
+    xrc_resource: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A name that never resolves raises ControlNotFoundError."""
+    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    try:
+        with monkeypatch.context() as patched:
+            patched.setattr(wx.Window, "FindWindowByName", lambda _name, _parent=None: None)
+
+            with pytest.raises(
+                harness.ControlNotFoundError,
+                match=re.escape(
+                    f"window {window.GetName()!r} has no control named 'no_such_control'"
+                ),
+            ):
+                harness.find_control(window, "no_such_control")
+    finally:
+        harness.close_window(window)
+
+
+def test_find_control_rejects_a_stale_typed_wrapper(
+    xrc_resource: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wrong-typed wrapper is refused, never returned as-is.
+
+    Under the wrapper-cache corruption a lookup can answer with a
+    stale wrapper whose Python type is not the live control's;
+    accepting it reads the wrong control's state. The harness must
+    raise a diagnosable error instead of handing it back.
+    """
+    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    try:
+        with monkeypatch.context() as patched:
+            patched.setattr(wx.Window, "FindWindowByName", lambda _name, _parent=None: object())
+
+            with pytest.raises(
+                harness.ControlNotFoundError,
+                match=re.escape(
+                    f"window {window.GetName()!r} resolved {ids.RIDES_LIST!r} to a stale"
+                ),
+            ):
+                harness.find_control(window, ids.RIDES_LIST)
+    finally:
+        harness.close_window(window)

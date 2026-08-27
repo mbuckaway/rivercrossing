@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -72,6 +73,17 @@ def rerun_module() -> ModuleType:
     from tools import functional_rerun  # type: ignore[import-not-found]  # noqa: PLC0415
 
     return functional_rerun
+
+
+def test_pass_timeout_s_at_least_600_seconds(rerun_module: ModuleType) -> None:
+    """The pass bound must clear a worst-case healthy crawl.
+
+    Measured on windows-latest CI: the suite's worst-case crawl runs
+    ~180-260 s in the last window-heavy files, and the previous 300 s
+    bound killed a slow-but-healthy pass seconds from green. 600 s
+    clears that crawl with margin while still bounding a true hang.
+    """
+    assert rerun_module.PASS_TIMEOUT_S >= 600
 
 
 # ------------------------------------------------- parse_summary
@@ -322,6 +334,33 @@ def test_spawn_when_child_hangs_times_out_terminates_and_returns_124(
 
     assert completed.returncode == 124
     assert completed.stdout == ""
+
+
+def test_spawn_returns_promptly_when_child_exits_but_grandchild_holds_pipes(
+    rerun_module: ModuleType,
+) -> None:
+    """A clean child exit must not stall on a pipe-holding grandchild.
+
+    The same Windows pipe-holder that stalls scenario_runner's drain
+    (Windows Error Reporting, measured on windows-latest CI) keeps
+    _spawn's reader thread from EOF after a healthy pass too, so the
+    normal-exit join must be bounded exactly like the timeout path
+    already is. The grandchild sleeps 30 s; a bounded join returns in
+    ~5 s, an unbounded one waits the full 30 s and fails the bound.
+    """
+    child = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+        "stdout=sys.stdout, stderr=sys.stderr); "
+        "print('CHILD_DONE', flush=True)"
+    )
+    start = time.monotonic()
+    completed = rerun_module._spawn([sys.executable, "-c", child], timeout=10)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 10, f"normal-exit join stalled {elapsed:.1f}s with the pipes held open"
+    assert completed.returncode == 0
+    assert "CHILD_DONE" in completed.stdout
 
 
 def test_spawn_streams_output_live_and_preserves_partial_output_on_timeout(
