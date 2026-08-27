@@ -33,18 +33,23 @@ flow), kept separate so firing an event there can never race the
 binding-removal proof over which bindings are still present.
 """
 
-import subprocess
+from __future__ import annotations
+
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import harness
 import pytest
+import scenario_runner
 import wx
 import wx.xrc
 
 from rivercrossing.ui import accelerators, commands, ids
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui.views import dialogs
+
+if TYPE_CHECKING:
+    import subprocess
 
 pytestmark = pytest.mark.functional
 
@@ -374,12 +379,9 @@ def test_main_shows_the_frame_before_entering_the_event_loop() -> None:
     for why a second, unbound App must not be built in a shared
     session applies here too).
     """
-    completed = subprocess.run(  # noqa: S603 -- sys.executable + a fixed inline probe
+    completed = scenario_runner._run_bounded(
         [sys.executable, "-c", _MAINLOOP_PROBE_SCRIPT],
-        capture_output=True,
-        text=True,
         timeout=_PROBE_TIMEOUT_SECONDS,
-        check=False,
     )
     result = _decode_probe_output(completed)
 

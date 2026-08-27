@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 import pytest
+import scenario_runner
 
 import rivercrossing
 
@@ -133,18 +134,16 @@ def _launch(executable: Path) -> _Launch:
     """Launch *executable* and collect its output, killing it after.
 
     Never leaves a GUI process behind: every path either reaps a
-    process that exited on its own or kills one that did not.
+    process that exited on its own or kills one that did not. The
+    bounded daemon-thread drain (``scenario_runner._run_bounded``)
+    means a third process holding the child's pipes -- Windows Error
+    Reporting, measured -- cannot stall the post-kill drain.
     """
-    with subprocess.Popen(  # noqa: S603 -- this session's own installed exe
-        [str(executable)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-    ) as process:
-        try:
-            stdout, stderr = process.communicate(timeout=LAUNCH_SETTLE_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate()
-            return _Launch(None, stdout, stderr)
-    return _Launch(process.returncode, stdout, stderr)
+    try:
+        completed = scenario_runner._run_bounded([str(executable)], timeout=LAUNCH_SETTLE_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        return _Launch(None, exc.stdout or "", exc.stderr or "")
+    return _Launch(completed.returncode, completed.stdout, completed.stderr)
 
 
 # ----------------------------------------------- group 1: compile smoke

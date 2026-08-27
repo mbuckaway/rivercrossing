@@ -36,7 +36,7 @@ stdout/stderr into one pipe and a daemon reader thread echoes every
 line to the wrapper's stdout live, so progress is visible while the
 pass runs and a hang leaves its last lines in the log instead of
 nothing at all. If the child is still running after ``PASS_TIMEOUT_S``
-(3600s) it is killed and a diagnostic naming the elapsed time and the
+(600s) it is killed and a diagnostic naming the elapsed time and the
 last ~20 lines is printed to stderr; the pass then reports exit code
 124, which is outside {0, 1} and is therefore propagated without a
 rerun, consistent with the crash rule above. Killing the wrapper's
@@ -55,12 +55,19 @@ from typing import IO, cast
 _MAX_RERUNS = 2
 
 # Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); on
-# windows-latest CI (PR #9, 2026-08-23) the suite reached 97-98% of 830
-# items in ~40 s before stalling in the last window-heavy files -- so a
-# healthy Windows pass is a couple of minutes, and 300 s turns a hang
-# into a five-minute bounded pass whose timeout (124) triggers the
-# whole-suite fresh-process fallback in rerun_failed_files.
-PASS_TIMEOUT_S = 300
+# windows-latest CI the suite's worst-case crawl reaches ~180-260 s
+# (the last window-heavy files dominate), so 300 s raced a healthy
+# pass and killed it seconds from green. 600 s clears that crawl with
+# margin while still bounding a true hang to a ten-minute pass whose
+# timeout (124) triggers the whole-suite fresh-process fallback in
+# rerun_failed_files.
+PASS_TIMEOUT_S = 600
+
+# How long _spawn's stream reader is joined after the child exits.
+# The timeout path already used this bound; the normal path needs it
+# too -- a third process holding the child's pipes (Windows Error
+# Reporting, measured) keeps the reader from EOF.
+_READER_JOIN_TIMEOUT_S = 5
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _SUMMARY_NODE_RE = re.compile(r"(FAILED|ERROR) (.+?)(?: - |$)")
@@ -105,8 +112,9 @@ def _spawn(
     stderr, and the result reports exit code 124 -- outside {0, 1}, so
     ``rerun_failed_files`` propagates it without a rerun, exactly like
     a genuine crash. Never raises for child failures; on a healthy pass
-    the reader thread is joined and the full accumulated output is
-    returned.
+    the reader thread is joined with a short bound (a pipe-holding
+    third process would otherwise stall the join) and the full
+    accumulated output is returned.
     """
     proc = subprocess.Popen(  # noqa: S603 -- fixed dev tool argv from the caller
         command,
@@ -128,8 +136,8 @@ def _spawn(
         proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait(timeout=5)
-        reader.join(timeout=5)
+        proc.wait(timeout=_READER_JOIN_TIMEOUT_S)
+        reader.join(timeout=_READER_JOIN_TIMEOUT_S)
         tail = "".join(lines[-20:])
         elapsed = cast("float", timeout)
         print(
@@ -142,7 +150,10 @@ def _spawn(
         return subprocess.CompletedProcess(
             args=command, returncode=124, stdout="".join(lines), stderr=""
         )
-    reader.join()
+    # Bounded on the normal path too, for the same pipe-holder reason:
+    # the daemon reader drains and ends when the holder exits, and
+    # *lines* already holds everything captured so far.
+    reader.join(timeout=_READER_JOIN_TIMEOUT_S)
     return subprocess.CompletedProcess(
         args=command, returncode=proc.returncode, stdout="".join(lines), stderr=""
     )

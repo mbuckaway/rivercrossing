@@ -55,6 +55,7 @@ from typing import Any, NamedTuple
 import harness
 import pages
 import pytest
+import scenario_runner
 import wx.xrc
 
 pytestmark = pytest.mark.functional
@@ -134,21 +135,16 @@ def _launch(executable: Path) -> Launch:
     """Launch *executable* and collect its output, killing it after.
 
     Never leaves a GUI process behind: every path either reaps a
-    process that exited on its own or kills one that did not.
+    process that exited on its own or kills one that did not. The
+    bounded daemon-thread drain (``scenario_runner._run_bounded``)
+    means a third process holding the child's pipes -- Windows Error
+    Reporting, measured -- cannot stall the post-kill drain.
     """
-    with subprocess.Popen(  # noqa: S603 -- a path this repo's own build produced
-        [str(executable)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-    ) as process:
-        try:
-            stdout, stderr = process.communicate(timeout=LAUNCH_SETTLE_SECONDS)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate()
-            return Launch(None, stdout, stderr)
-    return Launch(process.returncode, stdout, stderr)
+    try:
+        completed = scenario_runner._run_bounded([str(executable)], timeout=LAUNCH_SETTLE_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        return Launch(None, exc.stdout or "", exc.stderr or "")
+    return Launch(completed.returncode, completed.stdout, completed.stderr)
 
 
 def _digests(ui_dir: Path) -> dict[str, str]:
