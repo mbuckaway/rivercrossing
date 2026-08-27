@@ -33,15 +33,17 @@ from typing import Any
 __all__ = ["run_scenario"]
 
 SCENARIOS_SCRIPT = Path(__file__).resolve().parent / "console_subprocess_scenarios.py"
-SCENARIO_TIMEOUT_SECONDS = 60
+SCENARIO_TIMEOUT_SECONDS = 20
 # The scenario child self-terminates (os._exit(124)) after this many
 # seconds, dumping its thread stacks to stderr first. Measured on
-# windows-latest CI (PR #9, 2026-08-20/21): a healthy scenario takes
-# ~27 s there (a fresh interpreter bootstraps wx and builds the whole
-# main window), so the parent's original 30 s timeout was racing it,
-# and a hung one (test_windows_close_confirmed_destroys_the_frame)
-# stalled the whole functional pass for > 900 s. The child must always
-# die before SCENARIO_TIMEOUT_SECONDS, so the parent's timeout-and-kill
+# windows-latest CI (PR #9): healthy scenarios take ~2-5 s there (the
+# suite's dozens of scenarios clear in the first ~40 s of a pass), so
+# 10 s is a generous bound, and a hung one -- test_windows_close_
+# confirmed_destroys_the_frame deadlocks in the wxMSW close-confirm ->
+# Destroy flow with the GIL held, so neither the dump nor the exit can
+# fire and only the parent's timeout can kill it -- resolves in ~20 s
+# per attempt instead of stalling the pass. The child must always die
+# before SCENARIO_TIMEOUT_SECONDS, so the parent's timeout-and-kill
 # path never engages for a hung scenario -- one fast, named failure
 # instead of a suite-stalling hang. Pinned by
 # tests/unit/test_scenario_runner.py.
