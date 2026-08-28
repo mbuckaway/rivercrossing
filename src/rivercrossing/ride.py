@@ -18,17 +18,32 @@ be circular. Python 3.14's lazy annotation evaluation (PEP 649) makes
 this safe -- neither field needs the real enum class at runtime, only
 a caller (``roster.Roster``, a submitted setup form) ever needs to
 have one already.
+
+:class:`RideEngine` (E4.1) implements the spec §3 state machine over
+that config: DRAFT -> RUNNING -> FINISHED <-> REOPENED, wall-clock
+timing (spec §6, R-30), the minimal crossing path, and the standings
+snapshot. It imports ``hands``/``standings``/``cards`` (below it in
+the S3 dependency graph) and never ``roster`` at runtime -- the
+roster is duck-typed through the constructor's ``roster`` parameter,
+whose type is imported under ``TYPE_CHECKING`` only (same cycle
+reason as above); ``RideEngine``'s own docstring records the full
+doc-silence list.
 """
 
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from rivercrossing.hands import best_hand
+from rivercrossing.standings import EntryResult
+
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
     from datetime import date, datetime
     from pathlib import Path
 
-    from rivercrossing.roster import EntryMode, PlateModel
+    from rivercrossing.cards import Shoe
+    from rivercrossing.roster import EntryMode, PlateModel, Roster
 
 __all__ = [
     "DEFAULT_DECK_COUNT",
@@ -37,9 +52,16 @@ __all__ = [
     "TIEBREAK_HIGH_CARD",
     "TIEBREAK_LAPS",
     "TIEBREAK_TOTAL_TIME",
+    "Crossing",
+    "CrossingResult",
+    "Event",
+    "IllegalStateError",
     "RideConfig",
     "RideConfigError",
+    "RideEngine",
+    "RideEngineError",
     "RideStatus",
+    "StartBlockedError",
 ]
 
 
@@ -189,3 +211,449 @@ class RideConfig:
         if self.min_lap_s <= 0:
             msg = f"min_lap_s must be positive, got {self.min_lap_s}"
             raise RideConfigError(msg)
+
+
+# ==================================================== E4.1 engine
+
+
+class RideEngineError(Exception):
+    """Base for every ride engine invariant violation."""
+
+
+class IllegalStateError(RideEngineError):
+    """A method was called in a ride state that forbids it (spec §3).
+
+    Raised by the transition methods (``start``/``finish``/``reopen``/
+    ``stop``/``set_start_time``) for transitions the state machine
+    forbids, and by ``elapsed``/``remaining`` before the ride starts.
+    """
+
+
+class StartBlockedError(RideEngineError):
+    """``start()`` refused because the roster is not ready to start.
+
+    The engine consults ``Roster.validate_for_start()`` (R-12's team
+    floor) as the start gate; any violation blocks the transition.
+    """
+
+
+@dataclass(frozen=True)
+class Event:
+    """One ride-level audit event (spec §2 ``audit`` row shape).
+
+    Mirrors ``roster.AuditEvent`` exactly (action + payload); every
+    :class:`RideEngine` mutation appends the :class:`Event` it returns
+    to :attr:`RideEngine.events`, which EPIC 5's Store persists and
+    replays to rebuild the engine. ``payload`` is JSON-ready: datetimes
+    are stored as ISO-8601 strings.
+    """
+
+    action: str
+    payload: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class Crossing:
+    """One recorded lap crossing (spec §2 ``crossing`` row, minus ids).
+
+    ``seq`` is 1-based per entry; ``entry_id`` is the entry's plate in
+    this store-less model (doc-silence, ``RideEngine``). Lap times are
+    never stored -- spec §6 derives them from the entry's previous
+    crossing (or ``actual_start`` for lap 1), so a ``set_start_time``
+    retro-fix recomputes lap-1 automatically.
+    """
+
+    entry_id: str
+    seq: int
+    crossed_at: datetime
+
+
+@dataclass(frozen=True)
+class CrossingResult:
+    """The caller-facing outcome of one ``record_crossing`` call.
+
+    ``accepted`` False with a ``reason`` signals a refusal -- the ride
+    is not running, the ride is stopped (E4.1.3), or the plate is
+    unknown (the full rejection cue is E4.2) -- without raising, per
+    task-briefs.md E4.1.3. On success: ``entry_id``/``entry_name`` name
+    the resolved entry, ``lap`` is the credited lap number, and
+    ``lap_time`` is spec §6's derived lap time.
+    """
+
+    accepted: bool
+    plate: str
+    entry_id: str | None = None
+    entry_name: str | None = None
+    lap: int = 0
+    lap_time: float = 0.0
+    reason: str | None = None
+
+
+class RideEngine:
+    """The ride state machine, timing core and minimal crossing path.
+
+    Implements spec §3's transitions -- DRAFT -> RUNNING (``start``),
+    RUNNING -> FINISHED (``finish``), FINISHED -> REOPENED (``reopen``)
+    and REOPENED -> FINISHED (``finish`` again) -- with every other
+    transition raising :class:`IllegalStateError`. Timing is
+    wall-clock (spec §6, R-30): ``elapsed()``/``remaining()`` derive
+    ``now - actual_start`` from the injected ``clock``, never a stored
+    timer, so quit, crash or stop costs no time.
+
+    Doc-silence resolutions recorded here (module-skeletons.md S4's
+    skeleton is binding; these settle the gaps it leaves):
+
+    - **roster parameter.** The skeleton's ``__init__(config, shoe,
+      clock)`` gains ``roster`` because the engine needs plate->entry
+      resolution, the start gate and ``mark_has_data``. The roster is
+      annotated under ``TYPE_CHECKING`` and duck-typed at runtime:
+      ``roster.py`` imports ``RideStatus`` from this module, so a
+      runtime import back would be circular (module docstring).
+    - **Event shape.** Every mutation appends and returns an
+      ``Event(action, payload)`` mirroring ``roster.AuditEvent``;
+      ``record_crossing`` additionally returns ``CrossingResult`` for
+      the caller while its ``Event`` lands in :attr:`events`.
+    - **CrossingResult shape.** ``accepted`` + ``reason`` carry the
+      refusal; ``entry_id``/``entry_name``/``lap``/``lap_time`` carry
+      the success. The skeleton's ``card``/``ShortLapFlagged`` fields
+      arrive with E4.2/E4.3's dealing and min-lap work.
+    - **stop/continue semantics.** ``stop()`` is a UI guard, not a
+      state (spec §3, R-35): it locks plate entry while the ride stays
+      RUNNING; ``start()`` on a RUNNING ride continues it, unlocking
+      entry with ``actual_start`` unchanged ("Continue ride?").
+    - **entry_id.** The in-memory roster assigns no numeric ids, and
+      one plate namespace spans the ride (R-20), so the engine uses
+      the entry's plate as ``entry_id`` until EPIC 5's Store assigns
+      real ids.
+    - **on_course.** Spec §6 names the counter without defining it; a
+      loop timing's natural reading is an ACTIVE entry whose lap count
+      is odd (out on the loop, not yet back).
+    """
+
+    def __init__(  # noqa: PLR0913, PLR0917 -- frozen S4 API (config, shoe, clock, roster)
+        self,
+        config: RideConfig,
+        shoe: Shoe,
+        clock: Callable[[], datetime],
+        roster: Roster,
+    ) -> None:
+        """Build a DRAFT engine over config, shoe, clock, roster.
+
+        Args:
+            config: This ride's setup-time settings.
+            shoe: The seeded shoe E4.3's dealing will draw from.
+            clock: Wall-clock source; must return consistent
+                naive-or-aware UTC datetimes.
+            roster: This ride's entries/riders, duck-typed at runtime
+                (never imported -- module docstring).
+        """
+        self._config = config
+        self._shoe = shoe
+        self._clock = clock
+        self._roster = roster
+        self._state = RideStatus.DRAFT
+        self._actual_start: datetime | None = None
+        self._stopped = False
+        self._crossings: list[Crossing] = []
+        self._events: list[Event] = []
+
+    @property
+    def state(self) -> RideStatus:
+        """Return this ride's lifecycle state (spec §3)."""
+        return self._state
+
+    @property
+    def events(self) -> tuple[Event, ...]:
+        """Return every ride event, oldest first, read-only.
+
+        EPIC 5's Store persists these and rebuilds an engine by
+        replaying them (module-skeletons.md S4).
+        """
+        return tuple(self._events)
+
+    @property
+    def on_course(self) -> int:
+        """Return the count of ACTIVE entries currently out on the loop.
+
+        An entry is on course when its lap count is odd (crossed the
+        line once, not yet back) -- doc-silence record in the class
+        docstring.
+        """
+        return sum(
+            1
+            for entry in self._roster.entries
+            if entry.status.value == "active" and len(self._laps_for(entry.plate)) % 2 == 1
+        )
+
+    def start(self, at: datetime | None = None) -> Event:
+        """Start the ride, or continue a stopped one (spec §3, R-30).
+
+        From DRAFT: the roster's start gate
+        (:meth:`Roster.validate_for_start`) must be clear, then
+        ``actual_start`` is *at* or ``clock()`` and the state becomes
+        RUNNING. From RUNNING: continue -- unlock plate entry, keep
+        ``actual_start`` unchanged ("Continue ride?"). From FINISHED
+        or REOPENED: raise.
+
+        Args:
+            at: The start instant; omit to use the injected clock.
+
+        Returns:
+            The appended ``start``/``continue`` event.
+
+        Raises:
+            StartBlockedError: DRAFT and the roster is not ready.
+            IllegalStateError: the state is FINISHED or REOPENED.
+        """
+        if self._state is RideStatus.RUNNING:
+            started_at = self._require_actual_start()
+            self._stopped = False
+            return self._append(
+                Event(action="continue", payload={"actual_start": started_at.isoformat()})
+            )
+        if self._state is not RideStatus.DRAFT:
+            raise IllegalStateError(f"cannot start from {self._state}")
+        violations = self._roster.validate_for_start()
+        if violations:
+            reasons = "; ".join(
+                f"{violation.entry.plate}: {violation.reason}" for violation in violations
+            )
+            raise StartBlockedError(f"roster is not ready to start: {reasons}")
+        started_at = at if at is not None else self._clock()
+        self._actual_start = started_at
+        self._state = RideStatus.RUNNING
+        self._roster.status = RideStatus.RUNNING
+        self._stopped = False
+        return self._append(
+            Event(action="start", payload={"actual_start": started_at.isoformat()})
+        )
+
+    def set_start_time(self, at: datetime) -> Event:
+        """Back-date ``actual_start`` and recompute lap-1 (spec §3, 3d).
+
+        The gun-missed correction: ``actual_start`` moves to *at* and,
+        because lap times derive from it (spec §6), lap-1 lap times
+        recompute automatically -- later laps, which derive from their
+        own previous crossing, are untouched. Logged to the audit
+        trail. RUNNING only.
+
+        Raises:
+            IllegalStateError: the ride is not RUNNING.
+        """
+        if self._state is not RideStatus.RUNNING:
+            raise IllegalStateError(f"cannot set start time from {self._state}")
+        previous = self._require_actual_start()
+        self._actual_start = at
+        return self._append(
+            Event(
+                action="set_start_time",
+                payload={
+                    "actual_start": at.isoformat(),
+                    "previous_start": previous.isoformat(),
+                },
+            )
+        )
+
+    def record_crossing(self, plate: str, at: datetime | None = None) -> CrossingResult:
+        """Record one completed lap for *plate* (spec §6, minimal path).
+
+        Resolves *plate* to its entry via the roster (an entry's own
+        plate, or a rider_pooled rider's plate, credits the entry),
+        appends one lap with a timestamp, and marks the entry
+        has_data. Refusals come back as ``accepted=False`` results,
+        never raises: not RUNNING, stopped (E4.1.3), or an unknown
+        plate (the full rejection cue is E4.2). No card dealing (E4.3)
+        or min-lap flags (E4.2) land here.
+
+        Args:
+            plate: The recorded plate.
+            at: The crossing instant; omit to use the injected clock.
+
+        Returns:
+            The credited lap, or a refusal result.
+        """
+        if self._state is not RideStatus.RUNNING:
+            return CrossingResult(accepted=False, plate=plate, reason="ride is not running")
+        if self._stopped:
+            return CrossingResult(accepted=False, plate=plate, reason="ride is stopped")
+        entry = self._roster.resolve_plate(plate)
+        if entry is None:
+            return CrossingResult(accepted=False, plate=plate, reason="unknown plate")
+        crossed_at = at if at is not None else self._clock()
+        start = self._require_actual_start()
+        laps = self._laps_for(entry.plate)
+        seq = len(laps) + 1
+        self._crossings.append(Crossing(entry_id=entry.plate, seq=seq, crossed_at=crossed_at))
+        self._roster.mark_has_data(entry)
+        previous = laps[-1].crossed_at if laps else start
+        lap_time = (crossed_at - previous).total_seconds()
+        self._append(
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": plate,
+                    "entry_id": entry.plate,
+                    "lap": seq,
+                    "crossed_at": crossed_at.isoformat(),
+                },
+            )
+        )
+        return CrossingResult(
+            accepted=True,
+            plate=plate,
+            entry_id=entry.plate,
+            entry_name=entry.display_name,
+            lap=seq,
+            lap_time=lap_time,
+        )
+
+    def stop(self) -> Event:
+        """Lock plate entry; the ride stays RUNNING (spec §3, R-35).
+
+        Stop is a UI guard, not a state: it refuses further
+        ``record_crossing`` calls (as results), and ``start()``
+        continues with ``actual_start`` unchanged. RUNNING only, and
+        only once.
+
+        Raises:
+            IllegalStateError: the ride is not RUNNING, or already
+                stopped.
+        """
+        if self._state is not RideStatus.RUNNING:
+            raise IllegalStateError(f"cannot stop a {self._state} ride")
+        if self._stopped:
+            raise IllegalStateError("ride is already stopped")
+        self._stopped = True
+        return self._append(
+            Event(action="stop", payload={"stopped_at": self._clock().isoformat()})
+        )
+
+    def finish(self) -> Event:
+        """Finish the ride: RUNNING or REOPENED to FINISHED (spec §3).
+
+        Raises:
+            IllegalStateError: the ride is DRAFT or already FINISHED.
+        """
+        if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+            raise IllegalStateError(f"cannot finish from {self._state}")
+        self._state = RideStatus.FINISHED
+        self._roster.status = RideStatus.FINISHED
+        self._stopped = False
+        return self._append(
+            Event(action="finish", payload={"finished_at": self._clock().isoformat()})
+        )
+
+    def reopen(self) -> Event:
+        """Reopen a finished ride for corrections (spec §3, R-64).
+
+        REOPENED is corrections-only, not RUNNING: the clock stays
+        closed and live plate entry stays off; ``finish()`` re-locks.
+
+        Raises:
+            IllegalStateError: the ride is not FINISHED.
+        """
+        if self._state is not RideStatus.FINISHED:
+            raise IllegalStateError(f"cannot reopen from {self._state}")
+        self._state = RideStatus.REOPENED
+        self._roster.status = RideStatus.REOPENED
+        self._stopped = False
+        return self._append(
+            Event(action="reopen", payload={"reopened_at": self._clock().isoformat()})
+        )
+
+    def elapsed(self) -> float:
+        """Return seconds since ``actual_start``, from the clock (R-30).
+
+        Wall-clock only: ``now - actual_start`` with ``now`` from the
+        injected clock, so there is no stored timer to lose.
+
+        Raises:
+            IllegalStateError: the ride has not started.
+        """
+        start = self._require_actual_start()
+        return (self._clock() - start).total_seconds()
+
+    def remaining(self) -> float:
+        """Return seconds until ``planned_duration_s`` elapses (R-30).
+
+        ``planned_duration_s - elapsed()``; may go negative once the
+        planned duration passes (the UI clamps for display, this does
+        not).
+
+        Raises:
+            IllegalStateError: the ride has not started.
+        """
+        return self._config.planned_duration_s - self.elapsed()
+
+    def lap_times(self, entry_id: str) -> tuple[float, ...]:
+        """Return each lap's derived time for *entry_id* (spec §6).
+
+        Lap 1 is ``crossed_at - actual_start``; every later lap is
+        ``crossed_at - previous crossing``. Derived, never stored, so
+        :meth:`set_start_time` recomputes lap 1 automatically.
+        """
+        laps = self._laps_for(entry_id)
+        if not laps:
+            return ()
+        previous: datetime = self._require_actual_start()
+        times: list[float] = []
+        for lap in laps:
+            times.append((lap.crossed_at - previous).total_seconds())
+            previous = lap.crossed_at
+        return tuple(times)
+
+    def snapshot(self) -> list[EntryResult]:
+        """Return one standings result per ACTIVE entry, current state.
+
+        Before crossings an entry is laps=0, cards=(), hand from
+        ``hands.best_hand(())``; after crossings ``laps``,
+        ``total_time`` and ``best_lap`` reflect the derived timing.
+        Cards stay empty until E4.3's dealing. DNF entries are
+        excluded (mark_dnf is E4.2).
+        """
+        results: list[EntryResult] = []
+        for entry in self._roster.entries:
+            if entry.status.value != "active":  # spec §2's stored spelling
+                continue
+            laps = self._laps_for(entry.plate)
+            times = self.lap_times(entry.plate)
+            results.append(
+                EntryResult(
+                    entry_id=entry.plate,
+                    plate=entry.plate,
+                    name=entry.display_name,
+                    kind=entry.type.value,
+                    laps=len(laps),
+                    total_time=self._total_time(laps),
+                    best_lap=min(times) if times else 0.0,
+                    cards=(),
+                    hand=best_hand(()),
+                    dnf=False,
+                )
+            )
+        return results
+
+    def _total_time(self, laps: tuple[Crossing, ...]) -> float:
+        """Return the last crossing minus ``actual_start`` (spec §6)."""
+        if not laps:
+            return 0.0
+        return (laps[-1].crossed_at - self._require_actual_start()).total_seconds()
+
+    def _laps_for(self, entry_id: str) -> tuple[Crossing, ...]:
+        """Return *entry_id*'s crossings, oldest first."""
+        return tuple(crossing for crossing in self._crossings if crossing.entry_id == entry_id)
+
+    def _require_actual_start(self) -> datetime:
+        """Return ``actual_start``, or raise if it was never set.
+
+        Raises:
+            IllegalStateError: ``actual_start`` was never set.
+        """
+        if self._actual_start is None:
+            raise IllegalStateError("ride has not started")
+        return self._actual_start
+
+    def _append(self, event: Event) -> Event:
+        """Append *event* to :attr:`events` and return it."""
+        self._events.append(event)
+        return event
