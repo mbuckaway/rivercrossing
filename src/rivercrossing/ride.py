@@ -33,11 +33,12 @@ reason as above); ``RideEngine``'s own docstring records the full
 doc-silence list.
 """
 
+from contextlib import suppress
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from rivercrossing.cards import Card, ShoeEmpty
+from rivercrossing.cards import Card, ShoeClosedError, ShoeEmpty
 from rivercrossing.hands import best_hand
 from rivercrossing.standings import EntryResult
 
@@ -67,6 +68,7 @@ __all__ = [
     "RideEngineError",
     "RideStatus",
     "StartBlockedError",
+    "UnknownPlateError",
 ]
 
 
@@ -242,6 +244,16 @@ class StartBlockedError(RideEngineError):
     """
 
 
+class UnknownPlateError(RideEngineError):
+    """``deal_manual()`` could not resolve *plate* to any entry.
+
+    A corrections command fails loudly, unlike ``record_crossing``'s
+    console path, which returns a refusal result so the entry field
+    can flash its cue; E7's manual-deal dialog surfaces this as the
+    error for a mistyped plate.
+    """
+
+
 @dataclass(frozen=True)
 class Event:
     """One ride-level audit event (spec §2 ``audit`` row shape).
@@ -388,6 +400,32 @@ class RideEngine:
       provisional ``"unknown plate"``; the E4.1 pin test was updated
       to match. The sibling refusals (``"ride is not running"`` /
       ``"ride is stopped"``) keep their E4.1 spellings untouched.
+
+    E4.3's own resolutions:
+
+    - **Card cap X (R-13).** ``config.max_cards`` slices
+      ``EntryResult.cards``/``hand`` at ``snapshot()`` to the first
+      ``max_cards`` *credited* cards; laps past the cap still count
+      for laps/time, and later cards still deal from the shoe (deal
+      accounting unchanged) but never improve the hand. Held or
+      voided cards never enter the credited sequence, so they never
+      consume cap headroom; a ``deal_manual`` card appends to that
+      same sequence, so a manual card past the cap is dealt but
+      non-scoring. ``max_cards=None`` (the default) scores everything.
+    - **Manual deal (spec §4).** ``deal_manual(plate, reason)``
+      is the engine path E7.2.1's dialog wires to: one shoe deal
+      credited directly into the entry's hand (never the held queue --
+      a manual deal is a deliberate credit), ``mark_has_data``, and an
+      audit ``Event`` carrying the reason. An unresolvable plate
+      raises :class:`UnknownPlateError`; the ride must be RUNNING or
+      REOPENED.
+    - **Shoe close on Finish (spec §4, task-briefs E2.2.1).**
+      ``finish()`` calls ``shoe.close()``; every later deal raises
+      :class:`ShoeClosedError` -- including ``deal_manual`` once
+      REOPENED reopens corrections, since the shoe stays closed.
+      ``undo_last`` stays legal in REOPENED (E4.2 pin) and tolerates
+      the closed shoe: the undone card retires with it instead of
+      returning to the front.
     """
 
     def __init__(  # noqa: PLR0913, PLR0917 -- frozen S4 API (config, shoe, clock, roster)
@@ -685,7 +723,11 @@ class RideEngine:
         hand = self._hand.get(last.entry_id)
         if hand is not None and card in hand:
             hand.remove(card)
-        self._shoe.restitute(card)
+        # REOPENED after Finish: the shoe is closed (E4.3), so the
+        # card retires with it -- there is no next deal to reproduce,
+        # and E4.2 pins undo-in-REOPENED.
+        with suppress(ShoeClosedError):
+            self._shoe.restitute(card)
         return self._append(
             Event(
                 action="undo",
@@ -694,6 +736,55 @@ class RideEngine:
                     "seq": last.seq,
                     "crossed_at": last.crossed_at.isoformat(),
                     "card": card.code(),
+                },
+            )
+        )
+
+    def deal_manual(self, plate: str, reason: str) -> Event:
+        """Deal one shoe card to *plate*'s entry by hand (spec §4).
+
+        The operator's "manual add" correction from the entry detail:
+        one card comes off the shoe and credits straight into the
+        entry's hand -- never the held queue, whose short-lap path
+        (R-34) a deliberate manual deal must not bypass -- the entry
+        is marked has_data, and an audit ``Event`` carrying *reason*
+        lands. The card joins the credited sequence, so it obeys
+        ``config.max_cards`` exactly like a crossing's card: a manual
+        card past the cap is dealt but non-scoring (R-13). A
+        ``ShoeEmpty`` mid-deal reshuffles and audits it, exactly as
+        ``record_crossing``'s own deal does (R-40).
+
+        Args:
+            plate: The recorded plate, resolved like a crossing's (an
+                entry's own plate, or a rider_pooled rider's plate,
+                credits the entry -- R-16).
+            reason: Why the card was dealt by hand; carried in the
+                audit payload.
+
+        Returns:
+            The appended ``deal_manual`` audit event.
+
+        Raises:
+            IllegalStateError: the ride is not RUNNING or REOPENED.
+            UnknownPlateError: *plate* resolves to no entry.
+            ShoeClosedError: the shoe is closed (the ride finished).
+        """
+        if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+            raise IllegalStateError(f"cannot deal manually from {self._state}")
+        entry = self._roster.resolve_plate(plate)
+        if entry is None:
+            raise UnknownPlateError(f"unknown plate: {plate}")
+        card = self._deal_card()
+        self._hand.setdefault(entry.plate, []).append(card)
+        self._roster.mark_has_data(entry)
+        return self._append(
+            Event(
+                action="deal_manual",
+                payload={
+                    "plate": plate,
+                    "entry_id": entry.plate,
+                    "card": card.code(),
+                    "reason": reason,
                 },
             )
         )
@@ -722,6 +813,13 @@ class RideEngine:
     def finish(self) -> Event:
         """Finish the ride: RUNNING or REOPENED to FINISHED (spec §3).
 
+        Closing the shoe here (spec §4, task-briefs E2.2.1)
+        locks every later deal: ``deal_manual`` raises
+        :class:`ShoeClosedError` once REOPENED reopens corrections,
+        because the shoe stays closed. ``undo_last`` of an existing
+        crossing stays legal in REOPENED, with its card retired by
+        the closed shoe rather than returned to it.
+
         Raises:
             IllegalStateError: the ride is DRAFT or already FINISHED.
         """
@@ -730,6 +828,7 @@ class RideEngine:
         self._state = RideStatus.FINISHED
         self._roster.status = RideStatus.FINISHED
         self._stopped = False
+        self._shoe.close()
         return self._append(
             Event(action="finish", payload={"finished_at": self._clock().isoformat()})
         )
@@ -801,8 +900,12 @@ class RideEngine:
         ``total_time`` and ``best_lap`` reflect the derived timing, and
         ``cards`` pools every credited card -- normal deals plus
         confirmed-held releases (R-16/R-34) -- with the best hand
-        evaluated from them. Held (unconfirmed) and voided cards never
-        reach the hand. DNF entries are excluded (mark_dnf is E7).
+        evaluated from them. ``config.max_cards`` (R-13) slices both
+        ``cards`` and ``hand`` to the first ``max_cards`` credited
+        cards: laps past the cap still count, and later cards still
+        deal from the shoe but never improve the hand. Held
+        (unconfirmed) and voided cards never reach the hand. DNF
+        entries are excluded (mark_dnf is E7).
         """
         results: list[EntryResult] = []
         for entry in self._roster.entries:
@@ -812,6 +915,8 @@ class RideEngine:
             times = self.lap_times(entry.plate)
             hand_cards = self._hand.get(entry.plate)
             cards = tuple(hand_cards) if hand_cards else ()
+            if self._config.max_cards is not None:
+                cards = cards[: self._config.max_cards]
             results.append(
                 EntryResult(
                     entry_id=entry.plate,
