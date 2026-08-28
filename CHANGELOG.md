@@ -6,6 +6,28 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+EPIC 4 of 9 — live ride (in-memory) — on top of EPIC 3's roster and EPIC 2's deal & score engine.
+
+### Added — EPIC 4 (live ride)
+
+- **The ride engine.** `rivercrossing.ride.RideEngine`: DRAFT→RUNNING→FINISHED→REOPENED state
+  machine with guards, an injected wall clock (elapsed/remaining derive from `now − actual_start`,
+  never a timer), set-start-time with lap-1 recompute, stop-as-a-guard with continue, and a start
+  gate over the roster.
+- **Crossings, dealing, flags, undo.** Plate + Enter credits a lap and deals one card from the
+  seeded `Shoe` (reshuffle + audit on exhaustion); laps under `min_lap_s` flag and hold their card
+  until confirmed/voided; `undo_last` reverses a crossing and returns its card to the shoe front;
+  card cap X keeps laps counting past the cap while later cards stay non-scoring (R-13);
+  `deal_manual` is the audited manual-deal engine path E7's dialogs consume.
+- **Standings (pulled forward from E6).** `rivercrossing.standings`: best-hand ranking with the
+  R-14 tie-break order, R-43 draw-required flags, DNF placement, and both leaderboards.
+- **Live console.** The console runs on `EngineDataSource` (feed, counters, status from the engine)
+  with a fully wired `ConsolePresenter` — accepted/flagged/error outcomes with the matching
+  `ui/sound.py` cues (recorded/flagged/error, Settings-toggleable, fake-backend seam), arm-to-stop
+  (R-35), hide-times, and the finish route consulting the E6.4.3 gate stub.
+- **Mini acceptance.** A scripted 20-rider race (60 crossings incl. flags, undo, stop/continue,
+  finish) through the real UI with a hand-verified standings fixture.
+
 EPIC 3 of 9 — roster & CSV — on top of EPIC 2's deal & score engine and EPIC 1's runnable UI shell.
 
 ### Added — EPIC 3 (roster & CSV)

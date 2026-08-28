@@ -177,6 +177,15 @@ class RideEngine:             # pure; wall-clock injected for tests
     state: RideStatus · elapsed() · remaining() · on_course: int
     snapshot() -> list[EntryResult]                     # feeds standings live
 # every mutation returns an Event the store persists; engine rebuilds via replay(events)
+# E4 amendments (2026-08-28): __init__ takes `roster` in addition (duck-typed,
+#   annotated under TYPE_CHECKING only — roster.py imports RideStatus from this
+#   module at runtime, so a runtime back-import would cycle); the concrete shapes
+#   are Event(action, payload) · Crossing(entry_id, seq, crossed_at) ·
+#   CrossingResult(accepted, plate, entry_id, entry_name, lap, lap_time, card,
+#   flagged, reason) · HeldCrossing(crossing, card); RideEngine exposes `events`
+#   (audit log), `held_crossings()`, `confirm_held`/`void_held`,
+#   `deal_manual(plate, reason)` and the read accessors `config`, `crossings`,
+#   `card_for`, `shoe_remaining`, `shoe_total` (E7 consumes the first three).
 ```
 
 rivercrossing.roster — in-memory roster & lock matrix (§1–§2 · R-11/12/15/17/20 · E3)
