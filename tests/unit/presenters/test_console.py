@@ -808,6 +808,36 @@ def test_on_finish_given_draft_ride_shows_a_notice() -> None:
     assert engine.state is RideStatus.DRAFT
 
 
+# ------------------------------------------------------------- reopen
+
+
+def test_on_reopen_given_finished_ride_moves_console_to_reopened() -> None:
+    """E5.4.1: Reopen Ride moves FINISHED -> REOPENED and refreshes."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_reopen()
+
+    assert engine.state is RideStatus.REOPENED
+    assert view.last_state is RideStatus.REOPENED
+    assert view.last_notice == "Ride reopened for corrections"
+
+
+def test_on_reopen_given_draft_ride_shows_a_notice() -> None:
+    """Negative: reopening a ride that is not FINISHED is refused."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_reopen()
+
+    assert view.last_notice == "Cannot reopen: cannot reopen from draft"
+    assert engine.state is RideStatus.DRAFT
+
+
 # ---------------------------------------------------- negative import
 
 

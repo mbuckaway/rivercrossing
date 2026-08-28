@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from rivercrossing.ride import Event, RideConfig, RideStatus
-from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import (
     FutureSchemaVersionError,
     RideNameMismatchError,
@@ -1381,3 +1381,409 @@ def test_store_delete_ride_error_types_are_store_errors() -> None:
     """Both new guards surface as StoreError subclasses (T-12)."""
     assert issubclass(RideNameMismatchError, StoreError)
     assert issubclass(RideRunningError, StoreError)
+
+
+# --------------------------------------- E5.4.1 roster persistence
+
+
+def _solo_roster() -> Roster:
+    """Build a solo-only rider_pooled roster for round-trip tests."""
+    roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(name="Alice", plate="12")
+    return roster
+
+
+def _pooled_roster() -> Roster:
+    """Build the MIXED rider_pooled roster E5.4.1 round-trips.
+
+    One solo entry plus one team of two riders, each carrying their
+    own plate -- the team's derived plate is the lowest ("77").
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+    )
+    return roster
+
+
+def _relay_roster() -> Roster:
+    """Build the MIXED team_relay roster E5.4.1 round-trips.
+
+    The team carries one plate ("88"); its riders are plateless
+    (S1 -- the plate belongs to the entry, not the individual).
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_team_entry(
+        display_name="Moss Ridge",
+        riders=[Rider(name="R. Dubois"), Rider(name="M. Chen")],
+        plate="88",
+    )
+    return roster
+
+
+def _save_roster_ride(path: Path, roster: Roster, **config_overrides: object) -> int:
+    """Create a ride whose config matches *roster* (arrange).
+
+    The ride row's entry_mode/plate_model must agree with *roster*'s
+    own settings -- ``_load_roster`` rebuilds the shell from those
+    stored columns.
+    """
+    store = Store.open(path)
+    try:
+        ride_id = store.create_ride(_config(**config_overrides))
+        store.save_roster(ride_id, roster)
+    finally:
+        store.close()
+    return ride_id
+
+
+def _round_trip_roster(path: Path, ride_id: int) -> Roster:
+    """Reopen the store and reconstruct *ride_id*'s roster (arrange)."""
+    store = Store.open(path)
+    try:
+        return store.roster_for(ride_id)
+    finally:
+        store.close()
+
+
+def test_store_save_roster_solo_round_trips_entry_and_rider(tmp_path: Path) -> None:
+    """A solo entry's plate/name/type and rider survive a round-trip."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _solo_roster(),
+        entry_mode=EntryMode.SOLO,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    roster = _round_trip_roster(db_path, ride_id)
+
+    assert (roster.entry_mode, roster.plate_model, roster.max_team_size) == (
+        EntryMode.SOLO,
+        PlateModel.RIDER_POOLED,
+        4,
+    )
+    (entry,) = roster.entries
+    assert (entry.plate, entry.display_name, entry.type.value) == ("12", "Alice", "solo")
+    assert entry.team_size == 1
+    (rider,) = entry.riders
+    assert (rider.name, rider.plate, rider.sort_order) == ("Alice", "12", 0)
+
+
+def test_store_save_roster_pooled_team_round_trips_rider_plates(
+    tmp_path: Path,
+) -> None:
+    """A rider_pooled team's members and plates survive a round-trip."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    roster = _round_trip_roster(db_path, ride_id)
+
+    assert len(roster.entries) == 2
+    solo, team = roster.entries
+    assert (solo.plate, solo.display_name, solo.type.value) == ("12", "Alice", "solo")
+    assert (team.plate, team.display_name, team.type.value) == (
+        "77",
+        "Trail Blazers",
+        "team",
+    )
+    assert [(rider.name, rider.plate) for rider in team.riders] == [
+        ("A. Roy", "77"),
+        ("K. Singh", "78"),
+    ]
+
+
+def test_store_save_roster_relay_team_round_trips_plateless_riders(
+    tmp_path: Path,
+) -> None:
+    """A team_relay entry keeps its plate; its riders stay plateless."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _relay_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.TEAM_RELAY,
+    )
+
+    roster = _round_trip_roster(db_path, ride_id)
+
+    assert len(roster.entries) == 2
+    solo, team = roster.entries
+    assert (solo.plate, team.plate) == ("12", "88")
+    assert [rider.plate for rider in team.riders] == [None, None]
+    assert [rider.name for rider in team.riders] == ["R. Dubois", "M. Chen"]
+
+
+def test_store_save_roster_entry_notes_round_trip(tmp_path: Path) -> None:
+    """Entry notes persist and reconstruct (schema entry.notes)."""
+    roster = _pooled_roster()
+    roster.update_entry(roster.entries[1], notes="Captain's team")
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    assert [entry.notes for entry in rebuilt.entries] == ["", "Captain's team"]
+
+
+def test_store_save_roster_replaces_the_previous_roster(tmp_path: Path) -> None:
+    """Saving twice keeps one entry set -- the second, not a union."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+    store = Store.open(db_path)
+    try:
+        store.save_roster(ride_id, _solo_roster())
+    finally:
+        store.close()
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    assert len(rebuilt.entries) == 1
+    (entry,) = rebuilt.entries
+    assert entry.plate == "12"
+
+
+def test_store_roster_for_derives_has_data_from_crossing_rows(
+    tmp_path: Path,
+) -> None:
+    """has_data is derived from recorded rows, never stored (E5.4.1).
+
+    The schema has no has_data column -- R-15's permanent delete guard
+    derives from whether the entry has crossings/cards. After one
+    crossing row lands, the reconstructed entry carries has_data.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+    store = Store.open(db_path)
+    try:
+        with store._conn:
+            entry_id = store._conn.execute(
+                "SELECT id FROM entry WHERE ride_id = ? AND plate = '12'",
+                (ride_id,),
+            ).fetchone()[0]
+            store._conn.execute(
+                "INSERT INTO crossing (ride_id, entry_id, seq, crossed_at, lap_s, flag)"
+                " VALUES (?, ?, 1, 100, 50, 'none')",
+                (ride_id, entry_id),
+            )
+        rebuilt = store.roster_for(ride_id)
+    finally:
+        store.close()
+
+    assert [entry.has_data for entry in rebuilt.entries] == [True, False]
+
+
+def test_store_load_engine_builds_roster_from_db_and_replays_events(
+    tmp_path: Path,
+) -> None:
+    """load_engine with no caller roster rebuilds it from the DB.
+
+    E5.1.2's equivalence, closed: the engine replays the persisted
+    start + crossing and resolves the recorded plate "12" through the
+    reconstructed roster -- with an empty roster the crossing would be
+    refused (unknown_plate) and never recorded, so this genuinely
+    proves the roster came back from the entry/rider tables.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        min_lap_s=1,
+    )
+    store = Store.open(db_path)
+    try:
+        store.append(
+            ride_id,
+            Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+
+        engine = store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert engine.state is RideStatus.RUNNING
+    assert [crossing.entry_id for crossing in engine.crossings] == ["12"]
+    assert engine.lap_times("12") == (120.0,)
+
+
+# ------------------------------ E5.4.1 duplicate_ride (R-15)
+
+
+def _source_ride_with_timing_data(path: Path, roster: Roster) -> int:
+    """Create a ride with a saved roster and timing events (arrange).
+
+    The timing data (a start event and one crossing) is what
+    ``duplicate_ride`` must NOT copy.
+    """
+    store = Store.open(path)
+    try:
+        ride_id = store.create_ride(_config(name="GORBA EPIC 2026", min_lap_s=1))
+        store.save_roster(ride_id, roster)
+        store.append(
+            ride_id,
+            Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+    finally:
+        store.close()
+    return ride_id
+
+
+def test_store_duplicate_ride_copies_setup_and_roster_without_timing_data(
+    tmp_path: Path,
+) -> None:
+    """R-15: the copy is a new DRAFT ride with the roster, no timing."""
+    db_path = tmp_path / "rides.db"
+    source_id = _source_ride_with_timing_data(db_path, _pooled_roster())
+    store = Store.open(db_path)
+    try:
+        copy_id = store.duplicate_ride(source_id)
+        rows = store.rides()
+        copied = store.roster_for(copy_id)
+    finally:
+        store.close()
+
+    assert copy_id != source_id
+    assert [row.id for row in rows] == [source_id, copy_id]
+    assert [row.status for row in rows] == [RideStatus.DRAFT, RideStatus.DRAFT]
+    assert rows[1].name == "GORBA EPIC 2026 (copy)"
+    assert len(copied.entries) == 2
+    assert [(entry.plate, entry.display_name) for entry in copied.entries] == [
+        ("12", "Alice"),
+        ("77", "Trail Blazers"),
+    ]
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        assert (
+            conn.execute("SELECT COUNT(*) FROM crossing WHERE ride_id = ?", (copy_id,)).fetchone()[
+                0
+            ]
+            == 0
+        )
+        assert (
+            conn.execute("SELECT COUNT(*) FROM card WHERE ride_id = ?", (copy_id,)).fetchone()[0]
+            == 0
+        )
+        assert (
+            conn.execute("SELECT COUNT(*) FROM audit WHERE ride_id = ?", (copy_id,)).fetchone()[0]
+            == 0
+        )
+
+
+def test_store_duplicate_ride_uses_a_fresh_seed_and_never_timing_fields(
+    tmp_path: Path,
+) -> None:
+    """The copy's seed is fresh; actual_start/finished_at stay NULL."""
+    db_path = tmp_path / "rides.db"
+    source_id = _source_ride_with_timing_data(db_path, _solo_roster())
+    store = Store.open(db_path)
+    try:
+        copy_id = store.duplicate_ride(source_id)
+    finally:
+        store.close()
+
+    source_row = _fetch_ride_row(db_path, source_id)
+    copy_row = _fetch_ride_row(db_path, copy_id)
+    assert copy_row["rng_seed"] != source_row["rng_seed"]
+    assert copy_row["status"] == "draft"
+    assert copy_row["actual_start"] is None
+    assert copy_row["finished_at"] is None
+    assert copy_row["event_date"] == source_row["event_date"]
+    assert copy_row["venue"] == source_row["venue"]
+
+
+def test_store_duplicate_ride_accepts_an_explicit_copy_name(
+    tmp_path: Path,
+) -> None:
+    """Passing name= overrides the "(copy)" default."""
+    db_path = tmp_path / "rides.db"
+    source_id = _source_ride_with_timing_data(db_path, _solo_roster())
+    store = Store.open(db_path)
+    try:
+        copy_id = store.duplicate_ride(source_id, name="Winter Loop")
+    finally:
+        store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        names = [row.name for row in reopened.rides()]
+    finally:
+        reopened.close()
+    assert copy_id != source_id
+    assert names == ["GORBA EPIC 2026", "Winter Loop"]
+
+
+def test_store_duplicate_ride_keeps_the_source_untouched(tmp_path: Path) -> None:
+    """Duplicating never mutates the source ride or its timing data."""
+    db_path = tmp_path / "rides.db"
+    source_id = _source_ride_with_timing_data(db_path, _pooled_roster())
+    store = Store.open(db_path)
+    try:
+        store.duplicate_ride(source_id)
+        source = store.load_engine(source_id)
+    finally:
+        store.close()
+
+    assert source.state is RideStatus.RUNNING
+    assert [crossing.entry_id for crossing in source.crossings] == ["12"]
+
+
+def test_store_duplicate_ride_unknown_ride_raises_naming_it(
+    tmp_path: Path,
+) -> None:
+    """T-5: duplicating a ride id that never existed fails loudly."""
+    Store.open(tmp_path / "rides.db").close()
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.duplicate_ride(999)
+    finally:
+        store.close()

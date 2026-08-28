@@ -59,9 +59,9 @@ def _unplaced_buttons(window: object, buttons: tuple[str, ...]) -> tuple[str, ..
     return tuple(unplaced)
 
 
-def test_window_registry_declares_all_twenty_four_windows() -> None:
+def test_window_registry_declares_all_twenty_six_windows() -> None:
     """A window disappearing must shrink this, not the suite."""
-    assert len(pages.WINDOWS) == 24
+    assert len(pages.WINDOWS) == 26
 
 
 @pytest.mark.parametrize("spec", pages.WINDOWS, ids=lambda spec: spec.name)
