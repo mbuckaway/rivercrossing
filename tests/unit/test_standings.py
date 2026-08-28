@@ -30,13 +30,15 @@ from hypothesis import strategies as st
 
 from rivercrossing import hands
 from rivercrossing.cards import Card
-from rivercrossing.hands import EvaluatedHand, best_hand
+from rivercrossing.hands import EvaluatedHand, HandClass, best_hand
 from rivercrossing.standings import (
     DEFAULT_TIEBREAK_ORDER,
     EntryResult,
     TieBreak,
+    hand_name,
     laps_leaderboard,
     rank,
+    tiebreak_order_from_spellings,
     time_leaderboard,
 )
 
@@ -436,3 +438,145 @@ def test_laps_leaderboard_orders_laps_desc_then_time_asc_and_respects_top(
 
     assert len(placed) <= 3
     assert keys == sorted(keys)
+
+
+# -------------------------------------------------- hand names (E6.1.1)
+
+
+@pytest.mark.parametrize(
+    ("codes", "expected"),
+    [
+        ("AS QD 9H 5C 3S", "High Card — Ace"),
+        ("AH AC KS JD 8H", "Pair — Aces"),
+        ("KH KC 5H 5D AS", "Two Pair — Kings & Fives"),
+        ("7H 7C 7D KS JH", "Three of a Kind — Sevens"),
+        ("9H 8C 7D 6S 5H", "Straight — Nine high"),
+        ("AS 2H 3D 4C 5S", "Straight — Five high"),
+        ("KS JS 8S 6S 2S", "Flush — King high"),
+        ("JH JC JD 4H 4C", "Full House — Jacks over Fours"),
+        ("9H 9C 9D 9S KS", "Four of a Kind — Nines"),
+        ("QS JS TS 9S 8S", "Straight Flush — Queen high"),
+        ("AS KS QS JS TS", "Royal Flush"),
+        ("AS AD AH AC JK", "Five of a Kind — Aces"),
+    ],
+)
+def test_hand_name_each_hand_class_matches_golden_string(codes: str, expected: str) -> None:
+    """Each HandClass renders its pinned golden em-dash prose."""
+    assert hand_name(best_hand(_cards(codes))) == expected
+
+
+def test_hand_name_joker_completed_full_house_names_jokers_played_as() -> None:
+    """A joker resolving to an ace names aces over fours (golden)."""
+    assert hand_name(best_hand(_cards("AS AD JK 4C 4H"))) == "Full House — Aces over Fours"
+
+
+def test_hand_name_partial_four_card_hand_renders_best_class() -> None:
+    """A capped 4-card ace-high names the high card, no marker (D1)."""
+    assert hand_name(best_hand(_cards("AS KD QH JC"))) == "High Card — Ace"
+
+
+def test_hand_name_partial_pair_renders_plural_pair() -> None:
+    """Two aces name "Pair — Aces", the same form as a 5-card pair."""
+    assert hand_name(best_hand(_cards("AH AC"))) == "Pair — Aces"
+
+
+def test_hand_name_partial_hand_with_joker_names_completed_kicker() -> None:
+    """A 4-card hand's joker resolves to an ace: pair of aces named."""
+    assert hand_name(best_hand(_cards("AS KD QH JK"))) == "Pair — Aces"
+
+
+def test_hand_name_empty_hand_raises_value_error() -> None:
+    """A 0-card hand has no rank to name; the renderer refuses (D1)."""
+    with pytest.raises(ValueError, match=re.escape("cannot name an empty hand")):
+        hand_name(best_hand(_cards("")))
+
+
+# --------------------------------- tie-break spellings (E6.1.1)
+
+
+def test_tiebreak_order_from_spellings_maps_each_stored_spelling() -> None:
+    """ride.py's stored spellings map onto the right members."""
+    assert tiebreak_order_from_spellings(("laps", "total_time", "high_card")) == (
+        TieBreak.MOST_LAPS,
+        TieBreak.TOTAL_TIME,
+        TieBreak.HIGH_CARD_DRAW,
+    )
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        (),
+        (TieBreak.MOST_LAPS,),
+        (TieBreak.TOTAL_TIME,),
+        (TieBreak.HIGH_CARD_DRAW,),
+        (TieBreak.MOST_LAPS, TieBreak.TOTAL_TIME, TieBreak.HIGH_CARD_DRAW),
+        (TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS, TieBreak.HIGH_CARD_DRAW),
+        (TieBreak.HIGH_CARD_DRAW, TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS),
+    ],
+)
+def test_tiebreak_order_from_spellings_round_trips_via_member_value(
+    order: tuple[TieBreak, ...],
+) -> None:
+    """member.value is invertible: conversions round-trip unchanged."""
+    assert tiebreak_order_from_spellings(tuple(member.value for member in order)) == order
+
+
+def test_tiebreak_order_from_spellings_empty_tuple_returns_empty_order() -> None:
+    """No criteria converts to the all-draw empty order."""
+    assert tiebreak_order_from_spellings(()) == ()
+
+
+def test_tiebreak_order_from_spellings_unknown_spelling_raises_value_error() -> None:
+    """A spelling no member has is rejected, never silently skipped."""
+    with pytest.raises(ValueError, match=re.escape("unknown tie-break spelling")):
+        tiebreak_order_from_spellings(("laps", "fastest"))
+
+
+def test_rank_spelled_tiebreak_order_changes_placings() -> None:
+    """ride.py's stored spellings drive rank() via the conversion."""
+    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH TH", laps=4, total_time=50.0)
+    third = _result("3", "AD KD QD JD TD", laps=4, total_time=60.0)
+
+    placed = rank(
+        [first, second, third],
+        tiebreak_order_from_spellings(("total_time", "laps", "high_card")),
+    )
+
+    assert [p.result.entry_id for p in placed] == ["2", "3", "1"]
+
+
+# ------------------------- E6.1.1 renderer property invariants (T-7)
+
+_HAND_LABEL: dict[HandClass, str] = {
+    HandClass.HIGH_CARD: "High Card",
+    HandClass.PAIR: "Pair",
+    HandClass.TWO_PAIR: "Two Pair",
+    HandClass.TRIPS: "Three of a Kind",
+    HandClass.STRAIGHT: "Straight",
+    HandClass.FLUSH: "Flush",
+    HandClass.FULL_HOUSE: "Full House",
+    HandClass.QUADS: "Four of a Kind",
+    HandClass.STRAIGHT_FLUSH: "Straight Flush",
+    HandClass.ROYAL_FLUSH: "Royal Flush",
+    HandClass.FIVE_OF_A_KIND: "Five of a Kind",
+}
+
+
+@given(hand=st.sampled_from(_HAND_POOL))
+@settings(max_examples=50, deadline=None)
+def test_hand_name_opens_with_its_class_label(hand: EvaluatedHand) -> None:
+    """The prose name's leading label always matches the hand class."""
+    name = hand_name(hand)
+
+    assert name.split(" — ")[0] == _HAND_LABEL[hand.cls]
+
+
+@given(order=st.lists(st.sampled_from(tuple(TieBreak)), min_size=0, max_size=4))
+@settings(max_examples=50, deadline=None)
+def test_tiebreak_order_from_spellings_spellings_round_trip(
+    order: list[TieBreak],
+) -> None:
+    """member.value is always invertible through the spelling seam."""
+    assert tiebreak_order_from_spellings(tuple(member.value for member in order)) == tuple(order)
