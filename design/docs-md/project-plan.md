@@ -155,6 +155,8 @@ Type a plate, get a lap and a card: the full timing loop runs end-to-end in memo
 
 Exit criteria mini-race green on both OSes · flags/undo/held cards behave per §3 · console needs no demo data while a ride runs · latency plate-Enter→row < 100 ms.
 
+Shipped in v0.4. The engine found its home in ride.py: RideEngine (state machine with guards, injected wall clock, set-start-time lap-1 recompute, stop/continue) plus the crossings/dealing core — card-per-lap from the seeded Shoe with reshuffle-and-audit on exhaustion, min-lap flags with held cards (confirm/void), undo with shoe restitution, card cap X (laps past cap still count), deal_manual, shoe close on finish, snapshot feeding standings live. **Standings shipped here, pulled forward from E6 by decision** (module-skeletons S3's build order; resolved 2026-08-28): rivercrossing.standings ranks EntryResults by best hand with the R-14 tie-break order and R-43 draw-required flags; E6 keeps the prose hand-name renderer, the results window, and the exports. The console runs on a real engine-backed DataSource (EngineDataSource) — the demo seam is unused on that screen until E5.4.2 retires it — with arm-to-stop (R-35), the three sound cues behind ui/sound.py (recorded/flagged/error; the mapping to spec §10's rejected/held is recorded in the E4.4.3 write-back), and the finish gate hook stubbed for E6.4.3. The mini acceptance (E4.4.4: 20 riders / 60 crossings / flags / undo / stop-continue / finish with a hand-verified standings fixture) runs as a functional test until CI stage 4 lands in E9.
+
 E5 · Persistence & crash recovery
 
 The ride survives anything: SQLite event store with replay, autosave/backup, session_state, and the resume/reopened flows — proven by killing the process mid-race and continuing. Two contracts land here because this is where they first bite: the **wx⇄asyncio integration** behind the async writer (`wxasync` is ruled out — Spec §10) and, mock-first per §2, the two windows §15 routes to without a frozen design — **Duplicate Ride…** and **Reopen Ride** — names registered in §15b before any UI code.
@@ -173,7 +175,7 @@ E6 · Results & publishing
 
 Finish the ride, publish in minutes: standings with tie-breaks ①②③ (reorderable, re-ranks live), and the four exports — self-contained HTML (Jinja2, offline), PDF report, podium poster, standings CSV — matching the golden samples.
 
-- **E6.1 Standings** — E6.1.1 ordering + tie-break rules incl. high-card-draw records (S1: crafted tie fixtures, reorder re-runs, DNF block last · S2); E6.1.2 leaderboards (laps; fastest = most laps then shortest elapsed).
+- **E6.1 Standings** — the core (rank, R-14 tie-break order, R-43 draw-required, DNF placement, both leaderboards) shipped in E4 (v0.4, `rivercrossing.standings`); E6 adds what E4 deliberately deferred: the human-readable hand-name renderer, the results-window live standings wiring, and the draggable tie-break reorder UI. E6.1.1 crafted tie fixtures / reorder re-runs / DNF block last (S1 · S2); E6.1.2 leaderboards already live from E4.
 
 - **E6.2 HTML export** — E6.2.1 vendor CSS build step: Tailwind CLI in CI against the frozen [templates](../templates/base.html.j2) + [theme.css](../templates/theme.css) → compiled_css + font subsets packaged; E6.2.2 render() with racejson filter — S1: golden-file tests from the committed sample fixtures + JSON round-trip + zero-external-ref check (R-61) · S2 implement; E6.2.3 no-times variant omits markup and JSON fields (R-63).
 

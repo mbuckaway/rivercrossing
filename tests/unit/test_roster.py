@@ -1749,3 +1749,69 @@ def test_extract_rider_to_solo_unknown_rider_raises_rider_not_found_error() -> N
 
     with pytest.raises(RiderNotFoundError, match=re.escape("not on any entry")):
         roster.extract_rider_to_solo(ghost)
+
+
+# -------------------------------------------------- resolve_plate
+
+
+def test_resolve_plate_solo_entry_matches_its_own_plate() -> None:
+    """An entry's own plate resolves to itself (R-20 namespace)."""
+    roster = Roster()
+    entry = roster.create_solo_entry(name="Alex", plate="12")
+
+    assert roster.resolve_plate("12") is entry
+
+
+def test_resolve_plate_pooled_team_adopted_plate_resolves_to_team() -> None:
+    """A pooled team's lowest-rider plate resolves to the team (S1)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="45"), Rider(name="Bo", plate="9")]
+    )
+
+    assert roster.resolve_plate("9") is team
+
+
+def test_resolve_plate_pooled_rider_plate_resolves_to_owning_entry() -> None:
+    """A pooled team member's own plate resolves to the team (R-16)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    team = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex", plate="45"), Rider(name="Bo", plate="9")]
+    )
+
+    assert roster.resolve_plate("45") is team
+
+
+def test_resolve_plate_relay_matches_entry_plate_and_never_a_rider() -> None:
+    """team_relay riders carry no plate; only entry's own matches."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="7"
+    )
+
+    assert roster.resolve_plate("7") is entry
+
+
+def test_resolve_plate_unknown_plate_returns_none() -> None:
+    """A plate outside the namespace resolves to None, not an error."""
+    roster = Roster()
+    roster.create_solo_entry(name="Alex", plate="12")
+
+    assert roster.resolve_plate("999") is None
+
+
+def test_resolve_plate_on_empty_roster_returns_none() -> None:
+    """No entries means no resolution."""
+    roster = Roster()
+
+    assert roster.resolve_plate("1") is None
+
+
+def test_resolve_plate_relay_unknown_plate_returns_none() -> None:
+    """A relay roster never checks rider plates; unknown stays None."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="7"
+    )
+
+    assert roster.resolve_plate("999") is None

@@ -361,6 +361,25 @@ class Roster:
         numeric = [int(plate) for plate in self._plates_in_use() if plate.isdigit()]
         return str(max(numeric, default=0) + 1)
 
+    def resolve_plate(self, plate: str) -> Entry | None:
+        """Return the entry *plate* names, or None if unknown (R-20).
+
+        E4's ride engine resolves a recorded plate to its entry
+        through this one method: an entry's own plate always matches,
+        and on a ``rider_pooled`` ride a rider's own plate resolves to
+        their entry (a team member's crossing credits the team, R-16).
+        ``team_relay`` riders carry no plate (S1), so only the entry's
+        own plate ever matches there.
+        """
+        for entry in self._entries:
+            if entry.plate == plate:
+                return entry
+            if self._plate_model is PlateModel.RIDER_POOLED:
+                for rider in entry.riders:
+                    if rider.plate == plate:
+                        return entry
+        return None
+
     def validate_for_start(self) -> list[StartViolation]:
         """Return every reason this roster is not ready to start.
 

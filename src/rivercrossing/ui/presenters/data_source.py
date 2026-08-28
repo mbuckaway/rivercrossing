@@ -17,10 +17,14 @@ Pure Python -- no ``wx`` import may ever land here (R-71).
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from rivercrossing.roster import EntryType, Roster
+from rivercrossing.standings import rank
+
 if TYPE_CHECKING:
-    from rivercrossing.ride import RideStatus
+    from rivercrossing.ride import Event, RideEngine, RideStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,3 +175,253 @@ class DataSource(Protocol):
     def audit_rows(self) -> list[AuditRow]:
         """Return the audit trail rows, newest first."""
         ...
+
+
+# =================================================== E4.4.1 live source
+
+# R-32's "latest 20-30 crossings" -- the console feed's cap.
+FEED_CAP = 30
+
+
+def format_duration(seconds: float) -> str:
+    """Render *seconds* as ``h:mm:ss`` (the clock / feed Total format).
+
+    Negative values clamp to zero (the engine's ``remaining`` may go
+    negative; the UI clamps for display, ride.py's own docstring).
+    """
+    total = max(0, int(seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+_SECONDS_PER_HOUR = 3600
+
+
+def _format_lap_time(seconds: float) -> str:
+    """Render a per-lap time as ``m:ss`` (``h:mm:ss`` past an hour)."""
+    total = max(0, int(seconds))
+    if total >= _SECONDS_PER_HOUR:
+        return format_duration(total)
+    minutes, secs = divmod(total, 60)
+    return f"{minutes}:{secs:02d}"
+
+
+def _feed_time(crossed_at: datetime) -> str:
+    """Render a crossing instant as local 24-hour ``HH:MM:SS``.
+
+    spec §13: "Times: stored UTC, displayed local 24-hour." An aware
+    UTC datetime (the app's real clock) converts to local; a naive one
+    (tests, RideConfig.planned_start) is displayed as stored.
+    """
+    local = crossed_at.astimezone() if crossed_at.tzinfo is not None else crossed_at
+    return local.strftime("%H:%M:%S")
+
+
+def _event_time(event: Event) -> str:
+    """Render *event*'s first ISO payload timestamp, or ``""``.
+
+    Every ride-level event payload carries at least one ISO-8601
+    timestamp key (crossed_at/actual_start/stopped_at/finished_at/
+    reopened_at); the audit row shows whichever applies, locally.
+    """
+    for key in ("crossed_at", "actual_start", "stopped_at", "finished_at", "reopened_at"):
+        value = event.payload.get(key)
+        if isinstance(value, str):
+            try:
+                return _feed_time(datetime.fromisoformat(value))
+            except ValueError:
+                return ""
+    return ""
+
+
+class EngineDataSource:
+    """Real ``DataSource`` over ``(engine, roster)`` (E4.4.1).
+
+    The console's live source: every feed row, counter and status
+    derives from a ``RideEngine`` (and its roster), never from
+    ``rivercrossing.demo`` -- the "demo wiring line unused on this
+    screen" requirement. The non-console methods (``rides``/``riders``/
+    ``entry_detail``/``standings``/``audit_rows``) are implemented
+    simply and correctly here for the windows that will consume them;
+    E5/E6 replace them with richer store-backed versions.
+
+    Doc-silence resolutions (pinned here, this task's own):
+
+    - **cards_dealt counts credited cards.** ``recorded - held``: a
+      held card is dealt but not credited (R-34), matching the demo
+      fixture's own coherent numbers (1,124 crossings - 32 held =
+      1,092 cards dealt). E7's confirm/void surface supersedes this
+      reading once card disposition can change after the fact.
+    - **standings ``hand`` is a short placeholder.** The human
+      "Four of a kind, kings" prose is EPIC 6 display copy
+      (standings.py's own docstring); until then the evaluated
+      hand's ``HandClass.name`` (e.g. ``"FULL_HOUSE"``) is shown --
+      clearly a code, never invented copy.
+    - **entry-detail ``rider`` shows the entry's display name.**
+      ``Crossing`` stores only ``entry_id``, not which team rider
+      crossed (the event payload keeps the typed plate); per-rider
+      attribution is E7's correction surface.
+    """
+
+    def __init__(self, engine: RideEngine, roster: Roster) -> None:
+        """Build the live source over *engine* and its *roster*."""
+        self._engine = engine
+        self._roster = roster
+
+    def feed_rows(self) -> list[FeedRow]:
+        """Return the crossings feed, newest first, cap 30 (R-32)."""
+        engine = self._engine
+        held = frozenset(held.crossing for held in engine.held_crossings())
+        times_by_entry: dict[str, tuple[float, ...]] = {}
+        totals_by_entry: dict[str, list[float]] = {}
+        for entry in self._roster.entries:
+            times = engine.lap_times(entry.plate)
+            times_by_entry[entry.plate] = times
+            running: list[float] = []
+            total = 0.0
+            for lap_time in times:
+                total += lap_time
+                running.append(total)
+            totals_by_entry[entry.plate] = running
+
+        rows: list[FeedRow] = []
+        for crossing in reversed(engine.crossings[-FEED_CAP:]):
+            feed_entry = self._roster.resolve_plate(crossing.entry_id)
+            times = times_by_entry.get(crossing.entry_id, ())
+            totals = totals_by_entry.get(crossing.entry_id, [])
+            flagged = crossing in held
+            rows.append(
+                FeedRow(
+                    time=_feed_time(crossing.crossed_at),
+                    plate=crossing.entry_id,
+                    entry=feed_entry.display_name if feed_entry is not None else crossing.entry_id,
+                    lap=crossing.seq,
+                    lap_time=_format_lap_time(
+                        times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+                    ),
+                    total=format_duration(
+                        totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
+                    ),
+                    card="held" if flagged else engine.card_for(crossing).code(),
+                    flagged=flagged,
+                )
+            )
+        return rows
+
+    def counters(self) -> Counters:
+        """Return the four console counter values (R-32)."""
+        engine = self._engine
+        held = len(engine.held_crossings())
+        return Counters(
+            crossings=len(engine.crossings),
+            cards_dealt=len(engine.crossings) - held,
+            on_course=engine.on_course,
+            shoe_remaining=engine.shoe_remaining,
+            shoe_total=engine.shoe_total,
+        )
+
+    def ride_status(self) -> RideStatus:
+        """Return the active ride's current lifecycle status."""
+        return self._engine.state
+
+    def rides(self) -> list[RideSummary]:
+        """Return the ride library rows (minimal: this one ride)."""
+        config = self._engine.config
+        return [
+            RideSummary(
+                name=config.name,
+                date=config.event_date.isoformat(),
+                status=self._engine.state,
+                entries=len(self._roster.entries),
+            )
+        ]
+
+    def riders(self) -> list[RiderRow]:
+        """Return the rider editor rows for the active ride."""
+        rows: list[RiderRow] = []
+        for entry in self._roster.entries:
+            if entry.type is EntryType.TEAM:
+                rows.extend(
+                    RiderRow(
+                        plate=rider.plate if rider.plate is not None else entry.plate,
+                        name=rider.name,
+                        team=entry.display_name,
+                    )
+                    for rider in entry.riders
+                )
+            else:
+                rows.append(RiderRow(plate=entry.plate, name=entry.display_name))
+        return rows
+
+    def entry_detail(self, plate: str) -> EntryDetail:
+        """Return the detail view-model for the entry with ``plate``.
+
+        Raises:
+            LookupError: If no roster entry owns *plate*.
+        """
+        entry = self._roster.resolve_plate(plate)
+        if entry is None:
+            raise LookupError(f"no entry detail for plate {plate!r}")
+        engine = self._engine
+        times = engine.lap_times(entry.plate)
+        laps = tuple(
+            EntryLapRow(
+                lap=crossing.seq,
+                time=_feed_time(crossing.crossed_at),
+                lap_time=_format_lap_time(
+                    times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+                ),
+                rider=entry.display_name,  # doc-silence: per-rider is E7
+                card=engine.card_for(crossing).code(),
+            )
+            for crossing in engine.crossings
+            if crossing.entry_id == entry.plate
+        )
+        held_cards = tuple(
+            held.card.code()
+            for held in engine.held_crossings()
+            if held.crossing.entry_id == entry.plate
+        )
+        kind = "Team" if entry.type is EntryType.TEAM else "Solo"
+        header = (
+            f"{kind} · {len(entry.riders)} riders · {len(laps)} laps · "
+            f"{format_duration(sum(times))}"
+        )
+        members = " · ".join(rider.name for rider in entry.riders)
+        return EntryDetail(
+            header=header,
+            members=members,
+            cards_held=held_cards,
+            laps=laps,
+        )
+
+    def standings(self) -> list[StandingsRow]:
+        """Return the results standings rows, in placed order."""
+        placed = rank(self._engine.snapshot())
+        return [
+            StandingsRow(
+                place=item.place,
+                plate=item.result.plate,
+                entry=item.result.name,
+                laps=item.result.laps,
+                total=format_duration(item.result.total_time),
+                best5=tuple(card.code() for card in item.result.hand.best5),
+                hand=item.result.hand.cls.name,  # doc-silence: prose is E6
+                draw_required=item.draw_required,
+            )
+            for item in placed
+        ]
+
+    def audit_rows(self) -> list[AuditRow]:
+        """Return the audit trail rows, newest first."""
+        return [
+            AuditRow(
+                when=_event_time(event),
+                who="scorer",
+                action=event.action,
+                entry=str(event.payload.get("entry_id") or event.payload.get("plate") or ""),
+                reason=str(event.payload.get("reason") or ""),
+            )
+            for event in reversed(self._engine.events)
+        ]

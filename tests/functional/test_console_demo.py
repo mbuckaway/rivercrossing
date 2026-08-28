@@ -336,36 +336,33 @@ def test_main_frame_set_state_enables_or_disables_plate_input_and_record_btn_tog
 
 
 def test_main_frame_plate_entry_round_trip_records_once_clears_and_refocuses() -> None:
-    """Enter records the plate exactly once, clears, and refocuses (A5).
+    """Enter records the plate, clears, and refocuses (A5).
 
     Runs in its own spawned interpreter (module docstring): a real
     app bootstrap and a real ``EVT_TEXT_ENTER`` cannot run against
-    the shared ``shared_console`` fixture.
+    the shared ``shared_console`` fixture. E4.4.1 rewired the
+    bootstrap console from the demo placeholder to a live engine, so
+    the round trip now asserts the plate landed in the feed and the
+    crossing counter incremented -- the placeholder notice is gone.
     """
     result = scenario_runner.run_scenario("plate_entry_round_trip")
 
     assert result["ok"], result["context"]
-    expected_notice = "Plate 123 — recording engine lands in EPIC 4"
-    assert result["data"]["status_text"] == expected_notice, result["context"]
+    assert result["data"]["feed_plates"] == ["123"], result["context"]
     assert result["data"]["field_value"] == "", result["context"]
     assert result["data"]["focused"] is True, result["context"]
-    assert result["data"]["notice_count"] == 1, result["context"]
+    assert result["data"]["crossings_label"] == "1", result["context"]
 
 
 def test_main_frame_record_btn_click_records_once_clears_and_refocuses() -> None:
-    """Clicking Record does exactly what pressing Enter does (A5).
-
-    Runs in its own spawned interpreter (module docstring), like the
-    Enter round trip above.
-    """
+    """Clicking Record does exactly what pressing Enter does (A5)."""
     result = scenario_runner.run_scenario("record_btn_click_records_once")
 
     assert result["ok"], result["context"]
-    expected_notice = "Plate 77 — recording engine lands in EPIC 4"
-    assert result["data"]["status_text"] == expected_notice, result["context"]
+    assert result["data"]["feed_plates"] == ["77"], result["context"]
     assert result["data"]["field_value"] == "", result["context"]
     assert result["data"]["focused"] is True, result["context"]
-    assert result["data"]["notice_count"] == 1, result["context"]
+    assert result["data"]["crossings_label"] == "1", result["context"]
 
 
 def test_build_main_window_starts_the_console_in_the_running_state() -> None:

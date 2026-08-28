@@ -242,6 +242,7 @@ source_modules = [
     "rivercrossing.hands",
     "rivercrossing.roster",
     "rivercrossing.csvio",
+    "rivercrossing.standings",
 ]
 forbidden_modules = ["wx"]
 

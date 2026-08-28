@@ -35,14 +35,14 @@ import wx
 import wx.dataview
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.ui import feed_model, ids
+from rivercrossing.ui import feed_model, ids, sound
 from rivercrossing.ui.views._support import default_card_images, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from rivercrossing.ui.cards_imagelist import CardImageList
-    from rivercrossing.ui.presenters.console import Cue
+    from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import Counters, DataSource, FeedRow
 
 __all__ = [
@@ -74,6 +74,11 @@ FINISHED_INFOBAR = "finished_infobar"
 # XRC has no window-level minsize property (main.xrc's own header) --
 # only <size>, which sets the *initial* size, not the floor.
 MIN_SIZE = (1100, 700)
+
+# How often wire_console's timer drives presenter.tick() (E4.4.1).
+# 1 s keeps the clock, counters and R-35's 10 s arm auto-clear honest
+# without hammering the DataView with rebuilds.
+_TICK_MS = 1000
 
 # Interim, process-lifetime sash memory. Task E8.1.1 ("all settings
 # survive relaunch") replaces this with the real, disk-backed
@@ -155,19 +160,24 @@ class MainFrame:
     """Code-side behaviour for ``main_frame`` (the console, 1a).
 
     Implements ``ConsoleView`` (module-skeletons.md's presenter
-    contract) plus one extra method, :meth:`set_hide_times`, the
-    Protocol does not yet declare: ``ConsolePresenter.on_hide_times``
-    is still a no-op stub, so nothing calls a view-side hide-times
-    method through the Protocol yet. A later phase adds that member
-    once the presenter actually calls it.
+    contract). E4.4.1-E4.4.3 grew the Protocol with the four members
+    the live presenter actually calls (``set_stop_enabled``,
+    ``set_hide_times``, ``show_clock``, ``set_entry_locked``) -- the
+    "add the member once the presenter calls it" precedent this
+    class's own earlier docstring recorded for ``set_hide_times``.
+    :meth:`wire_console` binds the lifecycle controls (start/arm/
+    stop/undo) and the tick timer, mirroring :meth:`wire_entry`'s
+    callback idiom; the app bootstrap (and the live-console harness)
+    call it after construction.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (frame, data_source, card_images) + the E4.4.2 stop-confirm resource
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
         card_images: CardImageList | None = None,
+        resource: Any | None = None,  # noqa: ANN401 -- wx ships no stubs
     ) -> None:
         """Decorate an already-loaded ``main_frame`` window.
 
@@ -178,14 +188,18 @@ class MainFrame:
                 ``ui.presenters``). This view knows only the
                 :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
-                implementation applies (``DemoDataSource`` today, a
-                store-backed one from EPIC 4-5 on).
+                implementation applies (``EngineDataSource`` from
+                E4.4.1, ``DemoDataSource`` on screens still demo).
             card_images: The card bitmaps for the feed's Card column;
                 defaults to the packaged deck at 1x.
+            resource: The loaded ``wx.xrc.XmlResource`` the Stop
+                confirm dialog is loaded from (E4.4.2); ``None`` only
+                in constructions that never open that dialog.
         """
         self.frame = frame
         self.data_source = data_source
         self.card_images = card_images if card_images is not None else default_card_images()
+        self._stop_confirm_resource = resource
 
         self.crossings_list = self._find(ids.CROSSINGS_LIST, wx.dataview.DataViewCtrl)
         self.main_splitter = self._find(ids.MAIN_SPLITTER, wx.SplitterWindow)
@@ -197,6 +211,18 @@ class MainFrame:
         self.cards_count_lbl = self._find(ids.CARDS_COUNT_LBL, wx.StaticText)
         self.on_course_lbl = self._find(ids.ON_COURSE_LBL, wx.StaticText)
         self.shoe_lbl = self._find(ids.SHOE_LBL, wx.StaticText)
+
+        # E4.4.1 lifecycle controls (start/arm/stop/undo + clock).
+        self.start_btn = self._find(ids.START_BTN, wx.Button)
+        self.arm_stop_chk = self._find(ids.ARM_STOP_CHK, wx.CheckBox)
+        self.stop_btn = self._find(ids.STOP_BTN, wx.Button)
+        self.undo_btn = self._find(ids.UNDO_BTN, wx.Button)
+        self.clock_elapsed_lbl = self._find(ids.CLOCK_ELAPSED_LBL, wx.StaticText)
+        self.clock_remaining_lbl = self._find(ids.CLOCK_REMAINING_LBL, wx.StaticText)
+        # R-35: Stop is gated on arm_stop_chk -- disabled at rest even
+        # if the XRC ever leaves it enabled (test_menu_state pins the
+        # commands-side rule; this pins the actual control).
+        self.stop_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
 
         # LoadFrame does not honour main.xrc's <size> -- measured: the
         # frame comes back sized to the sizer's own computed minimum
@@ -404,11 +430,98 @@ class MainFrame:
         self.record_btn.Bind(wx.EVT_BUTTON, _submit)
 
     def play(self, cue: Cue) -> None:
-        """Play the audio cue for the given event (ConsoleView).
+        """Play the audio cue for the given event (ConsoleView, R-31).
 
-        Stub: ``ui.sound`` (module-skeletons.md) lands in E4.4.3 and
-        wires real playback; nothing calls this yet outside tests.
+        Delegates to ``ui.sound``'s default player (E4.4.3); the
+        player is wx-lazy and never blocks the entry field (spec §10).
         """
+        sound.play(cue)
+
+    def set_stop_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable the Stop button (ConsoleView, R-35).
+
+        Disarming also unticks ``arm_stop_chk`` so the checkbox
+        visibly reflects the presenter's auto-clear (after use or
+        timeout); ``SetValue`` fires no ``EVT_CHECKBOX`` (measured
+        harness convention), so this cannot loop back into the
+        presenter.
+        """
+        self.stop_btn.Enable(enabled)
+        if not enabled:
+            self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+
+    def show_clock(self, elapsed: str, remaining: str) -> None:
+        """Render the ride clock's labels (ConsoleView).
+
+        ``clock_remaining_lbl`` carries no canvas label; the elapsed
+        label's default ``0:00:00`` comes from main.xrc.
+        """
+        self.clock_elapsed_lbl.SetLabel(elapsed)
+        self.clock_remaining_lbl.SetLabel(remaining)
+
+    def set_entry_locked(self, *, locked: bool) -> None:
+        """Lock or unlock the plate entry row (ConsoleView, R-35).
+
+        Stop is a guard, not a state: after ``engine.stop()`` the ride
+        still reads RUNNING, so ``set_state`` would re-enable the
+        entry row -- this is the "only confirming locks the entry
+        field" channel on top of it.
+        """
+        self.plate_input.Enable(not locked)
+        self.record_btn.Enable(not locked)
+
+    def wire_console(self, presenter: ConsolePresenter) -> None:
+        """Bind the lifecycle controls and tick timer to *presenter*.
+
+        Mirrors :meth:`wire_entry`'s callback idiom: Start Ride,
+        the Arm checkbox, Stop Ride (through the confirm dialog,
+        :meth:`_on_stop_clicked`) and Undo each forward to the
+        presenter, and a 1 s ``wx.Timer`` drives ``presenter.tick()``
+        (feed/counters/clock refresh + R-35's 10 s arm auto-clear).
+        """
+        self.start_btn.Bind(wx.EVT_BUTTON, lambda _event: presenter.on_start())
+        self.arm_stop_chk.Bind(
+            wx.EVT_CHECKBOX,
+            lambda _event: presenter.on_arm_stop(armed=self.arm_stop_chk.GetValue()),
+        )
+        self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_stop_clicked(presenter))
+        self.undo_btn.Bind(wx.EVT_BUTTON, lambda _event: presenter.on_undo())
+        self._tick_timer = wx.Timer(self.frame)
+        self.frame.Bind(wx.EVT_TIMER, lambda _event: presenter.tick(), self._tick_timer)
+        self._tick_timer.Start(_TICK_MS)
+
+    def _on_stop_clicked(self, presenter: ConsolePresenter) -> None:
+        """Handle Stop Ride: R-35's confirm, then ``on_stop_confirmed``.
+
+        Loads ``stop_confirm_dlg`` from the constructor's resource and
+        shows it through ``dialogs.run_dialog`` -- the one entry point
+        every dialog in this codebase shows through -- so the default
+        + focused Cancel is honoured (test_dialog_behavior pins it on
+        the raw dialog) and only ``wxID_OK`` ("Stop ride") confirms.
+        A construction with no resource (a screen that never opens the
+        dialog) posts a notice rather than silently stopping.
+
+        # logic-coverage-exempt: T-3 -- the two ``is None`` guards are
+        # defensive for constructions that never open the dialog (the
+        # shared read-only fixtures); every live construction supplies
+        # the resource and the OK/Cancel arms are driven functionally.
+        """
+        from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
+
+        if self._stop_confirm_resource is None:
+            self.show_notice("Stop confirm unavailable")
+            return
+        dialog = self._stop_confirm_resource.LoadDialog(None, ids.STOP_CONFIRM_DLG)
+        if dialog is None:
+            self.show_notice("Stop confirm unavailable")
+            return
+        try:
+            result = dialogs.run_dialog(dialog, opener=self.stop_btn)
+        finally:
+            if not dialog.IsBeingDeleted():
+                dialog.Destroy()
+        if result == wx.ID_OK:
+            presenter.on_stop_confirmed()
 
 
 def _format_count(value: int) -> str:

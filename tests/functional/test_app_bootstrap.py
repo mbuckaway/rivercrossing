@@ -154,15 +154,22 @@ def test_build_main_window_attaches_a_menubar_with_seven_menus(
 # --- demo data flows through the bootstrap (D1 exit criteria) ----
 
 
-def test_build_main_window_shows_five_demo_feed_rows(
+def test_build_main_window_wires_the_console_to_the_live_engine_feed(
     bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """Not just a bare MainFrame(): the bootstrap's own console feed."""
+    """Not demo rows: the bootstrap console reads a fresh live engine.
+
+    E4.4.1 swapped the console's ``DemoDataSource`` wiring for an
+    ``EngineDataSource`` over a seeded, started ride; a fresh engine
+    has no crossings yet, so the feed is empty at startup (the E4.4.4
+    mini race drives real rows through this same bootstrap). The
+    library/editor/detail windows keep demo data until E5/E6.
+    """
     crossings_list = harness.find_control(bound_frame, ids.CROSSINGS_LIST)
 
     row_count = crossings_list.GetModel().GetCount()
 
-    assert row_count == 5
+    assert row_count == 0
 
 
 def test_build_main_window_applies_the_console_canvas_minimum_size(
@@ -182,9 +189,11 @@ def test_build_main_window_wires_the_console_to_the_running_data_source(
 ) -> None:
     """``set_state(data_source.ride_status())`` ran during bootstrap.
 
-    Read-only: ``bound_frame`` never mutates after construction, so
-    this shares the fixture with every other assertion in this
-    module (fixture docstring).
+    The bootstrap's seeded ride is started (RUNNING) so the console
+    opens live, exactly as the demo source reported RUNNING before
+    E4.4.1. Read-only: ``bound_frame`` never mutates after
+    construction, so this shares the fixture with every other
+    assertion in this module (fixture docstring).
     """
     plate_input = harness.find_control(bound_frame, ids.PLATE_INPUT)
     status_label = harness.find_control(bound_frame, ids.RIDE_STATUS_LBL)
