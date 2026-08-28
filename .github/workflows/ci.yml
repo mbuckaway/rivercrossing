@@ -133,7 +133,7 @@ jobs:
       # the command runs through tools/functional_rerun.py, which re-runs
       # failed files in freshly spawned pytest processes.
       - name: pytest functional (real wx windows)
-        run: python tools/functional_rerun.py pytest tests/functional --no-cov -n auto --dist loadfile --reruns 2
+        run: python tools/functional_rerun.py pytest tests/functional -v --no-cov -n auto --dist loadfile --reruns 2
       - name: Upload failure screenshots
         if: failure()
         uses: actions/upload-artifact@v4

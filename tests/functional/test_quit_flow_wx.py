@@ -159,7 +159,15 @@ def test_windows_close_cancelled_leaves_the_frame_alive_and_shown() -> None:
     ),
 )
 def test_windows_close_confirmed_destroys_the_frame() -> None:
-    """Windows ✕ + Quit on exit_running_dlg: the frame is destroyed."""
+    """Windows ✕ + Quit on exit_running_dlg: the frame is destroyed.
+
+    The confirmed-close destroy is deferred through ``wx.CallAfter``
+    (app.py's ``_on_main_frame_close``, MSW branch): a synchronous
+    ``Destroy()`` inside ``EVT_CLOSE`` right after the confirm modal
+    unwinds deadlocks wxMSW. That hang is only reproducible on
+    windows-latest CI (this Mac skips) -- this scenario is the CI
+    pin, and it asserts the deferred destroy still lands.
+    """
     result = scenario_runner.run_scenario("windows_close_confirmed_destroys")
 
     assert result["data"] == {"frame_being_deleted": True}, result["context"]

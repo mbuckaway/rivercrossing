@@ -477,6 +477,13 @@ def load_menubar(resource: Any, name: str) -> Any:  # noqa: ANN401
     return menubar
 
 
+# 25, mirroring ui.views._support.FIND_SETTLE_ATTEMPTS: the same
+# wx/SIP wrapper-cache stale-lookup hazard _support.find_control
+# settles applies to this harness's own name lookups too (its
+# find_control docstring).
+_FIND_SETTLE_ATTEMPTS = 25
+
+
 def find_control(window: Any, name: str) -> Any:  # noqa: ANN401
     """Return the control called *name* inside *window*.
 
@@ -486,15 +493,33 @@ def find_control(window: Any, name: str) -> Any:  # noqa: ANN401
     can silently resolve a same-named control that belongs to a
     different window.
 
+    Mirrors ``ui.views._support.find_control``'s settle retry and
+    type check (measured on windows-latest CI): under the wx/SIP
+    wrapper-cache corruption, ``FindWindowByName`` can return a
+    stale-typed wrapper for a live control, and a lookup that
+    accepts it reads the wrong control's state. A ``wx.SafeYield``
+    between retries flushes the deferred deletion that causes it.
+
     Raises:
         ControlNotFoundError: If *name* does not resolve inside
-            *window*, naming both so the failure is diagnosable
+            *window* -- or resolves only to a stale, non-``wx.Window``
+            wrapper -- naming both so the failure is diagnosable
             without falling through to a bare ``AttributeError`` on
             a ``None`` result.
     """
     control = wx.Window.FindWindowByName(name, window)
+    attempts = 0
+    while not isinstance(control, wx.Window) and attempts < _FIND_SETTLE_ATTEMPTS:
+        wx.SafeYield()
+        control = wx.Window.FindWindowByName(name, window)
+        attempts += 1
     if control is None:
         raise ControlNotFoundError(f"window {window.GetName()!r} has no control named {name!r}")
+    if not isinstance(control, wx.Window):
+        raise ControlNotFoundError(
+            f"window {window.GetName()!r} resolved {name!r} to a stale "
+            f"{type(control).__name__} wrapper, not a wx.Window"
+        )
     return control
 
 

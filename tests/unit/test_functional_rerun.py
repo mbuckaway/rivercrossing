@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,6 +50,7 @@ if str(_REPO_ROOT) not in sys.path:
 _CMD = [
     "pytest",
     "tests/functional",
+    "-v",
     "--no-cov",
     "-n",
     "auto",
@@ -71,6 +73,17 @@ def rerun_module() -> ModuleType:
     from tools import functional_rerun  # type: ignore[import-not-found]  # noqa: PLC0415
 
     return functional_rerun
+
+
+def test_pass_timeout_s_at_least_600_seconds(rerun_module: ModuleType) -> None:
+    """The pass bound must clear a worst-case healthy crawl.
+
+    Measured on windows-latest CI: the suite's worst-case crawl runs
+    ~180-260 s in the last window-heavy files, and the previous 300 s
+    bound killed a slow-but-healthy pass seconds from green. 600 s
+    clears that crawl with margin while still bounding a true hang.
+    """
+    assert rerun_module.PASS_TIMEOUT_S >= 600
 
 
 # ------------------------------------------------- parse_summary
@@ -229,6 +242,30 @@ def test_parse_summary_when_duplicate_files_returns_deduplicated_set(
     assert result == {"tests/functional/test_csvio.py"}
 
 
+def test_parse_summary_catches_xdist_progress_failed_lines(
+    rerun_module: ModuleType,
+) -> None:
+    """Streamed xdist progress lines carry FAILED/ERROR markers too.
+
+    With ``-v`` under xdist the marker sits mid-line
+    (``[gw2] [ 82%] FAILED tests/...``). A timed-out pass (124) never
+    prints the ``-ra`` summary, so these streamed lines are the only
+    failure record left to map to files.
+    """
+    text = (
+        "[gw0] [ 25%] PASSED tests/functional/test_xrc_structure.py::test_a\n"
+        "[gw2] [ 82%] FAILED tests/functional/test_ride_setup.py::test_deck_count\n"
+        "[gw2] [ 83%] ERROR tests/functional/test_csvio.py::test_import\n"
+    )
+
+    result = rerun_module.parse_summary(text)
+
+    assert result == {
+        "tests/functional/test_ride_setup.py",
+        "tests/functional/test_csvio.py",
+    }
+
+
 @given(
     st.lists(
         st.text(
@@ -250,6 +287,39 @@ def test_parse_summary_property_maps_node_ids_to_file_prefixes(
     result = rerun_module.parse_summary(text)
 
     assert result == set(node_ids)
+
+
+def test_stalled_file_returns_none_when_every_started_test_finished(
+    rerun_module: ModuleType,
+) -> None:
+    """Every bare start line has a matching result line: no stall."""
+    text = (
+        "tests/functional/test_ride_setup.py::test_a\n"
+        "[gw0] [ 50%] PASSED tests/functional/test_ride_setup.py::test_a\n"
+        "tests/functional/test_csvio.py::test_b\n"
+        "[gw0] [ 50%] FAILED tests/functional/test_csvio.py::test_b - boom\n"
+    )
+
+    assert rerun_module.stalled_file(text) is None
+
+
+def test_stalled_file_returns_the_last_unfinished_test_file(
+    rerun_module: ModuleType,
+) -> None:
+    """A bare start line with no result names the stalled file.
+
+    The timed-out pass on windows-latest ends exactly like this: the
+    stalled test's start line prints and no result ever follows, so the
+    wrapper can target that file for a fresh-process rerun instead of
+    falling back to a whole-suite pass.
+    """
+    text = (
+        "tests/functional/test_ride_setup.py::test_a\n"
+        "[gw0] [ 50%] PASSED tests/functional/test_ride_setup.py::test_a\n"
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+    )
+
+    assert rerun_module.stalled_file(text) == "tests/functional/test_csv_route_flows.py"
 
 
 # ------------------------------------------------ orchestration seam
@@ -290,6 +360,120 @@ def test_spawn_runs_command_and_returns_exit_code(
     assert completed.returncode == 0
     assert completed.stdout == ""
     assert completed.stderr == ""
+
+
+def test_spawn_when_timeout_none_waits_forever_and_returns_exit_code(
+    rerun_module: ModuleType,
+) -> None:
+    """An explicit None timeout disables the bound.
+
+    A fast child still returns its exit code; None means wait forever.
+    """
+    completed = rerun_module._spawn(
+        [sys.executable, "-c", "import sys; sys.exit(0)"], timeout=None
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == ""
+
+
+def test_spawn_when_child_hangs_times_out_terminates_and_returns_124(
+    rerun_module: ModuleType,
+) -> None:
+    """A hung child is killed after the timeout and maps to exit 124.
+
+    Returning at all -- within ~1s of a 3600s sleep -- proves the
+    timeout fired and the child was terminated, not left running.
+    """
+    completed = rerun_module._spawn(
+        [sys.executable, "-c", "import time; time.sleep(3600)"], timeout=0.3
+    )
+
+    assert completed.returncode == 124
+    assert completed.stdout == ""
+
+
+def test_spawn_returns_promptly_when_child_exits_but_grandchild_holds_pipes(
+    rerun_module: ModuleType,
+) -> None:
+    """A clean child exit must not stall on a pipe-holding grandchild.
+
+    The same Windows pipe-holder that stalls scenario_runner's drain
+    (Windows Error Reporting, measured on windows-latest CI) keeps
+    _spawn's reader thread from EOF after a healthy pass too, so the
+    normal-exit join must be bounded exactly like the timeout path
+    already is. The grandchild sleeps 30 s; a bounded join returns in
+    ~5 s, an unbounded one waits the full 30 s and fails the bound.
+    """
+    child = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], "
+        "stdout=sys.stdout, stderr=sys.stderr); "
+        "print('CHILD_DONE', flush=True)"
+    )
+    start = time.monotonic()
+    completed = rerun_module._spawn([sys.executable, "-c", child], timeout=10)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 10, f"normal-exit join stalled {elapsed:.1f}s with the pipes held open"
+    assert completed.returncode == 0
+    assert "CHILD_DONE" in completed.stdout
+
+
+def test_spawn_streams_output_live_and_preserves_partial_output_on_timeout(
+    rerun_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Output is streamed live to stdout and preserved on timeout.
+
+    The marker is flushed by the child immediately, then the child
+    sleeps: capture_output-style buffering would show nothing in
+    capsys, so the marker in ``out`` proves live streaming, and the
+    marker in ``completed.stdout`` proves the partial output survives
+    for parse_summary on a timed-out pass.
+    """
+    completed = rerun_module._spawn(
+        [
+            sys.executable,
+            "-c",
+            "import time; print('STREAMED_MARKER', flush=True); time.sleep(3600)",
+        ],
+        timeout=0.5,
+    )
+
+    captured = capsys.readouterr()
+    assert completed.returncode == 124
+    assert "STREAMED_MARKER" in captured.out
+    assert "STREAMED_MARKER" in completed.stdout
+
+
+def test_spawn_timeout_diagnostic_reports_elapsed_and_termination(
+    rerun_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A timeout leaves a named stderr diagnostic, not silence."""
+    completed = rerun_module._spawn(
+        [sys.executable, "-c", "import time; time.sleep(3600)"], timeout=0.3
+    )
+
+    captured = capsys.readouterr()
+    assert completed.returncode == 124
+    assert "pass exceeded" in captured.err
+    assert "child terminated" in captured.err
+
+
+def test_run_pass_when_real_spawn_streams_live_and_does_not_double_echo(
+    rerun_module: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Real _spawn streams live; _run_pass must not echo it again."""
+    result = rerun_module._run_pass(
+        [sys.executable, "-c", "print('REAL_PASS_MARKER')"],
+        rerun_module._spawn,
+        "solo",
+    )
+
+    captured = capsys.readouterr()
+    assert result == (0, set())
+    assert captured.out.count("REAL_PASS_MARKER") == 1
+    assert "solo: exit 0" in captured.err
 
 
 def test_rerun_failed_files_when_command_empty_runs_once(
@@ -333,13 +517,70 @@ def test_rerun_failed_files_when_initial_green_returns_zero_and_runs_once(
 def test_rerun_failed_files_when_initial_crash_propagates_code_without_rerun(
     rerun_module: ModuleType, crash_code: int
 ) -> None:
-    """Exit codes outside {0, 1} are propagated, never rerun."""
+    """Exit codes outside {0, 1} propagate without rerun.
+
+    The bounded pass's timeout (124) is deliberately NOT in this set:
+    a hang is not a pytest crash, and the fresh-process whole-suite
+    fallback (test_rerun_failed_files_when_initial_pass_times_out_...)
+    is the one measured remedy for the corruption it signals.
+    """
     runner, calls = _recording_runner([_completed(crash_code, "")])
 
     result = rerun_module.rerun_failed_files(_CMD, runner)
 
     assert result == crash_code
     assert calls == [_PASS1]
+
+
+def test_rerun_failed_files_when_initial_pass_times_out_falls_back_to_whole_suite(
+    rerun_module: ModuleType,
+) -> None:
+    """A timed-out pass (124, no summary) reruns the whole suite.
+
+    A hang produces no ``-ra`` summary to map to files (measured on
+    windows-latest CI, PR #9: the suite reached 97% then stalled in the
+    last window-heavy files until the pass bound killed it). The
+    fresh-process remedy is the only measured cure for the wx/SIP
+    corruption, so a 124 pass falls back to a whole-suite run in a
+    fresh process instead of failing bare.
+    """
+    runner, calls = _recording_runner([_completed(124, ""), _completed(0, "800 passed\n")])
+
+    result = rerun_module.rerun_failed_files(_CMD, runner)
+
+    assert result == 0
+    assert calls == [_PASS1, _PASS1]
+
+
+def test_rerun_failed_files_when_initial_pass_times_out_reruns_failed_and_stalled_files(
+    rerun_module: ModuleType,
+) -> None:
+    """A 124 pass targets failed + stalled files, not the whole suite.
+
+    The streamed progress lines name the failed files even though the
+    ``-ra`` summary never prints, and the last bare start line names
+    the stalled file. Fresh-process re-runs of just those files are the
+    documented remedy for the process-granular wx/SIP corruption; a
+    whole-suite re-run inherits the same stall.
+    """
+    output = (
+        "[gw2] [ 82%] FAILED tests/functional/test_ride_setup.py::test_deck_count\n"
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+    )
+    runner, calls = _recording_runner([_completed(124, output), _completed(0, "800 passed\n")])
+
+    result = rerun_module.rerun_failed_files(_CMD, runner)
+
+    assert result == 0
+    assert calls == [
+        _PASS1,
+        [
+            *_PYTEST,
+            "tests/functional/test_csv_route_flows.py",
+            "tests/functional/test_ride_setup.py",
+            *_FLAGS,
+        ],
+    ]
 
 
 def test_rerun_failed_files_when_first_rerun_green_returns_zero(
