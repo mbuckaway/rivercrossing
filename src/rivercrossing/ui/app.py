@@ -321,6 +321,30 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
         context.frame.SetStatusText(notice)
 
 
+def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | None:
+    """Return the library's store-backed delete callback, if any.
+
+    E5.3.2's R-18 seam: a confirmed Delete on ``delete_ride_dlg``
+    calls this with the ride's name, and the store deletes it (writing
+    its backup first). With no store open there is nothing to delete;
+    until E5.4.1's library-live work feeds the library real store
+    rows, the demo rows name no store ride, so the callback resolves
+    no match and is a silent no-op -- the store module docstring's
+    E5.3.2/E5.4.1 boundary resolution.
+    """
+    store = context.store
+    if store is None:
+        return None
+
+    def _delete(ride_name: str) -> None:
+        for ride in store.rides():
+            if ride.name == ride_name:
+                store.delete_ride(ride.id, ride_name)
+                return
+
+    return _delete
+
+
 def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) -> None:  # noqa: ANN401
     """Bind *window*'s code-side view class, if *route.target* has one.
 
@@ -337,7 +361,11 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
-        RideLibrary(window, data_source=context.data_source)
+        RideLibrary(
+            window,
+            data_source=context.data_source,
+            on_delete=_library_delete_callback(context),
+        )
     elif route.target == ids.RIDER_EDITOR_DLG:
         RiderEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:

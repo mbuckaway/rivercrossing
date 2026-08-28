@@ -15,10 +15,14 @@ records one ``app_session`` row per launch (``active_ride_id`` when a
 ride is running), :meth:`Store.close_session` stamps ``closed_at`` on
 a clean quit, and :meth:`Store.session_state` reads the previous
 session's record -- clean quit vs crash vs running-at-exit -- for the
-R-52 resume dialog. The rest of module-skeletons.md S4's surface --
-backups (E5.3), ``duplicate_ride``/``delete_ride`` (E5.4), the
-``AsyncWriter`` (E5.4), the settings table (E8) -- is deliberately
-absent: per the task, nothing is stubbed that nothing calls yet.
+R-52 resume dialog. E5.3.1 adds the backup mechanism
+(``rivercrossing.store.backup``, module-skeletons.md S4):
+:meth:`Store.delete_ride` (E5.3.2) calls ``backup.run`` before it
+deletes, so R-18's "automatic database backup is written first" is
+backup-then-delete inside the facade. The rest of S4's surface --
+``duplicate_ride`` (E5.4), the ``AsyncWriter`` (E5.4), the settings
+table (E8) -- is deliberately absent: per the task, nothing is
+stubbed that nothing calls yet.
 
 Doc-silence resolutions are recorded here, because the spec leaves
 them open and later EPICs will build on them:
@@ -84,6 +88,36 @@ them open and later EPICs will build on them:
   entry/rider rows yet (full roster-from-DB is E5.4.1), so an empty
   roster is the only honest reconstruction -- the shell
   :meth:`Store.load_engine` needs to rebuild a console.
+- **backup location / WAL / rotation (E5.3.1)**: backups live in a
+  sibling ``<db>.backups/`` directory as one fixed-width, sortable,
+  UTC-timestamped ``<stem>.<YYYYmmdd-HHMMSS-ffffff>.db`` file each;
+  a live WAL store is checkpointed (``PRAGMA wal_checkpoint(TRUNCATE)``)
+  through a short-lived second connection before the copy; rotation
+  prunes to the newest ``keep`` (R-54's 20) by filename sort. Full
+  detail, plus the hourly seam and restore, is recorded in
+  ``backup.py``'s own module docstring -- the one place the rule
+  lives.
+- **delete order (E5.3.2)**: :meth:`Store.delete_ride` validates
+  first (unknown id, typed-name mismatch, RUNNING refusal), then
+  calls ``backup.run`` -- R-18's backup-first -- and only then
+  deletes, in one transaction, in FK-safe order. The schema declares
+  plain ``REFERENCES`` with **no ON DELETE CASCADE** (spec §2's own
+  DDL), so the facade removes the dependents itself: cards, then
+  crossings, then riders, then entries, then audit rows, then NULLs
+  ``app_session.active_ride_id``, then the ride row.
+- **delete guards read the stored row (E5.3.2)**: the RUNNING refusal
+  reads the ``ride`` table's ``status`` column -- the persisted truth
+  the library shows. ``create_ride`` writes ``draft`` and today the
+  engine's ``start`` event lands in the audit log without the facade
+  syncing the row (E5.4's engine-sync writes it), so the delete guard
+  is correct against the stored value.
+- **E5.3.2/E5.4.1 UI boundary**: ``RideLibrary`` gets its R-18
+  enablement and its Delete-button -> ``delete_ride_dlg`` wiring, and
+  ``app.py`` threads a store-backed ``on_delete`` callback when a
+  store is open. With the demo data source (no store ride ids until
+  E5.4.1's library-live work), the callback finds no matching store
+  ride and is a silent no-op; the store-backed library E5.4.1 wires
+  is where the callback matches real rows.
 
 :class:`RideRow` is the small frozen summary ``rides()`` returns for
 the library -- id, name, event date, status -- with the full library
@@ -96,11 +130,13 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.store.backup import run as _backup_run
 from rivercrossing.store.migrations import (
     FutureSchemaVersionError,
     StoreError,
@@ -110,13 +146,14 @@ from rivercrossing.store.schema import apply_pragmas
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-    from pathlib import Path
 
 __all__ = [
     "FutureSchemaVersionError",
     "PreviousSession",
+    "RideNameMismatchError",
     "RideNotFoundError",
     "RideRow",
+    "RideRunningError",
     "SessionState",
     "Store",
     "StoreError",
@@ -219,6 +256,23 @@ class RideNotFoundError(StoreError):
     """
 
 
+class RideNameMismatchError(StoreError):
+    """``Store.delete_ride()`` was given the wrong typed name (R-18).
+
+    Raised when *typed_name* does not byte-for-byte equal the ride's
+    stored name -- no case-fold, no ``.strip()``, per UX-DESKTOP §4's
+    type-to-confirm rule. Raised before any backup or delete runs.
+    """
+
+
+class RideRunningError(StoreError):
+    """``Store.delete_ride()`` refused a RUNNING ride (R-18, spec §3).
+
+    Raised when the ride's stored status is ``running`` -- a running
+    ride is never deletable. Raised before any backup or delete runs.
+    """
+
+
 class SessionState(Enum):
     """The previous app session's state, for the R-52 resume reading.
 
@@ -288,9 +342,21 @@ class Store:
     connection cleanly on any failure.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        """Wrap an open connection; prefer :meth:`Store.open`."""
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        path: str | Path | None = None,
+    ) -> None:
+        """Wrap an open connection; prefer :meth:`Store.open`.
+
+        ``path`` is the backing file :meth:`Store.open` opened; only
+        :meth:`Store.open` sets it, and :meth:`delete_ride` needs it
+        to write the pre-delete backup. A Store constructed directly
+        (tests only) has no path and refuses to delete.
+        """
         self._conn = conn
+        self._path = Path(path) if path is not None else None
 
     @classmethod
     def open(cls, path: str | Path, *, active_ride_id: int | None = None) -> Store:
@@ -326,7 +392,7 @@ class Store:
         except Exception:
             conn.close()
             raise
-        return cls(conn)
+        return cls(conn, path=path)
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -550,6 +616,68 @@ class Store:
             )
             for row in rows
         ]
+
+    # -------------------------------- E5.3.2 delete guard
+
+    def delete_ride(self, ride_id: int, typed_name: str) -> None:
+        """Delete one ride and all its data (R-18, spec §3).
+
+        Exactly R-18's order: refuses unless *typed_name* byte-for-byte
+        equals the ride's stored name (no case-fold, no ``.strip()`` --
+        UX-DESKTOP §4), refuses a RUNNING ride outright, writes an
+        automatic backup FIRST (``backup.run``), and only then deletes.
+        Because the schema declares plain ``REFERENCES`` with no ON
+        DELETE CASCADE (module docstring's E5.3.2 resolution), the
+        dependents are removed explicitly, in FK-safe order, in one
+        transaction: cards, crossings, riders, entries, audit rows;
+        ``app_session.active_ride_id`` is NULLed; then the ride row.
+
+        Args:
+            ride_id: The ride to delete.
+            typed_name: The name the operator typed into
+                ``delete_ride_dlg``'s ``confirm_name_input``.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+            RideNameMismatchError: *typed_name* does not equal the
+                ride's name.
+            RideRunningError: The ride's stored status is RUNNING.
+            StoreError: The store has no backing path (constructed
+                directly, not via :meth:`Store.open`).
+        """
+        row = self._conn.execute(
+            "SELECT name, status FROM ride WHERE id = ?", (ride_id,)
+        ).fetchone()
+        if row is None:
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        if typed_name != row["name"]:
+            raise RideNameMismatchError(
+                f"typed name {typed_name!r} does not match ride {ride_id} name {row['name']!r}"
+            )
+        if row["status"] == RideStatus.RUNNING:
+            raise RideRunningError(f"ride {ride_id} is RUNNING and cannot be deleted")
+        if self._path is None:
+            # logic-coverage-exempt: T-3 -- unreachable through any live
+            # construction. Every Store is built by Store.open, which
+            # always sets _path; reaching this guard requires calling
+            # __init__ directly, which this task's test contract does
+            # not do. The guard narrows _path to a real Path for mypy.
+            raise StoreError("store has no backing path; construct via Store.open")
+        _backup_run(self._path)
+        with self._conn:
+            self._conn.execute("DELETE FROM card WHERE ride_id = ?", (ride_id,))
+            self._conn.execute("DELETE FROM crossing WHERE ride_id = ?", (ride_id,))
+            self._conn.execute(
+                "DELETE FROM rider WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?)",
+                (ride_id,),
+            )
+            self._conn.execute("DELETE FROM entry WHERE ride_id = ?", (ride_id,))
+            self._conn.execute("DELETE FROM audit WHERE ride_id = ?", (ride_id,))
+            self._conn.execute(
+                "UPDATE app_session SET active_ride_id = NULL WHERE active_ride_id = ?",
+                (ride_id,),
+            )
+            self._conn.execute("DELETE FROM ride WHERE id = ?", (ride_id,))
 
     # ------------------------------------- E5.1.2 event log (replay)
 

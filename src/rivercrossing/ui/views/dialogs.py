@@ -65,6 +65,7 @@ __all__ = [
     "MissingDialogControlError",
     "bind_delete_confirmation_gate",
     "default_button_for",
+    "delete_ride_message",
     "first_field_for",
     "run_dialog",
     "set_initial_focus",
@@ -229,6 +230,18 @@ def bind_delete_confirmation_gate(dialog: Any, ride_name: str) -> None:  # noqa:
         event.Skip()
 
     dialog.Bind(wx.EVT_TEXT, _on_text, confirm_input)
+
+
+def delete_ride_message(ride_name: str) -> str:
+    """Return ``delete_ride_dlg``'s ``message_lbl`` copy for a ride.
+
+    UX-DESKTOP §4: a destructive confirm must name the object it is
+    about to destroy, so this line is not optional -- the E5.3.2
+    functional suite asserts the label is non-empty and carries
+    *ride_name* (a blank label is a failed assertion, never cosmetic).
+    Mirrors library.xrc's own data-bearing sentence.
+    """
+    return f'Deletes "{ride_name}" and all its data.'
 
 
 def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs

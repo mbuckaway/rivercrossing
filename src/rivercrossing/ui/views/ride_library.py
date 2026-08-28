@@ -21,13 +21,13 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.dataview
 
+from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
 from rivercrossing.ui.views._support import associate_model, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from rivercrossing.ride import RideStatus
     from rivercrossing.ui.presenters.data_source import DataSource, RideSummary
 
 __all__ = [
@@ -37,10 +37,17 @@ __all__ = [
     "COL_NAME",
     "COL_STATUS",
     "MIN_SIZE",
+    "WX_ID_DELETE",
     "RideLibrary",
     "RidesListModel",
     "format_ride_status",
 ]
+
+# Real XRC name FindWindowByName resolves, but excluded from ui/ids.py
+# by tools/gen_ids.py's STOCK_IDS set (spec.md §15b) -- the same
+# literal views/dialogs.py repeats for the identical reason; pages.py
+# is test-only and production cannot import it.
+WX_ID_DELETE = "wxID_DELETE"
 
 COL_NAME = 0
 COL_DATE = 1
@@ -106,13 +113,25 @@ class RideLibrary:
     """Code-side behaviour for ``ride_library_dlg`` (1g).
 
     Implements ``LibraryView.show_rides`` (module-skeletons.md's
-    presenter contract); row selection and the Open/New/Duplicate/
-    Delete actions ``LibraryPresenter`` will drive are a later
-    phase's job (its own docstring: "Phase 5 wires...") and are not
-    in this task's scope.
+    presenter contract). E5.3.2 adds the R-18 delete surface: the
+    library's ``wxID_DELETE`` button stays disabled while nothing is
+    selected and for a RUNNING selected ride (never deletable, spec
+    §3), and a click on it opens ``delete_ride_dlg`` with the ride's
+    name interpolated into ``message_lbl`` and the type-to-confirm
+    gate armed; a confirmed Delete invokes the injected ``on_delete``
+    callback -- the seam E5.4 wires to ``Store.delete_ride`` (which
+    writes its backup first). Row selection and the Open/New/
+    Duplicate actions ``LibraryPresenter`` will drive are a later
+    phase's job (E5.4.1) and are not in this task's scope.
     """
 
-    def __init__(self, dialog: wx.Dialog, *, data_source: DataSource) -> None:
+    def __init__(
+        self,
+        dialog: wx.Dialog,
+        *,
+        data_source: DataSource,
+        on_delete: Callable[[str], None] | None = None,
+    ) -> None:
         """Decorate an already-loaded ``ride_library_dlg`` window.
 
         Args:
@@ -122,15 +141,29 @@ class RideLibrary:
                 the :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
                 implementation applies.
+            on_delete: Called with the selected ride's name when
+                ``delete_ride_dlg`` confirms a Delete; ``None`` leaves
+                the dialog's confirm a no-op (the app threads a
+                store-backed callback when a store is open, E5.3.2's
+                module-docstring resolution).
         """
         self.dialog = dialog
         self.data_source = data_source
+        self._on_delete = on_delete
+        self._rows: tuple[RideSummary, ...] = ()
+        self._selected: RideSummary | None = None
 
         self.rides_list = self._find(ids.RIDES_LIST, wx.dataview.DataViewCtrl)
+        self.delete_button = self._find(WX_ID_DELETE, wx.Button)
         self._build_columns()
         self._model: RidesListModel | None = None
 
         self.show_rides(self.data_source.rides())
+        self.rides_list.Bind(
+            wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_selection_changed
+        )
+        self.delete_button.Bind(wx.EVT_BUTTON, self._on_delete_clicked)
+        self._update_delete_enablement()
         self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
@@ -157,8 +190,103 @@ class RideLibrary:
         See ``ui.views._support.associate_model``'s docstring for
         why this repaints explicitly (unverified remedy).
         """
+        self._rows = tuple(rows)
+        self._selected = None
         self._model = RidesListModel(rows)
         associate_model(self.rides_list, self._model)
+        self._update_delete_enablement()
+
+    # --------------------------------------- E5.3.2 R-18 delete surface
+
+    def _selected_row(self) -> RideSummary | None:
+        """Return the currently selected ride row, or None.
+
+        ``GetSelection()`` returns an invalid item when nothing is
+        selected; ``GetRow`` on the model maps a valid item back to
+        its index.
+        """
+        item = self.rides_list.GetSelection()
+        if not item.IsOk():
+            return None
+        row = int(self.rides_list.GetModel().GetRow(item))
+        if 0 <= row < len(self._rows):
+            return self._rows[row]
+        # logic-coverage-exempt: T-3 -- a valid selection's GetRow index
+        # is always in the model's row count; the fallback exists only
+        # to keep the return type total (defensive, untestable via the
+        # library's own selection events).
+        return None
+
+    def _on_selection_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Track the selected ride; re-apply Delete enablement."""
+        self._selected = self._selected_row()
+        self._update_delete_enablement()
+        event.Skip()
+
+    def _update_delete_enablement(self) -> None:
+        """Gate the library's Delete button (R-18, spec §3).
+
+        Enabled only for a selected, non-RUNNING ride: with nothing
+        selected there is nothing to delete, and a RUNNING ride is
+        never deletable.
+        """
+        selected = self._selected
+        self.delete_button.Enable(
+            selected is not None and selected.status is not RideStatus.RUNNING
+        )
+
+    def _on_delete_clicked(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Open ``delete_ride_dlg`` for the selected ride (R-18).
+
+        Interpolates the ride's name into ``message_lbl`` (UX-DESKTOP
+        §4 -- a blank label is a failed assertion), arms the
+        type-to-confirm gate, and on a confirmed ``wxID_DELETE``
+        invokes the injected ``on_delete`` callback -- the seam E5.4
+        wires to ``Store.delete_ride``, which writes its backup first.
+        A RUNNING selection (or none) cannot reach here: the button is
+        disabled, and this guard re-checks anyway.
+        """
+        selected = self._selected
+        event.Skip()
+        # logic-coverage-exempt: T-3 -- both True arms are defensive:
+        # the Delete button is disabled for None/RUNNING selections
+        # (_update_delete_enablement), so a click cannot carry one here;
+        # the re-check keeps the open path safe by construction.
+        if selected is None or selected.status is RideStatus.RUNNING:
+            return
+        import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+        from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- wx-touching, deferred
+
+        dialog = wx.xrc.XmlResource.Get().LoadDialog(self.dialog, ids.DELETE_RIDE_DLG)
+        if dialog is None:
+            # logic-coverage-exempt: T-3 -- delete_ride_dlg is authored
+            # in library.xrc and loaded before any route opens the
+            # library; a None here means the resource is missing, which
+            # the functional load-time verification already fails on.
+            return
+        try:
+            message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+            if message_lbl is not None:
+                message_lbl.SetLabel(dialogs.delete_ride_message(selected.name))
+            dialogs.bind_delete_confirmation_gate(dialog, selected.name)
+            delete_button = wx.Window.FindWindowByName(WX_ID_DELETE, dialog)
+            if delete_button is not None:
+                # wxID_DELETE is not one of the ids wx auto-binds to
+                # end a modal (harness.py's measured note), so the
+                # confirmed Delete ends the dialog with its own id.
+                delete_button.Bind(wx.EVT_BUTTON, lambda click: dialog.EndModal(click.GetId()))
+            # logic-coverage-exempt: T-3 -- message_lbl and wxID_DELETE
+            # are frozen names in delete_ride_dlg's XRC (pages.py lists
+            # both), so the None arms above are unreachable defensive
+            # guards for wx's name lookup; the dialogs tests already
+            # cover the negative control-lookup path.
+            result = dialogs.run_dialog(dialog, opener=self.dialog)
+            if result == wx.ID_DELETE and self._on_delete is not None:
+                self._on_delete(selected.name)
+        finally:
+            if not dialog.IsBeingDeleted():
+                dialog.Destroy()
 
     def _apply_min_size(self) -> None:
         """Force the canvas's 520px floor, then Fit() the rest (D16).
