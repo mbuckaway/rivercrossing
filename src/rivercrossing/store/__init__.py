@@ -137,10 +137,10 @@ them open and later EPICs will build on them:
 - **E5.3.2/E5.4.1 UI boundary**: ``RideLibrary`` gets its R-18
   enablement and its Delete-button -> ``delete_ride_dlg`` wiring, and
   ``app.py`` threads a store-backed ``on_delete`` callback when a
-  store is open. With the demo data source (no store ride ids until
-  E5.4.1's library-live work), the callback finds no matching store
-  ride and is a silent no-op; the store-backed library E5.4.1 wires
-  is where the callback matches real rows.
+  store is open. With no store open the callback is ``None`` and the
+  no-store library shows the E5.4.2 empty state, so nothing matches a
+  store ride and Delete is a no-op; the store-backed library E5.4.1
+  wires is where the callback matches real rows.
 
 :class:`RideRow` is the small frozen summary ``rides()`` returns for
 the library -- id, name, event date, status -- with the full library

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""``main_frame``: the console (1a), wired to its demo/live DataSource.
+"""``main_frame``: the console (1a), wired to its live DataSource.
 
 xrc-windows.md section A's code-side footnote lists six things
 ``main.xrc`` cannot express: the crossings feed's DataView columns
@@ -197,7 +197,8 @@ class MainFrame:
                 :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
                 implementation applies (``EngineDataSource`` from
-                E4.4.1, ``DemoDataSource`` on screens still demo).
+                E4.4.1; ``rivercrossing.demo`` is test-only fixture
+                data since E5.4.2).
             card_images: The card bitmaps for the feed's Card column;
                 defaults to the packaged deck at 1x.
             resource: The loaded ``wx.xrc.XmlResource`` the Stop

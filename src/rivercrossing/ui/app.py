@@ -5,8 +5,12 @@ Phase-1 built a ``wx.App()`` and returned -- no frame, no menubar, no
 ``MainLoop`` -- so the packaged bundle launched and exited in ~0.14s
 with nothing on screen (E1.6.1's own report). This module assembles
 every already-tested piece (XRC, ``MainFrame``, the §15 route table,
-the accelerator table, ``DemoDataSource``) into a window that actually
-stays up.
+the accelerator table) into a window that actually stays up. E5.4.2
+retired the ``DemoDataSource`` wiring: no production module imports
+``rivercrossing.demo`` (import-linter contract), the bootstrap's
+windows read either a real store/engine-backed source or the
+``EmptyDataSource`` empty state, and demo.py remains as test-only
+fixture data.
 
 Two measured wx failure modes this module exists to avoid (AGENTS.md):
 
@@ -25,54 +29,60 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
   since a failed XRC load still names the resource it could not find.
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
-``quit_flow``, ``theme``, ``rivercrossing.demo``, ``rivercrossing.
-roster`` -- E3.2's seeded rider roster, :func:`~rivercrossing.ui.
-require_wx`) are imported at module scope, so this module itself
-stays importable even when wx cannot be (mirrors the guard the
-original stub's own docstring already promised). Every
-wx-touching name -- ``wx`` itself, its ``xrc`` submodule, the view
-classes, and the ``RiverCrossingApp`` subclass :func:`build_app`
-builds -- is imported/defined inside the function that first needs
-it, each behind its own :func:`require_wx` call. E3.4's Import/Export
-Riders CSV… routes (``_handle_import_csv``/``_handle_export_csv``)
-are two more such deferred names: both delegate straight to
-``rivercrossing.ui.views.rider_editor``'s own shared flow functions,
-the one place that route and ``rider_editor_dlg``'s own import_btn/
-export_btn both run the picker -> preview/write flow through (that
-module's own banner comment explains why it is hosted there, not
-here).
+``quit_flow``, ``theme``, ``rivercrossing.roster`` -- E3.2's seeded
+rider roster, :func:`~rivercrossing.ui.require_wx`) are imported at
+module scope, so this module itself stays importable even when wx
+cannot be (mirrors the guard the original stub's own docstring already
+promised). Every wx-touching name -- ``wx`` itself, its ``xrc``
+submodule, the view classes, and the ``RiverCrossingApp`` subclass
+:func:`build_app` builds -- is imported/defined inside the function
+that first needs it, each behind its own :func:`require_wx` call.
+E3.4's Import/Export Riders CSV… routes (``_handle_import_csv``/
+``_handle_export_csv``) are two more such deferred names: both
+delegate straight to ``rivercrossing.ui.views.rider_editor``'s own
+shared flow functions, the one place that route and
+``rider_editor_dlg``'s own import_btn/export_btn both run the picker
+-> preview/write flow through (that module's own banner comment
+explains why it is hosted there, not here).
 """
 
-import itertools
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.cards import Shoe
-from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
-from rivercrossing.ride import RideConfig, RideEngine
-from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
+from rivercrossing.ride import RideConfig, RideEngine, RideStatus
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, resume_flow, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
-from rivercrossing.ui.presenters.data_source import EngineDataSource, RideSummary
+from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataSource, RideSummary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rivercrossing.store import Store
-    from rivercrossing.ui.presenters.data_source import DataSource
 
 __all__ = ["build_app", "build_main_window", "main"]
 
-# E3.2's seeded roster (R-20): every mixed ride this app opens is
-# rider_pooled with room for teams up to this size.
+# E3.2's seeded roster default (R-20): every mixed ride this app opens
+# is rider_pooled with room for teams up to this size. The bootstrap
+# roster is EMPTY (no store-backed ride is open yet -- E5.4.2); the
+# mode still reads mixed/pooled so a ride the library later opens keeps
+# the same shape.
 _SEEDED_MAX_TEAM_SIZE = 4
 
+# The empty-state DataSource the windows E6/E7 have not wired to real
+# data yet read (E5.4.2): with no store-backed ride open, entry detail,
+# results and the no-store library render zero rows rather than demo
+# ones. Stateless, so one shared instance serves every route.
+_EMPTY_SOURCE = EmptyDataSource()
+
 # Riders > Entry Detail... has no plate to open with until a real ride
-# exists (EPIC 4+); "77" is the only plate rivercrossing.demo carries
-# entry_detail fixture data for, so it is what D1's menu route opens.
-_ENTRY_DETAIL_DEMO_PLATE = "77"
+# exists (EPIC 4+); with demo retired the dialog opens the empty state
+# (``EmptyDataSource.entry_detail`` ignores the key and returns an
+# empty view-model), so the lookup key itself no longer matters.
+_ENTRY_DETAIL_DEFAULT_PLATE = ""
 
 # The View row's own commands.py target (P8-D8): its 11 ids share one
 # route, dispatched further by event id below -- the theme trio to
@@ -84,11 +94,14 @@ _VIEW_ROUTE_TARGET = "view_setting"
 class _RouteContext:
     """The pieces every bound §15 route handler needs to act.
 
-    Threading these four together keeps every route-handling helper
-    below to at most one extra parameter, and keeps this module's one
-    :class:`DemoDataSource` construction (E1.2.4) to the single call
-    in :func:`build_main_window` -- every window a route later opens
-    reuses that same instance rather than constructing its own.
+    Threading these together keeps every route-handling helper below to
+    at most one extra parameter. E5.4.2 removed the ``data_source``
+    seam field: no window a route opens reads the demo source any more
+    (the empty-state windows read the module-level
+    :data:`_EMPTY_SOURCE`, the live console reads its own
+    ``EngineDataSource``, and the quit flow reads the live presenter's
+    engine), so the context no longer needs to carry a display-data
+    source at all.
 
     Not frozen (unlike a plain value record) because E5.4.1's library
     Open swaps the console in place: the route handlers bound in
@@ -99,13 +112,13 @@ class _RouteContext:
     Attributes:
         frame: ``main_frame``.
         resource: The loaded ``wx.xrc.XmlResource``.
-        data_source: The demo/live display-data seam.
         roster: The in-memory :class:`~rivercrossing.roster.Roster`
             ``rider_editor_dlg`` reads and writes directly (E3.2) --
             unlike every other window here, it is not a
             ``data_source`` projection, so it is threaded separately.
             E5.4.1's library Open replaces it with the opened ride's
-            store-reconstructed roster.
+            store-reconstructed roster; at bootstrap it is empty (no
+            store-backed ride is open yet, E5.4.2).
         app: The live ``wx.App`` -- carries ``really_quitting`` (the
             flag :func:`_on_query_end_session`/the exit route set so
             :func:`_on_main_frame_close` never re-opens a confirm
@@ -114,17 +127,18 @@ class _RouteContext:
         theme_controller: The one live :class:`theme.ThemeController`
             the View row's theme ids apply modes through (P8-D4).
         store: The live :class:`~rivercrossing.store.Store`, when the
-            app opened one (E5.2.1). ``None`` until the store-backed
-            bootstrap lands (E5.4.1); a confirmed quit closes the
-            open session through it (R-52's clean-quit signal).
+            app opened one (E5.2.1). ``None`` until a store-backed
+            bootstrap (E5.4.1); a confirmed quit closes the open
+            session through it (R-52's clean-quit signal).
         presenter: The live console's presenter, threaded so the
             Cards ▸ Undo Last Crossing route (and its Ctrl+Z
             accelerator) can fire ``presenter.on_undo``, the Finish
-            flow can fire ``on_finish`` (E4.4.4), and E5.4.1's
-            Reopen route can fire ``on_reopen``. Optional with a stub
-            fallback so route-level tests that construct
-            ``_RouteContext`` without a live console keep working
-            unchanged (test_app_open_target.py's
+            flow can fire ``on_finish`` (E4.4.4), the quit flow can
+            read the live ride status/name (:func:`_confirm_quit`,
+            E5.4.2), and E5.4.1's Reopen route can fire ``on_reopen``.
+            Optional with a stub fallback so route-level tests that
+            construct ``_RouteContext`` without a live console keep
+            working unchanged (test_app_open_target.py's
             ``_make_route_context``).
         console_view: The live :class:`~rivercrossing.ui.views.
             MainFrame` console, set by :func:`build_main_window`
@@ -138,7 +152,6 @@ class _RouteContext:
 
     frame: Any
     resource: Any
-    data_source: DataSource
     roster: Roster
     app: Any
     theme_controller: theme.ThemeController
@@ -156,49 +169,23 @@ class _RouteContext:
     active_ride_id: int | None = None
 
 
-def _seed_roster(data_source: DataSource) -> Roster:
-    """Build the mixed, rider_pooled Roster ``rider_editor_dlg`` opens.
-
-    Converts *data_source*'s ``riders()`` rows (``rivercrossing.demo``
-    today, E1.2.4) into a real, in-memory :class:`~rivercrossing.
-    roster.Roster`: a row with no team becomes a solo entry, and a run
-    of rows sharing one team name becomes that team's entry --
-    ``itertools.groupby`` keeps demo.py's own row order (R-20), since
-    every window that renders these rows already requires a team's
-    members to sit together. This keeps demo.py the one place these
-    fixture names/plates are written; nothing here repeats them.
-    """
-    roster = Roster(
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-        max_team_size=_SEEDED_MAX_TEAM_SIZE,
-    )
-    for team_name, rows in itertools.groupby(data_source.riders(), key=lambda row: row.team):
-        if team_name is None:
-            for row in rows:
-                roster.create_solo_entry(name=row.name, plate=row.plate)
-            continue
-        riders = [Rider(name=row.name, plate=row.plate) for row in rows]
-        roster.create_team_entry(display_name=team_name, riders=riders)
-    return roster
-
-
 def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]:
-    """Build the seeded, started ride the console runs (E4.4.1).
+    """Build the started ride the console runs at bootstrap (E4.4.1).
 
-    The app has no ride persistence yet (E5), so the console's ride is
-    created here from the same seeded roster ``rider_editor_dlg``
-    reads: a valid :class:`~rivercrossing.ride.RideConfig` matching
-    that roster's own settings, an 8-deck seeded shoe, and the real
-    wall clock. The engine is started so the console opens live
-    (RUNNING), exactly as ``DemoDataSource`` reported RUNNING before
-    E4.4.1 -- and so a typed plate records on the very first Enter.
+    With no store-backed ride open yet (E5.4.2), the console still
+    opens on a real engine: a valid :class:`~rivercrossing.ride.
+    RideConfig` matching *roster*'s own settings, an 8-deck seeded
+    shoe, and the real wall clock. The engine is started so the
+    console opens live (RUNNING), and a typed plate records on the
+    very first Enter once the roster holds that entry. The bootstrap
+    roster is empty until the library Open / resume flow loads a
+    store ride, so the fresh console is the correct empty state: zero
+    crossings, zero counters, full shoe, every plate refused as
+    unknown (R-31).
 
     This is the one place a ride is created at bootstrap; E5's
-    store-backed create/reopen flow replaces it (and the console's
-    ``EngineDataSource`` is what the "demo wiring line unused on this
-    screen" requirement hands the console, while other windows keep
-    ``DemoDataSource`` until E5.4.2).
+    store-backed create/reopen flow replaces it (``_switch_console_
+    to_ride``/``_resume_console_engine``).
 
     Returns:
         ``(engine, engine_source)`` -- the write side and the read-only
@@ -355,11 +342,11 @@ def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | 
 
     E5.3.2's R-18 seam: a confirmed Delete on ``delete_ride_dlg``
     calls this with the ride's name, and the store deletes it (writing
-    its backup first). With no store open there is nothing to delete;
-    until E5.4.1's library-live work feeds the library real store
-    rows, the demo rows name no store ride, so the callback resolves
-    no match and is a silent no-op -- the store module docstring's
-    E5.3.2/E5.4.1 boundary resolution.
+    its backup first). With no store open there is nothing to delete,
+    and the callback resolves no match and is a silent no-op -- the
+    store module docstring's E5.3.2/E5.4.1 boundary resolution. The
+    no-store library's rows are the E5.4.2 empty state (zero rows), so
+    there is no ride name to match either way.
     """
     store = context.store
     if store is None:
@@ -382,8 +369,8 @@ class _StoreLibrarySource:
     :meth:`~rivercrossing.ui.views.ride_library.RideLibrary.refresh`
     shows the change immediately. Rows carry the real ``ride_id`` so
     Open/Duplicate/Delete address the actual row. Only the library
-    needs this seam; the other windows keep ``DemoDataSource`` until
-    E5.4.2 retires it (module docstring's E5.3.2/E5.4.1 boundary).
+    needs this seam; with no store open the library reads the
+    E5.4.2 empty state (``_decorate``, zero rows) instead.
     """
 
     def __init__(self, store: Store) -> None:
@@ -516,21 +503,31 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
                 on_duplicate=on_duplicate,
             )
         else:
-            # No store: the demo library keeps its E1.5.2/E5.3.2
-            # behaviour -- demo rows, Delete seam only.
+            # No store open: the library is the E5.4.2 empty state --
+            # zero rides until a store-backed bootstrap or New Ride
+            # creates one; the Delete seam stays a no-op.
             RideLibrary(
                 window,
-                data_source=context.data_source,
+                data_source=_EMPTY_SOURCE,
                 on_delete=_library_delete_callback(context),
             )
     elif route.target == ids.RIDER_EDITOR_DLG:
+        # E5.4.2: the roster is the store's when a store-backed ride is
+        # open (E5.4.1's library Open replaced context.roster), and the
+        # empty bootstrap roster otherwise -- the rider editor shows a
+        # correct empty state until a real ride is opened.
         RiderEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
         RideSetup(window, roster=context.roster)
     elif route.target == ids.ENTRY_DETAIL_DLG:
-        EntryDetailDialog(window, _ENTRY_DETAIL_DEMO_PLATE, data_source=context.data_source)
+        # E5.4.2: no store-backed ride is selected, so entry detail is
+        # the empty state (E7 wires the real per-entry lookup, R-38's
+        # deep-link); the lookup key is irrelevant to the empty source.
+        EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
     elif route.target == ids.RESULTS_FRAME:
-        ResultsWindow(window, data_source=context.data_source)
+        # E5.4.2: results render the empty standings state until E6
+        # wires real placed rows from the finished ride.
+        ResultsWindow(window, data_source=_EMPTY_SOURCE)
     elif route.target == ids.SELFTEST_DLG:
         SelfTestDialog(window)
 
@@ -807,6 +804,13 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     the one seam every dialog in this codebase shows through -- and
     maps the result.
 
+    The live ride status and name come from the console's own
+    presenter engine (E5.4.2: the ``data_source`` seam is gone; the
+    quit flow asks the live console, never a display-data source).
+    Route-level tests construct ``_RouteContext`` without a live
+    presenter and never reach this path; the DRAFT/"The ride"
+    fallbacks mirror the finish route's own presenter-less stub.
+
     A confirmed ``QuitOutcome.QUIT`` closes the live session through
     *context*.store (E5.2.1: stamp ``closed_at`` so the next launch
     reads a clean quit, not a crash); a ``QuitOutcome.FINISH_FIRST``
@@ -817,11 +821,17 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     """
     wx = require_wx()
 
-    dialog_name = quit_flow.dialog_for_status(context.data_source.ride_status())
+    presenter = context.presenter
+    # logic-coverage-exempt: T-3 -- the DRAFT/"The ride" fallback arms
+    # are unreachable in every live construction: _confirm_quit runs
+    # only from post-bootstrap route handlers, which always have a
+    # live presenter threaded (build_main_window's replace), mirroring
+    # the finish route's own presenter-less stub exemption.
+    status = presenter.engine.state if presenter is not None else RideStatus.DRAFT
+    dialog_name = quit_flow.dialog_for_status(status)
     dialog = context.resource.LoadDialog(None, dialog_name)
     if dialog_name == ids.EXIT_RUNNING_DLG:
-        rides = context.data_source.rides()
-        ride_name = rides[0].name if rides else "The ride"
+        ride_name = presenter.engine.config.name if presenter is not None else "The ride"
         message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
         if message_lbl is not None:
             message_lbl.SetLabel(quit_flow.running_exit_message(ride_name))
@@ -1096,10 +1106,10 @@ def _resume_console_engine(
       Store.load_engine` with the ride's roster shell), and hands the
       console that engine/source -- elapsed derives from the engine's
       replayed ``actual_start`` and the wall clock (R-30).
-    - **Open library** opens ``ride_library_dlg`` instead (the demo
-      seam until E5.4.2) and falls through to the demo console.
-    - **No store, or nothing to resume** returns ``None`` -- the demo
-      console path stays.
+    - **Open library** opens ``ride_library_dlg`` (the store-backed
+      library, E5.4.1) and falls through to the bootstrap console.
+    - **No store, or nothing to resume** returns ``None`` -- the
+      bootstrap console path stays (E5.4.2: an empty real engine).
 
     Returns:
         ``(engine, source)`` for the console when the ride was
@@ -1201,11 +1211,12 @@ def build_main_window(
     every §15 route and the theme controller's own
     ``EVT_SYS_COLOUR_CHANGED`` re-apply, and wires the two
     process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
-    (Phase 8, P8-D1/P8-D2/P8-D4) -- threading the one
-    :class:`DemoDataSource` this function constructs through every
-    window the bootstrap can reach. Deleting ``rivercrossing.demo``
-    breaks exactly this module's import line and this construction
-    line, and nothing else (E1.2.4's removable seam).
+    (Phase 8, P8-D1/P8-D2/P8-D4). E5.4.2 retired the
+    :class:`DemoDataSource` construction: the bootstrap roster is
+    empty (no store-backed ride is open), the console reads its own
+    live ``EngineDataSource``, and the E6/E7 windows read the
+    :data:`_EMPTY_SOURCE` empty state -- no production module imports
+    ``rivercrossing.demo`` any more (import-linter contract).
 
     Split out of :func:`main` so a test can drive the whole
     construction path without ever entering ``MainLoop``, which
@@ -1242,13 +1253,19 @@ def build_main_window(
     frame.SetMenuBar(menubar)
     _check_default_menu_radios(menubar)
 
-    data_source = DemoDataSource()  # the one demo seam construction (E1.2.4)
-    roster = _seed_roster(data_source)
+    # E5.4.2: no store-backed ride is open at bootstrap, so the roster
+    # is empty (rider_editor_dlg shows the empty state; the library
+    # Open / resume flow replaces it with the store's roster). The
+    # mixed/pooled mode keeps the E3.2 default shape.
+    roster = Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        max_team_size=_SEEDED_MAX_TEAM_SIZE,
+    )
     theme_controller = theme.ThemeController(app)
     context = _RouteContext(
         frame=frame,
         resource=resource,
-        data_source=data_source,  # other windows keep demo until E5/E6
         roster=roster,
         app=app,
         theme_controller=theme_controller,
@@ -1260,7 +1277,8 @@ def build_main_window(
 
     # E5.2.2: a store-backed launch with a running ride at the
     # previous exit shows resume_dlg (R-52) and hands the console the
-    # store-loaded engine; anything else keeps the demo console path.
+    # store-loaded engine; anything else keeps the bootstrap console
+    # path (an empty real engine, E5.4.2).
     resumed = _resume_console_engine(context, clock)
     if resumed is None:
         engine, engine_source = _build_console_engine(roster)
@@ -1280,10 +1298,10 @@ def build_main_window(
 
     _apply_accelerators(frame, menubar)
     # theme_controller is kept alive by _RouteContext, threaded through
-    # every route handler the same way data_source is. console_view is
-    # threaded the same way so E5.4.1's library Open can swap the
-    # console's presenter; active_ride_id records the store ride the
-    # resume flow continued, if any (File ▸ Duplicate Ride… reads it).
+    # every route handler. console_view is threaded the same way so
+    # E5.4.1's library Open can swap the console's presenter;
+    # active_ride_id records the store ride the resume flow continued,
+    # if any (File ▸ Duplicate Ride… reads it).
     context = replace(
         context,
         presenter=_presenter,

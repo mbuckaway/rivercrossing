@@ -24,10 +24,13 @@ non-degenerate floor. See this task's own report for the measured
 result and how the six-button action row, not the DataView content,
 turned out to dominate it.
 
-The demo fixture's own comment (``rivercrossing.demo``) records that
-``cards_held`` only carries 5 of the entry's 9 dealt cards -- the
-rest are illegible in the canvas and are not invented here either;
-``show_entry`` renders exactly what the fixture gives it.
+The test-only fixture's own comment (``rivercrossing.demo``) records
+that its ``cards_held`` only carries 5 of the entry's 9 dealt cards --
+the rest are illegible in the canvas and are not invented there;
+``show_entry`` renders exactly what the source gives it. E5.4.2 wired
+the app's entry-detail route to ``EmptyDataSource`` (no store-backed
+entry selected yet, E7 wires the real lookup), so the dialog opens
+with an empty header/members/cards/laps until then.
 
 ``_find`` and the card-imagelist cache are now shared via
 ``ui.views._support`` -- see that module's docstring for why they

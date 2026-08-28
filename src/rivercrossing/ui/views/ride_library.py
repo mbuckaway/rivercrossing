@@ -50,11 +50,12 @@ class RidesSource(Protocol):
     """The one read this view needs: the library's rows.
 
     Narrower than the full ``DataSource`` display seam on purpose: the
-    ride library renders exactly one method -- ``rides()`` -- so both
-    ``DemoDataSource`` and the store-backed
-    ``app._StoreLibrarySource`` satisfy it, and a future library that
-    needs more adds the member it actually calls (the "add the member
-    once the presenter calls it" precedent main_frame.py records).
+    ride library renders exactly one method -- ``rides()`` -- so the
+    store-backed ``app._StoreLibrarySource``, the E5.4.2
+    ``EmptyDataSource`` and a test stub all satisfy it, and a future
+    library that needs more adds the member it actually calls (the
+    "add the member once the presenter calls it" precedent main_frame.
+    py records).
     """
 
     def rides(self) -> list[RideSummary]:
@@ -169,15 +170,15 @@ class RideLibrary:
                 app bootstrap) already loaded from ``library.xrc``.
             data_source: The library's row source -- any object with a
                 ``rides()`` (the :class:`RidesSource` Protocol), so
-                both ``DemoDataSource`` and the store-backed source
-                ``app.py`` wires in apply.
+                the store-backed source ``app.py`` wires in and the
+                E5.4.2 ``EmptyDataSource`` both apply.
             on_delete: Called with the selected ride's name when
                 ``delete_ride_dlg`` confirms a Delete; ``None`` leaves
                 the dialog's confirm a no-op (the app threads a
                 store-backed callback when a store is open, E5.3.2's
                 module-docstring resolution).
             on_open: Called with the selected ride when Open is
-                clicked; ``None`` leaves the button a no-op (the demo
+                clicked; ``None`` leaves the button a no-op (the empty
                 library, which has no store ride to load).
             on_new: Called when New is clicked (the app opens the ride
                 setup flow); ``None`` leaves it a no-op.

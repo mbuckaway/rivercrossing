@@ -3,15 +3,16 @@
 
 Every presenter reads its screen's display data through one
 ``DataSource`` -- read-only, and the same shape whether it is backed
-by ``rivercrossing.demo`` (E1.2.4, fixture data) or the real
-``rivercrossing.store``-backed source that replaces it in EPICs 4-5
-(module-skeletons.md ownership table). The row/view-model dataclasses
-below are what each window's Protocol (``console.py``, ``riders.py``,
-etc.) and this seam pass back and forth; they are deliberately shaped
-like the columns each window actually draws (xrc-windows.md), not
-like the eventual core domain models (``entry``, ``rider``, ...),
-which do not exist yet this early in the build order (S3) and would
-tie this UI-only seam to modules several EPICs away.
+by ``rivercrossing.demo`` (E1.2.4, test-only fixture data since
+E5.4.2), the real ``rivercrossing.store``-backed source, the live
+``EngineDataSource``, or the ``EmptyDataSource`` empty state. The
+row/view-model dataclasses below are what each window's Protocol
+(``console.py``, ``riders.py``, etc.) and this seam pass back and
+forth; they are deliberately shaped like the columns each window
+actually draws (xrc-windows.md), not like the eventual core domain
+models (``entry``, ``rider``, ...), which do not exist yet this early
+in the build order (S3) and would tie this UI-only seam to modules
+several EPICs away.
 
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
@@ -20,11 +21,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryType, Roster
 from rivercrossing.standings import rank
 
 if TYPE_CHECKING:
-    from rivercrossing.ride import Event, RideEngine, RideStatus
+    from rivercrossing.ride import Event, RideEngine
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,10 +146,12 @@ class AuditRow:
 class DataSource(Protocol):
     """Read-only display data feeding every presenter.
 
-    One seam, one shape, for every screen's fixture/real data: the
-    E1.2.4 ``DemoDataSource`` implements this against the canvas's
-    hard-coded rows; a store-backed implementation replaces it,
-    unchanged from every presenter's point of view, in EPICs 4-5.
+    One seam, one shape, for every screen's real/empty data: the
+    E4.4.1 ``EngineDataSource`` serves the live console; the E5.4.2
+    ``EmptyDataSource`` serves the windows with no store-backed data
+    yet (results, entry detail, the no-store library); and the E1.2.4
+    ``DemoDataSource`` remains as test-only fixture data (importable
+    from tests only since E5.4.2).
     """
 
     def feed_rows(self) -> list[FeedRow]:
@@ -245,12 +249,13 @@ class EngineDataSource:
     """Real ``DataSource`` over ``(engine, roster)`` (E4.4.1).
 
     The console's live source: every feed row, counter and status
-    derives from a ``RideEngine`` (and its roster), never from
-    ``rivercrossing.demo`` -- the "demo wiring line unused on this
-    screen" requirement. The non-console methods (``rides``/``riders``/
-    ``entry_detail``/``standings``/``audit_rows``) are implemented
-    simply and correctly here for the windows that will consume them;
-    E5/E6 replace them with richer store-backed versions.
+    derives from a ``RideEngine`` (and its roster), never from a
+    display-data seam (E4.4.1's "demo wiring line unused on this
+    screen" requirement; the seam itself retired in E5.4.2). The
+    non-console methods (``rides``/``riders``/``entry_detail``/
+    ``standings``/``audit_rows``) are implemented simply and correctly
+    here for the windows that will consume them; E5/E6 replace them
+    with richer store-backed versions.
 
     Doc-silence resolutions (pinned here, this task's own):
 
@@ -431,3 +436,56 @@ class EngineDataSource:
             )
             for event in reversed(self._engine.events)
         ]
+
+
+class EmptyDataSource:
+    """The empty-state ``DataSource`` for screens with no data yet.
+
+    E5.4.2: the demo seam's replacement on the windows E6/E7 have not
+    wired to real data -- with no store-backed ride open, the ride
+    library, rider editor, results, entry detail and audit screens
+    must render a correct EMPTY state rather than demo rows. Every
+    method returns the zero/empty value for its screen -- no rows, no
+    counters, a DRAFT ride, and an empty entry detail for any plate.
+    Production code (the app bootstrap wires it in ``ui.app``), not a
+    test double; it satisfies ``DataSource`` exactly like
+    ``DemoDataSource`` and ``EngineDataSource`` do.
+    """
+
+    def feed_rows(self) -> list[FeedRow]:
+        """Return no console crossings feed rows."""
+        return []
+
+    def counters(self) -> Counters:
+        """Return the zero console counters."""
+        return Counters(crossings=0, cards_dealt=0, on_course=0, shoe_remaining=0, shoe_total=0)
+
+    def ride_status(self) -> RideStatus:
+        """Return DRAFT -- no ride is open."""
+        return RideStatus.DRAFT
+
+    def rides(self) -> list[RideSummary]:
+        """Return no ride library rows."""
+        return []
+
+    def riders(self) -> list[RiderRow]:
+        """Return no rider editor rows."""
+        return []
+
+    def entry_detail(self, plate: str) -> EntryDetail:  # noqa: ARG002 -- DataSource's signature, unused by the empty state
+        """Return an empty detail view-model for any *plate*.
+
+        The entry-detail window opens with no entry selected; the view
+        renders the empty header/members/cards/laps rather than
+        crashing on a plate no store-backed entry owns yet (E7 wires
+        the real per-entry lookup, R-38's deep-link).
+        """
+        return EntryDetail(header="", members="", cards_held=(), laps=())
+
+    def standings(self) -> list[StandingsRow]:
+        """Return no results standings rows."""
+        return []
+
+    def audit_rows(self) -> list[AuditRow]:
+        """Return no audit trail rows."""
+        return []

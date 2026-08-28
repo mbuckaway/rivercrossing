@@ -72,8 +72,8 @@ JOKER_DISPLAY = "JK★"
 
 # D16: the canvas draws this window at 720px; XRC has no window-level
 # minsize (results.xrc's own header notes this and defers to code).
-# Height is Fit()'s own measurement of the real, demo-populated
-# sizer content -- see this task's own report for how it was measured.
+# Height is Fit()'s own measurement of the real sizer content -- see
+# this task's own report for how it was measured.
 MIN_SIZE = (720, 442)
 
 
