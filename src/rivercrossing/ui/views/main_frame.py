@@ -70,6 +70,14 @@ RESUME_INFOBAR = "resume_infobar"
 REOPENED_INFOBAR = "reopened_infobar"
 FINISHED_INFOBAR = "finished_infobar"
 
+# The REOPENED corrections banner (spec §3, R-36): the clock stays
+# closed and live plate entry stays off; the operator edits, voids or
+# adds crossings, then finishes again. Shown by set_state on REOPENED.
+REOPENED_BANNER = (
+    "This ride is open for corrections — entry is locked. "
+    "Edit, void, or add crossings, then finish again."
+)
+
 # xrc-windows.md section A: "Min frame 1100x700, fits 1366x768."
 # XRC has no window-level minsize property (main.xrc's own header) --
 # only <size>, which sets the *initial* size, not the floor.
@@ -382,16 +390,21 @@ class MainFrame:
     def set_state(self, status: RideStatus) -> None:
         """Reflect the ride's lifecycle state (ConsoleView).
 
-        Minimal for this task: the status label and record-crossing
-        row enablement (A4: ``record_btn`` tracks ``plate_input``,
-        both live only in RUNNING). The DRAFT/FINISHED/REOPENED
-        banner variants xrc-windows.md's footnote lists are a later
-        phase's job.
+        The status label and record-crossing row enablement (A4:
+        ``record_btn`` tracks ``plate_input``, both live only in
+        RUNNING), and the REOPENED corrections banner: REOPENED is a
+        corrections-only state (spec §3, R-36), so the console shows
+        ``reopened_infobar`` to say entry is off and corrections are
+        on (E5.2.2), and dismisses it for every other status.
         """
         self.ride_status_lbl.SetLabel(status.value.upper())
         running = status == RideStatus.RUNNING
         self.plate_input.Enable(running)
         self.record_btn.Enable(running)
+        if status is RideStatus.REOPENED:
+            self.reopened_infobar.ShowMessage(REOPENED_BANNER, wx.ICON_INFORMATION)
+        else:
+            self.reopened_infobar.Dismiss()
 
     def focus_entry(self) -> None:
         """Return focus to the plate entry field (ConsoleView)."""

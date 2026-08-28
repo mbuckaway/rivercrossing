@@ -63,6 +63,27 @@ them open and later EPICs will build on them:
   second-newest ``app_session`` row -- the session the current open's
   row supersedes -- never the newest open row, whose ``closed_at`` is
   NULL by construction and would otherwise always read as a crash.
+- **resume reading (E5.2.2)**: :meth:`Store.previous_session` is the
+  richer reading R-52's dialog needs -- state, the running ride's id
+  and the copy's time -- and :meth:`Store.session_state` is its thin
+  state-only projection, so the two can never drift. :meth:`Store.
+  set_active_ride` records the running ride on the *current* open row
+  (the resume dialog only learns the ride after :meth:`Store.open`
+  inserted the session); a clean quit then stamps ``closed_at`` on a
+  row that carries the ride.
+- **crash copy time (E5.2.2)**: spec §3 words a crash "closed
+  unexpectedly at 12:41 (last heartbeat)". The 30 s session heartbeat
+  task spec §10 names does not exist yet, so ``heartbeat_at`` is NULL
+  in every store this task can build; :meth:`Store.previous_session`
+  falls back to ``opened_at`` -- the last instant the crashed session
+  is known to have been alive -- and E5.3+ replaces the fallback with
+  real heartbeat writes.
+- **roster shell (E5.2.2)**: :meth:`Store.roster_for` returns an
+  *empty* :class:`~rivercrossing.roster.Roster` carrying the ride's
+  own entry_mode/plate_model/max_team_size. No Store method writes
+  entry/rider rows yet (full roster-from-DB is E5.4.1), so an empty
+  roster is the only honest reconstruction -- the shell
+  :meth:`Store.load_engine` needs to rebuild a console.
 
 :class:`RideRow` is the small frozen summary ``rides()`` returns for
 the library -- id, name, event date, status -- with the full library
@@ -93,6 +114,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FutureSchemaVersionError",
+    "PreviousSession",
     "RideNotFoundError",
     "RideRow",
     "SessionState",
@@ -218,6 +240,33 @@ class SessionState(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class PreviousSession:
+    """The previous app session's record, for the E5.2.2 resume reading.
+
+    ``session_state()`` answers only *whether* the previous session
+    was a clean quit, a crash or a quit-keep-running; the resume
+    dialog also needs *which* ride was running and *when* the session
+    ended, so :meth:`Store.previous_session` returns all three as one
+    frozen record (R-52).
+
+    Attributes:
+        state: How the previous session ended (a :class:`SessionState`).
+        ride_id: The ride that was running at that session's end
+            (``app_session.active_ride_id``); ``None`` when no ride
+            was running.
+        ended_at: The instant the dialog's copy shows: ``closed_at``
+            for a clean quit, else the last ``heartbeat_at`` -- today
+            ``opened_at``, since no heartbeat task writes yet (module
+            docstring's E5.2.2 resolution). ``None`` only on a fresh
+            database with no prior session.
+    """
+
+    state: SessionState
+    ride_id: int | None
+    ended_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
 class RideRow:
     """One ride's library summary (id, name, date, status).
 
@@ -303,6 +352,24 @@ class Store:
                 (now,),
             )
 
+    def _previous_session_row(self) -> sqlite3.Row | None:
+        """Return the previous ``app_session`` row, or None if none.
+
+        The one row-reading both :meth:`session_state` and
+        :meth:`previous_session` use: the second-newest row -- the
+        session the current :meth:`open` call's row supersedes, never
+        the current open row (whose ``closed_at`` is NULL by
+        construction, and whose ``active_ride_id`` the resume flow may
+        not even have set yet).
+        """
+        return cast(
+            "sqlite3.Row | None",
+            self._conn.execute(
+                "SELECT closed_at, active_ride_id, heartbeat_at, opened_at"
+                " FROM app_session ORDER BY id DESC LIMIT 1 OFFSET 1"
+            ).fetchone(),
+        )
+
     def session_state(self) -> SessionState:
         """Return the PREVIOUS session's state (launch reading, R-52).
 
@@ -325,16 +392,89 @@ class Store:
         Returns:
             The previous session's :class:`SessionState`.
         """
+        return self.previous_session().state
+
+    def previous_session(self) -> PreviousSession:
+        """Return the PREVIOUS session's full resume record (E5.2.2).
+
+        The R-52 reading behind :meth:`session_state`, carrying the
+        three fields the resume dialog actually words its copy from:
+        the state (same closed_at/active_ride_id logic), the running
+        ride's id, and the instant the copy's time shows --
+        ``closed_at`` for a clean quit, else the last ``heartbeat_at``,
+        falling back to ``opened_at`` while no heartbeat task writes
+        (module docstring's E5.2.2 resolution).
+
+        Returns:
+            The previous session's :class:`PreviousSession`.
+        """
+        row = self._previous_session_row()
+        if row is None:
+            return PreviousSession(SessionState.CLEAN_QUIT, None, None)
+        if row["closed_at"] is None:
+            state = SessionState.CRASHED
+            ended_epoch = (
+                row["heartbeat_at"] if row["heartbeat_at"] is not None else row["opened_at"]
+            )
+        elif row["active_ride_id"] is not None:
+            state = SessionState.RUNNING_AT_EXIT
+            ended_epoch = row["closed_at"]
+        else:
+            state = SessionState.CLEAN_QUIT
+            ended_epoch = row["closed_at"]
+        return PreviousSession(
+            state=state,
+            ride_id=row["active_ride_id"],
+            ended_at=_from_epoch(ended_epoch),
+        )
+
+    def set_active_ride(self, ride_id: int) -> None:
+        """Record the running ride on the OPEN session (E5.2.2, R-52).
+
+        :meth:`open` inserts the launch session before the bootstrap
+        knows which ride -- if any -- the resume dialog chose to
+        continue, so Continue marks that open row here: a later clean
+        quit (:meth:`close_session`) then stamps ``closed_at`` on a
+        session that carries the ride, and a crash reads
+        CRASHED-with-a-ride. With no session row at all this is a
+        no-op (nothing updates).
+        """
+        with self._conn:
+            self._conn.execute(
+                "UPDATE app_session SET active_ride_id = ?"
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
+                (ride_id,),
+            )
+
+    def roster_for(self, ride_id: int) -> Roster:
+        """Return an empty Roster carrying *ride_id*'s shape (E5.2.2).
+
+        Full roster-from-DB reconstruction is E5.4.1's job (module
+        docstring); until then no Store method writes entry/rider
+        rows, so the only honest reconstruction is an empty roster
+        with the ride's own entry_mode/plate_model/max_team_size --
+        the shell :meth:`load_engine` needs to rebuild a console.
+
+        Args:
+            ride_id: The ride whose shape the roster must carry.
+
+        Returns:
+            A new, empty :class:`~rivercrossing.roster.Roster`.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+        """
         row = self._conn.execute(
-            "SELECT closed_at, active_ride_id FROM app_session ORDER BY id DESC LIMIT 1 OFFSET 1"
+            "SELECT entry_mode, plate_model, max_team_size FROM ride WHERE id = ?",
+            (ride_id,),
         ).fetchone()
         if row is None:
-            return SessionState.CLEAN_QUIT
-        if row["closed_at"] is None:
-            return SessionState.CRASHED
-        if row["active_ride_id"] is not None:
-            return SessionState.RUNNING_AT_EXIT
-        return SessionState.CLEAN_QUIT
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        return Roster(
+            entry_mode=EntryMode(row["entry_mode"]),
+            plate_model=PlateModel(row["plate_model"]),
+            max_team_size=row["max_team_size"],
+        )
 
     def create_ride(self, config: RideConfig) -> int:
         """Persist one ride from its config; return the new ride id.
