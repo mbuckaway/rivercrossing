@@ -50,8 +50,10 @@ from rivercrossing.ride import (
     RideConfig,
     RideConfigError,
     RideEngine,
+    RideEngineError,
     RideStatus,
     StartBlockedError,
+    UnknownEventActionError,
     UnknownPlateError,
 )
 from rivercrossing.roster import EntryMode, EntryStatus, PlateModel, Rider, Roster
@@ -974,6 +976,30 @@ def test_undo_last_removes_lap_restitutes_card_and_audits() -> None:
     assert results["12"].cards == (first.card,)
 
 
+def test_undo_last_after_manual_deal_retires_crossing_card_not_front() -> None:
+    """Undo after a manual deal never disturbs the manual card (R-33).
+
+    The manual card is the shoe's last deal, so the undone crossing's
+    own card cannot return to the front; it retires with the shoe
+    instead, deterministically (E5.1.2 replay reproduces the same shoe
+    point). The manual credit stays in the hand.
+    """
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    crossing = engine.record_crossing("12", at=_dt(10, 30))
+    manual = engine.deal_manual("12", reason="replacement card")
+
+    event = engine.undo_last()
+
+    assert event.action == "undo"
+    assert event.payload["card"] == crossing.card.code()
+    assert engine.lap_times("12") == ()
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    manual_card = Card.parse(str(manual.payload["card"]))
+    assert results["12"].cards == (manual_card,)
+    assert engine._shoe.dealt == 2  # crossing card retired; manual card still dealt
+
+
 def test_undo_then_rerecord_deals_the_same_card_from_the_shoe_front() -> None:
     """Undo restitutes the card; re-record deals it again (R-33)."""
     engine, _ = _make_engine(config=_config(min_lap_s=1))
@@ -1401,3 +1427,229 @@ def test_engine_config_property_returns_the_frozen_setup_config() -> None:
 
     assert engine.config is not None
     assert engine.config.name == "GORBA EPIC 2026"
+
+
+# ======================= E5.1.2 replay seam: apply (task-briefs.md)
+
+
+def test_apply_start_event_transitions_to_running_and_records_event() -> None:
+    """apply("start") rebuilds RUNNING from the payload actual_start."""
+    engine, _ = _make_engine()
+    event = Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.RUNNING
+    assert engine.events == (event,)
+
+
+def test_apply_continue_event_keeps_actual_start_unchanged() -> None:
+    """apply("continue") resumes a RUNNING engine; start stays put."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(action="continue", payload={"actual_start": "2026-09-20T10:00:00"})
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.RUNNING
+    assert engine.elapsed() == 0.0
+    assert engine.events[-1] == event
+
+
+def test_apply_record_crossing_event_credits_lap_and_deals_deterministic_card() -> None:
+    """apply("record_crossing") credits one lap from the payload."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="record_crossing",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "lap": 1,
+            "crossed_at": "2026-09-20T10:02:00",
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.lap_times("12") == (120.0,)
+    assert engine.events[-1] == event
+
+
+def test_apply_set_start_time_event_backdates_actual_start() -> None:
+    """apply("set_start_time") recomputes lap-1 from the payload."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 2))
+    event = Event(
+        action="set_start_time",
+        payload={
+            "actual_start": "2026-09-20T09:55:00",
+            "previous_start": "2026-09-20T10:00:00",
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.lap_times("12") == (420.0,)
+    assert engine.events[-1] == event
+
+
+def test_apply_confirm_held_event_releases_held_card_into_the_hand() -> None:
+    """apply("confirm_held") releases a held card by entry/seq."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    event = Event(
+        action="confirm_held",
+        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+    )
+
+    engine.apply(event)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (held.card,)
+    assert engine.events[-1] == event
+
+
+def test_apply_void_held_event_discards_held_card_never_credited() -> None:
+    """apply("void_held") discards the held card, never credited."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    event = Event(
+        action="void_held",
+        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+    )
+
+    engine.apply(event)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == ()
+    assert engine.events[-1] == event
+
+
+def test_apply_undo_event_reverses_the_last_crossing() -> None:
+    """apply("undo") reverses the most recent crossing (R-33)."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    second = engine.record_crossing("12", at=_dt(10, 32))
+    event = Event(
+        action="undo",
+        payload={
+            "entry_id": "12",
+            "seq": 2,
+            "crossed_at": "2026-09-20T10:32:00",
+            "card": second.card.code(),
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.lap_times("12") == (1800.0,)
+    assert engine.events[-1] == event
+
+
+def test_apply_deal_manual_event_credits_card_with_the_payload_reason() -> None:
+    """apply("deal_manual") deals one card with the payload reason."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    reference = Shoe(decks=8, jokers_per_deck=2, seed=20260920)
+    expected = reference.deal()[0]
+    event = Event(
+        action="deal_manual",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "card": expected.code(),
+            "reason": "replacement card",
+        },
+    )
+
+    engine.apply(event)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (expected,)
+    assert engine.events[-1] == event
+
+
+def test_apply_stop_event_locks_entry_with_refusal_result() -> None:
+    """apply("stop") locks plate entry; the ride stays RUNNING."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(action="stop", payload={"stopped_at": "2026-09-20T10:01:00"})
+
+    engine.apply(event)
+
+    result = engine.record_crossing("12")
+    assert result.accepted is False
+    assert result.reason == "ride is stopped"
+
+
+def test_apply_finish_event_closes_shoe_and_marks_finished() -> None:
+    """apply("finish") transitions to FINISHED and closes the shoe."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(action="finish", payload={"finished_at": "2026-09-20T12:00:00"})
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.FINISHED
+    with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
+        engine._shoe.deal()
+
+
+def test_apply_reopen_event_returns_finished_ride_to_reopened() -> None:
+    """apply("reopen") moves FINISHED -> REOPENED (corrections-only)."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.finish()
+    event = Event(action="reopen", payload={"reopened_at": "2026-09-20T12:05:00"})
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.REOPENED
+
+
+def test_apply_shoe_reshuffle_event_is_a_noop_not_a_reshuffle() -> None:
+    """Replaying the reshuffle event never double-reshuffles the shoe.
+
+    The event is the audit record of a reshuffle the deal loop already
+    performed; on replay the next deal (not this event) reproduces it
+    when the fresh shoe empties (spec section 4, task-briefs E5.1.2's
+    own "do not store the dealt card" decision).
+    """
+    engine, _ = _make_engine(config=_config(deck_count=1, jokers_per_deck=0, min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    event = Event(action="shoe_reshuffle", payload={"cycle": 2})
+
+    engine.apply(event)
+
+    assert engine.events == (
+        Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+    )
+    assert engine._shoe.cycle == 1
+
+
+def test_apply_unknown_event_action_raises_unknown_event_action_error() -> None:
+    """An event the dispatch does not know fails loudly (negative)."""
+    engine, _ = _make_engine()
+
+    with pytest.raises(UnknownEventActionError, match=re.escape("bogus_action")):
+        engine.apply(Event(action="bogus_action", payload={}))
+
+
+def test_apply_confirm_held_for_an_unrecorded_crossing_raises_clear_error() -> None:
+    """confirm_held for a crossing the engine never saw fails loudly."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="confirm_held",
+        payload={"entry_id": "12", "seq": 99, "card": "AS"},
+    )
+
+    with pytest.raises(RideEngineError, match=re.escape("no crossing")):
+        engine.apply(event)

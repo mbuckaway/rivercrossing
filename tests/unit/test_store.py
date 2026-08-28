@@ -26,9 +26,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from rivercrossing.ride import RideConfig, RideStatus
-from rivercrossing.roster import EntryMode, PlateModel
-from rivercrossing.store import FutureSchemaVersionError, RideRow, Store, StoreError
+from rivercrossing.ride import Event, RideConfig, RideStatus
+from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.store import (
+    FutureSchemaVersionError,
+    RideNotFoundError,
+    RideRow,
+    Store,
+    StoreError,
+)
 from rivercrossing.store.migrations import LATEST_SCHEMA_VERSION
 
 if TYPE_CHECKING:
@@ -444,3 +450,291 @@ def test_store_rides_orders_by_created_at(tmp_path: Path) -> None:
         assert [row.id for row in store.rides()] == [first, second]
     finally:
         store.close()
+
+
+# ----------------------------------------- E5.1.2 append + load_engine
+
+
+def _replay_roster() -> Roster:
+    """Build the MIXED rider_pooled roster load_engine tests pass in."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(name="Alice", plate="12")
+    return roster
+
+
+def test_store_append_persists_audit_row_with_event_timestamp(tmp_path: Path) -> None:
+    """Appending writes one audit row; at uses the event time."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT at, action, payload_json FROM audit WHERE ride_id = ?", (ride_id,)
+        ).fetchone()
+    assert row is not None
+    naive = datetime(2026, 9, 20, 10, 2)  # noqa: DTZ001 -- the naive event timestamp
+    assert row["at"] == int(naive.astimezone().timestamp())
+    assert row["action"] == "record_crossing"
+    assert json.loads(row["payload_json"]) == {
+        "plate": "12",
+        "entry_id": "12",
+        "lap": 1,
+        "crossed_at": "2026-09-20T10:02:00",
+    }
+
+
+def test_store_append_event_without_timestamp_stores_now(tmp_path: Path) -> None:
+    """A timestamp-less event gets at = append time (now)."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id,
+            Event(
+                action="deal_manual",
+                payload={"plate": "12", "entry_id": "12", "card": "AS", "reason": "manual"},
+            ),
+        )
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT at, action, payload_json FROM audit WHERE ride_id = ?", (ride_id,)
+        ).fetchone()
+    assert row is not None
+    assert isinstance(row["at"], int)
+    assert row["at"] > 0
+    assert row["action"] == "deal_manual"
+    assert json.loads(row["payload_json"])["reason"] == "manual"
+
+
+def test_store_append_returns_none(tmp_path: Path) -> None:
+    """Append is a fire-and-persist call with no return value."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+
+        result = store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+    finally:
+        store.close()
+
+    assert result is None
+
+
+def test_store_append_unknown_ride_raises_foreign_key_error(tmp_path: Path) -> None:
+    """Appending to a missing ride fails loudly (FK constraint)."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match=re.escape("FOREIGN KEY")):
+            store.append(
+                999, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+            )
+    finally:
+        store.close()
+
+
+def test_store_load_engine_missing_ride_raises_ride_not_found(tmp_path: Path) -> None:
+    """Loading a ride id that never existed fails loudly."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("999")):
+            store.load_engine(999, _replay_roster())
+    finally:
+        store.close()
+
+
+def test_store_load_engine_replays_start_and_crossing_into_running_engine(
+    tmp_path: Path,
+) -> None:
+    """Loading rebuilds a RUNNING engine with crossings and events."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        start_event = Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        crossing_event = Event(
+            action="record_crossing",
+            payload={
+                "plate": "12",
+                "entry_id": "12",
+                "lap": 1,
+                "crossed_at": "2026-09-20T10:02:00",
+            },
+        )
+        store.append(ride_id, start_event)
+        store.append(ride_id, crossing_event)
+
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    assert engine.state is RideStatus.RUNNING
+    assert len(engine.crossings) == 1
+    assert engine.crossings[0].entry_id == "12"
+    assert engine.crossings[0].crossed_at == datetime(2026, 9, 20, 10, 2)  # noqa: DTZ001
+    assert engine.events == (start_event, crossing_event)
+
+
+def test_store_load_engine_replays_single_start_event_into_running_engine(
+    tmp_path: Path,
+) -> None:
+    """A one-event stream (just start) replays into a RUNNING engine."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        start_event = Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        store.append(ride_id, start_event)
+
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    assert engine.state is RideStatus.RUNNING
+    assert engine.events == (start_event,)
+    assert engine.crossings == ()
+
+
+def test_store_load_engine_replays_in_append_order_not_at_order(tmp_path: Path) -> None:
+    """Replay follows append order (insert id), never the at column.
+
+    set_start_time's payload start (09:55) sorts BEFORE the crossing's
+    at (10:02) in the audit at column, so at-ordering would replay it
+    first. Append order (id) must win: the events read back in the
+    exact order they were appended.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="set_start_time",
+                payload={
+                    "actual_start": "2026-09-20T09:55:00",
+                    "previous_start": "2026-09-20T10:00:00",
+                },
+            ),
+        )
+
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    assert [e.action for e in engine.events] == ["start", "record_crossing", "set_start_time"]
+    assert engine.lap_times("12") == (420.0,)
+
+
+def test_store_load_engine_reconstructs_ride_config_from_stored_columns(
+    tmp_path: Path,
+) -> None:
+    """Every create_ride field round-trips the rebuilt config."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(
+            _config(
+                name="Round Trip",
+                venue="Round Trip Venue",
+                lap_km=6.5,
+                organizer="Org",
+                scorer="Scorer",
+                planned_duration_s=7200,
+                min_lap_s=30,
+                max_team_size=6,
+                deck_count=2,
+                jokers_per_deck=0,
+                max_cards=5,
+                tiebreak_order=("laps", "high_card", "total_time"),
+            )
+        )
+
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    config = engine.config
+    assert config.name == "Round Trip"
+    assert config.event_date == date(2026, 9, 20)
+    assert config.venue == "Round Trip Venue"
+    assert config.lap_km == 6.5
+    assert config.organizer == "Org"
+    assert config.scorer == "Scorer"
+    assert config.planned_start == datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001 -- naive round-trip
+    assert config.planned_duration_s == 7200
+    assert config.min_lap_s == 30
+    assert config.entry_mode is EntryMode.MIXED
+    assert config.plate_model is PlateModel.RIDER_POOLED
+    assert config.max_team_size == 6
+    assert config.deck_count == 2
+    assert config.jokers_per_deck == 0
+    assert config.max_cards == 5
+    assert config.tiebreak_order == ("laps", "high_card", "total_time")
+    assert config.logo_path is None
+
+
+def test_store_load_engine_builds_shoe_from_the_stored_rng_seed(tmp_path: Path) -> None:
+    """The replay shoe is built from the ride row's own seed."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="deal_manual",
+                payload={"plate": "12", "entry_id": "12", "card": "AS", "reason": "manual"},
+            ),
+        )
+
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    assert engine._shoe.dealt == 1  # one card off the fresh replay shoe
+    assert engine.config.deck_count == 8
+    assert engine._shoe.remaining == 8 * 54 - 1
