@@ -113,6 +113,7 @@ from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
+from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
@@ -1119,6 +1120,121 @@ def _resume_reopened_ride_shows_reopened_infobar() -> dict[str, Any]:
         _close_without_prompt(frame)
 
 
+def _confirm_delete_on_dialog(dialog: Any, ride_name: str) -> dict[str, Any]:  # noqa: ANN401
+    """Type *ride_name* into the dialog and click Delete; report facts.
+
+    Drives ``delete_ride_dlg`` with the harness's direct-injection
+    pattern (SetValue fires EVT_TEXT; a posted CommandEvent fires
+    EVT_BUTTON): records the interpolated ``message_lbl`` and the gate
+    state after typing, then clicks Delete to end the modal. Returns
+    the observations plus whether the modal confirmed as Delete.
+    """
+    found: dict[str, Any] = {}
+
+    def _safe_end_modal() -> None:
+        if dialog.IsModal() and dialog.GetReturnCode() == 0:
+            dialog.EndModal(wx.ID_CANCEL)
+
+    def _type_and_confirm() -> None:
+        found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        harness.type_text(dialog, ids.CONFIRM_NAME_INPUT, ride_name)
+        found["delete_enabled_on_exact"] = harness.find_control(
+            dialog, pages.WX_ID_DELETE
+        ).IsEnabled()
+        harness.click(dialog, pages.WX_ID_DELETE)
+
+    wx.CallAfter(_type_and_confirm)
+    wx.CallAfter(_safe_end_modal)
+    result = dialog.ShowModal()
+    found["confirmed"] = result == wx.ID_DELETE
+    return found
+
+
+def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
+    """Confirm on delete_ride_dlg writes a backup, then deletes.
+
+    The E5.3.2 functional proof of R-18's "automatic database backup
+    is written first": drives the real ``delete_ride_dlg`` (name
+    interpolated into ``message_lbl``, type-to-confirm gate armed),
+    types the exact name, clicks Delete, and -- the callback E5.4 will
+    thread from the library -- runs ``Store.delete_ride``. The facts
+    returned are all first-class disk/store observations: whether a
+    backup existed *before* the delete ran, whether one exists after,
+    whether that backup reopens with the ride and a clean integrity
+    check, and whether the ride row is gone.
+    """
+    db_path = Path(tempfile.mkdtemp(prefix="rc-delete-")) / "rides.db"
+    boot = Store.open(db_path)
+    try:
+        config = RideConfig(
+            name="Club poker night",
+            event_date=date(2026, 9, 20),
+            venue="Sea to Sky Gondola",
+            lap_km=8.0,
+            organizer="GORBA",
+            scorer="K. Singh",
+            planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
+            planned_duration_s=21600,
+            min_lap_s=1080,
+            entry_mode=EntryMode.MIXED,
+            plate_model=PlateModel.RIDER_POOLED,
+        )
+        ride_id = boot.create_ride(config)
+        ride_name = "Club poker night"
+    finally:
+        boot.close()
+
+    store = Store.open(db_path)
+    dialog = harness.load_xrc_resources().LoadDialog(None, ids.DELETE_RIDE_DLG)
+    try:
+        message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+        if message_lbl is not None:
+            message_lbl.SetLabel(dialogs.delete_ride_message(ride_name))
+        dialogs.bind_delete_confirmation_gate(dialog, ride_name)
+        delete_btn = wx.Window.FindWindowByName(pages.WX_ID_DELETE, dialog)
+        if delete_btn is not None:
+            delete_btn.Bind(wx.EVT_BUTTON, lambda event: dialog.EndModal(event.GetId()))
+        found = _confirm_delete_on_dialog(dialog, ride_name)
+        backup_dir = backup_module.backup_dir_for(db_path)
+        found["backup_exists_before_delete"] = backup_dir.is_dir() and bool(
+            list(backup_dir.glob("*.db"))
+        )
+        if found["confirmed"]:
+            # The exact confirmed-delete callback E5.4 wires from the
+            # library: Store.delete_ride writes its backup first.
+            store.delete_ride(ride_id, ride_name)
+        found["backup_exists"] = backup_dir.is_dir() and bool(list(backup_dir.glob("*.db")))
+        found["ride_removed"] = store.rides() == []
+        if found["backup_exists"]:
+            backup_file = max(backup_dir.glob("*.db"))
+            reopened = Store.open(backup_file)
+            try:
+                found["backup_reopens"] = [ride.name for ride in reopened.rides()] == [ride_name]
+                with sqlite3.connect(str(backup_file)) as conn:
+                    found["backup_integrity"] = (
+                        conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+                    )
+            finally:
+                reopened.close()
+        else:
+            found["backup_reopens"] = False
+            found["backup_integrity"] = False
+    finally:
+        store.close()
+        if dialog is not None and not dialog.IsBeingDeleted():
+            dialog.Destroy()
+
+    return {
+        "message_lbl": found.get("message_lbl", ""),
+        "delete_enabled_on_exact": found.get("delete_enabled_on_exact", False),
+        "backup_exists_before_delete": found.get("backup_exists_before_delete", False),
+        "backup_exists": found.get("backup_exists", False),
+        "backup_reopens": found.get("backup_reopens", False),
+        "backup_integrity": found.get("backup_integrity", False),
+        "ride_removed": found.get("ride_removed", False),
+    }
+
+
 def _csv_import_commit_reads_editor() -> dict[str, Any]:
     """Import clean_pooled.csv via mi_import_csv, then read riders_list.
 
@@ -1520,6 +1636,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "resume_continue_loads_ride_with_elapsed": _resume_continue_loads_ride_with_elapsed,
     "resume_library_opens_ride_library": _resume_library_opens_ride_library,
     "resume_reopened_ride_shows_reopened_infobar": _resume_reopened_ride_shows_reopened_infobar,
+    "delete_ride_dlg_backup_written_before_delete": (
+        _delete_ride_dlg_backup_written_before_delete
+    ),
     "red_x_close_vetoes_and_hides_on_mac": _red_x_close_vetoes_and_hides_on_mac,
     "mac_reopen_shows_and_raises": _mac_reopen_shows_and_raises,
     "query_end_session_cancelled_vetoes": _query_end_session_cancelled_vetoes,

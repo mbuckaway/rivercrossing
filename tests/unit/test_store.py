@@ -30,11 +30,14 @@ from rivercrossing.ride import Event, RideConfig, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import (
     FutureSchemaVersionError,
+    RideNameMismatchError,
     RideNotFoundError,
     RideRow,
+    RideRunningError,
     SessionState,
     Store,
     StoreError,
+    backup,
 )
 from rivercrossing.store.migrations import LATEST_SCHEMA_VERSION
 
@@ -1127,3 +1130,254 @@ def test_store_roster_for_unknown_ride_raises_naming_the_id(tmp_path: Path) -> N
             store.roster_for(999)
     finally:
         store.close()
+
+
+# ------------------------------------------- E5.3.2 delete guard (R-18)
+
+
+def _backup_files(db_path: Path) -> list[Path]:
+    """Return *db_path*'s backup files, newest first by name."""
+    directory = backup.backup_dir_for(db_path)
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob("*.db"), reverse=True)
+
+
+def _mark_running(path: Path, ride_id: int) -> None:
+    """Set one ride's stored status to RUNNING (arrange, R-18).
+
+    ``create_ride`` writes ``draft``; today the engine's ``start``
+    event lands in the audit log without the facade syncing the
+    ``ride`` row (E5.4's engine-sync writes it). The delete guard
+    reads the stored column -- the persisted truth the library shows
+    -- so the arrange writes the column directly, the same real-SQL
+    pattern the session-heartbeat tests already use.
+    """
+    store = Store.open(path)
+    try:
+        with store._conn:
+            store._conn.execute("UPDATE ride SET status = 'running' WHERE id = ?", (ride_id,))
+    finally:
+        store.close()
+
+
+def test_store_delete_ride_writes_backup_then_removes_ride(tmp_path: Path) -> None:
+    """R-18: delete writes a backup first, then removes the ride."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Club poker night"))
+        store.delete_ride(ride_id, "Club poker night")
+        assert store.rides() == []
+    finally:
+        store.close()
+
+    files = _backup_files(db_path)
+    assert len(files) == 1
+    reopened = Store.open(files[0])
+    try:
+        assert [ride.name for ride in reopened.rides()] == ["Club poker night"]
+    finally:
+        reopened.close()
+
+
+def test_store_delete_ride_backup_reopens_with_integrity_ok(tmp_path: Path) -> None:
+    """The backup written before the delete is a valid database."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Integrity"))
+        store.delete_ride(ride_id, "Integrity")
+    finally:
+        store.close()
+
+    files = _backup_files(db_path)
+    assert len(files) == 1
+    reopened = Store.open(files[0])
+    try:
+        assert reopened.rides()[0].name == "Integrity"
+    finally:
+        reopened.close()
+    with closing(sqlite3.connect(str(files[0]))) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_store_delete_ride_typed_name_mismatch_raises_naming_the_ride(
+    tmp_path: Path,
+) -> None:
+    """R-18: a near-miss name is refused -- no case-fold, no strip."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Club poker night"))
+        with pytest.raises(
+            RideNameMismatchError,
+            match=re.escape("does not match ride"),
+        ):
+            store.delete_ride(ride_id, "club poker night")
+        assert len(store.rides()) == 1  # nothing deleted
+    finally:
+        store.close()
+
+    assert _backup_files(db_path) == []  # validation runs before the backup
+
+
+def test_store_delete_ride_typed_name_empty_raises(tmp_path: Path) -> None:
+    """T-4: an empty typed name is a mismatch, never a delete."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Club poker night"))
+        with pytest.raises(RideNameMismatchError, match=re.escape("does not match")):
+            store.delete_ride(ride_id, "")
+    finally:
+        store.close()
+
+
+def test_store_delete_ride_running_ride_refuses_naming_it(tmp_path: Path) -> None:
+    """R-18: a RUNNING ride is never deletable."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Live"))
+    finally:
+        store.close()
+    _mark_running(db_path, ride_id)
+
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(
+            RideRunningError,
+            match=re.escape("is RUNNING and cannot be deleted"),
+        ):
+            store.delete_ride(ride_id, "Live")
+        assert [ride.name for ride in store.rides()] == ["Live"]
+    finally:
+        store.close()
+
+    assert _backup_files(db_path) == []  # the refusal precedes the backup
+
+
+def test_store_delete_ride_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
+    """T-5: deleting a ride id that never existed fails loudly."""
+    db_path = tmp_path / "rides.db"
+    Store.open(db_path).close()
+
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.delete_ride(999, "any name")
+    finally:
+        store.close()
+
+
+def test_store_delete_ride_removes_all_dependent_rows(tmp_path: Path) -> None:
+    """Deleting a ride removes its entries/riders/crossings/cards/audit.
+
+    The schema declares plain ``REFERENCES`` (no ON DELETE CASCADE --
+    recorded decision), so delete_ride must remove the dependents
+    itself, in FK-safe order, in one transaction.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Dependents"))
+        store.append(
+            ride_id,
+            Event(
+                action="start",
+                payload={"actual_start": "2026-09-20T10:00:00"},
+            ),
+        )
+        with store._conn:
+            entry_id = store._conn.execute(
+                "INSERT INTO entry (ride_id, plate, display_name, type, team_size, status)"
+                " VALUES (?, '12', 'Alice', 'solo', 1, 'active')",
+                (ride_id,),
+            ).lastrowid
+            rider_id = store._conn.execute(
+                "INSERT INTO rider (entry_id, name, plate, sort_order)"
+                " VALUES (?, 'Alice', '12', 1)",
+                (entry_id,),
+            ).lastrowid
+            crossing_id = store._conn.execute(
+                "INSERT INTO crossing (ride_id, entry_id, rider_id, seq, crossed_at, lap_s, flag)"
+                " VALUES (?, ?, ?, 1, 100, 50, 'none')",
+                (ride_id, entry_id, rider_id),
+            ).lastrowid
+            store._conn.execute(
+                "INSERT INTO card"
+                " (ride_id, entry_id, crossing_id, shoe_index, rank, suit, state, dealt_at)"
+                " VALUES (?, ?, ?, 0, 14, 's', 'dealt', 100)",
+                (ride_id, entry_id, crossing_id),
+            )
+            store._conn.execute(
+                "UPDATE app_session SET active_ride_id = ?"
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
+                (ride_id,),
+            )
+        # lastrowid is int | None; the three ids feed the DELETE
+        # assertions below, so narrow them with isinstance (a type
+        # guard, never the test's own final assertion -- T-2).
+        assert isinstance(entry_id, int)
+        assert isinstance(rider_id, int)
+        assert isinstance(crossing_id, int)
+
+        store.delete_ride(ride_id, "Dependents")
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        # rider has no ride_id column -- it links through entry (the
+        # schema's own shape; delete_ride removes it via a subquery).
+        rider_count = conn.execute(
+            "SELECT COUNT(*) FROM rider WHERE entry_id IN"
+            " (SELECT id FROM entry WHERE ride_id = ?)",
+            (ride_id,),
+        ).fetchone()[0]
+        assert rider_count == 0, "rider rows survived the delete"
+        entry_count = conn.execute(
+            "SELECT COUNT(*) FROM entry WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        assert entry_count == 0, "entry rows survived the delete"
+        crossing_count = conn.execute(
+            "SELECT COUNT(*) FROM crossing WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        assert crossing_count == 0, "crossing rows survived the delete"
+        card_count = conn.execute(
+            "SELECT COUNT(*) FROM card WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        assert card_count == 0, "card rows survived the delete"
+        audit_count = conn.execute(
+            "SELECT COUNT(*) FROM audit WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        assert audit_count == 0, "audit rows survived the delete"
+        session_row = conn.execute(
+            "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert session_row[0] is None  # the session's ride reference is cleared
+        assert conn.execute("SELECT COUNT(*) FROM ride").fetchone()[0] == 0
+
+
+def test_store_delete_ride_keeps_other_rides_untouched(tmp_path: Path) -> None:
+    """Deleting one ride never touches a sibling ride's rows."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        doomed = store.create_ride(_config(name="Doomed"))
+        store.create_ride(_config(name="Kept"))
+        store.delete_ride(doomed, "Doomed")
+    finally:
+        store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        assert [ride.name for ride in reopened.rides()] == ["Kept"]
+    finally:
+        reopened.close()
+
+
+def test_store_delete_ride_error_types_are_store_errors() -> None:
+    """Both new guards surface as StoreError subclasses (T-12)."""
+    assert issubclass(RideNameMismatchError, StoreError)
+    assert issubclass(RideRunningError, StoreError)
