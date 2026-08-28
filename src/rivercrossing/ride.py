@@ -22,7 +22,10 @@ have one already.
 :class:`RideEngine` (E4.1) implements the spec §3 state machine over
 that config: DRAFT -> RUNNING -> FINISHED <-> REOPENED, wall-clock
 timing (spec §6, R-30), the minimal crossing path, and the standings
-snapshot. It imports ``hands``/``standings``/``cards`` (below it in
+snapshot. E4.2 completes the crossing path here: one shoe deal per
+accepted crossing (R-40) with a mid-ride reshuffle audit, the
+short-lap hold/confirm/void surface (R-34), and the compensating-write
+undo (R-33). It imports ``hands``/``standings``/``cards`` (below it in
 the S3 dependency graph) and never ``roster`` at runtime -- the
 roster is duck-typed through the constructor's ``roster`` parameter,
 whose type is imported under ``TYPE_CHECKING`` only (same cycle
@@ -34,6 +37,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from rivercrossing.cards import Card, ShoeEmpty
 from rivercrossing.hands import best_hand
 from rivercrossing.standings import EntryResult
 
@@ -55,6 +59,7 @@ __all__ = [
     "Crossing",
     "CrossingResult",
     "Event",
+    "HeldCrossing",
     "IllegalStateError",
     "RideConfig",
     "RideConfigError",
@@ -274,10 +279,14 @@ class CrossingResult:
 
     ``accepted`` False with a ``reason`` signals a refusal -- the ride
     is not running, the ride is stopped (E4.1.3), or the plate is
-    unknown (the full rejection cue is E4.2) -- without raising, per
-    task-briefs.md E4.1.3. On success: ``entry_id``/``entry_name`` name
-    the resolved entry, ``lap`` is the credited lap number, and
-    ``lap_time`` is spec §6's derived lap time.
+    unknown (``reason="unknown_plate"``, E4.2.4) -- without raising;
+    the error cue itself (shake, red border, buzz) is E4.4's UI
+    concern. On success: ``entry_id``/``entry_name`` name the resolved
+    entry, ``lap`` is the credited lap number, ``lap_time`` is spec
+    §6's derived lap time, ``card`` is the shoe card dealt for this
+    lap (R-40) and ``flagged`` is True when the lap fell under
+    ``config.min_lap_s`` -- the card is then *held*
+    (:meth:`RideEngine.held_crossings`), not credited (R-34).
     """
 
     accepted: bool
@@ -287,6 +296,23 @@ class CrossingResult:
     lap: int = 0
     lap_time: float = 0.0
     reason: str | None = None
+    card: Card | None = None
+    flagged: bool = False
+
+
+@dataclass(frozen=True)
+class HeldCrossing:
+    """One short-lap crossing whose card awaits confirm or void (R-34).
+
+    The review surface :meth:`RideEngine.held_crossings` returns these
+    so E4.4's review panel can show which entry/lap and which card is
+    held without reaching into the engine's internals. ``card`` is
+    deliberately not part of the credited hand -- it stays in limbo
+    until the operator confirms or voids it.
+    """
+
+    crossing: Crossing
+    card: Card
 
 
 class RideEngine:
@@ -328,6 +354,40 @@ class RideEngine:
     - **on_course.** Spec §6 names the counter without defining it; a
       loop timing's natural reading is an ACTIVE entry whose lap count
       is odd (out on the loop, not yet back).
+
+    E4.2's own resolutions:
+
+    - **Crossing card.** Every accepted crossing deals one card from
+      the shoe (``_deal_card``; R-40); a ``ShoeEmpty`` mid-ride
+      reshuffles (seed+1) and appends an audit ``Event`` named
+      ``"shoe_reshuffle"`` with payload ``{"cycle": N}`` before the
+      crossing's own ``record_crossing`` event. The per-deal card rides
+      on ``CrossingResult.card``; the ``record_crossing`` event payload
+      stays E4.1-pinned (no card field) -- deal auditability is the
+      seeded shoe's replay guarantee (R-40), and E5's Store persists
+      the card row with its own ``shoe_index``.
+    - **Held cards.** A lap under ``config.min_lap_s`` is flagged
+      short: the lap still records, but its card is dealt into a
+      *held* state (spec §4, R-34) -- tracked in ``_held``, exposed by
+      ``held_crossings()`` -- and never credited until ``confirm_held``
+      releases it into the entry's hand or ``void_held`` discards it.
+      ``confirm_held``/``void_held`` are gated only by the card being
+      held, never by ride state: the review surface stays usable while
+      RUNNING, and FINISHED's corrections flow routes through REOPENED
+      for timing changes (undo), not card disposition.
+    - **Undo.** ``undo_last()`` is a full compensating write (R-33):
+      the last crossing's lap is removed, its card returns to the shoe
+      front via ``shoe.restitute`` (so the next deal reproduces the
+      same card), and an ``undo`` audit event lands. Whatever the
+      card's disposition -- credited, currently held, or already
+      voided -- undo reverses it completely. Legal only while RUNNING
+      or REOPENED; zero crossings or any other state raises
+      ``IllegalStateError``.
+    - **unknown_plate spelling.** E4.2.4's machine-readable refusal
+      reason is ``"unknown_plate"`` (underscore), superseding E4.1's
+      provisional ``"unknown plate"``; the E4.1 pin test was updated
+      to match. The sibling refusals (``"ride is not running"`` /
+      ``"ride is stopped"``) keep their E4.1 spellings untouched.
     """
 
     def __init__(  # noqa: PLR0913, PLR0917 -- frozen S4 API (config, shoe, clock, roster)
@@ -355,6 +415,9 @@ class RideEngine:
         self._actual_start: datetime | None = None
         self._stopped = False
         self._crossings: list[Crossing] = []
+        self._dealt: dict[Crossing, Card] = {}
+        self._held: dict[Crossing, Card] = {}
+        self._hand: dict[str, list[Card]] = {}
         self._events: list[Event] = []
 
     @property
@@ -455,22 +518,25 @@ class RideEngine:
         )
 
     def record_crossing(self, plate: str, at: datetime | None = None) -> CrossingResult:
-        """Record one completed lap for *plate* (spec §6, minimal path).
+        """Record one completed lap for *plate* (spec §6, E4.2.1).
 
         Resolves *plate* to its entry via the roster (an entry's own
-        plate, or a rider_pooled rider's plate, credits the entry),
-        appends one lap with a timestamp, and marks the entry
-        has_data. Refusals come back as ``accepted=False`` results,
-        never raises: not RUNNING, stopped (E4.1.3), or an unknown
-        plate (the full rejection cue is E4.2). No card dealing (E4.3)
-        or min-lap flags (E4.2) land here.
+        plate, or a rider_pooled rider's plate, credits the entry --
+        uncapped, R-16), appends one lap with a timestamp, marks the
+        entry has_data, and deals one card from the shoe (R-40). A lap
+        under ``config.min_lap_s`` is flagged short: the lap still
+        records but its card is held, not credited (R-34). Refusals
+        come back as ``accepted=False`` results, never raises: not
+        RUNNING, stopped (E4.1.3), or an unknown plate
+        (``reason="unknown_plate"``, E4.2.4 -- the error cue is E4.4's
+        UI concern).
 
         Args:
             plate: The recorded plate.
             at: The crossing instant; omit to use the injected clock.
 
         Returns:
-            The credited lap, or a refusal result.
+            The credited lap with its dealt card, or a refusal result.
         """
         if self._state is not RideStatus.RUNNING:
             return CrossingResult(accepted=False, plate=plate, reason="ride is not running")
@@ -478,15 +544,23 @@ class RideEngine:
             return CrossingResult(accepted=False, plate=plate, reason="ride is stopped")
         entry = self._roster.resolve_plate(plate)
         if entry is None:
-            return CrossingResult(accepted=False, plate=plate, reason="unknown plate")
+            return CrossingResult(accepted=False, plate=plate, reason="unknown_plate")
         crossed_at = at if at is not None else self._clock()
         start = self._require_actual_start()
         laps = self._laps_for(entry.plate)
         seq = len(laps) + 1
-        self._crossings.append(Crossing(entry_id=entry.plate, seq=seq, crossed_at=crossed_at))
+        card = self._deal_card()
+        crossing = Crossing(entry_id=entry.plate, seq=seq, crossed_at=crossed_at)
+        self._crossings.append(crossing)
+        self._dealt[crossing] = card
         self._roster.mark_has_data(entry)
         previous = laps[-1].crossed_at if laps else start
         lap_time = (crossed_at - previous).total_seconds()
+        flagged = lap_time < self._config.min_lap_s
+        if flagged:
+            self._held[crossing] = card
+        else:
+            self._hand.setdefault(entry.plate, []).append(card)
         self._append(
             Event(
                 action="record_crossing",
@@ -505,6 +579,123 @@ class RideEngine:
             entry_name=entry.display_name,
             lap=seq,
             lap_time=lap_time,
+            card=card,
+            flagged=flagged,
+        )
+
+    def held_crossings(self) -> tuple[HeldCrossing, ...]:
+        """Return every held crossing's crossing + card, oldest first.
+
+        E4.4's review surface: short-lap crossings whose card awaits
+        confirm (:meth:`confirm_held`) or void (:meth:`void_held`)
+        (R-34). Held cards are dealt but never credited until released.
+        """
+        return tuple(
+            HeldCrossing(crossing=crossing, card=card) for crossing, card in self._held.items()
+        )
+
+    def confirm_held(self, crossing: Crossing) -> Event:
+        """Release *crossing*'s held card into its entry's hand (R-34).
+
+        The operator's "that short lap was real" action: the card moves
+        from the hold queue into the entry's credited hand and the
+        standings hand improves. Audited. Gated only by the card being
+        held -- ride state is irrelevant to card disposition.
+
+        Args:
+            crossing: A crossing currently in :meth:`held_crossings`.
+
+        Returns:
+            The appended ``confirm_held`` audit event.
+
+        Raises:
+            IllegalStateError: *crossing*'s card is not currently held.
+        """
+        card = self._held.pop(crossing, None)
+        if card is None:
+            raise IllegalStateError("crossing's card is not held")
+        self._hand.setdefault(crossing.entry_id, []).append(card)
+        return self._append(
+            Event(
+                action="confirm_held",
+                payload={
+                    "entry_id": crossing.entry_id,
+                    "seq": crossing.seq,
+                    "card": card.code(),
+                },
+            )
+        )
+
+    def void_held(self, crossing: Crossing) -> Event:
+        """Discard *crossing*'s held card; never credited (R-34).
+
+        The operator's "that short lap was a double-entry" action: the
+        card is voided out of the system -- not returned to the shoe,
+        not added to any hand. The lap itself stays recorded. Audited.
+        Gated only by the card being held.
+
+        Args:
+            crossing: A crossing currently in :meth:`held_crossings`.
+
+        Returns:
+            The appended ``void_held`` audit event.
+
+        Raises:
+            IllegalStateError: *crossing*'s card is not currently held.
+        """
+        card = self._held.pop(crossing, None)
+        if card is None:
+            raise IllegalStateError("crossing's card is not held")
+        return self._append(
+            Event(
+                action="void_held",
+                payload={
+                    "entry_id": crossing.entry_id,
+                    "seq": crossing.seq,
+                    "card": card.code(),
+                },
+            )
+        )
+
+    def undo_last(self) -> Event:
+        """Undo the most recent crossing: a compensating write (R-33).
+
+        Removes the last crossing's lap and timestamp, returns its card
+        to the shoe front via ``shoe.restitute`` -- the next deal
+        reproduces the same card -- and appends an ``undo`` audit
+        event. Undo is a full reversal whatever the card's disposition:
+        a credited card leaves the hand, a currently-held card drops
+        out of the hold queue (never credited), and a voided card is
+        un-voided back into the shoe. Legal while RUNNING or REOPENED.
+
+        Returns:
+            The appended ``undo`` audit event.
+
+        Raises:
+            IllegalStateError: the ride is not RUNNING or REOPENED, or
+                there are no crossings to undo.
+        """
+        if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+            raise IllegalStateError(f"cannot undo from {self._state}")
+        if not self._crossings:
+            raise IllegalStateError("no crossings to undo")
+        last = self._crossings.pop()
+        card = self._dealt.pop(last)
+        self._held.pop(last, None)
+        hand = self._hand.get(last.entry_id)
+        if hand is not None and card in hand:
+            hand.remove(card)
+        self._shoe.restitute(card)
+        return self._append(
+            Event(
+                action="undo",
+                payload={
+                    "entry_id": last.entry_id,
+                    "seq": last.seq,
+                    "crossed_at": last.crossed_at.isoformat(),
+                    "card": card.code(),
+                },
+            )
         )
 
     def stop(self) -> Event:
@@ -607,9 +798,11 @@ class RideEngine:
 
         Before crossings an entry is laps=0, cards=(), hand from
         ``hands.best_hand(())``; after crossings ``laps``,
-        ``total_time`` and ``best_lap`` reflect the derived timing.
-        Cards stay empty until E4.3's dealing. DNF entries are
-        excluded (mark_dnf is E4.2).
+        ``total_time`` and ``best_lap`` reflect the derived timing, and
+        ``cards`` pools every credited card -- normal deals plus
+        confirmed-held releases (R-16/R-34) -- with the best hand
+        evaluated from them. Held (unconfirmed) and voided cards never
+        reach the hand. DNF entries are excluded (mark_dnf is E7).
         """
         results: list[EntryResult] = []
         for entry in self._roster.entries:
@@ -617,6 +810,8 @@ class RideEngine:
                 continue
             laps = self._laps_for(entry.plate)
             times = self.lap_times(entry.plate)
+            hand_cards = self._hand.get(entry.plate)
+            cards = tuple(hand_cards) if hand_cards else ()
             results.append(
                 EntryResult(
                     entry_id=entry.plate,
@@ -626,8 +821,8 @@ class RideEngine:
                     laps=len(laps),
                     total_time=self._total_time(laps),
                     best_lap=min(times) if times else 0.0,
-                    cards=(),
-                    hand=best_hand(()),
+                    cards=cards,
+                    hand=best_hand(cards),
                     dnf=False,
                 )
             )
@@ -638,6 +833,21 @@ class RideEngine:
         if not laps:
             return 0.0
         return (laps[-1].crossed_at - self._require_actual_start()).total_seconds()
+
+    def _deal_card(self) -> Card:
+        """Deal the next shoe card, reshuffling + auditing on ShoeEmpty.
+
+        spec §4/R-40: an empty shoe reshuffles (seed+1) and the caller
+        writes the reshuffle's own audit entry -- here that entry lands
+        before the crossing's own ``record_crossing`` event.
+        """
+        try:
+            card, _deal_index = self._shoe.deal()
+        except ShoeEmpty:
+            self._shoe.reshuffle()
+            self._append(Event(action="shoe_reshuffle", payload={"cycle": self._shoe.cycle}))
+            card, _deal_index = self._shoe.deal()
+        return card
 
     def _laps_for(self, entry_id: str) -> tuple[Crossing, ...]:
         """Return *entry_id*'s crossings, oldest first."""
