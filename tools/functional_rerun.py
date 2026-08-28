@@ -69,6 +69,12 @@ PASS_TIMEOUT_S = 600
 # Reporting, measured) keeps the reader from EOF.
 _READER_JOIN_TIMEOUT_S = 5
 
+# The exit code _spawn reports for a pass killed by PASS_TIMEOUT_S
+# (mirrors the shell convention for a SIGTERM'd process). Outside
+# pytest's own {0, 1} set, so rerun_failed_files never mistakes a
+# bounded hang for a real crash.
+_TIMEOUT_RC = 124
+
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _SUMMARY_NODE_RE = re.compile(r"(FAILED|ERROR) (.+?)(?: - |$)")
 
@@ -88,14 +94,52 @@ def parse_summary(text: str) -> set[str]:
     statuses, and unparseable lines are ignored; ANSI colour codes
     are stripped first (the guest runs with colour). A clean summary
     returns an empty set.
+
+    The marker is searched for anywhere in a line, not just at its
+    start: with ``-v`` under xdist the progress lines carry it
+    mid-line (``[gw2] [ 82%] FAILED tests/...``), and a timed-out
+    pass (124) never prints the ``-ra`` summary, so those streamed
+    lines are the only failure record a 124 pass leaves behind.
     """
     files: set[str] = set()
     for line in _ANSI_RE.sub("", text).splitlines():
-        match = _SUMMARY_NODE_RE.match(line)
+        match = _SUMMARY_NODE_RE.search(line)
         if match is None:
             continue
         files.add(match.group(2).partition("::")[0])
     return files
+
+
+# A bare node id line, printed by pytest -v when a test starts
+# ("tests/functional/test_x.py::test_y"). Result lines carry a
+# "[gwN] [ XX%] PASSED/FAILED/..." prefix instead.
+_START_RE = re.compile(r"^(tests/[\w./-]+\.py::\S+)")
+_RESULT_RE = re.compile(r"\b(?:PASSED|FAILED|RERUN|SKIPPED)\s+(tests/[\w./-]+\.py::\S+)")
+
+
+def stalled_file(text: str) -> str | None:
+    """Return the file of the last test started but never finished.
+
+    A timed-out pass ends with the stalled test's bare start line and
+    no result line for it (measured on windows-latest CI: the suite
+    stalls in the last window-heavy file until the pass bound kills
+    it). Every bare start line whose node id also appears in a result
+    line is ruled out; the survivor -- the last one -- names the file
+    the fresh-process rerun must target. Returns ``None`` when every
+    started test produced a result, or nothing started.
+    """
+    started: str | None = None
+    resulted: set[str] = set()
+    for line in _ANSI_RE.sub("", text).splitlines():
+        start = _START_RE.match(line)
+        if start is not None:
+            started = start.group(1)
+            continue
+        for match in _RESULT_RE.finditer(line):
+            resulted.add(match.group(1))
+    if started is None or started in resulted:
+        return None
+    return started.partition("::")[0]
 
 
 def _spawn(
@@ -220,6 +264,12 @@ def _run_pass(command: list[str], runner: _Runner, label: str) -> tuple[int, set
         if completed.stderr:
             print(completed.stderr, end="", file=sys.stderr)
     files = parse_summary(f"{completed.stdout}{completed.stderr}")
+    if completed.returncode == _TIMEOUT_RC:
+        stalled = stalled_file(f"{completed.stdout}{completed.stderr}")
+        if stalled is not None:
+            # The pass that timed out never evaluated this file's
+            # unfinished test; the fresh-process rerun must cover it.
+            files = set(files) | {stalled}
     print(
         f"functional_rerun: {label}: exit {completed.returncode}, "
         f"{len(files)} failed file(s): {', '.join(sorted(files)) or 'none'}",
@@ -236,12 +286,16 @@ def rerun_failed_files(command: Sequence[str], runner: _Runner = _spawn) -> int:
     propagated unchanged. A 1 exit parses the ``-ra`` summary and
     re-runs only the FAILED/ERROR files (same flags) in a freshly
     spawned process, up to ``_MAX_RERUNS`` times, returning 0 on the
-    first fully green pass. When a pass's summary cannot be mapped to
-    re-runnable files -- including a timed-out pass (124), whose hang
-    produced no summary at all -- the whole suite is re-run once in a
-    fresh process (the one measured remedy for the wx/SIP wrapper-cache
-    corruption the hang signals), and that result is returned. Returns
-    the final pytest exit code.
+    first fully green pass. A timed-out pass (124) never prints that
+    summary, so its file set comes from the streamed progress lines
+    (``parse_summary`` searches mid-line) plus the file of the last
+    started-but-unfinished test (``stalled_file``); those files are
+    re-run fresh the same way -- the one measured remedy for the
+    process-granular wx/SIP wrapper-cache corruption the hang signals.
+    When a pass's output cannot be mapped to re-runnable files -- no
+    FAILED/ERROR lines and no stalled test -- the whole suite is re-run
+    once in a fresh process, and that result is returned. Returns the
+    final pytest exit code.
     """
     program, args = _program_and_args(command)
     initial_rc, initial_files = _run_pass(program + args, runner, "initial")
