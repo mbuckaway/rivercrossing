@@ -28,6 +28,24 @@ EPIC 4 of 9 — live ride (in-memory) — on top of EPIC 3's roster and EPIC 2's
 - **Mini acceptance.** A scripted 20-rider race (60 crossings incl. flags, undo, stop/continue,
   finish) through the real UI with a hand-verified standings fixture.
 
+### Added — EPIC 5 (persistence & crash recovery)
+
+- **Event-sourced store.** `rivercrossing.store`: multi-ride SQLite (spec §2 schema, WAL +
+  synchronous=NORMAL + foreign_keys=ON, linear idempotent migrations with a version ledger).
+  Every engine `Event` is appended to the `audit` log; `load_engine` replays it into an identical
+  `RideEngine` (the `apply` seam + a live==replayed equivalence property; fixed an E4 defect where
+  undo after a manual deal raised). R-50 proven by a 50-kill crash-consistency loop.
+- **Sessions.** `app_session` bookkeeping (CLEAN_QUIT / CRASHED / RUNNING_AT_EXIT), the
+  three-button exit-with-running-ride dialog (Cancel default · finish first · quit-keep-running),
+  the resume dialog with crash-vs-quit wording, and the reopened banner.
+- **Backups.** WAL-checkpointed copies into `<db>.backups/` rotating to keep 20 (R-54), hourly
+  seam, restore; the R-18 delete guard (type-name confirm, backup first, never RUNNING).
+- **Live library + demo retirement.** `ride_library_dlg` on the real DB (open/new/duplicate/
+  delete; roster persisted; `duplicate_ride` copies setup + roster with no timing data). The two
+  windowless §15 routes — Duplicate Ride… and Reopen Ride — authored mock-first with names
+  registered in §15b. `rivercrossing.demo` is retired from the app path (import-linter now
+  tests-only); screens show real or documented empty states.
+
 EPIC 3 of 9 — roster & CSV — on top of EPIC 2's deal & score engine and EPIC 1's runnable UI shell.
 
 ### Added — EPIC 3 (roster & CSV)
