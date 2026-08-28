@@ -9,10 +9,11 @@ through :class:`~rivercrossing.ui.presenters.riders.RidersPresenter`
 ``_show``/try-finally pattern: never a mock in place of the real
 Roster or the real dialog.
 
-``_seed_roster`` mirrors ``rivercrossing.ui.app``'s own bootstrap
-helper exactly (imported from there rather than re-derived here), so
-these tests exercise the identical roster shape production actually
-seeds: two solo entries and one pooled team, built from
+``_lists_common.demo_seeded_roster`` mirrors the E3.2-era
+``rivercrossing.ui.app._seed_roster`` helper (moved to test code by
+E5.4.2, since the bootstrap roster is now empty), so these tests
+exercise the same seeded mixed roster shape production used to seed:
+two solo entries and one pooled team, built from
 ``rivercrossing.demo``'s four fixture rows (E1.2.4).
 ``rivercrossing.demo`` is importable from tests (module docstring,
 CLAUDE.md's removable-seam note) even though ``ui.views``/
@@ -27,12 +28,11 @@ import harness
 import pytest
 import wx
 import wx.dataview
+from _lists_common import demo_seeded_roster
 
 from rivercrossing import csvio
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.roster import Roster
 from rivercrossing.ui import ids
-from rivercrossing.ui.app import _seed_roster
 from rivercrossing.ui.presenters.riders import NEW_TEAM_CHOICE, SOLO_TEAM_CHOICE, CsvPreview
 from rivercrossing.ui.views import dialogs, rider_editor
 from rivercrossing.ui.views.rider_editor import COL_TEAM, ROSTER_INFOBAR, RiderEditor
@@ -105,7 +105,7 @@ def test_rider_editor_dlg_infobar_disables_show_hide_effects(
     docstring. ``test_console_demo.py``'s sibling pin covers the
     same fix on ``main_frame.py``'s three InfoBars.
     """
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -124,7 +124,7 @@ def test_rider_editor_dlg_opens_showing_the_seeded_roster_rows(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """xrc-windows.md C: Ellis, Roy/Singh (Trail Blazers), Chen."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -139,7 +139,7 @@ def test_rider_editor_dlg_opens_prefilling_the_next_free_plate(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """R-20: plate_input starts one past the highest plate in use."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -154,7 +154,7 @@ def test_rider_editor_dlg_opens_populating_team_choice_with_solo_and_new_team(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """team_choice: solo sentinel, every team, new-team sentinel."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -172,7 +172,7 @@ def test_rider_editor_dlg_add_creates_a_solo_entry_and_reprefills_the_plate(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """Add with the default (solo) team appends a row, re-prefills."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -191,7 +191,7 @@ def test_rider_editor_dlg_add_duplicate_plate_shows_the_infobar_without_crashing
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """A colliding plate refuses via roster_infobar, not a crash."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -211,7 +211,7 @@ def test_rider_editor_dlg_successful_add_dismisses_a_prior_infobar(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """The next successful action clears a prior warning (E3.2)."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -235,7 +235,7 @@ def test_rider_editor_dlg_save_updates_the_selected_rows_name(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """Select a row, edit Name, Save -- that row updates (R-20)."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -256,7 +256,7 @@ def test_rider_editor_dlg_delete_removes_the_selected_draft_entry(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """Delete on a DRAFT entry with no data removes its row (R-15)."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -273,7 +273,7 @@ def test_rider_editor_dlg_delete_btn_disabled_once_the_entry_has_data(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """delete_btn tracks the presenter's has-data guard (R-15)."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     roster.mark_has_data(roster.entries[0])
     dialog, _view = _show(xrc_resource, roster)
 
@@ -360,7 +360,7 @@ def test_rider_editor_dlg_new_team_flow_creates_the_team_and_shows_it_in_the_row
     ``test_selftest_dialog.py``'s precedent for a monkeypatched-seam
     proof over a native modal.
     """
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, view = _show(xrc_resource, roster)
     monkeypatch.setattr(view, "prompt_new_team_name", lambda: "Dirt Dynamos")
 
@@ -382,7 +382,7 @@ def test_rider_editor_dlg_new_team_flow_cancelled_creates_no_entry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cancelling the native prompt (None) is a no-op (R-20)."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, view = _show(xrc_resource, roster)
     monkeypatch.setattr(view, "prompt_new_team_name", lambda: None)
 
@@ -409,7 +409,7 @@ def _solo_only_roster() -> Roster:
 
 def _mixed_roster() -> Roster:
     """Return the seeded mixed roster (E3.4.2's own "mixed" case)."""
-    return _seed_roster(DemoDataSource())
+    return demo_seeded_roster()
 
 
 @pytest.mark.parametrize(
@@ -450,7 +450,7 @@ def test_rider_editor_dlg_show_csv_preview_raises_not_implemented_naming_e3_4(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """T-5: show_csv_preview's only raise, naming its follow-up."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, view = _show(xrc_resource, roster)
 
     try:
@@ -464,7 +464,7 @@ def test_rider_editor_dlg_set_import_enabled_raises_not_implemented_naming_e3_4(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """T-5: set_import_enabled's only raise, naming its follow-up."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, view = _show(xrc_resource, roster)
 
     try:
@@ -491,7 +491,7 @@ def test_rider_editor_dlg_import_btn_with_a_clean_fixture_adds_its_rows(
     the same roster this still-open editor reads, then re-renders its
     own rows from it, exactly as if it had just been reopened.
     """
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
     monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
 
@@ -516,7 +516,7 @@ def test_rider_editor_dlg_import_btn_given_a_cancelled_picker_is_a_no_op(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """task-briefs.md's own "cancelled picker = no dialog" (E3.4)."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
     monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: None)
     before = len(wx.GetTopLevelWindows())
@@ -544,7 +544,7 @@ def test_rider_editor_dlg_export_btn_writes_a_file_that_repreviews_clean(
     a fresh roster (never the one just exported) proves the file's
     own header/rows round-trip clean, not only that a file exists.
     """
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
     export_path = tmp_path / "export.csv"
     monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: export_path)
@@ -565,7 +565,7 @@ def test_rider_editor_dlg_export_btn_given_a_cancelled_picker_is_a_no_op(
     tmp_path: Path,
 ) -> None:
     """A cancelled save picker writes nothing, silently (E3.4)."""
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
     export_path = tmp_path / "export.csv"
     monkeypatch.setattr(rider_editor, "_pick_export_path", lambda _parent: None)
@@ -600,7 +600,7 @@ def test_show_closes_the_dialog_when_view_construction_raises(
     reproduced deterministically: red until ``_show`` closes the
     dialog on the way out.
     """
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
 
     def _find_that_raises(*_args: Any, **_kwargs: Any) -> Any:  # noqa: ANN401
         raise LookupError("simulated find_control failure")
@@ -629,7 +629,7 @@ def test_run_csv_import_flow_closes_the_dialog_when_view_construction_raises(
     reproduced deterministically: red until the flow closes the dialog
     on the way out.
     """
-    roster = _seed_roster(DemoDataSource())
+    roster = demo_seeded_roster()
     monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: _CLEAN_POOLED_FIXTURE)
 
     def _construction_that_raises(*_args: Any, **_kwargs: Any) -> Any:  # noqa: ANN401

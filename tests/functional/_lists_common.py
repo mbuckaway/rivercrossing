@@ -10,9 +10,12 @@ keeps its own private helpers (the per-window ``_StubSource`` classes,
 the module-scoped ``shared_*`` fixtures) inline.
 """
 
+import itertools
 from typing import Any
 from unittest.mock import MagicMock
 
+from rivercrossing.demo import DemoDataSource
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import ids
 
 MAX_SCREEN_WIDTH = 1366
@@ -21,33 +24,15 @@ MAX_SCREEN_HEIGHT = 768
 # --- xrc-windows.md's own tables, transcribed independently of demo.py
 # so a transcription mistake in either place is caught by the other
 # disagreeing, not by this test checking demo.py against itself. ---
+# (CANVAS_RIDES/CANVAS_RIDERS/CANVAS_STANDINGS/CANVAS_ENTRY_HEADER/
+# CANVAS_ENTRY_MEMBERS/CANVAS_LAPS left _lists_common with E5.4.2: the
+# app's no-store library, bootstrap rider editor, results and entry
+# detail now assert the empty state; the entry-detail bitmap
+# capability suite still drives the two card-key sets below from demo,
+# the test-only fixture.)
 
-CANVAS_RIDES = (
-    ("GORBA EPIC 2026", "2026-09-20", "RUNNING", "180"),
-    ("Club poker night", "2026-06-11", "FINISHED", "24"),
-)
-
-CANVAS_RIDERS = (
-    ("123", "Sam Ellis", "—"),
-    ("77", "A. Roy", "Trail Blazers"),
-    ("78", "K. Singh", "Trail Blazers"),
-    ("212", "M. Chen", "—"),
-)
-
-CANVAS_ENTRY_HEADER = "Team · 3 riders · 9 laps · 3:02:11"
-CANVAS_ENTRY_MEMBERS = "A. Roy (77) · K. Singh (78) · L. Marchetti (79)"
-CANVAS_LAPS = (
-    ("9", "14:22:18", "19:55", "78"),
-    ("8", "14:02:23", "21:40", "77"),
-)
 CANVAS_LAPS_CARD_KEYS = ("Kc", "joker")  # KC -> Kc, JK -> joker (asset_key)
 CANVAS_CARDS_HELD_KEYS = ("9h", "Ks", "Kc", "joker", "4d")  # demo.py's own 5-of-9 fixture
-
-CANVAS_STANDINGS = (
-    ("1", "77", "Trail Blazers", "9", "5:44:02", "K♠ K♣ K♦ JK★ 9♥", "Four of a kind, kings"),
-    ("2", "123", "Sam Ellis", "8", "5:51:17", "Q♥ J♥ T♥ 9♥ 8♥", "Straight flush, queen-high"),
-    ("3", "8", "R. Dubois", "7", "5:38:44", "A♣ A♦ A♥ 4♦ 4♠", "Full house, aces over fours"),
-)
 
 CANVAS_PUBLISH_DEFAULTS = (
     (ids.SHOW_TIMES_CHK, False),
@@ -61,6 +46,33 @@ CANVAS_PUBLISH_DEFAULTS = (
 def _model_row(model: Any, row: int, columns: range) -> tuple[str, ...]:  # noqa: ANN401
     """Return every text cell of *row*, in column order."""
     return tuple(model.GetValueByRow(row, col) for col in columns)
+
+
+def demo_seeded_roster() -> Roster:
+    """Build the mixed, rider_pooled roster demo's four rows seed.
+
+    The E3.2-era ``rivercrossing.ui.app._seed_roster(DemoDataSource())``
+    helper moved here by E5.4.2: the bootstrap no longer seeds a roster
+    from a data source (no store-backed ride is open -- the roster is
+    empty), and the only remaining callers are tests building a seeded
+    mixed roster from the test-only demo fixture (test_rider_editor.py,
+    test_harness.py). ``DemoDataSource`` stays importable from tests.
+    """
+    roster = Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        max_team_size=4,
+    )
+    for team_name, rows in itertools.groupby(DemoDataSource().riders(), key=lambda row: row.team):
+        if team_name is None:
+            for row in rows:
+                roster.create_solo_entry(name=row.name, plate=row.plate)
+            continue
+        roster.create_team_entry(
+            display_name=team_name,
+            riders=[Rider(name=row.name, plate=row.plate) for row in rows],
+        )
+    return roster
 
 
 def _spy_repaint(control: Any) -> tuple[MagicMock, MagicMock]:  # noqa: ANN401

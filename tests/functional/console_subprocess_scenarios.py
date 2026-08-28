@@ -293,7 +293,14 @@ def _spy_on_destroy(window: Any) -> list[bool]:  # noqa: ANN401
 
 
 def _plate_entry_round_trip() -> dict[str, Any]:
-    """Typing a plate then Enter records it into the live feed."""
+    """Typing a plate with no ride open rejects it (R-31, E5.4.2).
+
+    The bootstrap roster is empty (no store-backed ride is open), so
+    every plate is unknown: the entry is refused with the ERROR notice,
+    the field is kept, focus returns, and no crossing is recorded --
+    the console's correct empty state until a store-backed ride is
+    opened.
+    """
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
@@ -311,13 +318,14 @@ def _plate_entry_round_trip() -> dict[str, Any]:
             "field_value": plate_input.GetValue(),
             "focused": len(focus_calls) > 0,
             "crossings_label": harness.find_control(frame, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
+            "status_text": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
         _close_without_prompt(frame)
 
 
 def _record_btn_click_records_once() -> dict[str, Any]:
-    """Clicking Record does exactly what pressing Enter does (A5)."""
+    """Clicking Record with no ride open rejects it (R-31, E5.4.2)."""
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
@@ -335,6 +343,7 @@ def _record_btn_click_records_once() -> dict[str, Any]:
             "field_value": plate_input.GetValue(),
             "focused": len(focus_calls) > 0,
             "crossings_label": harness.find_control(frame, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
+            "status_text": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
         _close_without_prompt(frame)
@@ -455,9 +464,16 @@ def _running_ride_shows_exit_running_dlg() -> dict[str, Any]:
 
 
 def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
-    """Show exit_confirm_dlg when the status is not RUNNING."""
-    original_ride_status = DemoDataSource.ride_status
-    DemoDataSource.ride_status = lambda _self: RideStatus.DRAFT
+    """Show exit_confirm_dlg when the console ride is not RUNNING.
+
+    E5.4.2: the quit flow reads the live presenter engine's state, so
+    the DRAFT case is set up by keeping the bootstrap engine DRAFT
+    (``RideEngine.start`` patched to a no-op before
+    ``build_main_window`` auto-starts it). The engine itself is real;
+    only the auto-start is suppressed, in this one spawned interpreter.
+    """
+    original_start = RideEngine.start
+    RideEngine.start = lambda _self, _at=None: None  # type: ignore[assignment]
     try:
         frame = app_module.build_main_window(wx.GetApp())
         frame.Show()
@@ -477,7 +493,7 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
         finally:
             _close_without_prompt(frame)
     finally:
-        DemoDataSource.ride_status = original_ride_status
+        RideEngine.start = original_start
 
 
 def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:

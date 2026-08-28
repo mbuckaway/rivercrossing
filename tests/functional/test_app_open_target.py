@@ -32,7 +32,7 @@ import pytest
 import wx
 import wx.xrc
 
-from rivercrossing.demo import DemoDataSource
+from rivercrossing.roster import Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import commands, ids, theme
 from rivercrossing.ui.views import dialogs, rider_editor
@@ -188,8 +188,7 @@ def _make_route_context(
     return app_module._RouteContext(
         frame=frame,
         resource=resource,
-        data_source=DemoDataSource(),
-        roster=app_module._seed_roster(DemoDataSource()),
+        roster=Roster(),
         app=wx.GetApp(),
         theme_controller=theme.ThemeController(wx.GetApp()),
     )
