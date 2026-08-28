@@ -395,6 +395,46 @@ def _handle_export_csv(context: _RouteContext) -> None:
         context.frame.SetStatusText(f"Exported {path.name}")
 
 
+def _handle_finish_route(context: _RouteContext) -> None:
+    """Ride ▸ Finish Ride…: confirm, then run the finish flow (E4.4.4).
+
+    Loads ``finish_confirm_dlg`` and shows it through
+    :func:`~rivercrossing.ui.views.dialogs.run_dialog` -- the one seam
+    every dialog in this codebase shows through -- and only a confirmed
+    ``wx.ID_OK`` fires the live console presenter's ``on_finish``,
+    which consults ``FINISH_GATE`` and calls ``engine.finish()`` (the
+    E6.4.3 gate hook stays the stub until then). Mirrors the
+    ``undo_last_crossing`` route's presenter-first shape: with no live
+    presenter threaded (route-level tests), a notice stands in for the
+    action after a confirmed dialog.
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
+
+    wx = require_wx()
+    dialog = context.resource.LoadDialog(None, ids.FINISH_CONFIRM_DLG)
+    # logic-coverage-exempt: T-3 -- the two defensive arms (a resource
+    # without the dialog; a route context without a live presenter) are
+    # unreachable in every live construction, mirroring the stop-confirm
+    # guards in main_frame.py. The cancel arm below IS driven
+    # functionally (test_mini_acceptance's finish-cancel case).
+    if dialog is None:
+        context.frame.SetStatusText("Finish Ride… — no finish dialog authored yet")
+        return
+    try:
+        result = dialogs.run_dialog(dialog, opener=context.frame)
+    finally:
+        if not dialog.IsBeingDeleted():
+            dialog.Destroy()
+    if result != wx.ID_OK:
+        return
+    presenter = context.presenter
+    if presenter is None:
+        label = commands.route_for_id("mi_finish_ride").label
+        context.frame.SetStatusText(f"{label} — not yet implemented")
+        return
+    presenter.on_finish()
+
+
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     """Open *route*'s target window, or notice its absence (D1).
 
@@ -603,7 +643,12 @@ def _make_route_handler(  # noqa: PLR0911 -- one early-return per route special 
     the live console presenter's ``on_undo`` (covering both the Cards
     ▸ Undo menu item and its Ctrl+Z accelerator); when no live
     presenter is threaded (route-level tests), it falls back to the
-    generic stub. ``csv_preview_dlg`` (E3.4) is the one
+    generic stub. ``finish_confirm_dlg`` (E4.4.4) opens its confirm
+    through :func:`_handle_finish_route`, which runs
+    ``presenter.on_finish`` on a confirmed OK -- the same
+    presenter-first shape ``undo_last_crossing`` uses -- instead of
+    :func:`_open_target`'s generic open-and-return. ``csv_preview_dlg``
+    (E3.4) is the one
     ``DIALOG`` target that needs a picker run before it opens, ahead
     of :func:`_open_target`'s generic path. Every other ``COMMAND``
     row has no window to open and no ride engine yet to run its real
@@ -624,6 +669,8 @@ def _make_route_handler(  # noqa: PLR0911 -- one early-return per route special 
         if presenter is not None:
             return lambda _event: presenter.on_undo()
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
+    if route.target == ids.FINISH_CONFIRM_DLG:
+        return lambda _event: _handle_finish_route(context)
     if route.target == ids.CSV_PREVIEW_DLG:
         return lambda _event: _handle_import_csv(context)
     if route.kind is commands.TargetKind.COMMAND:
