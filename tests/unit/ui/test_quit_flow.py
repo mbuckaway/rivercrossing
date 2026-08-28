@@ -10,6 +10,8 @@ shows, and that clicking its buttons genuinely ends the modal with
 these ids).
 """
 
+import string
+
 import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
@@ -80,3 +82,34 @@ def test_outcome_for_given_result_equals_ok_id_always_returns_quit(
     outcome = quit_flow.outcome_for(_OK_ID, ok_id=_OK_ID, finish_first_id=finish_first_id)
 
     assert outcome is quit_flow.QuitOutcome.QUIT
+
+
+# --- running_exit_message: the exit_running_dlg copy (E5.2.3) -----
+
+
+def test_running_exit_message_interpolates_the_ride_name_and_wall_clock() -> None:
+    """The message names the ride and keeps the wall-clock copy."""
+    message = quit_flow.running_exit_message("GORBA EPIC 2026")
+
+    assert "GORBA EPIC 2026" in message
+    assert "wall clock" in message
+    assert len(message) > 40
+
+
+def test_running_exit_message_given_different_rides_differs_per_ride() -> None:
+    """Each ride gets its own message naming that ride."""
+    first = quit_flow.running_exit_message("GORBA EPIC 2026")
+    second = quit_flow.running_exit_message("Club poker night")
+
+    assert first != second
+    assert "Club poker night" in second
+    assert "GORBA EPIC 2026" not in second
+
+
+@given(st.text(alphabet=string.ascii_letters + string.digits, min_size=1, max_size=30))
+def test_running_exit_message_given_any_ride_name_contains_it(ride_name: str) -> None:
+    """Property: any non-empty ride name lands verbatim in the copy."""
+    message = quit_flow.running_exit_message(ride_name)
+
+    assert message.startswith(ride_name)
+    assert "wall clock" in message

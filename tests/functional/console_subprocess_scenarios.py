@@ -93,6 +93,7 @@ import faulthandler
 import json
 import os
 import sys
+import tempfile
 import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -109,6 +110,7 @@ from rivercrossing.cards import Shoe
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
@@ -473,28 +475,6 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
         DemoDataSource.ride_status = original_ride_status
 
 
-def _finish_first_ends_dialog_stays_running_posts_notice() -> dict[str, Any]:
-    """finish_first_btn (A1): ends the dialog, ride stays running."""
-    frame = app_module.build_main_window(wx.GetApp())
-    frame.Show()
-    frame.Layout()
-    harness.pump()
-    try:
-
-        def _click_finish_first() -> None:
-            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
-            harness.click(dialog, ids.FINISH_FIRST_BTN)
-
-        wx.CallAfter(_click_finish_first)
-        _fire_exit_route(frame)
-        return {
-            "frame_being_deleted": frame.IsBeingDeleted(),
-            "status_text": frame.GetStatusBar().GetStatusText(0),
-        }
-    finally:
-        _close_without_prompt(frame)
-
-
 def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
     """Hide main_frame via a plain Close(); never destroy it."""
     frame = app_module.build_main_window(wx.GetApp())
@@ -681,6 +661,152 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
     frame.Close()
     harness.pump()  # run the deferred destroy the MSW fix schedules
     return {"frame_being_deleted": len(destroy_calls) > 0}
+
+
+# --- E5.2.3: the exit-with-running-ride dialog (R-51) -------------
+
+
+def _exit_running_dlg_probe_and_cancel() -> dict[str, Any]:
+    """exit_running_dlg shows 3 buttons, message_lbl, Cancel default."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        found: dict[str, Any] = {}
+
+        def _probe_and_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            found["shown"] = dialog is not None and dialog.IsShown()
+            if dialog is None:
+                return
+            found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+            for name in (pages.WX_ID_CANCEL, ids.FINISH_FIRST_BTN, pages.WX_ID_OK):
+                found[f"has_{name}"] = wx.Window.FindWindowByName(name, dialog) is not None
+            default_item = dialog.GetDefaultItem()
+            found["default_name"] = default_item.GetName() if default_item is not None else None
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        wx.CallAfter(_probe_and_cancel)
+        _fire_exit_route(frame)
+        return {
+            "exit_running_dlg_shown": found.get("shown", False),
+            "message_lbl": found.get("message_lbl", ""),
+            "has_cancel": found.get("has_wxID_CANCEL", False),
+            "has_finish_first": found.get("has_finish_first_btn", False),
+            "has_quit": found.get("has_wxID_OK", False),
+            "default_name": found.get("default_name"),
+            "frame_being_deleted": frame.IsBeingDeleted(),
+            "frame_shown": frame.IsShown(),
+        }
+    finally:
+        _close_without_prompt(frame)
+
+
+def _finish_first_routes_to_the_finish_flow() -> dict[str, Any]:
+    """finish_first_btn ends the exit dialog, then runs the finish flow.
+
+    ``_handle_finish_route`` opens finish_confirm_dlg modally inside
+    the exit flow's own synchronous unwind, so the scenario cannot
+    click it from its own code -- the same wall the
+    ``query_end_session_*`` scenarios hit. ``dialogs.run_dialog`` is
+    intercepted (the suite's established pattern) to answer a
+    confirmed OK for the finish dialog only; the exit dialog itself
+    still shows as a real modal and is dismissed by clicking
+    ``finish_first_btn``. That proves the routing: FINISH_FIRST hands
+    off to the E4.4.4 finish path, whose confirmed finish runs
+    ``presenter.on_finish`` and leaves the app up.
+    """
+    original_run_dialog = dialogs.run_dialog
+    found: dict[str, Any] = {}
+
+    def _auto_ok_finish(dialog: Any, opener: Any) -> int:  # noqa: ANN401
+        if dialog.GetName() == ids.FINISH_CONFIRM_DLG:
+            found["finish_confirm_shown"] = True
+            return wx.ID_OK
+        return original_run_dialog(dialog, opener)
+
+    dialogs.run_dialog = _auto_ok_finish
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+
+        def _click_finish_first() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            harness.click(dialog, ids.FINISH_FIRST_BTN)
+
+        wx.CallAfter(_click_finish_first)
+        _fire_exit_route(frame)
+        return {
+            "finish_confirm_shown": found.get("finish_confirm_shown", False),
+            "status_text": frame.GetStatusBar().GetStatusText(0),
+            "frame_being_deleted": frame.IsBeingDeleted(),
+        }
+    finally:
+        dialogs.run_dialog = original_run_dialog
+        _close_without_prompt(frame)
+
+
+def _quit_keep_running_writes_closed_at_and_stays_running() -> dict[str, Any]:
+    """Quit-keep-running: closed_at written, ride untouched, app quits.
+
+    The app is built over a real Store whose open recorded the running
+    ride's id (E5.2.1): confirming Quit on the exit dialog must stamp
+    that session's closed_at, leave the ride row's status alone, and
+    destroy the frame -- the bookkeeping the resume dialog (E5.2.2)
+    will read next launch.
+    """
+    db_path = Path(tempfile.mkdtemp(prefix="rc-exit-")) / "rides.db"
+    boot = Store.open(db_path)
+    try:
+        config = RideConfig(
+            name="GORBA EPIC 2026",
+            event_date=date(2026, 9, 20),
+            venue="Sea to Sky Gondola",
+            lap_km=8.0,
+            organizer="GORBA",
+            scorer="K. Singh",
+            planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
+            planned_duration_s=21600,
+            min_lap_s=1080,
+            entry_mode=EntryMode.MIXED,
+            plate_model=PlateModel.RIDER_POOLED,
+        )
+        ride_id = boot.create_ride(config)
+    finally:
+        boot.close()
+
+    store = Store.open(db_path, active_ride_id=ride_id)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    destroy_calls = _spy_on_destroy(frame)
+
+    def _click_quit() -> None:
+        dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+        harness.click(dialog, pages.WX_ID_OK)
+
+    wx.CallAfter(_click_quit)
+    _fire_exit_route(frame)
+    harness.pump()
+    store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        state = reopened.session_state()
+        status = reopened._conn.execute(
+            "SELECT status FROM ride WHERE id = ?", (ride_id,)
+        ).fetchone()[0]
+    finally:
+        reopened.close()
+    return {
+        "frame_being_deleted": len(destroy_calls) > 0,
+        "session_state": state.value,
+        "ride_status": status,
+    }
 
 
 def _csv_import_commit_reads_editor() -> dict[str, Any]:
@@ -1074,8 +1200,10 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "quit_menu_cancelled_stays": _quit_menu_cancelled_stays,
     "running_ride_shows_exit_running_dlg": _running_ride_shows_exit_running_dlg,
     "exit_confirm_dlg_shown_when_not_running": _exit_confirm_dlg_shown_when_not_running,
-    "finish_first_ends_dialog_stays_running_posts_notice": (
-        _finish_first_ends_dialog_stays_running_posts_notice
+    "exit_running_dlg_probe_and_cancel": _exit_running_dlg_probe_and_cancel,
+    "finish_first_routes_to_the_finish_flow": _finish_first_routes_to_the_finish_flow,
+    "quit_keep_running_writes_closed_at_and_stays_running": (
+        _quit_keep_running_writes_closed_at_and_stays_running
     ),
     "red_x_close_vetoes_and_hides_on_mac": _red_x_close_vetoes_and_hides_on_mac,
     "mac_reopen_shows_and_raises": _mac_reopen_shows_and_raises,

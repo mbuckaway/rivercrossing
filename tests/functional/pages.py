@@ -177,7 +177,7 @@ EXIT_RUNNING_DLG = WindowSpec(
     name=ids.EXIT_RUNNING_DLG,
     xrc_file="dialogs.xrc",
     is_frame=False,
-    controls=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
+    controls=(ids.MESSAGE_LBL, WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
     buttons=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
 )
 

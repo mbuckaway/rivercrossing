@@ -32,6 +32,7 @@ from rivercrossing.store import (
     FutureSchemaVersionError,
     RideNotFoundError,
     RideRow,
+    SessionState,
     Store,
     StoreError,
 )
@@ -738,3 +739,217 @@ def test_store_load_engine_builds_shoe_from_the_stored_rng_seed(tmp_path: Path) 
     assert engine._shoe.dealt == 1  # one card off the fresh replay shoe
     assert engine.config.deck_count == 8
     assert engine._shoe.remaining == 8 * 54 - 1
+
+
+# --------------------------------------- E5.2.1 session bookkeeping
+
+
+def _fetch_latest_session(path: Path) -> dict[str, object]:
+    """Read the newest app_session row back out of the file."""
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            "SELECT id, opened_at, closed_at, active_ride_id"
+            " FROM app_session ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise AssertionError("no app_session row")
+    return dict(row)
+
+
+def _created_ride_id(path: Path) -> int:
+    """Create one ride and return its id (session arrange helper)."""
+    store = Store.open(path)
+    try:
+        ride_id = store.create_ride(_config(name="Session Ride"))
+    finally:
+        store.close()
+    return ride_id
+
+
+def test_store_open_inserts_session_row_with_opened_at_and_null_close(
+    tmp_path: Path,
+) -> None:
+    """Every open records one session: opened_at now, closed_at NULL."""
+    db_path = tmp_path / "rides.db"
+
+    Store.open(db_path).close()
+
+    row = _fetch_latest_session(db_path)
+    assert isinstance(row["opened_at"], int)
+    assert row["opened_at"] > 0
+    assert row["closed_at"] is None
+    assert row["active_ride_id"] is None
+
+
+def test_store_open_with_active_ride_id_records_the_running_ride(
+    tmp_path: Path,
+) -> None:
+    """A running ride's id lands in active_ride_id (new session)."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+
+    Store.open(db_path, active_ride_id=ride_id).close()
+
+    row = _fetch_latest_session(db_path)
+    assert row["active_ride_id"] == ride_id
+    assert row["closed_at"] is None
+
+
+def test_store_open_with_unknown_active_ride_refuses_loudly(tmp_path: Path) -> None:
+    """A missing active_ride_id fails the FK, never a silent NULL."""
+    db_path = tmp_path / "rides.db"
+    Store.open(db_path).close()
+
+    with pytest.raises(sqlite3.IntegrityError, match=re.escape("FOREIGN KEY")):
+        Store.open(db_path, active_ride_id=999)
+
+
+def test_store_close_session_writes_closed_at_on_the_open_session(
+    tmp_path: Path,
+) -> None:
+    """close_session stamps the open session with closed_at."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        store.close_session()
+    finally:
+        store.close()
+
+    row = _fetch_latest_session(db_path)
+    assert isinstance(row["closed_at"], int)
+    assert row["closed_at"] >= row["opened_at"]
+
+
+def test_store_close_session_with_no_session_row_is_a_noop(tmp_path: Path) -> None:
+    """close_session on an empty table raises nothing, changes none."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        store._conn.execute("DELETE FROM app_session")
+
+        result = store.close_session()
+    finally:
+        store.close()
+
+    assert result is None
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM app_session").fetchone()[0] == 0
+
+
+def test_store_session_state_fresh_database_returns_clean_quit(tmp_path: Path) -> None:
+    """A first launch (no prior session) reads CLEAN_QUIT, not crash."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        state = store.session_state()
+    finally:
+        store.close()
+
+    assert state is SessionState.CLEAN_QUIT
+
+
+def test_store_session_state_clean_quit_reads_previous_session(tmp_path: Path) -> None:
+    """After a clean close + reopen: CLEAN_QUIT, never the open row."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    store.close_session()
+    store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        state = reopened.session_state()
+    finally:
+        reopened.close()
+
+    assert state is SessionState.CLEAN_QUIT
+
+
+def test_store_session_state_crashed_reads_previous_session(tmp_path: Path) -> None:
+    """A prior session left open (no close_session) reads CRASHED."""
+    db_path = tmp_path / "rides.db"
+    Store.open(db_path).close()  # no close_session -- the crash
+
+    reopened = Store.open(db_path)
+    try:
+        state = reopened.session_state()
+    finally:
+        reopened.close()
+
+    assert state is SessionState.CRASHED
+
+
+def test_store_session_state_running_at_exit_reads_previous_session(
+    tmp_path: Path,
+) -> None:
+    """Closed cleanly with active_ride_id set reads RUNNING_AT_EXIT."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    store = Store.open(db_path, active_ride_id=ride_id)
+    store.close_session()
+    store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        state = reopened.session_state()
+    finally:
+        reopened.close()
+
+    assert state is SessionState.RUNNING_AT_EXIT
+
+
+def test_store_session_state_crash_with_running_ride_reads_crashed(
+    tmp_path: Path,
+) -> None:
+    """A crash while a ride ran still reads CRASHED, not running."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    Store.open(db_path, active_ride_id=ride_id).close()  # crash, no close_session
+
+    reopened = Store.open(db_path)
+    try:
+        state = reopened.session_state()
+    finally:
+        reopened.close()
+
+    assert state is SessionState.CRASHED
+
+
+def test_store_session_state_reads_second_newest_not_an_older_one(
+    tmp_path: Path,
+) -> None:
+    """The reading is the session the current open supersedes."""
+    db_path = tmp_path / "rides.db"
+    Store.open(db_path).close()  # session A: crash (never closed)
+    ride_id = _created_ride_id(db_path)
+    store = Store.open(db_path, active_ride_id=ride_id)  # session B
+    store.close_session()  # B closed cleanly, running ride at exit
+    store.close()
+
+    reopened = Store.open(db_path)  # session C: the current open
+    try:
+        state = reopened.session_state()
+    finally:
+        reopened.close()
+
+    # The previous session is B (second-newest), so RUNNING_AT_EXIT --
+    # not A's CRASHED, which session C did not supersede.
+    assert state is SessionState.RUNNING_AT_EXIT
+
+
+@pytest.mark.parametrize(
+    ("member", "expected_value"),
+    [
+        (SessionState.CLEAN_QUIT, "clean_quit"),
+        (SessionState.CRASHED, "crashed"),
+        (SessionState.RUNNING_AT_EXIT, "running_at_exit"),
+    ],
+)
+def test_store_session_state_members_have_stable_serialized_values(
+    member: SessionState, expected_value: str
+) -> None:
+    """The enum spellings stay stable for any stored form."""
+    assert member.value == expected_value
