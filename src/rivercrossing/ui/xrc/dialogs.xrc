@@ -364,7 +364,13 @@
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxStaticText">
+        <!-- E5.2.3: the message line carries the frozen name message_lbl
+             (spec §15b's shared name, also in continue_or_new_dlg and
+             resume_dlg) so the exit path can interpolate the running
+             ride's name into it; the label below is the fallback copy
+             the smoke test screenshot renders, and app.py overwrites it
+             with the ride-naming copy before ShowModal. -->
+        <object class="wxStaticText" name="message_lbl">
           <label>Quitting won't stop the ride — it keeps timing on the wall clock, and you'll be asked to continue when you reopen.</label>
           <wrap>420</wrap>
         </object>

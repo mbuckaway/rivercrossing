@@ -10,11 +10,15 @@ and :meth:`Store.rides` (E5.1.1) and the event log --
 :meth:`Store.append` persists one :class:`~rivercrossing.ride.Event`
 as one ``audit`` row and :meth:`Store.load_engine` rebuilds a
 :class:`~rivercrossing.ride.RideEngine` by replaying those events
-(E5.1.2). The rest of module-skeletons.md S4's surface -- session
-bookkeeping (E5.2), backups (E5.3), ``duplicate_ride``/
-``delete_ride`` (E5.4), the ``AsyncWriter`` (E5.4), the settings
-table (E8) -- is deliberately absent: per the task, nothing is
-stubbed that nothing calls yet.
+(E5.1.2). E5.2.1 adds the session bookkeeping: :meth:`Store.open`
+records one ``app_session`` row per launch (``active_ride_id`` when a
+ride is running), :meth:`Store.close_session` stamps ``closed_at`` on
+a clean quit, and :meth:`Store.session_state` reads the previous
+session's record -- clean quit vs crash vs running-at-exit -- for the
+R-52 resume dialog. The rest of module-skeletons.md S4's surface --
+backups (E5.3), ``duplicate_ride``/``delete_ride`` (E5.4), the
+``AsyncWriter`` (E5.4), the settings table (E8) -- is deliberately
+absent: per the task, nothing is stubbed that nothing calls yet.
 
 Doc-silence resolutions are recorded here, because the spec leaves
 them open and later EPICs will build on them:
@@ -51,6 +55,14 @@ them open and later EPICs will build on them:
 - **roster boundary (E5.1.2)**: :meth:`Store.load_engine` takes the
   roster from the caller -- the engine needs plate->entry resolution,
   and full roster-from-DB reconstruction is E5.4.1's job.
+- **fresh-DB session_state (E5.2.1)**: :meth:`Store.session_state`
+  with no prior session row returns ``SessionState.CLEAN_QUIT`` -- a
+  first launch is not a crash and has no ride to resume (the
+  reasonable default, pinned in the method docstring and tests).
+- **previous session (E5.2.1)**: :meth:`Store.session_state` reads the
+  second-newest ``app_session`` row -- the session the current open's
+  row supersedes -- never the newest open row, whose ``closed_at`` is
+  NULL by construction and would otherwise always read as a crash.
 
 :class:`RideRow` is the small frozen summary ``rides()`` returns for
 the library -- id, name, event date, status -- with the full library
@@ -62,6 +74,7 @@ import secrets
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from enum import Enum
 from typing import TYPE_CHECKING, cast
 
 from rivercrossing.cards import Shoe
@@ -82,6 +95,7 @@ __all__ = [
     "FutureSchemaVersionError",
     "RideNotFoundError",
     "RideRow",
+    "SessionState",
     "Store",
     "StoreError",
 ]
@@ -97,6 +111,24 @@ _INSERT_RIDE_SQL = """
         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
 """
+
+_INSERT_SESSION_SQL = """
+    INSERT INTO app_session (opened_at, closed_at, active_ride_id, heartbeat_at)
+    VALUES (?, NULL, ?, NULL)
+"""
+
+
+def _insert_session(conn: sqlite3.Connection, active_ride_id: int | None) -> None:
+    """Record the new session row on an opened connection (E5.2.1).
+
+    ``opened_at`` is now epoch; ``closed_at`` stays NULL so a clean
+    quit (:meth:`Store.close_session`) is distinguishable from a crash
+    (:meth:`Store.session_state`). ``active_ride_id`` references the
+    ``ride`` table, so an unknown id fails the foreign key.
+    """
+    now = int(datetime.now(UTC).timestamp())
+    with conn:
+        conn.execute(_INSERT_SESSION_SQL, (now, active_ride_id))
 
 
 def _to_epoch(value: datetime) -> int:
@@ -165,6 +197,26 @@ class RideNotFoundError(StoreError):
     """
 
 
+class SessionState(Enum):
+    """The previous app session's state, for the R-52 resume reading.
+
+    ``session_state()`` returns one of these on launch, before the
+    resume dialog words its copy (E5.2.2):
+
+    - ``CLEAN_QUIT``: the previous session recorded ``closed_at`` and
+      no running ride -- a normal quit.
+    - ``CRASHED``: the previous session never wrote ``closed_at`` --
+      the app died without quitting.
+    - ``RUNNING_AT_EXIT``: the previous session closed cleanly while a
+      ride was running (``closed_at`` present and ``active_ride_id``
+      set) -- quitting keeps the ride running on wall time.
+    """
+
+    CLEAN_QUIT = "clean_quit"
+    CRASHED = "crashed"
+    RUNNING_AT_EXIT = "running_at_exit"
+
+
 @dataclass(frozen=True, slots=True)
 class RideRow:
     """One ride's library summary (id, name, date, status).
@@ -192,11 +244,20 @@ class Store:
         self._conn = conn
 
     @classmethod
-    def open(cls, path: str | Path) -> Store:
+    def open(cls, path: str | Path, *, active_ride_id: int | None = None) -> Store:
         """Open (or create) the database at ``path`` and migrate it.
+
+        After migrations, records the new app session (E5.2.1): one
+        ``app_session`` row with ``opened_at`` = now epoch and
+        ``closed_at`` NULL (the clean-quit vs crash signal R-52 words
+        the resume dialog from), plus ``active_ride_id`` when a ride is
+        running at launch -- the row :meth:`close_session` stamps on a
+        clean quit.
 
         Args:
             path: Filesystem path to the SQLite file.
+            active_ride_id: The running ride's id, when the app opens
+                onto a ride that is RUNNING; ``None`` otherwise.
 
         Returns:
             A ready Store with the connection open until :meth:`close`.
@@ -204,12 +265,15 @@ class Store:
         Raises:
             FutureSchemaVersionError: If the database was written by a
                 newer build than this one.
+            sqlite3.IntegrityError: If *active_ride_id* names no ride
+                row (the ``REFERENCES ride(id)`` foreign key).
         """
         conn = sqlite3.connect(str(path))
         conn.row_factory = sqlite3.Row
         try:
             apply_pragmas(conn)
             migrate(conn)
+            _insert_session(conn, active_ride_id)
         except Exception:
             conn.close()
             raise
@@ -218,6 +282,59 @@ class Store:
     def close(self) -> None:
         """Close the underlying connection."""
         self._conn.close()
+
+    # ------------------------------------- E5.2.1 session bookkeeping
+
+    def close_session(self) -> None:
+        """Write ``closed_at`` on the open session (a clean quit).
+
+        Stamps the newest ``app_session`` row -- the one :meth:`open`
+        inserted -- with now epoch. Called by the exit flow when the
+        user confirms quitting; a session left un-stamped is how
+        :meth:`session_state` recognises a crash (R-52). With no
+        session row at all this is a no-op (the table is empty, so no
+        row updates).
+        """
+        now = int(datetime.now(UTC).timestamp())
+        with self._conn:
+            self._conn.execute(
+                "UPDATE app_session SET closed_at = ?"
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
+                (now,),
+            )
+
+    def session_state(self) -> SessionState:
+        """Return the PREVIOUS session's state (launch reading, R-52).
+
+        Reads the second-newest ``app_session`` row -- the session the
+        current :meth:`open` call's row supersedes, never the current
+        open row (whose ``closed_at`` is NULL by construction). The
+        reading:
+
+        - ``closed_at`` NULL -> :attr:`SessionState.CRASHED`.
+        - ``closed_at`` present and ``active_ride_id`` set ->
+          :attr:`SessionState.RUNNING_AT_EXIT` (quit kept a running
+          ride on the wall clock).
+        - ``closed_at`` present, no running ride ->
+          :attr:`SessionState.CLEAN_QUIT`.
+        - no prior session (a fresh database) ->
+          :attr:`SessionState.CLEAN_QUIT` -- a first launch is not a
+          crash, and there is no ride to resume (doc-silence
+          resolution: the reasonable default).
+
+        Returns:
+            The previous session's :class:`SessionState`.
+        """
+        row = self._conn.execute(
+            "SELECT closed_at, active_ride_id FROM app_session ORDER BY id DESC LIMIT 1 OFFSET 1"
+        ).fetchone()
+        if row is None:
+            return SessionState.CLEAN_QUIT
+        if row["closed_at"] is None:
+            return SessionState.CRASHED
+        if row["active_ride_id"] is not None:
+            return SessionState.RUNNING_AT_EXIT
+        return SessionState.CLEAN_QUIT
 
     def create_ride(self, config: RideConfig) -> int:
         """Persist one ride from its config; return the new ride id.

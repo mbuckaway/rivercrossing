@@ -60,6 +60,7 @@ from rivercrossing.ui.presenters.data_source import EngineDataSource
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from rivercrossing.store import Store
     from rivercrossing.ui.presenters.data_source import DataSource
 
 __all__ = ["build_app", "build_main_window", "main"]
@@ -104,6 +105,10 @@ class _RouteContext:
             ``main_frame`` (for ``RiverCrossingApp.MacReopenApp``).
         theme_controller: The one live :class:`theme.ThemeController`
             the View row's theme ids apply modes through (P8-D4).
+        store: The live :class:`~rivercrossing.store.Store`, when the
+            app opened one (E5.2.1). ``None`` until the store-backed
+            bootstrap lands (E5.4.1); a confirmed quit closes the
+            open session through it (R-52's clean-quit signal).
     """
 
     frame: Any
@@ -118,6 +123,8 @@ class _RouteContext:
     # tests that construct _RouteContext without a live console keep
     # working unchanged (test_app_open_target.py's _make_route_context).
     presenter: ConsolePresenter | None = None
+    # E5.2.1: the optional live Store the quit flow stamps closed_at on.
+    store: Store | None = None
 
 
 def _seed_roster(data_source: DataSource) -> Roster:
@@ -488,18 +495,32 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     """Run the quit-confirm dialog for the ride's current status.
 
     Loads :func:`quit_flow.dialog_for_status`'s target from
-    *context*'s already-loaded resource, binds ``finish_first_btn``
-    to ``EndModal`` first when the dialog carries one (A1 -- today it
-    ends nothing), shows it through
-    :func:`~rivercrossing.ui.views.dialogs.run_dialog` -- the one seam
-    every dialog in this codebase shows through -- and posts the
-    Finish-Ride stub notice on ``QuitOutcome.FINISH_FIRST`` before
-    returning.
+    *context*'s already-loaded resource -- ``exit_running_dlg`` for a
+    RUNNING ride, ``exit_confirm_dlg`` otherwise (R-51) -- writes the
+    running variant's ride-naming copy into its ``message_lbl``
+    (E5.2.3), binds ``finish_first_btn`` to ``EndModal`` (A1), shows
+    it through :func:`~rivercrossing.ui.views.dialogs.run_dialog` --
+    the one seam every dialog in this codebase shows through -- and
+    maps the result.
+
+    A confirmed ``QuitOutcome.QUIT`` closes the live session through
+    *context*.store (E5.2.1: stamp ``closed_at`` so the next launch
+    reads a clean quit, not a crash); a ``QuitOutcome.FINISH_FIRST``
+    hands off to the E4.4.4 finish flow -- :func:`_handle_finish_route`
+    -- which shows ``finish_confirm_dlg`` and, on OK, runs the live
+    console presenter's ``on_finish`` (E5.2.3 replaces the old stub
+    notice).
     """
     wx = require_wx()
 
     dialog_name = quit_flow.dialog_for_status(context.data_source.ride_status())
     dialog = context.resource.LoadDialog(None, dialog_name)
+    if dialog_name == ids.EXIT_RUNNING_DLG:
+        rides = context.data_source.rides()
+        ride_name = rides[0].name if rides else "The ride"
+        message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+        if message_lbl is not None:
+            message_lbl.SetLabel(quit_flow.running_exit_message(ride_name))
 
     finish_first_id: int | None = None
     finish_first_button = wx.Window.FindWindowByName(ids.FINISH_FIRST_BTN, dialog)
@@ -520,9 +541,12 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
             dialog.Destroy()
 
     outcome = quit_flow.outcome_for(result, ok_id=wx.ID_OK, finish_first_id=finish_first_id)
-    if outcome is quit_flow.QuitOutcome.FINISH_FIRST:
-        label = commands.route_for_id("mi_finish_ride").label
-        context.frame.SetStatusText(f"{label} — not yet implemented")
+    if outcome is quit_flow.QuitOutcome.QUIT:
+        store = context.store
+        if store is not None:
+            store.close_session()
+    elif outcome is quit_flow.QuitOutcome.FINISH_FIRST:
+        _handle_finish_route(context)
     return outcome
 
 
@@ -730,7 +754,7 @@ def _run_launch_self_test(context: _RouteContext) -> None:
             window.Destroy()
 
 
-def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+def build_main_window(app: Any, *, store: Store | None = None) -> Any:  # noqa: ANN401
     """Build and wire ``main_frame``, complete but not yet shown.
 
     Loads every packaged XRC resource, builds the console
@@ -757,6 +781,11 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
             built; this function also hands it *frame*, for
             ``RiverCrossingApp.MacReopenApp`` to restore later, and
             binds its ``wxEVT_QUERY_END_SESSION``.
+        store: The live :class:`~rivercrossing.store.Store`, when the
+            caller opened one (E5.2.1). Threaded through
+            :class:`_RouteContext` so a confirmed quit stamps the
+            open session's ``closed_at`` (:func:`_confirm_quit`);
+            ``None`` until the store-backed bootstrap (E5.4.1).
 
     Returns:
         The loaded, fully wired ``main_frame``, not yet shown.
@@ -796,6 +825,7 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
         app=app,
         theme_controller=theme_controller,
         presenter=_presenter,
+        store=store,
     )
     _bind_routes(context)
     _bind_process_quit_paths(context)
