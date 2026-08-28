@@ -953,3 +953,177 @@ def test_store_session_state_members_have_stable_serialized_values(
 ) -> None:
     """The enum spellings stay stable for any stored form."""
     assert member.value == expected_value
+
+
+# --------------------------------------- E5.2.2 resume reading
+
+
+def _session_row(path: Path) -> sqlite3.Row:
+    """Read the newest app_session row, or the second-newest if asked.
+
+    The same reading ``Store.session_state`` uses (second-newest is
+    the previous session); assertions here compare the facade's
+    :meth:`Store.previous_session` against the raw row it wraps.
+    """
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    try:
+        return conn.execute(
+            "SELECT closed_at, active_ride_id, heartbeat_at, opened_at"
+            " FROM app_session ORDER BY id DESC LIMIT 1 OFFSET 1"
+        ).fetchone()
+    finally:
+        conn.close()
+
+
+def test_store_previous_session_fresh_database_returns_clean_quit(tmp_path: Path) -> None:
+    """A first launch (no prior session) reads CLEAN_QUIT, no ride."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        previous = store.previous_session()
+    finally:
+        store.close()
+
+    assert previous.state is SessionState.CLEAN_QUIT
+    assert previous.ride_id is None
+    assert previous.ended_at is None
+
+
+def test_store_previous_session_running_at_exit_carries_ride_id_and_closed_at(
+    tmp_path: Path,
+) -> None:
+    """Quit-keep-running: the reading carries the ride and quit time."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    store = Store.open(db_path, active_ride_id=ride_id)
+    store.close_session()
+    store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        previous = reopened.previous_session()
+    finally:
+        reopened.close()
+    row = _session_row(db_path)
+    assert row["closed_at"] is not None
+
+    assert previous.state is SessionState.RUNNING_AT_EXIT
+    assert previous.ride_id == ride_id
+    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006 -- naive local, _from_epoch's inverse
+        row["closed_at"]
+    )
+
+
+def test_store_previous_session_crashed_without_heartbeat_uses_opened_at(
+    tmp_path: Path,
+) -> None:
+    """No heartbeat written: the crash copy falls back to opened_at."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    Store.open(db_path, active_ride_id=ride_id).close()  # the crash
+    row = _session_row(db_path)
+    assert row["heartbeat_at"] is None
+    reopened = Store.open(db_path)
+    try:
+        previous = reopened.previous_session()
+    finally:
+        reopened.close()
+
+    assert previous.state is SessionState.CRASHED
+    assert previous.ride_id == ride_id
+    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006 -- naive local, _from_epoch's inverse
+        row["opened_at"]
+    )
+
+
+def test_store_previous_session_crashed_with_heartbeat_uses_last_heartbeat(
+    tmp_path: Path,
+) -> None:
+    """A written heartbeat is the crash copy's time (spec §3)."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    store = Store.open(db_path, active_ride_id=ride_id)
+    heartbeat_epoch = int(
+        datetime(2026, 9, 20, 12, 37).timestamp()  # noqa: DTZ001 -- local epoch, what the store writes
+    )
+    with store._conn:
+        store._conn.execute(
+            "UPDATE app_session SET heartbeat_at = ?"
+            " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
+            (heartbeat_epoch,),
+        )
+    store.close()  # no close_session -- the crash
+
+    reopened = Store.open(db_path)
+    try:
+        previous = reopened.previous_session()
+    finally:
+        reopened.close()
+
+    assert previous.state is SessionState.CRASHED
+    assert previous.ended_at == datetime.fromtimestamp(  # noqa: DTZ006 -- naive local, _from_epoch's inverse
+        heartbeat_epoch
+    )
+
+
+def test_store_previous_session_clean_quit_carries_no_ride(tmp_path: Path) -> None:
+    """A clean quit with no running ride reads CLEAN_QUIT, ride None."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    store.close_session()
+    store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        previous = reopened.previous_session()
+    finally:
+        reopened.close()
+
+    assert previous.state is SessionState.CLEAN_QUIT
+    assert previous.ride_id is None
+
+
+def test_store_set_active_ride_marks_the_open_session(tmp_path: Path) -> None:
+    """Continue marks the current session's running ride (R-52)."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    store = Store.open(db_path)  # the launch open, ride unknown yet
+    try:
+        store.set_active_ride(ride_id)
+    finally:
+        store.close()
+
+    row = _fetch_latest_session(db_path)
+    assert row["active_ride_id"] == ride_id
+
+
+def test_store_roster_for_returns_empty_roster_with_the_rides_shape(tmp_path: Path) -> None:
+    """load_engine's roster shell carries the ride's mode/team size."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    store = Store.open(db_path)
+    try:
+        roster = store.roster_for(ride_id)
+    finally:
+        store.close()
+
+    assert (roster.entry_mode, roster.plate_model, roster.max_team_size) == (
+        EntryMode.MIXED,
+        PlateModel.RIDER_POOLED,
+        4,
+    )
+    assert roster.entries == ()
+
+
+def test_store_roster_for_unknown_ride_raises_naming_the_id(tmp_path: Path) -> None:
+    """T-5: roster_for's negative case names the missing ride."""
+    db_path = tmp_path / "rides.db"
+    Store.open(db_path).close()
+
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.roster_for(999)
+    finally:
+        store.close()

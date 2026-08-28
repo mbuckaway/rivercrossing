@@ -92,9 +92,11 @@ case.
 import faulthandler
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 import threading
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -114,8 +116,9 @@ from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
-from rivercrossing.ui.presenters.data_source import EngineDataSource
+from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
+from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -809,6 +812,313 @@ def _quit_keep_running_writes_closed_at_and_stays_running() -> dict[str, Any]:
     }
 
 
+# --- E5.2.2: the resume dialog + reopened banner (R-52) -------------
+
+
+def _resume_db_path(prefix: str) -> Path:
+    """Return a fresh db file path under a temp dir named *prefix*."""
+    return Path(tempfile.mkdtemp(prefix=prefix)) / "rides.db"
+
+
+def _resume_ride_config() -> RideConfig:
+    """Return the store ride config the resume scenarios use."""
+    return RideConfig(
+        name="GORBA EPIC 2026",
+        event_date=date(2026, 9, 20),
+        venue="Sea to Sky Gondola",
+        lap_km=8.0,
+        organizer="GORBA",
+        scorer="K. Singh",
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
+        planned_duration_s=21600,
+        min_lap_s=1080,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ResumeRideSpec:
+    """What a resume scenario's store ride must look like.
+
+    ``quit_cleanly`` chooses the previous session's bookkeeping (a
+    clean quit-keep-running, or a crash). ``ended_at`` pins the copy's
+    time in that session row -- ``closed_at`` for a quit,
+    ``heartbeat_at`` for a crash. ``start_at`` appends the ride's
+    start event (the elapsed proof), and ``finish_and_reopen`` appends
+    finish + reopen so the replay lands in REOPENED.
+    """
+
+    quit_cleanly: bool
+    ended_at: datetime | None = None
+    start_at: datetime | None = None
+    finish_and_reopen: bool = False
+
+
+def _append_ride_events(store: Store, ride_id: int, spec: _ResumeRideSpec) -> None:
+    """Append start (and finish+reopen) events for the replay state.
+
+    The events are produced by a real engine over an empty roster with
+    the ride's own shape, exactly as ``store.roster_for`` will rebuild
+    it at launch -- the store persists only the events, and
+    ``load_engine`` reproduces the state by replaying them (E5.1.2).
+    """
+    if spec.start_at is None:
+        return
+    config = _resume_ride_config()
+    roster = Roster(
+        entry_mode=config.entry_mode,
+        plate_model=config.plate_model,
+        max_team_size=config.max_team_size,
+    )
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(config=config, shoe=shoe, clock=lambda: spec.start_at, roster=roster)
+    store.append(ride_id, engine.start(at=spec.start_at))
+    if spec.finish_and_reopen:
+        store.append(ride_id, engine.finish())
+        store.append(ride_id, engine.reopen())
+
+
+def _create_resumed_ride(db_path: Path, spec: _ResumeRideSpec) -> int:
+    """Create a store ride and a previous session that warrants resume.
+
+    The previous session records the ride as running at exit: closed
+    cleanly (``spec.quit_cleanly`` -- a quit-keep-running) or left
+    open (a crash). ``spec.ended_at`` pins the copy's time in the
+    session row -- ``closed_at`` for a quit, ``heartbeat_at`` for a
+    crash -- so the scenario can assert the exact HH:MM in the wording.
+    """
+    boot = Store.open(db_path)
+    try:
+        ride_id = boot.create_ride(_resume_ride_config())
+        _append_ride_events(boot, ride_id, spec)
+    finally:
+        boot.close()
+
+    session = Store.open(db_path, active_ride_id=ride_id)
+    if spec.quit_cleanly:
+        session.close_session()
+    session.close()
+
+    if spec.ended_at is not None:
+        column = "closed_at" if spec.quit_cleanly else "heartbeat_at"
+        with sqlite3.connect(str(db_path)) as conn:  # commits on exit
+            conn.execute(
+                f"UPDATE app_session SET {column} = ?"  # noqa: S608 -- column is a fixed literal, never input
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
+                (int(spec.ended_at.timestamp()),),
+            )
+    return ride_id
+
+
+def _resume_dlg_quit_wording_shows() -> dict[str, Any]:
+    """RUNNING_AT_EXIT launch: resume_dlg shows the quit wording."""
+    db_path = _resume_db_path("rc-resume-quit-")
+    _create_resumed_ride(
+        db_path,
+        _ResumeRideSpec(
+            quit_cleanly=True,
+            ended_at=datetime(2026, 9, 20, 12, 41),  # noqa: DTZ001 -- local, pinned for the copy
+        ),
+    )
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+
+    def _probe_and_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["shown"] = dialog is not None and dialog.IsShown()
+        if dialog is None:
+            return
+        found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        default_item = dialog.GetDefaultItem()
+        found["continue_is_default"] = default_item.GetName() if default_item is not None else None
+        harness.click(dialog, ids.CONTINUE_BTN)
+
+    wx.CallAfter(_probe_and_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        return {
+            "resume_dlg_shown": found.get("shown", False),
+            "message_lbl": found.get("message_lbl", ""),
+            "continue_is_default": found.get("continue_is_default"),
+        }
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+
+
+def _resume_dlg_crash_wording_shows() -> dict[str, Any]:
+    """CRASHED-with-ride launch: resume_dlg shows the crash wording."""
+    db_path = _resume_db_path("rc-resume-crash-")
+    _create_resumed_ride(
+        db_path,
+        _ResumeRideSpec(
+            quit_cleanly=False,
+            ended_at=datetime(2026, 9, 20, 12, 37),  # noqa: DTZ001 -- local, pinned for the copy
+        ),
+    )
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+
+    def _probe_and_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["shown"] = dialog is not None and dialog.IsShown()
+        if dialog is None:
+            return
+        found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        harness.click(dialog, ids.CONTINUE_BTN)
+
+    wx.CallAfter(_probe_and_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        return {
+            "resume_dlg_shown": found.get("shown", False),
+            "message_lbl": found.get("message_lbl", ""),
+        }
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+
+
+def _resume_continue_loads_ride_with_elapsed() -> dict[str, Any]:
+    """Continue resumes the store ride; the clock shows true elapsed.
+
+    The ride started at 10:00 (the store's replayed actual_start) and
+    the launch injects a fixed 11:00 clock, so the resumed console's
+    elapsed must read 1:00:00 -- the wall clock kept counting while
+    the app was closed (R-30), never the demo engine's ~0:00:00.
+
+    The clock label refreshes on the presenter's 1 s tick timer, and a
+    wx.Timer never fires under a bare SafeYield without a live loop
+    (measured; the flush_deferred_deletions precedent), so the read
+    runs on a real ``MainLoop``: the Continue click is a CallAfter
+    into the resume modal, the label is read at 1.5 s (after the tick)
+    and the frame force-closed so ``MainLoop`` returns.
+    """
+    db_path = _resume_db_path("rc-resume-elapsed-")
+    start = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001 -- local, the ride's actual_start
+    _create_resumed_ride(db_path, _ResumeRideSpec(quit_cleanly=True, start_at=start))
+    store = Store.open(db_path)
+    clock = _ScenarioClock(datetime(2026, 9, 20, 11, 0))  # noqa: DTZ001 -- fixed fake launch clock
+    captured: dict[str, Any] = {}
+
+    def _click_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if dialog is not None:
+            harness.click(dialog, ids.CONTINUE_BTN)
+
+    def _read_clock_then_close() -> None:
+        captured["clock_elapsed"] = harness.find_control(
+            frame, ids.CLOCK_ELAPSED_LBL
+        ).GetLabelText()
+        captured["status_label"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
+        _close_without_prompt(frame)
+
+    wx.CallAfter(_click_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store, clock=clock)
+    frame.Show()
+    frame.Layout()
+    wx.CallLater(1500, _read_clock_then_close)
+    wx.GetApp().MainLoop()
+    store.close()
+    expected = format_duration((clock() - start).total_seconds())  # type: ignore[operator]
+    return {
+        "clock_elapsed": captured.get("clock_elapsed", ""),
+        "status_label": captured.get("status_label", ""),
+        "expected_elapsed": expected,
+    }
+
+
+def _resume_library_opens_ride_library() -> dict[str, Any]:
+    """Open library on resume_dlg: ride_library_dlg opens instead.
+
+    The library open is deferred through wx.CallAfter by the resume
+    flow (app.py), so it fires on a real ``MainLoop`` -- the same
+    reason the elapsed scenario runs one. The resume dialog is clicked
+    via CallAfter into its own modal; the library opens on the loop; a
+    second CallAfter (FIFO after the deferred open) probes and
+    dismisses it inside the library's own modal; a 1.5 s CallLater
+    then closes the frame so ``MainLoop`` has no window to keep -- the
+    exact pattern the elapsed scenario uses successfully.
+    """
+    db_path = _resume_db_path("rc-resume-library-")
+    _create_resumed_ride(db_path, _ResumeRideSpec(quit_cleanly=True))
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+
+    def _click_library() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["resume_shown"] = dialog is not None and dialog.IsShown()
+        if dialog is not None:
+            harness.click(dialog, ids.LIBRARY_BTN)
+
+    def _probe_and_dismiss_library() -> None:
+        library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+        found["library_shown"] = library is not None and library.IsShown()
+        if library is not None:
+            harness.click(library, pages.WX_ID_CLOSE)
+
+    wx.CallAfter(_click_library)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    wx.CallAfter(_probe_and_dismiss_library)
+    wx.CallLater(1500, lambda: _close_without_prompt(frame))
+    wx.GetApp().MainLoop()
+    try:
+        return {
+            "resume_dlg_shown": found.get("resume_shown", False),
+            "library_shown": found.get("library_shown", False),
+        }
+    finally:
+        store.close()
+
+
+def _resume_reopened_ride_shows_reopened_infobar() -> dict[str, Any]:
+    """Continue a REOPENED ride: the corrections banner shows by name.
+
+    REOPENED is a corrections-only state (spec §3, R-36); resuming it
+    must show the code-constructed, SetName()-named banner (E5.2.2).
+    """
+    db_path = _resume_db_path("rc-resume-reopen-")
+    _create_resumed_ride(
+        db_path,
+        _ResumeRideSpec(
+            quit_cleanly=True,
+            start_at=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- local
+            finish_and_reopen=True,
+        ),
+    )
+    store = Store.open(db_path)
+
+    def _click_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if dialog is not None:
+            harness.click(dialog, ids.CONTINUE_BTN)
+
+    wx.CallAfter(_click_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        bar = wx.Window.FindWindowByName(REOPENED_INFOBAR, frame)
+        return {
+            "infobar_resolves": bar is not None,
+            "infobar_shown": bool(bar is not None and bar.IsShown()),
+            "status_label": harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText(),
+        }
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+
+
 def _csv_import_commit_reads_editor() -> dict[str, Any]:
     """Import clean_pooled.csv via mi_import_csv, then read riders_list.
 
@@ -1205,6 +1515,11 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "quit_keep_running_writes_closed_at_and_stays_running": (
         _quit_keep_running_writes_closed_at_and_stays_running
     ),
+    "resume_dlg_quit_wording_shows": _resume_dlg_quit_wording_shows,
+    "resume_dlg_crash_wording_shows": _resume_dlg_crash_wording_shows,
+    "resume_continue_loads_ride_with_elapsed": _resume_continue_loads_ride_with_elapsed,
+    "resume_library_opens_ride_library": _resume_library_opens_ride_library,
+    "resume_reopened_ride_shows_reopened_infobar": _resume_reopened_ride_shows_reopened_infobar,
     "red_x_close_vetoes_and_hides_on_mac": _red_x_close_vetoes_and_hides_on_mac,
     "mac_reopen_shows_and_raises": _mac_reopen_shows_and_raises,
     "query_end_session_cancelled_vetoes": _query_end_session_cancelled_vetoes,
