@@ -8,7 +8,11 @@ in-memory :class:`~rivercrossing.roster.Roster` that
 directly -- :class:`RiderEditor` takes ``roster=`` instead of
 ``data_source=``, constructs its own ``RidersPresenter`` (mirroring
 ``views/selftest.py``'s presenter-inside-the-view wiring), and binds
-Add/Save/Delete/row selection to it. E3.4 adds
+Add/Save/Delete/row selection to it. E5.4.2 retires the demo seam: the
+app bootstrap's roster is empty until a store-backed ride is opened
+(the library Open / resume flow replaces ``context.roster`` with the
+store's), so the editor shows a correct empty state with no ride
+open. E3.4 adds
 :class:`CsvPreviewDialog` for ``csv_preview_dlg``: a *second* view,
 pairing with a *second* ``RidersPresenter`` instance over the same
 live roster, constructed with ``load=False`` (that class's own
@@ -106,8 +110,8 @@ CSV_INFOBAR = "csv_infobar"
 
 # D16: the canvas draws this dialog at 640px; XRC has no window-level
 # minsize (riders.xrc's own header notes this and defers to code).
-# Height is Fit()'s own measurement of the real, demo-populated
-# sizer content -- see this task's own report for how it was measured.
+# Height is Fit()'s own measurement of the real sizer content -- see
+# this task's own report for how it was measured.
 MIN_SIZE = (640, 281)
 
 # The two NotImplementedError messages each view class's own "wrong
@@ -634,16 +638,16 @@ class CsvPreviewDialog:
 # their picker -> preview/write flow through (E3.4's own follow-on
 # "one source of truth" design constraint). Hosted here, not
 # ``ui.app`` -- the obvious home, since the route handlers already
-# lived there -- because a view importing ``ui.app`` back would give
-# ``rivercrossing.ui.views`` a transitive import of ``rivercrossing.
-# demo`` through ``ui.app``'s own module-level import of it, breaking
-# "only the app bootstrap imports rivercrossing.demo" (measured with
-# ``lint-imports`` while wiring this follow-on). Not the presenter
-# either: ``RidersPresenter`` may never import wx (R-71), and loading/
-# showing ``csv_preview_dlg`` is unavoidably wx-touching. ``ui.app``
-# keeps calling these two functions with a deferred, function-scoped
-# import -- the same way it already reaches every other view class in
-# this package.
+# lived there -- because a view importing ``ui.app`` back would create
+# a views->app dependency cycle (the layering contract the import-
+# linter's wx contract enforces); the original reason the comment
+# recorded -- ``ui.app`` importing ``rivercrossing.demo``, which would
+# leak through that back-import -- was retired with the seam itself in
+# E5.4.2. Not the presenter either: ``RidersPresenter`` may never
+# import wx (R-71), and loading/showing ``csv_preview_dlg`` is
+# unavoidably wx-touching. ``ui.app`` keeps calling these two
+# functions with a deferred, function-scoped import -- the same way it
+# already reaches every other view class in this package.
 
 
 def _pick_import_path(parent: wx.Window) -> Path | None:

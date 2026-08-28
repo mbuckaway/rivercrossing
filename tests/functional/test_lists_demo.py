@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-toolkit tests for the list windows' demo display (E1.5.2).
+"""Real-toolkit tests for the list windows' display (E1.5.2, E5.4.2).
 
 ``RideLibrary`` and ``RiderEditor`` each decorate an already-XRC-
 loaded window (``harness.load_window``, the same pattern
@@ -7,6 +7,15 @@ loaded window (``harness.load_window``, the same pattern
 bindings xrc-windows.md's per-window footnotes assign to it: each
 DataView's columns and rows and ``rider_editor_dlg``'s solo-only Team
 column.
+
+E5.4.2 retired the demo seam from the app path: the no-store library
+and the bootstrap rider editor now render the empty state (zero rides,
+zero riders -- a real store-backed ride shows rows once opened), so
+the fixtures below wire ``EmptyDataSource`` and an empty mixed roster,
+and the canvas-row pins became empty-state pins. ``rivercrossing.demo``
+remains importable from tests for the view-capability suites that
+still need populated fixture rows (``test_rider_editor.py`` builds its
+seeded mixed roster through ``_lists_common.demo_seeded_roster``).
 
 The ``entry_detail_dlg`` and ``results_frame`` suites moved to
 ``test_lists_entry_detail.py`` and ``test_lists_results.py`` with
@@ -30,25 +39,35 @@ import re
 import harness
 import pytest
 from _lists_common import (
-    CANVAS_RIDERS,
-    CANVAS_RIDES,
     MAX_SCREEN_HEIGHT,
     MAX_SCREEN_WIDTH,
     _model_row,
     _spy_repaint,
 )
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import RideStatus
-from rivercrossing.roster import Roster
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import ids
-from rivercrossing.ui.app import _seed_roster
-from rivercrossing.ui.presenters.data_source import RideSummary
+from rivercrossing.ui.presenters.data_source import EmptyDataSource, RideSummary
 from rivercrossing.ui.views import ride_library, rider_editor
 from rivercrossing.ui.views.ride_library import RideLibrary
 from rivercrossing.ui.views.rider_editor import COL_TEAM, RiderEditor
 
 pytestmark = pytest.mark.functional
+
+
+def _empty_mixed_roster() -> Roster:
+    """Return the bootstrap's empty mixed/pooled roster (E5.4.2).
+
+    Mirrors the ``Roster(...)`` ``app.build_main_window`` constructs:
+    no entries, but the E3.2-approved mixed/rider_pooled/max-4 shape
+    that keeps the Team column visible for a mixed ride.
+    """
+    return Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        max_team_size=4,
+    )
 
 
 # ----------------------------------------------------------- fixtures
@@ -62,7 +81,7 @@ def shared_library(xrc_resource: object) -> RideLibrary:
         window.Show()
         window.Layout()
         harness.pump()
-        view = RideLibrary(window, data_source=DemoDataSource())
+        view = RideLibrary(window, data_source=EmptyDataSource())
         yield view
     finally:
         # Phase 2 reference hygiene: drop the view before the window
@@ -73,13 +92,13 @@ def shared_library(xrc_resource: object) -> RideLibrary:
 
 @pytest.fixture(scope="module")
 def shared_rider_editor(xrc_resource: object) -> RiderEditor:
-    """One ``RiderEditor``, built against the demo's mixed roster."""
+    """One ``RiderEditor``, built against the empty bootstrap roster."""
     window = harness.load_window_verified(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     try:
         window.Show()
         window.Layout()
         harness.pump()
-        view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
+        view = RiderEditor(window, roster=_empty_mixed_roster())
         yield view
     finally:
         # Phase 2 reference hygiene: drop the view before the window
@@ -91,15 +110,15 @@ def shared_rider_editor(xrc_resource: object) -> RiderEditor:
 # --------------------------------------------------- ride_library_dlg
 
 
-def test_ride_library_shows_two_rides_matching_the_canvas_exactly(
+def test_ride_library_given_an_empty_source_shows_no_rides(
     shared_library: RideLibrary,
 ) -> None:
-    """xrc-windows.md D: GORBA EPIC 2026 (RUNNING) then poker night."""
+    """E5.4.2: no store open -- the library renders zero rides."""
     model = shared_library.rides_list.GetModel()
 
     rows = tuple(_model_row(model, row, range(4)) for row in range(model.GetCount()))
 
-    assert rows == CANVAS_RIDES
+    assert rows == ()
 
 
 def test_ride_library_given_a_different_source_shows_its_rows_not_the_demo(
@@ -146,21 +165,26 @@ def test_ride_library_fits_within_1366x768(shared_library: RideLibrary) -> None:
 # --------------------------------------------------- rider_editor_dlg
 
 
-def test_rider_editor_shows_four_riders_matching_the_canvas_exactly(
+def test_rider_editor_given_an_empty_mixed_roster_shows_no_rows(
     shared_rider_editor: RiderEditor,
 ) -> None:
-    """xrc-windows.md C: Ellis, Roy/Singh (Trail Blazers), Chen."""
+    """E5.4.2: no store-backed ride open -- the editor renders nothing.
+
+    The bootstrap roster is empty until a ride is opened; the editor
+    still declares the mixed mode, so its Team column rules apply to an
+    empty list (asserted by the sibling test below).
+    """
     model = shared_rider_editor.riders_list.GetModel()
 
     rows = tuple(_model_row(model, row, range(3)) for row in range(model.GetCount()))
 
-    assert rows == CANVAS_RIDERS
+    assert rows == ()
 
 
-def test_rider_editor_team_column_is_shown_for_the_demos_mixed_roster(
+def test_rider_editor_team_column_is_shown_for_an_empty_mixed_roster(
     shared_rider_editor: RiderEditor,
 ) -> None:
-    """Req 3: mixed solo+team riders keep the Team column visible."""
+    """Req 3/R-11: a mixed ride keeps the Team column, even empty."""
     column = shared_rider_editor.riders_list.GetColumn(COL_TEAM)
 
     assert column.IsHidden() is False
@@ -234,12 +258,12 @@ def test_ride_library_show_rides_repaints_the_list_after_associating_its_model(
         # control kept alive: _spy_repaint's docstring.
         control = harness.find_control(window, ids.RIDES_LIST)
         refresh, update = _spy_repaint(control)
-        view = RideLibrary(window, data_source=DemoDataSource())
+        view = RideLibrary(window, data_source=EmptyDataSource())
         row_count = view.rides_list.GetModel().GetCount()
     finally:
         harness.close_window(window)
 
-    assert row_count == len(CANVAS_RIDES)
+    assert row_count == 0
     refresh.assert_called_once_with()
     update.assert_called_once_with()
 
@@ -255,11 +279,11 @@ def test_rider_editor_show_riders_repaints_the_list_after_associating_its_model(
         # control kept alive: _spy_repaint's docstring.
         control = harness.find_control(window, ids.RIDERS_LIST)
         refresh, update = _spy_repaint(control)
-        view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
+        view = RiderEditor(window, roster=_empty_mixed_roster())
         row_count = view.riders_list.GetModel().GetCount()
     finally:
         harness.close_window(window)
 
-    assert row_count == len(CANVAS_RIDERS)
+    assert row_count == 0
     refresh.assert_called_once_with()
     update.assert_called_once_with()

@@ -65,7 +65,10 @@ __all__ = [
     "MissingDialogControlError",
     "bind_delete_confirmation_gate",
     "default_button_for",
+    "delete_ride_message",
+    "duplicate_ride_message",
     "first_field_for",
+    "reopen_ride_message",
     "run_dialog",
     "set_initial_focus",
     "wire_close_button",
@@ -229,6 +232,39 @@ def bind_delete_confirmation_gate(dialog: Any, ride_name: str) -> None:  # noqa:
         event.Skip()
 
     dialog.Bind(wx.EVT_TEXT, _on_text, confirm_input)
+
+
+def delete_ride_message(ride_name: str) -> str:
+    """Return ``delete_ride_dlg``'s ``message_lbl`` copy for a ride.
+
+    UX-DESKTOP §4: a destructive confirm must name the object it is
+    about to destroy, so this line is not optional -- the E5.3.2
+    functional suite asserts the label is non-empty and carries
+    *ride_name* (a blank label is a failed assertion, never cosmetic).
+    Mirrors library.xrc's own data-bearing sentence.
+    """
+    return f'Deletes "{ride_name}" and all its data.'
+
+
+def duplicate_ride_message(ride_name: str) -> str:
+    """Return ``duplicate_ride_dlg``'s ``message_lbl`` copy (E5.4.1).
+
+    Names the ride being duplicated (UX-DESKTOP §4), matching
+    dialogs.xrc's data-bearing sentence. Non-destructive, so the
+    confirm is Enter-safe; the copy's derived name is the Store's
+    concern, not this line's.
+    """
+    return f'Duplicate "{ride_name}" as a new DRAFT ride?'
+
+
+def reopen_ride_message(ride_name: str) -> str:
+    """Return ``reopen_ride_dlg``'s ``message_lbl`` copy (E5.4.1).
+
+    Names the ride being reopened (UX-DESKTOP §4), matching
+    dialogs.xrc's data-bearing sentence and spec §3's "reopen for
+    corrections" wording.
+    """
+    return f'Reopen "{ride_name}" for corrections?'
 
 
 def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs

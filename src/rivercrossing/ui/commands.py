@@ -56,12 +56,14 @@ class TargetKind(Enum):
     COMMAND = "command"
 
 
-# spec.md section 15 names a dialog for these three rows -- Duplicate
-# Ride, Reopen Ride, Void Card -- that xrc-windows.md's 23 frozen
-# windows do not implement (all three rows' own "Opens / does" text
-# says "(3d pattern)" or "Duplicate-ride dialog", never a name that
-# matches an authored window). This sentinel cannot be mistaken for a
-# real ``ui/ids.py`` constant; see the E1.4.1 report for the gap.
+# spec.md section 15 names a dialog for Void Card… that
+# xrc-windows.md's frozen windows do not implement (its own "Opens /
+# does" text says "(3d pattern)", never a name that matches an
+# authored window). E5.4.1 authored the other two 3d-pattern rows --
+# Duplicate Ride and Reopen Ride -- as duplicate_ride_dlg and
+# reopen_ride_dlg (mock-first, spec.md 15b), so this sentinel remains
+# for Void Card only, owned by E7. It cannot be mistaken for a real
+# ``ui/ids.py`` constant; see the E1.4.1 report for the gap.
 _UNAUTHORED_DIALOG = "UNAUTHORED-DIALOG: no frozen XRC window covers this §15 target yet"
 
 _RUNNING = frozenset({RideStatus.RUNNING})
@@ -159,8 +161,11 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="File",
         label="Duplicate Ride…",
         ids=("mi_duplicate_ride",),
+        # E5.4.1 mock-first: duplicate_ride_dlg authored and its names
+        # registered in spec.md 15b before this route resolved to it
+        # (the E1.4.1 sentinel is retired for this row).
         kind=TargetKind.DIALOG,
-        target=_UNAUTHORED_DIALOG,
+        target=ids.DUPLICATE_RIDE_DLG,
         enabled_when=Enablement(requires_ride_open=True),  # "a ride is open"
     ),
     MenuRoute(
@@ -255,8 +260,11 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="Ride",
         label="Reopen Ride",
         ids=("mi_reopen_ride",),
+        # E5.4.1 mock-first: reopen_ride_dlg authored and its names
+        # registered in spec.md 15b before this route resolved to it
+        # (the E1.4.1 sentinel is retired for this row).
         kind=TargetKind.DIALOG,
-        target=_UNAUTHORED_DIALOG,
+        target=ids.REOPEN_RIDE_DLG,
         enabled_when=Enablement(allowed_states=_FINISHED),  # "FINISHED"
     ),
     MenuRoute(

@@ -92,8 +92,11 @@ case.
 import faulthandler
 import json
 import os
+import sqlite3
 import sys
+import tempfile
 import threading
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -107,13 +110,17 @@ import wx.xrc
 
 from rivercrossing.cards import Shoe
 from rivercrossing.demo import DemoDataSource
-from rivercrossing.ride import RideConfig, RideEngine, RideStatus
-from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
+from rivercrossing.store import Store
+from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
-from rivercrossing.ui.presenters.data_source import EngineDataSource
+from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
+from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
+from rivercrossing.ui.views.ride_library import COL_NAME, COL_STATUS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -286,7 +293,14 @@ def _spy_on_destroy(window: Any) -> list[bool]:  # noqa: ANN401
 
 
 def _plate_entry_round_trip() -> dict[str, Any]:
-    """Typing a plate then Enter records it into the live feed."""
+    """Typing a plate with no ride open rejects it (R-31, E5.4.2).
+
+    The bootstrap roster is empty (no store-backed ride is open), so
+    every plate is unknown: the entry is refused with the ERROR notice,
+    the field is kept, focus returns, and no crossing is recorded --
+    the console's correct empty state until a store-backed ride is
+    opened.
+    """
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
@@ -304,13 +318,14 @@ def _plate_entry_round_trip() -> dict[str, Any]:
             "field_value": plate_input.GetValue(),
             "focused": len(focus_calls) > 0,
             "crossings_label": harness.find_control(frame, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
+            "status_text": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
         _close_without_prompt(frame)
 
 
 def _record_btn_click_records_once() -> dict[str, Any]:
-    """Clicking Record does exactly what pressing Enter does (A5)."""
+    """Clicking Record with no ride open rejects it (R-31, E5.4.2)."""
     frame = app_module.build_main_window(wx.GetApp())
     frame.Show()
     frame.Layout()
@@ -328,6 +343,7 @@ def _record_btn_click_records_once() -> dict[str, Any]:
             "field_value": plate_input.GetValue(),
             "focused": len(focus_calls) > 0,
             "crossings_label": harness.find_control(frame, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
+            "status_text": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
         _close_without_prompt(frame)
@@ -448,9 +464,16 @@ def _running_ride_shows_exit_running_dlg() -> dict[str, Any]:
 
 
 def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
-    """Show exit_confirm_dlg when the status is not RUNNING."""
-    original_ride_status = DemoDataSource.ride_status
-    DemoDataSource.ride_status = lambda _self: RideStatus.DRAFT
+    """Show exit_confirm_dlg when the console ride is not RUNNING.
+
+    E5.4.2: the quit flow reads the live presenter engine's state, so
+    the DRAFT case is set up by keeping the bootstrap engine DRAFT
+    (``RideEngine.start`` patched to a no-op before
+    ``build_main_window`` auto-starts it). The engine itself is real;
+    only the auto-start is suppressed, in this one spawned interpreter.
+    """
+    original_start = RideEngine.start
+    RideEngine.start = lambda _self, _at=None: None  # type: ignore[assignment]
     try:
         frame = app_module.build_main_window(wx.GetApp())
         frame.Show()
@@ -470,29 +493,7 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
         finally:
             _close_without_prompt(frame)
     finally:
-        DemoDataSource.ride_status = original_ride_status
-
-
-def _finish_first_ends_dialog_stays_running_posts_notice() -> dict[str, Any]:
-    """finish_first_btn (A1): ends the dialog, ride stays running."""
-    frame = app_module.build_main_window(wx.GetApp())
-    frame.Show()
-    frame.Layout()
-    harness.pump()
-    try:
-
-        def _click_finish_first() -> None:
-            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
-            harness.click(dialog, ids.FINISH_FIRST_BTN)
-
-        wx.CallAfter(_click_finish_first)
-        _fire_exit_route(frame)
-        return {
-            "frame_being_deleted": frame.IsBeingDeleted(),
-            "status_text": frame.GetStatusBar().GetStatusText(0),
-        }
-    finally:
-        _close_without_prompt(frame)
+        RideEngine.start = original_start
 
 
 def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
@@ -681,6 +682,967 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
     frame.Close()
     harness.pump()  # run the deferred destroy the MSW fix schedules
     return {"frame_being_deleted": len(destroy_calls) > 0}
+
+
+# --- E5.2.3: the exit-with-running-ride dialog (R-51) -------------
+
+
+def _exit_running_dlg_probe_and_cancel() -> dict[str, Any]:
+    """exit_running_dlg shows 3 buttons, message_lbl, Cancel default."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        found: dict[str, Any] = {}
+
+        def _probe_and_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            found["shown"] = dialog is not None and dialog.IsShown()
+            if dialog is None:
+                return
+            found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+            for name in (pages.WX_ID_CANCEL, ids.FINISH_FIRST_BTN, pages.WX_ID_OK):
+                found[f"has_{name}"] = wx.Window.FindWindowByName(name, dialog) is not None
+            default_item = dialog.GetDefaultItem()
+            found["default_name"] = default_item.GetName() if default_item is not None else None
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        wx.CallAfter(_probe_and_cancel)
+        _fire_exit_route(frame)
+        return {
+            "exit_running_dlg_shown": found.get("shown", False),
+            "message_lbl": found.get("message_lbl", ""),
+            "has_cancel": found.get("has_wxID_CANCEL", False),
+            "has_finish_first": found.get("has_finish_first_btn", False),
+            "has_quit": found.get("has_wxID_OK", False),
+            "default_name": found.get("default_name"),
+            "frame_being_deleted": frame.IsBeingDeleted(),
+            "frame_shown": frame.IsShown(),
+        }
+    finally:
+        _close_without_prompt(frame)
+
+
+def _finish_first_routes_to_the_finish_flow() -> dict[str, Any]:
+    """finish_first_btn ends the exit dialog, then runs the finish flow.
+
+    ``_handle_finish_route`` opens finish_confirm_dlg modally inside
+    the exit flow's own synchronous unwind, so the scenario cannot
+    click it from its own code -- the same wall the
+    ``query_end_session_*`` scenarios hit. ``dialogs.run_dialog`` is
+    intercepted (the suite's established pattern) to answer a
+    confirmed OK for the finish dialog only; the exit dialog itself
+    still shows as a real modal and is dismissed by clicking
+    ``finish_first_btn``. That proves the routing: FINISH_FIRST hands
+    off to the E4.4.4 finish path, whose confirmed finish runs
+    ``presenter.on_finish`` and leaves the app up.
+    """
+    original_run_dialog = dialogs.run_dialog
+    found: dict[str, Any] = {}
+
+    def _auto_ok_finish(dialog: Any, opener: Any) -> int:  # noqa: ANN401
+        if dialog.GetName() == ids.FINISH_CONFIRM_DLG:
+            found["finish_confirm_shown"] = True
+            return wx.ID_OK
+        return original_run_dialog(dialog, opener)
+
+    dialogs.run_dialog = _auto_ok_finish
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+
+        def _click_finish_first() -> None:
+            dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+            harness.click(dialog, ids.FINISH_FIRST_BTN)
+
+        wx.CallAfter(_click_finish_first)
+        _fire_exit_route(frame)
+        return {
+            "finish_confirm_shown": found.get("finish_confirm_shown", False),
+            "status_text": frame.GetStatusBar().GetStatusText(0),
+            "frame_being_deleted": frame.IsBeingDeleted(),
+        }
+    finally:
+        dialogs.run_dialog = original_run_dialog
+        _close_without_prompt(frame)
+
+
+def _quit_keep_running_writes_closed_at_and_stays_running() -> dict[str, Any]:
+    """Quit-keep-running: closed_at written, ride untouched, app quits.
+
+    The app is built over a real Store whose open recorded the running
+    ride's id (E5.2.1): confirming Quit on the exit dialog must stamp
+    that session's closed_at, leave the ride row's status alone, and
+    destroy the frame -- the bookkeeping the resume dialog (E5.2.2)
+    will read next launch.
+    """
+    db_path = Path(tempfile.mkdtemp(prefix="rc-exit-")) / "rides.db"
+    boot = Store.open(db_path)
+    try:
+        config = RideConfig(
+            name="GORBA EPIC 2026",
+            event_date=date(2026, 9, 20),
+            venue="Sea to Sky Gondola",
+            lap_km=8.0,
+            organizer="GORBA",
+            scorer="K. Singh",
+            planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
+            planned_duration_s=21600,
+            min_lap_s=1080,
+            entry_mode=EntryMode.MIXED,
+            plate_model=PlateModel.RIDER_POOLED,
+        )
+        ride_id = boot.create_ride(config)
+    finally:
+        boot.close()
+
+    store = Store.open(db_path, active_ride_id=ride_id)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    destroy_calls = _spy_on_destroy(frame)
+
+    def _click_quit() -> None:
+        dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
+        harness.click(dialog, pages.WX_ID_OK)
+
+    wx.CallAfter(_click_quit)
+    _fire_exit_route(frame)
+    harness.pump()
+    store.close()
+
+    reopened = Store.open(db_path)
+    try:
+        state = reopened.session_state()
+        status = reopened._conn.execute(
+            "SELECT status FROM ride WHERE id = ?", (ride_id,)
+        ).fetchone()[0]
+    finally:
+        reopened.close()
+    return {
+        "frame_being_deleted": len(destroy_calls) > 0,
+        "session_state": state.value,
+        "ride_status": status,
+    }
+
+
+# --- E5.2.2: the resume dialog + reopened banner (R-52) -------------
+
+
+def _resume_db_path(prefix: str) -> Path:
+    """Return a fresh db file path under a temp dir named *prefix*."""
+    return Path(tempfile.mkdtemp(prefix=prefix)) / "rides.db"
+
+
+def _resume_ride_config() -> RideConfig:
+    """Return the store ride config the resume scenarios use."""
+    return RideConfig(
+        name="GORBA EPIC 2026",
+        event_date=date(2026, 9, 20),
+        venue="Sea to Sky Gondola",
+        lap_km=8.0,
+        organizer="GORBA",
+        scorer="K. Singh",
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
+        planned_duration_s=21600,
+        min_lap_s=1080,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _ResumeRideSpec:
+    """What a resume scenario's store ride must look like.
+
+    ``quit_cleanly`` chooses the previous session's bookkeeping (a
+    clean quit-keep-running, or a crash). ``ended_at`` pins the copy's
+    time in that session row -- ``closed_at`` for a quit,
+    ``heartbeat_at`` for a crash. ``start_at`` appends the ride's
+    start event (the elapsed proof), and ``finish_and_reopen`` appends
+    finish + reopen so the replay lands in REOPENED.
+    """
+
+    quit_cleanly: bool
+    ended_at: datetime | None = None
+    start_at: datetime | None = None
+    finish_and_reopen: bool = False
+
+
+def _append_ride_events(store: Store, ride_id: int, spec: _ResumeRideSpec) -> None:
+    """Append start (and finish+reopen) events for the replay state.
+
+    The events are produced by a real engine over an empty roster with
+    the ride's own shape, exactly as ``store.roster_for`` will rebuild
+    it at launch -- the store persists only the events, and
+    ``load_engine`` reproduces the state by replaying them (E5.1.2).
+    """
+    if spec.start_at is None:
+        return
+    config = _resume_ride_config()
+    roster = Roster(
+        entry_mode=config.entry_mode,
+        plate_model=config.plate_model,
+        max_team_size=config.max_team_size,
+    )
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(config=config, shoe=shoe, clock=lambda: spec.start_at, roster=roster)
+    store.append(ride_id, engine.start(at=spec.start_at))
+    if spec.finish_and_reopen:
+        store.append(ride_id, engine.finish())
+        store.append(ride_id, engine.reopen())
+
+
+def _create_resumed_ride(db_path: Path, spec: _ResumeRideSpec) -> int:
+    """Create a store ride and a previous session that warrants resume.
+
+    The previous session records the ride as running at exit: closed
+    cleanly (``spec.quit_cleanly`` -- a quit-keep-running) or left
+    open (a crash). ``spec.ended_at`` pins the copy's time in the
+    session row -- ``closed_at`` for a quit, ``heartbeat_at`` for a
+    crash -- so the scenario can assert the exact HH:MM in the wording.
+    """
+    boot = Store.open(db_path)
+    try:
+        ride_id = boot.create_ride(_resume_ride_config())
+        _append_ride_events(boot, ride_id, spec)
+    finally:
+        boot.close()
+
+    session = Store.open(db_path, active_ride_id=ride_id)
+    if spec.quit_cleanly:
+        session.close_session()
+    session.close()
+
+    if spec.ended_at is not None:
+        column = "closed_at" if spec.quit_cleanly else "heartbeat_at"
+        with sqlite3.connect(str(db_path)) as conn:  # commits on exit
+            conn.execute(
+                f"UPDATE app_session SET {column} = ?"  # noqa: S608 -- column is a fixed literal, never input
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
+                (int(spec.ended_at.timestamp()),),
+            )
+    return ride_id
+
+
+def _resume_dlg_quit_wording_shows() -> dict[str, Any]:
+    """RUNNING_AT_EXIT launch: resume_dlg shows the quit wording."""
+    db_path = _resume_db_path("rc-resume-quit-")
+    _create_resumed_ride(
+        db_path,
+        _ResumeRideSpec(
+            quit_cleanly=True,
+            ended_at=datetime(2026, 9, 20, 12, 41),  # noqa: DTZ001 -- local, pinned for the copy
+        ),
+    )
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+
+    def _probe_and_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["shown"] = dialog is not None and dialog.IsShown()
+        if dialog is None:
+            return
+        found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        default_item = dialog.GetDefaultItem()
+        found["continue_is_default"] = default_item.GetName() if default_item is not None else None
+        harness.click(dialog, ids.CONTINUE_BTN)
+
+    wx.CallAfter(_probe_and_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        return {
+            "resume_dlg_shown": found.get("shown", False),
+            "message_lbl": found.get("message_lbl", ""),
+            "continue_is_default": found.get("continue_is_default"),
+        }
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+
+
+def _resume_dlg_crash_wording_shows() -> dict[str, Any]:
+    """CRASHED-with-ride launch: resume_dlg shows the crash wording."""
+    db_path = _resume_db_path("rc-resume-crash-")
+    _create_resumed_ride(
+        db_path,
+        _ResumeRideSpec(
+            quit_cleanly=False,
+            ended_at=datetime(2026, 9, 20, 12, 37),  # noqa: DTZ001 -- local, pinned for the copy
+        ),
+    )
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+
+    def _probe_and_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["shown"] = dialog is not None and dialog.IsShown()
+        if dialog is None:
+            return
+        found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        harness.click(dialog, ids.CONTINUE_BTN)
+
+    wx.CallAfter(_probe_and_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        return {
+            "resume_dlg_shown": found.get("shown", False),
+            "message_lbl": found.get("message_lbl", ""),
+        }
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+
+
+def _resume_continue_loads_ride_with_elapsed() -> dict[str, Any]:
+    """Continue resumes the store ride; the clock shows true elapsed.
+
+    The ride started at 10:00 (the store's replayed actual_start) and
+    the launch injects a fixed 11:00 clock, so the resumed console's
+    elapsed must read 1:00:00 -- the wall clock kept counting while
+    the app was closed (R-30), never the demo engine's ~0:00:00.
+
+    The clock label refreshes on the presenter's 1 s tick timer, and a
+    wx.Timer never fires under a bare SafeYield without a live loop
+    (measured; the flush_deferred_deletions precedent), so the read
+    runs on a real ``MainLoop``: the Continue click is a CallAfter
+    into the resume modal, the label is read at 1.5 s (after the tick)
+    and the frame force-closed so ``MainLoop`` returns.
+    """
+    db_path = _resume_db_path("rc-resume-elapsed-")
+    start = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001 -- local, the ride's actual_start
+    _create_resumed_ride(db_path, _ResumeRideSpec(quit_cleanly=True, start_at=start))
+    store = Store.open(db_path)
+    clock = _ScenarioClock(datetime(2026, 9, 20, 11, 0))  # noqa: DTZ001 -- fixed fake launch clock
+    captured: dict[str, Any] = {}
+
+    def _click_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if dialog is not None:
+            harness.click(dialog, ids.CONTINUE_BTN)
+
+    def _read_clock_then_close() -> None:
+        captured["clock_elapsed"] = harness.find_control(
+            frame, ids.CLOCK_ELAPSED_LBL
+        ).GetLabelText()
+        captured["status_label"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
+        _close_without_prompt(frame)
+
+    wx.CallAfter(_click_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store, clock=clock)
+    frame.Show()
+    frame.Layout()
+    wx.CallLater(1500, _read_clock_then_close)
+    wx.GetApp().MainLoop()
+    store.close()
+    expected = format_duration((clock() - start).total_seconds())  # type: ignore[operator]
+    return {
+        "clock_elapsed": captured.get("clock_elapsed", ""),
+        "status_label": captured.get("status_label", ""),
+        "expected_elapsed": expected,
+    }
+
+
+def _resume_library_opens_ride_library() -> dict[str, Any]:
+    """Open library on resume_dlg: ride_library_dlg opens instead.
+
+    The library open is deferred through wx.CallAfter by the resume
+    flow (app.py), so it fires on a real ``MainLoop`` -- the same
+    reason the elapsed scenario runs one. The resume dialog is clicked
+    via CallAfter into its own modal; the library opens on the loop; a
+    second CallAfter (FIFO after the deferred open) probes and
+    dismisses it inside the library's own modal; a 1.5 s CallLater
+    then closes the frame so ``MainLoop`` has no window to keep -- the
+    exact pattern the elapsed scenario uses successfully.
+    """
+    db_path = _resume_db_path("rc-resume-library-")
+    _create_resumed_ride(db_path, _ResumeRideSpec(quit_cleanly=True))
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+
+    def _click_library() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["resume_shown"] = dialog is not None and dialog.IsShown()
+        if dialog is not None:
+            harness.click(dialog, ids.LIBRARY_BTN)
+
+    def _probe_and_dismiss_library() -> None:
+        library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+        found["library_shown"] = library is not None and library.IsShown()
+        if library is not None:
+            harness.click(library, pages.WX_ID_CLOSE)
+
+    wx.CallAfter(_click_library)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    wx.CallAfter(_probe_and_dismiss_library)
+    wx.CallLater(1500, lambda: _close_without_prompt(frame))
+    wx.GetApp().MainLoop()
+    try:
+        return {
+            "resume_dlg_shown": found.get("resume_shown", False),
+            "library_shown": found.get("library_shown", False),
+        }
+    finally:
+        store.close()
+
+
+def _resume_reopened_ride_shows_reopened_infobar() -> dict[str, Any]:
+    """Continue a REOPENED ride: the corrections banner shows by name.
+
+    REOPENED is a corrections-only state (spec §3, R-36); resuming it
+    must show the code-constructed, SetName()-named banner (E5.2.2).
+    """
+    db_path = _resume_db_path("rc-resume-reopen-")
+    _create_resumed_ride(
+        db_path,
+        _ResumeRideSpec(
+            quit_cleanly=True,
+            start_at=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- local
+            finish_and_reopen=True,
+        ),
+    )
+    store = Store.open(db_path)
+
+    def _click_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if dialog is not None:
+            harness.click(dialog, ids.CONTINUE_BTN)
+
+    wx.CallAfter(_click_continue)
+    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        bar = wx.Window.FindWindowByName(REOPENED_INFOBAR, frame)
+        return {
+            "infobar_resolves": bar is not None,
+            "infobar_shown": bool(bar is not None and bar.IsShown()),
+            "status_label": harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText(),
+        }
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+
+
+def _confirm_delete_on_dialog(dialog: Any, ride_name: str) -> dict[str, Any]:  # noqa: ANN401
+    """Type *ride_name* into the dialog and click Delete; report facts.
+
+    Drives ``delete_ride_dlg`` with the harness's direct-injection
+    pattern (SetValue fires EVT_TEXT; a posted CommandEvent fires
+    EVT_BUTTON): records the interpolated ``message_lbl`` and the gate
+    state after typing, then clicks Delete to end the modal. Returns
+    the observations plus whether the modal confirmed as Delete.
+    """
+    found: dict[str, Any] = {}
+
+    def _safe_end_modal() -> None:
+        if dialog.IsModal() and dialog.GetReturnCode() == 0:
+            dialog.EndModal(wx.ID_CANCEL)
+
+    def _type_and_confirm() -> None:
+        found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        harness.type_text(dialog, ids.CONFIRM_NAME_INPUT, ride_name)
+        found["delete_enabled_on_exact"] = harness.find_control(
+            dialog, pages.WX_ID_DELETE
+        ).IsEnabled()
+        harness.click(dialog, pages.WX_ID_DELETE)
+
+    wx.CallAfter(_type_and_confirm)
+    wx.CallAfter(_safe_end_modal)
+    result = dialog.ShowModal()
+    found["confirmed"] = result == wx.ID_DELETE
+    return found
+
+
+def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
+    """Confirm on delete_ride_dlg writes a backup, then deletes.
+
+    The E5.3.2 functional proof of R-18's "automatic database backup
+    is written first": drives the real ``delete_ride_dlg`` (name
+    interpolated into ``message_lbl``, type-to-confirm gate armed),
+    types the exact name, clicks Delete, and -- the callback E5.4 will
+    thread from the library -- runs ``Store.delete_ride``. The facts
+    returned are all first-class disk/store observations: whether a
+    backup existed *before* the delete ran, whether one exists after,
+    whether that backup reopens with the ride and a clean integrity
+    check, and whether the ride row is gone.
+    """
+    db_path = Path(tempfile.mkdtemp(prefix="rc-delete-")) / "rides.db"
+    boot = Store.open(db_path)
+    try:
+        config = RideConfig(
+            name="Club poker night",
+            event_date=date(2026, 9, 20),
+            venue="Sea to Sky Gondola",
+            lap_km=8.0,
+            organizer="GORBA",
+            scorer="K. Singh",
+            planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
+            planned_duration_s=21600,
+            min_lap_s=1080,
+            entry_mode=EntryMode.MIXED,
+            plate_model=PlateModel.RIDER_POOLED,
+        )
+        ride_id = boot.create_ride(config)
+        ride_name = "Club poker night"
+    finally:
+        boot.close()
+
+    store = Store.open(db_path)
+    dialog = harness.load_xrc_resources().LoadDialog(None, ids.DELETE_RIDE_DLG)
+    try:
+        message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+        if message_lbl is not None:
+            message_lbl.SetLabel(dialogs.delete_ride_message(ride_name))
+        dialogs.bind_delete_confirmation_gate(dialog, ride_name)
+        delete_btn = wx.Window.FindWindowByName(pages.WX_ID_DELETE, dialog)
+        if delete_btn is not None:
+            delete_btn.Bind(wx.EVT_BUTTON, lambda event: dialog.EndModal(event.GetId()))
+        found = _confirm_delete_on_dialog(dialog, ride_name)
+        backup_dir = backup_module.backup_dir_for(db_path)
+        found["backup_exists_before_delete"] = backup_dir.is_dir() and bool(
+            list(backup_dir.glob("*.db"))
+        )
+        if found["confirmed"]:
+            # The exact confirmed-delete callback E5.4 wires from the
+            # library: Store.delete_ride writes its backup first.
+            store.delete_ride(ride_id, ride_name)
+        found["backup_exists"] = backup_dir.is_dir() and bool(list(backup_dir.glob("*.db")))
+        found["ride_removed"] = store.rides() == []
+        if found["backup_exists"]:
+            backup_file = max(backup_dir.glob("*.db"))
+            reopened = Store.open(backup_file)
+            try:
+                found["backup_reopens"] = [ride.name for ride in reopened.rides()] == [ride_name]
+                with sqlite3.connect(str(backup_file)) as conn:
+                    found["backup_integrity"] = (
+                        conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+                    )
+            finally:
+                reopened.close()
+        else:
+            found["backup_reopens"] = False
+            found["backup_integrity"] = False
+    finally:
+        store.close()
+        if dialog is not None and not dialog.IsBeingDeleted():
+            dialog.Destroy()
+
+    return {
+        "message_lbl": found.get("message_lbl", ""),
+        "delete_enabled_on_exact": found.get("delete_enabled_on_exact", False),
+        "backup_exists_before_delete": found.get("backup_exists_before_delete", False),
+        "backup_exists": found.get("backup_exists", False),
+        "backup_reopens": found.get("backup_reopens", False),
+        "backup_integrity": found.get("backup_integrity", False),
+        "ride_removed": found.get("ride_removed", False),
+    }
+
+
+# --- E5.4.1: the library live on the real DB + the two new routes
+
+
+def _library_ride_config(name: str) -> RideConfig:
+    """Return the store ride config the E5.4.1 scenarios use."""
+    return RideConfig(
+        name=name,
+        event_date=date(2026, 9, 20),
+        venue="Sea to Sky Gondola",
+        lap_km=8.0,
+        organizer="GORBA",
+        scorer="K. Singh",
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
+        planned_duration_s=21600,
+        min_lap_s=1080,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+
+def _library_roster() -> Roster:
+    """Build the MIXED rider_pooled roster the E5.4.1 scenarios persist.
+
+    One solo entry plus one team of two riders with their own plates
+    -- the roster shape ``Store.duplicate_ride`` must copy verbatim
+    and ``Store.roster_for`` must rebuild identically.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+    )
+    return roster
+
+
+def _create_library_ride(path: Path, *, name: str, running: bool) -> int:
+    """Create a store ride with a saved roster; timing when *running*.
+
+    ``running`` appends start + one crossing so the ride reads RUNNING
+    with a recorded lap -- the timing data ``duplicate_ride`` must
+    leave out of the copy.
+    """
+    boot = Store.open(path)
+    try:
+        ride_id = boot.create_ride(_library_ride_config(name))
+        boot.save_roster(ride_id, _library_roster())
+        if running:
+            boot.append(
+                ride_id,
+                Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+            )
+            boot.append(
+                ride_id,
+                Event(
+                    action="record_crossing",
+                    payload={
+                        "plate": "12",
+                        "entry_id": "12",
+                        "lap": 1,
+                        "crossed_at": "2026-09-20T10:02:00",
+                    },
+                ),
+            )
+    finally:
+        boot.close()
+    return ride_id
+
+
+def _running_ride_with_roster(path: Path) -> int:
+    """Create a running store ride and a quit-keep-running session.
+
+    The previous session records the ride as running at a clean exit,
+    so the launch shows resume_dlg and Continue sets the context's
+    ``active_ride_id`` -- what File ▸ Duplicate Ride… reads (E5.4.1).
+    """
+    boot = Store.open(path)
+    try:
+        ride_id = boot.create_ride(_library_ride_config("GORBA EPIC 2026"))
+        boot.save_roster(ride_id, _library_roster())
+        boot.append(
+            ride_id,
+            Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+        )
+    finally:
+        boot.close()
+    session = Store.open(path, active_ride_id=ride_id)
+    session.close_session()
+    session.close()
+    return ride_id
+
+
+def _library_live_open_switches_console_context() -> dict[str, Any]:
+    """Library Open loads the store ride and swaps the console onto it.
+
+    Launch keeps the demo console (no running ride at the previous
+    exit), then the library's Open on the RUNNING store ride must
+    switch the console to that ride: status RUNNING and the feed shows
+    the persisted crossing -- neither of which the demo console had.
+    """
+    db_path = _resume_db_path("rc-lib-open-")
+    _create_library_ride(db_path, name="GORBA EPIC 2026", running=True)
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _open_the_ride() -> None:
+        library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+        if library is None:
+            return
+        harness.select_row(library, ids.RIDES_LIST, 0)
+        harness.click(library, pages.WX_ID_OPEN)
+
+    try:
+        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        wx.CallAfter(_open_the_ride)
+        harness.fire_menu_event(frame, "mi_open_library")
+        harness.pump()
+        model = harness.find_control(frame, ids.CROSSINGS_LIST).GetModel()
+        found["status_label"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
+        found["feed_rows"] = model.GetCount()
+        found["feed_plate"] = (
+            model.GetValueByRow(0, feed_model.COL_PLATE) if model.GetCount() > 0 else ""
+        )
+    finally:
+        store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
+
+
+def _library_live_duplicate_appears_as_new_draft() -> dict[str, Any]:  # noqa: PLR0915 -- scripted modal-driving flow: nested probes + store facts, the scenario pattern this file owns
+    """Library Duplicate: the copy appears as a DRAFT ride, no timing.
+
+    Drives the library's Duplicate button on a RUNNING source ride:
+    the E5.4.1 confirm opens (nested in the library modal), is probed
+    for its naming copy + default, OK runs ``Store.duplicate_ride``,
+    the library refreshes, and the store facts prove the R-15 copy --
+    DRAFT, same roster, zero crossings/cards/audit, fresh seed. The
+    library's Status column reads the STORED ``ride.status``, and the
+    facade does not sync that column when events are appended (the
+    documented E5.4 engine-sync gap, store module docstring), so the
+    RUNNING source ride's row reads DRAFT too -- the console, by
+    contrast, derives status from the replayed engine (the Open
+    scenario asserts RUNNING there).
+    """
+    db_path = _resume_db_path("rc-lib-dup-")
+    source_id = _create_library_ride(db_path, name="GORBA EPIC 2026", running=True)
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _drive_duplicate_dialog() -> None:
+        dialog = wx.Window.FindWindowByName(ids.DUPLICATE_RIDE_DLG)
+        found["duplicate_dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        found["duplicate_message"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        default_item = dialog.GetDefaultItem()
+        found["duplicate_default"] = default_item.GetName() if default_item is not None else None
+        harness.click(dialog, pages.WX_ID_OK)
+
+    def _record_rows_and_close(library: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        model = harness.find_control(library, ids.RIDES_LIST).GetModel()
+        found["rows_after"] = [
+            (
+                model.GetValueByRow(row, COL_NAME),
+                model.GetValueByRow(row, COL_STATUS),
+            )
+            for row in range(model.GetCount())
+        ]
+        if not library.IsBeingDeleted():
+            library.EndModal(wx.ID_CLOSE)
+
+    def _drive_library() -> None:
+        library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+        if library is None:
+            return
+        harness.select_row(library, ids.RIDES_LIST, 0)
+        wx.CallAfter(_drive_duplicate_dialog)
+        harness.click(library, ids.DUPLICATE_BTN)
+        wx.CallAfter(_record_rows_and_close, library)
+
+    try:
+        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        wx.CallAfter(_drive_library)
+        harness.fire_menu_event(frame, "mi_open_library")
+        harness.pump()
+
+        reopened = Store.open(db_path)
+        try:
+            rows = reopened.rides()
+            found["ride_count"] = len(rows)
+            copy = next(row for row in rows if row.id != source_id)
+            found["copy_name"] = copy.name
+            found["copy_status"] = copy.status.value
+            found["copy_entries"] = copy.entries
+            found["copy_roster"] = [
+                (entry.plate, entry.display_name) for entry in reopened.roster_for(copy.id).entries
+            ]
+            with sqlite3.connect(str(db_path)) as conn:
+                found["copy_crossings"] = conn.execute(
+                    "SELECT COUNT(*) FROM crossing WHERE ride_id = ?", (copy.id,)
+                ).fetchone()[0]
+                found["copy_cards"] = conn.execute(
+                    "SELECT COUNT(*) FROM card WHERE ride_id = ?", (copy.id,)
+                ).fetchone()[0]
+                found["copy_audit"] = conn.execute(
+                    "SELECT COUNT(*) FROM audit WHERE ride_id = ?", (copy.id,)
+                ).fetchone()[0]
+                source_seed = conn.execute(
+                    "SELECT rng_seed FROM ride WHERE id = ?", (source_id,)
+                ).fetchone()[0]
+                copy_seed = conn.execute(
+                    "SELECT rng_seed FROM ride WHERE id = ?", (copy.id,)
+                ).fetchone()[0]
+                found["fresh_seed"] = copy_seed != source_seed
+        finally:
+            reopened.close()
+    finally:
+        store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
+
+
+def _duplicate_ride_menu_route_opens_confirm_and_duplicates() -> dict[str, Any]:
+    """File ▸ Duplicate Ride… opens the confirm and duplicates (E5.4.1).
+
+    The resume flow (E5.2.2's Continue) sets the context's
+    ``active_ride_id``, then firing the duplicate route -- which used
+    to hit the E1.4.1 sentinel -- opens ``duplicate_ride_dlg`` naming
+    the ride; OK creates the copy.
+    """
+    db_path = _resume_db_path("rc-dup-route-")
+    source_id = _running_ride_with_roster(db_path)
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _drive_duplicate_dialog() -> None:
+        dialog = wx.Window.FindWindowByName(ids.DUPLICATE_RIDE_DLG)
+        found["duplicate_dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        found["duplicate_message"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        default_item = dialog.GetDefaultItem()
+        found["duplicate_default"] = default_item.GetName() if default_item is not None else None
+        harness.click(dialog, pages.WX_ID_OK)
+
+    def _resume_then_fire_duplicate() -> None:
+        resume = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if resume is None:
+            return
+        harness.click(resume, ids.CONTINUE_BTN)
+
+    try:
+        wx.CallAfter(_resume_then_fire_duplicate)
+        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        wx.CallAfter(_drive_duplicate_dialog)
+        harness.fire_menu_event(frame, "mi_duplicate_ride")
+        harness.pump()
+        found["status_text"] = frame.GetStatusBar().GetStatusText(0)
+        reopened = Store.open(db_path)
+        try:
+            rows = reopened.rides()
+            found["ride_count"] = len(rows)
+            copy = next(row for row in rows if row.id != source_id)
+            found["copy_name"] = copy.name
+            found["copy_status"] = copy.status.value
+        finally:
+            reopened.close()
+    finally:
+        store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
+
+
+def _reopen_ride_menu_route_opens_confirm_and_reopens() -> dict[str, Any]:
+    """Ride ▸ Reopen Ride opens the confirm and reopens (E5.4.1).
+
+    Resume continues a RUNNING ride, the library Open loads a FINISHED
+    ride ("Club poker night"), and the reopen route -- previously the
+    E1.4.1 sentinel -- opens ``reopen_ride_dlg`` naming it; OK moves
+    the console to REOPENED (spec §3).
+    """
+    db_path = _resume_db_path("rc-reopen-route-")
+    _running_ride_with_roster(db_path)
+    boot = Store.open(db_path)
+    try:
+        finished_id = boot.create_ride(_library_ride_config("Club poker night"))
+        boot.save_roster(finished_id, _library_roster())
+        boot.append(
+            finished_id,
+            Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+        )
+        boot.append(finished_id, Event(action="finish", payload={}))
+    finally:
+        boot.close()
+
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _drive_reopen_dialog() -> None:
+        dialog = wx.Window.FindWindowByName(ids.REOPEN_RIDE_DLG)
+        found["reopen_dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        found["reopen_message"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        harness.click(dialog, pages.WX_ID_OK)
+
+    def _open_finished_ride() -> None:
+        library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+        if library is None:
+            return
+        harness.select_row(library, ids.RIDES_LIST, 1)
+        harness.click(library, pages.WX_ID_OPEN)
+
+    def _resume_then_open_finished() -> None:
+        resume = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if resume is None:
+            return
+        harness.click(resume, ids.CONTINUE_BTN)
+
+    try:
+        wx.CallAfter(_resume_then_open_finished)
+        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        wx.CallAfter(_open_finished_ride)
+        harness.fire_menu_event(frame, "mi_open_library")
+        harness.pump()
+        wx.CallAfter(_drive_reopen_dialog)
+        harness.fire_menu_event(frame, "mi_reopen_ride")
+        harness.pump()
+        found["status_label"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
+    finally:
+        store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
+
+
+def _reopen_ride_route_on_non_finished_refuses() -> dict[str, Any]:
+    """Reopen Ride on a RUNNING console: the confirm opens, OK refuses.
+
+    The demo bootstrap's console is RUNNING (never FINISHED), so
+    confirming the (real) reopen dialog must surface the engine's
+    refusal on the status bar, never crash. Runs in this fresh
+    interpreter because the in-process equivalent -- building
+    ``main_frame`` in the shared worker, then driving a modal from it
+    with a pump -- hit the documented wx native-crash churn (the
+    address-reuse hazard main_frame.py's own ``_find`` docstring
+    records); a fresh interpreter gets an independent layout.
+    """
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _confirm_reopen() -> None:
+        dialog = wx.Window.FindWindowByName(ids.REOPEN_RIDE_DLG)
+        found["reopen_dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        found["reopen_message"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        harness.click(dialog, pages.WX_ID_OK)
+
+    try:
+        frame = app_module.build_main_window(wx.GetApp())
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        wx.CallAfter(_confirm_reopen)
+        harness.fire_menu_event(frame, "mi_reopen_ride")
+        harness.pump()
+        found["status_text"] = frame.GetStatusBar().GetStatusText(0)
+    finally:
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
 
 
 def _csv_import_commit_reads_editor() -> dict[str, Any]:
@@ -1074,9 +2036,28 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "quit_menu_cancelled_stays": _quit_menu_cancelled_stays,
     "running_ride_shows_exit_running_dlg": _running_ride_shows_exit_running_dlg,
     "exit_confirm_dlg_shown_when_not_running": _exit_confirm_dlg_shown_when_not_running,
-    "finish_first_ends_dialog_stays_running_posts_notice": (
-        _finish_first_ends_dialog_stays_running_posts_notice
+    "exit_running_dlg_probe_and_cancel": _exit_running_dlg_probe_and_cancel,
+    "finish_first_routes_to_the_finish_flow": _finish_first_routes_to_the_finish_flow,
+    "quit_keep_running_writes_closed_at_and_stays_running": (
+        _quit_keep_running_writes_closed_at_and_stays_running
     ),
+    "resume_dlg_quit_wording_shows": _resume_dlg_quit_wording_shows,
+    "resume_dlg_crash_wording_shows": _resume_dlg_crash_wording_shows,
+    "resume_continue_loads_ride_with_elapsed": _resume_continue_loads_ride_with_elapsed,
+    "resume_library_opens_ride_library": _resume_library_opens_ride_library,
+    "resume_reopened_ride_shows_reopened_infobar": _resume_reopened_ride_shows_reopened_infobar,
+    "delete_ride_dlg_backup_written_before_delete": (
+        _delete_ride_dlg_backup_written_before_delete
+    ),
+    "library_live_open_switches_console_context": (_library_live_open_switches_console_context),
+    "library_live_duplicate_appears_as_new_draft": (_library_live_duplicate_appears_as_new_draft),
+    "duplicate_ride_menu_route_opens_confirm_and_duplicates": (
+        _duplicate_ride_menu_route_opens_confirm_and_duplicates
+    ),
+    "reopen_ride_menu_route_opens_confirm_and_reopens": (
+        _reopen_ride_menu_route_opens_confirm_and_reopens
+    ),
+    "reopen_ride_route_on_non_finished_refuses": _reopen_ride_route_on_non_finished_refuses,
     "red_x_close_vetoes_and_hides_on_mac": _red_x_close_vetoes_and_hides_on_mac,
     "mac_reopen_shows_and_raises": _mac_reopen_shows_and_raises,
     "query_end_session_cancelled_vetoes": _query_end_session_cancelled_vetoes,

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-toolkit tests for ``results_frame``'s demo display (E1.5.2).
+"""Real-toolkit tests for ``results_frame``'s display (E1.5.2, E5.4.2).
 
 Split out of ``test_lists_demo.py`` -- alongside
 ``test_lists_entry_detail.py`` -- so the two heaviest functional
@@ -10,6 +10,10 @@ same pattern ``test_console_demo.py`` uses for ``MainFrame``) with
 the code-side bindings xrc-windows.md's per-window footnotes assign
 to it: the standings DataView's columns and rows and the five
 publish-checkbox defaults authored in results.xrc.
+
+E5.4.2 retired the demo seam: results render the empty standings state
+until E6 wires real placed rows, so the fixture below wires
+``EmptyDataSource`` and the canvas-row pin became an empty-state pin.
 
 The window carries no splitter, so the rebuild-and-compare hazard
 this suite's harness warns about does not apply; it is built exactly
@@ -24,16 +28,14 @@ import harness
 import pytest
 from _lists_common import (
     CANVAS_PUBLISH_DEFAULTS,
-    CANVAS_STANDINGS,
     MAX_SCREEN_HEIGHT,
     MAX_SCREEN_WIDTH,
     _model_row,
     _spy_repaint,
 )
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
-from rivercrossing.ui.presenters.data_source import StandingsRow
+from rivercrossing.ui.presenters.data_source import EmptyDataSource, StandingsRow
 from rivercrossing.ui.views import results_win
 from rivercrossing.ui.views.results_win import ResultsWindow
 
@@ -51,7 +53,7 @@ def shared_results(xrc_resource: object) -> ResultsWindow:
         window.Show()
         window.Layout()
         harness.pump()
-        view = ResultsWindow(window, data_source=DemoDataSource())
+        view = ResultsWindow(window, data_source=EmptyDataSource())
         yield view
     finally:
         # Phase 2 reference hygiene: drop the view before the window
@@ -63,15 +65,19 @@ def shared_results(xrc_resource: object) -> ResultsWindow:
 # ------------------------------------------------------ results_frame
 
 
-def test_results_window_shows_three_standings_matching_the_canvas_exactly(
+def test_results_window_given_an_empty_source_shows_no_standings(
     shared_results: ResultsWindow,
 ) -> None:
-    """xrc-windows.md D: 77/Trail Blazers, 123/Ellis, 8/Dubois."""
+    """E5.4.2: no finished ride -- results render zero standings rows.
+
+    E6 wires the real placed rows from the finished ride; until then
+    the standings list is the correct empty state.
+    """
     model = shared_results.standings_list.GetModel()
 
     rows = tuple(_model_row(model, row, range(7)) for row in range(model.GetCount()))
 
-    assert rows == CANVAS_STANDINGS
+    assert rows == ()
 
 
 def test_results_window_given_a_different_source_shows_its_rows_not_the_demo(
@@ -163,11 +169,11 @@ def test_results_window_show_standings_repaints_the_list_after_associating_its_m
         # control kept alive: _spy_repaint's docstring.
         control = harness.find_control(window, ids.STANDINGS_LIST)
         refresh, update = _spy_repaint(control)
-        view = ResultsWindow(window, data_source=DemoDataSource())
+        view = ResultsWindow(window, data_source=EmptyDataSource())
         row_count = view.standings_list.GetModel().GetCount()
     finally:
         harness.close_window(window)
 
-    assert row_count == len(CANVAS_STANDINGS)
+    assert row_count == 0
     refresh.assert_called_once_with()
     update.assert_called_once_with()

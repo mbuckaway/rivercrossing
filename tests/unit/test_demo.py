@@ -10,6 +10,7 @@ reaches into the wx-bearing app bootstrap it is meant to be
 imported *by*.
 """
 
+import ast
 import re
 import subprocess
 import sys
@@ -35,6 +36,15 @@ from rivercrossing.ui.presenters.data_source import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DEMO_MODULE = _REPO_ROOT / "src" / "rivercrossing" / "demo.py"
+
+# E5.4.2: every module under src/rivercrossing except demo.py itself --
+# parametrized below so the "no production module imports demo" proof is
+# one row per file, not a loop inside a test body (T-8).
+_PRODUCTION_MODULES = tuple(
+    str(path.relative_to(_REPO_ROOT / "src" / "rivercrossing"))
+    for path in (_REPO_ROOT / "src" / "rivercrossing").rglob("*.py")
+    if path.name != "demo.py"
+)
 
 # demo.py's only entry_detail fixture is plate 77 (entry_detail_dlg's
 # one canvas example); every other plate must raise.
@@ -334,3 +344,43 @@ def test_demo_module_import_does_not_load_the_ui_bootstrap_or_wx() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+# -------------------------------------------------- E5.4.2 tests-only
+
+
+def _imports_demo(tree: ast.AST) -> bool:
+    """Return whether *tree* imports ``rivercrossing.demo``.
+
+    Checks both ``from rivercrossing.demo import ...`` and a bare
+    ``import rivercrossing.demo`` form; the seam's own module is
+    excluded by the parametrization above.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "rivercrossing.demo":
+            return True
+        if isinstance(node, ast.Import) and any(
+            alias.name == "rivercrossing.demo" or alias.name.startswith("rivercrossing.demo.")
+            for alias in node.names
+        ):
+            return True
+    return False
+
+
+@pytest.mark.parametrize("relative", _PRODUCTION_MODULES)
+def test_no_production_module_imports_rivercrossing_demo(relative: str) -> None:
+    """E5.4.2: ``rivercrossing.demo`` is reachable from tests only.
+
+    Every module under ``src/rivercrossing`` is parsed (not imported,
+    so this never depends on this process's own ``sys.modules``) and
+    must contain no import of the demo seam. The import-linter
+    contract in pyproject.toml enforces the identical rule at lint
+    time; this is the in-process sibling that names the offending
+    file. The red state is the pre-E5.4.2 bootstrap's own
+    ``from rivercrossing.demo import DemoDataSource`` line in
+    ``ui/app.py``.
+    """
+    path = _REPO_ROOT / "src" / "rivercrossing" / relative
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+
+    assert not _imports_demo(tree), f"{relative} imports rivercrossing.demo"

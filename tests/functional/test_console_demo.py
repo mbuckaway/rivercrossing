@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-toolkit tests for the console's demo display (E1.5.1).
+"""Real-toolkit tests for the console's display (E1.5.1, E5.4.2).
 
 ``MainFrame`` decorates ``main_frame`` (already loaded from
 ``main.xrc`` the same way every other window in this suite is,
@@ -12,17 +12,26 @@ window's ``wxDataViewListCtrl``-family control the riskiest widget
 in EPIC 1; the bold-flagged-row assertions below are the test that
 retires that risk.
 
+E5.4.2 retired the demo seam from the app path: the app's console is
+the live ``EngineDataSource`` over a fresh engine (empty feed, zero
+counters), so the ``empty_console`` fixture below pins that real empty
+state through the production ``app._build_console_engine``. The demo
+``shared_console`` fixture stays for the view-capability assertions
+(bold mapping, card bitmap, held-no-chip) -- ``rivercrossing.demo``
+remains importable from tests.
+
 Everything here needs a live ``wx.App`` and the packaged card
 bitmaps, so it lives in ``tests/functional/`` rather than
 ``tests/unit/`` (``cards_imagelist``'s own split is the precedent).
 
-Read-only assertions share one module-scoped ``shared_console``
-(see its own docstring): building a ``MainFrame`` decodes the 53-card
-imagelist and appends 7 DataView columns, and reconstructing one per
-test measurably raises this wxPython 4.3.1 / wxWidgets 3.3.3 build's
-own address-reuse hazard (``MainFrame._find``'s docstring) at whole
--suite scale, where every functional module's own window churn adds
-to the same process's tally.
+Read-only assertions share two module-scoped fixtures
+(``shared_console`` and ``empty_console``, see their own docstrings):
+building a ``MainFrame`` decodes the 53-card imagelist and appends 7
+DataView columns, and reconstructing one per test measurably raises
+this wxPython 4.3.1 / wxWidgets 3.3.3 build's own address-reuse
+hazard (``MainFrame._find``'s docstring) at whole-suite scale, where
+every functional module's own window churn adds to the same process's
+tally.
 
 The tests that mutate ``main_frame`` state instead run their whole
 scenario in a fresh, *spawned* interpreter each --
@@ -46,6 +55,8 @@ import scenario_runner
 import wx.dataview
 
 from rivercrossing.demo import DemoDataSource
+from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids
 from rivercrossing.ui.views import MainFrame, _support
 from rivercrossing.ui.views.main_frame import (
@@ -60,18 +71,18 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.functional
 
-# xrc-windows.md section A's feed table, newest first, transcribed
-# independently of demo.py so a transcription mistake in either place
-# is caught by the other disagreeing, not by this test checking
-# demo.py against itself.
-CANVAS_FEED_PLATES = ("123", "77", "45", "212", "8")
-CANVAS_COUNTERS = ("1 124", "1 092", "42", "41/108")
 INFOBAR_NAMES = (RESUME_INFOBAR, REOPENED_INFOBAR, FINISHED_INFOBAR)
 
 
 @pytest.fixture(scope="module")
 def shared_console(xrc_resource: object) -> MainFrame:
-    """One ``MainFrame``, reused by every read-only assertion below.
+    """One demo-fed ``MainFrame`` for the view-capability assertions.
+
+    ``rivercrossing.demo`` is the test-only fixture source since
+    E5.4.2: the bold-mapping, card-bitmap and held-no-chip assertions
+    below need populated rows to exercise the view's own rendering
+    paths, and the app path itself is pinned demo-free by the lint
+    contract plus the ``empty_console``/subprocess pins.
 
     Nothing in this module's read-only tests mutates the feed,
     counters, InfoBars, columns or min size a fresh construction
@@ -91,6 +102,30 @@ def shared_console(xrc_resource: object) -> MainFrame:
         # it alive past close_window would keep their SIP map entries
         # from evicting (Addendum 2; pinned by
         # test_harness.py's cycle test).
+        del console
+        harness.close_window(window)
+
+
+@pytest.fixture(scope="module")
+def empty_console(xrc_resource: object) -> MainFrame:
+    """One fresh-engine ``MainFrame`` for the E5.4.2 empty-state pins.
+
+    Wired exactly as the app bootstrap wires it: the production
+    :func:`rivercrossing.ui.app._build_console_engine` over an empty
+    mixed roster -- a started engine with zero entries and zero
+    crossings, so the feed is empty and the counters read
+    zero/full-shoe.
+    """
+    window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+        _engine, source = app_module._build_console_engine(roster)
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        yield console
+    finally:
         del console
         harness.close_window(window)
 
@@ -119,15 +154,22 @@ def _expected_bold_flags(rows: list[FeedRow]) -> dict[str, bool]:
 # --- feed rows: count, order (T-3/T-9) ------------------------------
 
 
-def test_main_frame_given_demo_data_source_shows_five_feed_rows_newest_first(
-    shared_console: MainFrame,
+def test_main_frame_given_a_fresh_engine_shows_an_empty_feed(
+    empty_console: MainFrame,
 ) -> None:
-    """R-32: the feed is the demo fixture, in its newest-first order."""
-    model = shared_console.crossings_list.GetModel()
+    """E5.4.2: the real bootstrap console opens with zero crossings.
+
+    The app's console reads a fresh live engine (no store-backed ride
+    open), so its feed is empty -- the demo rows are gone from the app
+    path. ``test_app_bootstrap``'s ``wires_the_console_to_the_live_
+    engine_feed`` pin is the same fact through ``build_main_window``;
+    this one drives the production ``_build_console_engine`` wiring.
+    """
+    model = empty_console.crossings_list.GetModel()
 
     plates = _feed_plates(model)
 
-    assert plates == CANVAS_FEED_PLATES
+    assert plates == ()
 
 
 # --- the riskiest widget: the bold flagged row (project-plan.md §7) --
@@ -140,7 +182,9 @@ def test_main_frame_crossings_model_bolds_only_the_row_the_fixture_flags(
 
     Never hard-codes row 2 -- the flagged row is found by asking the
     fixture which plate it flags, the same source the model itself
-    renders from.
+    renders from. Demo is the test-only fixture supplying a flagged
+    row here (E5.4.2); the live-engine path is pinned by
+    ``test_console_live``'s ``live_flagged_crossing_row_is_bold``.
     """
     rows = shared_console.data_source.feed_rows()
     model = shared_console.crossings_list.GetModel()
@@ -153,18 +197,22 @@ def test_main_frame_crossings_model_bolds_only_the_row_the_fixture_flags(
 # --- counters (T-9) --------------------------------------------------
 
 
-def test_main_frame_given_demo_data_source_shows_canvas_exact_counters(
-    shared_console: MainFrame,
+def test_main_frame_given_a_fresh_engine_shows_zero_counters_and_full_shoe(
+    empty_console: MainFrame,
 ) -> None:
-    """R-32: crossings/cards/on-course/shoe read as the canvas draws."""
+    """E5.4.2: a fresh ride counts 0 crossings/cards/course; full shoe.
+
+    The bootstrap engine starts an empty real ride (R-32's counters
+    read from the engine, never a display-data source).
+    """
     labels = (
-        shared_console.crossings_count_lbl.GetLabelText(),
-        shared_console.cards_count_lbl.GetLabelText(),
-        shared_console.on_course_lbl.GetLabelText(),
-        shared_console.shoe_lbl.GetLabelText(),
+        empty_console.crossings_count_lbl.GetLabelText(),
+        empty_console.cards_count_lbl.GetLabelText(),
+        empty_console.on_course_lbl.GetLabelText(),
+        empty_console.shoe_lbl.GetLabelText(),
     )
 
-    assert labels == CANVAS_COUNTERS
+    assert labels == ("0", "0", "0", "432/432")
 
 
 # --- InfoBars (R-73) ---------------------------------------------
@@ -335,34 +383,36 @@ def test_main_frame_set_state_enables_or_disables_plate_input_and_record_btn_tog
     assert result["data"]["draft"] == [False, False], result["context"]
 
 
-def test_main_frame_plate_entry_round_trip_records_once_clears_and_refocuses() -> None:
-    """Enter records the plate, clears, and refocuses (A5).
+def test_main_frame_plate_entry_given_no_ride_open_rejects_and_keeps_the_field() -> None:
+    """R-31/E5.4.2: with no ride open, a typed plate is refused.
 
     Runs in its own spawned interpreter (module docstring): a real
     app bootstrap and a real ``EVT_TEXT_ENTER`` cannot run against
-    the shared ``shared_console`` fixture. E4.4.1 rewired the
-    bootstrap console from the demo placeholder to a live engine, so
-    the round trip now asserts the plate landed in the feed and the
-    crossing counter incremented -- the placeholder notice is gone.
+    the shared fixtures. E5.4.2 emptied the bootstrap roster (no
+    store-backed ride is open), so plate 123 is unknown: the ERROR
+    notice names it, the field is kept, focus returns, and no
+    crossing is recorded -- the console's correct empty state.
     """
     result = scenario_runner.run_scenario("plate_entry_round_trip")
 
     assert result["ok"], result["context"]
-    assert result["data"]["feed_plates"] == ["123"], result["context"]
-    assert result["data"]["field_value"] == "", result["context"]
+    assert result["data"]["feed_plates"] == [], result["context"]
+    assert result["data"]["field_value"] == "123", result["context"]
     assert result["data"]["focused"] is True, result["context"]
-    assert result["data"]["crossings_label"] == "1", result["context"]
+    assert result["data"]["crossings_label"] == "0", result["context"]
+    assert result["data"]["status_text"] == "Unknown plate 123", result["context"]
 
 
-def test_main_frame_record_btn_click_records_once_clears_and_refocuses() -> None:
-    """Clicking Record does exactly what pressing Enter does (A5)."""
+def test_main_frame_record_btn_given_no_ride_open_rejects_and_keeps_the_field() -> None:
+    """R-31/E5.4.2: Record with no ride open refuses the plate too."""
     result = scenario_runner.run_scenario("record_btn_click_records_once")
 
     assert result["ok"], result["context"]
-    assert result["data"]["feed_plates"] == ["77"], result["context"]
-    assert result["data"]["field_value"] == "", result["context"]
+    assert result["data"]["feed_plates"] == [], result["context"]
+    assert result["data"]["field_value"] == "77", result["context"]
     assert result["data"]["focused"] is True, result["context"]
-    assert result["data"]["crossings_label"] == "1", result["context"]
+    assert result["data"]["crossings_label"] == "0", result["context"]
+    assert result["data"]["status_text"] == "Unknown plate 77", result["context"]
 
 
 def test_build_main_window_starts_the_console_in_the_running_state() -> None:

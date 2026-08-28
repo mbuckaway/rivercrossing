@@ -243,23 +243,33 @@ source_modules = [
     "rivercrossing.roster",
     "rivercrossing.csvio",
     "rivercrossing.standings",
+    "rivercrossing.store",
 ]
 forbidden_modules = ["wx"]
 
 [[tool.importlinter.contracts]]
-# E1.2.4: the demo seam is removable. Only the app bootstrap may import it, so
-# deleting demo.py in E5.4.2 breaks exactly one wiring line and nothing else.
-# Note demo.py *may* import rivercrossing.ui.presenters.data_source -- that is
-# the wx-free contract it implements, and the restriction the design docs state
-# is on who imports demo, not on what demo imports.
-name = "only the app bootstrap imports rivercrossing.demo"
+# E5.4.2: the demo seam is tests-only. The E1.2.4 bootstrap exemption is gone --
+# rivercrossing.ui.app now counts as a forbidden importer too, so every module
+# under src/rivercrossing that could possibly reach the seam is listed. demo.py
+# itself stays (tests import it as fixture data), but no production module may
+# import it, and deleting it later breaks no wiring line. Note demo.py *may*
+# import rivercrossing.ui.presenters.data_source -- that is the wx-free contract
+# it implements, and the restriction the design docs state is on who imports
+# demo, not on what demo imports.
+name = "only tests import rivercrossing.demo"
 type = "forbidden"
 source_modules = [
-    "rivercrossing.ride",
+    "rivercrossing.cards",
+    "rivercrossing.csvio",
+    "rivercrossing.hands",
     "rivercrossing.htmlexport",
+    "rivercrossing.ride",
+    "rivercrossing.roster",
+    "rivercrossing.standings",
+    "rivercrossing.store",
+    "rivercrossing.ui",
+    "rivercrossing.ui.app",
     "rivercrossing.ui.presenters",
     "rivercrossing.ui.views",
-    "rivercrossing.roster",
-    "rivercrossing.csvio",
 ]
 forbidden_modules = ["rivercrossing.demo"]

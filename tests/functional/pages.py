@@ -157,6 +157,26 @@ FINISH_CONFIRM_DLG = WindowSpec(
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
+# E5.4.1 mock-first: the two §15 rows that had no frozen window until
+# this session (task-brief E5.4.1); their names are registered in
+# spec.md 15b. Both are non-destructive confirms: message_lbl names
+# the ride and OK is the default + focused control.
+DUPLICATE_RIDE_DLG = WindowSpec(
+    name=ids.DUPLICATE_RIDE_DLG,
+    xrc_file="dialogs.xrc",
+    is_frame=False,
+    controls=(ids.MESSAGE_LBL, WX_ID_OK, WX_ID_CANCEL),
+    buttons=(WX_ID_OK, WX_ID_CANCEL),
+)
+
+REOPEN_RIDE_DLG = WindowSpec(
+    name=ids.REOPEN_RIDE_DLG,
+    xrc_file="dialogs.xrc",
+    is_frame=False,
+    controls=(ids.MESSAGE_LBL, WX_ID_OK, WX_ID_CANCEL),
+    buttons=(WX_ID_OK, WX_ID_CANCEL),
+)
+
 CONTINUE_OR_NEW_DLG = WindowSpec(
     name=ids.CONTINUE_OR_NEW_DLG,
     xrc_file="dialogs.xrc",
@@ -177,7 +197,7 @@ EXIT_RUNNING_DLG = WindowSpec(
     name=ids.EXIT_RUNNING_DLG,
     xrc_file="dialogs.xrc",
     is_frame=False,
-    controls=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
+    controls=(ids.MESSAGE_LBL, WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
     buttons=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
 )
 
@@ -392,14 +412,16 @@ SELFTEST_DLG = WindowSpec(
     buttons=(ids.RERUN_BTN, WX_ID_CLOSE),
 )
 
-# xrc-windows's own A-E order: 1 console + 8 setup/lifecycle dialogs +
-# 7 rider/card dialogs + 4 results/library/audit + 4 system/help = 24.
+# xrc-windows's own A-E order: 1 console + 10 setup/lifecycle dialogs +
+# 7 rider/card dialogs + 4 results/library/audit + 4 system/help = 26.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
     SET_START_DLG,
     STOP_CONFIRM_DLG,
     FINISH_CONFIRM_DLG,
+    DUPLICATE_RIDE_DLG,
+    REOPEN_RIDE_DLG,
     CONTINUE_OR_NEW_DLG,
     RESUME_DLG,
     EXIT_RUNNING_DLG,

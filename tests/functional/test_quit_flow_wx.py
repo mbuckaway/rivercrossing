@@ -58,13 +58,19 @@ def test_non_running_status_shows_exit_confirm_dlg_on_exit() -> None:
     assert result["data"] == {"exit_confirm_dlg_shown": True}, result["context"]
 
 
-def test_finish_first_btn_ends_dialog_stays_running_and_posts_notice() -> None:
-    """A1: Finish ride first… ends the modal, ride stays running."""
-    result = scenario_runner.run_scenario("finish_first_ends_dialog_stays_running_posts_notice")
+def test_finish_first_btn_routes_to_the_finish_flow() -> None:
+    """finish_first_btn opens the finish confirm, then finishes.
+
+    E5.2.3 replaces the old stub notice (A1) with the real E4.4.4
+    finish path: the exit dialog ends, finish_confirm_dlg appears, and
+    a confirmed finish leaves the ride FINISHED with the app still up.
+    """
+    result = scenario_runner.run_scenario("finish_first_routes_to_the_finish_flow")
 
     assert result["data"] == {
+        "finish_confirm_shown": True,
+        "status_text": "Ride finished",
         "frame_being_deleted": False,
-        "status_text": "Finish Ride… — not yet implemented",
     }, result["context"]
 
 

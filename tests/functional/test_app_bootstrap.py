@@ -313,9 +313,15 @@ def test_command_route_posts_a_not_yet_implemented_status_notice(
 def test_unauthored_dialog_route_posts_a_no_window_status_notice(
     firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """The 3 unauthored §15 gaps still say something, not nothing."""
-    route = commands.route_for_id("mi_duplicate_ride")
-    _fire_menu_event(firing_frame, "mi_duplicate_ride")
+    """The last unauthored §15 gap (Void Card…) still says something.
+
+    E5.4.1 authored the other two 3d-pattern rows (Duplicate Ride…,
+    Reopen Ride) as real dialogs, so ``mi_void_card`` is the only
+    route left on the ``_UNAUTHORED_DIALOG`` sentinel -- firing it
+    must post a notice, never silently do nothing.
+    """
+    route = commands.route_for_id("mi_void_card")
+    _fire_menu_event(firing_frame, "mi_void_card")
 
     status_text = firing_frame.GetStatusBar().GetStatusText()
 

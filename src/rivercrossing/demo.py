@@ -8,12 +8,19 @@ data_source.DataSource`` with the exact values the frozen canvas
 ``audit_dlg`` -- letting D1 show a fully populated UI with no engine
 and no database (project-plan.md §5, E1.2.4).
 
-This module is a **removable seam**, scheduled for deletion in EPIC 5
-(task E5.4.2) once real, store-backed data sources exist: the app
-bootstrap's one wiring line to this module and the module itself go
-away together, and nothing else should break. Do not grow real
-business logic here -- if a change starts to look like anything
-other than constant fixture data, it belongs somewhere else.
+**E5.4.2 retired the seam from the app path but kept the module as
+test-only fixture data.** The app bootstrap's one wiring line to this
+module is gone (no production module imports ``rivercrossing.demo``
+-- import-linter contract; the windows read a real engine/store
+source or the ``EmptyDataSource`` empty state), and the module itself
+stays because tests still import it: ``tests/functional/``'s
+view-capability suites drive populated rows through
+``_lists_common.demo_seeded_roster``/``DemoDataSource``, and
+``tests/unit/test_demo.py`` pins its values. E1.2.4's removable seam
+is therefore retired from the app path, not deleted; deleting the
+module later is a test-only change. Do not grow real business logic
+here -- if a change starts to look like anything other than constant
+fixture data, it belongs somewhere else.
 """
 
 from typing import TYPE_CHECKING

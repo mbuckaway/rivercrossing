@@ -26,9 +26,10 @@ would violate R-71, not simplify toward it -- do not "simplify" it
 away.
 
 ``DataSource`` (in ``data_source.py``) is the analogous seam on the
-data side: one read-only Protocol every presenter takes, satisfied
-today by nothing (its production implementer, ``DemoDataSource``,
-lands in task E1.2.4) and by a store-backed source in EPICs 4-5.
+data side: one read-only Protocol every presenter takes, satisfied by
+the E4.4.1 live ``EngineDataSource``, the E5.4.2 ``EmptyDataSource``
+empty state, and -- test-only since E5.4.2 -- ``DemoDataSource``
+fixture data (module-skeletons.md ownership table).
 """
 
 from rivercrossing.ui.presenters.audit import AuditPresenter, AuditView

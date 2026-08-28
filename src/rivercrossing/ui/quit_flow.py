@@ -24,7 +24,7 @@ from enum import Enum
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
 
-__all__ = ["QuitOutcome", "dialog_for_status", "outcome_for"]
+__all__ = ["QuitOutcome", "dialog_for_status", "outcome_for", "running_exit_message"]
 
 
 class QuitOutcome(Enum):
@@ -79,3 +79,27 @@ def outcome_for(result: int, *, ok_id: int, finish_first_id: int | None = None) 
     if finish_first_id is not None and result == finish_first_id:
         return QuitOutcome.FINISH_FIRST
     return QuitOutcome.STAY
+
+
+def running_exit_message(ride_name: str) -> str:
+    """Return ``exit_running_dlg``'s ``message_lbl`` copy for a ride.
+
+    Interpolates the running ride's name into the wall-clock
+    reassurance spec §3/R-51 promises ("the wall clock keeps counting
+    while the app is closed"), so the operator knows exactly which
+    ride quitting keeps running. The XRC label carries the frozen
+    ``message_lbl`` name and a fallback copy; app.py writes this
+    ride-naming copy before showing the dialog, and a blank label is
+    a failed assertion, not a cosmetic one.
+
+    Args:
+        ride_name: The running ride's display name.
+
+    Returns:
+        The message text naming *ride_name*.
+    """
+    return (
+        f"{ride_name} is still running. Quitting won't stop the ride — "
+        "it keeps timing on the wall clock, and you'll be asked to "
+        "continue when you reopen."
+    )

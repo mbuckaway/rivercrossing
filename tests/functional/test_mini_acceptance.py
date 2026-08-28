@@ -254,7 +254,6 @@ def _build_mini_console(
     context = app_module._RouteContext(
         frame=window,
         resource=xrc_resource,
-        data_source=source,
         roster=roster,
         app=wx.GetApp(),
         theme_controller=theme.ThemeController(wx.GetApp()),

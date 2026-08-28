@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Belt-and-braces seam proof for ``ui.views`` (E1.2.4).
+"""Belt-and-braces seam proof for ``ui.views`` (E1.2.4, E5.4.2).
 
-The "only the app bootstrap imports rivercrossing.demo" contract
-(pyproject.toml's own import-linter config) once missed five hidden
+The "only tests import rivercrossing.demo" contract (pyproject.toml's
+own import-linter config, tightened by E5.4.2 to forbid every
+production module including ``ui.app``) once missed five hidden
 imports because its own ``source_modules`` list left
 ``rivercrossing.ui.views`` out -- a contract mis-scoped by the person
 who wrote it. This module re-proves the same fact by parsing each
@@ -68,7 +69,11 @@ def _imports_rivercrossing_demo(source: str) -> bool:
 
 @pytest.mark.parametrize("module_path", _view_module_paths(), ids=lambda path: path.name)
 def test_ui_views_module_source_never_imports_rivercrossing_demo(module_path: Path) -> None:
-    """E1.2.4's seam: only ``ui.app`` imports ``rivercrossing.demo``."""
+    """E5.4.2's seam: ``ui.views`` never imports ``rivercrossing.demo``.
+
+    The demo seam is tests-only; ``ui.views`` (like every production
+    module) may not reach it.
+    """
     source = module_path.read_text(encoding="utf-8")
 
     assert _imports_rivercrossing_demo(source) is False

@@ -190,6 +190,8 @@ _HAS_NATIVE_CANCEL = (
     ids.SET_START_DLG,
     ids.STOP_CONFIRM_DLG,
     ids.FINISH_CONFIRM_DLG,
+    ids.DUPLICATE_RIDE_DLG,
+    ids.REOPEN_RIDE_DLG,
     ids.CONTINUE_OR_NEW_DLG,
     ids.EXIT_RUNNING_DLG,
     ids.EXIT_CONFIRM_DLG,
@@ -382,6 +384,11 @@ _DEFAULT_CLICK_CASES = (
     _DefaultClickCase(ids.SET_START_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.STOP_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.FINISH_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
+    # E5.4.1's two non-destructive confirms: the primary is the default
+    # so a reflex Enter is safe (spec.md 13) -- the opposite of the
+    # destructive confirms above, whose Cancel is the default.
+    _DefaultClickCase(ids.DUPLICATE_RIDE_DLG, pages.WX_ID_OK, wx.ID_OK),
+    _DefaultClickCase(ids.REOPEN_RIDE_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.EXIT_RUNNING_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.EXIT_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.EDIT_CROSSING_DLG, pages.WX_ID_OK, wx.ID_OK),
@@ -732,9 +739,9 @@ def test_run_dialog_returns_result_and_restores_opener_focus(
 _ALL_DIALOG_SPECS = tuple(spec for spec in pages.WINDOWS if not spec.is_frame)
 
 
-def test_all_dialogs_declare_exactly_twenty_two_rows() -> None:
+def test_all_dialogs_declare_exactly_twenty_four_rows() -> None:
     """A dialog disappearing from ``pages.WINDOWS`` must shrink this."""
-    assert len(_ALL_DIALOG_SPECS) == 22
+    assert len(_ALL_DIALOG_SPECS) == 24
 
 
 @pytest.mark.parametrize("spec", _ALL_DIALOG_SPECS, ids=lambda s: s.name)

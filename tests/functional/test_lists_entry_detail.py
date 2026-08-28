@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-toolkit tests for ``entry_detail_dlg``'s demo display (E1.5.2).
+"""Real-toolkit tests for ``entry_detail_dlg`` (E1.5.2, E5.4.2).
 
 Split out of ``test_lists_demo.py`` -- alongside
 ``test_lists_results.py`` -- so the two heaviest functional files
@@ -11,6 +11,14 @@ the code-side bindings xrc-windows.md's per-window footnotes assign
 to it: each DataView's columns and rows and ``entry_detail_dlg``'s
 two card bitmap columns.
 
+E5.4.2 retired the demo seam from the app path: the app's entry-detail
+route now opens the empty state (``EmptyDataSource`` -- no store-backed
+entry is selected until E7 wires the real lookup), so the two canvas-row
+pins below assert that empty state against their own empty-fed dialogs.
+The shared ``shared_entry_detail`` fixture keeps demo's populated rows
+for the view-capability assertions (bitmap rendering, card-imagelist
+cache) -- ``rivercrossing.demo`` remains importable from tests.
+
 The window carries no splitter, so the rebuild-and-compare hazard
 this suite's harness warns about does not apply; it is built exactly
 once per module and never torn down and rebuilt mid-module. The
@@ -19,14 +27,12 @@ live in ``_lists_common``.
 """
 
 import re
+from typing import Any
 
 import harness
 import pytest
 from _lists_common import (
     CANVAS_CARDS_HELD_KEYS,
-    CANVAS_ENTRY_HEADER,
-    CANVAS_ENTRY_MEMBERS,
-    CANVAS_LAPS,
     CANVAS_LAPS_CARD_KEYS,
     MAX_SCREEN_HEIGHT,
     MAX_SCREEN_WIDTH,
@@ -36,6 +42,7 @@ from _lists_common import (
 
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
+from rivercrossing.ui.presenters.data_source import EmptyDataSource
 from rivercrossing.ui.views import _support, entry_detail
 from rivercrossing.ui.views.entry_detail import COL_CARD as LAPS_COL_CARD
 from rivercrossing.ui.views.entry_detail import EntryDetailDialog
@@ -48,7 +55,12 @@ pytestmark = pytest.mark.functional
 
 @pytest.fixture(scope="module")
 def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
-    """One ``EntryDetailDialog``, built for the demo's plate 77."""
+    """One ``EntryDetailDialog``, demo-fed for the view-capability rows.
+
+    Kept populated (demo fixture, tests-only since E5.4.2) so the
+    bitmap-rendering and card-imagelist assertions below have rows to
+    render; the app-path pins build their own empty-fed dialogs.
+    """
     window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
     try:
         window.Show()
@@ -63,28 +75,55 @@ def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
         harness.close_window(window)
 
 
+def _show_empty_detail(xrc_resource: object) -> tuple[Any, EntryDetailDialog]:
+    """Load ``entry_detail_dlg`` wired to the E5.4.2 empty state."""
+    window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        view = EntryDetailDialog(window, "", data_source=EmptyDataSource())
+    except Exception:
+        harness.close_window(window)
+        raise
+    return window, view
+
+
 # --------------------------------------------------- entry_detail_dlg
 
 
-def test_entry_detail_shows_the_canvas_header_and_members_for_plate_77(
-    shared_entry_detail: EntryDetailDialog,
+def test_entry_detail_given_an_empty_source_shows_an_empty_header_and_members(
+    xrc_resource: object,
 ) -> None:
-    """xrc-windows.md C: header + member roster text for plate 77."""
-    header = shared_entry_detail.entry_header_lbl.GetLabelText()
-    members = shared_entry_detail.members_lbl.GetLabelText()
+    """E5.4.2: no store-backed entry selected -- header/members empty.
 
-    assert (header, members) == (CANVAS_ENTRY_HEADER, CANVAS_ENTRY_MEMBERS)
+    E7 wires the real per-entry lookup (R-38's deep-link); until then
+    the dialog opens showing the empty state rather than demo rows.
+    """
+    window, view = _show_empty_detail(xrc_resource)
+
+    try:
+        header = view.entry_header_lbl.GetLabelText()
+        members = view.members_lbl.GetLabelText()
+    finally:
+        harness.close_window(window)
+
+    assert (header, members) == ("", "")
 
 
-def test_entry_detail_laps_list_shows_two_rows_matching_the_canvas_exactly(
-    shared_entry_detail: EntryDetailDialog,
+def test_entry_detail_given_an_empty_source_shows_no_laps(
+    xrc_resource: object,
 ) -> None:
-    """xrc-windows.md C: lap 9 (rider 78) then lap 8 (rider 77)."""
-    model = shared_entry_detail.laps_list.GetModel()
+    """E5.4.2: the empty entry has no lap history rows."""
+    window, view = _show_empty_detail(xrc_resource)
 
-    rows = tuple(_model_row(model, row, range(4)) for row in range(model.GetCount()))
+    try:
+        model = view.laps_list.GetModel()
+        rows = tuple(_model_row(model, row, range(4)) for row in range(model.GetCount()))
+    finally:
+        harness.close_window(window)
 
-    assert rows == CANVAS_LAPS
+    assert rows == ()
 
 
 def test_entry_detail_laps_list_card_column_renders_the_dealt_bitmaps(
@@ -198,13 +237,13 @@ def test_entry_detail_show_entry_repaints_both_dataviews_after_associating_model
         laps_control = harness.find_control(window, ids.LAPS_LIST)
         cards_refresh, cards_update = _spy_repaint(cards_control)
         laps_refresh, laps_update = _spy_repaint(laps_control)
-        view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
+        view = EntryDetailDialog(window, "", data_source=EmptyDataSource())
         cards_count = view.cards_list.GetModel().GetCount()
         laps_count = view.laps_list.GetModel().GetCount()
     finally:
         harness.close_window(window)
 
-    assert (cards_count, laps_count) == (len(CANVAS_CARDS_HELD_KEYS), len(CANVAS_LAPS))
+    assert (cards_count, laps_count) == (0, 0)
     cards_refresh.assert_called_once_with()
     cards_update.assert_called_once_with()
     laps_refresh.assert_called_once_with()

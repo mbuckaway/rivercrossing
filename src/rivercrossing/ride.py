@@ -35,16 +35,17 @@ doc-silence list.
 
 from contextlib import suppress
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from rivercrossing.cards import Card, ShoeClosedError, ShoeEmpty
+from rivercrossing.cards import Card, RestitutionError, ShoeClosedError, ShoeEmpty
 from rivercrossing.hands import best_hand
 from rivercrossing.standings import EntryResult
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
-    from datetime import date, datetime
+    from datetime import date
     from pathlib import Path
 
     from rivercrossing.cards import Shoe
@@ -68,6 +69,7 @@ __all__ = [
     "RideEngineError",
     "RideStatus",
     "StartBlockedError",
+    "UnknownEventActionError",
     "UnknownPlateError",
 ]
 
@@ -254,6 +256,28 @@ class UnknownPlateError(RideEngineError):
     """
 
 
+class UnknownEventActionError(RideEngineError):
+    """RideEngine.apply() met an event action it does not dispatch.
+
+    Raised while replaying an event whose ``action`` names no ride
+    mutation -- a corrupted or foreign ``audit`` row, never a valid
+    event (task-briefs E5.1.2's negative case).
+    """
+
+
+def _payload_dt(event: Event, key: str) -> datetime:
+    """Parse one ISO-8601 payload value back into a datetime.
+
+    Args:
+        event: The event being replayed.
+        key: The payload key holding the ISO-8601 timestamp.
+
+    Returns:
+        The parsed naive-or-aware datetime.
+    """
+    return datetime.fromisoformat(str(event.payload[key]))
+
+
 @dataclass(frozen=True)
 class Event:
     """One ride-level audit event (spec §2 ``audit`` row shape).
@@ -426,6 +450,32 @@ class RideEngine:
       ``undo_last`` stays legal in REOPENED (E4.2 pin) and tolerates
       the closed shoe: the undone card retires with it instead of
       returning to the front.
+
+    E5.1.2's own resolutions (event replay, task-briefs E5.1.2):
+
+    - **Replay seam.** :meth:`apply` re-applies one previously-recorded
+      :class:`Event` by dispatching on ``action`` to the matching
+      mutation; :class:`~rivercrossing.store.Store.load_engine` calls
+      it for every persisted event to rebuild this engine. Every
+      payload field each branch needs already exists in the E4 events
+      -- ``start``/``continue`` carry ``actual_start``,
+      ``set_start_time`` carries the new ``actual_start``,
+      ``record_crossing`` carries ``plate``+``crossed_at``,
+      ``confirm_held``/``void_held`` carry ``entry_id``+``seq`` (the
+      held crossing's identity), ``deal_manual`` carries
+      ``plate``+``reason`` -- so no payload extension was needed
+      (task-briefs E5.1.2's "where a payload is insufficient" did not
+      trigger); the ``card`` fields are audit-only, since the seeded
+      shoe reproduces every deal (spec §4, R-40).
+    - **Clock-stamped events.** ``stop``/``finish``/``reopen`` re-stamp
+      their payload timestamp from the engine's clock when replayed,
+      so their audit bytes differ from the live original by design;
+      replay equivalence compares event count/actions, not those three
+      payload fields (recorded in the property's comparison contract).
+    - **shoe_reshuffle is a no-op on replay.** The event is the audit
+      record of a reshuffle the deal loop already performed; re-applying
+      it would double-reshuffle the fresh shoe. The next deal
+      reproduces the reshuffle when the shoe empties.
     """
 
     def __init__(  # noqa: PLR0913, PLR0917 -- frozen S4 API (config, shoe, clock, roster)
@@ -748,7 +798,12 @@ class RideEngine:
         event. Undo is a full reversal whatever the card's disposition:
         a credited card leaves the hand, a currently-held card drops
         out of the hold queue (never credited), and a voided card is
-        un-voided back into the shoe. Legal while RUNNING or REOPENED.
+        un-voided back into the shoe. When the card cannot return to
+        the front -- the shoe is closed (REOPENED after Finish) or a
+        later ``deal_manual`` put a different card there -- the undone
+        card retires with the shoe instead, deterministically (E5.1.2
+        replay reproduces the same shoe point). Legal while RUNNING or
+        REOPENED.
 
         Returns:
             The appended ``undo`` audit event.
@@ -769,8 +824,14 @@ class RideEngine:
             hand.remove(card)
         # REOPENED after Finish: the shoe is closed (E4.3), so the
         # card retires with it -- there is no next deal to reproduce,
-        # and E4.2 pins undo-in-REOPENED.
-        with suppress(ShoeClosedError):
+        # and E4.2 pins undo-in-REOPENED. The same retire applies when
+        # a later manual deal (deal_manual, spec §4) put a different
+        # card at the shoe front: that card is a deliberate credit and
+        # must not be disturbed, so the undone crossing's card cannot
+        # return to the front and retires instead. Both paths are
+        # deterministic -- replay reproduces the identical shoe point
+        # (E5.1.2).
+        with suppress(ShoeClosedError, RestitutionError):
             self._shoe.restitute(card)
         return self._append(
             Event(
@@ -1016,3 +1077,83 @@ class RideEngine:
         """Append *event* to :attr:`events` and return it."""
         self._events.append(event)
         return event
+
+    # ------------------------------------- E5.1.2 replay seam: apply
+
+    # The replay dispatch is inherently one branch per action (11
+    # mutations + the unknown-action guard); the cyclomatic count is
+    # the event vocabulary's size, not a refactorable control-flow
+    # tangle.
+    def apply(self, event: Event) -> None:  # noqa: C901, PLR0912
+        """Replay one previously-recorded event onto this engine.
+
+        The store's replay seam: :class:`~rivercrossing.store.
+        Store.load_engine` builds a fresh DRAFT engine and calls this
+        for every persisted event, oldest first, to reach the exact
+        live state. Dispatch calls the matching mutation with the
+        payload's own values, so the re-appended event equals the
+        original for every action that takes an explicit timestamp
+        (``start``/``set_start_time``/``record_crossing`` and the
+        identity-based holds); ``stop``/``finish``/``reopen`` re-stamp
+        their payload timestamp from the engine's clock, so their
+        audit bytes differ by design on replay (class docstring's
+        E5.1.2 resolutions).
+
+        Args:
+            event: The event to re-apply, exactly as persisted.
+
+        Raises:
+            UnknownEventActionError: *event.action* is not a known
+                ride mutation.
+            RideEngineError: ``confirm_held``/``void_held`` name a
+                crossing this engine never recorded (an inconsistent
+                event stream).
+        """
+        action = event.action
+        if action == "start":
+            self.start(at=_payload_dt(event, "actual_start"))
+        elif action == "continue":
+            self.start()
+        elif action == "set_start_time":
+            self.set_start_time(_payload_dt(event, "actual_start"))
+        elif action == "record_crossing":
+            self.record_crossing(str(event.payload["plate"]), at=_payload_dt(event, "crossed_at"))
+        elif action == "confirm_held":
+            self.confirm_held(self._crossing_from(event))
+        elif action == "void_held":
+            self.void_held(self._crossing_from(event))
+        elif action == "undo":
+            self.undo_last()
+        elif action == "deal_manual":
+            self.deal_manual(str(event.payload["plate"]), reason=str(event.payload["reason"]))
+        elif action == "stop":
+            self.stop()
+        elif action == "finish":
+            self.finish()
+        elif action == "reopen":
+            self.reopen()
+        elif action == "shoe_reshuffle":
+            # Deliberate no-op (class docstring, E5.1.2): the deal loop
+            # reproduces the reshuffle when the fresh shoe empties.
+            pass
+        else:
+            raise UnknownEventActionError(f"cannot apply unknown event action: {action}")
+
+    def _crossing_from(self, event: Event) -> Crossing:
+        """Return the recorded crossing an event's entry/seq names.
+
+        ``confirm_held``/``void_held`` events identify their held
+        crossing by ``entry_id`` + ``seq`` (the ``crossing`` table's
+        own uniqueness, spec §2); the engine locates that crossing in
+        its own current state rather than trusting the payload's card.
+
+        Raises:
+            RideEngineError: no recorded crossing matches the event's
+                entry/seq -- an inconsistent event stream.
+        """
+        entry_id = str(event.payload["entry_id"])
+        seq = int(str(event.payload["seq"]))
+        for crossing in self._crossings:
+            if crossing.entry_id == entry_id and crossing.seq == seq:
+                return crossing
+        raise RideEngineError(f"no crossing with entry_id {entry_id} seq {seq} for {event.action}")

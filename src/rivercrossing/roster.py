@@ -352,6 +352,22 @@ class Roster:
         """Return every audit event, oldest first, read-only."""
         return tuple(self._audit_log)
 
+    def load_entries(self, entries: Sequence[Entry]) -> None:
+        """Restore persisted entries wholesale (EPIC 5's store seam).
+
+        Reconstruction, not mutation: appends *entries* with no
+        validation and no audit logging -- the rows came from a
+        consistent persisted state (Store.save_roster wrote them), and
+        re-logging a restore as a live edit would pollute this
+        roster's own audit_log with create events that never happened.
+        :meth:`Store._load_roster` calls this to rebuild a ride's
+        field from the entry/rider tables.
+
+        Args:
+            entries: The entries to restore, in creation order.
+        """
+        self._entries.extend(entries)
+
     def next_free_plate(self) -> str:
         """Return one past the highest numeric plate in use (R-20).
 

@@ -35,10 +35,9 @@ import harness
 import pytest
 import wx
 import wx.xrc
+from _lists_common import demo_seeded_roster
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
-from rivercrossing.ui.app import _seed_roster
 from rivercrossing.ui.views.rider_editor import RiderEditor
 
 pytestmark = pytest.mark.functional
@@ -109,7 +108,7 @@ def test_close_window_collects_a_cycle_between_a_view_and_its_controls(
     window.Show()
     window.Layout()
     harness.pump()
-    view = RiderEditor(window, roster=_seed_roster(DemoDataSource()))
+    view = RiderEditor(window, roster=demo_seeded_roster())
     view_ref = weakref.ref(view)
     control_ref = weakref.ref(view.riders_list)
 

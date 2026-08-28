@@ -40,6 +40,9 @@ from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import (
     Counters,
+    DataSource,
+    EmptyDataSource,
+    EntryDetail,
     FeedRow,
     RiderRow,
     StandingsRow,
@@ -249,6 +252,62 @@ def _assert_rejected(  # noqa: PLR0913 -- shared rejection assertion: view + not
 
 
 # -------------------------------------------------- EngineDataSource
+
+# ------------------------------------------- E5.4.2 EmptyDataSource
+
+
+def test_empty_data_source_isinstance_satisfies_data_source_protocol() -> None:
+    """E5.4.2: ``EmptyDataSource`` is a structural ``DataSource``.
+
+    The empty state is a real production implementation (the windows
+    with no store-backed data yet read it), not a test double -- so it
+    must conform to the same Protocol ``DemoDataSource`` and
+    ``EngineDataSource`` do.
+    """
+    assert isinstance(EmptyDataSource(), DataSource)
+
+
+def test_empty_data_source_returns_zero_rows_for_every_screen() -> None:
+    """E5.4.2: the empty state reads no rows anywhere.
+
+    Library (``rides``), rider editor (``riders``), results
+    (``standings``) and audit (``audit_rows``) all render empty until
+    E6/E7 wire real data; the console feed (``feed_rows``) is empty
+    because no crossings exist.
+    """
+    source = EmptyDataSource()
+
+    assert (
+        source.feed_rows(),
+        source.rides(),
+        source.riders(),
+        source.standings(),
+        source.audit_rows(),
+    ) == ([], [], [], [], [])
+
+
+def test_empty_data_source_counters_and_status_report_no_ride() -> None:
+    """E5.4.2: zero counters and DRAFT -- nothing is running."""
+    source = EmptyDataSource()
+
+    assert source.counters() == Counters(
+        crossings=0, cards_dealt=0, on_course=0, shoe_remaining=0, shoe_total=0
+    )
+    assert source.ride_status() is RideStatus.DRAFT
+
+
+def test_empty_data_source_entry_detail_returns_an_empty_view_model() -> None:
+    """E5.4.2: any plate resolves to an empty detail, never raises.
+
+    ``entry_detail_dlg`` opens with no ride selected; the view renders
+    the empty header/members/cards/laps rather than crashing on a
+    plate that no store-backed entry owns yet (E7 wires the real
+    per-entry lookup).
+    """
+    detail = EmptyDataSource().entry_detail("77")
+
+    assert detail == EntryDetail(header="", members="", cards_held=(), laps=())
+
 
 # ------------------------------------------------------------- feed
 
@@ -805,6 +864,36 @@ def test_on_finish_given_draft_ride_shows_a_notice() -> None:
     presenter.on_finish()
 
     assert view.last_notice == "Cannot finish: cannot finish from draft"
+    assert engine.state is RideStatus.DRAFT
+
+
+# ------------------------------------------------------------- reopen
+
+
+def test_on_reopen_given_finished_ride_moves_console_to_reopened() -> None:
+    """E5.4.1: Reopen Ride moves FINISHED -> REOPENED and refreshes."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_reopen()
+
+    assert engine.state is RideStatus.REOPENED
+    assert view.last_state is RideStatus.REOPENED
+    assert view.last_notice == "Ride reopened for corrections"
+
+
+def test_on_reopen_given_draft_ride_shows_a_notice() -> None:
+    """Negative: reopening a ride that is not FINISHED is refused."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_reopen()
+
+    assert view.last_notice == "Cannot reopen: cannot reopen from draft"
     assert engine.state is RideStatus.DRAFT
 
 
