@@ -17,11 +17,14 @@ illegal move raising (E4.1.1), wall-clock timing from an injected fake
 clock (R-30), the set-start-time retro-fix recomputing lap-1 only
 (E4.1.2), stop-as-guard with continue (E4.1.3), the start gate over
 ``Roster.validate_for_start``, the minimal crossing path, and the
-standings snapshot. No card dealing (E4.3), min-lap flags (E4.2) or
-undo (E4.2) land here.
+standings snapshot. E4.2 extends the crossing path here: one shoe deal
+per accepted crossing (R-40, incl. the mid-ride reshuffle audit), the
+short-lap hold/confirm/void surface (R-34), and the compensating-write
+undo (R-33).
 """
 
 import re
+import time
 from dataclasses import FrozenInstanceError
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -261,15 +264,26 @@ def _roster_with_entries(*plates: str) -> Roster:
 
 
 def _make_engine(
-    *, roster: Roster | None = None, clock: _FakeClock | None = None
+    *,
+    roster: Roster | None = None,
+    clock: _FakeClock | None = None,
+    config: RideConfig | None = None,
 ) -> tuple[RideEngine, _FakeClock]:
     """Build a DRAFT engine over a valid config, shoe and roster."""
-    config = _config()
+    config = config if config is not None else _config()
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     roster = roster if roster is not None else _roster_with_entries("12", "34")
     clock = clock if clock is not None else _FakeClock(config.planned_start)
     engine = RideEngine(config=config, shoe=shoe, clock=clock, roster=roster)
     return engine, clock
+
+
+def _record_crossings(  # noqa: PLR0913 -- seeded batch recorder: (engine, plate, count) + (start_at, step_s)
+    engine: RideEngine, plate: str, count: int, *, start_at: datetime, step_s: float
+) -> None:
+    """Record *count* crossings for *plate*, *step_s* apart."""
+    for index in range(count):
+        engine.record_crossing(plate, at=start_at + timedelta(seconds=index * step_s))
 
 
 def _engine_in(state: str) -> tuple[RideEngine, _FakeClock]:
@@ -535,16 +549,18 @@ def test_start_with_below_floor_team_raises_start_blocked_and_stays_draft() -> N
 
 
 def test_record_crossing_unknown_plate_returns_refusal_result() -> None:
-    """An unknown plate comes back refused, not raised (cue is E4.2)."""
+    """An unknown plate comes back refused, not raised (cue is E4.4)."""
     engine, _ = _make_engine()
     engine.start()
 
     result = engine.record_crossing("999")
 
     assert result.accepted is False
-    assert result.reason == "unknown plate"
+    assert result.reason == "unknown_plate"
     assert result.entry_id is None
     assert result.lap == 0
+    assert result.card is None
+    assert result.flagged is False
 
 
 def test_record_crossing_before_start_returns_refusal_result() -> None:
@@ -693,3 +709,355 @@ def test_on_course_counts_active_entries_with_odd_lap_counts() -> None:
     engine.record_crossing("34", at=_dt(10, 4))
 
     assert engine.on_course == 1
+
+
+# ============================================ E4.2 crossings + dealing
+
+
+def test_record_crossing_normal_lap_credits_card_and_reports_flagged_false() -> None:
+    """A lap at/above min_lap_s credits its card to the hand."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    result = engine.record_crossing("12", at=_dt(10, 30))
+
+    assert result.accepted is True
+    assert result.flagged is False
+    assert engine.held_crossings() == ()
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (result.card,)
+    assert results["12"].hand == best_hand((result.card,))
+
+
+def test_record_crossing_short_lap_flags_holds_card_and_still_records_lap() -> None:
+    """A lap under min_lap_s flags short, records, holds its card."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    assert result.accepted is True
+    assert result.flagged is True
+    held = engine.held_crossings()
+    assert len(held) == 1
+    assert held[0].crossing.seq == 1
+    assert held[0].card == result.card
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].laps == 1
+    assert results["12"].cards == ()
+
+
+def test_record_crossing_min_lap_exact_equal_is_not_flagged() -> None:
+    """A lap exactly at min_lap_s is normal, never flagged (spec §6)."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    result = engine.record_crossing("12", at=_dt(10, 18))
+
+    assert result.flagged is False
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (result.card,)
+
+
+def test_record_crossing_min_lap_one_second_under_is_flagged() -> None:
+    """A lap a second under min_lap_s flags short, holds card."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    result = engine.record_crossing("12", at=_dt(10, 17, 59))
+
+    assert result.flagged is True
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == ()
+
+
+def test_record_crossing_deals_the_shoe_next_card_in_deal_index_order() -> None:
+    """Each accepted crossing deals shoe[deal_index++] in turn."""
+    expected = Shoe(decks=8, jokers_per_deck=2, seed=20260920)
+    engine, _ = _make_engine()
+    engine.start()
+    first = engine.record_crossing("12", at=_dt(10, 30))
+    second = engine.record_crossing("12", at=_dt(10, 32))
+    third = engine.record_crossing("34", at=_dt(10, 34))
+
+    assert (first.card, second.card, third.card) == (
+        expected.deal()[0],
+        expected.deal()[0],
+        expected.deal()[0],
+    )
+    assert engine._shoe.dealt == 3
+
+
+def test_record_crossing_pooled_rider_out_lapping_teammates_is_uncapped() -> None:
+    """One rider may out-lap teammates; laps and cards pool uncapped."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+    )
+    engine, _ = _make_engine(roster=roster, config=_config(min_lap_s=60))
+    engine.start()
+    _record_crossings(engine, "45", 5, start_at=_dt(10, 1), step_s=600)
+    _record_crossings(engine, "9", 2, start_at=_dt(10, 51), step_s=600)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+
+    assert results["9"].laps == 7
+    assert len(results["9"].cards) == 7
+    assert engine.lap_times("9") == (60.0, 600.0, 600.0, 600.0, 600.0, 600.0, 600.0)
+
+
+# ----------------------------------------- E4.2 held cards (R-34)
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_hand_cards", "expected_held"),
+    [
+        ("confirm_held", 1, 0),
+        ("void_held", 0, 0),
+    ],
+    ids=["confirm_releases_into_hand", "void_discards_never_credited"],
+)
+def test_record_crossing_held_card_confirm_void_table(
+    action: str, expected_hand_cards: int, expected_held: int
+) -> None:
+    """Held-card lifecycle: confirm credits, void discards (R-34)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+
+    getattr(engine, action)(held.crossing)
+
+    assert len(engine.held_crossings()) == expected_held
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert len(results["12"].cards) == expected_hand_cards
+
+
+def test_confirm_held_returns_audit_event_and_best_hand_improves() -> None:
+    """confirm_held writes an audit row; the credited hand improves."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+
+    event = engine.confirm_held(held.crossing)
+
+    assert event == Event(
+        action="confirm_held",
+        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+    )
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (held.card,)
+    assert results["12"].hand == best_hand((held.card,))
+
+
+def test_void_held_returns_audit_event_and_hand_stays_empty() -> None:
+    """void_held writes an audit row and never credits the card."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+
+    event = engine.void_held(held.crossing)
+
+    assert event == Event(
+        action="void_held",
+        payload={"entry_id": "12", "seq": 1, "card": held.card.code()},
+    )
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == ()
+    assert results["12"].hand == best_hand(())
+
+
+def test_confirm_held_already_credited_crossing_raises_illegal_state_error() -> None:
+    """confirm_held on a non-held crossing raises (R-34 negative)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+    engine.confirm_held(crossing)
+
+    with pytest.raises(IllegalStateError, match=re.escape("crossing's card is not held")):
+        engine.confirm_held(crossing)
+
+
+def test_void_held_already_voided_crossing_raises_illegal_state_error() -> None:
+    """void_held on a non-held crossing raises (R-34 negative)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+    engine.void_held(crossing)
+
+    with pytest.raises(IllegalStateError, match=re.escape("crossing's card is not held")):
+        engine.void_held(crossing)
+
+
+def test_record_crossing_shoe_exhaustion_reshuffles_and_audits() -> None:
+    """ShoeEmpty mid-ride reshuffles (seed+1) and audits it (R-40)."""
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1)
+    engine, _ = _make_engine(config=config)
+    engine.start()
+    _record_crossings(engine, "12", 52, start_at=_dt(10, 0), step_s=60)
+
+    result = engine.record_crossing("12", at=_dt(10, 53))
+
+    assert result.accepted is True
+    assert engine.events[-2] == Event(action="shoe_reshuffle", payload={"cycle": 2})
+    assert engine.events[-1].action == "record_crossing"
+    reshuffled = Shoe(decks=1, jokers_per_deck=0, seed=20260921)
+    assert result.card == reshuffled.deal()[0]
+
+
+def test_snapshot_cards_reflect_credited_and_released_cards() -> None:
+    """EntryResult.cards pools credited plus released cards (R-34)."""
+    engine, _ = _make_engine()
+    engine.start()
+    normal = engine.record_crossing("12", at=_dt(10, 30))
+    flagged = engine.record_crossing("12", at=_dt(10, 32))
+    engine.confirm_held(engine.held_crossings()[0].crossing)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+
+    assert results["12"].cards == (normal.card, flagged.card)
+    assert results["12"].hand == best_hand((normal.card, flagged.card))
+
+
+def test_snapshot_excludes_held_and_voided_cards_from_the_hand() -> None:
+    """Held (unconfirmed) and voided cards never reach the hand."""
+    engine, _ = _make_engine()
+    engine.start()
+    normal = engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 32))
+    engine.record_crossing("12", at=_dt(10, 33))
+    engine.void_held(engine.held_crossings()[-1].crossing)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+
+    assert results["12"].cards == (normal.card,)
+    assert results["12"].hand == best_hand((normal.card,))
+    assert len(engine.held_crossings()) == 1
+
+
+# --------------------------------------------- E4.2 undo (R-33)
+
+
+def test_undo_last_removes_lap_restitutes_card_and_audits() -> None:
+    """undo_last reverses the last crossing and audits it."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+    first = engine.record_crossing("12", at=_dt(10, 30))
+    second = engine.record_crossing("12", at=_dt(10, 32))
+
+    event = engine.undo_last()
+
+    assert event == Event(
+        action="undo",
+        payload={
+            "entry_id": "12",
+            "seq": 2,
+            "crossed_at": "2026-09-20T10:32:00",
+            "card": second.card.code(),
+        },
+    )
+    assert engine.lap_times("12") == (1800.0,)
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].laps == 1
+    assert results["12"].cards == (first.card,)
+
+
+def test_undo_then_rerecord_deals_the_same_card_from_the_shoe_front() -> None:
+    """Undo restitutes the card; re-record deals it again (R-33)."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+    original = engine.record_crossing("12", at=_dt(10, 30))
+    engine.undo_last()
+
+    rerecord = engine.record_crossing("12", at=_dt(10, 31))
+
+    assert rerecord.card == original.card
+    assert engine.lap_times("12") == (1860.0,)  # lap 1 again: crossed_at - actual_start
+
+
+def test_undo_last_held_crossing_releases_hold_and_restitutes_card() -> None:
+    """Undo of a held crossing drops the hold, never credits."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+
+    engine.undo_last()
+
+    assert engine.held_crossings() == ()
+    assert engine.lap_times("12") == ()
+    redo = engine.record_crossing("12", at=_dt(10, 0, 45))
+    assert redo.card == held.card
+
+
+def test_undo_last_voided_crossing_returns_its_card_to_the_shoe() -> None:
+    """Undo fully reverses a voided crossing, card back to shoe."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    engine.void_held(held.crossing)
+
+    engine.undo_last()
+
+    redo = engine.record_crossing("12", at=_dt(10, 0, 45))
+    assert redo.card == held.card
+
+
+def test_undo_last_with_zero_crossings_raises_illegal_state_error() -> None:
+    """undo_last on an empty ride raises (E4.2.3 negative)."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    with pytest.raises(IllegalStateError, match=re.escape("no crossings to undo")):
+        engine.undo_last()
+
+
+def test_undo_last_from_finished_raises_illegal_state_error() -> None:
+    """Undo is a corrections path, blocked once FINISHED (spec §3)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.finish()
+
+    with pytest.raises(IllegalStateError, match=re.escape("cannot undo from finished")):
+        engine.undo_last()
+
+
+def test_undo_last_from_reopened_reverses_the_crossing() -> None:
+    """REOPENED corrections allow undo (spec §3/§6)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.finish()
+    engine.reopen()
+
+    engine.undo_last()
+
+    assert engine.lap_times("12") == ()
+
+
+# -------------------------------------------------- R-31 perf budget
+
+
+def test_record_crossing_batch_of_100_averages_under_100ms() -> None:
+    """100 real-engine crossings average well under 100 ms each (R-31).
+
+    Mirrors tests/unit/test_hands.py's measured-budget style: seeded,
+    no sleeps, and the bound is the requirement itself -- recording is
+    dict/list work plus one shoe deal, so the real margin is orders of
+    magnitude even on a slow CI runner.
+    """
+    engine, _ = _make_engine()
+    engine.start()
+
+    start = time.perf_counter()
+    _record_crossings(engine, "12", 100, start_at=_dt(10, 0), step_s=60)
+    elapsed = time.perf_counter() - start
+
+    assert elapsed / 100 < 0.1  # R-31: feedback payload under 100 ms average
