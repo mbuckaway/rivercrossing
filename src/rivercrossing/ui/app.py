@@ -45,13 +45,17 @@ here).
 
 import itertools
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from rivercrossing.cards import Shoe
 from rivercrossing.demo import DemoDataSource  # the one demo seam import (E1.2.4)
+from rivercrossing.ride import RideConfig, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
+from rivercrossing.ui.presenters.data_source import EngineDataSource
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -108,6 +112,12 @@ class _RouteContext:
     roster: Roster
     app: Any
     theme_controller: theme.ThemeController
+    # E4.4.1: the live console's presenter, threaded so the Cards ▸
+    # Undo Last Crossing route (and its Ctrl+Z accelerator) can fire
+    # presenter.on_undo. Optional with a stub fallback so route-level
+    # tests that construct _RouteContext without a live console keep
+    # working unchanged (test_app_open_target.py's _make_route_context).
+    presenter: ConsolePresenter | None = None
 
 
 def _seed_roster(data_source: DataSource) -> Roster:
@@ -135,6 +145,52 @@ def _seed_roster(data_source: DataSource) -> Roster:
         riders = [Rider(name=row.name, plate=row.plate) for row in rows]
         roster.create_team_entry(display_name=team_name, riders=riders)
     return roster
+
+
+def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]:
+    """Build the seeded, started ride the console runs (E4.4.1).
+
+    The app has no ride persistence yet (E5), so the console's ride is
+    created here from the same seeded roster ``rider_editor_dlg``
+    reads: a valid :class:`~rivercrossing.ride.RideConfig` matching
+    that roster's own settings, an 8-deck seeded shoe, and the real
+    wall clock. The engine is started so the console opens live
+    (RUNNING), exactly as ``DemoDataSource`` reported RUNNING before
+    E4.4.1 -- and so a typed plate records on the very first Enter.
+
+    This is the one place a ride is created at bootstrap; E5's
+    store-backed create/reopen flow replaces it (and the console's
+    ``EngineDataSource`` is what the "demo wiring line unused on this
+    screen" requirement hands the console, while other windows keep
+    ``DemoDataSource`` until E5.4.2).
+
+    Returns:
+        ``(engine, engine_source)`` -- the write side and the read-only
+        source the console presenter and view are wired to.
+    """
+    config = RideConfig(
+        name="GORBA EPIC 2026",
+        event_date=date(2026, 9, 20),
+        venue="Sea to Sky Gondola",
+        lap_km=8.0,
+        organizer="GORBA",
+        scorer="K. Singh",
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- pre-persistence local, RideConfig's own contract
+        planned_duration_s=21600,
+        min_lap_s=1080,
+        entry_mode=roster.entry_mode,
+        plate_model=roster.plate_model,
+        max_team_size=roster.max_team_size,
+    )
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(
+        config=config,
+        shoe=shoe,
+        clock=lambda: datetime.now(UTC),
+        roster=roster,
+    )
+    engine.start()
+    return engine, EngineDataSource(engine, roster)
 
 
 def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
@@ -531,7 +587,7 @@ def _bind_theme(context: _RouteContext) -> None:
     context.frame.Bind(wx.EVT_SYS_COLOUR_CHANGED, context.theme_controller.on_sys_colour_changed)
 
 
-def _make_route_handler(
+def _make_route_handler(  # noqa: PLR0911 -- one early-return per route special case; each is a real action
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
     """Return the ``EVT_MENU`` handler *route* fires.
@@ -543,7 +599,11 @@ def _make_route_handler(
     :func:`_handle_view_row`, rather than by anything ``route`` alone
     carries -- its 11 ids all share this one row. ``export_riders_csv``
     (E3.4) is the one ``COMMAND`` row with a real action of its own,
-    ahead of the generic stub. ``csv_preview_dlg`` (E3.4) is the one
+    ahead of the generic stub. ``undo_last_crossing`` (E4.4.2) fires
+    the live console presenter's ``on_undo`` (covering both the Cards
+    ▸ Undo menu item and its Ctrl+Z accelerator); when no live
+    presenter is threaded (route-level tests), it falls back to the
+    generic stub. ``csv_preview_dlg`` (E3.4) is the one
     ``DIALOG`` target that needs a picker run before it opens, ahead
     of :func:`_open_target`'s generic path. Every other ``COMMAND``
     row has no window to open and no ride engine yet to run its real
@@ -559,6 +619,11 @@ def _make_route_handler(
         return lambda event: _handle_view_row(context, route, event)
     if route.target == "export_riders_csv":
         return lambda _event: _handle_export_csv(context)
+    if route.target == "undo_last_crossing":
+        presenter = context.presenter
+        if presenter is not None:
+            return lambda _event: presenter.on_undo()
+        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     if route.target == ids.CSV_PREVIEW_DLG:
         return lambda _event: _handle_import_csv(context)
     if route.kind is commands.TargetKind.COMMAND:
@@ -659,13 +724,17 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     _check_default_menu_radios(menubar)
 
     data_source = DemoDataSource()  # the one demo seam construction (E1.2.4)
-    _console = MainFrame(frame, data_source=data_source)  # kept alive by its own event binding
+    roster = _seed_roster(data_source)
+    engine, engine_source = _build_console_engine(roster)
+    _console = MainFrame(frame, data_source=engine_source, resource=resource)
 
-    # _presenter is kept alive the same way: wire_entry's closure holds
-    # its bound on_plate_entered, which wx's own event table then holds.
-    _presenter = ConsolePresenter(_console, data_source=data_source)
+    # _presenter is kept alive the same way: wire_entry/wire_console's
+    # closures hold its bound handlers, which wx's own event table and
+    # the tick timer then hold.
+    _presenter = ConsolePresenter(_console, engine=engine, source=engine_source)
     _console.wire_entry(_presenter.on_plate_entered)
-    _console.set_state(data_source.ride_status())
+    _console.wire_console(_presenter)
+    _console.set_state(engine_source.ride_status())
     _console.focus_entry()
 
     _apply_accelerators(frame, menubar)
@@ -675,10 +744,11 @@ def build_main_window(app: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     context = _RouteContext(
         frame=frame,
         resource=resource,
-        data_source=data_source,
-        roster=_seed_roster(data_source),
+        data_source=data_source,  # other windows keep demo until E5/E6
+        roster=roster,
         app=app,
         theme_controller=theme_controller,
+        presenter=_presenter,
     )
     _bind_routes(context)
     _bind_process_quit_paths(context)

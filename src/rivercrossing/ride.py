@@ -486,6 +486,50 @@ class RideEngine:
             if entry.status.value == "active" and len(self._laps_for(entry.plate)) % 2 == 1
         )
 
+    # E4.4.1 console read accessors. The console's ``EngineDataSource``
+    # (rivercrossing.ui.presenters.data_source) builds its feed and
+    # counters from these; each is a read-only projection over state
+    # this engine already owns, never a new mutation path.
+
+    @property
+    def config(self) -> RideConfig:
+        """Return this ride's frozen setup-time config (spec §2)."""
+        return self._config
+
+    @property
+    def crossings(self) -> tuple[Crossing, ...]:
+        """Return every recorded crossing, oldest first, read-only.
+
+        Undo removes the reversed crossing, so this always reflects
+        the current live state -- the console feed's source of truth.
+        """
+        return tuple(self._crossings)
+
+    def card_for(self, crossing: Crossing) -> Card:
+        """Return the shoe card dealt for *crossing* (R-40).
+
+        Args:
+            crossing: A crossing this engine recorded (see
+                :attr:`crossings`).
+
+        Returns:
+            The card dealt for *crossing*, held or credited.
+
+        Raises:
+            KeyError: *crossing* was never dealt by this engine.
+        """
+        return self._dealt[crossing]
+
+    @property
+    def shoe_remaining(self) -> int:
+        """Count of undealt cards left in the shoe's current cycle."""
+        return self._shoe.remaining
+
+    @property
+    def shoe_total(self) -> int:
+        """Total cards in the current shoe cycle (decks+jokers)."""
+        return self._shoe.remaining + self._shoe.dealt
+
     def start(self, at: datetime | None = None) -> Event:
         """Start the ride, or continue a stopped one (spec §3, R-30).
 
