@@ -56,9 +56,32 @@ them open and later EPICs will build on them:
   :func:`_to_epoch`'s naive branch. A naive config value round-trips
   exactly; an aware one keeps its instant but loses its tzinfo (the
   config's own convention is naive local, RideConfig docstring).
-- **roster boundary (E5.1.2)**: :meth:`Store.load_engine` takes the
+- **roster boundary (E5.1.2)**: :meth:`Store.load_engine` took the
   roster from the caller -- the engine needs plate->entry resolution,
-  and full roster-from-DB reconstruction is E5.4.1's job.
+  and full roster-from-DB reconstruction was E5.4.1's job.
+- **roster persistence (E5.4.1)**: :meth:`Store.save_roster` writes
+  every entry and rider into spec §2's tables (replacing any prior
+  snapshot, one transaction); :meth:`Store.roster_for` and
+  :meth:`Store.load_engine` rebuild the full roster from those rows.
+  ``has_data`` is derived, never stored: the schema has no column for
+  it, and R-15's permanent delete guard is exactly "has recorded
+  data", so ``_load_roster`` marks an entry ``has_data`` when it owns
+  a crossing or card row. ``entry.status`` persists; ``entry.dnf_at``
+  stays NULL and the rider's ``emergency_contact``/``waiver_signed``/
+  ``ccn_reg_id`` stay NULL -- the in-memory Roster model carries no
+  such fields, so there is nothing honest to store.
+- **duplicate name (E5.4.1)**: :meth:`Store.duplicate_ride` names the
+  copy ``f"{source name} (copy)"`` by default (the retired 3d mock
+  drew a "New ride name" input, but the E5.4.1 confirm dialog is
+  mock-first simple -- ``message_lbl`` + stock buttons, no input --
+  so the Store derives the name; a caller may pass ``name=``).
+- **duplication audit (E5.4.1)**: :meth:`Store.duplicate_ride` audits
+  nothing. The audit table is the replay channel
+  (:meth:`Store.load_engine` applies every row), and
+  ``RideEngine.apply`` raises on an unknown action -- a
+  ``duplicate_ride`` row would break replay of the copy. A separate,
+  non-replayed audit channel is E7's audit-viewer work, not this
+  task's.
 - **fresh-DB session_state (E5.2.1)**: :meth:`Store.session_state`
   with no prior session row returns ``SessionState.CLEAN_QUIT`` -- a
   first launch is not a crash and has no ride to resume (the
@@ -82,12 +105,12 @@ them open and later EPICs will build on them:
   falls back to ``opened_at`` -- the last instant the crashed session
   is known to have been alive -- and E5.3+ replaces the fallback with
   real heartbeat writes.
-- **roster shell (E5.2.2)**: :meth:`Store.roster_for` returns an
+- **roster shell (E5.2.2)**: :meth:`Store.roster_for` returned an
   *empty* :class:`~rivercrossing.roster.Roster` carrying the ride's
-  own entry_mode/plate_model/max_team_size. No Store method writes
-  entry/rider rows yet (full roster-from-DB is E5.4.1), so an empty
-  roster is the only honest reconstruction -- the shell
-  :meth:`Store.load_engine` needs to rebuild a console.
+  own entry_mode/plate_model/max_team_size until E5.4.1 -- no Store
+  method wrote entry/rider rows yet, so an empty roster was the only
+  honest reconstruction. E5.4.1 replaces it with the full
+  roster-from-DB rebuild (same method, complete result).
 - **backup location / WAL / rotation (E5.3.1)**: backups live in a
   sibling ``<db>.backups/`` directory as one fixed-width, sortable,
   UTC-timestamped ``<stem>.<YYYYmmdd-HHMMSS-ffffff>.db`` file each;
@@ -135,7 +158,15 @@ from typing import TYPE_CHECKING, cast
 
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
-from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.roster import (
+    Entry,
+    EntryMode,
+    EntryStatus,
+    EntryType,
+    PlateModel,
+    Rider,
+    Roster,
+)
 from rivercrossing.store.backup import run as _backup_run
 from rivercrossing.store.migrations import (
     FutureSchemaVersionError,
@@ -322,16 +353,20 @@ class PreviousSession:
 
 @dataclass(frozen=True, slots=True)
 class RideRow:
-    """One ride's library summary (id, name, date, status).
+    """One ride's library summary (id, name, date, status, entries).
 
-    The full library view-model arrives with E5.4.1; this is the
-    smallest frozen shape ``rides()`` can return today.
+    E5.4.1 fills in the last field: ``entries`` is the cheap COUNT the
+    library's Entries column draws (schema has it; xrc-windows.md D's
+    rides_list shows Ride | Date | Status | Entries). Demo-era
+    constructions that name only the first four fields keep working
+    through the zero default.
     """
 
     id: int
     name: str
     event_date: date
     status: RideStatus
+    entries: int = 0
 
 
 class Store:
@@ -513,19 +548,38 @@ class Store:
             )
 
     def roster_for(self, ride_id: int) -> Roster:
-        """Return an empty Roster carrying *ride_id*'s shape (E5.2.2).
+        """Return *ride_id*'s full roster reconstructed from the DB.
 
-        Full roster-from-DB reconstruction is E5.4.1's job (module
-        docstring); until then no Store method writes entry/rider
-        rows, so the only honest reconstruction is an empty roster
-        with the ride's own entry_mode/plate_model/max_team_size --
-        the shell :meth:`load_engine` needs to rebuild a console.
+        E5.4.1 closes E5.1.2's roster boundary (module docstring): this
+        rebuilds the complete roster -- entries and riders in creation
+        order, with entry notes and ``has_data`` derived from recorded
+        rows -- instead of the empty shell E5.2.2 had to settle for.
+        :meth:`load_engine` calls the same reconstruction when no
+        caller roster is supplied.
 
         Args:
-            ride_id: The ride whose shape the roster must carry.
+            ride_id: The ride whose roster to rebuild.
 
         Returns:
-            A new, empty :class:`~rivercrossing.roster.Roster`.
+            A fresh :class:`~rivercrossing.roster.Roster` carrying the
+            ride's own entry_mode/plate_model/max_team_size and every
+            persisted entry and rider.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+        """
+        return self._load_roster(ride_id)
+
+    def _load_roster(self, ride_id: int) -> Roster:
+        """Rebuild *ride_id*'s roster from the entry/rider tables.
+
+        The one reading both :meth:`roster_for` and :meth:`load_engine`
+        use: the ride row's shape columns build the shell, then every
+        entry (creation order) and its riders (``sort_order``, id tie-
+        break for a stable order) reconstruct the field. ``has_data``
+        is derived, never stored (module docstring's E5.4.1
+        resolution): an entry that owns a crossing or card row has
+        recorded data.
 
         Raises:
             RideNotFoundError: No ``ride`` row has *ride_id*.
@@ -536,11 +590,111 @@ class Store:
         ).fetchone()
         if row is None:
             raise RideNotFoundError(f"no ride with id {ride_id}")
-        return Roster(
+        roster = Roster(
             entry_mode=EntryMode(row["entry_mode"]),
             plate_model=PlateModel(row["plate_model"]),
             max_team_size=row["max_team_size"],
         )
+        entries: list[Entry] = []
+        for entry_row in self._conn.execute(
+            "SELECT id, plate, display_name, type, status, notes"
+            " FROM entry WHERE ride_id = ? ORDER BY id",
+            (ride_id,),
+        ).fetchall():
+            riders = [
+                Rider(
+                    name=rider_row["name"],
+                    plate=rider_row["plate"],
+                    sort_order=rider_row["sort_order"],
+                )
+                for rider_row in self._conn.execute(
+                    "SELECT name, plate, sort_order FROM rider"
+                    " WHERE entry_id = ? ORDER BY sort_order, id",
+                    (entry_row["id"],),
+                ).fetchall()
+            ]
+            has_data = bool(
+                self._conn.execute(
+                    "SELECT EXISTS(SELECT 1 FROM crossing WHERE entry_id = ?)"
+                    " OR EXISTS(SELECT 1 FROM card WHERE entry_id = ?)",
+                    (entry_row["id"], entry_row["id"]),
+                ).fetchone()[0]
+            )
+            entry = Entry(
+                plate=entry_row["plate"],
+                display_name=entry_row["display_name"],
+                type=EntryType(entry_row["type"]),
+                riders=riders,
+                status=EntryStatus(entry_row["status"]),
+                notes=entry_row["notes"] or "",
+            )
+            entry.has_data = has_data
+            entries.append(entry)
+        roster.load_entries(entries)
+        return roster
+
+    def save_roster(self, ride_id: int, roster: Roster) -> None:
+        """Persist one ride's roster, replacing any previously saved.
+
+        E5.4.1's roster persistence into spec §2's entry/rider tables:
+        every entry (plate, display_name, type, team_size, status,
+        notes) and every rider (name, plate, sort_order) is written in
+        one transaction, after removing any previously saved rows -- a
+        save is a snapshot of the live roster, never an append (the
+        replace semantics the rider editor's DRAFT edits need).
+        ``has_data`` is deliberately not stored (derived at load time
+        from recorded rows), and ``dnf_at``/``emergency_contact``/
+        ``waiver_signed``/``ccn_reg_id`` stay NULL -- the in-memory
+        Roster model carries no such fields (module docstring's E5.4.1
+        resolutions).
+
+        Args:
+            ride_id: The ride whose roster to write.
+            roster: The roster to persist.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+        """
+        row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
+        if row is None:
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM rider WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?)",
+                (ride_id,),
+            )
+            self._conn.execute("DELETE FROM entry WHERE ride_id = ?", (ride_id,))
+            for entry in roster.entries:
+                cursor = self._conn.execute(
+                    "INSERT INTO entry"
+                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes)"
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                    (
+                        ride_id,
+                        entry.plate,
+                        entry.display_name,
+                        entry.type.value,
+                        len(entry.riders),
+                        entry.status.value,
+                        entry.notes,
+                    ),
+                )
+                entry_id = cursor.lastrowid
+                if entry_id is None:
+                    # logic-coverage-exempt: T-3 -- unreachable by
+                    # construction, the same lastrowid narrowing as
+                    # create_ride: a single INSERT on an INTEGER PRIMARY
+                    # KEY always sets it, and this task's test contract
+                    # forbids mocking sqlite3.
+                    raise RuntimeError("INSERT returned no rowid")
+                for rider in entry.riders:
+                    self._conn.execute(
+                        "INSERT INTO rider"
+                        " (entry_id, name, plate, sort_order, emergency_contact,"
+                        " waiver_signed, ccn_reg_id)"
+                        " VALUES (?, ?, ?, ?, NULL, NULL, NULL)",
+                        (entry_id, rider.name, rider.plate, rider.sort_order),
+                    )
 
     def create_ride(self, config: RideConfig) -> int:
         """Persist one ride from its config; return the new ride id.
@@ -600,12 +754,18 @@ class Store:
     def rides(self) -> list[RideRow]:
         """Return all ride summaries, oldest first by creation.
 
+        Each row carries the ride's entry count (the library's Entries
+        column) via a correlated subquery -- cheap, and the schema has
+        the data.
+
         Returns:
             One :class:`RideRow` per ride, ordered by ``created_at``
             (ties broken by id for a stable library listing).
         """
         rows = self._conn.execute(
-            "SELECT id, name, event_date, status FROM ride ORDER BY created_at, id"
+            "SELECT r.id, r.name, r.event_date, r.status,"
+            " (SELECT COUNT(*) FROM entry e WHERE e.ride_id = r.id) AS entries"
+            " FROM ride r ORDER BY r.created_at, r.id"
         ).fetchall()
         return [
             RideRow(
@@ -613,6 +773,7 @@ class Store:
                 name=row["name"],
                 event_date=date.fromisoformat(row["event_date"]),
                 status=RideStatus(row["status"]),
+                entries=int(row["entries"]),
             )
             for row in rows
         ]
@@ -706,7 +867,7 @@ class Store:
     def load_engine(
         self,
         ride_id: int,
-        roster: Roster,
+        roster: Roster | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
     ) -> RideEngine:
@@ -722,15 +883,18 @@ class Store:
         persisted event in append (insert-id) order via
         :meth:`RideEngine.apply`.
 
-        The roster is supplied by the caller -- full roster-from-DB
-        reconstruction is E5.4.1's job (module docstring). ``clock``
-        defaults to ``datetime.now`` (naive local, matching the naive
-        timestamps E4 events carry); tests inject a fake clock for
-        determinism.
+        The roster is rebuilt from the DB by default (E5.4.1 closes
+        E5.1.2's caller-supplied boundary); a caller may still pass
+        ``roster=`` to override -- the only other caller is
+        ``app.py``'s resume flow, which passes the same roster
+        :meth:`roster_for` returned. ``clock`` defaults to
+        ``datetime.now`` (naive local, matching the naive timestamps
+        E4 events carry); tests inject a fake clock for determinism.
 
         Args:
             ride_id: The ride to rebuild.
-            roster: This ride's entries/riders, as it existed live.
+            roster: This ride's entries/riders; ``None`` reconstructs
+                them from the entry/rider tables.
             clock: Wall-clock source for the rebuilt engine; defaults
                 to ``datetime.now``.
 
@@ -770,7 +934,7 @@ class Store:
                 seed=row["rng_seed"],
             ),
             clock=clock if clock is not None else datetime.now,
-            roster=roster,
+            roster=roster if roster is not None else self._load_roster(ride_id),
         )
         events = self._conn.execute(
             "SELECT action, payload_json FROM audit WHERE ride_id = ? ORDER BY id",
@@ -781,3 +945,107 @@ class Store:
                 Event(action=stored["action"], payload=json.loads(stored["payload_json"]))
             )
         return engine
+
+    # ------------------------------------- E5.4.1 duplicate_ride (R-15)
+
+    def duplicate_ride(self, ride_id: int, *, name: str | None = None) -> int:
+        """Copy one ride's setup + roster to a new DRAFT ride (R-15).
+
+        R-15's "setup + roster, no timing data": reads the source ride
+        row, inserts a new ride row copying every config column with a
+        fresh DB-owned ``rng_seed`` (spec §4 -- a new ride gets its own
+        seed, never the source's), status DRAFT and NULL
+        ``actual_start``/``finished_at``, then copies the roster rows
+        (entries + riders, in creation order). No crossings, cards or
+        audit rows are written -- the copy has no timing data by
+        construction. The duplication itself is not audited either
+        (module docstring's E5.4.1 decision): the audit replay channel
+        only knows ride mutations, so a ``duplicate_ride`` row would
+        break :meth:`load_engine`.
+
+        Args:
+            ride_id: The source ride.
+            name: The copy's name; default ``f"{source name} (copy)"``
+                (module docstring's E5.4.1 resolution).
+
+        Returns:
+            The new ride's id.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+        """
+        row = self._conn.execute("SELECT * FROM ride WHERE id = ?", (ride_id,)).fetchone()
+        if row is None:
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        now = int(datetime.now(UTC).timestamp())
+        params: tuple[object, ...] = (
+            name if name is not None else f"{row['name']} (copy)",
+            row["event_date"],
+            row["venue"],
+            row["course_name"],
+            row["lap_km"],
+            row["organizer"],
+            row["scorer"],
+            row["logo_png"],
+            row["planned_start"],
+            row["planned_duration_s"],
+            None,  # actual_start: the copy has never started
+            None,  # finished_at
+            RideStatus.DRAFT,
+            row["entry_mode"],
+            row["max_team_size"],
+            row["plate_model"],
+            row["min_lap_s"],
+            row["deck_count"],
+            row["jokers_per_deck"],
+            row["max_cards"],
+            row["tiebreak_order"],
+            secrets.randbits(63),  # fresh seed (spec §4)
+            now,
+            now,
+        )
+        with self._conn:
+            cursor = self._conn.execute(_INSERT_RIDE_SQL, params)
+            new_id = cursor.lastrowid
+            if new_id is None:
+                # logic-coverage-exempt: T-3 -- unreachable by
+                # construction, the same lastrowid narrowing as
+                # create_ride (module docstring's delete-order note).
+                raise RuntimeError("INSERT returned no rowid")
+            for source_entry in self._conn.execute(
+                "SELECT id, plate, display_name, type, team_size, status, notes"
+                " FROM entry WHERE ride_id = ? ORDER BY id",
+                (ride_id,),
+            ).fetchall():
+                entry_cursor = self._conn.execute(
+                    "INSERT INTO entry"
+                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes)"
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                    (
+                        new_id,
+                        source_entry["plate"],
+                        source_entry["display_name"],
+                        source_entry["type"],
+                        source_entry["team_size"],
+                        source_entry["status"],
+                        source_entry["notes"],
+                    ),
+                )
+                new_entry_id = entry_cursor.lastrowid
+                if new_entry_id is None:
+                    # logic-coverage-exempt: T-3 -- unreachable by
+                    # construction (lastrowid narrowing, as above).
+                    raise RuntimeError("INSERT returned no rowid")
+                for rider in self._conn.execute(
+                    "SELECT name, plate, sort_order FROM rider"
+                    " WHERE entry_id = ? ORDER BY sort_order, id",
+                    (source_entry["id"],),
+                ).fetchall():
+                    self._conn.execute(
+                        "INSERT INTO rider"
+                        " (entry_id, name, plate, sort_order, emergency_contact,"
+                        " waiver_signed, ccn_reg_id)"
+                        " VALUES (?, ?, ?, ?, NULL, NULL, NULL)",
+                        (new_entry_id, rider["name"], rider["plate"], rider["sort_order"]),
+                    )
+        return new_id

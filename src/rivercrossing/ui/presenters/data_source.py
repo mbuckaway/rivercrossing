@@ -58,12 +58,18 @@ class Counters:
 
 @dataclass(frozen=True, slots=True)
 class RideSummary:
-    """One row of the ride library (ride_library_dlg, rides_list)."""
+    """One row of the ride library (ride_library_dlg, rides_list).
+
+    ``ride_id`` is E5.4.1's addition: the store-backed library source
+    fills it so Open/Duplicate/Delete can address the real ride row.
+    Demo-era rows leave it ``None``.
+    """
 
     name: str
     date: str
     status: RideStatus
     entries: int
+    ride_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

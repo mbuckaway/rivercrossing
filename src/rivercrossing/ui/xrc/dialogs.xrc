@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The fourteen small dialogs of spec.md 15b's dialogs.xrc entry:
+  The sixteen small dialogs of spec.md 15b's dialogs.xrc entry:
   set_start_dlg, stop_confirm_dlg, finish_confirm_dlg,
   continue_or_new_dlg, resume_dlg, exit_running_dlg, exit_confirm_dlg
   (xrc-windows.md section B; exit_confirm_dlg added Phase 8, P8-D1),
+  duplicate_ride_dlg and reopen_ride_dlg (section B, E5.4.1 mock-first —
+  the two §15 rows that had no frozen window until then),
   edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg
   (section C), about_dlg, selftest_dlg, shortcuts_dlg (section E).
   Control names are frozen; tests find them with
@@ -218,6 +220,113 @@
               <default>1</default>
               <focused>1</focused>
             </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- E5.4.1 mock-first (task-brief E5.4.1): File ▸ Duplicate Ride…
+       previously one of the three §15 rows with no frozen window
+       (commands.py's _UNAUTHORED_DIALOG sentinel). Authored mock-first:
+       the control names are registered in spec.md §15b BEFORE any UI
+       wiring, replacing the E1.4.1 sentinel. Duplicate copies setup +
+       roster with no timing data (R-15), so it is a NON-destructive
+       confirm: OK is both the default and the initially focused
+       control, and a reflex Enter is safe (spec.md 13). The ride being
+       duplicated is interpolated into message_lbl by the presenter
+       (UX-DESKTOP §4 names the object). -->
+  <object class="wxDialog" name="duplicate_ride_dlg">
+    <title>Duplicate Ride</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- "Duplicate "<ride name>" as a new DRAFT ride?" Written by
+           the presenter; a blank label is a failed assertion. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="message_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Copies the ride's setup and full rider list — no timing data.</label>
+          <wrap>420</wrap>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Duplicate</label>
+              <default>1</default>
+              <focused>1</focused>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- E5.4.1 mock-first (task-brief E5.4.1): Ride ▸ Reopen Ride — the
+       second §15 row that previously had no frozen window. Reopen
+       moves a FINISHED ride to REOPENED for corrections (spec §3),
+       which loses nothing, so this is a NON-destructive confirm: OK
+       is the default and the initially focused control (spec.md 13). -->
+  <object class="wxDialog" name="reopen_ride_dlg">
+    <title>Reopen Ride</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- "Reopen "<ride name>" for corrections?" Written by the
+           presenter; a blank label is a failed assertion. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="message_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Reopen for corrections? Standings recompute on export.</label>
+          <wrap>420</wrap>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Reopen</label>
+              <default>1</default>
+              <focused>1</focused>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
           </object>
         </object>
       </object>

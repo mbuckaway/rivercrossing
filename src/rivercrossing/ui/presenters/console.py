@@ -268,6 +268,26 @@ class ConsolePresenter:
         self.view.set_state(self.engine.state)
         self.view.show_notice("Ride finished")
 
+    def on_reopen(self) -> None:
+        """Handle Ride ▸ Reopen Ride (E5.4.1, spec §3).
+
+        ``engine.reopen()`` moves a FINISHED ride into REOPENED -- the
+        corrections-only state (clock closed, entry locked). The
+        console reflects the new state (which shows the reopened
+        corrections banner, R-36) and posts a notice; engine refusals
+        (not FINISHED) surface as notices. The reopen event's
+        persistence belongs to E5.4's async writer, not this task.
+        """
+        try:
+            self.engine.reopen()
+        except IllegalStateError as exc:
+            self.view.show_notice(f"Cannot reopen: {exc}")
+            return
+        self._refresh_feed()
+        self._refresh_counters()
+        self.view.set_state(self.engine.state)
+        self.view.show_notice("Ride reopened for corrections")
+
     def tick(self) -> None:
         """Handle a periodic clock/feed refresh tick.
 

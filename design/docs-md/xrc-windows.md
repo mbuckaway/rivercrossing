@@ -142,6 +142,26 @@ Finish rideCancel
 
 `wxID_OK "Finish ride" · wxID_CANCEL (default)`
 
+Duplicate Ride`duplicate_ride_dlg`✕
+
+Duplicate **"GORBA EPIC 2026"** as a new DRAFT ride?
+
+Copies the ride's setup and full rider list — no timing data.
+
+CancelDuplicate
+
+`message_lbl (the ride's name is interpolated — UX-DESKTOP §4) · wxID_OK "Duplicate" (default + focused — non-destructive, E5.4.1) · wxID_CANCEL`
+
+Reopen Ride`reopen_ride_dlg`✕
+
+Reopen **"GORBA EPIC 2026"** for corrections?
+
+Reopen for corrections? Standings recompute on export.
+
+CancelReopen
+
+`message_lbl (the ride's name is interpolated — UX-DESKTOP §4) · wxID_OK "Reopen" (default + focused — non-destructive, E5.4.1) · wxID_CANCEL`
+
 Ride Already Has Data`continue_or_new_dlg`✕
 
 This ride was stopped with 1 124 crossings recorded. Continue it (keeps start time and all data) or archive and start fresh?

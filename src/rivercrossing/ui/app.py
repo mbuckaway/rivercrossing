@@ -55,7 +55,7 @@ from rivercrossing.ride import RideConfig, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, resume_flow, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
-from rivercrossing.ui.presenters.data_source import EngineDataSource
+from rivercrossing.ui.presenters.data_source import EngineDataSource, RideSummary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -80,7 +80,7 @@ _ENTRY_DETAIL_DEMO_PLATE = "77"
 _VIEW_ROUTE_TARGET = "view_setting"
 
 
-@dataclass(frozen=True)
+@dataclass
 class _RouteContext:
     """The pieces every bound §15 route handler needs to act.
 
@@ -90,14 +90,22 @@ class _RouteContext:
     in :func:`build_main_window` -- every window a route later opens
     reuses that same instance rather than constructing its own.
 
+    Not frozen (unlike a plain value record) because E5.4.1's library
+    Open swaps the console in place: the route handlers bound in
+    :func:`_bind_routes` close over this one object, so mutating
+    :attr:`presenter`, :attr:`roster` and :attr:`active_ride_id` on it
+    is what lets a later ``EVT_MENU`` see the opened ride.
+
     Attributes:
         frame: ``main_frame``.
         resource: The loaded ``wx.xrc.XmlResource``.
         data_source: The demo/live display-data seam.
-        roster: The seeded, in-memory :class:`~rivercrossing.roster.
-            Roster` ``rider_editor_dlg`` reads and writes directly
-            (E3.2) -- unlike every other window here, it is not a
+        roster: The in-memory :class:`~rivercrossing.roster.Roster`
+            ``rider_editor_dlg`` reads and writes directly (E3.2) --
+            unlike every other window here, it is not a
             ``data_source`` projection, so it is threaded separately.
+            E5.4.1's library Open replaces it with the opened ride's
+            store-reconstructed roster.
         app: The live ``wx.App`` -- carries ``really_quitting`` (the
             flag :func:`_on_query_end_session`/the exit route set so
             :func:`_on_main_frame_close` never re-opens a confirm
@@ -109,6 +117,23 @@ class _RouteContext:
             app opened one (E5.2.1). ``None`` until the store-backed
             bootstrap lands (E5.4.1); a confirmed quit closes the
             open session through it (R-52's clean-quit signal).
+        presenter: The live console's presenter, threaded so the
+            Cards ▸ Undo Last Crossing route (and its Ctrl+Z
+            accelerator) can fire ``presenter.on_undo``, the Finish
+            flow can fire ``on_finish`` (E4.4.4), and E5.4.1's
+            Reopen route can fire ``on_reopen``. Optional with a stub
+            fallback so route-level tests that construct
+            ``_RouteContext`` without a live console keep working
+            unchanged (test_app_open_target.py's
+            ``_make_route_context``).
+        console_view: The live :class:`~rivercrossing.ui.views.
+            MainFrame` console, set by :func:`build_main_window`
+            after construction; E5.4.1's library Open swaps its
+            presenter through :meth:`MainFrame.set_presenter`.
+        active_ride_id: The id of the store ride currently open in
+            the console (E5.4.1). ``None`` until a store-backed ride
+            is opened -- by the resume flow (E5.2.2's Continue) or the
+            library's Open -- and what File ▸ Duplicate Ride… reads.
     """
 
     frame: Any
@@ -125,6 +150,10 @@ class _RouteContext:
     presenter: ConsolePresenter | None = None
     # E5.2.1: the optional live Store the quit flow stamps closed_at on.
     store: Store | None = None
+    # E5.4.1: the live console view (set by build_main_window after
+    # MainFrame construction) and the currently open store ride's id.
+    console_view: Any = None
+    active_ride_id: int | None = None
 
 
 def _seed_roster(data_source: DataSource) -> Roster:
@@ -345,6 +374,121 @@ def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | 
     return _delete
 
 
+class _StoreLibrarySource:
+    """DataSource-shaped ``rides()`` source over a real Store (E5.4.1).
+
+    The ride library's live source: every ``rides()`` call re-queries
+    the store, so a duplicate (or delete) followed by the view's own
+    :meth:`~rivercrossing.ui.views.ride_library.RideLibrary.refresh`
+    shows the change immediately. Rows carry the real ``ride_id`` so
+    Open/Duplicate/Delete address the actual row. Only the library
+    needs this seam; the other windows keep ``DemoDataSource`` until
+    E5.4.2 retires it (module docstring's E5.3.2/E5.4.1 boundary).
+    """
+
+    def __init__(self, store: Store) -> None:
+        """Wrap *store* as the library's live row source."""
+        self._store = store
+
+    def rides(self) -> list[RideSummary]:
+        """Return store rows as library ``RideSummary`` rows with ids.
+
+        Each call re-queries the store, so the view's own refresh after
+        a duplicate (or delete) shows the change immediately.
+        """
+        return [
+            RideSummary(
+                name=row.name,
+                date=row.event_date.isoformat(),
+                status=row.status,
+                entries=row.entries,
+                ride_id=row.id,
+            )
+            for row in self._store.rides()
+        ]
+
+
+def _switch_console_to_ride(
+    context: _RouteContext, ride_id: int, clock: Callable[[], datetime] | None = None
+) -> None:
+    """Load *ride_id* from the store and swap the live console onto it.
+
+    E5.4.1's library Open: the one place the console changes ride
+    after bootstrap. Rebuilds the ride's roster and engine from the
+    DB (:meth:`Store.roster_for`/:meth:`Store.load_engine`), builds a
+    fresh ``EngineDataSource``, and swaps the presenter through
+    :meth:`MainFrame.set_presenter` -- which rewires the plate entry,
+    lifecycle controls and tick timer without rebinding (E5.2.2's
+    resume wiring is the same store-load, applied at launch instead
+    of mid-session). The route context's presenter/roster/
+    ``active_ride_id`` are mutated in place because every bound route
+    handler closes over this one object (``_RouteContext`` docstring).
+    """
+    store = context.store
+    if store is None or context.console_view is None:
+        return
+    roster = store.roster_for(ride_id)
+    engine = store.load_engine(ride_id, roster, clock=clock)
+    source = EngineDataSource(engine, roster)
+    presenter = ConsolePresenter(context.console_view, engine=engine, source=source)
+    context.console_view.set_presenter(presenter)
+    context.console_view.set_state(source.ride_status())
+    context.console_view.show_feed(source.feed_rows())
+    context.console_view.show_counters(source.counters())
+    context.console_view.focus_entry()
+    context.presenter = presenter
+    context.roster = roster
+    context.active_ride_id = ride_id
+
+
+def _live_library_callbacks(
+    context: _RouteContext,
+    window: Any,  # noqa: ANN401 -- wx ships no stubs; a loaded wx.Dialog
+    store: Store,
+) -> tuple[Callable[[RideSummary], None], Callable[[], None], Callable[[RideSummary], None]]:
+    """Return the store-backed library's Open/New/Duplicate callbacks.
+
+    E5.4.1 wires the live library to the real DB through these three:
+
+    - **Open** loads the selected ride and swaps the console onto it
+      (:func:`_switch_console_to_ride`), then ends the library modal
+      -- deferred through ``wx.CallAfter``, the same modal-chaining
+      avoidance the resume flow's ``library_btn`` uses (measured
+      there: a modal opened synchronously inside this one's unwind is
+      not dismissible by the harness).
+    - **New** ends the library modal and opens File ▸ New Ride…'s
+      target (the ride setup flow), also deferred.
+    - **Duplicate** shows the ride's name in the E5.4.1 mock-first
+      confirm and, on OK, calls ``Store.duplicate_ride`` -- the view
+      refreshes its own rows afterwards, so the new DRAFT ride
+      appears immediately (R-15).
+
+    ``window`` is the live ``ride_library_dlg``, used to end the
+    modal for Open/New. ``store`` is the live Store the callbacks
+    act on (:func:`_decorate` only calls this with one open).
+    """
+    wx = require_wx()
+
+    def _open(selected: RideSummary) -> None:
+        if selected.ride_id is None:
+            return
+        if not window.IsBeingDeleted():
+            window.EndModal(wx.ID_CLOSE)
+        wx.CallAfter(_switch_console_to_ride, context, selected.ride_id)
+
+    def _new() -> None:
+        if not window.IsBeingDeleted():
+            window.EndModal(wx.ID_CLOSE)
+        wx.CallAfter(_open_target, context, commands.route_for_id("mi_new_ride"))
+
+    def _duplicate(selected: RideSummary) -> None:
+        if selected.ride_id is None:
+            return
+        store.duplicate_ride(selected.ride_id)
+
+    return _open, _new, _duplicate
+
+
 def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) -> None:  # noqa: ANN401
     """Bind *window*'s code-side view class, if *route.target* has one.
 
@@ -361,11 +505,24 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
-        RideLibrary(
-            window,
-            data_source=context.data_source,
-            on_delete=_library_delete_callback(context),
-        )
+        if context.store is not None:
+            on_open, on_new, on_duplicate = _live_library_callbacks(context, window, context.store)
+            RideLibrary(
+                window,
+                data_source=_StoreLibrarySource(context.store),
+                on_delete=_library_delete_callback(context),
+                on_open=on_open,
+                on_new=on_new,
+                on_duplicate=on_duplicate,
+            )
+        else:
+            # No store: the demo library keeps its E1.5.2/E5.3.2
+            # behaviour -- demo rows, Delete seam only.
+            RideLibrary(
+                window,
+                data_source=context.data_source,
+                on_delete=_library_delete_callback(context),
+            )
     elif route.target == ids.RIDER_EDITOR_DLG:
         RiderEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
@@ -468,6 +625,125 @@ def _handle_finish_route(context: _RouteContext) -> None:
         context.frame.SetStatusText(f"{label} — not yet implemented")
         return
     presenter.on_finish()
+
+
+def _open_ride_confirm(context: _RouteContext, dialog_name: str, message_lbl_text: str) -> bool:
+    """Show one E5.4.1 confirm dialog; return whether it was confirmed.
+
+    The shared shape of the two mock-first confirms
+    (``duplicate_ride_dlg``, ``reopen_ride_dlg``): loads the dialog
+    from the context resource, writes the ride-naming copy into
+    ``message_lbl`` (a blank label is a failed assertion, never a
+    cosmetic one -- UX-DESKTOP §4), shows it through
+    :func:`~rivercrossing.ui.views.dialogs.run_dialog`, and reports
+    whether ``wxID_OK`` (the marked default) was chosen. Both are
+    non-destructive confirms, so Enter-ok is safe and there is no
+    Cancel-focus wiring.
+
+    Returns:
+        ``True`` when the operator confirmed; ``False`` on Cancel or
+        when the dialog resource is missing (which posts a notice).
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
+
+    wx = require_wx()
+    dialog = context.resource.LoadDialog(None, dialog_name)
+    if dialog is None:
+        # logic-coverage-exempt: T-3 -- both dialogs are authored in
+        # dialogs.xrc and loaded before any route opens them; a None
+        # here means the resource is missing, which the functional
+        # load-time verification already fails on.
+        route = next(
+            (row for row in commands.ROUTE_TABLE if row.target == dialog_name),
+            None,
+        )
+        label = route.label if route is not None else dialog_name
+        context.frame.SetStatusText(f"{label} — no dialog authored yet")
+        return False
+    try:
+        message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+        if message_lbl is not None:
+            message_lbl.SetLabel(message_lbl_text)
+        result = dialogs.run_dialog(dialog, opener=context.frame)
+    finally:
+        if not dialog.IsBeingDeleted():
+            dialog.Destroy()
+    return bool(result == wx.ID_OK)
+
+
+def _handle_duplicate_ride_route(context: _RouteContext) -> None:
+    """File ▸ Duplicate Ride…: confirm, then duplicate the open ride.
+
+    E5.4.1 replaces the E1.4.1 sentinel for this row: the route opens
+    the mock-first ``duplicate_ride_dlg`` naming the ride currently
+    open in the console, and on a confirmed Duplicate calls
+    ``Store.duplicate_ride`` on the context's ``active_ride_id`` (the
+    ride the library Open or the resume flow loaded). R-15: the copy
+    is setup + roster, no timing data. Without a store-backed open
+    ride there is nothing to duplicate, and the confirm's OK posts a
+    notice instead of inventing a ride.
+    """
+    ride_id = context.active_ride_id
+    if ride_id is None:
+        context.frame.SetStatusText("Duplicate Ride… — no store ride is open")
+        return
+    store = context.store
+    if store is None:
+        context.frame.SetStatusText("Duplicate Ride… — no store is open")
+        return
+    ride_name = next(
+        (ride.name for ride in store.rides() if ride.id == ride_id),
+        "The ride",
+    )
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
+
+    confirmed = _open_ride_confirm(
+        context,
+        ids.DUPLICATE_RIDE_DLG,
+        dialogs.duplicate_ride_message(ride_name),
+    )
+    if not confirmed:
+        return
+    copy_id = store.duplicate_ride(ride_id)
+    copy_name = next(
+        (ride.name for ride in store.rides() if ride.id == copy_id),
+        "a new ride",
+    )
+    context.frame.SetStatusText(f"Duplicated as {copy_name}")
+
+
+def _handle_reopen_ride_route(context: _RouteContext) -> None:
+    """Ride ▸ Reopen Ride: confirm, then reopen the finished ride.
+
+    E5.4.1 replaces the E1.4.1 sentinel for this row: the route opens
+    the mock-first ``reopen_ride_dlg`` naming the ride (a FINISHED
+    ride is the only one the row enables, commands.py), and on a
+    confirmed Reopen fires the live console presenter's ``on_reopen``
+    -- ``engine.reopen()`` moves the console to REOPENED, the
+    corrections-only state (spec §3, R-36). With no live presenter
+    (route-level tests) a notice stands in, mirroring the finish
+    route's presenter-first shape.
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
+
+    presenter = context.presenter
+    ride_name = (
+        presenter.engine.config.name
+        if presenter is not None
+        else commands.route_for_id("mi_reopen_ride").label
+    )
+    confirmed = _open_ride_confirm(
+        context,
+        ids.REOPEN_RIDE_DLG,
+        dialogs.reopen_ride_message(ride_name),
+    )
+    if not confirmed:
+        return
+    if presenter is None:
+        label = commands.route_for_id("mi_reopen_ride").label
+        context.frame.SetStatusText(f"{label} — not yet implemented")
+        return
+    presenter.on_reopen()
 
 
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
@@ -679,6 +955,16 @@ def _bind_theme(context: _RouteContext) -> None:
     context.frame.Bind(wx.EVT_SYS_COLOUR_CHANGED, context.theme_controller.on_sys_colour_changed)
 
 
+# E5.4.1's two mock-first confirm routes: Duplicate Ride… and Reopen
+# Ride both open a confirm dialog then act on OK (like the finish
+# route), so they dispatch through one table in _make_route_handler
+# rather than two near-identical branches.
+_RIDE_CONFIRM_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
+    ids.DUPLICATE_RIDE_DLG: _handle_duplicate_ride_route,
+    ids.REOPEN_RIDE_DLG: _handle_reopen_ride_route,
+}
+
+
 def _make_route_handler(  # noqa: PLR0911 -- one early-return per route special case; each is a real action
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
@@ -723,6 +1009,12 @@ def _make_route_handler(  # noqa: PLR0911 -- one early-return per route special 
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     if route.target == ids.FINISH_CONFIRM_DLG:
         return lambda _event: _handle_finish_route(context)
+    # E5.4.1's two mock-first confirms both need a real handler ahead
+    # of _open_target (their confirm -> action shape, like the finish
+    # route), so they share one dispatch table instead of two branches.
+    ride_confirm_handler = _RIDE_CONFIRM_HANDLERS.get(route.target)
+    if ride_confirm_handler is not None:
+        return lambda _event: ride_confirm_handler(context)
     if route.target == ids.CSV_PREVIEW_DLG:
         return lambda _event: _handle_import_csv(context)
     if route.kind is commands.TargetKind.COMMAND:
@@ -871,6 +1163,10 @@ def _resume_console_engine(
 
         if continue_id is not None and result == continue_id:
             store.set_active_ride(ride_id)
+            # E5.4.1: record the continued ride on the shared context
+            # so File ▸ Duplicate Ride… knows what is open (the route
+            # handlers close over this same object).
+            context.active_ride_id = ride_id
             roster = store.roster_for(ride_id)
             engine = store.load_engine(ride_id, roster, clock=clock)
             return engine, EngineDataSource(engine, roster)
@@ -984,8 +1280,15 @@ def build_main_window(
 
     _apply_accelerators(frame, menubar)
     # theme_controller is kept alive by _RouteContext, threaded through
-    # every route handler the same way data_source is.
-    context = replace(context, presenter=_presenter)
+    # every route handler the same way data_source is. console_view is
+    # threaded the same way so E5.4.1's library Open can swap the
+    # console's presenter; active_ride_id records the store ride the
+    # resume flow continued, if any (File ▸ Duplicate Ride… reads it).
+    context = replace(
+        context,
+        presenter=_presenter,
+        console_view=_console,
+    )
     _bind_routes(context)
     _bind_process_quit_paths(context)
     _bind_theme(context)

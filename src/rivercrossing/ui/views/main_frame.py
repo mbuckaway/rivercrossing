@@ -434,10 +434,16 @@ class MainFrame:
         ``wxTE_PROCESS_ENTER``, ``Skip()`` would fall through to
         wx's own default-button dispatch and fire a second submit
         for the one Enter keypress.
+
+        The callback is stored as :attr:`_on_submit` and every
+        handler routes through it, so :meth:`set_presenter` can swap
+        the console onto a new ride without rebinding (E5.4.1's
+        library Open).
         """
+        self._on_submit = on_submit
 
         def _submit(_event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-            on_submit(self.plate_input.GetValue())
+            self._on_submit(self.plate_input.GetValue())
 
         self.plate_input.Bind(wx.EVT_TEXT_ENTER, _submit)
         self.record_btn.Bind(wx.EVT_BUTTON, _submit)
@@ -491,19 +497,38 @@ class MainFrame:
         :meth:`_on_stop_clicked`) and Undo each forward to the
         presenter, and a 1 s ``wx.Timer`` drives ``presenter.tick()``
         (feed/counters/clock refresh + R-35's 10 s arm auto-clear).
+
+        The presenter is stored as :attr:`_presenter` and every
+        handler routes through it, so :meth:`set_presenter` can swap
+        the console onto a store-loaded ride without rebinding the
+        controls or the timer (E5.4.1's library Open).
         """
-        self.start_btn.Bind(wx.EVT_BUTTON, lambda _event: presenter.on_start())
+        self._presenter = presenter
+        self.start_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_start())
         self.arm_stop_chk.Bind(
             wx.EVT_CHECKBOX,
-            lambda _event: presenter.on_arm_stop(armed=self.arm_stop_chk.GetValue()),
+            lambda _event: self._presenter.on_arm_stop(armed=self.arm_stop_chk.GetValue()),
         )
-        self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_stop_clicked(presenter))
-        self.undo_btn.Bind(wx.EVT_BUTTON, lambda _event: presenter.on_undo())
+        self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_stop_clicked())
+        self.undo_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_undo())
         self._tick_timer = wx.Timer(self.frame)
-        self.frame.Bind(wx.EVT_TIMER, lambda _event: presenter.tick(), self._tick_timer)
+        self.frame.Bind(wx.EVT_TIMER, lambda _event: self._presenter.tick(), self._tick_timer)
         self._tick_timer.Start(_TICK_MS)
 
-    def _on_stop_clicked(self, presenter: ConsolePresenter) -> None:
+    def set_presenter(self, presenter: ConsolePresenter) -> None:
+        """Swap the console's bound presenter (E5.4.1 library Open).
+
+        :meth:`wire_entry`/:meth:`wire_console` route every handler
+        through :attr:`_on_submit`/:attr:`_presenter`, so replacing
+        those two references rewires the whole console -- plate entry,
+        start/arm/stop/undo, the tick timer -- without rebinding any
+        control or starting a second timer. The caller then re-renders
+        state/feed/counters from the new presenter's source.
+        """
+        self._on_submit = presenter.on_plate_entered
+        self._presenter = presenter
+
+    def _on_stop_clicked(self) -> None:
         """Handle Stop Ride: R-35's confirm, then ``on_stop_confirmed``.
 
         Loads ``stop_confirm_dlg`` from the constructor's resource and
@@ -534,7 +559,7 @@ class MainFrame:
             if not dialog.IsBeingDeleted():
                 dialog.Destroy()
         if result == wx.ID_OK:
-            presenter.on_stop_confirmed()
+            self._presenter.on_stop_confirmed()
 
 
 def _format_count(value: int) -> str:

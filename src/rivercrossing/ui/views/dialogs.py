@@ -66,7 +66,9 @@ __all__ = [
     "bind_delete_confirmation_gate",
     "default_button_for",
     "delete_ride_message",
+    "duplicate_ride_message",
     "first_field_for",
+    "reopen_ride_message",
     "run_dialog",
     "set_initial_focus",
     "wire_close_button",
@@ -242,6 +244,27 @@ def delete_ride_message(ride_name: str) -> str:
     Mirrors library.xrc's own data-bearing sentence.
     """
     return f'Deletes "{ride_name}" and all its data.'
+
+
+def duplicate_ride_message(ride_name: str) -> str:
+    """Return ``duplicate_ride_dlg``'s ``message_lbl`` copy (E5.4.1).
+
+    Names the ride being duplicated (UX-DESKTOP §4), matching
+    dialogs.xrc's data-bearing sentence. Non-destructive, so the
+    confirm is Enter-safe; the copy's derived name is the Store's
+    concern, not this line's.
+    """
+    return f'Duplicate "{ride_name}" as a new DRAFT ride?'
+
+
+def reopen_ride_message(ride_name: str) -> str:
+    """Return ``reopen_ride_dlg``'s ``message_lbl`` copy (E5.4.1).
+
+    Names the ride being reopened (UX-DESKTOP §4), matching
+    dialogs.xrc's data-bearing sentence and spec §3's "reopen for
+    corrections" wording.
+    """
+    return f'Reopen "{ride_name}" for corrections?'
 
 
 def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
