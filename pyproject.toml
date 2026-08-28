@@ -243,6 +243,7 @@ source_modules = [
     "rivercrossing.roster",
     "rivercrossing.csvio",
     "rivercrossing.standings",
+    "rivercrossing.store",
 ]
 forbidden_modules = ["wx"]
 
