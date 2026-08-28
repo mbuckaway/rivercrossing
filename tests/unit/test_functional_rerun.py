@@ -242,6 +242,30 @@ def test_parse_summary_when_duplicate_files_returns_deduplicated_set(
     assert result == {"tests/functional/test_csvio.py"}
 
 
+def test_parse_summary_catches_xdist_progress_failed_lines(
+    rerun_module: ModuleType,
+) -> None:
+    """Streamed xdist progress lines carry FAILED/ERROR markers too.
+
+    With ``-v`` under xdist the marker sits mid-line
+    (``[gw2] [ 82%] FAILED tests/...``). A timed-out pass (124) never
+    prints the ``-ra`` summary, so these streamed lines are the only
+    failure record left to map to files.
+    """
+    text = (
+        "[gw0] [ 25%] PASSED tests/functional/test_xrc_structure.py::test_a\n"
+        "[gw2] [ 82%] FAILED tests/functional/test_ride_setup.py::test_deck_count\n"
+        "[gw2] [ 83%] ERROR tests/functional/test_csvio.py::test_import\n"
+    )
+
+    result = rerun_module.parse_summary(text)
+
+    assert result == {
+        "tests/functional/test_ride_setup.py",
+        "tests/functional/test_csvio.py",
+    }
+
+
 @given(
     st.lists(
         st.text(
@@ -263,6 +287,39 @@ def test_parse_summary_property_maps_node_ids_to_file_prefixes(
     result = rerun_module.parse_summary(text)
 
     assert result == set(node_ids)
+
+
+def test_stalled_file_returns_none_when_every_started_test_finished(
+    rerun_module: ModuleType,
+) -> None:
+    """Every bare start line has a matching result line: no stall."""
+    text = (
+        "tests/functional/test_ride_setup.py::test_a\n"
+        "[gw0] [ 50%] PASSED tests/functional/test_ride_setup.py::test_a\n"
+        "tests/functional/test_csvio.py::test_b\n"
+        "[gw0] [ 50%] FAILED tests/functional/test_csvio.py::test_b - boom\n"
+    )
+
+    assert rerun_module.stalled_file(text) is None
+
+
+def test_stalled_file_returns_the_last_unfinished_test_file(
+    rerun_module: ModuleType,
+) -> None:
+    """A bare start line with no result names the stalled file.
+
+    The timed-out pass on windows-latest ends exactly like this: the
+    stalled test's start line prints and no result ever follows, so the
+    wrapper can target that file for a fresh-process rerun instead of
+    falling back to a whole-suite pass.
+    """
+    text = (
+        "tests/functional/test_ride_setup.py::test_a\n"
+        "[gw0] [ 50%] PASSED tests/functional/test_ride_setup.py::test_a\n"
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+    )
+
+    assert rerun_module.stalled_file(text) == "tests/functional/test_csv_route_flows.py"
 
 
 # ------------------------------------------------ orchestration seam
@@ -493,6 +550,37 @@ def test_rerun_failed_files_when_initial_pass_times_out_falls_back_to_whole_suit
 
     assert result == 0
     assert calls == [_PASS1, _PASS1]
+
+
+def test_rerun_failed_files_when_initial_pass_times_out_reruns_failed_and_stalled_files(
+    rerun_module: ModuleType,
+) -> None:
+    """A 124 pass targets failed + stalled files, not the whole suite.
+
+    The streamed progress lines name the failed files even though the
+    ``-ra`` summary never prints, and the last bare start line names
+    the stalled file. Fresh-process re-runs of just those files are the
+    documented remedy for the process-granular wx/SIP corruption; a
+    whole-suite re-run inherits the same stall.
+    """
+    output = (
+        "[gw2] [ 82%] FAILED tests/functional/test_ride_setup.py::test_deck_count\n"
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+    )
+    runner, calls = _recording_runner([_completed(124, output), _completed(0, "800 passed\n")])
+
+    result = rerun_module.rerun_failed_files(_CMD, runner)
+
+    assert result == 0
+    assert calls == [
+        _PASS1,
+        [
+            *_PYTEST,
+            "tests/functional/test_csv_route_flows.py",
+            "tests/functional/test_ride_setup.py",
+            *_FLAGS,
+        ],
+    ]
 
 
 def test_rerun_failed_files_when_first_rerun_green_returns_zero(
