@@ -290,6 +290,25 @@ def test_time_leaderboard_orders_by_most_laps_then_shortest_time() -> None:
     assert [p.result.entry_id for p in placed] == ["1"]
 
 
+@pytest.mark.parametrize("leaderboard", [laps_leaderboard, time_leaderboard])
+def test_leaderboard_orders_by_laps_then_time_not_time_alone(
+    leaderboard: object,
+) -> None:
+    """Negative guard: fast 3-lap never beats slow 5-lap.
+
+    E6.1.2's named fixture: pure-time order (fastest first) differs from
+    laps-then-time order, so sorting by time alone would put the 3-lap
+    rider on top.
+    """
+    three_laps_fast = _result("1", "AS KS QS JS TS", laps=3, total_time=1200.0)
+    five_laps_slow = _result("2", "9H 8C 7D 6S 5H", laps=5, total_time=3600.0)
+    five_laps_slower = _result("3", "JH JC JD 4H 4C", laps=5, total_time=4200.0)
+
+    placed = leaderboard([three_laps_fast, five_laps_slow, five_laps_slower])
+
+    assert [p.result.entry_id for p in placed] == ["2", "3", "1"]
+
+
 @pytest.mark.parametrize(("top", "expected_len"), [(0, 0), (1, 1), (9, 9), (10, 10), (11, 11)])
 def test_laps_leaderboard_top_boundary_rows_return_capped_length(
     top: int, expected_len: int
