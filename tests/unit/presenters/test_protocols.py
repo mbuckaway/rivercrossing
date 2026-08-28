@@ -30,7 +30,6 @@ from rivercrossing.ui.presenters import (
     AuditPresenter,
     AuditRow,
     AuditView,
-    ConsolePresenter,
     ConsoleView,
     Counters,
     CsvPreview,
@@ -104,6 +103,23 @@ class FakeConsoleView:
 
     def clear_entry(self) -> None:
         """Record the clear request (unused here)."""
+
+    # E4.4.1-E4.4.3: the Protocol grew the four members the live
+    # presenter actually calls (the same "add the member once the
+    # presenter calls it" precedent main_frame.py's own docstring
+    # records for set_hide_times). Behavioral coverage lives in
+    # tests/unit/presenters/test_console.py; these stay no-ops.
+    def set_stop_enabled(self, *, enabled: bool) -> None:
+        """Record the stop-button enablement (unused here)."""
+
+    def set_hide_times(self, *, hide: bool) -> None:
+        """Record the hide-times toggle (unused here)."""
+
+    def show_clock(self, elapsed: str, remaining: str) -> None:
+        """Record the clock labels (unused here)."""
+
+    def set_entry_locked(self, *, locked: bool) -> None:
+        """Record the entry-lock request (unused here)."""
 
 
 class FakeSetupView:
@@ -311,7 +327,9 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
 @pytest.mark.parametrize(
     ("presenter_cls", "view"),
     [
-        (ConsolePresenter, FakeConsoleView()),
+        # ConsolePresenter is excluded: since E4.4.1 it takes
+        # (view, engine, source) -- covered by its own dedicated
+        # tests/unit/presenters/test_console.py suite.
         (ResultsPresenter, FakeResultsView()),
         (LibraryPresenter, FakeLibraryView()),
         (DetailPresenter, FakeDetailView()),
@@ -338,113 +356,14 @@ def test_presenter_holds_the_view_and_data_source_it_was_given(
 
 
 # --------------------------------------------------- ConsolePresenter
-
-
-@pytest.mark.parametrize(
-    ("method_name", "args", "kwargs"),
-    [
-        ("on_undo", (), {}),
-        ("on_arm_stop", (), {"armed": True}),
-        ("on_arm_stop", (), {"armed": False}),
-        ("on_stop_confirmed", (), {}),
-        ("on_hide_times", (), {"hide": True}),
-        ("on_hide_times", (), {"hide": False}),
-        ("tick", (), {}),
-    ],
-)
-def test_console_presenter_method_is_a_no_op_returning_none(
-    method_name: str, args: tuple[object, ...], kwargs: dict[str, object]
-) -> None:
-    """Every named ConsolePresenter method exists and no-ops."""
-    presenter = ConsolePresenter(FakeConsoleView(), FakeDataSource())
-    method = getattr(presenter, method_name)
-
-    result = method(*args, **kwargs)
-
-    assert result is None
-
-
-class RecordingConsoleView:
-    """A ``ConsoleView`` spy recording each call, in order (D1 wiring).
-
-    Distinct from :class:`FakeConsoleView`: the ``on_plate_entered``
-    cases below assert call *order* and *argument content*, which a
-    no-op fake cannot record.
-    """
-
-    def __init__(self) -> None:
-        """Start with an empty call log."""
-        self.calls: list[tuple[str, tuple[object, ...]]] = []
-
-    def show_feed(self, rows: list[FeedRow]) -> None:
-        """Record the fed rows."""
-        self.calls.append(("show_feed", (rows,)))
-
-    def show_counters(self, c: Counters) -> None:
-        """Record the counters."""
-        self.calls.append(("show_counters", (c,)))
-
-    def flash_crossing(self, r: FeedRow) -> None:
-        """Record the flashed crossing."""
-        self.calls.append(("flash_crossing", (r,)))
-
-    def set_state(self, status: RideStatus) -> None:
-        """Record the ride state."""
-        self.calls.append(("set_state", (status,)))
-
-    def focus_entry(self) -> None:
-        """Record the focus request."""
-        self.calls.append(("focus_entry", ()))
-
-    def play(self, cue: Cue) -> None:
-        """Record the played cue."""
-        self.calls.append(("play", (cue,)))
-
-    def show_notice(self, text: str) -> None:
-        """Record the shown notice."""
-        self.calls.append(("show_notice", (text,)))
-
-    def clear_entry(self) -> None:
-        """Record the clear request."""
-        self.calls.append(("clear_entry", ()))
-
-
-# --- on_plate_entered: D1 placeholder behaviour (A3, A5) --------------
-
-
-def test_on_plate_entered_given_text_shows_notice_clears_and_refocuses() -> None:
-    """A5: notice, then clear, then refocus -- in that exact order."""
-    view = RecordingConsoleView()
-    presenter = ConsolePresenter(view, FakeDataSource())
-
-    presenter.on_plate_entered("123")
-
-    assert view.calls == [
-        ("show_notice", ("Plate 123 — recording engine lands in EPIC 4",)),
-        ("clear_entry", ()),
-        ("focus_entry", ()),
-    ]
-
-
-def test_on_plate_entered_strips_surrounding_whitespace_into_the_notice() -> None:
-    """Leading/trailing whitespace never reaches the notice text."""
-    view = RecordingConsoleView()
-    presenter = ConsolePresenter(view, FakeDataSource())
-
-    presenter.on_plate_entered("  123  ")
-
-    assert view.calls[0] == ("show_notice", ("Plate 123 — recording engine lands in EPIC 4",))
-
-
-@pytest.mark.parametrize("text", ["", "   "], ids=["empty", "whitespace_only"])
-def test_on_plate_entered_given_blank_text_only_refocuses(text: str) -> None:
-    """A3: a blank (or whitespace-only) plate only refocuses."""
-    view = RecordingConsoleView()
-    presenter = ConsolePresenter(view, FakeDataSource())
-
-    presenter.on_plate_entered(text)
-
-    assert view.calls == [("focus_entry", ())]
+#
+# ConsolePresenter behavior moved to test_console.py (E4.4.1):
+# it holds (view, engine, source) and drives a real
+# RideEngine -- every event handler (on_plate_entered/on_undo/
+# on_arm_stop/on_stop_confirmed/on_start/on_hide_times/tick/on_finish)
+# is covered there against a recording fake view and real engine
+# fixtures. What remains here is Protocol conformance (FakeConsoleView
+# above) and the wx-free import probe below.
 
 
 # -------------------------------------------------------- mypy negative

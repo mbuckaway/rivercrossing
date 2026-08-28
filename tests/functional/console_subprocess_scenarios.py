@@ -94,6 +94,7 @@ import json
 import os
 import sys
 import threading
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -101,12 +102,17 @@ import harness
 import pages
 import scenario_runner
 import wx
+import wx.dataview
 import wx.xrc
 
+from rivercrossing.cards import Shoe
 from rivercrossing.demo import DemoDataSource
-from rivercrossing.ride import RideStatus
+from rivercrossing.ride import RideConfig, RideEngine, RideStatus
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import ids, theme
+from rivercrossing.ui import feed_model, ids, theme
+from rivercrossing.ui.presenters.console import ConsolePresenter
+from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
 
 if TYPE_CHECKING:
@@ -226,36 +232,6 @@ def _state_enablement_round_trip() -> dict[str, Any]:
     return {"running": running, "draft": draft}
 
 
-def _counting_show_notices() -> tuple[list[str], Callable[[], None]]:
-    """Wrap ``MainFrame.show_notice`` to count its real calls (A5).
-
-    # logic-coverage-exempt: T-10 -- this passthrough spy targets an
-    # internal view method, not a true I/O boundary, because the
-    # final rendered status-bar text alone cannot distinguish one
-    # real call from a wrongly re-fired second one:
-    # on_plate_entered's own blank-guard swallows a double-fire's
-    # visible side effects (its second call would see an
-    # already-cleared field and only refocus, leaving the status
-    # bar's text unchanged either way). Counting real invocations is
-    # the only direct way to observe the double-submit guard; the
-    # spy still calls through to the genuine implementation, it
-    # never fakes it.
-    """
-    calls: list[str] = []
-    original = MainFrame.show_notice
-
-    def _counting(self: MainFrame, text: str) -> None:
-        calls.append(text)
-        original(self, text)
-
-    MainFrame.show_notice = _counting
-
-    def _restore() -> None:
-        MainFrame.show_notice = original
-
-    return calls, _restore
-
-
 def _post_text_enter(control: Any) -> None:  # noqa: ANN401
     """Post the event a real Enter keypress fires in *control*."""
     event = wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, control.GetId())
@@ -310,53 +286,51 @@ def _spy_on_destroy(window: Any) -> list[bool]:  # noqa: ANN401
 
 
 def _plate_entry_round_trip() -> dict[str, Any]:
-    """Typing a plate then Enter records once, clears, refocuses."""
-    calls, restore = _counting_show_notices()
+    """Typing a plate then Enter records it into the live feed."""
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
     try:
-        frame = app_module.build_main_window(wx.GetApp())
-        frame.Show()
-        frame.Layout()
-        harness.pump()
-        try:
-            plate_input = harness.find_control(frame, ids.PLATE_INPUT)
-            focus_calls = _spy_on_set_focus(plate_input)  # after the bootstrap's own focus_entry()
-            plate_input.SetValue("123")
-            _post_text_enter(plate_input)
-            return {
-                "status_text": frame.GetStatusBar().GetStatusText(0),
-                "field_value": plate_input.GetValue(),
-                "focused": len(focus_calls) > 0,
-                "notice_count": len(calls),
-            }
-        finally:
-            _close_without_prompt(frame)
+        plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+        focus_calls = _spy_on_set_focus(plate_input)  # after the bootstrap's own focus_entry()
+        plate_input.SetValue("123")
+        _post_text_enter(plate_input)
+        model = harness.find_control(frame, ids.CROSSINGS_LIST).GetModel()
+        return {
+            "feed_plates": [
+                model.GetValueByRow(row, feed_model.COL_PLATE) for row in range(model.GetCount())
+            ],
+            "field_value": plate_input.GetValue(),
+            "focused": len(focus_calls) > 0,
+            "crossings_label": harness.find_control(frame, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
+        }
     finally:
-        restore()
+        _close_without_prompt(frame)
 
 
 def _record_btn_click_records_once() -> dict[str, Any]:
     """Clicking Record does exactly what pressing Enter does (A5)."""
-    calls, restore = _counting_show_notices()
+    frame = app_module.build_main_window(wx.GetApp())
+    frame.Show()
+    frame.Layout()
+    harness.pump()
     try:
-        frame = app_module.build_main_window(wx.GetApp())
-        frame.Show()
-        frame.Layout()
-        harness.pump()
-        try:
-            plate_input = harness.find_control(frame, ids.PLATE_INPUT)
-            focus_calls = _spy_on_set_focus(plate_input)  # after the bootstrap's own focus_entry()
-            plate_input.SetValue("77")
-            harness.click(frame, ids.RECORD_BTN)
-            return {
-                "status_text": frame.GetStatusBar().GetStatusText(0),
-                "field_value": plate_input.GetValue(),
-                "focused": len(focus_calls) > 0,
-                "notice_count": len(calls),
-            }
-        finally:
-            _close_without_prompt(frame)
+        plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+        focus_calls = _spy_on_set_focus(plate_input)  # after the bootstrap's own focus_entry()
+        plate_input.SetValue("77")
+        harness.click(frame, ids.RECORD_BTN)
+        model = harness.find_control(frame, ids.CROSSINGS_LIST).GetModel()
+        return {
+            "feed_plates": [
+                model.GetValueByRow(row, feed_model.COL_PLATE) for row in range(model.GetCount())
+            ],
+            "field_value": plate_input.GetValue(),
+            "focused": len(focus_calls) > 0,
+            "crossings_label": harness.find_control(frame, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
+        }
     finally:
-        restore()
+        _close_without_prompt(frame)
 
 
 def _console_starts_in_running_state() -> dict[str, Any]:
@@ -854,8 +828,9 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
 
     # logic-coverage-exempt: T-10 -- this passthrough spy targets an
     # internal module function (``theme.apply``), not a true I/O
-    # boundary, for the same reason ``_counting_show_notices`` above
-    # is exempted: the final ``SystemSettings`` state alone cannot
+    # boundary, for the same reason the retired
+    # ``_counting_show_notices`` spy was exempted before it: the
+    # final ``SystemSettings`` state alone cannot
     # distinguish "the guard let exactly one re-apply through" from
     # "it let none, or many, through". Counting real invocations is
     # the only direct way to observe the reentrancy guard; the spy
@@ -919,6 +894,174 @@ def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, An
         _close_without_prompt(frame)
 
 
+# --- E4.4.1/E4.4.2: the live console on a real engine -----------------
+
+
+class _ScenarioClock:
+    """An advanceable datetime clock for a live ride (R-30 fake)."""
+
+    def __init__(self, start: object) -> None:
+        """Start at *start* (a datetime)."""
+        self._now = start
+
+    def __call__(self) -> object:
+        """Return the current scenario time."""
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        """Move the clock forward by *seconds*."""
+        self._now = self._now + timedelta(seconds=seconds)  # type: ignore[operator]
+
+
+def _live_console_parts(
+    resource: object,
+    *,
+    min_lap_s: int = 1,
+    plates: tuple[str, ...] = ("12", "34"),
+) -> tuple[Any, MainFrame, RideEngine, _ScenarioClock]:
+    """Build a RUNNING live console: real engine + MainFrame, wired.
+
+    Returns ``(window, console, engine, clock)``. The console is wired
+    exactly as the app bootstrap wires it (``wire_entry`` +
+    ``wire_console`` + ``set_state``), so the scenarios below drive the
+    real bindings, not the presenter in isolation.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    for plate in plates:
+        roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+    config = RideConfig(
+        name="GORBA EPIC 2026",
+        event_date=date(2026, 9, 20),
+        venue="Sea to Sky Gondola",
+        lap_km=8.0,
+        organizer="GORBA",
+        scorer="K. Singh",
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
+        planned_duration_s=21600,
+        min_lap_s=min_lap_s,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    clock = _ScenarioClock(config.planned_start)
+    engine = RideEngine(config=config, shoe=shoe, clock=clock, roster=roster)
+    engine.start()
+    source = EngineDataSource(engine, roster)
+
+    window = harness.load_window(resource, ids.MAIN_FRAME, frame=True)
+    window.Show()
+    window.Layout()
+    harness.pump()
+    console = MainFrame(window, data_source=source, resource=resource)
+    presenter = ConsolePresenter(console, engine=engine, source=source)
+    console.wire_entry(presenter.on_plate_entered)
+    console.wire_console(presenter)
+    console.set_state(source.ride_status())
+    return window, console, engine, clock
+
+
+def _set_checkbox(window: Any, name: str, *, value: bool) -> None:  # noqa: ANN401
+    """Set *name*'s value and post the event a real click would fire.
+
+    ``harness`` has helpers for buttons, choices and radios but not
+    checkboxes; a plain ``SetValue`` fires no ``EVT_CHECKBOX`` (the
+    same silence its other helpers document), so the event is posted
+    directly -- this module's one working mechanism.
+    """
+    control = harness.find_control(window, name)
+    control.SetValue(value)
+    event = wx.CommandEvent(wx.EVT_CHECKBOX.typeId, control.GetId())
+    event.SetEventObject(control)
+    control.GetEventHandler().ProcessEvent(event)
+    harness.pump()
+
+
+def _live_typed_plate_appears_in_feed() -> dict[str, Any]:
+    """Type a plate + Enter; the feed shows it with a card chip."""
+    resource = harness.load_xrc_resources()
+    window, console, _engine, clock = _live_console_parts(resource, min_lap_s=1)
+    try:
+        plate_input = harness.find_control(window, ids.PLATE_INPUT)
+        focus_calls = _spy_on_set_focus(plate_input)  # after the bootstrap's own focus_entry()
+        clock.advance(10)  # a 10 s lap is never short under min_lap_s=1
+        plate_input.SetValue("12")
+        _post_text_enter(plate_input)
+        model = harness.find_control(window, ids.CROSSINGS_LIST).GetModel()
+        card_bitmap = model.GetValueByRow(0, feed_model.COL_CARD)
+        return {
+            "feed_plates": [
+                model.GetValueByRow(row, feed_model.COL_PLATE) for row in range(model.GetCount())
+            ],
+            "card_chip_ok": bool(card_bitmap is not None and card_bitmap.IsOk()),
+            "crossings_label": harness.find_control(
+                window, ids.CROSSINGS_COUNT_LBL
+            ).GetLabelText(),
+            "field_cleared": plate_input.GetValue() == "",
+            "focused": len(focus_calls) > 0,
+        }
+    finally:
+        del console
+        harness.close_window(window)
+
+
+def _live_flagged_crossing_row_is_bold() -> dict[str, Any]:
+    """Record a short lap; its feed row must read bold (R-34)."""
+    resource = harness.load_xrc_resources()
+    window, console, engine, _clock = _live_console_parts(resource, min_lap_s=60)
+    try:
+        plate_input = harness.find_control(window, ids.PLATE_INPUT)
+        plate_input.SetValue("12")
+        _post_text_enter(plate_input)  # 0 s lap < 60 s min lap -> flagged, card held
+        model = harness.find_control(window, ids.CROSSINGS_LIST).GetModel()
+        attr = wx.dataview.DataViewItemAttr()
+        attr_set = model.GetAttrByRow(0, feed_model.COL_TIME, attr)
+        card_bitmap = model.GetValueByRow(0, feed_model.COL_CARD)
+        return {
+            "row_bold": bool(attr_set and attr.GetBold()),
+            "card_chip_ok": bool(card_bitmap is not None and card_bitmap.IsOk()),
+            "held_count": len(engine.held_crossings()),
+        }
+    finally:
+        del console
+        harness.close_window(window)
+
+
+def _live_arm_stop_confirm_flow() -> dict[str, Any]:
+    """R-35: arm enables Stop; the confirm stops the engine, locks."""
+    resource = harness.load_xrc_resources()
+    window, console, engine, _clock = _live_console_parts(resource, min_lap_s=1)
+    try:
+        stop_btn = harness.find_control(window, ids.STOP_BTN)
+        arm_chk = harness.find_control(window, ids.ARM_STOP_CHK)
+        plate_input = harness.find_control(window, ids.PLATE_INPUT)
+        before_arm = stop_btn.IsEnabled()
+        _set_checkbox(window, ids.ARM_STOP_CHK, value=True)
+        while_armed = stop_btn.IsEnabled()
+
+        def _click_stop_ok() -> None:
+            dialog = wx.Window.FindWindowByName(ids.STOP_CONFIRM_DLG)
+            harness.click(dialog, "wxID_OK")
+
+        wx.CallAfter(_click_stop_ok)
+        harness.click(window, ids.STOP_BTN)  # opens the confirm; CallAfter clicks Stop ride
+
+        after_use = stop_btn.IsEnabled()
+        arm_after = arm_chk.GetValue()
+        entry_enabled = plate_input.IsEnabled()
+        refused_reason = engine.record_crossing("12").reason
+        return {
+            "stop_enabled_before_arm": before_arm,
+            "stop_enabled_while_armed": while_armed,
+            "stop_enabled_after_confirm": after_use,
+            "arm_checked_after_confirm": arm_after,
+            "plate_enabled_after_stop": entry_enabled,
+            "refused_reason": refused_reason,
+        }
+    finally:
+        del console
+        harness.close_window(window)
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
@@ -953,6 +1096,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "theme_ids_do_not_post_the_stub_notice_but_zoom_still_does": (
         _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does
     ),
+    "live_typed_plate_appears_in_feed": _live_typed_plate_appears_in_feed,
+    "live_flagged_crossing_row_is_bold": _live_flagged_crossing_row_is_bold,
+    "live_arm_stop_confirm_flow": _live_arm_stop_confirm_flow,
 }
 
 

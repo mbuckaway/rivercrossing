@@ -44,6 +44,18 @@ class IncompleteConsoleView:
     def clear_entry(self) -> None:
         """No-op fixture stub."""
 
+    def set_stop_enabled(self, *, enabled: bool) -> None:
+        """No-op fixture stub."""
+
+    def set_hide_times(self, *, hide: bool) -> None:
+        """No-op fixture stub."""
+
+    def show_clock(self, elapsed: str, remaining: str) -> None:
+        """No-op fixture stub."""
+
+    def set_entry_locked(self, *, locked: bool) -> None:
+        """No-op fixture stub."""
+
 
 def _accepts_console_view(view: ConsoleView) -> None:
     """Type-check-only sink requiring a complete ``ConsoleView``."""

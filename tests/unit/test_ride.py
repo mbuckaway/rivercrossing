@@ -44,6 +44,7 @@ from rivercrossing.ride import (
     TIEBREAK_HIGH_CARD,
     TIEBREAK_LAPS,
     TIEBREAK_TOTAL_TIME,
+    Crossing,
     Event,
     IllegalStateError,
     RideConfig,
@@ -1342,3 +1343,61 @@ def test_undo_last_from_reopened_after_finish_reverses_with_closed_shoe() -> Non
 
     assert engine.lap_times("12") == ()
     assert engine._shoe.dealt == 1  # closed shoe: card not returned
+
+
+# ------------------------------------- E4.4.1 console read accessors
+
+
+def test_engine_crossings_property_returns_recorded_crossings_oldest_first() -> None:
+    """The feed read seam: every recorded crossing, oldest first."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 31))
+
+    crossings = engine.crossings
+
+    assert len(crossings) == 2
+    assert [c.seq for c in crossings] == [1, 2]
+    assert crossings[0].entry_id == "12"
+    assert crossings[0].crossed_at == _dt(10, 30)
+
+
+def test_engine_card_for_returns_the_card_dealt_for_a_recorded_crossing() -> None:
+    """The feed's Card column reads the per-crossing deal (R-40)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    crossing = engine.crossings[-1]
+
+    card = engine.card_for(crossing)
+
+    assert card.code() == engine._shoe._cards[0].code()
+
+
+def test_engine_card_for_given_an_unknown_crossing_raises_key_error() -> None:
+    """Negative: a crossing never dealt has no card to show."""
+    engine, _ = _make_engine()
+    engine.start()
+    crossing = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 30))
+
+    with pytest.raises(KeyError, match=re.escape(str(crossing))):
+        engine.card_for(crossing)
+
+
+def test_engine_shoe_remaining_and_total_track_the_current_cycle() -> None:
+    """The Shoe counter's source: remaining + dealt = cycle total."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    assert engine.shoe_total == 432  # 8 decks x (52 + 2 jokers)
+    assert engine.shoe_remaining == 431
+
+
+def test_engine_config_property_returns_the_frozen_setup_config() -> None:
+    """Ride metadata (name/date) the library source reads stays kept."""
+    engine, _ = _make_engine()
+
+    assert engine.config is not None
+    assert engine.config.name == "GORBA EPIC 2026"
