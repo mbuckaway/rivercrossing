@@ -20,7 +20,12 @@ clock (R-30), the set-start-time retro-fix recomputing lap-1 only
 standings snapshot. E4.2 extends the crossing path here: one shoe deal
 per accepted crossing (R-40, incl. the mid-ride reshuffle audit), the
 short-lap hold/confirm/void surface (R-34), and the compensating-write
-undo (R-33).
+undo (R-33). E4.3 pins that dealing exact (seed replay), the card cap X
+(R-13: laps past the cap still count, later cards still deal but never
+score), the manual-deal engine path ``deal_manual`` (spec section 4;
+unknown plate raises, DRAFT/FINISHED gate), and the shoe close on
+Finish (every later deal raises ``ShoeClosedError`` while REOPENED
+undo still reverses).
 """
 
 import re
@@ -31,8 +36,8 @@ from pathlib import Path
 
 import pytest
 
-from rivercrossing.cards import Shoe
-from rivercrossing.hands import best_hand
+from rivercrossing.cards import Card, Shoe, ShoeClosedError
+from rivercrossing.hands import best_hand, compare
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
     DEFAULT_JOKERS_PER_DECK,
@@ -46,6 +51,7 @@ from rivercrossing.ride import (
     RideEngine,
     RideStatus,
     StartBlockedError,
+    UnknownPlateError,
 )
 from rivercrossing.roster import EntryMode, EntryStatus, PlateModel, Rider, Roster
 
@@ -1061,3 +1067,278 @@ def test_record_crossing_batch_of_100_averages_under_100ms() -> None:
     elapsed = time.perf_counter() - start
 
     assert elapsed / 100 < 0.1  # R-31: feedback payload under 100 ms average
+
+
+# ====================================== E4.3 dealing accounting (R-40)
+
+
+def test_record_crossing_deals_match_reference_shoe_sequence() -> None:
+    """Each crossing's card is shoe[deal_index++] in order (R-40)."""
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1)
+    engine, _ = _make_engine(config=config)
+    engine.start()
+    reference = Shoe(decks=1, jokers_per_deck=0, seed=20260920)
+
+    cards = tuple(engine.record_crossing("12", at=_dt(10, index)).card for index in range(1, 21))
+
+    assert cards == tuple(reference.deal()[0] for _ in range(20))
+
+
+def test_record_crossing_deal_sequence_replays_identically_from_seed() -> None:
+    """Shoe.replay rebuilds the exact live shoe; next deal matches."""
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1)
+    engine, _ = _make_engine(config=config)
+    engine.start()
+    for index in range(1, 21):
+        engine.record_crossing("12", at=_dt(10, index))
+
+    replayed = Shoe.replay(
+        decks=1,
+        jokers_per_deck=0,
+        seed=20260920,
+        deals=engine._shoe.dealt,
+        cycles=engine._shoe.cycle,
+    )
+
+    assert replayed.deal()[0] == engine._shoe.deal()[0]
+
+
+# ----------------------------------------- E4.3 card cap X (R-13)
+
+
+def test_snapshot_cap_slices_scoring_cards_while_laps_past_cap_count() -> None:
+    """max_cards caps scoring; laps past the cap still count (R-13)."""
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1, max_cards=2)
+    engine, _ = _make_engine(config=config)
+    engine.start()
+    for index in range(1, 6):
+        engine.record_crossing("12", at=_dt(10, index))
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+
+    reference = Shoe(decks=1, jokers_per_deck=0, seed=20260920)
+    expected = tuple(reference.deal()[0] for _ in range(2))
+    assert results["12"].laps == 5
+    assert results["12"].cards == expected
+    assert results["12"].hand == best_hand(expected)
+
+
+def test_snapshot_cap_blocks_would_improve_eleventh_card() -> None:
+    """A card past X is dealt but never improves the scored hand."""
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1, max_cards=10)
+    shoe = Shoe(decks=1, jokers_per_deck=0, seed=1)
+    engine = RideEngine(
+        config=config,
+        shoe=shoe,
+        clock=_FakeClock(config.planned_start),
+        roster=_roster_with_entries("12"),
+    )
+    engine.start()
+    for index in range(1, 12):
+        engine.record_crossing("12", at=_dt(10, index))
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    reference = Shoe(decks=1, jokers_per_deck=0, seed=1)
+    all_eleven = tuple(reference.deal()[0] for _ in range(11))
+
+    assert results["12"].laps == 11
+    assert results["12"].cards == all_eleven[:10]
+    assert results["12"].hand == best_hand(all_eleven[:10])
+    assert compare(best_hand(all_eleven[:10]), best_hand(all_eleven)) == -1
+    assert engine._shoe.dealt == 11  # deal accounting unchanged past the cap
+
+
+def test_snapshot_cap_applies_to_pooled_team_total() -> None:
+    """R-16 pooling: the cap slices the team's pooled total (R-13)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+    )
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1, max_cards=3)
+    engine, _ = _make_engine(roster=roster, config=config)
+    engine.start()
+    _record_crossings(engine, "45", 5, start_at=_dt(10, 1), step_s=60)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+
+    reference = Shoe(decks=1, jokers_per_deck=0, seed=20260920)
+    expected = tuple(reference.deal()[0] for _ in range(3))
+    assert results["9"].laps == 5
+    assert results["9"].cards == expected
+    assert results["9"].hand == best_hand(expected)
+
+
+def test_snapshot_uncapped_default_scores_every_dealt_card() -> None:
+    """max_cards=None (default) scores every credited card (R-16)."""
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1)
+    engine, _ = _make_engine(config=config)
+    engine.start()
+    for index in range(1, 7):
+        engine.record_crossing("12", at=_dt(10, index))
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+
+    reference = Shoe(decks=1, jokers_per_deck=0, seed=20260920)
+    expected = tuple(reference.deal()[0] for _ in range(6))
+    assert results["12"].cards == expected
+    assert results["12"].hand == best_hand(expected)
+
+
+# ------------------------------------------- E4.3 manual deal (spec §4)
+
+
+def test_deal_manual_credits_card_marks_has_data_and_audits_reason() -> None:
+    """deal_manual credits one card and audits plate/card/reason."""
+    roster = _roster_with_entries("12", "34")
+    engine, _ = _make_engine(roster=roster)
+    engine.start()
+
+    event = engine.deal_manual("12", reason="replacement card")
+
+    assert event.action == "deal_manual"
+    assert (event.payload["plate"], event.payload["entry_id"]) == ("12", "12")
+    assert event.payload["reason"] == "replacement card"
+    manual_card = Card.parse(str(event.payload["card"]))
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (manual_card,)
+    assert results["12"].hand == best_hand((manual_card,))
+    assert roster.entries[0].has_data is True
+    assert engine._shoe.dealt == 1
+
+
+def test_deal_manual_pooled_rider_plate_credits_the_team() -> None:
+    """A rider_pooled rider's plate credits their team (R-16)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+    )
+    engine, _ = _make_engine(roster=roster)
+    engine.start()
+
+    event = engine.deal_manual("45", reason="replacement")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert event.payload["entry_id"] == "9"
+    assert results["9"].cards == (Card.parse(str(event.payload["card"])),)
+
+
+@pytest.mark.parametrize(
+    ("start_state", "match"),
+    [
+        ("draft", "cannot deal manually from draft"),
+        ("finished", "cannot deal manually from finished"),
+    ],
+    ids=["draft_refused", "finished_refused"],
+)
+def test_deal_manual_from_non_live_state_raises_illegal_state_error(
+    start_state: str, match: str
+) -> None:
+    """deal_manual is a live-ride action: DRAFT/FINISHED raise."""
+    engine, _ = _engine_in(start_state)
+
+    with pytest.raises(IllegalStateError, match=re.escape(match)):
+        engine.deal_manual("12", reason="replacement")
+
+
+def test_deal_manual_unknown_plate_raises_unknown_plate_error() -> None:
+    """An unresolvable plate raises UnknownPlateError, never credits."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    with pytest.raises(UnknownPlateError, match=re.escape("unknown plate")):
+        engine.deal_manual("999", reason="replacement")
+
+
+def test_deal_manual_from_reopened_after_finish_raises_shoe_closed_error() -> None:
+    """REOPENED passes the gate; the closed shoe refuses."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.finish()
+    engine.reopen()
+
+    with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
+        engine.deal_manual("12", reason="replacement")
+
+
+def test_deal_manual_respects_card_cap() -> None:
+    """A manual card past max_cards deals but never scores (R-13)."""
+    config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1, max_cards=1)
+    engine, _ = _make_engine(config=config)
+    engine.start()
+    crossing = engine.record_crossing("12", at=_dt(10, 1))
+
+    manual = engine.deal_manual("12", reason="replacement card")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    manual_card = Card.parse(str(manual.payload["card"]))
+    assert results["12"].cards == (crossing.card,)
+    assert results["12"].hand == best_hand((crossing.card,))
+    assert manual_card not in results["12"].cards
+    assert engine._shoe.dealt == 2  # still dealt, just not scored
+
+
+def test_deal_manual_credits_directly_never_releases_held_card() -> None:
+    """deal_manual never bypasses the held queue (R-34)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> card held
+    held_before = engine.held_crossings()
+
+    manual = engine.deal_manual("12", reason="replacement card")
+
+    manual_card = Card.parse(str(manual.payload["card"]))
+    assert engine.held_crossings() == held_before
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (manual_card,)
+    assert results["12"].hand == best_hand((manual_card,))
+
+
+# ----------------------------- E4.3 shoe close on Finish (spec §4)
+
+
+def test_finish_closes_the_shoe_and_later_deals_raise_shoe_closed_error() -> None:
+    """finish() closes the shoe; every later deal raises (E2.2.1)."""
+    config = _config()
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(
+        config=config,
+        shoe=shoe,
+        clock=_FakeClock(config.planned_start),
+        roster=_roster_with_entries("12"),
+    )
+    engine.start()
+
+    engine.finish()
+
+    with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
+        shoe.deal()
+
+
+def test_record_crossing_after_finish_refuses_without_dealing() -> None:
+    """Crossings after finish refuse; no card leaves the shoe."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.finish()
+
+    result = engine.record_crossing("12", at=_dt(10, 31))
+
+    assert result.accepted is False
+    assert result.reason == "ride is not running"
+    assert engine._shoe.dealt == 1
+
+
+def test_undo_last_from_reopened_after_finish_reverses_with_closed_shoe() -> None:
+    """REOPENED undo still reverses; the card retires with the shoe."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.finish()
+    engine.reopen()
+
+    engine.undo_last()
+
+    assert engine.lap_times("12") == ()
+    assert engine._shoe.dealt == 1  # closed shoe: card not returned
