@@ -17,7 +17,6 @@ import wx  # noqa: E402
 sys.path.insert(0, "tests/functional")
 import console_subprocess_scenarios as scenarios  # noqa: E402
 import harness  # noqa: E402
-import pages  # noqa: E402
 
 from rivercrossing.store import Store  # noqa: E402
 from rivercrossing.ui import app as app_module  # noqa: E402
@@ -48,29 +47,18 @@ def main() -> int:
         found["library_shown"] = library is not None and library.IsShown()
         print(f"probe: library_shown={found['library_shown']}", flush=True)
         if library is not None:
-            close_btn = library.FindWindowByName("wxID_CLOSE")
-            btn_id = close_btn.GetId() if close_btn else None
-            print(f"probe: close_btn={close_btn} id={btn_id}", flush=True)
-            harness.click(library, pages.WX_ID_CLOSE)
-            wx.SafeYield()
-            print(
-                "probe: after click, still_shown="
-                f"{library.IsShown()} is_deleting={library.IsBeingDeleted()}",
-                flush=True,
-            )
-            if library.IsShown():
-                print("probe: calling EndModal directly", flush=True)
-                library.EndModal(wx.ID_CLOSE)
-                wx.SafeYield()
-                print(f"probe: after EndModal, still_shown={library.IsShown()}", flush=True)
-        print("probe: done", flush=True)
+            # Dismiss via EndModal directly -- harness.click pumps
+            # (SafeYield) inside the modal loop, which re-enters it and
+            # hangs (measured).
+            wx.CallAfter(library.EndModal, wx.ID_CLOSE)
+        print("probe: EndModal queued", flush=True)
 
     wx.CallAfter(_click_library)
     frame = app_module.build_main_window(wx.GetApp(), store=store)
     frame.Show()
     frame.Layout()
     wx.CallAfter(_probe_and_dismiss_library)
-    wx.CallLater(4500, lambda: scenarios._close_without_prompt(frame))  # noqa: SLF001 -- diagnostic
+    wx.CallLater(3000, lambda: scenarios._close_without_prompt(frame))  # noqa: SLF001 -- diagnostic
     start = time.time()
     wx.GetApp().MainLoop()
     print(f"MainLoop returned after {time.time() - start:.1f}s", flush=True)
