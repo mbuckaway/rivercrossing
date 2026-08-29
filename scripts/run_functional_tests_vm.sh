@@ -210,6 +210,9 @@ main() {
   # `: > "${sentinel}"`), not "mktemp ran".
   rm -f "${sentinel}"
 
+  # shellcheck disable=SC2029
+  # The RIVERCROSSING_FUNCTIONAL_JOBS expansion is intentionally
+  # client-side: the local value selects the guest's xdist parallelism.
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
     "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python tools/functional_rerun.py pytest tests/functional -v --no-cov -n '${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2" &
   local run_pid=$!
