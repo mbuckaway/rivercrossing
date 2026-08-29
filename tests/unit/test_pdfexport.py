@@ -24,6 +24,7 @@ presence/absence under each flag, DNF marking, the podium's top-3
 plates and the per-page footer.
 """
 
+import base64
 import re
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -699,3 +700,54 @@ def test_format_duration_round_trips_whole_seconds(seconds: int) -> None:
     rendered = pdfexport._format_duration(float(seconds))
 
     assert _parse_duration(rendered) == seconds
+
+
+# ------------------------------------------------- logo seam (E6.4.2)
+
+
+def _logo_png(tmp_path: Path) -> Path:
+    """Write a tiny valid PNG and return its path (1x1 transparent)."""
+    logo = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+    logo_file = tmp_path / "logo.png"
+    logo_file.write_bytes(logo)
+    return logo_file
+
+
+def test_render_with_logo_path_writes_a_valid_pdf(tmp_path: Path) -> None:
+    """logo_path embeds the organizer logo without error (R-62/5c)."""
+    logo = _logo_png(tmp_path)
+    out = tmp_path / "report.pdf"
+    stamp = FIXED_CREATED
+    ride, placed = build_ride(), build_placed()
+
+    pdfexport.render(ride, placed, ExportOptions(), out, created_at=stamp, logo_path=logo)
+
+    reader = PdfReader(str(out))
+    assert len(reader.pages) >= 1
+
+
+def test_podium_poster_with_logo_path_stays_single_page(tmp_path: Path) -> None:
+    """The poster's logo draws on the one celebratory page."""
+    logo = _logo_png(tmp_path)
+    out = tmp_path / "podium.pdf"
+    stamp = FIXED_CREATED
+    ride, placed = build_ride(), build_placed()
+
+    pdfexport.podium_poster(ride, placed, out, created_at=stamp, logo_path=logo)
+
+    assert len(PdfReader(str(out)).pages) == 1
+
+
+def test_render_logo_keeps_byte_determinism(tmp_path: Path) -> None:
+    """Two logo renders with the same stamp are byte-identical."""
+    logo = _logo_png(tmp_path)
+    stamp = FIXED_CREATED
+    ride, placed = build_ride(), build_placed()
+    first, second = tmp_path / "a.pdf", tmp_path / "b.pdf"
+
+    pdfexport.render(ride, placed, ExportOptions(), first, created_at=stamp, logo_path=logo)
+    pdfexport.render(ride, placed, ExportOptions(), second, created_at=stamp, logo_path=logo)
+
+    assert first.read_bytes() == second.read_bytes()

@@ -46,6 +46,7 @@ red until rivercrossing/csvio.py lands.
 
 import re
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from typing import NamedTuple
 
@@ -62,6 +63,7 @@ from rivercrossing.csvio import (
     ParsedRider,
     commit,
     export,
+    export_standings,
     preview,
 )
 from rivercrossing.hands import best_hand
@@ -1801,3 +1803,55 @@ def test_export_finished_relay_total_time_column_round_trips_as_float(
         line = _read_lines(path)[1]
 
     assert float(line.split(",")[-1]) == total_time
+
+
+# ------------------------------------ §15 standings CSV (E6.4.2)
+
+
+def test_export_standings_writes_the_s15_header_without_times() -> None:
+    """§15: place, plate, entry, laps, hand -- no total_time column."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings([], path)
+        assert _read_lines(path)[0] == "place,plate,entry,laps,hand"
+
+
+def test_export_standings_show_times_appends_total_time_column() -> None:
+    """show_times adds the raw-seconds total_time column (R-63)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings([], path, show_times=True)
+        assert _read_lines(path)[0] == "place,plate,entry,laps,hand,total_time"
+
+
+def test_export_standings_rows_carry_the_placed_values() -> None:
+    """One row per Placed: place, plate, entry, laps, hand prose."""
+    placed = [
+        _placed("88", "9S 9D 9C 9H 2C", laps=11, total_time=20_000.0),
+        replace(_placed("7", "KH KC 5H 5D AS", laps=10, total_time=21_000.0), place=2),
+    ]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path, show_times=True)
+        lines = _read_lines(path)
+
+    assert lines[1] == "1,88,Rider,11,Four of a Kind — Nines,20000.0"
+    assert lines[2] == "2,7,Rider,10,Two Pair — Kings & Fives,21000.0"
+
+
+def test_export_standings_keeps_dnf_rows() -> None:
+    """DNF entries keep their row (R-33: laps/cards retained)."""
+    placed = [_placed("3", "AS KS QS JS TS", laps=5, dnf=True)]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path)
+        assert _read_lines(path)[1] == "1,3,Rider,5,Royal Flush"
+
+
+def test_export_standings_zero_card_hand_writes_a_blank_hand() -> None:
+    """A 0-card entry (never crossed) renders a blank hand."""
+    placed = [_placed("9", "", laps=0)]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path)
+        assert _read_lines(path)[1] == "1,9,Rider,0,"

@@ -18,16 +18,15 @@ regenerated once by ``tools/gen_htmlexport_goldens.py`` from this
 renderer; regenerating them is deliberate (Spec section 8 tests).
 """
 
+import base64
 import json
 import re
+import tempfile
 from dataclasses import replace
 from datetime import date
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 from htmlexport_fixtures import (
     GOLDEN_NO_TIMES,
     GOLDEN_TIMES,
@@ -522,3 +521,45 @@ def test_finalize_display_passes_through_non_integral_floats(value: float) -> No
 
     assert isinstance(rendered, float)
     assert rendered == value
+
+
+# ---------------------------------- render() boards + logo (E6.4.2)
+
+
+def test_render_public_laps_board_populated_when_option_on() -> None:
+    """The laps_board option renders the Most-laps section + record."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions(laps_board=True))
+
+    assert "Most laps" in html
+    record = json.loads(race_data_block(html))
+    assert record["lapsBoard"] != []
+
+
+def test_render_public_time_board_populated_when_option_on() -> None:
+    """The time_board option renders the Fastest section + rows."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions(show_times=True, time_board=True))
+
+    assert "Fastest" in html
+    record = json.loads(race_data_block(html))
+    assert record["timeBoard"] != []
+    assert "avg" in record["timeBoard"][0]
+
+
+def test_render_public_boards_empty_when_options_off() -> None:
+    """Boards absent from markup and record when both flags are off."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions(laps_board=False, time_board=False))
+
+    record = json.loads(race_data_block(html))
+    assert record["lapsBoard"] == []
+    assert record["timeBoard"] == []
+
+
+def test_render_public_logo_path_embeds_base64_data_uri() -> None:
+    """logo_path bytes become the data URI (R-61 logo base64)."""
+    logo = base64.b64decode(_TRANSPARENT_PNG.split(",", 1)[1])
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        logo_file = Path(tmp_dir) / "logo.png"
+        logo_file.write_bytes(logo)
+        html = render(_StubRide(), _placed_pair(), ExportOptions(), logo_path=logo_file)
+
+    assert "data:image/png;base64," in html
