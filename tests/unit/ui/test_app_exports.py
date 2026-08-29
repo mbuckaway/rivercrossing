@@ -10,9 +10,12 @@ post notices instead of failing.
 
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pytest
 from pypdf import PdfReader
+
+if TYPE_CHECKING:
+    import pytest
 
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
@@ -85,6 +88,16 @@ def _placed(results: tuple[EntryResult, ...]) -> tuple[Placed, ...]:
     )
 
 
+def _export_inputs(context: app_module._RouteContext) -> tuple[object, tuple, object]:
+    """Capture (config, placed, opts) the way the handler now does."""
+    engine = context.presenter.engine
+    return (
+        engine.config,
+        app_module._placed_for_export(context),
+        app_module._export_options(),
+    )
+
+
 def _context(*, engine: _StubEngine | None) -> app_module._RouteContext:
     """Build a route context with an optional live engine."""
     return app_module._RouteContext(
@@ -136,7 +149,8 @@ def test_write_export_html_writes_a_self_contained_page(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "results.html"
 
-    app_module._write_export(context, "export_html", out)
+    config, placed, opts = _export_inputs(context)
+    app_module._write_export(config, placed, opts, "export_html", out)
 
     text = out.read_text(encoding="utf-8")
     assert "Test Poker Run" in text
@@ -148,7 +162,8 @@ def test_write_export_pdf_writes_a_readable_pdf(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "results.pdf"
 
-    app_module._write_export(context, "export_pdf", out)
+    config, placed, opts = _export_inputs(context)
+    app_module._write_export(config, placed, opts, "export_pdf", out)
 
     assert len(PdfReader(str(out)).pages) >= 1
 
@@ -158,7 +173,8 @@ def test_write_export_poster_writes_one_page(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "podium.pdf"
 
-    app_module._write_export(context, "export_poster", out)
+    config, placed, opts = _export_inputs(context)
+    app_module._write_export(config, placed, opts, "export_poster", out)
 
     assert len(PdfReader(str(out)).pages) == 1
 
@@ -168,20 +184,23 @@ def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "standings.csv"
 
-    app_module._write_export(context, "export_results_csv", out)
+    config, placed, opts = _export_inputs(context)
+    app_module._write_export(config, placed, opts, "export_results_csv", out)
 
     lines = out.read_text(encoding="utf-8").splitlines()
     assert lines[0] == "place,plate,entry,laps,hand"
     assert len(lines) == 3  # header + two rows
 
 
-def test_write_export_without_engine_raises(tmp_path: Path) -> None:
-    """No ride threaded is a loud error, not a silent empty file."""
-    context = _context(engine=None)
+def test_write_export_html_writes_an_empty_field_page(tmp_path: Path) -> None:
+    """A 0-entry field still renders a valid, self-contained page."""
+    context = _context(engine=_StubEngine(()))
     out = tmp_path / "results.html"
 
-    with pytest.raises(RuntimeError, match="no finished ride"):
-        app_module._write_export(context, "export_html", out)
+    config, placed, opts = _export_inputs(context)
+    app_module._write_export(config, placed, opts, "export_html", out)
+
+    assert "race-data" in out.read_text(encoding="utf-8")
 
 
 def test_handle_export_command_picks_writes_and_records(
@@ -192,9 +211,11 @@ def test_handle_export_command_picks_writes_and_records(
     out = tmp_path / "results.html"
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
 
-    def sync_offloop(ctx: object, target: str, path: Path) -> None:
-        app_module._write_export(ctx, target, path)
-        ctx.last_export_path = path
+    def sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
+        ctx: object, target: str, path: Path, *, config: object, placed: object, opts: object
+    ) -> None:
+        app_module._write_export(config, placed, opts, target, path)  # type: ignore[arg-type]
+        ctx.last_export_path = path  # type: ignore[attr-defined]
 
     monkeypatch.setattr(app_module, "_run_export_offloop", sync_offloop)
 

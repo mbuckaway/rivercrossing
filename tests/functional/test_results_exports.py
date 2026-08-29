@@ -28,16 +28,18 @@ EXPORT_ROWS = (
 )
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see docstring
     """Build the one ``main_frame`` the export rows fire at.
 
     Same shape as ``test_app_open_target.firing_frame`` (which is
     module-local, not shared) -- a real ``build_main_window`` frame
-    whose bound route handlers carry the live console engine. The
-    teardown sets ``really_quitting`` first, the
-    ``console_subprocess_scenarios`` pattern: a plain close on a
-    fresh app would hit ``_on_main_frame_close``'s
+    whose bound route handlers carry the live console engine.
+    Module-scoped: six tests sharing one build/close keeps the
+    main-frame churn (and its bus-error exposure under xdist load)
+    at one close instead of six. The teardown sets ``really_quitting``
+    first, the ``console_subprocess_scenarios`` pattern: a plain close
+    on a fresh app would hit ``_on_main_frame_close``'s
     ``context.app.really_quitting`` guard before the quit flow ever
     set the attribute (measured crash, rerun-2 teardown).
     """
@@ -49,9 +51,11 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
         harness.close_window(frame)
 
 
-def _sync_offloop(context: object, target: str, path: object) -> None:
+def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s inputs
+    context: object, target: str, path: object, *, config: object, placed: object, opts: object
+) -> None:
     """Run the export synchronously so the walk can assert the file."""
-    app_module._write_export(context, target, path)  # type: ignore[arg-type]
+    app_module._write_export(config, placed, opts, target, path)  # type: ignore[arg-type]
     context.last_export_path = path  # type: ignore[attr-defined]
 
 

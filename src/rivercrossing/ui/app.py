@@ -682,20 +682,20 @@ def _export_options() -> ExportOptions:
     return ExportOptions()
 
 
-def _write_export(context: _RouteContext, target: str, path: Path) -> None:
+def _write_export(  # noqa: PLR0913, PLR0917 -- (config, placed, opts, target, path): the pure writer's inputs
+    config: RideConfig,
+    placed: tuple[Placed, ...],
+    opts: ExportOptions,
+    target: str,
+    path: Path,
+) -> None:
     """Render and write one results export to *path* (E6.4.2).
 
-    Pure-ish seam: runs off the UI loop via :func:`_run_export_offloop`
-    (R-02); unit tests call it directly or run the off-loop wrapper
-    synchronously.
+    Pure -- no wx, no context: it runs on the off-loop thread, so it
+    must never touch wx (measured: a wx call from the worker thread
+    bus-errors the process). The handler captures *config*/*placed*/
+    *opts* on the main thread first.
     """
-    engine = _export_engine(context)
-    if engine is None:
-        msg = "no finished ride to export"
-        raise RuntimeError(msg)
-    config = engine.config
-    placed = _placed_for_export(context)
-    opts = _export_options()
     if target == "export_html":
         html = htmlexport.render(config, placed, opts, logo_path=config.logo_path)
         path.write_text(html, encoding="utf-8")
@@ -710,25 +710,35 @@ def _write_export(context: _RouteContext, target: str, path: Path) -> None:
         raise ValueError(msg)
 
 
-def _run_export_offloop(context: _RouteContext, target: str, path: Path) -> None:
+def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export inputs
+    context: _RouteContext,
+    target: str,
+    path: Path,
+    *,
+    config: RideConfig,
+    placed: tuple[Placed, ...],
+    opts: ExportOptions,
+) -> None:
     """Write the export on a background thread; notice via CallAfter.
 
     R-02's off-loop rule: the UI never blocks on an export. A daemon
-    thread renders and writes; completion posts the status notice
-    through ``wx.CallAfter`` (the E5-recorded mechanism). Failures
-    surface on the status bar instead of the console.
+    thread renders and writes the already-captured inputs; completion
+    posts the status notice and records ``last_export_path`` through
+    ``wx.CallAfter`` (the E5-recorded mechanism), keeping every wx
+    touch on the main thread. Failures surface on the status bar
+    instead of the console.
     """
 
     def write() -> None:
         try:
-            _write_export(context, target, path)
+            _write_export(config, placed, opts, target, path)
         except Exception as exc:  # noqa: BLE001 -- a failed export is a notice, not a crash
             wx = require_wx()
             wx.CallAfter(context.frame.SetStatusText, f"Export failed: {exc}")
             return
         wx = require_wx()
         wx.CallAfter(context.frame.SetStatusText, f"Exported {path.name}")
-        context.last_export_path = path
+        wx.CallAfter(setattr, context, "last_export_path", path)
 
     threading.Thread(target=write, daemon=True).start()
 
@@ -736,7 +746,9 @@ def _run_export_offloop(context: _RouteContext, target: str, path: Path) -> None
 def _handle_export_command(context: _RouteContext, target: str) -> None:
     """Run one Results ▸ export row (E6.4.2): pick, write off-loop.
 
-    A cancelled picker is a silent no-op like the roster export.
+    A cancelled picker is a silent no-op like the roster export. The
+    wx-touching reads (engine/config/placed/options) happen here on
+    the main thread; the off-loop thread only renders and writes.
     """
     engine = _export_engine(context)
     if engine is None:
@@ -746,7 +758,10 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     path = _pick_export_path(name)
     if path is None:
         return
-    _run_export_offloop(context, target, path)
+    config = engine.config
+    placed = _placed_for_export(context)
+    opts = _export_options()
+    _run_export_offloop(context, target, path, config=config, placed=placed, opts=opts)
 
 
 def _handle_preview_browser(context: _RouteContext) -> None:
