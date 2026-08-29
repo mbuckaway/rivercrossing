@@ -53,7 +53,9 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from rivercrossing.cards import Card
 from rivercrossing.csvio import (
+    CsvIoError,
     ImportConflict,
     ImportConflictsPresentError,
     ParsedEntry,
@@ -62,6 +64,7 @@ from rivercrossing.csvio import (
     export,
     preview,
 )
+from rivercrossing.hands import best_hand
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import (
     DEFAULT_MAX_TEAM_SIZE,
@@ -71,6 +74,7 @@ from rivercrossing.roster import (
     Rider,
     Roster,
 )
+from rivercrossing.standings import EntryResult, Placed
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "csv"
 
@@ -1573,3 +1577,227 @@ def test_export_then_preview_reimports_a_pooled_team_with_zero_conflicts(
     result = preview(path, target)
 
     assert (result.rider_count, result.team_count, result.conflicts) == (3, 1, ())
+
+
+# ================================================ P3: standings columns
+
+
+def _placed(  # noqa: PLR0913 -- mirrors standings.EntryResult's 10 fields
+    plate: str,
+    codes: str,
+    *,
+    laps: int = 0,
+    total_time: float = 0.0,
+    dnf: bool = False,
+) -> Placed:
+    """Build one Placed whose result's hand is best_hand of *codes*."""
+    cards = tuple(Card.parse(code) for code in codes.split())
+    result = EntryResult(
+        entry_id=plate,
+        plate=plate,
+        name="Rider",
+        kind="solo",
+        laps=laps,
+        total_time=total_time,
+        best_lap=0.0,
+        cards=cards,
+        hand=best_hand(cards),
+        dnf=dnf,
+    )
+    return Placed(place=1, result=result, tie_note=None, draw_required=False)
+
+
+def test_export_placed_none_omitted_is_byte_identical(tmp_path: Path) -> None:
+    """Omitting *placed* and passing None write the same bytes."""
+    path_omitted = tmp_path / "omitted.csv"
+    path_none = tmp_path / "none.csv"
+    roster = _relay_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Bo"), Rider(name="Cy")], plate="7"
+    )
+
+    export(roster, path_omitted)
+    export(roster, path_none, placed=None)
+
+    assert path_omitted.read_bytes() == path_none.read_bytes()
+
+
+def test_export_finished_relay_header_appends_standings_columns_after_existing_columns(
+    tmp_path: Path,
+) -> None:
+    """Spec §7: finished rides add the four standings columns."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    export(roster, path, placed=[_placed("1", "AS AH")])
+
+    assert _read_lines(path)[0] == (
+        "plate,entry_name,type,rider_1,rider_2,rider_3,rider_4,notes,"
+        "laps,cards,best_hand,total_time"
+    )
+
+
+def test_export_finished_relay_rows_carry_the_matching_placed_values(
+    tmp_path: Path,
+) -> None:
+    """A relay row appends its entry's laps, cards, hand prose, time."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_team_entry(
+        display_name="Team A", riders=[Rider(name="Bo"), Rider(name="Cy")], plate="7"
+    )
+    placed = [
+        _placed("1", "AS AH", laps=5, total_time=20811.0),
+        _placed("7", "9H 9D 9S", laps=4, total_time=19000.0),
+    ]
+
+    export(roster, path, placed=placed)
+
+    assert _read_lines(path)[1:3] == [
+        "1,Alex,solo,,,,,,5,2,Pair — Aces,20811.0",
+        "7,Team A,team2,Bo,Cy,,,,4,3,Three of a Kind — Nines,19000.0",
+    ]
+
+
+def test_export_finished_pooled_rows_repeat_entry_stats_on_every_rider_row(
+    tmp_path: Path,
+) -> None:
+    """Pooled rows are per-rider, so each carries the entry's stats."""
+    path = tmp_path / "out.csv"
+    roster = _pooled_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_team_entry(
+        display_name="Wolves",
+        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3")],
+    )
+    placed = [
+        _placed("1", "AS AH", laps=2, total_time=6000.0),
+        _placed("2", "KS KD", laps=3, total_time=9000.0),
+    ]
+
+    export(roster, path, placed=placed)
+
+    lines = _read_lines(path)
+    assert (lines[0], lines[1:4]) == (
+        "plate,name,team_name,notes,laps,cards,best_hand,total_time",
+        [
+            "1,Alex,,,2,2,Pair — Aces,6000.0",
+            "2,Bo,Wolves,,3,2,Pair — Kings,9000.0",
+            "3,Cy,Wolves,,3,2,Pair — Kings,9000.0",
+        ],
+    )
+
+
+def test_export_finished_ride_writes_dnf_entry_stats_from_placed(tmp_path: Path) -> None:
+    """R-33: a DNF placed entry keeps laps/cards; export writes them."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    export(roster, path, placed=[_placed("1", "AS AH", laps=3, total_time=12345.0, dnf=True)])
+
+    assert _read_lines(path)[1] == "1,Alex,solo,,,,,,3,2,Pair — Aces,12345.0"
+
+
+def test_export_finished_ride_ignores_extra_placed_rows_with_no_matching_entry(
+    tmp_path: Path,
+) -> None:
+    """A caller may pass extra placed rows; they are ignored."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+    placed = [
+        _placed("1", "AS AH", laps=5, total_time=20811.0),
+        _placed("99", "KS KD", laps=2, total_time=999.0),  # no such entry
+    ]
+
+    export(roster, path, placed=placed)
+
+    assert _read_lines(path)[1] == "1,Alex,solo,,,,,,5,2,Pair — Aces,20811.0"
+
+
+@pytest.mark.parametrize("status", [RideStatus.DRAFT, RideStatus.RUNNING])
+def test_export_with_standings_before_finish_raises_csv_io_error(
+    tmp_path: Path, *, status: RideStatus
+) -> None:
+    """Standings columns exist only once the ride is finished."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = status
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    with pytest.raises(CsvIoError, match=re.escape("finished ride")):
+        export(roster, path, placed=[_placed("1", "AS AH")])
+
+
+def test_export_finished_ride_with_entry_missing_from_standings_raises_naming_plate(
+    tmp_path: Path,
+) -> None:
+    """An entry absent from *placed* fails loudly, naming its plate."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(name="Bo", plate="2")
+
+    with pytest.raises(CsvIoError, match=re.escape("no standings for plate 1")):
+        export(roster, path, placed=[_placed("2", "AS AH")])
+
+
+def test_export_placed_none_on_finished_ride_writes_plain_header(tmp_path: Path) -> None:
+    """Even FINISHED, omitting *placed* keeps the roster-only shape."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    export(roster, path)
+
+    assert _read_lines(path)[0] == _relay_header(DEFAULT_MAX_TEAM_SIZE)
+
+
+def test_export_finished_ride_with_empty_placed_raises_naming_plate(tmp_path: Path) -> None:
+    """An empty *placed* list covers no entry; the plate is named."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    with pytest.raises(CsvIoError, match=re.escape("no standings for plate 1")):
+        export(roster, path, placed=[])
+
+
+_CARD_CODES = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
+
+
+@given(
+    codes=st.lists(st.sampled_from(_CARD_CODES), min_size=1, max_size=5),
+    laps=st.integers(min_value=0, max_value=100),
+    total_time=st.floats(
+        min_value=0.0, max_value=1_000_000.0, allow_nan=False, allow_infinity=False
+    ),
+)
+@settings(max_examples=25, deadline=None)
+def test_export_finished_relay_total_time_column_round_trips_as_float(
+    *, codes: list[str], laps: int, total_time: float
+) -> None:
+    """The total_time cell is repr-clean: float(repr(t)) round-trips."""
+    roster = _relay_roster()
+    roster.status = RideStatus.FINISHED
+    roster.create_solo_entry(name="Alex", plate="1")
+    placed = [_placed("1", " ".join(codes), laps=laps, total_time=total_time)]
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "out.csv"
+        export(roster, path, placed=placed)
+        line = _read_lines(path)[1]
+
+    assert float(line.split(",")[-1]) == total_time
