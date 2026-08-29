@@ -476,14 +476,12 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
 
 def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource: object) -> None:
     """Cancelling finish_confirm_dlg does not finish the ride (R-35)."""
-    pytest.skip(
-        "pre-existing flake, quarantined in EPIC 6 (EPIC5 handoff §3: 'intermittent native "
-        "segfault under wx churn, passes on some workers'). The segfault kills the xdist "
-        "worker process, cascading collateral FAILED verdicts onto whatever unrelated tests "
-        "were in flight on that worker (measured 2026-08-29: three such cascades polluted a "
-        "VM run, and a wedged worker drove the run past the watchdog). The finish-cancel "
-        "flow itself is covered headless by test_console.py's on_finish gate tests."
-    )
+    # 2026-08-29: un-quarantined -- the flake's segfault was the
+    # dangling console tick timer (never stopped on frame destroy;
+    # any wxSafeYield fired it against freed memory), root-caused
+    # + fixed in EPIC 6 (EVT_WINDOW_DESTROY -> timer.Stop();
+    # tools/timer_repro.py; regression in test_app_bootstrap.py).
+    # The crash mechanism is gone.
     window, console, _presenter, engine, _source, _clock = _build_mini_console(xrc_resource)
     try:
         original_gate = console_module.FINISH_GATE

@@ -103,62 +103,11 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         # and names tell a whole-subtree load gap (CI has seen three
         # fresh loads of the same frame each missing a different
         # control) apart from a single genuinely missing name.
-        if control is not None:
-            _dump_address_reuse(name, control, expected_type)
         raise LookupError(  # noqa: TRY004
             f"{window.GetName()} has no control named {name!r} "
             f"(first-level children: {len(children)} -- {children!r})"
         )
     return control
-
-
-def _dump_address_reuse(name: str, stale: object, expected_type: type) -> None:
-    """Diagnostic: dump who retains a stale address-reuse wrapper.
-
-    Temporary instrumentation for the 2026-08-29 investigation: when
-    ``FindWindowByName`` returns a wrapper of the wrong Python class
-    for a live control (the upstream SIP address-reuse corruption),
-    record its reference chain so the retainer can be identified and
-    removed. Removed once the retainer is fixed.
-    """
-    import sys as _sys  # noqa: PLC0415 -- diagnostic only
-    from pathlib import Path  # noqa: PLC0415 -- diagnostic only
-
-    # tests/functional/_screenshots is rsync'd back to the host by the
-    # VM script (pull_screenshots), so the dump survives clone cleanup.
-    dump_dir = Path(__file__).resolve().parents[4] / "tests" / "functional" / "_screenshots"
-    dump_dir.mkdir(parents=True, exist_ok=True)
-    handle = (dump_dir / "addr_reuse_dump.txt").open("a", encoding="utf-8")
-    cpp_class = getattr(stale, "GetClassName", lambda: "?")()
-    handle.write(
-        f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
-        f"refcount={_sys.getrefcount(stale)} cpp_class={cpp_class}\n"
-    )
-    for referrer in gc.get_referrers(stale):
-        kind = type(referrer).__name__
-        if kind in ("list", "dict", "set", "tuple", "function", "module", "frame", "weakref"):
-            continue
-        handle.write(f"    referrer: {kind} -> {repr(referrer)[:180]}\n")
-    for referrer in gc.get_referrers(stale):
-        kind = type(referrer).__name__
-        if kind == "frame":
-            handle.write(f"    FRAME: {referrer.f_code.co_filename}:{referrer.f_lineno} "
-                         f"in {referrer.f_code.co_name}\n")
-    handle.flush()
-    try:
-        import wx.siplib as _sip  # noqa: PLC0415 -- diagnostic only
-
-        cpp = _sip.unwrapinstance(stale)
-        fresh = _sip.wrapinstance(cpp, _sip.wrappertype(expected_type))
-        with (dump_dir / "addr_reuse_dump.txt").open("a", encoding="utf-8") as handle:
-            handle.write(
-                f"    REWRAP attempt: {type(fresh).__name__} "
-                f"isinstance={isinstance(fresh, expected_type)} "
-                f"cpp_class={getattr(fresh, 'GetClassName', lambda: '?')()}\n"
-            )
-    except Exception as exc:  # noqa: BLE001 -- diagnostic must never crash the worker
-        with (dump_dir / "addr_reuse_dump.txt").open("a", encoding="utf-8") as handle:
-            handle.write(f"    REWRAP failed: {type(exc).__name__}: {exc}\n")
 
 
 @cache
