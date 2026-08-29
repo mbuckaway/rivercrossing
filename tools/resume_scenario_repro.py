@@ -70,7 +70,7 @@ def main() -> int:
     frame.Show()
     frame.Layout()
     wx.CallAfter(_probe_and_dismiss_library)
-    wx.CallLater(1500, lambda: scenarios._close_without_prompt(frame))  # noqa: SLF001 -- diagnostic
+    wx.CallLater(4500, lambda: scenarios._close_without_prompt(frame))  # noqa: SLF001 -- diagnostic
     start = time.time()
     wx.GetApp().MainLoop()
     print(f"MainLoop returned after {time.time() - start:.1f}s", flush=True)
