@@ -1080,7 +1080,12 @@ def _resume_library_opens_ride_library() -> dict[str, Any]:
         library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
         found["library_shown"] = library is not None and library.IsShown()
         if library is not None:
-            harness.click(library, pages.WX_ID_CLOSE)
+            # EndModal directly, never harness.click here: click pumps
+            # (SafeYield) inside the library's own modal loop, which
+            # re-enters it and hangs (measured 2026-08-29;
+            # tools/resume_scenario_repro.py reproduces it -- this was
+            # the "resume_library" flake's hang).
+            wx.CallAfter(library.EndModal, wx.ID_CLOSE)
 
     wx.CallAfter(_click_library)
     frame = app_module.build_main_window(wx.GetApp(), store=store)
