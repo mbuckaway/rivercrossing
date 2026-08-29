@@ -29,11 +29,13 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.ui.presenters.data_source import RiderRow
+from rivercrossing.ui.presenters.data_source import RiderRow, StandingsRow
 from rivercrossing.ui.views.results_win import (
     JOKER_DISPLAY,
+    TIE_BADGE,
     format_best5,
     format_card,
+    format_place,
 )
 from rivercrossing.ui.views.ride_library import format_ride_status
 from rivercrossing.ui.views.rider_editor import SOLO_TEAM_TEXT, format_team
@@ -176,3 +178,56 @@ def test_format_best5_given_any_non_empty_hand_preserves_its_card_count(
     text = format_best5(cards)
 
     assert len(text.split(" ")) == len(cards)
+
+
+# --- results_win.format_place (E6.4.1 ⚠ badge) ---------------------
+
+
+def _standing(*, place: int, draw_required: bool = False) -> StandingsRow:
+    """Build a minimal standings row varying only place/draw state."""
+    return StandingsRow(
+        place=place,
+        plate="7",
+        entry="Rider",
+        laps=1,
+        total="0:01:00",
+        best5=(),
+        hand="High Card — Ace",
+        draw_required=draw_required,
+    )
+
+
+PLACE_CASES = (
+    (_standing(place=1), "1"),
+    (_standing(place=12), "12"),
+    (_standing(place=1, draw_required=True), f"{TIE_BADGE} 1"),
+    (_standing(place=2, draw_required=True), f"{TIE_BADGE} 2"),
+)
+
+
+@pytest.mark.parametrize(("row", "expected"), PLACE_CASES)
+def test_format_place_given_a_standings_row_returns_its_canvas_cell_text(
+    row: StandingsRow, expected: str
+) -> None:
+    """Draw rows carry the warning badge; ordinary rows just the place.
+
+    E6.4.1's decision beyond the brief: the ⚠ badge renders as a
+    leading glyph in the Place cell (the canvas pins exactly seven
+    columns and shows no tie rows), rather than a new eighth column.
+    """
+    assert format_place(row) == expected
+
+
+@given(
+    place=st.integers(min_value=1, max_value=999),
+    draw_required=st.booleans(),
+)
+def test_format_place_preserves_the_place_number_and_badges_only_draw_rows(
+    place: int,
+    draw_required: bool,  # noqa: FBT001 -- a generated property value
+) -> None:
+    """Invariant: the cell ends in the place number; ⚠ iff draw."""
+    text = format_place(_standing(place=place, draw_required=draw_required))
+
+    assert text.endswith(str(place))
+    assert (TIE_BADGE in text) is draw_required
