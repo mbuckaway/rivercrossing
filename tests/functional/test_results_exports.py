@@ -13,6 +13,7 @@ from typing import Any
 
 import harness
 import pytest
+import wx
 
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids
@@ -33,12 +34,18 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
 
     Same shape as ``test_app_open_target.firing_frame`` (which is
     module-local, not shared) -- a real ``build_main_window`` frame
-    whose bound route handlers carry the live console engine.
+    whose bound route handlers carry the live console engine. The
+    teardown sets ``really_quitting`` first, the
+    ``console_subprocess_scenarios`` pattern: a plain close on a
+    fresh app would hit ``_on_main_frame_close``'s
+    ``context.app.really_quitting`` guard before the quit flow ever
+    set the attribute (measured crash, rerun-2 teardown).
     """
     frame = app_module.build_main_window(wx_app)
     try:
         yield frame
     finally:
+        wx.GetApp().really_quitting = True
         harness.close_window(frame)
 
 
