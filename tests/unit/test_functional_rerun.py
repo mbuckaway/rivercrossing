@@ -625,9 +625,7 @@ def test_rerun_failed_files_when_all_reruns_fail_returns_last_exit_code(
     """Exhausted rerun budget -> the last pass's pytest exit code."""
     failed = _failed_summary("tests/functional/test_rider_editor.py")
     # _MAX_RERUNS is 4: initial + 4 fresh-process reruns, all failing.
-    runner, calls = _recording_runner(
-        [_completed(1, failed)] * 5
-    )
+    runner, calls = _recording_runner([_completed(1, failed)] * 5)
 
     result = rerun_module.rerun_failed_files(_CMD, runner)
 
