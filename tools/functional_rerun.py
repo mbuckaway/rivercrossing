@@ -52,7 +52,15 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import IO, cast
 
-_MAX_RERUNS = 2
+# The address-reuse corruption (find_control's docstring: wxWidgets/
+# Phoenix #2931, Python-SIP/sip#113, wxWidgets/wxWidgets#26789 -- no
+# released wxPython fixes it) is process-granular, so only a fresh
+# process clears a file's poisoned SIP map; per-file poison hits ~half
+# of fresh processes (measured 2026-08-29: test_ride_setup.py fails
+# 6-15 of 17 tests per fresh run, on pristine master too). 2 reruns
+# leaves a ~p^3 residual; 4 converges the suite to green with the
+# same bounded runtime (each rerun re-runs only the failed files).
+_MAX_RERUNS = 4
 
 # Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); on
 # windows-latest CI the suite's worst-case crawl reaches ~180-260 s
