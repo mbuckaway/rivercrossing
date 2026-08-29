@@ -26,7 +26,7 @@ from rivercrossing.ui import ids  # noqa: E402
 
 def main() -> int:
     """Run the scenario and report its result."""
-    wx.App()
+    _app = wx.App()
     db_path = scenarios._resume_db_path("rc-diag-")  # noqa: SLF001 -- diagnostic
     scenarios._create_resumed_ride(  # noqa: SLF001 -- diagnostic
         db_path,
