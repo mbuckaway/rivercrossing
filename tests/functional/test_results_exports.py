@@ -8,6 +8,9 @@ a real file landed with the expected content. Runs only in the Tart
 VM (``pytestmark = functional``; AGENTS.md hard rule).
 """
 
+import pathlib
+from typing import Any
+
 import harness
 import pytest
 
@@ -22,6 +25,21 @@ EXPORT_ROWS = (
     ("mi_export_poster", "podium.pdf", None),
     ("mi_export_results_csv", "standings.csv", "place,plate,entry,laps,hand"),
 )
+
+
+@pytest.fixture
+def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see docstring
+    """Build the one ``main_frame`` the export rows fire at.
+
+    Same shape as ``test_app_open_target.firing_frame`` (which is
+    module-local, not shared) -- a real ``build_main_window`` frame
+    whose bound route handlers carry the live console engine.
+    """
+    frame = app_module.build_main_window(wx_app)
+    try:
+        yield frame
+    finally:
+        harness.close_window(frame)
 
 
 def _sync_offloop(context: object, target: str, path: object) -> None:
@@ -44,8 +62,6 @@ def test_results_export_rows_write_real_files(  # noqa: PLR0913, PLR0917 -- para
     content: str | None,
 ) -> None:
     """Each export row writes its file through the real handler."""
-    import pathlib  # noqa: PLC0415 -- deferred, tiny
-
     out = pathlib.Path(str(tmp_path)) / name
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _suggested: out)
     monkeypatch.setattr(app_module, "_run_export_offloop", _sync_offloop)
@@ -63,8 +79,6 @@ def test_results_preview_browser_opens_the_last_export(
     firing_frame: object, tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Preview in Browser opens the export the handler recorded."""
-    import pathlib  # noqa: PLC0415 -- deferred, tiny
-
     out = pathlib.Path(str(tmp_path)) / "results.html"
     opened: list[object] = []
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _suggested: out)
