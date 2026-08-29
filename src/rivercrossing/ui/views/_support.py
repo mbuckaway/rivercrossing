@@ -15,6 +15,7 @@ shared home; every view still exposes its own thin ``_find`` method
 own docstring for exactly what it does and does not claim to fix.
 """
 
+import gc
 from functools import cache
 from typing import Any
 
@@ -83,6 +84,15 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     attempts = 0
     while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
         wx.SafeYield()
+        # The documented remedy for the address-reuse poison is
+        # reference hygiene: drop the stale wrapper so its SIP
+        # pointer->wrapper entry is evicted on dealloc, THEN
+        # re-query. Holding the wrapper across the query (the
+        # previous `control = FindWindowByName(...)` shape) kept the
+        # stale entry alive during the lookup, so the cache returned
+        # the same poison wrapper every attempt.
+        del control
+        gc.collect()
         control = wx.Window.FindWindowByName(name, window)
         attempts += 1
     if not isinstance(control, expected_type):

@@ -28,13 +28,19 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.cards import Shoe
+from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import (
     RideConfig,
     RideEngine,
     RideStatus,
 )
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
+from rivercrossing.standings import (
+    DEFAULT_TIEBREAK_ORDER,
+    TieBreak,
+    hand_name,
+    tiebreak_order_from_spellings,
+)
 from rivercrossing.ui.presenters import Cue, EngineDataSource
 from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
@@ -427,9 +433,79 @@ def test_engine_data_source_standings_maps_the_ranked_snapshot() -> None:
     assert {row.plate for row in standings} == {"12", "34"}
     assert all(row.place in (1, 2) for row in standings)
     assert {row.plate: row.hand for row in standings} == {
-        plate: snapshots[plate].hand.cls.name for plate in snapshots
+        plate: hand_name(snapshots[plate].hand) for plate in snapshots
     }
     assert all(isinstance(row, StandingsRow) for row in standings)
+
+
+def test_engine_data_source_standings_omitted_order_uses_the_default_constant() -> None:
+    """E6.4.1: the defaulted ``order`` keeps today's behaviour."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=100)
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    assert source.standings() == source.standings(order=DEFAULT_TIEBREAK_ORDER)
+
+
+def test_engine_data_source_standings_reordered_order_changes_row_order() -> None:
+    """A reordered tie-break order re-ranks the same snapshot live.
+
+    Two entries hold byte-identical hands (the same pair-over-trips
+    five) with different laps/totals; ``rank(snapshot, order)`` under
+    most-laps-first and total-time-first must place them differently.
+    The credited hands are written straight onto the engine's hand
+    table (the same private-access style ``_make_presenter`` already
+    uses for ``engine._roster``): the seeded shoe has no natural
+    hand-tie pair in any reachable crossing pattern (probed), and
+    this pins the forwarding, not the shoe's deal order.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=60)
+    _record(engine, clock, "12", lap_time_s=100)
+    tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
+    engine._hand["12"] = list(tied)
+    engine._hand["34"] = list(tied)
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    by_laps = source.standings(
+        order=tiebreak_order_from_spellings(("laps", "total_time", "high_card"))
+    )
+    by_time = source.standings(
+        order=tiebreak_order_from_spellings(("total_time", "laps", "high_card"))
+    )
+
+    assert [row.plate for row in by_laps] == ["12", "34"]
+    assert [row.plate for row in by_time] == ["34", "12"]
+
+
+def test_engine_data_source_standings_given_a_zero_card_entry_renders_a_blank_hand() -> None:
+    """P1's 0-card guard: ``hand_name`` raises, the row renders ''.
+
+    An entry that never crossed finishes with ``best_hand(())`` -- no
+    rank to name (``hand_name`` raises ValueError) -- so the source
+    renders an empty hand cell instead of crashing.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    rows = source.standings()
+
+    by_plate = {row.plate: row for row in rows}
+    assert by_plate["12"].hand != ""  # one credited card has a real prose hand
+    assert by_plate["34"].hand == ""
+
+
+def test_empty_data_source_standings_accepts_the_order_argument() -> None:
+    """E6.4.1: the empty state still returns no rows for any order."""
+    source = EmptyDataSource()
+
+    assert source.standings(order=(TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS)) == []
 
 
 # -------------------------------------------------------- entry detail
@@ -923,3 +999,24 @@ def test_format_duration_round_trips_through_its_hms_parts(seconds: float) -> No
     minutes, secs = rest.split(":", 1)
 
     assert int(hours) * 3600 + int(minutes) * 60 + int(secs) == int(seconds)
+
+
+def test_finish_gate_consults_the_evaluator_self_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E6.4.3: the gate is the self-test's green report (R-44)."""
+
+    class _Red:
+        """A report whose suite failed."""
+
+        passed = False
+
+    class _Green:
+        """A report whose suite passed."""
+
+        passed = True
+
+    monkeypatch.setattr(console_module.hands, "self_test", _Green)
+    assert console_module.FINISH_GATE() is True
+    monkeypatch.setattr(console_module.hands, "self_test", _Red)
+    assert console_module.FINISH_GATE() is False

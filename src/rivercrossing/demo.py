@@ -26,6 +26,7 @@ fixture data, it belongs somewhere else.
 from typing import TYPE_CHECKING
 
 from rivercrossing.ride import RideStatus
+from rivercrossing.standings import DEFAULT_TIEBREAK_ORDER
 from rivercrossing.ui.presenters.data_source import (
     AuditRow,
     Counters,
@@ -38,6 +39,7 @@ from rivercrossing.ui.presenters.data_source import (
 )
 
 if TYPE_CHECKING:
+    from rivercrossing.standings import TieBreak
     from rivercrossing.ui.presenters.data_source import DataSource
 
 # ----------------------------------------------------------- console
@@ -241,7 +243,10 @@ class DemoDataSource:
             raise UnknownPlateError(f"no entry detail for plate {plate!r}")
         return detail
 
-    def standings(self) -> list[StandingsRow]:
+    def standings(
+        self,
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; fixture data ignores order
+    ) -> list[StandingsRow]:
         """Return the results standings rows, in placed order."""
         return list(_STANDINGS)
 

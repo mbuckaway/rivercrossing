@@ -23,7 +23,12 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryType, Roster
-from rivercrossing.standings import rank
+from rivercrossing.standings import (
+    DEFAULT_TIEBREAK_ORDER,
+    TieBreak,
+    hand_name,
+    rank,
+)
 
 if TYPE_CHECKING:
     from rivercrossing.ride import Event, RideEngine
@@ -178,8 +183,10 @@ class DataSource(Protocol):
         """Return the detail view-model for the entry with ``plate``."""
         ...
 
-    def standings(self) -> list[StandingsRow]:
-        """Return the results standings rows, in placed order."""
+    def standings(
+        self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
+    ) -> list[StandingsRow]:
+        """Return the results standings rows, ranked under *order*."""
         ...
 
     def audit_rows(self) -> list[AuditRow]:
@@ -264,11 +271,14 @@ class EngineDataSource:
       fixture's own coherent numbers (1,124 crossings - 32 held =
       1,092 cards dealt). E7's confirm/void surface supersedes this
       reading once card disposition can change after the fact.
-    - **standings ``hand`` is a short placeholder.** The human
-      "Four of a kind, kings" prose is EPIC 6 display copy
-      (standings.py's own docstring); until then the evaluated
-      hand's ``HandClass.name`` (e.g. ``"FULL_HOUSE"``) is shown --
-      clearly a code, never invented copy.
+    - **standings ``hand`` is the human prose name (E6.4.1).** The
+      evaluated hand renders through ``standings.hand_name`` (decision
+      D1: "Four of a Kind -- Nines"), the same vocabulary the golden
+      exports pin; the pre-E6 placeholder (``HandClass.name``, e.g.
+      ``"FULL_HOUSE"``) is gone. A 0-card entry (``best_hand(())`` --
+      an entry that never credited a card) has no rank to name, so
+      ``hand_name``'s own ``ValueError`` is caught and the cell
+      renders ``""`` (the 0-card guard).
     - **entry-detail ``rider`` shows the entry's display name.**
       ``Crossing`` stores only ``entry_id``, not which team rider
       crossed (the event payload keeps the typed plate); per-rider
@@ -407,22 +417,38 @@ class EngineDataSource:
             laps=laps,
         )
 
-    def standings(self) -> list[StandingsRow]:
-        """Return the results standings rows, in placed order."""
-        placed = rank(self._engine.snapshot())
-        return [
-            StandingsRow(
-                place=item.place,
-                plate=item.result.plate,
-                entry=item.result.name,
-                laps=item.result.laps,
-                total=format_duration(item.result.total_time),
-                best5=tuple(card.code() for card in item.result.hand.best5),
-                hand=item.result.hand.cls.name,  # doc-silence: prose is E6
-                draw_required=item.draw_required,
+    def standings(
+        self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
+    ) -> list[StandingsRow]:
+        """Return the results standings rows, ranked under *order*.
+
+        ``rank`` runs over the engine's current snapshot with *order*
+        (E6.4.1: the results window re-ranks live by passing the
+        reordered tie-break criteria). ``hand`` is the human prose
+        name (``standings.hand_name``), with the 0-card guard from the
+        class docstring: an entry that never credited a card has no
+        rank to name and renders ``""`` instead of crashing.
+        """
+        placed = rank(self._engine.snapshot(), order)
+        rows: list[StandingsRow] = []
+        for item in placed:
+            try:
+                hand = hand_name(item.result.hand)
+            except ValueError:
+                hand = ""  # 0-card entry -- no rank to name (P1 contract)
+            rows.append(
+                StandingsRow(
+                    place=item.place,
+                    plate=item.result.plate,
+                    entry=item.result.name,
+                    laps=item.result.laps,
+                    total=format_duration(item.result.total_time),
+                    best5=tuple(card.code() for card in item.result.hand.best5),
+                    hand=hand,
+                    draw_required=item.draw_required,
+                )
             )
-            for item in placed
-        ]
+        return rows
 
     def audit_rows(self) -> list[AuditRow]:
         """Return the audit trail rows, newest first."""
@@ -482,7 +508,10 @@ class EmptyDataSource:
         """
         return EntryDetail(header="", members="", cards_held=(), laps=())
 
-    def standings(self) -> list[StandingsRow]:
+    def standings(
+        self,
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; empty state returns no rows
+    ) -> list[StandingsRow]:
         """Return no results standings rows."""
         return []
 

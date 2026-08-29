@@ -46,14 +46,20 @@ shared flow functions, the one place that route and
 explains why it is hosted there, not here).
 """
 
+import re
+import threading
+import webbrowser
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from rivercrossing import csvio, htmlexport, pdfexport
 from rivercrossing.cards import Shoe
+from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.standings import Placed, rank, tiebreak_order_from_spellings
 from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, resume_flow, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataSource, RideSummary
@@ -167,6 +173,9 @@ class _RouteContext:
     # MainFrame construction) and the currently open store ride's id.
     console_view: Any = None
     active_ride_id: int | None = None
+    # E6.4.2: the most recent results export, backing Preview in
+    # Browser (commands.RideState.export_exists derives from it).
+    last_export_path: Path | None = None
 
 
 def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]:
@@ -525,9 +534,22 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
         # deep-link); the lookup key is irrelevant to the empty source.
         EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
     elif route.target == ids.RESULTS_FRAME:
-        # E5.4.2: results render the empty standings state until E6
-        # wires real placed rows from the finished ride.
-        ResultsWindow(window, data_source=_EMPTY_SOURCE)
+        # E6.4.1 (D10): with a live console threaded, results render
+        # the real placed rows from the console's EngineDataSource
+        # (the same live source build_main_window wired, so the
+        # roster always matches the engine -- the resume path never
+        # updates context.roster) and seed the tie-break list from
+        # the ride's stored order. The E5.4.2 empty state stays for
+        # the no-presenter path (route-level tests).
+        presenter = context.presenter
+        if presenter is not None:
+            ResultsWindow(
+                window,
+                data_source=presenter.source,
+                tiebreak_order=presenter.engine.config.tiebreak_order,
+            )
+        else:
+            ResultsWindow(window, data_source=_EMPTY_SOURCE)
     elif route.target == ids.SELFTEST_DLG:
         SelfTestDialog(window)
 
@@ -582,6 +604,188 @@ def _handle_export_csv(context: _RouteContext) -> None:
     path = rider_editor.run_csv_export_flow(context.frame, context.roster)
     if path is not None:
         context.frame.SetStatusText(f"Exported {path.name}")
+
+
+_EXPORT_SUGGESTED_NAMES = {
+    "export_html": "{slug}-results.html",
+    "export_pdf": "{slug}-results.pdf",
+    "export_poster": "{slug}-podium.pdf",
+    "export_results_csv": "{slug}-standings.csv",
+}
+
+
+def _pick_export_path(suggested_name: str) -> Path | None:
+    """Open the OS save dialog for one export (E6.4.2 picker seam).
+
+    Returns the chosen path, or None on cancel (a silent no-op, the
+    same shape :func:`_handle_export_csv` uses). Tests monkeypatch
+    this to write tmp files (the ``rider_editor._pick_export_path``
+    precedent, test_csv_route_flows.py).
+    """
+    wx = require_wx()
+    dialog = wx.FileDialog(
+        None,
+        message="Export results",
+        defaultFile=suggested_name,
+        wildcard="",
+        style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT,
+    )
+    try:
+        if dialog.ShowModal() != wx.ID_OK:
+            return None
+        return Path(dialog.GetPath())
+    finally:
+        dialog.Destroy()
+
+
+def _open_in_browser(path: Path) -> None:
+    """Open *path* in the default browser (E6.4.2, injectable seam)."""
+    webbrowser.open(path.as_uri())
+
+
+def _ride_slug(name: str) -> str:
+    """Slugify *name* for export filenames (``-`` for non-alnum)."""
+    slug = "".join(ch if ch.isalnum() else "-" for ch in name.lower())
+    collapsed = re.sub(r"-+", "-", slug).strip("-")
+    return collapsed or "results"
+
+
+def _export_engine(context: _RouteContext) -> RideEngine | None:
+    """Return the console's engine when a ride is threaded (E6.4.2)."""
+    presenter = context.presenter
+    return presenter.engine if presenter is not None else None
+
+
+def _placed_for_export(context: _RouteContext) -> tuple[Placed, ...]:
+    """Rank the snapshot with the ride's stored tie-break order."""
+    engine = _export_engine(context)
+    if engine is None:
+        return ()
+    order = tiebreak_order_from_spellings(engine.config.tiebreak_order)
+    return tuple(rank(engine.snapshot(), order))
+
+
+def _export_options() -> ExportOptions:
+    """Return the results window's live publish options, else defaults.
+
+    The ResultsPresenter built by the results window holds the live
+    checkbox state (E6.4.1); with no window open the dataclass
+    defaults (the canvas's own) apply.
+    """
+    wx = require_wx()
+    if wx.GetApp() is None:
+        return ExportOptions()
+    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
+    presenter = getattr(frame, "presenter", None)
+    if presenter is not None:
+        return cast("ExportOptions", presenter.export_options())
+    return ExportOptions()
+
+
+def _write_export(  # noqa: PLR0913, PLR0917 -- (config, placed, opts, target, path): the pure writer's inputs
+    config: RideConfig,
+    placed: tuple[Placed, ...],
+    opts: ExportOptions,
+    target: str,
+    path: Path,
+) -> None:
+    """Render and write one results export to *path* (E6.4.2).
+
+    Pure -- no wx, no context: it runs on the off-loop thread, so it
+    must never touch wx (measured: a wx call from the worker thread
+    bus-errors the process). The handler captures *config*/*placed*/
+    *opts* on the main thread first.
+    """
+    if target == "export_html":
+        html = htmlexport.render(config, placed, opts, logo_path=config.logo_path)
+        path.write_text(html, encoding="utf-8")
+    elif target == "export_pdf":
+        pdfexport.render(config, placed, opts, path, logo_path=config.logo_path)
+    elif target == "export_poster":
+        pdfexport.podium_poster(config, placed, path, logo_path=config.logo_path)
+    elif target == "export_results_csv":
+        csvio.export_standings(placed, path, show_times=opts.show_times)
+    else:  # pragma: no cover -- the dispatch table owns the targets
+        msg = f"unknown export target {target!r}"
+        raise ValueError(msg)
+
+
+def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export inputs
+    context: _RouteContext,
+    target: str,
+    path: Path,
+    *,
+    config: RideConfig,
+    placed: tuple[Placed, ...],
+    opts: ExportOptions,
+) -> None:
+    """Write the export on a background thread; notice via CallAfter.
+
+    R-02's off-loop rule: the UI never blocks on an export. A daemon
+    thread renders and writes the already-captured inputs; completion
+    posts the status notice and records ``last_export_path`` through
+    ``wx.CallAfter`` (the E5-recorded mechanism), keeping every wx
+    touch on the main thread. Failures surface on the status bar
+    instead of the console.
+    """
+
+    def write() -> None:
+        try:
+            _write_export(config, placed, opts, target, path)
+        except Exception as exc:  # noqa: BLE001 -- a failed export is a notice, not a crash
+            wx = require_wx()
+            wx.CallAfter(context.frame.SetStatusText, f"Export failed: {exc}")
+            return
+        wx = require_wx()
+        wx.CallAfter(context.frame.SetStatusText, f"Exported {path.name}")
+        wx.CallAfter(setattr, context, "last_export_path", path)
+
+    threading.Thread(target=write, daemon=True).start()
+
+
+def _handle_export_command(context: _RouteContext, target: str) -> None:
+    """Run one Results ▸ export row (E6.4.2): pick, write off-loop.
+
+    A cancelled picker is a silent no-op like the roster export. The
+    wx-touching reads (engine/config/placed/options) happen here on
+    the main thread; the off-loop thread only renders and writes.
+    """
+    engine = _export_engine(context)
+    if engine is None:
+        context.frame.SetStatusText("No ride to export")
+        return
+    name = _EXPORT_SUGGESTED_NAMES[target].format(slug=_ride_slug(engine.config.name))
+    path = _pick_export_path(name)
+    if path is None:
+        return
+    config = engine.config
+    placed = _placed_for_export(context)
+    opts = _export_options()
+    _run_export_offloop(context, target, path, config=config, placed=placed, opts=opts)
+
+
+def _handle_preview_browser(context: _RouteContext) -> None:
+    """Results ▸ Preview in Browser: open the last export (E6.4.2)."""
+    if context.last_export_path is None:
+        context.frame.SetStatusText("No export yet — generate one first")
+        return
+    _open_in_browser(context.last_export_path)
+    context.frame.SetStatusText(f"Opened {context.last_export_path.name}")
+
+
+def _handle_focus_tiebreak(context: _RouteContext) -> None:
+    """Results ▸ Tie-break Order…: open Results and focus the list."""
+    wx = require_wx()
+    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
+    if frame is None:
+        _open_target(context, commands.route_for_id("mi_standings"))
+        frame = wx.FindWindowByName(ids.RESULTS_FRAME)
+    if frame is None:
+        context.frame.SetStatusText("Open Results to set the tie-break order")
+        return
+    control = frame.FindWindowByName(ids.TIEBREAK_LIST)
+    if control is not None:
+        control.SetFocus()
 
 
 def _handle_finish_route(context: _RouteContext) -> None:
@@ -975,6 +1179,21 @@ _RIDE_CONFIRM_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
 }
 
 
+def _export_action(target: str) -> Callable[[_RouteContext], None]:
+    """Return the handler for one export target (E6.4.2 dispatch)."""
+    return lambda context: _handle_export_command(context, target)
+
+
+# E6.4.2: the route targets with real actions, dispatched by
+# route.target ahead of the generic "not yet implemented" stub.
+_TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
+    target: _export_action(target) for target in _EXPORT_SUGGESTED_NAMES
+}
+_TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
+_TARGET_ACTIONS["focus_tiebreak_control"] = _handle_focus_tiebreak
+_TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
+
+
 def _make_route_handler(  # noqa: PLR0911 -- one early-return per route special case; each is a real action
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
@@ -1025,8 +1244,9 @@ def _make_route_handler(  # noqa: PLR0911 -- one early-return per route special 
     ride_confirm_handler = _RIDE_CONFIRM_HANDLERS.get(route.target)
     if ride_confirm_handler is not None:
         return lambda _event: ride_confirm_handler(context)
-    if route.target == ids.CSV_PREVIEW_DLG:
-        return lambda _event: _handle_import_csv(context)
+    target_action = _TARGET_ACTIONS.get(route.target)
+    if target_action is not None:
+        return lambda _event: target_action(context)
     if route.kind is commands.TargetKind.COMMAND:
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     return lambda _event: _open_target(context, route)

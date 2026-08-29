@@ -82,6 +82,22 @@ rivercrossing = [
     "ui/assets/cards/*.png",
     "ui/assets/sounds/*.wav",
     "vectors/*.csv",
+    # E6.2.1: the frozen results templates plus the two vendored CSS
+    # artifacts. Explicit per-file entries (no glob, no fonts/) -- the
+    # base64 fonts_css ships instead of the woff2 sources.
+    "htmlexport/templates/base.html.j2",
+    "htmlexport/templates/macros.html.j2",
+    "htmlexport/templates/theme.css",
+    "htmlexport/templates/compiled_css",
+    "htmlexport/templates/fonts_css",
+    # P7 (E6.3.1): the PDF report's three TTF faces. fpdf2 reads them
+    # from the package at render time and embeds them into the PDF
+    # bytes, so the wheel must carry them exactly like the htmlexport
+    # templates above. Explicit per-file entries (no glob), matching
+    # the list's convention.
+    "pdfexport/fonts/Barlow-Regular.ttf",
+    "pdfexport/fonts/BarlowCondensed-SemiBold.ttf",
+    "pdfexport/fonts/DejaVuSans.ttf",
 ]
 
 # ----------------------------------------------------------------- ruff
@@ -237,6 +253,7 @@ type = "forbidden"
 source_modules = [
     "rivercrossing.ride",
     "rivercrossing.htmlexport",
+    "rivercrossing.pdfexport",
     "rivercrossing.demo",
     "rivercrossing.cards",
     "rivercrossing.hands",

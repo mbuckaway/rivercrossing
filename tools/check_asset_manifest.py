@@ -26,10 +26,12 @@ Run it directly to check a tree without waiting for a build::
     python tools/check_asset_manifest.py --ui-dir path/to/ui
     python tools/check_asset_manifest.py --package-dir path/to/pkg
 
-``main()`` checks both manifests -- ``verify_assets`` and
-``verify_vectors`` -- so a tree missing either the ``ui/`` assets or
-the two self-test vector CSVs fails this direct check the same way
-it would fail the real build.
+``main()`` checks all four manifests -- ``verify_assets``,
+``verify_vectors``, ``verify_templates`` and ``verify_pdf_fonts`` --
+so a tree missing either the ``ui/`` assets, the two self-test vector
+CSVs, the five htmlexport template artifacts or the three PDF report
+TTFs fails this direct check the same way it would fail the real
+build.
 """
 
 import argparse
@@ -99,6 +101,39 @@ REQUIRED_VECTORS: tuple[str, ...] = ("joker_vectors.csv", "rank_sweep.csv")
 # loader never found them there -- a launch-time crash, not the
 # build-time failure E1.6.1's own goal asks for (missed once here).
 VECTORS_PACKAGE_DEST = f"rivercrossing/{VECTORS_SUBDIR}"
+
+# E6.2.1: the frozen results templates and the two vendored CSS
+# artifacts (spec section 8). ``htmlexport.render`` reads the templates
+# via Jinja2's PackageLoader, and the page inlines compiled_css +
+# fonts_css, so all five must land under
+# ``rivercrossing/htmlexport/templates/`` in the bundle. The base64
+# fonts_css ships instead of the ``fonts/`` woff2 sources (they never
+# ride along); the manifest therefore names the artifacts, not the
+# font files.
+HTMLEXPORT_TEMPLATES_SUBDIR = "htmlexport/templates"
+REQUIRED_TEMPLATES: tuple[str, ...] = (
+    "base.html.j2",
+    "macros.html.j2",
+    "theme.css",
+    "compiled_css",
+    "fonts_css",
+)
+HTMLEXPORT_PACKAGE_DEST = f"rivercrossing/{HTMLEXPORT_TEMPLATES_SUBDIR}"
+
+# P7 (E6.3.1): the PDF report's three TTF faces (spec section 8b).
+# ``pdfexport.render`` calls ``add_font`` on these at render time and
+# fpdf2 embeds them into the PDF bytes, so the bundle must carry them
+# under ``rivercrossing/pdfexport/fonts/`` -- the path
+# ``pdfexport._FONTS_DIR`` resolves from its own ``__file__``. Only
+# the three TTFs ride along; the OFL license texts stay in the tree
+# (they commit, they do not ship).
+PDF_FONTS_SUBDIR = "pdfexport/fonts"
+REQUIRED_PDF_FONTS: tuple[str, ...] = (
+    "Barlow-Regular.ttf",
+    "BarlowCondensed-SemiBold.ttf",
+    "DejaVuSans.ttf",
+)
+PDF_FONTS_PACKAGE_DEST = f"rivercrossing/{PDF_FONTS_SUBDIR}"
 
 
 class MissingAssetError(FileNotFoundError):
@@ -207,6 +242,72 @@ def vector_data_entries(package_dir: Path) -> list[tuple[str, str]]:
     ]
 
 
+def missing_templates(package_dir: Path) -> tuple[str, ...]:
+    """List every required template absent from *package_dir*."""
+    return tuple(
+        f"{HTMLEXPORT_TEMPLATES_SUBDIR}/{name}"
+        for name in REQUIRED_TEMPLATES
+        if not (package_dir / HTMLEXPORT_TEMPLATES_SUBDIR / name).is_file()
+    )
+
+
+def verify_templates(package_dir: Path) -> None:
+    """Assert *package_dir* ships every htmlexport template artifact.
+
+    Raises:
+        MissingAssetError: Naming every absent file.
+    """
+    missing = missing_templates(package_dir)
+    if missing:
+        raise MissingAssetError(f"templates missing from {package_dir}: {', '.join(missing)}")
+
+
+def htmlexport_data_entries(package_dir: Path) -> list[tuple[str, str]]:
+    """Return PyInstaller ``(source, destination)`` pairs, templates.
+
+    Raises:
+        MissingAssetError: If any required template artifact is absent.
+    """
+    verify_templates(package_dir)
+    return [
+        (str(package_dir / HTMLEXPORT_TEMPLATES_SUBDIR / name), HTMLEXPORT_PACKAGE_DEST)
+        for name in REQUIRED_TEMPLATES
+    ]
+
+
+def missing_pdf_fonts(package_dir: Path) -> tuple[str, ...]:
+    """List every required PDF font absent from *package_dir*."""
+    return tuple(
+        f"{PDF_FONTS_SUBDIR}/{name}"
+        for name in REQUIRED_PDF_FONTS
+        if not (package_dir / PDF_FONTS_SUBDIR / name).is_file()
+    )
+
+
+def verify_pdf_fonts(package_dir: Path) -> None:
+    """Assert *package_dir* ships every PDF report TTF.
+
+    Raises:
+        MissingAssetError: Naming every absent file.
+    """
+    missing = missing_pdf_fonts(package_dir)
+    if missing:
+        raise MissingAssetError(f"pdf fonts missing from {package_dir}: {', '.join(missing)}")
+
+
+def pdfexport_font_entries(package_dir: Path) -> list[tuple[str, str]]:
+    """Return PyInstaller ``(source, destination)`` pairs, PDF fonts.
+
+    Raises:
+        MissingAssetError: If any required PDF font is absent.
+    """
+    verify_pdf_fonts(package_dir)
+    return [
+        (str(package_dir / PDF_FONTS_SUBDIR / name), PDF_FONTS_PACKAGE_DEST)
+        for name in REQUIRED_PDF_FONTS
+    ]
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the ``--ui-dir``/``--package-dir`` argument parser."""
     parser = argparse.ArgumentParser(description="Check the bundle asset manifest.")
@@ -216,16 +317,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Check both trees for a missing asset or vector; 0 if complete."""
+    """Check all four trees for a missing asset; 0 if complete."""
     args = _build_parser().parse_args(argv)
     try:
         verify_assets(args.ui_dir)
         verify_vectors(args.package_dir)
+        verify_templates(args.package_dir)
+        verify_pdf_fonts(args.package_dir)
     except MissingAssetError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(f"{args.ui_dir}: all {len(required_relative_paths())} required assets present")
     print(f"{args.package_dir}: all {len(REQUIRED_VECTORS)} required vectors present")
+    print(f"{args.package_dir}: all {len(REQUIRED_TEMPLATES)} required templates present")
+    print(f"{args.package_dir}: all {len(REQUIRED_PDF_FONTS)} required pdf fonts present")
     return 0
 
 

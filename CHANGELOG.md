@@ -6,7 +6,39 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
-EPIC 4 of 9 — live ride (in-memory) — on top of EPIC 3's roster and EPIC 2's deal & score engine.
+### Added — EPIC 6 (results & publishing)
+
+- Standings: human-readable hand-name prose renderer (title-case em-dash, D1), stored
+  tie-break spelling ⇄ `TieBreak` conversion, leaderboard negative guard (laps-then-time,
+  never time alone — E6.1).
+- Roster CSV: finished rides gain `laps, cards, best_hand, total_time` columns (spec §7,
+  approved addition); standalone §15 standings CSV (`csvio.export_standings`).
+- HTML export: templates shipped verbatim; vendored Tailwind v4 CSS build step
+  (`tools/gen_css.py`, `compiled_css` + base64 `fonts_css`, `css_drift` staleness gate in
+  CI); `htmlexport.render()` with autoescape + StrictUndefined + `racejson` `</`-escaping;
+  golden pages frozen (regenerated once, TB-5); no-times variant (R-63); laps/time boards
+  and ride logo (E6.2).
+- PDF export: `pdfexport.render()` multi-section report + `podium_poster()` one-page poster,
+  byte-deterministic across OSes (aware-UTC creation date, embedded OFL fonts), organizer
+  logo (E6.3).
+- Results window live: standings from the live engine source, native tie-break reorder with
+  instant re-rank, publish checkboxes → `ExportOptions`, hidden `stale_infobar`, ⚠ draw
+  badge (E6.4.1).
+- Results menu: Generate HTML / Export PDF / Podium Poster / Standings CSV / Preview in
+  Browser / Tie-break Order wired with FINISHED gating, off-loop writes (R-02); window
+  export buttons route through the same handlers (E6.4.2).
+- Finish gate: `FINISH_GATE` runs the evaluator self-test; a red suite blocks finishing
+  with a notice (R-44, E6.4.3).
+
+### Notes — EPIC 6
+
+- One PR for the whole EPIC (product decision): PR #12 overrides the task-briefs
+  "one task per PR" rule for this EPIC; commits are per-task in test-first order.
+- Headless gates green (2145+ tests, ≥90 % line+branch); the Tart-VM functional run of the
+  new results-window/export-walk tests is recorded separately in
+  `docs/EPIC6-SESSION-SUMMARY.md`.
+- Known seam: `wx.adv.EditableListBox` ships generic New/Delete buttons nothing suppresses
+  (ride_setup precedent); the results presenter validates and restores.
 
 ### Added — EPIC 4 (live ride)
 

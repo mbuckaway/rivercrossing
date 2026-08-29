@@ -67,6 +67,9 @@ def test_resume_continue_resumes_the_ride_with_correct_elapsed() -> None:
 
 def test_resume_open_library_opens_ride_library_dlg() -> None:
     """library_btn on resume_dlg opens ride_library_dlg instead."""
+    # 2026-08-29: un-quarantined -- re-testing whether the EPIC-6 fixes
+    # (tick-timer stop, settle-loop) resolved the modal hang too; the
+    # suite is green with it un-skipped.
     result = scenario_runner.run_scenario("resume_library_opens_ride_library")
 
     data = result["data"]

@@ -9,13 +9,11 @@ convention. Golden key sets are parsed from the committed fixture
 pages rather than hard-coded, so drift in the samples fails here too.
 """
 
-import json
 import re
 from dataclasses import FrozenInstanceError
-from pathlib import Path
-from typing import Any
 
 import pytest
+from htmlexport_fixtures import NO_TIMES_SAMPLE, TIMES_SAMPLE, parse_race_data
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -28,22 +26,6 @@ from rivercrossing.htmlexport import (
     TimeBoardRow,
     _snake_to_camel,
 )
-
-_EXPORTS_DIR = Path(__file__).resolve().parents[2] / "design" / "exports"
-_TIMES_GOLDEN = _EXPORTS_DIR / "epic-2026-results.html"
-_NO_TIMES_GOLDEN = _EXPORTS_DIR / "epic-2026-results-no-times.html"
-
-_RACE_DATA_RE = re.compile(
-    r'<script type="application/json" id="race-data">(.*?)</script>', re.DOTALL
-)
-
-
-def _parse_golden(path: Path) -> dict[str, Any]:
-    """Extract and parse a golden page's ``race-data`` JSON block."""
-    match = _RACE_DATA_RE.search(path.read_text(encoding="utf-8"))
-    if match is None:
-        pytest.fail(f"no race-data block found in {path}")
-    return json.loads(match.group(1))
 
 
 def _sample_event() -> EventInfo:
@@ -193,7 +175,7 @@ def test_export_options_construction_with_unknown_keyword_raises_type_error() ->
 
 def test_race_payload_to_record_key_sets_match_times_shown_golden() -> None:
     """Every level's keys match epic-2026-results.html's race-data."""
-    golden = _parse_golden(_TIMES_GOLDEN)
+    golden = parse_race_data(TIMES_SAMPLE)
 
     record = _times_shown_payload().to_record()
 
@@ -209,7 +191,7 @@ def test_race_payload_to_record_key_sets_match_times_shown_golden() -> None:
 
 def test_race_payload_to_record_key_sets_match_no_times_golden() -> None:
     """Every level's key set matches epic-2026-results-no-times.html."""
-    golden = _parse_golden(_NO_TIMES_GOLDEN)
+    golden = parse_race_data(NO_TIMES_SAMPLE)
 
     record = _times_hidden_payload().to_record()
 

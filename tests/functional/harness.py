@@ -523,6 +523,24 @@ def find_control(window: Any, name: str) -> Any:  # noqa: ANN401
     return control
 
 
+def _clear_last_exception() -> None:
+    """Drop the parked traceback after a synthetic dispatch (retention).
+
+    wx swallows a Python exception raised inside a handler, and
+    PyErr_Print parks it on ``sys`` (``last_exc`` on 3.11+, carrying
+    the traceback); the frame chain then holds the failing handler's
+    view and its control wrappers alive for the rest of the process,
+    keeping their SIP map entries forever -- the address-reuse poison
+    :func:`~rivercrossing.ui.views._support.find_control`'s docstring
+    documents. :func:`fire_menu_event` has cleared this in a
+    ``finally`` since the 2026-08-19 retention probe; every other
+    synthetic dispatch (click/type/select) must do the same, or one
+    swallowed exception mid-suite poisons a recycled C++ address.
+    """
+    sys.last_type = sys.last_value = sys.last_traceback = None
+    sys.last_exc = None
+
+
 def click(window: Any, name: str) -> None:  # noqa: ANN401
     """Click the button named *name* in *window*.
 
@@ -534,8 +552,11 @@ def click(window: Any, name: str) -> None:  # noqa: ANN401
     button = find_control(window, name)
     event = wx.CommandEvent(wx.EVT_BUTTON.typeId, button.GetId())
     event.SetEventObject(button)
-    button.GetEventHandler().ProcessEvent(event)
-    pump()
+    try:
+        button.GetEventHandler().ProcessEvent(event)
+        pump()
+    finally:
+        _clear_last_exception()
 
 
 def type_text(window: Any, name: str, text: str) -> None:  # noqa: ANN401
@@ -545,8 +566,11 @@ def type_text(window: Any, name: str, text: str) -> None:  # noqa: ANN401
     does (measured), which is what a bound presenter listens for.
     """
     control = find_control(window, name)
-    control.SetValue(text)
-    pump()
+    try:
+        control.SetValue(text)
+        pump()
+    finally:
+        _clear_last_exception()
 
 
 def select_choice(window: Any, name: str, item_label: str) -> None:  # noqa: ANN401
@@ -572,8 +596,11 @@ def select_choice(window: Any, name: str, item_label: str) -> None:  # noqa: ANN
     control.SetSelection(index)
     event = wx.CommandEvent(wx.EVT_CHOICE.typeId, control.GetId())
     event.SetEventObject(control)
-    control.GetEventHandler().ProcessEvent(event)
-    pump()
+    try:
+        control.GetEventHandler().ProcessEvent(event)
+        pump()
+    finally:
+        _clear_last_exception()
 
 
 def select_radio(window: Any, name: str) -> None:  # noqa: ANN401
@@ -595,8 +622,11 @@ def select_radio(window: Any, name: str) -> None:  # noqa: ANN401
     control.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
     event = wx.CommandEvent(wx.EVT_RADIOBUTTON.typeId, control.GetId())
     event.SetEventObject(control)
-    control.GetEventHandler().ProcessEvent(event)
-    pump()
+    try:
+        control.GetEventHandler().ProcessEvent(event)
+        pump()
+    finally:
+        _clear_last_exception()
 
 
 def select_row(window: Any, name: str, row: int) -> None:  # noqa: ANN401
@@ -630,8 +660,11 @@ def select_row(window: Any, name: str, row: int) -> None:  # noqa: ANN401
     item = control.GetModel().GetItem(row)
     control.Select(item)
     event = wx.dataview.DataViewEvent(wx.dataview.wxEVT_DATAVIEW_SELECTION_CHANGED, control, item)
-    control.GetEventHandler().ProcessEvent(event)
-    pump()
+    try:
+        control.GetEventHandler().ProcessEvent(event)
+        pump()
+    finally:
+        _clear_last_exception()
 
 
 def run_modal(dialog: Any, *, dismiss_with: int) -> int:  # noqa: ANN401
@@ -826,5 +859,4 @@ def fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401
         for _ in range(_MENU_EVENT_SETTLE_ATTEMPTS):
             flush_deferred_deletions()
     finally:
-        sys.last_type = sys.last_value = sys.last_traceback = None
-        sys.last_exc = None
+        _clear_last_exception()

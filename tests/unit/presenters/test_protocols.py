@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from rivercrossing.ride import RideStatus
+from rivercrossing.standings import DEFAULT_TIEBREAK_ORDER, TieBreak
 from rivercrossing.ui.presenters import (
     AppSettings,
     AuditPresenter,
@@ -54,8 +55,9 @@ from rivercrossing.ui.presenters import (
 )
 
 if TYPE_CHECKING:
-    from rivercrossing.htmlexport import ExportOptions
     from rivercrossing.roster import EntryMode, PlateModel
+
+from rivercrossing.htmlexport import ExportOptions
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -187,6 +189,21 @@ class FakeResultsView:
     def show_publish_options(self, options: ExportOptions) -> None:
         """No-op fake."""
 
+    # E6.4.1: the Protocol grew the three members the live presenter
+    # actually calls (the same "add the member once the presenter
+    # calls it" precedent main_frame.py's own docstring records).
+    # Behavior is covered in tests/unit/presenters/test_results.py;
+    # these stay no-ops.
+    def set_tiebreak_labels(self, labels: list[str]) -> None:
+        """No-op fake."""
+
+    def show_notice(self, text: str) -> None:
+        """No-op fake."""
+
+    def publish_options(self) -> ExportOptions:
+        """No-op fake."""
+        return ExportOptions()
+
 
 class FakeLibraryView:
     """A complete ``LibraryView`` implementation for headless tests."""
@@ -272,8 +289,11 @@ class FakeDataSource:
             laps=(EntryLapRow(lap=9, time="14:22:18", lap_time="19:55", rider="78", card="KC"),),
         )
 
-    def standings(self) -> list[StandingsRow]:
-        """Return one fixed standings row."""
+    def standings(
+        self,
+        order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; the fake ignores order
+    ) -> list[StandingsRow]:
+        """Return one fixed standings row for any order."""
         return [
             StandingsRow(
                 place=1,

@@ -22,6 +22,7 @@ from hypothesis import strategies as st
 
 from rivercrossing.demo import DemoDataSource, UnknownPlateError
 from rivercrossing.ride import RideStatus
+from rivercrossing.standings import TieBreak
 from rivercrossing.ui.presenters.data_source import (
     AuditRow,
     Counters,
@@ -289,6 +290,13 @@ def test_demo_standings_returns_the_three_placed_fixture_rows() -> None:
             hand="Full house, aces over fours",
         ),
     ]
+
+
+def test_demo_standings_accepts_the_tiebreak_order_argument() -> None:
+    """E6.4.1: ``standings(order=...)`` -- the fixture ignores it."""
+    source = DemoDataSource()
+
+    assert source.standings(order=(TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS)) == source.standings()
 
 
 # ---------------------------------------------------------------- audit

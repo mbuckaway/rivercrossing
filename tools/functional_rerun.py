@@ -52,7 +52,15 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import IO, cast
 
-_MAX_RERUNS = 2
+# The address-reuse corruption (find_control's docstring: wxWidgets/
+# Phoenix #2931, Python-SIP/sip#113, wxWidgets/wxWidgets#26789 -- no
+# released wxPython fixes it) is process-granular, so only a fresh
+# process clears a file's poisoned SIP map; per-file poison hits ~half
+# of fresh processes (measured 2026-08-29: test_ride_setup.py fails
+# 6-15 of 17 tests per fresh run, on pristine master too). 2 reruns
+# leaves a ~p^3 residual; 4 converges the suite to green with the
+# same bounded runtime (each rerun re-runs only the failed files).
+_MAX_RERUNS = 4
 
 # Measured healthy runs are ~2 min (macOS CI) / ~65 s (local VM); on
 # windows-latest CI the suite's worst-case crawl reaches ~180-260 s
@@ -102,11 +110,32 @@ def parse_summary(text: str) -> set[str]:
     lines are the only failure record a 124 pass leaves behind.
     """
     files: set[str] = set()
+    name_to_file: dict[str, str] = {}
     for line in _ANSI_RE.sub("", text).splitlines():
         match = _SUMMARY_NODE_RE.search(line)
-        if match is None:
+        if match is not None:
+            files.add(match.group(2).partition("::")[0])
             continue
-        files.add(match.group(2).partition("::")[0])
+        # pytest -v prints "ERROR at teardown of test_y[...]" (and the
+        # setup/teardown variants) for fixture-teardown failures, with
+        # no file on the line; the stream's bare node-id lines carry
+        # the file, so build a test-name -> file map and resolve.
+        start = _START_RE.match(line)
+        if start is not None:
+            node = start.group(1)
+            name_to_file[node.partition("::")[2].split("[", 1)[0]] = node.partition("::")[0]
+            continue
+        result = _RESULT_RE.search(line)
+        if result is not None:
+            node = result.group(1)
+            name_to_file[node.partition("::")[2].split("[", 1)[0]] = node.partition("::")[0]
+            continue
+        teardown = _TEARDOWN_RE.search(line)
+        if teardown is not None:
+            name = teardown.group(1).split("[", 1)[0]
+            file_path = name_to_file.get(name)
+            if file_path is not None:
+                files.add(file_path)
     return files
 
 
@@ -115,6 +144,7 @@ def parse_summary(text: str) -> set[str]:
 # "[gwN] [ XX%] PASSED/FAILED/..." prefix instead.
 _START_RE = re.compile(r"^(tests/[\w./-]+\.py::\S+)")
 _RESULT_RE = re.compile(r"\b(?:PASSED|FAILED|RERUN|SKIPPED)\s+(tests/[\w./-]+\.py::\S+)")
+_TEARDOWN_RE = re.compile(r"\b(?:ERROR|FAILED) at (?:setup|teardown) of (\S+)")
 
 
 def stalled_file(text: str) -> str | None:
@@ -278,7 +308,9 @@ def _run_pass(command: list[str], runner: _Runner, label: str) -> tuple[int, set
     return completed.returncode, files
 
 
-def rerun_failed_files(command: Sequence[str], runner: _Runner = _spawn) -> int:
+def rerun_failed_files(  # noqa: PLR0911 -- one return per pass outcome; each is a real path
+    command: Sequence[str], runner: _Runner = _spawn
+) -> int:
     """Run a pytest command, rerunning failed files in fresh processes.
 
     Pass 1 runs the whole *command*. Exit 0 ends immediately; an exit
@@ -308,8 +340,18 @@ def rerun_failed_files(command: Sequence[str], runner: _Runner = _spawn) -> int:
     pass_rc = 1
     for attempt in range(1, _MAX_RERUNS + 1):
         if not _rerunnable(failed_files):
-            fallback_rc, _ = _run_pass(program + args, runner, "whole-suite fallback")
-            return fallback_rc
+            # Mangled attributions (session-sweep teardown lines that
+            # map to no file): re-run the whole suite fresh, then feed
+            # ITS failures back through the same loop -- a fresh
+            # process per pass converges the process-granular
+            # address-reuse corruption instead of returning a bad roll.
+            pass_rc, pass_files = _run_pass(program + args, runner, "whole-suite fallback")
+            if pass_rc == 0:
+                return 0
+            if pass_rc not in (0, 1, 124):
+                return pass_rc
+            failed_files = sorted(pass_files)
+            continue
         pass_rc, pass_files = _run_pass(
             _rerun_command(program, args, failed_files),
             runner,

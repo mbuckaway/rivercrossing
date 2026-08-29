@@ -18,6 +18,11 @@
 #         seconds) and was killed by the watchdog
 #   *   - otherwise, the guest's pytest exit code is propagated as-is
 #
+# Parallelism: RIVERCROSSING_FUNCTIONAL_JOBS (default "auto") sets the
+# xdist -n value. The E6-size suite saturates the 4-CPU clone at -n
+# auto (measured 2026-08-29: 4-6 wx-churn segfaults per run), so local
+# runs may set it to 2 for a deterministic pass.
+#
 # Usage: scripts/run_functional_tests_vm.sh
 
 set -uo pipefail
@@ -205,8 +210,11 @@ main() {
   # `: > "${sentinel}"`), not "mktemp ran".
   rm -f "${sentinel}"
 
+  # shellcheck disable=SC2029
+  # The RIVERCROSSING_FUNCTIONAL_JOBS expansion is intentionally
+  # client-side: the local value selects the guest's xdist parallelism.
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
-    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python tools/functional_rerun.py pytest tests/functional -v --no-cov -n auto --dist loadfile --reruns 2" &
+    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python tools/functional_rerun.py pytest tests/functional -v --no-cov -n '${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2" &
   local run_pid=$!
 
   run_watchdog "${VM_TIMEOUT}" "${run_pid}" "${sentinel}" &

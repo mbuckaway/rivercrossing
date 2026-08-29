@@ -1,0 +1,974 @@
+{
+  "event": {
+    "kicker": "Official results · poker run",
+    "title": "GORBA EPIC & MTB Festival 2026",
+    "meta": "Sunday September 20, 2026 · Guelph Lake MTB Trails · 8 km closed loop · riding 10:00–16:00",
+    "organizer": "Organizer: GORBA — J. Marsden",
+    "scorer": "Scorer: D. Whitfield",
+    "generated": "Generated 16:07, Sept 20 2026",
+    "entries": 180,
+    "laps": 1124,
+    "cards": 1092
+  },
+  "options": {
+    "showTimes": false,
+    "lapsBoard": true,
+    "timeBoard": false,
+    "fullField": true,
+    "allCards": true
+  },
+  "tieNote": "P3/P4 held identical hands — resolved by the ride's tie-break rule #1, most laps (10 v 9).",
+  "results": [
+    {
+      "place": 1,
+      "plate": 88,
+      "entry": "Moss Ridge Riders",
+      "type": "TEAM ×4",
+      "laps": 11,
+      "hand": "Four of a Kind — Nines",
+      "cards": [
+        [
+          "9",
+          "s"
+        ],
+        [
+          "9",
+          "d"
+        ],
+        [
+          "9",
+          "c"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "K",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "9",
+          "s"
+        ],
+        [
+          "9",
+          "d"
+        ],
+        [
+          "9",
+          "c"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "2",
+          "c"
+        ],
+        [
+          "5",
+          "d"
+        ],
+        [
+          "7",
+          "h"
+        ],
+        [
+          "J",
+          "c"
+        ],
+        [
+          "3",
+          "s"
+        ],
+        [
+          "10",
+          "d"
+        ]
+      ]
+    },
+    {
+      "place": 2,
+      "plate": 7,
+      "entry": "Luca Ferrari",
+      "type": "SOLO",
+      "laps": 10,
+      "hand": "Full House — Aces over Fours",
+      "cards": [
+        [
+          "A",
+          "s"
+        ],
+        [
+          "A",
+          "d"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "4",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "A",
+          "s"
+        ],
+        [
+          "A",
+          "d"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "4",
+          "h"
+        ],
+        [
+          "8",
+          "s"
+        ],
+        [
+          "2",
+          "d"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "6",
+          "s"
+        ]
+      ]
+    },
+    {
+      "place": 3,
+      "plate": 127,
+      "entry": "Dirt Dynamos",
+      "type": "TEAM ×3",
+      "laps": 10,
+      "hand": "Full House — Queens over Nines",
+      "tie": true,
+      "cards": [
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "Q",
+          "d"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "9",
+          "c"
+        ]
+      ],
+      "drawn": [
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "Q",
+          "d"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "9",
+          "c"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "7",
+          "d"
+        ],
+        [
+          "2",
+          "h"
+        ],
+        [
+          "10",
+          "s"
+        ],
+        [
+          "J",
+          "d"
+        ]
+      ]
+    },
+    {
+      "place": 4,
+      "plate": 56,
+      "entry": "Fat Tire Four",
+      "type": "TEAM ×4",
+      "laps": 9,
+      "hand": "Full House — Queens over Nines",
+      "tie": true,
+      "cards": [
+        [
+          "Q",
+          "h"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "9",
+          "d"
+        ],
+        [
+          "9",
+          "s"
+        ]
+      ],
+      "drawn": [
+        [
+          "Q",
+          "h"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "9",
+          "d"
+        ],
+        [
+          "9",
+          "s"
+        ],
+        [
+          "3",
+          "d"
+        ],
+        [
+          "6",
+          "h"
+        ],
+        [
+          "8",
+          "c"
+        ],
+        [
+          "2",
+          "s"
+        ]
+      ]
+    },
+    {
+      "place": 5,
+      "plate": 61,
+      "entry": "Marc Tremblay",
+      "type": "SOLO",
+      "laps": 10,
+      "hand": "Flush — King high",
+      "cards": [
+        [
+          "K",
+          "d"
+        ],
+        [
+          "J",
+          "d"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "6",
+          "d"
+        ],
+        [
+          "2",
+          "d"
+        ]
+      ],
+      "drawn": [
+        [
+          "K",
+          "d"
+        ],
+        [
+          "J",
+          "d"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "6",
+          "d"
+        ],
+        [
+          "2",
+          "d"
+        ],
+        [
+          "4",
+          "s"
+        ],
+        [
+          "9",
+          "c"
+        ],
+        [
+          "Q",
+          "h"
+        ],
+        [
+          "7",
+          "c"
+        ],
+        [
+          "10",
+          "h"
+        ]
+      ]
+    },
+    {
+      "place": 6,
+      "plate": 150,
+      "entry": "Singletrack Sisters",
+      "type": "TEAM ×4",
+      "laps": 9,
+      "hand": "Straight — Nine high",
+      "cards": [
+        [
+          "9",
+          "c"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "7",
+          "s"
+        ],
+        [
+          "6",
+          "h"
+        ],
+        [
+          "5",
+          "c"
+        ]
+      ],
+      "drawn": [
+        [
+          "9",
+          "c"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "7",
+          "s"
+        ],
+        [
+          "6",
+          "h"
+        ],
+        [
+          "5",
+          "c"
+        ],
+        [
+          "K",
+          "s"
+        ],
+        [
+          "2",
+          "h"
+        ],
+        [
+          "4",
+          "d"
+        ],
+        [
+          "A",
+          "c"
+        ]
+      ]
+    },
+    {
+      "place": 7,
+      "plate": 143,
+      "entry": "Chain Gang",
+      "type": "TEAM ×2",
+      "laps": 8,
+      "hand": "Three of a Kind — Sevens",
+      "cards": [
+        [
+          "7",
+          "s"
+        ],
+        [
+          "7",
+          "h"
+        ],
+        [
+          "7",
+          "c"
+        ],
+        [
+          "K",
+          "d"
+        ],
+        [
+          "J",
+          "s"
+        ]
+      ],
+      "drawn": [
+        [
+          "7",
+          "s"
+        ],
+        [
+          "7",
+          "h"
+        ],
+        [
+          "7",
+          "c"
+        ],
+        [
+          "K",
+          "d"
+        ],
+        [
+          "J",
+          "s"
+        ],
+        [
+          "3",
+          "c"
+        ],
+        [
+          "8",
+          "h"
+        ],
+        [
+          "5",
+          "s"
+        ]
+      ]
+    },
+    {
+      "place": 8,
+      "plate": 12,
+      "entry": "Ana Souza",
+      "type": "SOLO",
+      "laps": 9,
+      "hand": "Two Pair — Kings & Fives",
+      "cards": [
+        [
+          "K",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "5",
+          "c"
+        ],
+        [
+          "5",
+          "d"
+        ],
+        [
+          "A",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "K",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "5",
+          "c"
+        ],
+        [
+          "5",
+          "d"
+        ],
+        [
+          "A",
+          "h"
+        ],
+        [
+          "2",
+          "s"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "4",
+          "h"
+        ],
+        [
+          "10",
+          "c"
+        ]
+      ]
+    },
+    {
+      "place": 9,
+      "plate": 102,
+      "entry": "Lake Effect",
+      "type": "TEAM ×3",
+      "laps": 9,
+      "hand": "Two Pair — Tens & Fours",
+      "cards": [
+        [
+          "10",
+          "s"
+        ],
+        [
+          "10",
+          "h"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "4",
+          "s"
+        ],
+        [
+          "Q",
+          "d"
+        ]
+      ],
+      "drawn": [
+        [
+          "10",
+          "s"
+        ],
+        [
+          "10",
+          "h"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "4",
+          "s"
+        ],
+        [
+          "Q",
+          "d"
+        ],
+        [
+          "6",
+          "c"
+        ],
+        [
+          "9",
+          "d"
+        ],
+        [
+          "3",
+          "h"
+        ],
+        [
+          "K",
+          "c"
+        ]
+      ]
+    },
+    {
+      "place": 10,
+      "plate": 19,
+      "entry": "Owen Clark",
+      "type": "SOLO",
+      "laps": 8,
+      "hand": "Pair — Aces",
+      "cards": [
+        [
+          "A",
+          "c"
+        ],
+        [
+          "A",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "J",
+          "c"
+        ],
+        [
+          "8",
+          "d"
+        ]
+      ],
+      "drawn": [
+        [
+          "A",
+          "c"
+        ],
+        [
+          "A",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "J",
+          "c"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "5",
+          "h"
+        ],
+        [
+          "2",
+          "c"
+        ],
+        [
+          "7",
+          "d"
+        ]
+      ]
+    },
+    {
+      "place": 11,
+      "plate": 33,
+      "entry": "Peter Kim",
+      "type": "SOLO",
+      "laps": 7,
+      "hand": "Pair — Kings",
+      "cards": [
+        [
+          "K",
+          "c"
+        ],
+        [
+          "K",
+          "d"
+        ],
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "6",
+          "c"
+        ]
+      ],
+      "drawn": [
+        [
+          "K",
+          "c"
+        ],
+        [
+          "K",
+          "d"
+        ],
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "6",
+          "c"
+        ],
+        [
+          "3",
+          "s"
+        ],
+        [
+          "10",
+          "h"
+        ]
+      ]
+    },
+    {
+      "place": 12,
+      "plate": 168,
+      "entry": "Grinder Bros",
+      "type": "TEAM ×2",
+      "laps": 8,
+      "hand": "Pair — Jacks",
+      "cards": [
+        [
+          "J",
+          "h"
+        ],
+        [
+          "J",
+          "d"
+        ],
+        [
+          "A",
+          "s"
+        ],
+        [
+          "8",
+          "c"
+        ],
+        [
+          "3",
+          "s"
+        ]
+      ],
+      "drawn": [
+        [
+          "J",
+          "h"
+        ],
+        [
+          "J",
+          "d"
+        ],
+        [
+          "A",
+          "s"
+        ],
+        [
+          "8",
+          "c"
+        ],
+        [
+          "3",
+          "s"
+        ],
+        [
+          "6",
+          "d"
+        ],
+        [
+          "10",
+          "c"
+        ],
+        [
+          "5",
+          "d"
+        ]
+      ]
+    },
+    {
+      "place": 13,
+      "plate": 71,
+      "entry": "Gita Rao",
+      "type": "SOLO",
+      "laps": 7,
+      "hand": "Pair — Eights",
+      "cards": [
+        [
+          "8",
+          "s"
+        ],
+        [
+          "8",
+          "h"
+        ],
+        [
+          "K",
+          "c"
+        ],
+        [
+          "10",
+          "d"
+        ],
+        [
+          "4",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "8",
+          "s"
+        ],
+        [
+          "8",
+          "h"
+        ],
+        [
+          "K",
+          "c"
+        ],
+        [
+          "10",
+          "d"
+        ],
+        [
+          "4",
+          "h"
+        ],
+        [
+          "2",
+          "d"
+        ],
+        [
+          "Q",
+          "c"
+        ]
+      ]
+    },
+    {
+      "place": 14,
+      "plate": 94,
+      "entry": "Ted Novak",
+      "type": "SOLO",
+      "laps": 4,
+      "hand": "High Card — Ace",
+      "dnf": true,
+      "cards": [
+        [
+          "A",
+          "d"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "9",
+          "s"
+        ],
+        [
+          "5",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "A",
+          "d"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "9",
+          "s"
+        ],
+        [
+          "5",
+          "h"
+        ]
+      ]
+    }
+  ],
+  "lapsBoard": [
+    {
+      "plate": 88,
+      "entry": "Moss Ridge Riders",
+      "laps": 11
+    },
+    {
+      "plate": 7,
+      "entry": "Luca Ferrari",
+      "laps": 10
+    },
+    {
+      "plate": 61,
+      "entry": "Marc Tremblay",
+      "laps": 10
+    },
+    {
+      "plate": 127,
+      "entry": "Dirt Dynamos",
+      "laps": 10
+    },
+    {
+      "plate": 12,
+      "entry": "Ana Souza",
+      "laps": 9
+    }
+  ],
+  "timeBoard": []
+}

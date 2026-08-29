@@ -93,7 +93,7 @@ Strictly bottom-up; each module goes red→green→refactor before the next star
 4b roster ─→ ride                        (E3's store-less models: entries/riders/teams, the
                                           lock matrix, audited mutations the store later persists)
 5 store ─→ ride, cards, roster           (persists events; replays them back into RideEngine)
-6 csvio ─→ roster
+6 csvio ─→ roster, standings             (finished-ride columns + §15 standings CSV need standings)
 7 htmlexport / 8 pdfexport ─→ standings, store models
 9 ui.presenters ─→ ride, store, standings, csvio, exports
 10 ui.views + app ─→ presenters, theme, sound, ids   (wx enters here, nowhere else)
@@ -151,6 +151,8 @@ class TieBreak(Enum): MOST_LAPS TOTAL_TIME HIGH_CARD_DRAW
 rank(results, order: tuple[TieBreak, ...]) -> list[Placed]
 laps_leaderboard(results, top: int = 10) -> list[Placed]
 time_leaderboard(results, top: int = 10) -> list[Placed]   # most laps, then time
+hand_name(hand: EvaluatedHand) -> str   # title-case em-dash prose (E6.1.1, D1); raises on an empty hand
+tiebreak_order_from_spellings(spellings) -> tuple[TieBreak, ...]   # ride spellings ⇄ members (E6.1.1)
 ```
 
 rivercrossing.ride — state machine & timing (§3/§6 · R-30…36)
@@ -230,19 +232,24 @@ rivercrossing.csvio / htmlexport / pdfexport (§7/§8/§8b · R-21/61/62/63)
 ```
 csvio.preview(path, ride) -> ImportPreview      # counts + conflicts; writes nothing;
                                                 #   ride = the Roster aggregate until E5's Store
-csvio.commit(preview) -> ImportReport · csvio.export(ride, path) -> None
+csvio.commit(preview) -> ImportReport · csvio.export(ride, path, *, placed=None) -> None
     # commit applies through the roster's own audited mutators, atomically;
     # ImportReport carries inserted/updated/moved/extracted/joined counts + the audit events
+    # export with placed (a FINISHED ride's standings) appends laps/cards/best_hand/total_time (§7)
+csvio.export_standings(placed, path, *, show_times=False) -> None   # §15 standings CSV (E6.4.2)
 @dataclass ExportOptions(show_times=False, laps_board=True, time_board=False,
                         full_field=True, all_cards=True, lap_km=8.0)  # times hidden by default (R-63)
-htmlexport.render(ride, placed, opts) -> str    # Jinja2 (autoescape, StrictUndefined),
-    # base.html.j2 + macros (event_header, podium_card, standings_row,
-    # laps_board, time_board, field_row, drawn_row) — STATIC markup, no page JS;
-    # vendored Tailwind CSS + fonts inlined, payload JSON
-    # embedded (</ escaped as <\/), logo base64; times off ⇒ neither cells nor JSON fields emitted.
+htmlexport.render(ride, placed, opts, *, logo_src=None, generated=None, logo_path=None) -> str
+    # Jinja2 (autoescape, StrictUndefined), base.html.j2 + macros
+    # (event_header, podium_card, standings_row, laps_board, time_board, field_row, drawn_row)
+    # — STATIC markup, no page JS; vendored Tailwind CSS + fonts inlined, payload JSON
+    # embedded (</ escaped as <\/), logo base64 (transparent 1×1 fallback), laps/time boards
+    # derived from placed when the options ask; times off ⇒ neither cells nor JSON fields emitted.
     # Tests: golden pages from committed fixtures + JSON round-trip (§8)
-pdfexport.render(ride, placed, opts, path)      # fpdf2, deterministic bytes (R-62)
-pdfexport.podium_poster(ride, placed, path)     # one-page poster (5d)
+pdfexport.render(ride, placed, opts, path, *, letter=True, created_at=None, logo_path=None)
+    # fpdf2, deterministic bytes (R-62); aware-UTC creation stamp is the only timestamp
+pdfexport.podium_poster(ride, placed, path, *, letter=True, created_at=None, logo_path=None)
+    # one-page poster (5d)
 ```
 
 rivercrossing.ui — MVP shell (§10/§13/§15 · R-02/03/31/73/76)

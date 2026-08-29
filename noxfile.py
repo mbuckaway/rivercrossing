@@ -23,12 +23,21 @@ import nox.command
 
 nox.options.default_venv_backend = "uv|virtualenv"
 nox.options.reuse_existing_virtualenvs = True
-nox.options.sessions = ["lint", "typecheck", "importlint", "ids_drift", "unit"]
+nox.options.sessions = [
+    "lint",
+    "typecheck",
+    "importlint",
+    "ids_drift",
+    "css_drift",
+    "unit",
+]
 
 PYTHON = "3.14"
 ROOT = Path(__file__).parent
 XRC_DIR = ROOT / "src" / "rivercrossing" / "ui" / "xrc"
+HTMLEXPORT_TEMPLATES = ROOT / "src" / "rivercrossing" / "htmlexport" / "templates"
 GEN_IDS = ROOT / "tools" / "gen_ids.py"
+GEN_CSS = ROOT / "tools" / "gen_css.py"
 GEN_APP_ICONS = ROOT / "tools" / "gen_app_icons.py"
 SPEC = ROOT / "installers" / "rivercrossing.spec"
 BUNDLE_SMOKE = ROOT / "tests" / "functional" / "test_bundle_smoke.py"
@@ -164,6 +173,32 @@ def ids_drift(session):
         return
     session.install(DEV)
     session.run("python", str(GEN_IDS), "--check")
+
+
+@nox.session(python=PYTHON)
+def gen_css(session):
+    """Regenerate the vendored compiled_css + fonts_css (E6.2.1).
+
+    Requires the pinned Tailwind CLI (``npm install`` at the repo
+    root); the nox ``unit`` session never needs it.
+    """
+    session.install(DEV)
+    session.run("python", str(GEN_CSS), "--write")
+
+
+@nox.session(python=PYTHON)
+def css_drift(session):
+    """Fail if the vendored CSS disagrees with the templates (E6.2.1).
+
+    This single ``--check`` is both the CI compile and the TB-7
+    staleness gate. Passes vacuously until the templates exist, so the
+    gate can be wired into CI before they are authored.
+    """
+    if not GEN_CSS.exists() or not any(HTMLEXPORT_TEMPLATES.glob("*.j2")):
+        session.log("no htmlexport templates yet - nothing to check")
+        return
+    session.install(DEV)
+    session.run("python", str(GEN_CSS), "--check")
 
 
 @nox.session(python=PYTHON)

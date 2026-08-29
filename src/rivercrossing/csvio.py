@@ -65,17 +65,26 @@ row only, leaving the other member rows' notes blank -- so a
 commit-then-export-then-preview round trip reproduces the same
 ``notes`` string.
 
-**Export (E3.3.3).** ``export(ride, path)`` writes *ride*'s current
-roster in the same shape :func:`preview` reads, selected by
-``ride.plate_model`` -- an export of a conflict-free preview's target
-therefore previews clean again (spec §7's own "export mirrors the
-columns"; task-briefs.md E3.3.3's round-trip property). **A finished
-ride's extra columns -- laps, cards, best_hand, total_time -- are
-out of scope here**: they need EPIC 6's standings module, which this
-one does not depend on. ``export`` writes only the roster's own
-columns (plate/entry_name-or-name/type-or-team_name/riders/notes),
-regardless of ``ride.status``; no placeholder values are invented for
-the columns that need standings.
+**Export (E3.3.3).** ``export(ride, path, *, placed=None)`` writes
+*ride*'s current roster in the same shape :func:`preview` reads,
+selected by ``ride.plate_model`` -- an export of a conflict-free
+preview's target therefore previews clean again (spec §7's own
+"export mirrors the columns"; task-briefs.md E3.3.3's round-trip
+property). Passing *placed* -- a sequence of
+:class:`rivercrossing.standings.Placed` from EPIC 6's rankings, the
+module's first standings dependency (approved decision D3) --
+appends spec §7's four finished-ride columns ``laps, cards,
+best_hand, total_time`` after the roster's own columns
+(plate/entry_name-or-name/type-or-team_name/riders/notes), guarded to
+a FINISHED ride and filled from the matching entry's Placed row (an
+entry missing from *placed* fails loudly; extra rows are ignored).
+Value formats are machine-readable, decided for P3: laps an int,
+cards ``len(result.cards)``, best_hand
+:func:`~rivercrossing.standings.hand_name`'s prose, total_time raw
+numeric seconds (``repr``-clean) -- human formatting belongs to the
+HTML/PDF exports only. The standalone spec §15 standings CSV ships as
+:func:`export_standings` (E6.4.2): rows ``place, plate, entry, laps,
+hand`` plus a raw-seconds ``total_time`` column when asked (R-63).
 """
 
 import csv
@@ -84,6 +93,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
+from rivercrossing.ride import RideStatus
 from rivercrossing.roster import (
     MIN_TEAM_SIZE,
     AuditEvent,
@@ -95,14 +105,14 @@ from rivercrossing.roster import (
     can_edit_structure,
     can_move_rider,
 )
+from rivercrossing.standings import Placed, hand_name
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from rivercrossing.ride import RideStatus
-
 _HEADER_PROBLEM = "missing or malformed header for this ride's plate model"
+_FINISHED_COLUMNS = ("laps", "cards", "best_hand", "total_time")
 _MISSING_NAME_PROBLEM = "missing name"
 _POOLED_HEADER = ("plate", "name", "team_name", "notes")
 _TEAM_TYPE_PATTERN = re.compile(r"team(\d+)")
@@ -293,28 +303,122 @@ def commit(preview: ImportPreview) -> ImportReport:
     )
 
 
-def export(ride: Roster, path: Path) -> None:
+def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) -> None:
     """Write *ride*'s current roster to *path* as CSV (R-21, spec S7).
 
     The header and column shape match *ride*'s plate_model exactly --
     the same shape :func:`preview` requires -- so re-importing the
     result against an equivalent roster previews with zero conflicts
-    (module docstring's round-trip note; EPIC 6's standings columns
-    are out of scope, see the module docstring).
+    (module docstring's round-trip note). Passing *placed* -- a
+    finished ride's standings -- appends spec §7's four columns
+    (``laps, cards, best_hand, total_time``) after the roster's own
+    ones and fills them from each matching entry's
+    :class:`~rivercrossing.standings.Placed` row; ``placed=None``
+    keeps the export byte-identical to the roster-only shape.
 
     Args:
         ride: The roster to export. Never mutated.
         path: The file to write. Overwritten if it already exists.
+        placed: Optional standings for a FINISHED ride; the caller may
+            pass the whole ranked field (rows with no matching entry
+            are ignored, DNFs included). Defaults to None, the
+            roster-only export.
+
+    Raises:
+        CsvIoError: *placed* is given while *ride* is not FINISHED, or
+            an entry has no matching
+            :class:`~rivercrossing.standings.Placed` row (naming the
+            first missing plate).
     """
+    if placed is not None and ride.status is not RideStatus.FINISHED:
+        msg = f"standings columns require a finished ride (ride is {ride.status})"
+        raise CsvIoError(msg)
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(_expected_header(ride))
+        writer.writerow(_expected_header(ride, with_standings=placed is not None))
+        by_plate = _finished_by_plate(ride, placed) if placed is not None else None
         if ride.plate_model is PlateModel.TEAM_RELAY:
             for entry in ride.entries:
-                writer.writerow(_relay_export_row(entry, ride.max_team_size))
+                row = _relay_export_row(entry, ride.max_team_size)
+                if by_plate is not None:
+                    row.extend(_stats_values(by_plate[entry.plate]))
+                writer.writerow(row)
         else:
             for entry in ride.entries:
-                writer.writerows(_pooled_export_rows(entry))
+                rows = _pooled_export_rows(entry)
+                if by_plate is not None:
+                    stats = _stats_values(by_plate[entry.plate])
+                    rows = [row + stats for row in rows]
+                writer.writerows(rows)
+
+
+def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool = False) -> None:
+    """Write *placed* as the spec §15 standings CSV to *path* (E6.4.2).
+
+    Rows are ``place, plate, entry, laps, hand`` with a
+    ``total_time`` column appended when *show_times* -- raw numeric
+    seconds, consistent with :func:`export`'s finished-ride columns
+    (CSVs are machine-readable; human formatting is the HTML/PDF
+    exports' job). DNF entries keep their row with their laps and
+    cards (R-33); an entry that never crossed renders a blank hand.
+
+    Args:
+        placed: Ranked standings, one row each.
+        path: The file to write. Overwritten if it already exists.
+        show_times: Append the ``total_time`` column (R-63: times
+            only when the export setting says so).
+    """
+    header = ["place", "plate", "entry", "laps", "hand"]
+    if show_times:
+        header.append("total_time")
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(header)
+        for placed_row in placed:
+            result = placed_row.result
+            row = [
+                str(placed_row.place),
+                result.plate,
+                result.name,
+                str(result.laps),
+                hand_name(result.hand) if result.cards else "",
+            ]
+            if show_times:
+                row.append(repr(result.total_time))
+            writer.writerow(row)
+
+
+def _stats_values(placed: Placed) -> list[str]:
+    """Return *placed*'s four finished-ride column values (spec §7).
+
+    Machine-readable formats (P3 decision): laps an int, cards the
+    count, best_hand :func:`~rivercrossing.standings.hand_name`'s
+    prose, total_time raw numeric seconds (``repr``-clean) -- human
+    formatting belongs to the HTML/PDF exports only.
+    """
+    result = placed.result
+    return [
+        str(result.laps),
+        str(len(result.cards)),
+        hand_name(result.hand),
+        repr(result.total_time),
+    ]
+
+
+def _finished_by_plate(ride: Roster, placed: Sequence[Placed]) -> dict[str, Placed]:
+    """Map every *ride* entry's plate to its Placed row (spec §7).
+
+    An entry with no matching row is an invariant violation -- the
+    caller passed standings that do not cover the roster -- so export
+    fails loudly rather than inventing placeholder values; extra
+    placed rows (the caller may pass the whole ranked field, DNF
+    entries included) are ignored.
+    """
+    by_plate = {placed_row.result.plate: placed_row for placed_row in placed}
+    missing = [entry.plate for entry in ride.entries if entry.plate not in by_plate]
+    if missing:
+        raise CsvIoError(f"no standings for plate {missing[0]}")
+    return by_plate
 
 
 def _relay_export_row(entry: Entry, max_team_size: int) -> list[str]:
@@ -344,12 +448,22 @@ def _pooled_export_rows(entry: Entry) -> list[list[str]]:
     ]
 
 
-def _expected_header(ride: Roster) -> list[str]:
-    """Return the CSV header *ride*'s plate_model requires (spec S7)."""
+def _expected_header(ride: Roster, *, with_standings: bool = False) -> list[str]:
+    """Return the CSV header *ride*'s plate_model requires (spec S7).
+
+    A finished ride's standings export appends spec §7's four columns
+    (laps, cards, best_hand, total_time) after the model's own ones;
+    :func:`preview` never sets *with_standings*, so its header check
+    stays byte-identical to the roster-only shape.
+    """
     if ride.plate_model is PlateModel.TEAM_RELAY:
         rider_cols = [f"rider_{i}" for i in range(1, ride.max_team_size + 1)]
-        return ["plate", "entry_name", "type", *rider_cols, "notes"]
-    return list(_POOLED_HEADER)
+        header = ["plate", "entry_name", "type", *rider_cols, "notes"]
+    else:
+        header = list(_POOLED_HEADER)
+    if with_standings:
+        header.extend(_FINISHED_COLUMNS)
+    return header
 
 
 def _field(row: Mapping[str, str | None], column: str) -> str:

@@ -6,8 +6,10 @@ EPIC 4's pull-forward of the ranking core: order a finished ride's
 the caller (EPIC 4's ``RideEngine.snapshot``) runs
 ``hands.best_hand`` and stores the result, and :func:`rank` only
 orders by it via ``hands.compare``, never re-deriving a hand from
-``cards``. The human-readable hand-name renderer ("Four of a kind,
-kings") is EPIC 6 display copy and deliberately absent.
+``cards``. The human-readable hand-name renderer (:func:`hand_name`)
+is EPIC 6 display copy (decision D1): one title-case em-dash style,
+vocabulary pinned by the golden exports, that the results window and
+exports both consume.
 
 Handling rules, in order of application:
 
@@ -45,27 +47,33 @@ can never depend on any of them. ``kind`` is the entry-type spelling
 spellings so a stored ``tiebreak_order`` maps onto these members
 without standings importing ``ride``; the ride-setup dialog re-ranks
 live by passing a reordered tuple (R-14).
+:func:`tiebreak_order_from_spellings` is that mapping as a function:
+a stored order of ``ride.py`` spellings converts to the member tuple
+:func:`rank` takes (empty = all-draw).
 """
 
+from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 from functools import cmp_to_key
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from rivercrossing.hands import EvaluatedHand, compare
+from rivercrossing.hands import EvaluatedHand, HandClass, compare
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from rivercrossing.cards import Card
+    from rivercrossing.cards import Card, Rank
 
 __all__ = [
     "DEFAULT_TIEBREAK_ORDER",
     "EntryResult",
     "Placed",
     "TieBreak",
+    "hand_name",
     "laps_leaderboard",
     "rank",
+    "tiebreak_order_from_spellings",
     "time_leaderboard",
 ]
 
@@ -94,6 +102,36 @@ DEFAULT_TIEBREAK_ORDER: tuple[TieBreak, ...] = (
     TieBreak.TOTAL_TIME,
     TieBreak.HIGH_CARD_DRAW,
 )
+
+
+def tiebreak_order_from_spellings(spellings: Sequence[str]) -> tuple[TieBreak, ...]:
+    """Convert a stored ride.py tie-break order onto TieBreak members.
+
+    ``ride.py`` persists its order as the ``TIEBREAK_*`` string
+    spellings ("laps"/"total_time"/"high_card" -- module docstring);
+    this maps each onto its :class:`TieBreak` member so a stored order
+    can drive :func:`rank` directly. An empty *spellings* is valid: a
+    ride with no criteria, where every hand tie is a draw.
+
+    Args:
+        spellings: The stored spellings, in priority order.
+
+    Returns:
+        The matching member tuple for :func:`rank`.
+
+    Raises:
+        ValueError: *spellings* holds a spelling no :class:`TieBreak`
+            member has.
+    """
+    by_value = {member.value: member for member in TieBreak}
+    order: list[TieBreak] = []
+    for spelling in spellings:
+        member = by_value.get(spelling)
+        if member is None:
+            msg = f"unknown tie-break spelling: {spelling!r}"
+            raise ValueError(msg)
+        order.append(member)
+    return tuple(order)
 
 
 @dataclass(frozen=True)
@@ -314,3 +352,151 @@ def time_leaderboard(results: Sequence[EntryResult], top: int = 10) -> list[Plac
         ValueError: *top* is negative.
     """
     return _leaderboard(results, top)
+
+
+# -------------------------------------------------- hand names (E6.1.1)
+
+# The display vocabulary: each rank value (cards.Rank's own integer,
+# 2..14, joker 0) maps to the singular and plural words the golden
+# exports pin. The value -> letter identity (J=11 .. A=14) is
+# cards.Rank's and never repeated here; these are the prose word forms
+# only, and the two tables exist because English plurals are irregular
+# (Fives, Sixes, Nines, Tens) rather than a rule worth encoding.
+_RANK_WORD: dict[int, str] = {
+    2: "Two",
+    3: "Three",
+    4: "Four",
+    5: "Five",
+    6: "Six",
+    7: "Seven",
+    8: "Eight",
+    9: "Nine",
+    10: "Ten",
+    11: "Jack",
+    12: "Queen",
+    13: "King",
+    14: "Ace",
+}
+
+_RANK_PLURAL: dict[int, str] = {
+    2: "Twos",
+    3: "Threes",
+    4: "Fours",
+    5: "Fives",
+    6: "Sixes",
+    7: "Sevens",
+    8: "Eights",
+    9: "Nines",
+    10: "Tens",
+    11: "Jacks",
+    12: "Queens",
+    13: "Kings",
+    14: "Aces",
+}
+
+# The four classes built from a same-rank group, each named from that
+# group's rank in the plural: "Pair -- Aces", "Three of a Kind --
+# Sevens", "Four of a Kind -- Nines", "Five of a Kind -- Aces".
+_GROUP_LABELS: dict[HandClass, str] = {
+    HandClass.PAIR: "Pair",
+    HandClass.TRIPS: "Three of a Kind",
+    HandClass.QUADS: "Four of a Kind",
+    HandClass.FIVE_OF_A_KIND: "Five of a Kind",
+}
+_GROUP_SIZE: dict[HandClass, int] = {
+    HandClass.PAIR: 2,
+    HandClass.TRIPS: 3,
+    HandClass.QUADS: 4,
+    HandClass.FIVE_OF_A_KIND: 5,
+}
+
+# The FULL_HOUSE branch needs its own two group sizes (3 over 2), and
+# the TWO_PAIR branch filters on the pair count -- named here so no
+# bare 2/3 sits in a comparison (PLR2004), matching hands.py's own
+# _PAIR_COUNT/_TRIPS_COUNT convention.
+_PAIR_COUNT = 2
+_TRIPS_COUNT = 3
+
+
+def _effective_ranks(hand: EvaluatedHand) -> list[int]:
+    """List the rank values *hand*'s cards actually play as.
+
+    ``best5`` still holds raw joker placeholders (rank None); each
+    joker's resolution from ``jokers_played_as`` stands in for it, so a
+    joker-completed hand names its true kickers (decision D1).
+    """
+    played = (*hand.best5, *hand.jokers_played_as)
+    return [cast("Rank", card.rank).value for card in played if not card.joker]
+
+
+def _rank_with_count(ranks: Sequence[int], count: int) -> int:
+    """Return the one rank appearing exactly *count* times in *ranks*.
+
+    The evaluated :class:`HandClass` guarantees such a rank exists; a
+    miss is a hands bug and surfaces as :class:`KeyError` -- internal
+    invariants fail loudly, they are not guessed at (module style).
+    """
+    by_count = {n: rank for rank, n in Counter(ranks).items()}
+    return by_count[count]
+
+
+def _straight_high(ranks: Sequence[int]) -> int:
+    """Return a straight's display high rank, mindful of the wheel.
+
+    A-2-3-4-5 plays as a 5-high straight, never ace-high (spec §5);
+    every other straight names its top rank.
+    """
+    if set(ranks) == {2, 3, 4, 5, 14}:
+        return 5
+    return max(ranks)
+
+
+def hand_name(hand: EvaluatedHand) -> str:
+    """Return *hand*'s title-case prose name (decision D1, spec §5).
+
+    The one em-dash style the results window and exports share, with
+    the exact vocabulary the golden exports pin: "High Card -- Ace",
+    "Pair -- Aces", "Two Pair -- Kings & Fives", "Full House -- Aces
+    over Fours", "Straight -- Nine high" (wheel = "Five high"), and
+    "Royal Flush" with no kicker suffix. A joker's resolution
+    (``jokers_played_as``) supplies its rank, so a joker-completed hand
+    names its true kickers. Fewer than 5 cards render the same prose
+    form as the class they make, with no marker.
+
+    Args:
+        hand: The evaluated hand to name.
+
+    Returns:
+        The prose name, e.g. ``"Four of a Kind -- Nines"``.
+
+    Raises:
+        ValueError: *hand* has no cards at all (``best_hand(())``
+            yields one); there is no rank to name.
+    """
+    ranks = _effective_ranks(hand)
+    if not ranks:
+        msg = "cannot name an empty hand"
+        raise ValueError(msg)
+    cls = hand.cls
+    if cls in _GROUP_LABELS:
+        rank = _rank_with_count(ranks, _GROUP_SIZE[cls])
+        return f"{_GROUP_LABELS[cls]} — {_RANK_PLURAL[rank]}"
+    if cls is HandClass.TWO_PAIR:
+        pair_ranks = sorted(rank for rank, n in Counter(ranks).items() if n == _PAIR_COUNT)
+        return f"Two Pair — {_RANK_PLURAL[pair_ranks[-1]]} & {_RANK_PLURAL[pair_ranks[0]]}"
+    if cls is HandClass.FULL_HOUSE:
+        trips = _rank_with_count(ranks, _TRIPS_COUNT)
+        pair = _rank_with_count(ranks, _PAIR_COUNT)
+        return f"Full House — {_RANK_PLURAL[trips]} over {_RANK_PLURAL[pair]}"
+    if cls in (HandClass.STRAIGHT, HandClass.STRAIGHT_FLUSH):
+        base = "Straight" if cls is HandClass.STRAIGHT else "Straight Flush"
+        return f"{base} — {_RANK_WORD[_straight_high(ranks)]} high"
+    if cls in (HandClass.HIGH_CARD, HandClass.FLUSH):
+        base = "High Card" if cls is HandClass.HIGH_CARD else "Flush"
+        # HIGH_CARD names the bare top rank, FLUSH the same rank plus
+        # " high" -- the two kicker classes only differ in that suffix.
+        suffix = "" if cls is HandClass.HIGH_CARD else " high"
+        return f"{base} — {_RANK_WORD[max(ranks)]}{suffix}"
+    # ROYAL_FLUSH names nothing -- it is the one kickerless class and
+    # the fall-through above.
+    return "Royal Flush"
