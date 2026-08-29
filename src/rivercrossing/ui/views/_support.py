@@ -135,7 +135,6 @@ def _dump_address_reuse(name: str, stale: object, expected_type: type) -> None:
         f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
         f"refcount={_sys.getrefcount(stale)} cpp_class={cpp_class}\n"
     )
-    handle.close()
     for referrer in gc.get_referrers(stale):
         kind = type(referrer).__name__
         if kind in ("list", "dict", "set", "tuple", "function", "module", "frame", "weakref"):
