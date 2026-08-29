@@ -115,7 +115,12 @@ the decisions taken, and what the next machine needs to resume into EPIC 7.
   root-cause-or-quarantine instruction — the test now skips with this reason; every other
   resume_dlg scenario passes.
 - **`test_mini_acceptance.py::test_mini_acceptance_finish_confirm_cancel_leaves_ride_running`**:
-  intermittent native segfault under wx churn (passes on some workers).
+  intermittent native segfault under wx churn (EPIC5 handoff §3, "passes on some workers").
+  **Quarantined 2026-08-29**: the segfault kills the xdist worker, cascading collateral
+  FAILED verdicts onto unrelated in-flight tests (measured: three such cascades polluted a
+  VM run, and a wedged worker drove it past the watchdog) — a documented skip keeps the
+  suite deterministic; the finish-cancel flow stays unit-covered by test_console.py's
+  on_finish gate tests. Re-open when the wx-churn segfault is root-caused.
 - **Testing discipline (HARD)**: on macOS, functional tests run ONLY in the Tart VM via
   `scripts/run_functional_tests_vm.sh` — never `pytest tests/functional/...` on the host.
 
