@@ -48,8 +48,22 @@ def main() -> int:
         found["library_shown"] = library is not None and library.IsShown()
         print(f"probe: library_shown={found['library_shown']}", flush=True)
         if library is not None:
+            close_btn = library.FindWindowByName("wxID_CLOSE")
+            btn_id = close_btn.GetId() if close_btn else None
+            print(f"probe: close_btn={close_btn} id={btn_id}", flush=True)
             harness.click(library, pages.WX_ID_CLOSE)
-        print("probe: after close click", flush=True)
+            wx.SafeYield()
+            print(
+                "probe: after click, still_shown="
+                f"{library.IsShown()} is_deleting={library.IsBeingDeleted()}",
+                flush=True,
+            )
+            if library.IsShown():
+                print("probe: calling EndModal directly", flush=True)
+                library.EndModal(wx.ID_CLOSE)
+                wx.SafeYield()
+                print(f"probe: after EndModal, still_shown={library.IsShown()}", flush=True)
+        print("probe: done", flush=True)
 
     wx.CallAfter(_click_library)
     frame = app_module.build_main_window(wx.GetApp(), store=store)
