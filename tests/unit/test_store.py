@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+import rivercrossing.store as store_module
 from rivercrossing.ride import Event, RideConfig, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import (
@@ -246,6 +247,60 @@ def test_store_open_migration_failure_rolls_back_all_ddl(tmp_path: Path) -> None
         assert "audit" in names  # the v0 conflicting table survived
         assert "schema_version" in names  # ledger bootstrapped, no version row
         assert check.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 0
+
+
+def test_store_open_retries_transient_wal_io_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A transient WAL I/O error after a hard kill retries, not fatal.
+
+    Windows-measured: reopening a DB whose writer was
+    TerminateProcess'd can hit a one-shot ``disk I/O error`` on the
+    first PRAGMA while the -wal lock settles (R-52's crash-recovery
+    path must not fail on a transient). The fault is injected at the
+    store's own PRAGMA seam -- sqlite3 itself stays real, per this
+    file's discipline -- because a transient OS error cannot be
+    produced deterministically with real I/O.
+    """
+    real_apply = store_module.apply_pragmas
+    calls = {"n": 0}
+
+    def flaky_apply(conn: sqlite3.Connection) -> None:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise sqlite3.OperationalError("disk I/O error")
+        real_apply(conn)
+
+    monkeypatch.setattr(store_module, "apply_pragmas", flaky_apply)
+    db_path = tmp_path / "store.db"
+
+    store = store_module.Store.open(db_path)
+    store.close()
+
+    assert calls["n"] >= 2
+
+
+def test_store_open_does_not_retry_persistent_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A persistent failure surfaces immediately, no futile retries.
+
+    The retry is bounded to transient conditions; a schema collision
+    ("already exists") must raise on the first attempt exactly as
+    before (test_store_open_migration_failure_rolls_back_all_ddl).
+    """
+    calls = {"n": 0}
+
+    def failing_apply(_conn: sqlite3.Connection) -> None:
+        calls["n"] += 1
+        raise sqlite3.OperationalError("table ride already exists")
+
+    monkeypatch.setattr(store_module, "apply_pragmas", failing_apply)
+
+    with pytest.raises(sqlite3.OperationalError, match=re.escape("already exists")):
+        store_module.Store.open(tmp_path / "store.db")
+
+    assert calls["n"] == 1
 
 
 def test_store_future_schema_version_error_is_a_store_error() -> None:
