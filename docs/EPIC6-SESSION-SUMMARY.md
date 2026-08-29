@@ -146,18 +146,14 @@ merges; `docs/EPIC7-SESSION-SUMMARY` does not exist yet.
 ## 5 · Numbers
 
 - Unit + property + simulations: **2146 passed**, coverage **98.49%** (line+branch ≥ 90 gate).
-- Functional (Tart VM, 2026-08-29): **every EPIC-6 test passes** (results window, export walk,
-  finish gate). **The segfault system is fixed and root-caused** — see §6 below; three
-  consecutive full-suite runs have **zero** "Fatal Python error" dumps. The remaining
-  suite-wide residual is the **pre-existing upstream SIP/wxWidgets wrapper-cache
-  address-reuse corruption** (Phoenix #2931, sip#113 — proven by failing identically on
-  pristine master; no released wxPython fix). Mitigations shipped: `gc.collect()` in
-  `find_control`'s settle loop, `sys.last_*` cleared after every synthetic dispatch, and a
-  deepened fresh-process rerun budget (2 → 4) — the wrapper's own designed remedy (fresh
-  process = fresh SIP map). Best run: 862 passed / 2 Fault-A leak-errors (leaked dialogs
-  from address-reuse construction failures tripping the session sweep). A deterministic
-  one-process green awaits the upstream fix or a product decision on quarantining the
-  affected pre-existing files.
+- Functional (Tart VM, 2026-08-29): **FULL SUITE GREEN — 860 passed, 49 skipped (platform /
+  bundle only), 0 failed, 0 segfaults, exit 0.** Both EPIC-6 quarantines are lifted
+  (resume_dlg + mini_acceptance pass). All three failure systems root-caused and fixed
+  (§6): segfault storms (dangling tick timer), address-reuse LookupErrors (settle-loop
+  wrapper hygiene), and the resume_library modal hang (SafeYield re-entrancy). The
+  fresh-process rerun wrapper now converges deterministically (teardown-attributed failures
+  parse to real files; the whole-suite fallback feeds its failures back through fresh
+  reruns instead of returning a bad roll).
 - Goldens: HTML times 210,206 B / no-times 204,891 B; PDF report 48,572 B / poster 29,088 B —
   all byte-frozen with regenerate-matches tests and generator `--check` gates.
 
