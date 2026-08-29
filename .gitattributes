@@ -3,3 +3,19 @@
 # on checkout -- Windows autocrlf turned them into CRLF and broke the
 # regeneration honesty test on windows-latest.
 src/rivercrossing/vectors/*.csv text eol=lf
+
+# The same contract for every byte-frozen text artifact the exporters
+# and their generators compare against LF output: the vendored Tailwind
+# inputs and artifacts, the frozen HTML/JSON export goldens, the golden
+# samples under design/, and the CSV import fixtures. Without these,
+# Windows autocrlf rewrites them to CRLF on checkout and the
+# regeneration/byte-compare tests fail on windows-latest (measured for
+# compiled_css + theme.css + the .j2 templates, added in EPIC 6).
+src/rivercrossing/htmlexport/templates/*.j2 text eol=lf
+src/rivercrossing/htmlexport/templates/compiled_css text eol=lf
+src/rivercrossing/htmlexport/templates/fonts_css text eol=lf
+src/rivercrossing/htmlexport/templates/theme.css text eol=lf
+tests/unit/fixtures/htmlexport/*.html text eol=lf
+tests/unit/fixtures/htmlexport/*.json text eol=lf
+design/exports/*.html text eol=lf
+tests/unit/fixtures/csv/*.csv text eol=lf
