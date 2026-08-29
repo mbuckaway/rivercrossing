@@ -90,6 +90,14 @@ rivercrossing = [
     "htmlexport/templates/theme.css",
     "htmlexport/templates/compiled_css",
     "htmlexport/templates/fonts_css",
+    # P7 (E6.3.1): the PDF report's three TTF faces. fpdf2 reads them
+    # from the package at render time and embeds them into the PDF
+    # bytes, so the wheel must carry them exactly like the htmlexport
+    # templates above. Explicit per-file entries (no glob), matching
+    # the list's convention.
+    "pdfexport/fonts/Barlow-Regular.ttf",
+    "pdfexport/fonts/BarlowCondensed-SemiBold.ttf",
+    "pdfexport/fonts/DejaVuSans.ttf",
 ]
 
 # ----------------------------------------------------------------- ruff
@@ -245,6 +253,7 @@ type = "forbidden"
 source_modules = [
     "rivercrossing.ride",
     "rivercrossing.htmlexport",
+    "rivercrossing.pdfexport",
     "rivercrossing.demo",
     "rivercrossing.cards",
     "rivercrossing.hands",
