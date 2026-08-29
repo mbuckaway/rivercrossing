@@ -123,26 +123,29 @@ def _dump_address_reuse(name: str, stale: object) -> None:
     removed. Removed once the retainer is fixed.
     """
     import sys as _sys  # noqa: PLC0415 -- diagnostic only
-    import tempfile  # noqa: PLC0415 -- diagnostic only
+    from pathlib import Path  # noqa: PLC0415 -- diagnostic only
 
-    with tempfile.NamedTemporaryFile(
-        mode="a", prefix="addr_reuse_dump_", delete=False, encoding="utf-8"
-    ) as handle:
-        handle.write(
-            f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
-            f"refcount={_sys.getrefcount(stale)}\n"
-        )
-        for referrer in gc.get_referrers(stale):
-            kind = type(referrer).__name__
-            if kind in ("list", "dict", "set", "tuple", "function", "module", "frame", "weakref"):
-                continue
-            handle.write(f"    referrer: {kind} -> {repr(referrer)[:180]}\n")
-        for referrer in gc.get_referrers(stale):
-            kind = type(referrer).__name__
-            if kind == "frame":
-                handle.write(f"    FRAME: {referrer.f_code.co_filename}:{referrer.f_lineno} "
-                             f"in {referrer.f_code.co_name}\n")
-        handle.flush()
+    # tests/functional/_screenshots is rsync'd back to the host by the
+    # VM script (pull_screenshots), so the dump survives clone cleanup.
+    dump_dir = Path(__file__).resolve().parents[4] / "tests" / "functional" / "_screenshots"
+    dump_dir.mkdir(parents=True, exist_ok=True)
+    handle = (dump_dir / "addr_reuse_dump.txt").open("a", encoding="utf-8")
+    handle.write(
+        f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
+        f"refcount={_sys.getrefcount(stale)}\n"
+    )
+    handle.close()
+    for referrer in gc.get_referrers(stale):
+        kind = type(referrer).__name__
+        if kind in ("list", "dict", "set", "tuple", "function", "module", "frame", "weakref"):
+            continue
+        handle.write(f"    referrer: {kind} -> {repr(referrer)[:180]}\n")
+    for referrer in gc.get_referrers(stale):
+        kind = type(referrer).__name__
+        if kind == "frame":
+            handle.write(f"    FRAME: {referrer.f_code.co_filename}:{referrer.f_lineno} "
+                         f"in {referrer.f_code.co_name}\n")
+    handle.flush()
 
 
 @cache
