@@ -10,9 +10,14 @@ with the real renderer, then prove the committed bytes match" honest:
 the test and the generator cannot drift apart on the inputs.
 
 * ``tests/unit/fixtures/pdfexport/epic-2026-results.pdf`` -- the
-  frozen GOLDEN, regenerated once by ``tools/gen_pdfexport_fixtures.py``
-  from the real renderer; ``test_pdfexport.py`` compares
-  ``render(...)`` output to it byte-for-byte (R-62).
+  frozen GOLDEN report, regenerated once by
+  ``tools/gen_pdfexport_fixtures.py`` from the real renderer;
+  ``test_pdfexport.py`` compares ``render(...)`` output to it
+  byte-for-byte (R-62).
+* ``tests/unit/fixtures/pdfexport/epic-2026-podium.pdf`` -- the frozen
+  GOLDEN podium poster (P8, E6.3.2), regenerated once by the same
+  generator from ``podium_poster(...)``; the poster tests compare its
+  output byte-for-byte.
 """
 
 from dataclasses import dataclass
@@ -27,6 +32,7 @@ from rivercrossing.standings import EntryResult, Placed, rank
 _ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = _ROOT / "tests" / "unit" / "fixtures" / "pdfexport"
 GOLDEN_PDF = FIXTURES_DIR / "epic-2026-results.pdf"
+GOLDEN_POSTER = FIXTURES_DIR / "epic-2026-podium.pdf"
 
 # The one timestamp a render embeds: pinned as tz-aware UTC (D14) so
 # /CreationDate never bakes a machine-local offset. Identical inputs
