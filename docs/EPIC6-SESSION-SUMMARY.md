@@ -146,19 +146,38 @@ merges; `docs/EPIC7-SESSION-SUMMARY` does not exist yet.
 ## 5 · Numbers
 
 - Unit + property + simulations: **2146 passed**, coverage **98.49%** (line+branch ≥ 90 gate).
-- Functional (Tart VM, 2026-08-29): **every EPIC-6 test passes** — the results-window suite,
-  the export walk (`test_results_exports.py`) and the finish-gate paths ran green in runs 2 and
-  5 (with the rerun wrapper). The suite-wide exit code is held hostage by a **pre-existing
-  ambient wx-churn segfault system** (measured: 4-6 "Fatal Python error: Segmentation fault"
-  worker deaths per run at both `-n auto` and `-n 2`, across pre-existing tests only —
-  bundle_smoke, dialog_behavior, ride_setup, rider_editor, ride_library, menu_coverage…). A
-  crashed worker cascades FAILED verdicts onto its in-flight tests (and the session's Fault-A
-  sweep blames the last test for windows the crashed tests leaked). This is the EPIC5-handoff
-  "carried, do not re-litigate without the user" class, now much more frequent than E5's run
-  suggested; the E6 work neither causes it (crash sites are all pre-existing tests) nor can
-  fix it. `RIVERCROSSING_FUNCTIONAL_JOBS` (default `auto`) lets local runs dial xdist down;
-  two E6-specific quarantine skips (resume_dlg hang, mini_acceptance segfault — §3) are in.
-  Verdict: **E6 functional work is verified; a clean suite-wide green needs the ambient
-  segfaults resolved (or quarantined) — a user decision.**
+- Functional (Tart VM, 2026-08-29): **every EPIC-6 test passes** (results window, export walk,
+  finish gate). **The segfault system is fixed and root-caused** — see §6 below; three
+  consecutive full-suite runs have **zero** "Fatal Python error" dumps. The remaining
+  suite-wide residual is the **pre-existing upstream SIP/wxWidgets wrapper-cache
+  address-reuse corruption** (Phoenix #2931, sip#113 — proven by failing identically on
+  pristine master; no released wxPython fix). Mitigations shipped: `gc.collect()` in
+  `find_control`'s settle loop, `sys.last_*` cleared after every synthetic dispatch, and a
+  deepened fresh-process rerun budget (2 → 4) — the wrapper's own designed remedy (fresh
+  process = fresh SIP map). Best run: 862 passed / 2 Fault-A leak-errors (leaked dialogs
+  from address-reuse construction failures tripping the session sweep). A deterministic
+  one-process green awaits the upstream fix or a product decision on quarantining the
+  affected pre-existing files.
 - Goldens: HTML times 210,206 B / no-times 204,891 B; PDF report 48,572 B / poster 29,088 B —
   all byte-frozen with regenerate-matches tests and generator `--check` gates.
+
+## 6 · Segfault investigation (2026-08-29, requested by the user)
+
+- **Root cause (deterministic repro):** `main_frame.wire_console` starts a 1 s `wx.Timer`
+  (`_tick_timer`) driving `presenter.tick()` and never stopped it. Destroying the frame left
+  the native timer registered; the next `wxSafeYield` (any `harness.pump`) dispatched
+  `wxTimerImpl::SendEvent` → `SafelyProcessEvent` against the freed owner — the exact C stack
+  in every suite crash dump. A 40-cycle build/destroy/pump repro (`tools/timer_repro.py`)
+  segfaulted before the fix and runs clean after.
+- **Fix:** `self.frame.Bind(wx.EVT_WINDOW_DESTROY, lambda _e: self._tick_timer.Stop())` in
+  `wire_console`; regression test
+  `test_app_bootstrap.py::test_tick_timer_stops_when_the_frame_is_destroyed`. Zero segfaults
+  in all runs since.
+- **Second layer (pre-existing, upstream):** with the segfaults gone, the residual failures
+  were `find_control`'s documented wrapper-cache address-reuse corruption — a recycled C++
+  address whose SIP wrapper cache still maps to a destroyed control's class (isinstance
+  fails while the name resolves). **Proven pre-existing:** `test_ride_setup.py` fails 6–15 of
+  17 tests per fresh process on pristine master (`2301bba`) too. The `sys.last_*` parked-
+  traceback retention was one contributor (fixed: cleared after every dispatch), plus
+  `gc.collect()` in the settle loop and the rerun-budget deepen; the remaining corruption is
+  upstream (Phoenix #2931 / sip#113) and out of this repo's reach.
