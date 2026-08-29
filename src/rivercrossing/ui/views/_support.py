@@ -122,18 +122,22 @@ def _dump_address_reuse(name: str, stale: object) -> None:
     record its reference chain so the retainer can be identified and
     removed. Removed once the retainer is fixed.
     """
-    import gc as _gc
-    import sys as _sys
+    import sys as _sys  # noqa: PLC0415 -- diagnostic only
+    import tempfile  # noqa: PLC0415 -- diagnostic only
 
-    with open("/tmp/addr_reuse_dump.txt", "a", encoding="utf-8") as handle:
-        handle.write(f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
-                     f"refcount={_sys.getrefcount(stale)}\n")
-        for referrer in _gc.get_referrers(stale):
+    with tempfile.NamedTemporaryFile(
+        mode="a", prefix="addr_reuse_dump_", delete=False, encoding="utf-8"
+    ) as handle:
+        handle.write(
+            f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
+            f"refcount={_sys.getrefcount(stale)}\n"
+        )
+        for referrer in gc.get_referrers(stale):
             kind = type(referrer).__name__
             if kind in ("list", "dict", "set", "tuple", "function", "module", "frame", "weakref"):
                 continue
             handle.write(f"    referrer: {kind} -> {repr(referrer)[:180]}\n")
-        for referrer in _gc.get_referrers(stale):
+        for referrer in gc.get_referrers(stale):
             kind = type(referrer).__name__
             if kind == "frame":
                 handle.write(f"    FRAME: {referrer.f_code.co_filename}:{referrer.f_lineno} "
