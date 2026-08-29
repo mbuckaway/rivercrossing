@@ -105,7 +105,7 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         # fresh loads of the same frame each missing a different
         # control) apart from a single genuinely missing name.
         if control is not None:
-            _dump_address_reuse(name, control)
+            _dump_address_reuse(name, control, expected_type)
         raise LookupError(  # noqa: TRY004
             f"{window.GetName()} has no control named {name!r} "
             f"(first-level children: {len(children)} -- {children!r})"
@@ -113,7 +113,7 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     return control
 
 
-def _dump_address_reuse(name: str, stale: object) -> None:
+def _dump_address_reuse(name: str, stale: object, expected_type: type) -> None:
     """Diagnostic: dump who retains a stale address-reuse wrapper.
 
     Temporary instrumentation for the 2026-08-29 investigation: when
@@ -147,6 +147,20 @@ def _dump_address_reuse(name: str, stale: object) -> None:
             handle.write(f"    FRAME: {referrer.f_code.co_filename}:{referrer.f_lineno} "
                          f"in {referrer.f_code.co_name}\n")
     handle.flush()
+    try:
+        import wx.siplib as _sip  # noqa: PLC0415 -- diagnostic only
+
+        cpp = _sip.unwrapinstance(stale)
+        fresh = _sip.wrapinstance(cpp, _sip.wrappertype(expected_type))
+        with (dump_dir / "addr_reuse_dump.txt").open("a", encoding="utf-8") as handle:
+            handle.write(
+                f"    REWRAP attempt: {type(fresh).__name__} "
+                f"isinstance={isinstance(fresh, expected_type)} "
+                f"cpp_class={getattr(fresh, 'GetClassName', lambda: '?')()}\n"
+            )
+    except Exception as exc:  # noqa: BLE001 -- diagnostic must never crash the worker
+        with (dump_dir / "addr_reuse_dump.txt").open("a", encoding="utf-8") as handle:
+            handle.write(f"    REWRAP failed: {type(exc).__name__}: {exc}\n")
 
 
 @cache
