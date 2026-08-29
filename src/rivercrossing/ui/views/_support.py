@@ -15,6 +15,7 @@ shared home; every view still exposes its own thin ``_find`` method
 own docstring for exactly what it does and does not claim to fix.
 """
 
+import gc
 from functools import cache
 from typing import Any
 
@@ -83,6 +84,16 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     attempts = 0
     while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
         wx.SafeYield()
+        # The documented remedy for the address-reuse poison is
+        # reference hygiene: a lingering Python wrapper (a test-local,
+        # a swallowed-exception traceback) keeps SIP's pointer->wrapper
+        # entry alive for the recycled address. SafeYield flushes
+        # deferred deletions but never deallocs that wrapper, so the
+        # stale entry survives the retry; an explicit gc.collect() here
+        # evicts any droppable wrapper between attempts (measured: the
+        # residual suite failures after the tick-timer fix are this
+        # class, and the collect clears them).
+        gc.collect()
         control = wx.Window.FindWindowByName(name, window)
         attempts += 1
     if not isinstance(control, expected_type):
