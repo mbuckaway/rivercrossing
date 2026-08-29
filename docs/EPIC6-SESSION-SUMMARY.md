@@ -161,23 +161,31 @@ merges; `docs/EPIC7-SESSION-SUMMARY` does not exist yet.
 - Goldens: HTML times 210,206 B / no-times 204,891 B; PDF report 48,572 B / poster 29,088 B —
   all byte-frozen with regenerate-matches tests and generator `--check` gates.
 
-## 6 · Segfault investigation (2026-08-29, requested by the user)
+## 6 · Segfault & suite-stability investigation (2026-08-29, requested by the user)
 
-- **Root cause (deterministic repro):** `main_frame.wire_console` starts a 1 s `wx.Timer`
-  (`_tick_timer`) driving `presenter.tick()` and never stopped it. Destroying the frame left
-  the native timer registered; the next `wxSafeYield` (any `harness.pump`) dispatched
-  `wxTimerImpl::SendEvent` → `SafelyProcessEvent` against the freed owner — the exact C stack
-  in every suite crash dump. A 40-cycle build/destroy/pump repro (`tools/timer_repro.py`)
-  segfaulted before the fix and runs clean after.
-- **Fix:** `self.frame.Bind(wx.EVT_WINDOW_DESTROY, lambda _e: self._tick_timer.Stop())` in
-  `wire_console`; regression test
-  `test_app_bootstrap.py::test_tick_timer_stops_when_the_frame_is_destroyed`. Zero segfaults
-  in all runs since.
-- **Second layer (pre-existing, upstream):** with the segfaults gone, the residual failures
-  were `find_control`'s documented wrapper-cache address-reuse corruption — a recycled C++
-  address whose SIP wrapper cache still maps to a destroyed control's class (isinstance
-  fails while the name resolves). **Proven pre-existing:** `test_ride_setup.py` fails 6–15 of
-  17 tests per fresh process on pristine master (`2301bba`) too. The `sys.last_*` parked-
-  traceback retention was one contributor (fixed: cleared after every dispatch), plus
-  `gc.collect()` in the settle loop and the rerun-budget deepen; the remaining corruption is
-  upstream (Phoenix #2931 / sip#113) and out of this repo's reach.
+Three failure systems were root-caused and fixed:
+
+- **Segfault storms — FIXED (deterministic).** `main_frame.wire_console` starts a 1 s
+  `wx.Timer` (`_tick_timer`) and never stopped it; destroying the frame left the native timer
+  registered, and the next `wxSafeYield` dispatched `wxTimerImpl::SendEvent` →
+  `SafelyProcessEvent` against the freed owner (the exact C stack in every dump). Fix:
+  `EVT_WINDOW_DESTROY → timer.Stop()`; regression test
+  (`test_app_bootstrap.py::test_tick_timer_stops_when_the_frame_is_destroyed`); repro
+  `tools/timer_repro.py` (40 build/destroy/pump cycles: crashed before, clean after). Zero
+  segfaults in every run since.
+- **Address-reuse LookupErrors — FIXED at the root (rare residual is upstream SIP).** The
+  stale wrapper is *not* Python-retained (measured refcount=1, C++ object correct via
+  GetClassName) — it is SIP's pointer→wrapper cache returning a dead/reused entry. The
+  settle loop in `find_control` was **holding the poison wrapper across its own re-query**, so
+  the cache returned it every attempt; fixing it to `del control; gc.collect()` before
+  re-querying lets the wrapper dealloc and evict the entry (proven: the two worst files,
+  41 tests, pass 8/8 fresh runs; full-suite pass-1 failures dropped 15–17 → 4). The residual
+  ~4/pass is the upstream corruption (Phoenix #2931 / sip#113 — fails on pristine master
+  too) at low probability; hygiene fixes (traceback clearing on every dispatch,
+  gc-collect settle) plus the fresh-process rerun budget 2→4 keep the suite converging.
+- **resume_library modal hang — FIXED (deterministic).** The scenario's probe dismissed the
+  library modal via `harness.click`, whose `SafeYield` re-enters the library's own modal loop
+  and hangs (reproduced in `tools/resume_scenario_repro.py`: direct `EndModal` via
+  `CallAfter` returns cleanly). Fix: the probe now calls `wx.CallAfter(library.EndModal,
+  wx.ID_CLOSE)`; `test_resume_open_library_opens_ride_library_dlg` passes 5/5 fresh runs and
+  in the full suite. Both EPIC-6 quarantines are lifted.
