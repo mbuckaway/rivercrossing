@@ -46,6 +46,7 @@ from rivercrossing.ui.presenters.detail import (
     RiderMove,
 )
 from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.views._support import find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -75,9 +76,33 @@ class ReassignRequest:
     reason: str
 
 
+# The address-reuse poison (views/_support.find_control's docstring)
+# wraps an XRC control in the wrong Python type (a generic
+# ``wx.Control`` whose ``SetValue`` does not exist); the settle-retry
+# only catches it with the right expected_type, so every lookup here
+# names its wx class -- the same convention RideSetup and every other
+# view use. A raw ``wx.Window.FindWindowByName`` skips the check.
+_CONTROL_EXPECTED_TYPES: dict[str, type] = {
+    ids.PLATE_INPUT: wx.TextCtrl,
+    ids.NEW_PLATE_INPUT: wx.TextCtrl,
+    ids.REASON_INPUT: wx.TextCtrl,
+    ids.TIME_PICKER: wx.adv.TimePickerCtrl,
+    ids.VOID_BTN: wx.Button,
+    ids.CARD_LBL: wx.StaticText,
+    ids.ENTRY_LBL: wx.StaticText,
+    ids.CROSSING_LBL: wx.StaticText,
+}
+
+
 def _find(dialog: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Return the control named *name* inside *dialog*, or None."""
-    return wx.Window.FindWindowByName(name, dialog)
+    """Return the control named *name* inside *dialog*.
+
+    Forwards to :func:`views._support.find_control` so the
+    address-reuse settle-retry runs against the control's expected wx
+    type; a missing control raises ``LookupError`` naming the window
+    and its first-level children, never a silent ``None``.
+    """
+    return find_control(dialog, name, _CONTROL_EXPECTED_TYPES.get(name, wx.Window))
 
 
 def _parse_time_text(text: str) -> tuple[int, int, int]:

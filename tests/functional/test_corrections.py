@@ -278,7 +278,7 @@ def test_edit_crossing_dialog_add_vs_edit_prefill(  # noqa: PLR0913 -- (xrc_reso
     """
     captured: dict[str, object] = {}
 
-    def fake_run(dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+    def fake_run(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001 -- wx ships no stubs
         captured["title"] = dialog.GetTitle()
         captured["void_shown"] = harness.find_control(dialog, ids.VOID_BTN).IsShown()
         captured["plate"] = harness.find_control(dialog, ids.PLATE_INPUT).GetValue()

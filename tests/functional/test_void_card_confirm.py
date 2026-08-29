@@ -144,7 +144,7 @@ def test_void_card_confirm_runner_writes_the_card_label(
     """run_void_card writes card_lbl from the helper, never blank."""
     captured: dict[str, object] = {}
 
-    def fake_run(dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+    def fake_run(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001 -- wx ships no stubs
         captured["card_lbl"] = harness.find_control(dialog, ids.CARD_LBL).GetLabelText()
         return wx.ID_CANCEL
 

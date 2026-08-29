@@ -140,7 +140,17 @@ def test_open_target_applies_the_recorded_default_button(
     assert captured["name"] == control_name
 
 
-@pytest.mark.parametrize("decision", dialogs.FORM_FIRST_FIELDS, ids=lambda d: d[0])
+# E7 D3: mi_reassign_plate now requires a selected entry (the dialog
+# carries no plate selector, so the route targets "the current entry");
+# its no-selection path posts "open an entry first" instead of opening
+# the dialog, so this route-path focus pin covers the dialogs that
+# still open directly. The reassign dialog's recorded first field is
+# still applied by run_reassign when it opens from a selection.
+@pytest.mark.parametrize(
+    "decision",
+    [d for d in dialogs.FORM_FIRST_FIELDS if d[0] != ids.REASSIGN_DLG],
+    ids=lambda d: d[0],
+)
 def test_open_target_applies_the_recorded_initial_focus(
     firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
     monkeypatch: pytest.MonkeyPatch,

@@ -101,8 +101,7 @@ def _visible_rows(view: AuditDialog) -> list[tuple[str, ...]]:
     """Return audit_list's rows as five-column tuples, top first."""
     model = view.audit_list.GetModel()
     return [
-        tuple(view.audit_list.GetTextValue(row, col) for col in range(5))
-        for row in range(model.GetCount())
+        tuple(model.GetValueByRow(row, col) for col in range(5)) for row in range(model.GetCount())
     ]
 
 
