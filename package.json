@@ -1,0 +1,6 @@
+{
+  "name": "rivercrossing-build-tools",
+  "private": true,
+  "description": "Build-time asset tooling for RiverCrossing (Tailwind v4 CLI for the vendored CSS export artifact). No runtime dependency.",
+  "devDependencies": { "@tailwindcss/cli": "4.3.3" }
+}

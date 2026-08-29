@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# Thin wrapper around `nox -s lint typecheck importlint ids_drift`
+# Thin wrapper around `nox -s lint typecheck importlint ids_drift css_drift`
 # (CI stage 1 - static checks: ruff, mypy strict, import-linter, ids
-# drift). nox is the single source of truth for what CI runs; this
-# script only locates nox and forwards arguments to it.
+# drift, vendored CSS drift). nox is the single source of truth for what
+# CI runs; this script only locates nox and forwards arguments to it.
 #
 # See noxfile.py and design/docs-md/spec.md §14.
 #
@@ -83,7 +83,7 @@ main() {
   fi
 
   local exit_code
-  "${nox_bin}" -s lint typecheck importlint ids_drift -- "$@"
+  "${nox_bin}" -s lint typecheck importlint ids_drift css_drift -- "$@"
   exit_code=$?
   return "${exit_code}"
 }

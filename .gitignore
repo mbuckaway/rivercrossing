@@ -233,3 +233,6 @@ coverage.json
 
 # Functional-test screenshot artifacts (CI uploads these on failure)
 tests/functional/_screenshots/
+
+# build-time npm installs (Tailwind CLI, vendored CSS step)
+node_modules/

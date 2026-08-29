@@ -63,6 +63,10 @@ jobs:
         run: lint-imports
       - name: ids.py drift vs .xrc (R-05)
         run: python tools/gen_ids.py --check
+      - name: Install pinned Tailwind CLI (E6.2.1)
+        run: npm ci
+      - name: css artifacts drift vs templates (E6.2.1)
+        run: python tools/gen_css.py --check
 
   # ---------------------------------------------------------------- stage 2
   unit:

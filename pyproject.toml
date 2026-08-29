@@ -82,6 +82,14 @@ rivercrossing = [
     "ui/assets/cards/*.png",
     "ui/assets/sounds/*.wav",
     "vectors/*.csv",
+    # E6.2.1: the frozen results templates plus the two vendored CSS
+    # artifacts. Explicit per-file entries (no glob, no fonts/) -- the
+    # base64 fonts_css ships instead of the woff2 sources.
+    "htmlexport/templates/base.html.j2",
+    "htmlexport/templates/macros.html.j2",
+    "htmlexport/templates/theme.css",
+    "htmlexport/templates/compiled_css",
+    "htmlexport/templates/fonts_css",
 ]
 
 # ----------------------------------------------------------------- ruff

@@ -1,0 +1,30 @@
+/* rivercrossing.htmlexport — frozen Tailwind 4 source (Spec §8).
+   Dev samples inline this via <style type="text/tailwindcss"> (browser build);
+   the package build runs the Tailwind CLI against base.html.j2 + this file and
+   vendors the compiled output as compiled_css. Mono palette: hearts/diamonds
+   take the steel accent (.chip.r) — no red. Edit only with the goldens. */
+@theme {
+  --color-ink: #1d1f20;
+  --color-paper: #f2f2f3;
+  --color-panel: #e9e9ea;
+  --color-steel-100: #eef6ff;
+  --color-steel-300: #b5d9fd;
+  --color-steel-500: #749dc4;
+  --color-steel-600: #597ea3;
+  --color-steel-700: #416180;
+  --color-steel-800: #2c455d;
+  --color-steel-900: #1d2d3d;
+  --font-head: "Barlow Condensed", sans-serif;
+  --font-body: "Barlow", sans-serif;
+}
+.bp { position: relative; border: 1px solid rgba(29,31,32,.16); }
+.bp > i.c { position: absolute; width: 11px; height: 11px; color: rgba(29,31,32,.55); }
+.bp > i.c::before, .bp > i.c::after { content: ""; position: absolute; background: currentColor; }
+.bp > i.c::before { left: 5px; top: 0; width: 1px; height: 100%; }
+.bp > i.c::after { top: 5px; left: 0; width: 100%; height: 1px; }
+.bp > i.tl { top: -6px; left: -6px; } .bp > i.tr { top: -6px; right: -6px; }
+.bp > i.bl { bottom: -6px; left: -6px; } .bp > i.br { bottom: -6px; right: -6px; }
+.chip { display: inline-flex; align-items: center; gap: 2px; border: 1px solid rgba(29,31,32,.16); background: #e9e9ea; padding: 0 6px; font-family: var(--font-head); font-weight: 600; font-size: 13px; line-height: 20px; }
+.chip.r { color: #416180; } /* hearts & diamonds take the steel accent — mono palette, no red */
+.chip.j { background: transparent; border-color: #597ea3; color: #416180; }
+@media print { .no-print { display: none !important; } body { background: #fff !important; } }

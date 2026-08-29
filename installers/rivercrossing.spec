@@ -32,7 +32,10 @@ asset fail *this build* rather than the app's first paint.
 self-test CSVs (E2.4.1, R-44): they ship at ``rivercrossing/...``
 directly, a sibling of ``ui/``, matching where
 ``rivercrossing.hands`` resolves them relative to its own
-``__file__``.
+``__file__``. ``htmlexport_data_entries`` adds the frozen results
+templates and vendored CSS artifacts (E6.2.1): ``PackageLoader``
+reads ``rivercrossing.htmlexport/templates``, so those five files
+must land on exactly that package path.
 
 **The UI is reached by name, not by import.** Windows come from XRC
 at runtime, so PyInstaller's import graph cannot see most of the
@@ -52,6 +55,7 @@ from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
 import rivercrossing  # noqa: E402 -- check_asset_manifest puts src/ on the path
 from check_asset_manifest import (  # noqa: E402 -- needs the path above
     data_entries,
+    htmlexport_data_entries,
     vector_data_entries,
 )
 
@@ -121,7 +125,7 @@ INFO_PLIST = {
 analysis = Analysis(  # noqa: F821 -- PyInstaller injects Analysis
     [str(ENTRY_SCRIPT)],
     pathex=[str(ROOT / "src")],
-    datas=[*data_entries(UI_DIR), *vector_data_entries(PACKAGE_DIR)],
+    datas=[*data_entries(UI_DIR), *vector_data_entries(PACKAGE_DIR), *htmlexport_data_entries(PACKAGE_DIR)],
     hiddenimports=HIDDEN_IMPORTS,
 )
 
