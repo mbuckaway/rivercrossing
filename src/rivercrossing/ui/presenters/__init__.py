@@ -46,7 +46,15 @@ from rivercrossing.ui.presenters.data_source import (
     RideSummary,
     StandingsRow,
 )
-from rivercrossing.ui.presenters.detail import DetailPresenter, DetailView
+from rivercrossing.ui.presenters.detail import (
+    CardVoid,
+    CrossingEdit,
+    DetailPresenter,
+    DetailView,
+    DnfMark,
+    ManualDeal,
+    RiderMove,
+)
 from rivercrossing.ui.presenters.library import LibraryPresenter, LibraryView
 from rivercrossing.ui.presenters.results import ResultsPresenter, ResultsView
 from rivercrossing.ui.presenters.riders import (
@@ -69,25 +77,30 @@ __all__ = [
     "AuditPresenter",
     "AuditRow",
     "AuditView",
+    "CardVoid",
     "ConsolePresenter",
     "ConsoleView",
     "Counters",
+    "CrossingEdit",
     "CsvConflict",
     "CsvPreview",
     "Cue",
     "DataSource",
     "DetailPresenter",
     "DetailView",
+    "DnfMark",
     "EngineDataSource",
     "EntryDetail",
     "EntryLapRow",
     "FeedRow",
     "LibraryPresenter",
     "LibraryView",
+    "ManualDeal",
     "ResultsPresenter",
     "ResultsView",
     "RideSummary",
     "RiderFormValues",
+    "RiderMove",
     "RiderRow",
     "RidersPresenter",
     "RidersView",

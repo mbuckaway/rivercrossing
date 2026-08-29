@@ -134,6 +134,15 @@ them open and later EPICs will build on them:
   engine's ``start`` event lands in the audit log without the facade
   syncing the row (E5.4's engine-sync writes it), so the delete guard
   is correct against the stored value.
+- **audit_rows projection (E7.3.1)**: :meth:`Store.audit_rows` returns
+  the UI's own :class:`~rivercrossing.ui.presenters.data_source.
+  AuditRow` view-model rather than a second, store-side row type --
+  E7.3.1's "reuse the AuditRow projection" ruling, and the one place a
+  core module imports the wx-free ``rivercrossing.ui.presenters``
+  package (the same seam ``rivercrossing.demo`` already implements).
+  ``when`` derives from the stored ``at`` epoch (the audit viewer's
+  When column, spec §13's stored-UTC/displayed-local), never re-parsed
+  from the payload.
 - **E5.3.2/E5.4.1 UI boundary**: ``RideLibrary`` gets its R-18
   enablement and its Delete-button -> ``delete_ride_dlg`` wiring, and
   ``app.py`` threads a store-backed ``on_delete`` callback when a
@@ -174,6 +183,7 @@ from rivercrossing.store.migrations import (
     migrate,
 )
 from rivercrossing.store.schema import apply_pragmas
+from rivercrossing.ui.presenters.data_source import AuditRow
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -275,6 +285,18 @@ def _event_timestamp(payload: Mapping[str, object]) -> datetime | None:
         if isinstance(value, str):
             return datetime.fromisoformat(value)
     return None
+
+
+def _audit_when(epoch: int) -> str:
+    """Render an ``audit.at`` epoch as the viewer's local ``HH:MM:SS``.
+
+    ``append`` stores ``at`` as a UTC epoch; spec §13's "stored UTC,
+    displayed local" means the audit viewer's When column (E7.3.1)
+    renders it in local wall time -- the same rule
+    ``data_source._feed_time`` applies to the engine-derived
+    projection.
+    """
+    return datetime.fromtimestamp(epoch).strftime("%H:%M:%S")  # noqa: DTZ006 -- local display, _to_epoch's inverse
 
 
 class RideNotFoundError(StoreError):
@@ -945,6 +967,55 @@ class Store:
                 Event(action=stored["action"], payload=json.loads(stored["payload_json"]))
             )
         return engine
+
+    # ------------------------- E7.3.1 audit viewer read accessor
+
+    def audit_rows(self, ride_id: int) -> list[AuditRow]:
+        """Return one ride's audit trail rows, newest first (E7.3.1).
+
+        The audit viewer's read accessor: every ``audit`` row the
+        ride recorded, projected to the display
+        :class:`~rivercrossing.ui.presenters.data_source.AuditRow`
+        shape the viewer's list draws -- ``who="scorer"`` (the engine
+        never records another actor), ``entry`` = the payload's
+        ``entry_id`` (falling back to ``plate``, then ``""``),
+        ``reason`` = the payload's ``reason``, and ``when`` rendered
+        from the stored ``at`` epoch as local ``HH:MM:SS`` (spec §13:
+        stored UTC, displayed local). Newest first by insert id -- the
+        same order the viewer draws -- never by ``at``, which is not
+        monotonic in append order (module docstring's E5.1.2
+        resolution).
+
+        Args:
+            ride_id: The ride whose audit trail to read.
+
+        Returns:
+            One :class:`AuditRow` per recorded event, newest first;
+            ``[]`` for a ride with no events.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+        """
+        row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
+        if row is None:
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        stored = self._conn.execute(
+            "SELECT at, action, payload_json FROM audit WHERE ride_id = ? ORDER BY id DESC",
+            (ride_id,),
+        ).fetchall()
+        rows: list[AuditRow] = []
+        for audit_row in stored:
+            payload = json.loads(audit_row["payload_json"])
+            rows.append(
+                AuditRow(
+                    when=_audit_when(audit_row["at"]),
+                    who="scorer",
+                    action=audit_row["action"],
+                    entry=str(payload.get("entry_id") or payload.get("plate") or ""),
+                    reason=str(payload.get("reason") or ""),
+                )
+            )
+        return rows
 
     # ------------------------------------- E5.4.1 duplicate_ride (R-15)
 

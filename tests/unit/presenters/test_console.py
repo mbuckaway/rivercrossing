@@ -30,6 +30,8 @@ from hypothesis import strategies as st
 
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import (
+    Crossing,
+    Event,
     RideConfig,
     RideEngine,
     RideStatus,
@@ -41,6 +43,7 @@ from rivercrossing.standings import (
     hand_name,
     tiebreak_order_from_spellings,
 )
+from rivercrossing.ui import commands, ids
 from rivercrossing.ui.presenters import Cue, EngineDataSource
 from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
@@ -52,6 +55,7 @@ from rivercrossing.ui.presenters.data_source import (
     FeedRow,
     RiderRow,
     StandingsRow,
+    corrected_crossing_keys,
     format_duration,
 )
 
@@ -1020,3 +1024,383 @@ def test_finish_gate_consults_the_evaluator_self_test(
     assert console_module.FINISH_GATE() is True
     monkeypatch.setattr(console_module.hands, "self_test", _Red)
     assert console_module.FINISH_GATE() is False
+
+
+# --- E7.2.2 REOPENED corrections-only
+#
+# spec §3 (R-36): REOPENED is a distinct, corrections-only state --
+# live plate entry stays off, the six correction rows and Finish Ride
+# stay enabled, corrected crossings render highlighted in the feed,
+# and the single primary action is "Finish again" (re-lock to FINISHED
+# via the existing finish gate, standings re-ranked by the existing
+# standings.rank -- never reimplemented here).
+
+
+def test_feed_rows_given_reopened_ride_no_corrections_marks_nothing() -> None:
+    """Untouched reopened crossings render no edited rows."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.plate, row.edited) for row in feed] == [("12", False)]
+
+
+def test_engine_data_source_feed_rows_given_edited_crossing_marks_only_that_row() -> None:
+    """An edited crossing's row renders edited, not its siblings."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    engine.edit_crossing("12", 1, _dt(10, 31), "mis-keyed time")
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.lap, row.edited) for row in feed] == [(2, False), (1, True)]
+
+
+def test_engine_data_source_feed_rows_given_added_crossing_marks_the_new_row() -> None:
+    """Add Crossing at Time's new lap renders edited in the feed.
+
+    The add runs while RUNNING: ``add_crossing_at`` is a corrections
+    path that is legal while RUNNING or REOPENED (spec §15), so the
+    marker is exercised on the state where the add is legal.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.add_crossing_at("34", _dt(10, 35), "missed at the line")
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.plate, row.edited) for row in feed] == [("34", True), ("12", False)]
+
+
+def test_engine_data_source_feed_rows_given_reassigned_crossing_marks_the_moved_row() -> None:
+    """Reassign's moved crossing renders edited under its new plate."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    engine.reassign_crossing(1, "34", "wrong plate on the line")
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.plate, row.edited) for row in feed] == [("34", True)]
+
+
+def test_engine_data_source_feed_rows_given_reassign_onto_entry_with_laps_marks_the_new_lap() -> (
+    None
+):
+    """Reassign onto an entry that already has laps marks the moved lap.
+
+    The moved crossing lands as the destination's next lap (highest
+    seq); the destination's pre-existing laps stay unmarked.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    engine.reassign_crossing(1, "34", "wrong plate on the line")
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    by_lap = {(row.plate, row.lap): row.edited for row in feed}
+    assert by_lap[("34", 3)] is True  # the moved crossing (highest seq)
+    assert by_lap[("34", 2)] is False
+    assert by_lap[("34", 1)] is False
+
+
+def test_engine_data_source_feed_rows_given_voided_crossing_hides_it_and_marks_nothing() -> None:
+    """A voided lap leaves the feed; the survivor stays clear."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    engine.void_crossing("12", 1, "double-entry")
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.lap, row.edited) for row in feed] == [(1, False)]
+
+
+def test_engine_data_source_feed_rows_given_correction_while_running_marks_the_row() -> None:
+    """Corrections are legal in RUNNING too; the marker follows."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.edit_crossing("12", 1, _dt(10, 31), "mis-keyed time")
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.lap, row.edited) for row in feed] == [(1, True)]
+
+
+def _reopened_ride_state(engine: RideEngine) -> commands.RideState:
+    """Build the §15 RideState the menu binder reads for REOPENED.
+
+    The E7.2.1 binder's live source (app._menu_ride_state) computes
+    every field from the console's engine; this mirrors it for the
+    "corrections enabled" assertions below.
+    """
+    return commands.RideState(
+        status=engine.state,
+        ride_open=True,
+        crossings=len(engine.crossings),
+        audit_rows=len(engine.events),
+        entry_has_cards=any(result.cards for result in engine.snapshot()),
+    )
+
+
+_REOPENED_ENABLED_ROWS = (
+    ids.MI_ADD_CROSSING_AT,
+    ids.MI_EDIT_CROSSING,
+    ids.MI_REASSIGN_PLATE,
+    ids.MI_DEAL_MANUAL,
+    ids.MI_VOID_CARD,
+    ids.MI_MARK_DNF,
+    ids.MI_FINISH_RIDE,
+)
+_REOPENED_DISABLED_ROWS = (ids.MI_START_RIDE, ids.MI_STOP_RIDE, ids.MI_REOPEN_RIDE)
+
+
+def test_on_reopen_given_finished_ride_disables_live_entry() -> None:
+    """REOPENED is corrections-only: ``record_crossing`` refuses entry.
+
+    spec §3 (R-36): the clock stays closed and live plate entry stays
+    off -- the engine gate refuses a crossing and the view is told the
+    state is REOPENED (which turns off the plate entry row).
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_reopen()
+
+    assert engine.state is RideStatus.REOPENED
+    assert view.last_state is RideStatus.REOPENED
+    refused = engine.record_crossing("12")
+    assert refused.accepted is False
+    assert refused.reason == "ride is not running"
+
+
+@pytest.mark.parametrize("item_id", _REOPENED_ENABLED_ROWS, ids=lambda value: value)
+def test_commands_given_reopened_state_keeps_correction_row_enabled(item_id: str) -> None:
+    """The six correction rows + Finish Ride stay enabled here."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+
+    assert commands.is_route_enabled(commands.route_for_id(item_id), _reopened_ride_state(engine))
+
+
+@pytest.mark.parametrize("item_id", _REOPENED_DISABLED_ROWS, ids=lambda value: value)
+def test_commands_given_reopened_state_disables_start_stop_and_reopen(item_id: str) -> None:
+    """Start/Stop/Reopen stay off: REOPENED is neither live nor done."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+
+    enabled = commands.is_route_enabled(
+        commands.route_for_id(item_id), _reopened_ride_state(engine)
+    )
+    assert enabled is False
+
+
+def test_on_finish_given_reopened_ride_finishes_again_and_notices() -> None:
+    """E7.2.2 item 4: Finish from REOPENED re-locks to FINISHED.
+
+    The single primary "Finish again" action reuses the existing
+    finish route: the gate is consulted and ``engine.finish()`` closes
+    the shoe again (REOPENED -> FINISHED, spec §3).
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_finish()
+
+    assert engine.state is RideStatus.FINISHED
+    assert view.last_state is RideStatus.FINISHED
+    assert view.last_notice == "Ride finished again"
+
+
+def test_on_finish_given_reopened_ride_and_blocked_gate_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The finish gate blocks "Finish again" like a first finish."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    monkeypatch.setattr(console_module, "FINISH_GATE", lambda: False)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_finish()
+
+    assert engine.state is RideStatus.REOPENED
+    assert view.last_state is None
+    assert view.last_notice == "Finish blocked: evaluator self-test did not pass"
+
+
+def test_engine_data_source_standings_rerank_after_reopened_correction_and_finish_again() -> None:
+    """Finish again re-ranks: the corrected snapshot ranks under rank().
+
+    Two byte-identical hands split by laps (R-14): plate 12 leads with
+    2 laps until a reopened void_card drops one of its cards; the
+    re-lock to FINISHED re-ranks the same snapshot and plate 34 leads.
+    The ranking itself is standings.rank's -- never reimplemented here.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=60)
+    _record(engine, clock, "12", lap_time_s=100)
+    tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
+    engine._hand["12"] = list(tied)
+    engine._hand["34"] = list(tied)
+    engine.finish()
+    before = [row.plate for row in EngineDataSource(engine, engine._roster).standings()]
+    engine.reopen()
+    engine.void_card("12", Card.parse("5D"), "wrong card off the line")
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    after = [row.plate for row in source.standings()]
+
+    assert before[0] == "12"
+    assert after != before
+    assert after[0] == "34"
+
+
+def test_standings_given_reopened_zero_card_entry_renders_blank_hand_again() -> None:
+    """E7.2.2 item 5: the 0-card guard holds across finish-again.
+
+    An entry that never credited a card has no rank to name; after a
+    reopen -> finish-again cycle the standings still render a blank
+    Hand cell instead of crashing on hand_name's ValueError.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    by_plate = {row.plate: row for row in source.standings()}
+
+    assert by_plate["12"].hand != ""
+    assert by_plate["34"].hand == ""
+
+
+# ------------------------------- corrected_crossing_keys (pure helper)
+
+
+def _event_from_parts(parts: tuple[str, str, object]) -> Event:
+    """Build a correction event from an (action, first, second) triple.
+
+    Not a ``st.builds(Event, ...)`` target: ``Event.payload`` is
+    annotated with ``Mapping``, which ride.py imports only under
+    ``TYPE_CHECKING``, so annotation introspection (which ``st.builds``
+    performs) would raise NameError at strategy-construction time. The
+    tuple strategy below avoids introspection entirely.
+    """
+    action, first, second = parts
+    if action == "edit_crossing":
+        payload: dict[str, object] = {"entry_id": first, "seq": second}
+    elif action == "add_crossing_at":
+        payload = {"entry_id": first, "crossed_at": second}
+    elif action == "reassign":
+        payload = {"new_entry_id": first, "seq": second}
+    else:  # void_crossing -- the only remaining correction action
+        payload = {"entry_id": first, "seq": second}
+    return Event(action=action, payload=payload)
+
+
+def _correction_event_strategy() -> st.SearchStrategy[Event]:
+    """Build a random correction-like event for the helper property.
+
+    Each generated payload carries exactly the fields
+    ``corrected_crossing_keys`` reads for its action; unrelated keys
+    are absent, so the strategy mirrors the engine's own event shapes.
+    """
+    plate = st.text(min_size=1, max_size=3)
+    seq = st.integers(min_value=1, max_value=99)
+    instant = st.datetimes().map(lambda value: value.isoformat())
+    return st.one_of(
+        st.tuples(st.just("edit_crossing"), plate, seq),
+        st.tuples(st.just("add_crossing_at"), plate, instant),
+        st.tuples(st.just("reassign"), plate, seq),
+        st.tuples(st.just("void_crossing"), plate, seq),
+    ).map(_event_from_parts)
+
+
+@given(events=st.lists(_correction_event_strategy(), max_size=8))
+def test_corrected_crossing_keys_given_no_live_crossings_returns_only_edit_keys(
+    events: list[Event],
+) -> None:
+    """With no live crossings, only edit keys survive.
+
+    The add/reassign resolution needs a live crossing to name; a
+    voided crossing's key is recorded by the engine but can never match
+    a live feed row, so with an empty live list the function reports
+    exactly the edit-event keys and nothing else.
+    """
+    keys = corrected_crossing_keys(events, ())
+
+    assert keys == {
+        (str(event.payload["entry_id"]), int(event.payload["seq"]))
+        for event in events
+        if event.action == "edit_crossing"
+    }
+
+
+@given(
+    events=st.lists(_correction_event_strategy(), max_size=8),
+    crossings=st.lists(
+        st.builds(
+            Crossing,
+            entry_id=st.text(min_size=1, max_size=3),
+            seq=st.integers(min_value=1, max_value=99),
+            crossed_at=st.datetimes(),
+        ),
+        max_size=8,
+    ),
+)
+def test_corrected_crossing_keys_every_key_is_an_edit_key_or_a_live_crossing_key(
+    events: list[Event], crossings: list[Crossing]
+) -> None:
+    """T-7: every key is an edit's own or a live crossing's.
+
+    The marker must never invent a key: an edit names its crossing
+    directly, and an add/reassign resolution can only point at a
+    crossing present in the live list it was asked about.
+    """
+    keys = corrected_crossing_keys(events, crossings)
+
+    edit_keys = {
+        (str(event.payload["entry_id"]), int(event.payload["seq"]))
+        for event in events
+        if event.action == "edit_crossing"
+    }
+    live_keys = {(crossing.entry_id, crossing.seq) for crossing in crossings}
+    assert keys <= (edit_keys | live_keys)
+    assert all(isinstance(entry, str) and isinstance(seq, int) for entry, seq in keys)

@@ -195,19 +195,21 @@ class ResultsWindow:
 
     Implements the :class:`~rivercrossing.ui.presenters.results.
     ResultsView` contract in full (E6.4.1): ``show_standings``,
-    ``set_stale`` (the code-side stale_export banner, hidden until
-    E7.3.2 triggers it), ``show_publish_options``/``publish_options``
-    (the five publish checkboxes), and the tie-break seed/restore
-    channel (``set_tiebreak_labels``) plus a status notice. The one
-    live presenter is built here, the same ``RideSetup`` precedent.
+    ``set_stale`` (the code-side stale_export banner E7.3.2 triggers
+    after post-export corrections), ``show_publish_options``/
+    ``publish_options`` (the five publish checkboxes), and the
+    tie-break seed/restore channel (``set_tiebreak_labels``) plus a
+    status notice. The one live presenter is built here, the same
+    ``RideSetup`` precedent.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (frame, data_source) + the tie-break order and export-watermark seams
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
         tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER,
+        export_watermark: int | None = None,
     ) -> None:
         """Decorate an already-loaded ``results_frame`` window.
 
@@ -221,6 +223,10 @@ class ResultsWindow:
             tiebreak_order: The ride's stored tie-break spellings, in
                 priority order; the presenter seeds ``tiebreak_list``
                 from them (``RideConfig.tiebreak_order``).
+            export_watermark: The engine event count at the last
+                export (E7.3.2); the presenter evaluates the stale
+                banner against it on the first render. ``None`` when
+                nothing was exported.
         """
         self.frame = frame
         self.data_source = data_source
@@ -239,7 +245,21 @@ class ResultsWindow:
 
         self.stale_infobar = self._build_infobar()
 
-        self.presenter = ResultsPresenter(self, data_source, tiebreak_order=tiebreak_order)
+        self.presenter = ResultsPresenter(
+            self,
+            data_source,
+            tiebreak_order=tiebreak_order,
+            export_watermark=export_watermark,
+        )
+        # E7.3.2: app.py's export completion (and E6.4.2's own
+        # ``_export_options``) finds the open window's presenter through
+        # ``wx.FindWindowByName(RESULTS_FRAME).presenter`` -- the E6.4.2
+        # contract this view was always meant to fulfil. wxPython
+        # wrapper objects hold instance attributes (the ``_spy_repaint``
+        # precedent in _lists_common.py); the wrapper stays alive while
+        # the window's event bindings hold this view, and a closed
+        # window's lookup returns None, so the seam self-clears.
+        self.frame.presenter = self.presenter
 
         self._bind_events()
         self._bind_export_buttons()

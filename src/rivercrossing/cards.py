@@ -111,7 +111,8 @@ class ShoeClosedError(Exception):
 
     Ride Finish closes the shoe (task-briefs.md E2.2.1's own negative
     case, "deal after close raises"); nothing may deal, reshuffle or
-    undo against it after that point.
+    undo against it while it stays closed. Ride Reopen calls
+    :meth:`Shoe.reopen` to open it again for corrections (spec §15).
     """
 
 
@@ -178,6 +179,17 @@ class Shoe:
         """The current 1-based shuffle cycle ("Shoe cycle N")."""
         return self._cycle
 
+    @property
+    def is_closed(self) -> bool:
+        """Whether :meth:`close` has run and :meth:`reopen` has not.
+
+        Read-only: the ride's ``finish``/``reopen`` transitions drive
+        this flag (E4.3 closes on Finish, spec §15 re-opens on Reopen);
+        the replay-equivalence contract compares it so a replayed
+        ``reopen`` reproduces the open/closed state exactly.
+        """
+        return self._closed
+
     def _require_open(self) -> None:
         """Raise ShoeClosedError once :meth:`close` has run."""
         if self._closed:
@@ -240,9 +252,23 @@ class Shoe:
         """Close the shoe; ride Finish calls this (task-briefs E2.2.1).
 
         Every later :meth:`deal`, :meth:`reshuffle` or
-        :meth:`restitute` call raises :class:`ShoeClosedError`.
+        :meth:`restitute` call raises :class:`ShoeClosedError` until
+        :meth:`reopen` opens it again. The deal position is untouched:
+        a reopened shoe continues the exact deal order.
         """
         self._closed = True
+
+    def reopen(self) -> None:
+        """Re-open the shoe; ride Reopen calls this (spec §15).
+
+        Clears :meth:`close`'s flag -- nothing else changes: the deal
+        position, cycle and remaining sequence are exactly as they were
+        when the shoe closed, so the next :meth:`deal` continues the
+        deterministic order (R-40). Ride Reopen uses this so the
+        corrections commands (``deal_manual``, ``add_crossing_at``)
+        can deal new cards in REOPENED.
+        """
+        self._closed = False
 
     @staticmethod
     def replay(  # noqa: PLR0913, PLR0917 -- frozen module-skeletons.md S4 API

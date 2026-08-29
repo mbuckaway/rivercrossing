@@ -39,10 +39,16 @@ class _StubConfig:
 class _StubEngine:
     """The engine surface the export handlers read."""
 
-    def __init__(self, snapshot: tuple[EntryResult, ...]) -> None:
-        """Store *snapshot* under a stub config."""
+    def __init__(
+        self,
+        snapshot: tuple[EntryResult, ...],
+        *,
+        events: tuple = (),
+    ) -> None:
+        """Store *snapshot* under a stub config and fixed event log."""
         self.config = _StubConfig()
         self._snapshot = snapshot
+        self.events = events
 
     def snapshot(self) -> tuple[EntryResult, ...]:
         """Return the stored results."""
@@ -212,10 +218,18 @@ def test_handle_export_command_picks_writes_and_records(
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
 
     def sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
-        ctx: object, target: str, path: Path, *, config: object, placed: object, opts: object
+        ctx: object,
+        target: str,
+        path: Path,
+        *,
+        config: object,
+        placed: object,
+        opts: object,
+        watermark: int | None = None,
     ) -> None:
         app_module._write_export(config, placed, opts, target, path)  # type: ignore[arg-type]
         ctx.last_export_path = path  # type: ignore[attr-defined]
+        ctx.export_watermark = watermark  # type: ignore[attr-defined]
 
     monkeypatch.setattr(app_module, "_run_export_offloop", sync_offloop)
 
@@ -223,8 +237,48 @@ def test_handle_export_command_picks_writes_and_records(
 
     assert out.exists()
     assert context.last_export_path == out
+    assert context.export_watermark == 0
     # the off-loop notice is async; the sync seam posts nothing
     assert context.frame.notices == []
+
+
+def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The watermark a fresh export records is the engine's event count.
+
+    E7.3.2: ``_handle_export_command`` captures ``len(engine.events)``
+    at snapshot time and the off-loop completion stores it on the route
+    context, so a later correction (a new event past that count) makes
+    the results window render the stale banner.
+    """
+    events = (object(), object(), object())  # three recorded events
+    context = _context(engine=_StubEngine(_snapshot(), events=events))
+    out = tmp_path / "results.html"
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
+    captured: list[object] = []
+
+    def sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
+        ctx: object,
+        _target: str,
+        _path: Path,
+        *,
+        config: object,
+        placed: object,
+        opts: object,
+        watermark: int | None = None,
+    ) -> None:
+        app_module._write_export(config, placed, opts, "export_html", out)  # type: ignore[arg-type]
+        ctx.last_export_path = out  # type: ignore[attr-defined]
+        ctx.export_watermark = watermark  # type: ignore[attr-defined]
+        captured.append(watermark)
+
+    monkeypatch.setattr(app_module, "_run_export_offloop", sync_offloop)
+
+    app_module._handle_export_command(context, "export_html")
+
+    assert captured == [3]
+    assert context.export_watermark == 3
 
 
 def test_handle_export_command_cancel_is_a_silent_noop(

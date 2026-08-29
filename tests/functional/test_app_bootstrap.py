@@ -27,10 +27,11 @@ hazard grows with how many windows one session builds and tears down
 read-only assertion below -- including the Unbind-based route-binding
 proof, which removes bindings but touches nothing else that the other
 read-only assertions care about. ``firing_frame`` is a second,
-independent instance for the three tests that post a real
-``EVT_MENU`` event (the two status-notice routes and the Exit confirm
-flow), kept separate so firing an event there can never race the
-binding-removal proof over which bindings are still present.
+independent instance for the two tests that post a real
+``EVT_MENU`` event (the one remaining status-notice route, Back Up
+Database…, and the Exit confirm flow), kept separate so firing an
+event there can never race the binding-removal proof over which
+bindings are still present.
 """
 
 from __future__ import annotations
@@ -310,22 +311,17 @@ def test_command_route_posts_a_not_yet_implemented_status_notice(
     assert status_text == f"{route.label} — not yet implemented"
 
 
-def test_unauthored_dialog_route_posts_a_no_window_status_notice(
-    firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
-) -> None:
-    """The last unauthored §15 gap (Void Card…) still says something.
+def test_void_card_route_targets_the_authored_dialog_not_the_sentinel() -> None:
+    """E7 mock-first: the last unauthored §15 gap is now authored.
 
-    E5.4.1 authored the other two 3d-pattern rows (Duplicate Ride…,
-    Reopen Ride) as real dialogs, so ``mi_void_card`` is the only
-    route left on the ``_UNAUTHORED_DIALOG`` sentinel -- firing it
-    must post a notice, never silently do nothing.
+    E5.4.1 authored Duplicate Ride… and Reopen Ride; E7 authors Void
+    Card… as ``void_card_confirm_dlg``, so ``mi_void_card`` targets a
+    real dialog instead of the retired ``_UNAUTHORED_DIALOG`` sentinel.
+    Its wiring gets its own functional tests in E7.2.1.
     """
     route = commands.route_for_id("mi_void_card")
-    _fire_menu_event(firing_frame, "mi_void_card")
 
-    status_text = firing_frame.GetStatusBar().GetStatusText()
-
-    assert status_text == f"{route.label} — no window authored yet"
+    assert route.target == ids.VOID_CARD_CONFIRM_DLG
 
 
 # --- Exit always confirms first (Phase 8, P8-D1) ------------------

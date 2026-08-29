@@ -56,16 +56,6 @@ class TargetKind(Enum):
     COMMAND = "command"
 
 
-# spec.md section 15 names a dialog for Void Card… that
-# xrc-windows.md's frozen windows do not implement (its own "Opens /
-# does" text says "(3d pattern)", never a name that matches an
-# authored window). E5.4.1 authored the other two 3d-pattern rows --
-# Duplicate Ride and Reopen Ride -- as duplicate_ride_dlg and
-# reopen_ride_dlg (mock-first, spec.md 15b), so this sentinel remains
-# for Void Card only, owned by E7. It cannot be mistaken for a real
-# ``ui/ids.py`` constant; see the E1.4.1 report for the gap.
-_UNAUTHORED_DIALOG = "UNAUTHORED-DIALOG: no frozen XRC window covers this §15 target yet"
-
 _RUNNING = frozenset({RideStatus.RUNNING})
 _RUNNING_REOPENED = frozenset({RideStatus.RUNNING, RideStatus.REOPENED})
 _FINISHED = frozenset({RideStatus.FINISHED})
@@ -371,7 +361,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         label="Void Card…",
         ids=("mi_void_card",),
         kind=TargetKind.DIALOG,
-        target=_UNAUTHORED_DIALOG,
+        target=ids.VOID_CARD_CONFIRM_DLG,
         enabled_when=Enablement(
             allowed_states=_RUNNING_REOPENED, requires_entry_has_cards=True
         ),  # "RUNNING · REOPENED, entry has cards"

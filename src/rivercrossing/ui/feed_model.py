@@ -35,6 +35,7 @@ __all__ = [
     "COL_TOTAL",
     "TIME_COLUMNS",
     "card_asset_key_or_none",
+    "edited_row_indexes",
     "flagged_row_indexes",
 ]
 
@@ -71,3 +72,16 @@ def card_asset_key_or_none(card: str) -> str | None:
 def flagged_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
     """Return the indexes of every flagged row in *rows* (R-34)."""
     return frozenset(index for index, row in enumerate(rows) if row.flagged)
+
+
+def edited_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
+    """Return the indexes of every edited row in *rows* (E7.2.2).
+
+    The feed's second bold channel: a crossing a correction touched
+    (edit/void/add-at-time/reassign -- the ``FeedRow.edited`` flag set
+    by ``EngineDataSource.feed_rows`` from the engine's event log)
+    renders bold like a flagged (held-card) row does (R-34). Pure, so
+    the wx-facing ``CrossingsFeedModel`` can delegate the decision
+    here, exactly as it does for :func:`flagged_row_indexes`.
+    """
+    return frozenset(index for index, row in enumerate(rows) if row.edited)

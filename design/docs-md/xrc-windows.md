@@ -315,6 +315,20 @@ Mark DNFCancel
 
 `wxID_OK "Mark DNF" · wxID_CANCEL (default)`
 
+Void Card`void_card_confirm_dlg`✕
+
+- **9♥ — 45 · J. Okafor** — removes the card from the entry's scored hand. Audit-logged. `card_lbl`
+
+Reason
+
+`reason_input`
+
+Void cardCancel
+
+`wxID_OK "Void card" · wxID_CANCEL (default + focused)`
+
+⚠ E7 mock-first: the last §15 row with no frozen window, authored in E7 before wiring; names registered in spec.md §15b.
+
 D · Results, library, audit
 
 Results — GORBA EPIC 2026 (FINISHED 16:02:11)`results_frame`— ▢ ✕

@@ -1,33 +1,58 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Results presenter unit tests (P9 / E6.4.1), tests-first (R-70).
+"""Results presenter unit tests (E6.4.1 + E7.3.2), tests-first (R-70).
 
 ``ResultsPresenter`` goes live in E6.4.1: it owns the tie-break
 label map, seeds ``tiebreak_list`` from the ride's stored
 ``tiebreak_order``, re-ranks ``standings(order=...)`` live on a
 reorder, restores the last-good order on an unrecognised reorder, and
-builds the ``ExportOptions`` the export handlers (E6.4.2) read. The
-presenter is pure Python (R-71), so every test drives it with a
+builds the ``ExportOptions`` the export handlers (E6.4.2) read.
+E7.3.2 (the stale-export flag) adds the second live channel: the
+presenter holds the engine event count captured at the last export
+(the export watermark) and, on every refresh, asks the data source
+whether a correction event landed at/after that watermark, then
+drives ``ResultsView.set_stale`` -- ``True`` when published results
+are stale, ``False`` on a fresh export (``mark_exported``) or when no
+correction landed since.
+
+The presenter is pure Python (R-71), so every test drives it with a
 recording fake view and a recording ``DataSource`` -- no wx and no
 real engine are needed. ``RecordingResultsSource`` subclasses
 :class:`~rivercrossing.ui.presenters.data_source.EmptyDataSource` so
 it structurally satisfies ``DataSource`` (every Protocol member)
-while overriding only ``standings`` to record the orders it was
-called with.
+while overriding ``standings`` to record the orders it was called
+with and ``results_stale`` to answer the stale-export query with a
+test-configured value.
 """
+
+from datetime import date, datetime
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from rivercrossing.cards import Shoe
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import (
     DEFAULT_TIEBREAK_ORDER as RIDE_DEFAULT_ORDER,
 )
-from rivercrossing.ride import TIEBREAK_HIGH_CARD, TIEBREAK_LAPS, TIEBREAK_TOTAL_TIME
+from rivercrossing.ride import (
+    TIEBREAK_HIGH_CARD,
+    TIEBREAK_LAPS,
+    TIEBREAK_TOTAL_TIME,
+    Event,
+    RideConfig,
+    RideEngine,
+)
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import DEFAULT_TIEBREAK_ORDER, TieBreak
 from rivercrossing.ui.presenters import ResultsPresenter, StandingsRow
 from rivercrossing.ui.presenters import results as results_module
-from rivercrossing.ui.presenters.data_source import EmptyDataSource
+from rivercrossing.ui.presenters.data_source import (
+    CORRECTION_ACTIONS,
+    EmptyDataSource,
+    EngineDataSource,
+    has_correction_since,
+)
 
 # ------------------------------------------------------------- fixtures
 
@@ -35,11 +60,11 @@ from rivercrossing.ui.presenters.data_source import EmptyDataSource
 class RecordingResultsView:
     """A complete ``ResultsView`` spy recording each call, in order.
 
-    ``set_stale`` is a no-op: E7.3.2 (the stale-export flag trigger)
-    drives it, not this presenter, so nothing here ever calls it.
-    ``publish_options`` returns whatever the test last handed to
-    ``show_publish_options`` -- the fake "checkbox states" the
-    presenter reads.
+    ``set_stale`` records every stale-flag update the presenter applies
+    (E7.3.2) -- ``stale_calls`` is the assertion surface for the
+    stale-export flag. ``publish_options`` returns whatever the test
+    last handed to ``show_publish_options`` -- the fake "checkbox
+    states" the presenter reads.
     """
 
     def __init__(self) -> None:
@@ -49,13 +74,15 @@ class RecordingResultsView:
         self.notices: list[str] = []
         self.reported_options = ExportOptions()
         self.publish_reads = 0
+        self.stale_calls: list[bool] = []
 
     def show_standings(self, rows: list[StandingsRow]) -> None:
         """Record the rendered standings rows."""
         self.shown_rows = list(rows)
 
     def set_stale(self, *, stale: bool) -> None:
-        """No-op: nothing in this presenter calls it."""
+        """Record one stale-flag update (True shows the banner)."""
+        self.stale_calls.append(stale)
 
     def show_publish_options(self, options: ExportOptions) -> None:
         """Record the reflected checkbox states."""
@@ -79,9 +106,10 @@ class RecordingResultsSource(EmptyDataSource):
     """A full ``DataSource`` recording every ``standings`` order.
 
     Subclasses ``EmptyDataSource`` (which implements every Protocol
-    member) so this is a real ``DataSource``, overriding only
-    ``standings`` to record its orders and return whatever rows a test
-    pre-loads.
+    member) so this is a real ``DataSource``, overriding ``standings``
+    to record its orders and return whatever rows a test pre-loads,
+    and ``results_stale`` (E7.3.2) to record the watermark it is
+    queried with and return a test-configured answer.
     """
 
     def __init__(self) -> None:
@@ -89,6 +117,8 @@ class RecordingResultsSource(EmptyDataSource):
         super().__init__()
         self.standings_orders: list[tuple[TieBreak, ...]] = []
         self.rows_by_order: dict[tuple[TieBreak, ...], list[StandingsRow]] = {}
+        self.stale_result: bool = False
+        self.stale_queries: list[int | None] = []
 
     def standings(
         self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
@@ -96,6 +126,11 @@ class RecordingResultsSource(EmptyDataSource):
         """Record *order*, then return the rows pre-loaded for it."""
         self.standings_orders.append(order)
         return self.rows_by_order.get(order, [])
+
+    def results_stale(self, export_watermark: int | None) -> bool:
+        """Record the watermark query; return the configured answer."""
+        self.stale_queries.append(export_watermark)
+        return self.stale_result
 
 
 def _row(plate: str, *, place: int = 1) -> StandingsRow:
@@ -259,3 +294,215 @@ def test_tiebreak_label_map_round_trips_any_stored_order(order: list[str]) -> No
     labels = [results_module._TIEBREAK_LABELS[spelling] for spelling in order]
 
     assert [results_module._TIEBREAK_IDS_BY_LABEL[label] for label in labels] == order
+
+
+# --------------------------------------- E7.3.2 stale-export flag
+
+
+def test_results_presenter_init_clears_the_stale_flag_before_any_export() -> None:
+    """No export watermark: nothing published, so nothing is stale."""
+    view = RecordingResultsView()
+    source = RecordingResultsSource()
+
+    ResultsPresenter(view, source)
+
+    assert view.stale_calls == [False]
+    assert source.stale_queries == [None]
+
+
+def test_results_presenter_init_marks_stale_when_a_correction_landed_past_the_watermark() -> None:
+    """A post-export correction trips the flag at open time."""
+    view = RecordingResultsView()
+    source = RecordingResultsSource()
+    source.stale_result = True
+
+    ResultsPresenter(view, source, export_watermark=3)
+
+    assert view.stale_calls == [True]
+    assert source.stale_queries == [3]
+
+
+def test_results_presenter_init_stays_clean_when_no_correction_since_the_watermark() -> None:
+    """No post-export correction: the flag stays clear."""
+    view = RecordingResultsView()
+    source = RecordingResultsSource()
+
+    ResultsPresenter(view, source, export_watermark=3)
+
+    assert view.stale_calls == [False]
+    assert source.stale_queries == [3]
+
+
+def test_results_presenter_mark_exported_advances_the_watermark_and_clears_stale() -> None:
+    """A fresh export records the watermark and clears the banner."""
+    view = RecordingResultsView()
+    source = RecordingResultsSource()
+    source.stale_result = True
+    presenter = ResultsPresenter(view, source, export_watermark=2)
+
+    presenter.mark_exported(6)
+
+    assert presenter.export_watermark == 6
+    assert view.stale_calls == [True, False]
+
+
+def test_results_presenter_refresh_re_evaluates_stale_after_a_post_export_correction() -> None:
+    """A refresh sees a correction that landed since the watermark."""
+    view = RecordingResultsView()
+    source = RecordingResultsSource()
+    presenter = ResultsPresenter(view, source, export_watermark=2)
+    source.stale_result = True
+
+    presenter.on_tiebreak_reordered(["Total time", "Most laps", "High-card draw"])
+
+    assert view.stale_calls == [False, True]
+    assert source.stale_queries == [2, 2]
+
+
+def test_results_presenter_mark_exported_then_a_later_correction_marks_stale_again() -> None:
+    """A correction after re-export trips the flag again."""
+    view = RecordingResultsView()
+    source = RecordingResultsSource()
+    presenter = ResultsPresenter(view, source, export_watermark=2)
+    presenter.mark_exported(6)
+    source.stale_result = True
+
+    presenter.on_tiebreak_reordered(["Total time", "Most laps", "High-card draw"])
+
+    assert presenter.export_watermark == 6
+    assert view.stale_calls == [False, False, True]
+    assert source.stale_queries[-1] == 6
+
+
+# --------------------------- E7.3.2 correction-vs-watermark helper
+
+
+def test_correction_actions_is_the_e7_audited_correction_vocabulary() -> None:
+    """The stale set is the E7.2.1 corrections plus void_crossing."""
+    assert (
+        frozenset(
+            {
+                "add_crossing_at",
+                "edit_crossing",
+                "reassign",
+                "deal_manual",
+                "dnf",
+                "void_card",
+                "void_crossing",
+            }
+        )
+        == CORRECTION_ACTIONS
+    )
+    assert "record_crossing" not in CORRECTION_ACTIONS
+    assert "undo" not in CORRECTION_ACTIONS
+    assert "set_start_time" not in CORRECTION_ACTIONS
+
+
+def _event(action: str) -> Event:
+    """Build one minimal event with *action* and an empty payload."""
+    return Event(action=action, payload={})
+
+
+def test_has_correction_since_without_a_watermark_is_never_stale() -> None:
+    """No export yet: nothing published, never stale."""
+    events = (_event("start"), _event("edit_crossing"))
+
+    assert has_correction_since(events, None) is False
+
+
+def test_has_correction_since_flags_a_correction_exactly_at_the_watermark() -> None:
+    """A correction at index == watermark landed after the export."""
+    events = (_event("start"), _event("record_crossing"), _event("edit_crossing"))
+
+    assert has_correction_since(events, 2) is True
+
+
+def test_has_correction_since_with_the_watermark_at_the_event_count_is_clean() -> None:
+    """A watermark at the current count: no events after it."""
+    events = (_event("start"), _event("record_crossing"), _event("edit_crossing"))
+
+    assert has_correction_since(events, len(events)) is False
+    assert has_correction_since(events, len(events) + 1) is False
+
+
+def test_has_correction_since_ignores_non_correction_events_after_the_watermark() -> None:
+    """A live-entry tail (record_crossing) is not a correction."""
+    events = (_event("start"), _event("edit_crossing"), _event("record_crossing"))
+
+    assert has_correction_since(events, 0) is True
+    assert has_correction_since(events, 2) is False
+
+
+@given(
+    actions=st.lists(
+        st.sampled_from((*CORRECTION_ACTIONS, "record_crossing", "start")),
+        max_size=8,
+    ),
+    watermark=st.integers(min_value=0, max_value=9),
+)
+def test_has_correction_since_matches_a_correction_scan_past_the_watermark(
+    actions: list[str], watermark: int
+) -> None:
+    """Invariant: True iff a correction sits at/after the watermark."""
+    events = tuple(_event(action) for action in actions)
+    expected = any(action in CORRECTION_ACTIONS for action in actions[watermark:])
+
+    assert has_correction_since(events, watermark) is expected
+
+
+# ------------------------- E7.3.2 live EngineDataSource delegation
+
+
+def _engine_source_with_correction() -> tuple[RideEngine, EngineDataSource]:
+    """Build a RUNNING engine with start, one crossing, and an edit.
+
+    The clock is a fixed naive instant (the ``_FakeClock`` convention
+    test_lists_results.py uses): the engine's lap arithmetic subtracts
+    naive timestamps, so an aware clock would TypeError against the
+    naive correction instants (the latent bug test_corrections.py's
+    own builder carries, recorded in this task's report).
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(name="Rider 12", plate="12")
+    config = RideConfig(
+        name="GORBA EPIC 2026",
+        event_date=date(2026, 9, 20),
+        venue="Sea to Sky Gondola",
+        lap_km=8.0,
+        organizer="GORBA",
+        scorer="K. Singh",
+        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, RideConfig's own contract
+        planned_duration_s=21600,
+        min_lap_s=1,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(
+        config=config,
+        shoe=shoe,
+        clock=lambda: datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive clock, matching the naive crossing instants
+        roster=roster,
+    )
+    engine.start()
+    engine.record_crossing("12", at=datetime(2026, 9, 20, 10, 30))  # noqa: DTZ001
+    engine.edit_crossing("12", 1, datetime(2026, 9, 20, 10, 31), reason="mis-key")  # noqa: DTZ001
+    return engine, EngineDataSource(engine, roster)
+
+
+def test_engine_data_source_results_stale_reads_the_live_event_log() -> None:
+    """The live source flags a post-export correction from events."""
+    engine, source = _engine_source_with_correction()
+    watermark_at_export = len(engine.events) - 1  # the export predates the edit
+
+    assert source.results_stale(watermark_at_export) is True
+    assert source.results_stale(len(engine.events)) is False
+    assert source.results_stale(None) is False
+
+
+def test_empty_data_source_results_stale_is_never_stale() -> None:
+    """The empty state (no ride) has nothing published to go stale."""
+    source = EmptyDataSource()
+
+    assert source.results_stale(None) is False
+    assert source.results_stale(5) is False

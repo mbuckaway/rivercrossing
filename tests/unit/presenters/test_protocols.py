@@ -31,20 +31,25 @@ from rivercrossing.ui.presenters import (
     AuditPresenter,
     AuditRow,
     AuditView,
+    CardVoid,
     ConsoleView,
     Counters,
+    CrossingEdit,
     CsvPreview,
     Cue,
     DataSource,
     DetailPresenter,
     DetailView,
+    DnfMark,
     EntryDetail,
     EntryLapRow,
     FeedRow,
     LibraryPresenter,
     LibraryView,
+    ManualDeal,
     ResultsPresenter,
     ResultsView,
+    RiderMove,
     RiderRow,
     RidersView,
     RideSummary,
@@ -224,7 +229,58 @@ class FakeDetailView:
     def set_move_rider_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
 
-    def show_edit_crossing(self, *, adding: bool, plate: str, time: str) -> None:
+    def selected_lap(self) -> EntryLapRow | None:
+        """No-op fake: no lap selected."""
+        return None
+
+    def show_edit_crossing(
+        self,
+        *,
+        adding: bool,  # noqa: ARG002 -- Protocol signature; the fake ignores values
+        plate: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
+        time: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
+    ) -> CrossingEdit | None:
+        """No-op fake: the dialog is cancelled."""
+        return None
+
+    def open_manual_deal(
+        self,
+        *,
+        plate: str,  # noqa: ARG002 -- Protocol signature; the fake ignores the value
+    ) -> ManualDeal | None:
+        """No-op fake: the dialog is cancelled."""
+        return None
+
+    def open_void_card(
+        self,
+        *,
+        card: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
+        entry: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
+    ) -> CardVoid | None:
+        """No-op fake: the dialog is cancelled."""
+        return None
+
+    def open_dnf(
+        self,
+        *,
+        entry: str,  # noqa: ARG002 -- Protocol signature; the fake ignores the value
+    ) -> DnfMark | None:
+        """No-op fake: the dialog is cancelled."""
+        return None
+
+    def open_move_rider(
+        self,
+        *,
+        riders: tuple[str, ...],  # noqa: ARG002 -- Protocol signature; the fake ignores values
+        teams: tuple[str, ...],  # noqa: ARG002 -- Protocol signature; the fake ignores values
+    ) -> RiderMove | None:
+        """No-op fake: the picker is cancelled."""
+        return None
+
+    def open_audit(self) -> None:
+        """No-op fake."""
+
+    def show_notice(self, text: str) -> None:
         """No-op fake."""
 
 
@@ -313,6 +369,10 @@ class FakeDataSource:
                 when="14:23:02", who="scorer", action="Void crossing", entry="45", reason="mis-key"
             )
         ]
+
+    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002 -- DataSource's signature; the fake is never stale
+        """Return False: the fake publishes nothing that goes stale."""
+        return False
 
     def ride_status(self) -> RideStatus:
         """Return one fixed ride status."""

@@ -21,10 +21,13 @@ good as what it compares):
   NOT compared: ``stop``/``finish``/``reopen`` re-stamp their payload
   timestamps from the replay engine's own clock, so those three audit
   fields differ by design (see :meth:`RideEngine.apply`'s docstring).
-- shoe state -- ``dealt``/``cycle``/``remaining`` equal. The fresh
-  shoe built from the stored ``rng_seed`` reproduces every deal, and
-  the deal loop (not the ``shoe_reshuffle`` event) drives the
-  reshuffle, so the replayed shoe lands at the same point.
+- shoe state -- ``dealt``/``cycle``/``remaining`` equal, plus the
+  shoe's open/closed state (``Shoe.is_closed``). The fresh shoe built
+  from the stored ``rng_seed`` reproduces every deal, and the deal
+  loop (not the ``shoe_reshuffle`` event) drives the reshuffle, so
+  the replayed shoe lands at the same point; ``finish`` closes it and
+  a replayed ``reopen`` opens it again, so the open/closed state
+  matches too (E7.1.1: REOPENED corrections deal new cards).
 - ``held_crossings()`` and ``state`` equal.
 - ``elapsed()`` equal at the shared fake clock's final instant.
 
@@ -47,7 +50,7 @@ from typing import TYPE_CHECKING
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from rivercrossing.cards import Shoe
+from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import CrossingResult, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import Store
@@ -262,9 +265,10 @@ def _drive_random_ride(ctx: _RideContext, rng: random.Random) -> None:  # noqa: 
     while ctx.engine._shoe.cycle == 1:
         _crossing(ctx, "12", 600)
 
-    # Phase 4: finish, reopen, finish again.
+    # Phase 4: finish, reopen (dealing a correction card), finish again.
     _mutate(ctx, ctx.engine.finish)
     _mutate(ctx, ctx.engine.reopen)
+    _mutate(ctx, lambda: ctx.engine.deal_manual("12", reason="replacement card"))
     _mutate(ctx, ctx.engine.finish)
 
 
@@ -277,6 +281,7 @@ def _assert_equivalent(live: RideEngine, replayed: RideEngine) -> None:
     assert replayed.shoe_total == live.shoe_total
     assert replayed._shoe.cycle == live._shoe.cycle
     assert replayed._shoe.dealt == live._shoe.dealt
+    assert replayed._shoe.is_closed is live._shoe.is_closed
     assert replayed.held_crossings() == live.held_crossings()
     assert replayed.elapsed() == live.elapsed()
     assert replayed.snapshot() == live.snapshot()
@@ -293,12 +298,114 @@ def _drive_and_load(db_path: Path, seed: int) -> tuple[RideEngine, RideEngine]:
         ctx.store.close()
 
 
+def _drive_random_corrections(ctx: _RideContext, rng: random.Random) -> None:
+    """Drive a seeded ride of random audited corrections (E7.1.2).
+
+    Seeds eight plain crossings, then fires 30 random corrections --
+    edit, void, reassign, add-at-time, DNF, void-card -- each legal at
+    the moment it runs (RUNNING, a live crossing/plate/card) and each
+    appending exactly one event the store persists. Replay must rebuild
+    the directly-corrected state: every correction resolves the same
+    live identity from its payload (``(entry_id, seq)`` for edit/void,
+    the ride-wide crossing ordinal for reassign, the card code for
+    void-card), which is exactly what ``apply`` reproduces in order.
+    """
+    plates = ("12", "45", "9")
+    _mutate(ctx, ctx.engine.start)
+    for _ in range(8):
+        _crossing(ctx, rng.choice(plates), 600)
+
+    for _ in range(30):
+        roll = rng.random()
+        live = ctx.engine
+        crossings = live.crossings
+        if roll < 0.22 and crossings:
+            crossing = crossings[rng.randrange(len(crossings))]
+            _mutate(
+                ctx,
+                lambda c=crossing, engine=live: engine.edit_crossing(
+                    c.entry_id, c.seq, ctx.clock(), reason="mis-keyed time"
+                ),
+            )
+        elif roll < 0.38 and crossings:
+            crossing = crossings[rng.randrange(len(crossings))]
+            _mutate(
+                ctx,
+                lambda c=crossing, engine=live: engine.void_crossing(
+                    c.entry_id, c.seq, reason="double entry"
+                ),
+            )
+        elif roll < 0.54 and crossings:
+            ordinal = rng.randrange(1, len(crossings) + 1)
+            _mutate(
+                ctx,
+                lambda engine=live, n=ordinal: engine.reassign_crossing(
+                    n, rng.choice(plates), reason="mis-keyed plate"
+                ),
+            )
+        elif roll < 0.70:
+            _mutate(
+                ctx,
+                lambda engine=live: engine.add_crossing_at(
+                    rng.choice(plates), ctx.clock(), reason="missed crossing"
+                ),
+            )
+        elif roll < 0.86:
+            results = {result.plate: result for result in live.snapshot()}
+            plates_with_cards = [plate for plate, result in results.items() if result.cards]
+            if plates_with_cards:
+                plate = rng.choice(plates_with_cards)
+                card = results[plate].cards[0]
+                _mutate(
+                    ctx,
+                    lambda engine=live, p=plate, c=card: engine.void_card(
+                        p, c, reason="wrong card dealt"
+                    ),
+                )
+        else:
+            plate = rng.choice(plates)
+            _mutate(
+                ctx,
+                lambda engine=live, p=plate: engine.mark_dnf(p, reason="mechanical failure"),
+            )
+
+    _mutate(ctx, ctx.engine.finish)
+
+
+def _drive_corrections_and_load(db_path: Path, seed: int) -> tuple[RideEngine, RideEngine]:
+    """Drive a seeded corrections ride, persist, and replay it."""
+    ctx = _make_ctx(db_path)
+    try:
+        _drive_random_corrections(ctx, random.Random(seed))  # noqa: S311 -- seeded fixture, not a security use
+        replayed = _replay(ctx)
+        return ctx.engine, replayed
+    finally:
+        ctx.store.close()
+
+
 @given(seed=st.integers(min_value=1, max_value=_REPLAY_SEED_BOUND))
 @settings(max_examples=50, deadline=None)
 def test_store_replay_equivalence_random_seeded_sequences(seed: int) -> None:
     """Random-but-seeded event sequences: live state equals replayed."""
     with tempfile.TemporaryDirectory() as tmp:
         live, replayed = _drive_and_load(Path(tmp) / "replay.db", seed)
+
+    _assert_equivalent(live, replayed)
+
+
+@given(seed=st.integers(min_value=1, max_value=_REPLAY_SEED_BOUND))
+@settings(max_examples=50, deadline=None)
+def test_store_replay_equivalence_corrected_history_random_seeded(seed: int) -> None:
+    """Corrected history replayed equals the directly corrected ride.
+
+    E7.1.2's own done-when: a ride driven with random audited
+    corrections -- edit/void/reassign/add-at-time/DNF/void-card --
+    persisted event by event and replayed from the audit log lands in
+    the exact state the live engine reached by applying those same
+    corrections directly.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        live, replayed = _drive_corrections_and_load(Path(tmp) / "replay_corrections.db", seed)
 
     _assert_equivalent(live, replayed)
 
@@ -322,7 +429,40 @@ def test_store_replay_equivalence_deterministic_fixture(tmp_path: Path) -> None:
         for _ in range(4):
             _crossing(ctx, "12", 600)
         _mutate(ctx, lambda: ctx.engine.set_start_time(datetime(2026, 9, 20, 9, 55)))  # noqa: DTZ001
-        _mutate(ctx, lambda: ctx.engine.deal_manual("12", reason="replacement card"))
+        _start = len(ctx.engine.events)
+        manual = ctx.engine.deal_manual("12", reason="replacement card")
+        ctx.persist_new(_start)
+        # E7.1.2 corrections while RUNNING -- each appends one audit
+        # event, and every one of them must replay identically. "45"
+        # and "9" are riders on one team whose entry plate is "9"
+        # (R-16), so every correction names the entry plate the
+        # crossing/card actually carries.
+        _mutate(
+            ctx,
+            lambda: ctx.engine.edit_crossing(
+                "9",
+                1,
+                datetime(2026, 9, 20, 10, 1),  # noqa: DTZ001
+                reason="mis-keyed time",
+            ),
+        )
+        _mutate(
+            ctx,
+            lambda: ctx.engine.add_crossing_at(
+                "12",
+                datetime(2026, 9, 20, 10, 2),  # noqa: DTZ001
+                reason="missed crossing",
+            ),
+        )
+        _mutate(ctx, lambda: ctx.engine.reassign_crossing(2, "12", reason="mis-keyed plate"))
+        _mutate(ctx, lambda: ctx.engine.void_crossing("12", 2, reason="double entry"))
+        _mutate(ctx, lambda: ctx.engine.mark_dnf("45", reason="mechanical failure"))
+        _mutate(
+            ctx,
+            lambda: ctx.engine.void_card(
+                "12", Card.parse(str(manual.payload["card"])), reason="wrong card dealt"
+            ),
+        )
         _mutate(ctx, ctx.engine.stop)
         _mutate(ctx, ctx.engine.start)
         while ctx.engine._shoe.cycle == 1:
@@ -331,6 +471,11 @@ def test_store_replay_equivalence_deterministic_fixture(tmp_path: Path) -> None:
         _crossing(ctx, "12", 600)
         _mutate(ctx, ctx.engine.finish)
         _mutate(ctx, ctx.engine.reopen)
+        _mutate(ctx, lambda: ctx.engine.deal_manual("12", reason="replacement card"))
+        _mutate(
+            ctx,
+            lambda: ctx.engine.add_crossing_at("12", ctx.clock(), reason="missed crossing"),
+        )
         _mutate(ctx, ctx.engine.finish)
 
         replayed = _replay(ctx)
@@ -352,4 +497,11 @@ def test_store_replay_equivalence_deterministic_fixture(tmp_path: Path) -> None:
         "shoe_reshuffle",
         "finish",
         "reopen",
+        # E7.1.1 audited corrections (each replays through apply).
+        "edit_crossing",
+        "void_crossing",
+        "add_crossing_at",
+        "reassign",
+        "dnf",
+        "void_card",
     }

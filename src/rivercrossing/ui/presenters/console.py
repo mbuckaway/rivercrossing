@@ -257,12 +257,15 @@ class ConsolePresenter:
 
         Consults :data:`FINISH_GATE` first: a failing evaluator
         self-test blocks finishing with a notice. When clear,
-        ``engine.finish()`` closes the shoe and the console reflects
-        FINISHED. Engine refusals (DRAFT) surface as notices.
+        ``engine.finish()`` closes the shoe -- from RUNNING, or from
+        REOPENED (E7.2.2's single primary "Finish again": re-locks to
+        FINISHED after corrections, spec §3) -- and the console
+        reflects FINISHED. Engine refusals (DRAFT) surface as notices.
         """
         if not FINISH_GATE():
             self.view.show_notice("Finish blocked: evaluator self-test did not pass")
             return
+        was_reopened = self.engine.state is RideStatus.REOPENED
         try:
             self.engine.finish()
         except IllegalStateError as exc:
@@ -271,7 +274,7 @@ class ConsolePresenter:
         self._refresh_feed()
         self._refresh_counters()
         self.view.set_state(self.engine.state)
-        self.view.show_notice("Ride finished")
+        self.view.show_notice("Ride finished again" if was_reopened else "Ride finished")
 
     def on_reopen(self) -> None:
         """Handle Ride ▸ Reopen Ride (E5.4.1, spec §3).

@@ -882,6 +882,81 @@
     </object>
   </object>
 
+  <!-- E7 mock-first: Void Card… confirm (spec.md §15). Authored in E7 with
+       its control names registered in §15b before any UI wiring, replacing
+       the E1.4.1 _UNAUTHORED_DIALOG sentinel. -->
+  <object class="wxDialog" name="void_card_confirm_dlg">
+    <title>Void Card</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <!-- The card being voided ("9♥ — 45 · J. Okafor"); the consequence
+           beside it is fixed wording and stays in XRC. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxStaticText" name="card_lbl">
+              <label></label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>— removes the card from the entry's scored hand. Audit-logged.</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxStaticText">
+              <label>Reason</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="reason_input"/>
+          </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Void card</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <default>1</default>
+              <focused>1</focused>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
   <!-- ============================ section E ============================ -->
 
   <object class="wxDialog" name="about_dlg">

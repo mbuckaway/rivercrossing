@@ -6,6 +6,22 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added — EPIC 7 (corrections & audit)
+
+- **Audited corrections on the engine** (`rivercrossing.ride`): `edit_crossing`, `void_crossing`,
+  `add_crossing_at`, `reassign_crossing`, `mark_dnf`, and `void_card` — each requires a non-empty reason
+  and writes one audit event; `undo_last` carries a fixed "Undo last crossing" reason; every action
+  replays through `apply()` (with `Shoe.is_closed` in the equivalence contract); DNF flows into
+  `snapshot()` for `standings.rank`. `reopen()` now re-opens the shoe so `deal_manual`/`add_crossing_at`
+  keep dealing in REOPENED (resolving the §4-vs-§15 tension).
+- **Correction dialogs live**: entry detail's six buttons and every Cards-menu route drive the real
+  commands; `void_card_confirm_dlg` authored mock-first (voids a dealt card); `ui/menu_state.py` applies
+  the §15 enablement at runtime; REOPENED is corrections-only with edited-row highlighting and
+  "Finish again".
+- **Audit viewer + stale flag**: `Store.audit_rows` (newest-first) + `AuditPresenter`/`views/audit.py`
+  with plate-or-entry-name search and the six §15 action buckets; published results turn stale after a
+  post-export correction and clear on re-export (watermark = `len(engine.events)`).
+
 ### Added — EPIC 6 (results & publishing)
 
 - Standings: human-readable hand-name prose renderer (title-case em-dash, D1), stored
