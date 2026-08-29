@@ -130,9 +130,10 @@ def _dump_address_reuse(name: str, stale: object) -> None:
     dump_dir = Path(__file__).resolve().parents[4] / "tests" / "functional" / "_screenshots"
     dump_dir.mkdir(parents=True, exist_ok=True)
     handle = (dump_dir / "addr_reuse_dump.txt").open("a", encoding="utf-8")
+    cpp_class = getattr(stale, "GetClassName", lambda: "?")()
     handle.write(
         f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
-        f"refcount={_sys.getrefcount(stale)}\n"
+        f"refcount={_sys.getrefcount(stale)} cpp_class={cpp_class}\n"
     )
     handle.close()
     for referrer in gc.get_referrers(stale):
