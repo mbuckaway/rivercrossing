@@ -15,8 +15,8 @@ faulthandler.dump_traceback_later(20, exit=True)
 import wx  # noqa: E402
 
 sys.path.insert(0, "tests/functional")
+import console_subprocess_scenarios as scenarios  # noqa: E402
 import harness  # noqa: E402
-from tests.functional import console_subprocess_scenarios as scenarios  # noqa: E402
 
 from rivercrossing.store import Store  # noqa: E402
 from rivercrossing.ui import app as app_module  # noqa: E402
