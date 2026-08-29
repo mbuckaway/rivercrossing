@@ -104,11 +104,41 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         # and names tell a whole-subtree load gap (CI has seen three
         # fresh loads of the same frame each missing a different
         # control) apart from a single genuinely missing name.
+        if control is not None:
+            _dump_address_reuse(name, control)
         raise LookupError(  # noqa: TRY004
             f"{window.GetName()} has no control named {name!r} "
             f"(first-level children: {len(children)} -- {children!r})"
         )
     return control
+
+
+def _dump_address_reuse(name: str, stale: object) -> None:
+    """Diagnostic: dump who retains a stale address-reuse wrapper.
+
+    Temporary instrumentation for the 2026-08-29 investigation: when
+    ``FindWindowByName`` returns a wrapper of the wrong Python class
+    for a live control (the upstream SIP address-reuse corruption),
+    record its reference chain so the retainer can be identified and
+    removed. Removed once the retainer is fixed.
+    """
+    import gc as _gc
+    import sys as _sys
+
+    with open("/tmp/addr_reuse_dump.txt", "a", encoding="utf-8") as handle:
+        handle.write(f"--- stale wrapper for {name!r}: type={type(stale).__name__} "
+                     f"refcount={_sys.getrefcount(stale)}\n")
+        for referrer in _gc.get_referrers(stale):
+            kind = type(referrer).__name__
+            if kind in ("list", "dict", "set", "tuple", "function", "module", "frame", "weakref"):
+                continue
+            handle.write(f"    referrer: {kind} -> {repr(referrer)[:180]}\n")
+        for referrer in _gc.get_referrers(stale):
+            kind = type(referrer).__name__
+            if kind == "frame":
+                handle.write(f"    FRAME: {referrer.f_code.co_filename}:{referrer.f_lineno} "
+                             f"in {referrer.f_code.co_name}\n")
+        handle.flush()
 
 
 @cache
