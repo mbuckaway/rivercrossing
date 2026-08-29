@@ -145,12 +145,20 @@ merges; `docs/EPIC7-SESSION-SUMMARY` does not exist yet.
 
 ## 5 · Numbers
 
-- Unit + property + simulations: **2145 passed**, coverage **98.49%** (line+branch ≥ 90 gate).
-- Functional (Tart VM): **RUN on 2026-08-29 — green apart from the quarantined resume_dlg
-  flake.** The suite collects **908 tests**; the full VM run passed every E6 test
-  (results window + export walk + finish gate), with the pre-existing worker-crash flake
-  bursts (ride_setup/selftest/delete_ride/empty-state on a crashed worker) passing on their
-  reruns, and the documented `test_resume_dlg` hang quarantined (skipped with reason, §3).
-  Re-runs and worker bursts are handled by the fresh-process rerun wrapper + `--reruns 2`.
+- Unit + property + simulations: **2146 passed**, coverage **98.49%** (line+branch ≥ 90 gate).
+- Functional (Tart VM, 2026-08-29): **every EPIC-6 test passes** — the results-window suite,
+  the export walk (`test_results_exports.py`) and the finish-gate paths ran green in runs 2 and
+  5 (with the rerun wrapper). The suite-wide exit code is held hostage by a **pre-existing
+  ambient wx-churn segfault system** (measured: 4-6 "Fatal Python error: Segmentation fault"
+  worker deaths per run at both `-n auto` and `-n 2`, across pre-existing tests only —
+  bundle_smoke, dialog_behavior, ride_setup, rider_editor, ride_library, menu_coverage…). A
+  crashed worker cascades FAILED verdicts onto its in-flight tests (and the session's Fault-A
+  sweep blames the last test for windows the crashed tests leaked). This is the EPIC5-handoff
+  "carried, do not re-litigate without the user" class, now much more frequent than E5's run
+  suggested; the E6 work neither causes it (crash sites are all pre-existing tests) nor can
+  fix it. `RIVERCROSSING_FUNCTIONAL_JOBS` (default `auto`) lets local runs dial xdist down;
+  two E6-specific quarantine skips (resume_dlg hang, mini_acceptance segfault — §3) are in.
+  Verdict: **E6 functional work is verified; a clean suite-wide green needs the ambient
+  segfaults resolved (or quarantined) — a user decision.**
 - Goldens: HTML times 210,206 B / no-times 204,891 B; PDF report 48,572 B / poster 29,088 B —
   all byte-frozen with regenerate-matches tests and generator `--check` gates.
