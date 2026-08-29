@@ -27,11 +27,17 @@ def main() -> int:
     """Churn the dialog and report the first stale-wrapper retainer."""
     app = wx.App()
     resource = harness.load_xrc_resources()
-    for i in range(60):
+    for i in range(80):
         dialog = harness.load_window_verified(resource, ids.RIDE_SETUP_DLG, frame=False)
         try:
             try:
                 RideSetup(dialog, roster=Roster())
+                dialog.Show()
+                harness.pump()
+                harness.click(dialog, ids.CAP_CHK)
+                other = harness.load_window_verified(resource, ids.RIDER_EDITOR_DLG, frame=False)
+                harness.run_modal(other, dismiss_with=wx.ID_CANCEL)
+                harness.close_window(other)
             except LookupError:
                 stale = wx.Window.FindWindowByName("lap_km_spin", dialog)
                 kind = type(stale).__name__
@@ -48,7 +54,7 @@ def main() -> int:
         gc.collect()
         if i % 10 == 0:
             print(f"iter {i}: clean", flush=True)
-    print("NO STALE WRAPPER after 60 ride_setup churn cycles")
+    print("NO STALE WRAPPER after 80 full-shape churn cycles")
     return 0
 
 
