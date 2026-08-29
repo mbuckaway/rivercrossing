@@ -107,7 +107,7 @@ def _build_live_entry_detail(
     engine = RideEngine(
         config=config,
         shoe=shoe,
-        clock=lambda: _dt.datetime.now(_dt.UTC),
+        clock=lambda: _dt.datetime(2026, 9, 20, 12, 0),  # noqa: DTZ001 -- naive, RideConfig's contract
         roster=roster,
     )
     engine.start()
@@ -309,7 +309,7 @@ def live_context(
     engine = RideEngine(
         config=config,
         shoe=shoe,
-        clock=lambda: _dt.datetime.now(_dt.UTC),
+        clock=lambda: _dt.datetime(2026, 9, 20, 12, 0),  # noqa: DTZ001 -- naive, RideConfig's contract
         roster=roster,
     )
     engine.start()

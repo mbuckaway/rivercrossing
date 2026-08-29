@@ -558,15 +558,18 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     elif route.target == ids.RIDE_SETUP_DLG:
         RideSetup(window, roster=context.roster)
     elif route.target == ids.ENTRY_DETAIL_DLG:
-        # E7.2.1: with a live console threaded, entry detail opens the
-        # entry the scorer was last looking at (context.detail_plate,
-        # recorded here) over the live engine/roster/resource, so the
-        # six action buttons act on real data; the E5.4.2 empty state
-        # stays for the no-presenter path (route-level tests).
+        # E7.2.1: with a live console threaded AND a concrete entry
+        # selected (context.detail_plate, recorded when entry detail
+        # opened), entry detail opens that entry over the live
+        # engine/roster/resource, so the six action buttons act on
+        # real data; with no selection the E5.4.2 empty state stays
+        # (a live engine with an unset plate would raise LookupError
+        # from entry_detail("") -- R-38's loud failure is for a
+        # deep-linked plate, not the menu's no-selection default).
         presenter = context.presenter
-        if presenter is not None:
-            plate = context.detail_plate or _ENTRY_DETAIL_DEFAULT_PLATE
-            context.detail_plate = plate or None
+        plate = context.detail_plate or ""
+        if presenter is not None and plate:
+            context.detail_plate = plate
             engine = presenter.engine
             EntryDetailDialog(
                 window,

@@ -121,6 +121,8 @@ def _build_ride_console(
     window.Show()
     window.Layout()
     harness.pump()
+    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+    window.SetMenuBar(menubar)
     console = MainFrame(window, data_source=source, resource=xrc_resource)
     presenter = ConsolePresenter(console, engine=engine, source=source)
     console.wire_entry(presenter.on_plate_entered)

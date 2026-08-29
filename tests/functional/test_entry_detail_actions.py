@@ -74,7 +74,8 @@ def _build_engine(*, roster: Roster) -> tuple[RideEngine, EngineDataSource]:
     )
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     engine = RideEngine(
-        config=config, shoe=shoe, clock=lambda: _dt.datetime.now(_dt.UTC), roster=roster
+        config=config, shoe=shoe, clock=lambda: _dt.datetime(2026, 9, 20, 12, 0),  # noqa: DTZ001 -- naive, RideConfig's contract
+        roster=roster,
     )
     engine.start()
     engine.record_crossing("12", at=datetime(2026, 9, 20, 10, 30))  # noqa: DTZ001

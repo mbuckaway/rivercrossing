@@ -135,6 +135,30 @@ def _bind_ok(dialog: Any, gate: Callable[[], bool], on_ok: Callable[[], None]) -
     ok_button.Bind(wx.EVT_BUTTON, _handler)
 
 
+def _apply_recorded_defaults(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Apply *dialog*'s own E1.5.3 default-button/first-field.
+
+    The generic ``_open_target`` path applies these through
+    ``app._apply_dialog_defaults``; the correction runners are its
+    second entry point (menu routes + entry-detail buttons), so they
+    apply the same recorded decision. A dialog with no entry in either
+    table is a no-op (its XRC already declares its ``<default>``).
+    """
+    dialog_name = dialog.GetName()
+    default_button = dialogs.default_button_for(dialog_name)
+    if default_button is not None:
+        dialogs.set_default_button(dialog, default_button)
+    first_field = dialogs.first_field_for(dialog_name)
+    if first_field is not None:
+        dialogs.set_initial_focus(dialog, first_field)
+
+
+def _run_dialog(dialog: Any, frame: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+    """Show *dialog* through the one seam, recorded defaults applied."""
+    _apply_recorded_defaults(dialog)
+    return dialogs.run_dialog(dialog, opener=frame)
+
+
 def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time, seq, base_date)
     resource: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
@@ -203,7 +227,7 @@ def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time
                     dialog.EndModal(wx.ID_OK)
 
             void_btn.Bind(wx.EVT_BUTTON, _on_void)
-        result = dialogs.run_dialog(dialog, opener=frame)
+        result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
     finally:
         if not dialog.IsBeingDeleted():
@@ -234,7 +258,7 @@ def run_manual_deal(
             )
 
         _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
-        result = dialogs.run_dialog(dialog, opener=frame)
+        result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
     finally:
         if not dialog.IsBeingDeleted():
@@ -273,7 +297,7 @@ def run_void_card(  # noqa: PLR0913 -- (resource, frame, entry_id, card, entry)
             )
 
         _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
-        result = dialogs.run_dialog(dialog, opener=frame)
+        result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
     finally:
         if not dialog.IsBeingDeleted():
@@ -306,7 +330,7 @@ def run_dnf(  # noqa: PLR0913 -- (resource, frame, entry_id, entry)
             confirmed = DnfMark(entry_id=entry_id, reason=reason_input.GetValue().strip())
 
         _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
-        result = dialogs.run_dialog(dialog, opener=frame)
+        result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
     finally:
         if not dialog.IsBeingDeleted():
@@ -342,7 +366,7 @@ def run_reassign(
             )
 
         _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
-        result = dialogs.run_dialog(dialog, opener=frame)
+        result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
     finally:
         if not dialog.IsBeingDeleted():

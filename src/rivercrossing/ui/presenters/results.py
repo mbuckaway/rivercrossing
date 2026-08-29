@@ -208,4 +208,9 @@ class ResultsPresenter:
         :meth:`ResultsView.set_stale` with the answer -- the one place
         the banner's state is decided.
         """
-        self.view.set_stale(stale=self.data_source.results_stale(self._export_watermark))
+        # Pre-E7.3.2 sources (e.g. the E6-era functional stubs) carry
+        # no results_stale member -- never stale for them (no watermark)
+        # because they hold no watermark either.
+        query = getattr(self.data_source, "results_stale", None)
+        stale = bool(query(self._export_watermark)) if query is not None else False
+        self.view.set_stale(stale=stale)
