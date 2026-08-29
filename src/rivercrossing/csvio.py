@@ -82,8 +82,9 @@ Value formats are machine-readable, decided for P3: laps an int,
 cards ``len(result.cards)``, best_hand
 :func:`~rivercrossing.standings.hand_name`'s prose, total_time raw
 numeric seconds (``repr``-clean) -- human formatting belongs to the
-HTML/PDF exports only. The standalone standings CSV of spec §15 is a
-separate later task (``export_standings``), not built here.
+HTML/PDF exports only. The standalone spec §15 standings CSV ships as
+:func:`export_standings` (E6.4.2): rows ``place, plate, entry, laps,
+hand`` plus a raw-seconds ``total_time`` column when asked (R-63).
 """
 
 import csv
@@ -349,6 +350,42 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
                     stats = _stats_values(by_plate[entry.plate])
                     rows = [row + stats for row in rows]
                 writer.writerows(rows)
+
+
+def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool = False) -> None:
+    """Write *placed* as the spec §15 standings CSV to *path* (E6.4.2).
+
+    Rows are ``place, plate, entry, laps, hand`` with a
+    ``total_time`` column appended when *show_times* -- raw numeric
+    seconds, consistent with :func:`export`'s finished-ride columns
+    (CSVs are machine-readable; human formatting is the HTML/PDF
+    exports' job). DNF entries keep their row with their laps and
+    cards (R-33); an entry that never crossed renders a blank hand.
+
+    Args:
+        placed: Ranked standings, one row each.
+        path: The file to write. Overwritten if it already exists.
+        show_times: Append the ``total_time`` column (R-63: times
+            only when the export setting says so).
+    """
+    header = ["place", "plate", "entry", "laps", "hand"]
+    if show_times:
+        header.append("total_time")
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(header)
+        for placed_row in placed:
+            result = placed_row.result
+            row = [
+                str(placed_row.place),
+                result.plate,
+                result.name,
+                str(result.laps),
+                hand_name(result.hand) if result.cards else "",
+            ]
+            if show_times:
+                row.append(repr(result.total_time))
+            writer.writerow(row)
 
 
 def _stats_values(placed: Placed) -> list[str]:

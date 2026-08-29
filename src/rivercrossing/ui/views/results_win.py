@@ -107,6 +107,16 @@ MIN_SIZE = (720, 442)
 STALE_INFOBAR = "stale_infobar"
 
 
+# E6.4.2: the results-frame export buttons and the menu rows they fire,
+# so one handler implementation serves both surfaces.
+_EXPORT_BUTTONS: tuple[tuple[str, str], ...] = (
+    ("export_html_btn", ids.MI_EXPORT_HTML),
+    ("export_pdf_btn", ids.MI_EXPORT_PDF),
+    ("poster_btn", ids.MI_EXPORT_POSTER),
+    ("export_csv_btn", ids.MI_EXPORT_RESULTS_CSV),
+)
+
+
 def format_card(code: str) -> str:
     """Return one stored card code's canvas display text.
 
@@ -232,6 +242,7 @@ class ResultsWindow:
         self.presenter = ResultsPresenter(self, data_source, tiebreak_order=tiebreak_order)
 
         self._bind_events()
+        self._bind_export_buttons()
         self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
@@ -246,6 +257,25 @@ class ResultsWindow:
                 after settling.
         """
         return find_control(self.frame, name, expected_type)
+
+    def _bind_export_buttons(self) -> None:
+        """Route the four export buttons through the menu command table.
+
+        E6.4.2: each button fires the same ``mi_export_*`` event the
+        Results menu row does, so one handler implementation serves
+        both surfaces -- the frame's bound ``EVT_MENU`` handlers run
+        the export off-loop (R-02).
+        """
+        import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+        for button_name, menu_id in _EXPORT_BUTTONS:
+            button = self._find(button_name, wx.Button)
+            button.Bind(
+                wx.EVT_BUTTON,
+                lambda _event, mid=menu_id: self.frame.GetEventHandler().ProcessEvent(
+                    wx.CommandEvent(wx.EVT_MENU.typeId, wx.xrc.XRCID(mid))
+                ),
+            )
 
     def _build_columns(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Append ``standings_list``'s seven columns in canvas order.

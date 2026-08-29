@@ -250,18 +250,30 @@ def _poster_subtitle(result: EntryResult) -> str:
 class _RideLike(Protocol):
     """The ride fields :func:`render` reads (documented seam, D15).
 
-    ``RideConfig`` satisfies this structurally; the Protocol lets the
+    ``RideConfig`` satisfies this structurally (the read-only property
+    members match its frozen fields); the Protocol lets the
     render tests pass a tiny stub instead of constructing a full ride.
     Read fields: ``name`` -> title, ``event_date``/``venue``/``lap_km``
     -> meta, ``organizer``/``scorer`` -> footer credits.
     """
 
-    name: str
-    event_date: date
-    venue: str
-    lap_km: float
-    organizer: str
-    scorer: str
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def event_date(self) -> date: ...
+
+    @property
+    def venue(self) -> str: ...
+
+    @property
+    def lap_km(self) -> float: ...
+
+    @property
+    def organizer(self) -> str: ...
+
+    @property
+    def scorer(self) -> str: ...
 
 
 def _format_meta(ride: _RideLike) -> str:
@@ -406,6 +418,24 @@ def _draw_rule(pdf: FPDF) -> None:
     pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
 
 
+def _draw_logo(pdf: FPDF, logo_path: Path | str | None) -> None:
+    """Draw the organizer logo at the top right when one is set (5c).
+
+    ``logo_path`` is the caller-supplied PNG; when absent the header
+    renders as today (the golden fixtures carry no logo, so the
+    byte-frozen outputs are untouched).
+    """
+    if logo_path is None:
+        return
+    width = 0.8
+    pdf.image(
+        str(logo_path),
+        x=pdf.w - pdf.r_margin - width,
+        y=pdf.t_margin,
+        w=width,
+    )
+
+
 def _maybe_page_break(pdf: FPDF, height: float) -> None:
     """Add a page if a *height*-tall block would cross the break."""
     if pdf.will_page_break(height):
@@ -425,7 +455,9 @@ class _PosterPDF(FPDF):
     stamp -- no "Page n of N", there is only one page.
     """
 
-    def __init__(self, ride: _RideLike, *, letter: bool, created_at: datetime) -> None:
+    def __init__(  # noqa: PLR0913 -- (ride, letter, created_at, logo_path): the poster's state inputs
+        self, ride: _RideLike, *, letter: bool, created_at: datetime, logo_path: Path | str | None
+    ) -> None:
         """Open one poster: geometry, fonts, metadata, footer stamp.
 
         Raises:
@@ -436,6 +468,7 @@ class _PosterPDF(FPDF):
         _open_document(self, ride.name, created_at=created_at)
         self._ride = ride
         self._generated = _format_generated(created_at)
+        self._logo_path = logo_path
 
     def header(self) -> None:
         """Draw the corner marks; a one-pager has no running title."""
@@ -466,6 +499,9 @@ class _PosterPDF(FPDF):
 
     def _header_block(self) -> None:
         """Draw the event meta, "Best poker hands" heading and title."""
+        _draw_logo(self, self._logo_path)
+        if self._logo_path is not None:
+            self.ln(0.42)
         self.set_font(_FONT_BODY, "", 9)
         self.set_text_color(*_STEEL)
         self.cell(0, 0.16, text=_format_meta(self._ride))
@@ -527,13 +563,14 @@ class _ReportPDF(FPDF):
     display fields) and draws the sections in the HTML export's order.
     """
 
-    def __init__(  # noqa: PLR0913 -- (ride, opts, letter, created_at): the report's four state inputs
+    def __init__(  # noqa: PLR0913 -- (ride, opts, letter, created_at, logo_path): the report's state inputs
         self,
         ride: _RideLike,
         opts: ExportOptions,
         *,
         letter: bool,
         created_at: datetime,
+        logo_path: Path | str | None = None,
     ) -> None:
         """Open one report: geometry, fonts, metadata, footer stamp.
 
@@ -547,6 +584,7 @@ class _ReportPDF(FPDF):
         self._ride = ride
         self._opts = opts
         self._generated = _format_generated(created_at)
+        self._logo_path = logo_path
         self.alias_nb_pages("{nb}")
 
     # -------------------------------------------------- page furniture
@@ -678,6 +716,9 @@ class _ReportPDF(FPDF):
 
     def _cover(self, placed: Sequence[Placed]) -> None:
         """Draw the page-1 cover: kicker, title, counters, meta."""
+        _draw_logo(self, self._logo_path)
+        if self._logo_path is not None:
+            self.ln(0.42)
         entries = len(placed)
         laps = sum(p.result.laps for p in placed)
         cards = sum(len(p.result.cards) for p in placed)
@@ -917,7 +958,7 @@ class _ReportPDF(FPDF):
         self.ln(0.04)
 
 
-def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, placed, opts, path) plus the letter/created_at seams
+def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, placed, opts, path) plus the letter/created_at/logo seams
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,
@@ -925,6 +966,7 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
     *,
     letter: bool = True,
     created_at: datetime | None = None,
+    logo_path: Path | str | None = None,
 ) -> None:
     """Write one finished ride's results report PDF to *path*.
 
@@ -950,6 +992,8 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
         letter: True for Letter paper, False for A4.
         created_at: The pinned aware-UTC creation stamp; defaults to
             now. Naive stamps are rejected (D14).
+        logo_path: Optional organizer-logo PNG drawn at the top right
+            of the cover (R-62/5c); None renders no logo.
 
     Raises:
         ValueError: *created_at* is not tz-aware.
@@ -961,18 +1005,19 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
             timezone.utc  # noqa: UP017 -- this mypy build lacks datetime.UTC; the portable form
         )
     )
-    report = _ReportPDF(ride, opts, letter=letter, created_at=stamp)
+    report = _ReportPDF(ride, opts, letter=letter, created_at=stamp, logo_path=logo_path)
     report.build(placed)
     report.output(str(path))
 
 
-def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, placed, path) plus the letter/created_at seams
+def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, placed, path) plus the letter/created_at/logo seams
     ride: _RideLike,
     placed: Sequence[Placed],
     path: Path | str,
     *,
     letter: bool = True,
     created_at: datetime | None = None,
+    logo_path: Path | str | None = None,
 ) -> None:
     """Write one finished ride's one-page podium poster PDF to *path*.
 
@@ -1000,6 +1045,8 @@ def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, place
         letter: True for Letter paper, False for A4.
         created_at: The pinned aware-UTC creation stamp; defaults to
             now. Naive stamps are rejected (D14).
+        logo_path: Optional organizer-logo PNG drawn at the top right
+            (R-62/5c); None renders no logo.
 
     Raises:
         ValueError: *created_at* is not tz-aware.
@@ -1011,6 +1058,6 @@ def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, place
             timezone.utc  # noqa: UP017 -- this mypy build lacks datetime.UTC; the portable form
         )
     )
-    poster = _PosterPDF(ride, letter=letter, created_at=stamp)
+    poster = _PosterPDF(ride, letter=letter, created_at=stamp, logo_path=logo_path)
     poster.build(placed)
     poster.output(str(path))

@@ -20,6 +20,7 @@ self-contained production page with CSS/fonts inlined and the record
 embedded.
 """
 
+import base64
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -30,7 +31,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from jinja2 import Environment, PackageLoader, StrictUndefined
 from markupsafe import Markup
 
-from rivercrossing.standings import hand_name
+from rivercrossing.standings import hand_name, laps_leaderboard, time_leaderboard
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -291,18 +292,30 @@ _TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 class _RideLike(Protocol):
     """The ride fields :func:`render` reads (documented seam, D15).
 
-    ``RideConfig`` satisfies this structurally; the Protocol lets the
+    ``RideConfig`` satisfies this structurally (the read-only property
+    members match its frozen fields); the Protocol lets the
     ``render()`` tests pass a tiny stub instead of constructing a full
     ride. Read fields: ``name`` -> title, ``event_date``/``venue``/
     ``lap_km`` -> meta, ``organizer``/``scorer`` -> footer credits.
     """
 
-    name: str
-    event_date: date
-    venue: str
-    lap_km: float
-    organizer: str
-    scorer: str
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def event_date(self) -> date: ...
+
+    @property
+    def venue(self) -> str: ...
+
+    @property
+    def lap_km(self) -> float: ...
+
+    @property
+    def organizer(self) -> str: ...
+
+    @property
+    def scorer(self) -> str: ...
 
 
 def racejson(payload: RacePayload) -> Markup:
@@ -505,6 +518,50 @@ def _format_meta(ride: _RideLike) -> str:
     )
 
 
+def _boards_from_placed(
+    placed: Sequence[Placed], opts: ExportOptions
+) -> tuple[tuple[LapsBoardRow, ...], tuple[TimeBoardRow, ...]]:
+    """Build the leaderboard rows the export options request (E6.4.2).
+
+    ``laps_board`` renders only when ``opts.laps_board`` (rows carry a
+    ``total`` only when times are shown, R-63); ``time_board`` is
+    times-only by contract and renders only when ``opts.time_board``.
+    Both boards order by most laps, then shortest total time
+    (standings' own leaderboards).
+    """
+    results = [p.result for p in placed]
+    laps = (
+        tuple(
+            LapsBoardRow(
+                plate=_parse_plate(p.result.plate),
+                entry=p.result.name,
+                laps=p.result.laps,
+                total=_format_duration(p.result.total_time) if opts.show_times else None,
+            )
+            for p in laps_leaderboard(results)
+        )
+        if opts.laps_board
+        else ()
+    )
+    times = (
+        tuple(
+            TimeBoardRow(
+                plate=_parse_plate(p.result.plate),
+                entry=p.result.name,
+                laps=p.result.laps,
+                total=_format_duration(p.result.total_time),
+                avg=_format_duration(p.result.total_time / p.result.laps)
+                if p.result.laps
+                else "—",
+            )
+            for p in time_leaderboard(results)
+        )
+        if opts.time_board
+        else ()
+    )
+    return laps, times
+
+
 def _payload_from_ride(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, generated): D15's mapping inputs
     ride: _RideLike,
     placed: Sequence[Placed],
@@ -513,12 +570,13 @@ def _payload_from_ride(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, genera
 ) -> RacePayload:
     """Build the export payload from a ride and its placed standings.
 
-    Leaderboard payloads are not derived here -- ``laps_board``/
-    ``time_board`` stay empty and the page renders the podium, top ten
-    and full field; the fixture payloads (which carry the golden
-    boards) reach the page through ``_render_payload`` (D15).
+    The fixture payloads (which carry the golden boards) reach the
+    page through ``_render_payload`` (D15); the public
+    :func:`render` path derives its boards from *placed* here
+    (E6.4.2).
     """
     results = tuple(_result_row_from_placed(p) for p in placed)
+    laps_board, time_board = _boards_from_placed(placed, opts)
     event = EventInfo(
         kicker=_KICKER,
         title=ride.name,
@@ -530,7 +588,20 @@ def _payload_from_ride(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, genera
         laps=sum(p.result.laps for p in placed),
         cards=sum(len(p.result.cards) for p in placed),
     )
-    return RacePayload(event=event, options=opts, tie_note=None, results=results)
+    return RacePayload(
+        event=event,
+        options=opts,
+        tie_note=None,
+        results=results,
+        laps_board=laps_board,
+        time_board=time_board,
+    )
+
+
+def _logo_data_uri(path: Path | str) -> str:
+    """Encode the PNG at *path* as a base64 data URI (R-61)."""
+    payload = base64.b64encode(Path(path).read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{payload}"
 
 
 def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo_src, generated)
@@ -540,16 +611,20 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     *,
     logo_src: str | None = None,
     generated: str | None = None,
+    logo_path: Path | str | None = None,
 ) -> str:
     """Render one finished ride's results as a self-contained HTML page.
 
     Composes the page's ``EventInfo`` from *ride* (name -> title,
     venue/date -> meta, organizer/scorer, entries/laps/cards tallied
-    from *placed*) and one ``ResultRow`` per ``Placed``, then renders
+    from *placed*), one ``ResultRow`` per ``Placed``, and the laps /
+    time boards when the options request them (E6.4.2), then renders
     through :func:`_render_payload`. ``generated`` pins the footer
     timestamp (defaults to now in the golden pages' style);
     ``logo_src`` is the ride logo as a base64 data URI, falling back
-    to a transparent 1x1 PNG when absent (D8).
+    to a transparent 1x1 PNG when absent (D8); ``logo_path`` is the
+    alternative raw-file form, base64-encoded when *logo_src* is
+    None.
 
     Args:
         ride: Ride-like object exposing ``name``/``event_date``/
@@ -559,6 +634,8 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
         opts: Export flags (times/boards/full-field/all-cards).
         logo_src: Base64 logo data URI; transparent fallback when None.
         generated: Footer timestamp; defaults to now, samples' style.
+        logo_path: Raw PNG path, base64-embedded when *logo_src* is
+            None (R-61's logo-base64 rule).
 
     Returns:
         The full HTML page as a string.
@@ -566,6 +643,8 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     Raises:
         ValueError: An entry's plate is not numeric.
     """
+    if logo_src is None and logo_path is not None:
+        logo_src = _logo_data_uri(logo_path)
     payload = _payload_from_ride(ride, placed, opts, generated)
     return _render_payload(payload, logo_src=logo_src)
 
