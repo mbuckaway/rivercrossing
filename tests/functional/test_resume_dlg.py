@@ -67,14 +67,9 @@ def test_resume_continue_resumes_the_ride_with_correct_elapsed() -> None:
 
 def test_resume_open_library_opens_ride_library_dlg() -> None:
     """library_btn on resume_dlg opens ride_library_dlg instead."""
-    pytest.skip(
-        "pre-existing flake, quarantined in EPIC 6 (EPIC5 handoff §3 authorized "
-        "root-cause-or-quarantine; it tripped every EPIC-6 VM run). The scenario's "
-        "own docstring names the hang: a nested-modal CallAfter chain (resume modal "
-        "-> library modal -> probe/dismiss -> 1.5 s frame close) racing the loop. "
-        "Fixing it belongs to the resume-flow/modal-dismissal machinery (E5 scope), "
-        "not EPIC 6."
-    )
+    # 2026-08-29: un-quarantined -- re-testing whether the EPIC-6 fixes
+    # (tick-timer stop, settle-loop) resolved the modal hang too; the
+    # suite is green with it un-skipped.
     result = scenario_runner.run_scenario("resume_library_opens_ride_library")
 
     data = result["data"]
