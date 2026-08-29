@@ -515,6 +515,13 @@ class MainFrame:
         self._tick_timer = wx.Timer(self.frame)
         self.frame.Bind(wx.EVT_TIMER, lambda _event: self._presenter.tick(), self._tick_timer)
         self._tick_timer.Start(_TICK_MS)
+        # Stop the timer with the frame: a running wx.Timer whose owner
+        # was destroyed keeps its native timer registered, and the next
+        # wxSafeYield dispatches wxTimerImpl::SendEvent against the
+        # freed owner -- the measured segfault behind the functional
+        # suite's "worker crashed" flake (reproduced deterministically:
+        # build frame -> destroy -> SafeYield past the tick period).
+        self.frame.Bind(wx.EVT_DESTROY, lambda _event: self._tick_timer.Stop())
 
     def set_presenter(self, presenter: ConsolePresenter) -> None:
         """Swap the console's bound presenter (E5.4.1 library Open).

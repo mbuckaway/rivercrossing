@@ -401,3 +401,34 @@ def test_main_shows_the_frame_before_entering_the_event_loop() -> None:
     result = _decode_probe_output(completed)
 
     assert (result["frame_shown_before_loop"], result["exit_code"]) == (True, 0), result["context"]
+
+
+def test_tick_timer_stops_when_the_frame_is_destroyed(xrc_resource: object) -> None:
+    """The 1 s tick timer must not outlive its frame (segfault fix).
+
+    Regression for the measured crash behind the suite's "worker
+    crashed" flake: wire_console starts the tick timer; destroying the
+    frame left it registered, and the next SafeYield dispatched
+    wxTimerImpl::SendEvent against the freed owner (segfault,
+    reproduced deterministically in a Tart clone). The fix stops the
+    timer on EVT_DESTROY.
+    """
+    from rivercrossing.ui.presenters.data_source import EmptyDataSource  # noqa: PLC0415
+    from rivercrossing.ui.views.main_frame import MainFrame  # noqa: PLC0415
+
+    class _StubPresenter:
+        """The presenter surface wire_console/tick touches."""
+
+        def tick(self) -> None:
+            """No-op tick: the timer's only call at this scope."""
+
+    window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
+    console = MainFrame(window, data_source=EmptyDataSource(), resource=xrc_resource)
+    console.wire_console(_StubPresenter())  # type: ignore[arg-type]
+    try:
+        assert console._tick_timer.IsRunning() is True
+    finally:
+        wx.GetApp().really_quitting = True
+        harness.close_window(window)
+
+    assert console._tick_timer.IsRunning() is False
