@@ -85,14 +85,13 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
         wx.SafeYield()
         # The documented remedy for the address-reuse poison is
-        # reference hygiene: a lingering Python wrapper (a test-local,
-        # a swallowed-exception traceback) keeps SIP's pointer->wrapper
-        # entry alive for the recycled address. SafeYield flushes
-        # deferred deletions but never deallocs that wrapper, so the
-        # stale entry survives the retry; an explicit gc.collect() here
-        # evicts any droppable wrapper between attempts (measured: the
-        # residual suite failures after the tick-timer fix are this
-        # class, and the collect clears them).
+        # reference hygiene: drop the stale wrapper so its SIP
+        # pointer->wrapper entry is evicted on dealloc, THEN
+        # re-query. Holding the wrapper across the query (the
+        # previous `control = FindWindowByName(...)` shape) kept the
+        # stale entry alive during the lookup, so the cache returned
+        # the same poison wrapper every attempt.
+        del control
         gc.collect()
         control = wx.Window.FindWindowByName(name, window)
         attempts += 1
