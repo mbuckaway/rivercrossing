@@ -525,9 +525,22 @@ def _decorate(context: _RouteContext, window: Any, route: commands.MenuRoute) ->
         # deep-link); the lookup key is irrelevant to the empty source.
         EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
     elif route.target == ids.RESULTS_FRAME:
-        # E5.4.2: results render the empty standings state until E6
-        # wires real placed rows from the finished ride.
-        ResultsWindow(window, data_source=_EMPTY_SOURCE)
+        # E6.4.1 (D10): with a live console threaded, results render
+        # the real placed rows from the console's EngineDataSource
+        # (the same live source build_main_window wired, so the
+        # roster always matches the engine -- the resume path never
+        # updates context.roster) and seed the tie-break list from
+        # the ride's stored order. The E5.4.2 empty state stays for
+        # the no-presenter path (route-level tests).
+        presenter = context.presenter
+        if presenter is not None:
+            ResultsWindow(
+                window,
+                data_source=presenter.source,
+                tiebreak_order=presenter.engine.config.tiebreak_order,
+            )
+        else:
+            ResultsWindow(window, data_source=_EMPTY_SOURCE)
     elif route.target == ids.SELFTEST_DLG:
         SelfTestDialog(window)
 
