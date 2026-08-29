@@ -108,11 +108,12 @@ the decisions taken, and what the next machine needs to resume into EPIC 7.
   (EPIC3-SESSION-SUMMARY Addendum 2); deprioritized by product decision 2026-08-28 — macOS is
   the working gate.
 - **`test_resume_dlg.py::test_resume_open_library_opens_ride_library_dlg`**: pre-existing
-  subprocess-scenario modal-dismissal hang (its scenario docstring names the hang). Bounded
-  root-cause attempt: the scenario drives `library_btn` on the modal `resume_dlg` through the
-  scenario runner while the parent modal is dismissing — the same class of modal churn that
-  flakes other modal-walk tests. **Quarantine decision:** keep it carried (rerun wrapper +
-  screenshot artifacts already in place); root-cause it properly in E7 if it keeps tripping.
+  subprocess-scenario modal-dismissal hang (its scenario docstring names the hang). Root-caused
+  (bounded): the scenario's nested-modal `CallAfter` chain (resume modal → library modal →
+  probe/dismiss → 1.5 s frame close) races the loop; the fix belongs to the resume-flow/modal
+  machinery, not EPIC 6. **Quarantined 2026-08-29** per the EPIC5 handoff's
+  root-cause-or-quarantine instruction — the test now skips with this reason; every other
+  resume_dlg scenario passes.
 - **`test_mini_acceptance.py::test_mini_acceptance_finish_confirm_cancel_leaves_ride_running`**:
   intermittent native segfault under wx churn (passes on some workers).
 - **Testing discipline (HARD)**: on macOS, functional tests run ONLY in the Tart VM via
@@ -140,9 +141,11 @@ merges; `docs/EPIC7-SESSION-SUMMARY` does not exist yet.
 ## 5 · Numbers
 
 - Unit + property + simulations: **2145 passed**, coverage **98.49%** (line+branch ≥ 90 gate).
-- Functional (Tart VM): suite collects **908 tests** (was 903; +5 new export-walk/results
-  tests). The VM run itself is PENDING — the authoring machine has no Tart VM; run
-  `scripts/run_functional_tests_vm.sh` on a VM-capable host before merging PR #12, or rely on
-  CI's functional stage.
+- Functional (Tart VM): **RUN on 2026-08-29 — green apart from the quarantined resume_dlg
+  flake.** The suite collects **908 tests**; the full VM run passed every E6 test
+  (results window + export walk + finish gate), with the pre-existing worker-crash flake
+  bursts (ride_setup/selftest/delete_ride/empty-state on a crashed worker) passing on their
+  reruns, and the documented `test_resume_dlg` hang quarantined (skipped with reason, §3).
+  Re-runs and worker bursts are handled by the fresh-process rerun wrapper + `--reruns 2`.
 - Goldens: HTML times 210,206 B / no-times 204,891 B; PDF report 48,572 B / poster 29,088 B —
   all byte-frozen with regenerate-matches tests and generator `--check` gates.
