@@ -17,10 +17,11 @@ import wx  # noqa: E402
 sys.path.insert(0, "tests/functional")
 import console_subprocess_scenarios as scenarios  # noqa: E402
 import harness  # noqa: E402
+import pages  # noqa: E402
 
 from rivercrossing.store import Store  # noqa: E402
 from rivercrossing.ui import app as app_module  # noqa: E402
-from rivercrossing.ui import ids, pages  # noqa: E402
+from rivercrossing.ui import ids  # noqa: E402
 
 
 def main() -> int:
