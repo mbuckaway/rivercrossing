@@ -39,6 +39,7 @@ E4.4.1-E4.4.3 behavior (spec §10/§13, R-31/32/34/35/37):
 from time import monotonic
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from rivercrossing import hands
 from rivercrossing.ride import IllegalStateError, RideStatus, StartBlockedError
 from rivercrossing.ui.presenters.data_source import format_duration
 from rivercrossing.ui.sound import Cue  # re-exported; see module docstring
@@ -57,8 +58,12 @@ ARM_TIMEOUT_S = 10.0
 
 
 def _finish_gate_clear() -> bool:
-    """Return True: the stub gate stays green until E6.4.3."""
-    return True
+    """Return whether the evaluator self-test is green (R-44, E6.4.3).
+
+    A fresh run each finish (not a cached launch result): the gate is
+    only as honest as the suite's last pass.
+    """
+    return hands.self_test().passed
 
 
 # E6.4.3 wires the real evaluator self-test report here; until then a

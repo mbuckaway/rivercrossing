@@ -999,3 +999,24 @@ def test_format_duration_round_trips_through_its_hms_parts(seconds: float) -> No
     minutes, secs = rest.split(":", 1)
 
     assert int(hours) * 3600 + int(minutes) * 60 + int(secs) == int(seconds)
+
+
+def test_finish_gate_consults_the_evaluator_self_test(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """E6.4.3: the gate is the self-test's green report (R-44)."""
+
+    class _Red:
+        """A report whose suite failed."""
+
+        passed = False
+
+    class _Green:
+        """A report whose suite passed."""
+
+        passed = True
+
+    monkeypatch.setattr(console_module.hands, "self_test", _Green)
+    assert console_module.FINISH_GATE() is True
+    monkeypatch.setattr(console_module.hands, "self_test", _Red)
+    assert console_module.FINISH_GATE() is False
