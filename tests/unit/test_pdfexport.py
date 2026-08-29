@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-r"""PDF results report tests (P7, E6.3.1) -- tests first, per R-70.
+r"""PDF export tests (P7, E6.3.1 / P8, E6.3.2) -- tests first, per R-70.
 
 Pins spec §8b's render contract: ``pdfexport.render(ride, placed,
 opts, path)`` writes a print-ready PDF whose sections and flags mirror
@@ -8,16 +8,20 @@ full field, show/hide times, all cards drawn -- with the retired
 designs' print geometry ([5a]-[5c]): Letter/A4, 0.58in margins, footer
 rule + "Page n of N" on every page, a page-2+ running title, Barlow +
 Barlow Condensed headings + DejaVu Sans suit glyphs, and the
-ink/steel/deep-steel tokens.
+ink/steel/deep-steel tokens. It also pins P8's ``podium_poster``
+sibling ([5d]): one celebratory Letter page (A4 via ``letter=False``),
+the top-3 placings as large podium cards, hand prose (D1, not
+ALL-CAPS), and a credit-line footer with no page count.
 
 Determinism (R-62, D14) is the load-bearing claim: identical inputs
 plus the pinned aware-UTC creation stamp produce byte-identical
-files, and the committed golden at
-``tests/unit/fixtures/pdfexport/epic-2026-results.pdf`` regenerates
-byte-for-byte from this renderer (the honest regeneration pattern
-gen_rank_vectors.py established). pypdf reads the bytes back to prove
-page count, page size, section presence/absence under each flag, DNF
-marking, the podium's top-3 plates and the per-page footer.
+files, and the committed goldens at
+``tests/unit/fixtures/pdfexport/epic-2026-results.pdf`` and
+``epic-2026-podium.pdf`` regenerate byte-for-byte from this renderer
+(the honest regeneration pattern gen_rank_vectors.py established).
+pypdf reads the bytes back to prove page count, page size, section
+presence/absence under each flag, DNF marking, the podium's top-3
+plates and the per-page footer.
 """
 
 import re
@@ -30,6 +34,7 @@ from hypothesis import strategies as st
 from pdfexport_fixtures import (
     FIXED_CREATED,
     GOLDEN_PDF,
+    GOLDEN_POSTER,
     build_placed,
     build_ride,
     golden_opts,
@@ -388,6 +393,217 @@ def test_render_credits_and_generated_footer_text(tmp_path: Path) -> None:
     assert "Organizer: GORBA — J. Marsden · Scorer: D. Whitfield" in text
     assert "generated 20:07, Sept 20 2026" in text
     assert "RiverCrossing" in text
+
+
+# ------------------------------------------------------- poster (5d)
+
+
+def _poster(  # noqa: PLR0913 -- (tmp_path, placed, letter, created_at): the poster seam inputs
+    tmp_path: Path,
+    placed: tuple[Placed, ...],
+    *,
+    letter: bool = True,
+    created_at: datetime | None = FIXED_CREATED,
+) -> Path:
+    """Render *placed* as the podium poster to a scratch file."""
+    out = tmp_path / "poster.pdf"
+    pdfexport.podium_poster(build_ride(), placed, out, letter=letter, created_at=created_at)
+    return out
+
+
+def test_podium_poster_writes_single_letter_page(tmp_path: Path) -> None:
+    """The poster is exactly one page at Letter (612 x 792 pt)."""
+    out = _poster(tmp_path, build_placed())
+    reader = PdfReader(str(out))
+
+    assert len(reader.pages) == 1
+    page = reader.pages[0]
+    assert float(page.mediabox.width) == pytest.approx(612.0)
+    assert float(page.mediabox.height) == pytest.approx(792.0)
+
+
+def test_podium_poster_letter_false_emits_a4_page(tmp_path: Path) -> None:
+    """letter=False selects A4: 595.28 x 841.89 pt."""
+    out = _poster(tmp_path, _placed_three(), letter=False)
+    page = PdfReader(str(out)).pages[0]
+
+    assert float(page.mediabox.width) == pytest.approx(595.28, abs=0.01)
+    assert float(page.mediabox.height) == pytest.approx(841.89, abs=0.01)
+
+
+def test_podium_poster_shows_top_three_plates_and_names(tmp_path: Path) -> None:
+    """The poster lists the top-3 plates with their entry names."""
+    text = _text(_poster(tmp_path, _placed_mixed()))
+
+    assert "#88 Moss Ridge Riders" in text
+    assert "#7 Luca Ferrari" in text
+    assert "#127 Dirt Dynamos" in text
+
+
+def test_podium_poster_omits_fourth_place(tmp_path: Path) -> None:
+    """Place 4 does not appear on the one-page poster."""
+    text = _text(_poster(tmp_path, _placed_mixed()))
+
+    assert "Ted Novak" not in text
+    assert "#94" not in text
+
+
+def test_podium_poster_shows_hand_prose_not_all_caps(tmp_path: Path) -> None:
+    """The hand name renders as D1 title-case prose, not ALL-CAPS."""
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert "Three of a Kind — Nines" in text
+    assert "THREE OF A KIND" not in text
+
+
+def test_podium_poster_team_line_names_team_and_laps(tmp_path: Path) -> None:
+    """A team's line reads "Team — name · N laps" from the payload."""
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert "Team — Dirt Dynamos · 10 laps" in text
+
+
+def test_podium_poster_solo_line_names_rider_and_laps(tmp_path: Path) -> None:
+    """A solo line reads "Solo — name · N laps"."""
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert "Solo — Moss Ridge Riders · 11 laps" in text
+    assert "Solo — Luca Ferrari · 10 laps" in text
+
+
+def test_podium_poster_card_faces_text_present(tmp_path: Path) -> None:
+    """The large card faces carry each card's rank and suit glyphs."""
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert "9♠" in text
+    assert "9♦" in text
+    assert "9♣" in text
+    assert "K♥" in text
+    assert "2♠" in text
+
+
+def test_podium_poster_footer_shows_credits_and_generated_no_page_count(
+    tmp_path: Path,
+) -> None:
+    """Footer names organizer/scorer and stamp; no "Page n of N"."""
+    text = _text(_poster(tmp_path, _placed_three()))
+
+    assert "Organizer: GORBA — J. Marsden · Scorer: D. Whitfield" in text
+    assert "generated 20:07, Sept 20 2026" in text
+    assert "RiverCrossing" in text
+    assert "Page 1 of" not in text
+
+
+def test_podium_poster_identical_inputs_produce_identical_bytes(tmp_path: Path) -> None:
+    """Two renders of the same inputs are byte-identical (R-62)."""
+    first = _poster(tmp_path, build_placed())
+    second = _poster(tmp_path, build_placed())
+
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_podium_poster_naive_created_at_raises_value_error(tmp_path: Path) -> None:
+    """D14: a naive creation stamp bakes a local offset; reject it."""
+    naive = datetime(2026, 9, 20, 20, 7, 0)  # noqa: DTZ001 -- the test deliberately builds a naive stamp to prove the D14 guard
+
+    with pytest.raises(ValueError, match=re.escape("created_at must be tz-aware")):
+        _poster(tmp_path, _placed_three(), created_at=naive)
+
+
+def test_podium_poster_fewer_than_three_entries_renders_available(tmp_path: Path) -> None:
+    """A short field still renders the entries it has, on one page."""
+    out = _poster(tmp_path, _placed_three()[:2])
+    reader = PdfReader(str(out))
+
+    assert len(reader.pages) == 1
+    text = _text(out)
+    assert "#88 Moss Ridge Riders" in text
+    assert "#7 Luca Ferrari" in text
+    assert "#127 Dirt Dynamos" not in text
+
+
+def test_podium_poster_zero_card_entry_renders_with_blank_hand(tmp_path: Path) -> None:
+    """A no-show entry (zero cards) renders, with no hand name."""
+    no_show = Placed(
+        place=1,
+        result=EntryResult(
+            entry_id="1",
+            plate="1",
+            name="No Show",
+            kind="solo",
+            laps=0,
+            total_time=0.0,
+            best_lap=0.0,
+            cards=(),
+            hand=best_hand(()),
+            dnf=False,
+        ),
+        tie_note=None,
+        draw_required=False,
+    )
+
+    text = _text(_poster(tmp_path, (no_show,)))
+
+    assert "No Show" in text
+
+
+def test_podium_poster_matches_committed_golden_byte_for_byte(tmp_path: Path) -> None:
+    """The golden dataset regenerates the frozen poster exactly."""
+    out = _poster(tmp_path, build_placed())
+
+    assert out.read_bytes() == GOLDEN_POSTER.read_bytes()
+
+
+@pytest.mark.parametrize(
+    ("kind", "name", "laps", "expected"),
+    [
+        ("solo", "Luca Ferrari", 10, "Solo — Luca Ferrari · 10 laps"),
+        ("team", "Dirt Dynamos", 10, "Team — Dirt Dynamos · 10 laps"),
+        ("team", "Moss Ridge Riders", 11, "Team — Moss Ridge Riders · 11 laps"),
+    ],
+)
+def test_poster_subtitle_formats_team_and_solo_lines(  # noqa: PLR0913, PLR0917 -- the parametrize row's four inputs
+    kind: str, name: str, laps: int, expected: str
+) -> None:
+    """The poster's team/solo line renders kind, name and laps."""
+    assert pdfexport._poster_subtitle(_entry("88", name, laps, kind=kind)) == expected
+
+
+@pytest.mark.parametrize(
+    ("card", "expected"),
+    [
+        (Card(Rank.NINE, Suit.SPADES), "9♠"),
+        (Card(Rank.TEN, Suit.CLUBS), "10♣"),
+        (Card(Rank.ACE, Suit.HEARTS), "A♥"),
+        (Card(Rank.QUEEN, Suit.DIAMONDS), "Q♦"),
+        (Card(rank=None, suit=None, joker=True), "★JOKER"),
+    ],
+)
+def test_poster_card_text_renders_rank_suit_and_joker(card: Card, expected: str) -> None:
+    """A large card face reads rank+suit, and "★JOKER" for the joker."""
+    assert pdfexport._poster_card_text(card) == expected
+
+
+def test_hand_prose_is_title_case_for_a_real_hand() -> None:
+    """D1 prose casing, unlike the report's uppercase table label."""
+    assert pdfexport._hand_prose(best_hand(_FIVE_CARDS)) == "Three of a Kind — Nines"
+
+
+def test_hand_prose_is_blank_for_a_no_card_hand() -> None:
+    """The empty-hand guard displays "" -- pinned (like the HTML)."""
+    assert pdfexport._hand_prose(best_hand(())) == ""
+
+
+@given(
+    rank=st.sampled_from(list(Rank)),
+    suit=st.sampled_from(list(Suit)),
+)
+def test_poster_card_text_embeds_rank_letter_and_suit_glyph(rank: Rank, suit: Suit) -> None:
+    """Property: a natural face carries rank letter and suit glyph."""
+    text = pdfexport._poster_card_text(Card(rank=rank, suit=suit))
+
+    assert text[:-1] == pdfexport._RANK_LETTER[rank.value]
+    assert text[-1] == pdfexport._SUIT_GLYPH[suit]
 
 
 # ------------------------------------------------- pure-function bounds

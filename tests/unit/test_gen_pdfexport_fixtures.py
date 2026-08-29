@@ -1,14 +1,15 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Unit tests for tools/gen_pdfexport_fixtures.py (P7, E6.3.1).
+"""Unit tests for tools/gen_pdfexport_fixtures.py (P7/P8, E6.3.1/2).
 
-The generator freezes the PDF results golden at
-``tests/unit/fixtures/pdfexport/epic-2026-results.pdf``, regenerated
-once from the real renderer with the shared fixture dataset and the
-pinned aware-UTC creation stamp (R-62/D14). Regenerating it is
-deliberate (spec §8b's golden-file test); ``tools/`` is a dev-script
-tree, not an installed package, so the module under test is loaded
-from its file path (the pattern test_gen_htmlexport_goldens.py
-established).
+The generator freezes both PDF goldens at
+``tests/unit/fixtures/pdfexport/`` -- the results report
+``epic-2026-results.pdf`` and the one-page podium poster
+``epic-2026-podium.pdf`` -- regenerated once from the real renderers
+with the shared fixture dataset and the pinned aware-UTC creation
+stamp (R-62/D14). Regenerating them is deliberate (spec §8b's
+golden-file test); ``tools/`` is a dev-script tree, not an installed
+package, so the module under test is loaded from its file path (the
+pattern test_gen_htmlexport_goldens.py established).
 """
 
 import importlib.util
@@ -16,7 +17,7 @@ from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
 from typing import TYPE_CHECKING
 
-from pdfexport_fixtures import GOLDEN_PDF
+from pdfexport_fixtures import GOLDEN_PDF, GOLDEN_POSTER
 
 if TYPE_CHECKING:
     import pytest
@@ -54,6 +55,20 @@ def test_write_golden_regeneration_matches_committed_file_byte_for_byte(
     assert path.read_bytes() == GOLDEN_PDF.read_bytes()
 
 
+def test_write_golden_poster_regeneration_matches_committed_file_byte_for_byte(
+    tmp_path: Path,
+) -> None:
+    """Regenerating the podium poster reproduces its committed golden.
+
+    P8 (E6.3.2): the one-page poster is byte-deterministic under the
+    same pinned aware-UTC stamp, so a fresh ``write_golden_poster``
+    matches ``epic-2026-podium.pdf`` exactly.
+    """
+    path = gen_goldens.write_golden_poster(tmp_path)
+
+    assert path.read_bytes() == GOLDEN_POSTER.read_bytes()
+
+
 def test_main_write_with_out_dir_override_writes_the_golden(tmp_path: Path) -> None:
     """``--write --out-dir`` points the generator at a scratch tree."""
     out_dir = tmp_path / "out"
@@ -62,6 +77,7 @@ def test_main_write_with_out_dir_override_writes_the_golden(tmp_path: Path) -> N
 
     assert exit_code == 0
     assert (out_dir / "epic-2026-results.pdf").is_file()
+    assert (out_dir / "epic-2026-podium.pdf").is_file()
 
 
 def test_main_check_returns_zero_when_committed_golden_matches() -> None:
