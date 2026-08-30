@@ -135,6 +135,23 @@ __all__ = ["main"]
 
 _SCREENSHOT_DIR = Path(__file__).resolve().parent / "_screenshots"
 
+# E8.1.1 hermeticity: every scenario builds the app through
+# _build_app_window, which injects a per-process tmp settings file.
+# Each scenario runs in its OWN spawned interpreter, so a module-level
+# mkdtemp path is per-scenario, and no scenario ever reads or writes
+# the guest's real user config dir (measured: the theme-dark scenario's
+# own persisted appearance was leaking into later launches in the same
+# VM clone, flipping appearance_unchanged on rerun). Scenarios that
+# need a specific file pass settings_path= explicitly and the helper
+# leaves it untouched.
+_SCENARIO_SETTINGS_PATH = Path(tempfile.mkdtemp(prefix="rc-scenario-settings-")) / "settings.json"
+
+
+def _build_app_window(**kwargs: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """build_main_window with a per-scenario settings path (E8.1.1)."""
+    kwargs.setdefault("settings_path", _SCENARIO_SETTINGS_PATH)
+    return app_module.build_main_window(wx.GetApp(), **kwargs)
+
 
 def _visible_column_titles(crossings_list: Any) -> list[str]:  # noqa: ANN401
     """Return the titles of every non-hidden column, in column order."""
@@ -336,7 +353,7 @@ def _plate_entry_round_trip() -> dict[str, Any]:
     the console's correct empty state until a store-backed ride is
     opened.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -361,7 +378,7 @@ def _plate_entry_round_trip() -> dict[str, Any]:
 
 def _record_btn_click_records_once() -> dict[str, Any]:
     """Clicking Record with no ride open rejects it (R-31, E5.4.2)."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -386,7 +403,7 @@ def _record_btn_click_records_once() -> dict[str, Any]:
 
 def _console_starts_in_running_state() -> dict[str, Any]:
     """Run the bootstrap and read the console's starting state."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -443,7 +460,7 @@ def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401
 
 def _quit_menu_confirmed_destroys() -> dict[str, Any]:
     """wxID_EXIT + Quit on exit_running_dlg (demo RUNNING)."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -460,7 +477,7 @@ def _quit_menu_confirmed_destroys() -> dict[str, Any]:
 
 def _quit_menu_cancelled_stays() -> dict[str, Any]:
     """wxID_EXIT + Cancel on exit_running_dlg: frame survives."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -479,7 +496,7 @@ def _quit_menu_cancelled_stays() -> dict[str, Any]:
 
 def _running_ride_shows_exit_running_dlg() -> dict[str, Any]:
     """Fire wxID_EXIT; check exit_running_dlg is what shows."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -510,7 +527,7 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
     original_start = RideEngine.start
     RideEngine.start = lambda _self, _at=None: None  # type: ignore[assignment]
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -533,7 +550,7 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
 
 def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
     """Hide main_frame via a plain Close(); never destroy it."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -548,7 +565,7 @@ def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
 def _mac_reopen_shows_and_raises() -> dict[str, Any]:
     """Show and raise main_frame after the red X hid it."""
     app = wx.GetApp()
-    frame = app_module.build_main_window(app)
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -568,7 +585,7 @@ def _query_end_session_cancelled_vetoes() -> dict[str, Any]:
     dialogs.run_dialog = lambda _dialog, opener: wx.ID_CANCEL  # noqa: ARG005 -- opener= is a real kwarg
     try:
         app = wx.GetApp()
-        frame = app_module.build_main_window(app)
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -589,7 +606,7 @@ def _query_end_session_confirmed_does_not_veto() -> dict[str, Any]:
     dialogs.run_dialog = lambda _dialog, opener: wx.ID_OK  # noqa: ARG005 -- opener= is a real kwarg
     try:
         app = wx.GetApp()
-        frame = app_module.build_main_window(app)
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -624,7 +641,7 @@ def _session_end_confirmed_then_close_destroys_once() -> dict[str, Any]:
     dialogs.run_dialog = _counting_run_dialog
     try:
         app = wx.GetApp()
-        frame = app_module.build_main_window(app)
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -649,7 +666,7 @@ def _forced_close_destroys_without_dialog() -> dict[str, Any]:
 
     dialogs.run_dialog = _counting_run_dialog
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -671,7 +688,7 @@ def _windows_close_cancelled_stays() -> dict[str, Any]:
     exactly except for firing a plain ``Close()`` instead of the
     wxID_EXIT menu route.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -703,7 +720,7 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
     that deferred destroy before the JSON envelope is printed, so no
     further cleanup close is needed here either.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -724,7 +741,7 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
 
 def _exit_running_dlg_probe_and_cancel() -> dict[str, Any]:
     """exit_running_dlg shows 3 buttons, message_lbl, Cancel default."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -784,7 +801,7 @@ def _finish_first_routes_to_the_finish_flow() -> dict[str, Any]:
 
     dialogs.run_dialog = _auto_ok_finish
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -835,7 +852,7 @@ def _quit_keep_running_writes_closed_at_and_stays_running() -> dict[str, Any]:
         boot.close()
 
     store = Store.open(db_path, active_ride_id=ride_id)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -988,7 +1005,7 @@ def _resume_dlg_quit_wording_shows() -> dict[str, Any]:
         harness.click(dialog, ids.CONTINUE_BTN)
 
     wx.CallAfter(_probe_and_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1025,7 +1042,7 @@ def _resume_dlg_crash_wording_shows() -> dict[str, Any]:
         harness.click(dialog, ids.CONTINUE_BTN)
 
     wx.CallAfter(_probe_and_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1074,7 +1091,7 @@ def _resume_continue_loads_ride_with_elapsed() -> dict[str, Any]:
         _close_without_prompt(frame)
 
     wx.CallAfter(_click_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store, clock=clock)
+    frame = _build_app_window(store=store, clock=clock)
     frame.Show()
     frame.Layout()
     wx.CallLater(1500, _read_clock_then_close)
@@ -1123,7 +1140,7 @@ def _resume_library_opens_ride_library() -> dict[str, Any]:
             wx.CallAfter(library.EndModal, wx.ID_CLOSE)
 
     wx.CallAfter(_click_library)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     wx.CallAfter(_probe_and_dismiss_library)
@@ -1161,7 +1178,7 @@ def _resume_reopened_ride_shows_reopened_infobar() -> dict[str, Any]:
             harness.click(dialog, ids.CONTINUE_BTN)
 
     wx.CallAfter(_click_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1406,7 +1423,7 @@ def _library_live_open_switches_console_context() -> dict[str, Any]:
         harness.click(library, pages.WX_ID_OPEN)
 
     try:
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1479,7 +1496,7 @@ def _library_live_duplicate_appears_as_new_draft() -> dict[str, Any]:  # noqa: P
         wx.CallAfter(_record_rows_and_close, library)
 
     try:
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1556,7 +1573,7 @@ def _duplicate_ride_menu_route_opens_confirm_and_duplicates() -> dict[str, Any]:
 
     try:
         wx.CallAfter(_resume_then_fire_duplicate)
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1629,7 +1646,7 @@ def _reopen_ride_menu_route_opens_confirm_and_reopens() -> dict[str, Any]:
 
     try:
         wx.CallAfter(_resume_then_open_finished)
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1671,7 +1688,7 @@ def _reopen_ride_route_on_non_finished_refuses() -> dict[str, Any]:
         harness.click(dialog, pages.WX_ID_OK)
 
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1716,7 +1733,7 @@ def _csv_import_commit_reads_editor() -> dict[str, Any]:
             return wx.ID_OK
 
         dialogs.run_dialog = _click_import
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         _fire_menu_event(frame, "mi_import_csv")
 
         plates: set[str] = set()
@@ -1779,7 +1796,7 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
     invariant this caller can check without ever needing to know
     either OS's actual, environment-dependent starting appearance.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1809,7 +1826,7 @@ def _theme_light_round_trip() -> dict[str, Any]:
     both times, so comparing to the untouched pre-fire text is not
     enough on its own to prove a notice posted at all.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1848,7 +1865,7 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
 
     theme.apply = _counting_apply
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1865,19 +1882,19 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
         theme.apply = original_apply
 
 
-def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, Any]:
-    """Theme ids post no stub notice (Ok/CannotChange); zoom still does.
+def _theme_ids_do_not_post_the_stub_notice_and_zoom_applies() -> dict[str, Any]:
+    """Theme and zoom ids post no stub notice; zoom applies (E8.1.4).
 
     Returns the raw post-fire theme notice text too, not only whether
     it changed: MSW's ``CannotChange`` contract means firing the theme
     id *does* change the status bar on Windows (to the documented
     next-launch text), so "unchanged" alone would read as a false
-    positive there for the one fact this scenario actually needs to
-    prove on every platform -- that the theme id's own notice, if any,
-    is never the generic ``route.label — not yet implemented`` stub
-    ``mi_zoom_110`` posts.
+    positive there for the one fact this scenario needs to prove on
+    every platform -- that neither the theme nor the zoom id posts the
+    generic ``route.label — not yet implemented`` stub. Zoom applies:
+    the fired radio is checked and the settings file records 110.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1890,7 +1907,9 @@ def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, An
         return {
             "theme_notice_unchanged": after_theme == before,
             "theme_notice_after": after_theme,
-            "zoom_stub_notice": after_zoom,
+            "zoom_notice_after": after_zoom,
+            "zoom_radio_checked": _menu_item_checked(frame, ids.MI_ZOOM_110),
+            "zoom_percent_after": load_settings(_SCENARIO_SETTINGS_PATH).zoom_percent,
         }
     finally:
         _close_without_prompt(frame)
@@ -2100,7 +2119,7 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
         save_settings(target, settings_path)
 
         # First run: the bootstrap loads the saved file and applies it.
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2132,7 +2151,7 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
             _close_without_prompt(frame)
 
         # Relaunch: a fresh build reads the file the first run saved.
-        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2 = _build_app_window(settings_path=settings_path)
         frame2.Show()
         frame2.Layout()
         harness.pump()
@@ -2174,7 +2193,7 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2237,7 +2256,7 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: 
             ),
             settings_path,
         )
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2273,7 +2292,7 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: 
             _close_without_prompt(frame)
 
         # Relaunch: the persisted appearance renders in a fresh dialog.
-        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2 = _build_app_window(settings_path=settings_path)
         frame2.Show()
         frame2.Layout()
         harness.pump()
@@ -2318,7 +2337,7 @@ def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2373,7 +2392,7 @@ def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2421,7 +2440,7 @@ def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
         finally:
             _close_without_prompt(frame)
 
-        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2 = _build_app_window(settings_path=settings_path)
         frame2.Show()
         frame2.Layout()
         harness.pump()
@@ -2454,7 +2473,7 @@ def _zoom_view_menu_applies_live_and_boundaries() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2499,7 +2518,7 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2567,7 +2586,7 @@ def _zoom_survives_relaunch() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame = _build_app_window(settings_path=settings_path)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -2580,7 +2599,7 @@ def _zoom_survives_relaunch() -> dict[str, Any]:
         finally:
             _close_without_prompt(frame)
 
-        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2 = _build_app_window(settings_path=settings_path)
         frame2.Show()
         frame2.Layout()
         harness.pump()
@@ -2653,8 +2672,8 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "theme_system_reapplies_on_sys_colour_changed": (
         _theme_system_reapplies_on_sys_colour_changed
     ),
-    "theme_ids_do_not_post_the_stub_notice_but_zoom_still_does": (
-        _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does
+    "theme_ids_do_not_post_the_stub_notice_and_zoom_applies": (
+        _theme_ids_do_not_post_the_stub_notice_and_zoom_applies
     ),
     "live_typed_plate_appears_in_feed": _live_typed_plate_appears_in_feed,
     "live_flagged_crossing_row_is_bold": _live_flagged_crossing_row_is_bold,

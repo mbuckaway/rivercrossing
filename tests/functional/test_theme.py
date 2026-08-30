@@ -36,7 +36,7 @@ import pytest
 import scenario_runner
 import wx
 
-from rivercrossing.ui import commands, theme
+from rivercrossing.ui import theme
 
 pytestmark = pytest.mark.functional
 
@@ -187,27 +187,46 @@ def test_theme_system_menu_clicks_still_apply_and_check_the_radio_on_windows() -
     assert result["data"]["radio_checked"] is True, result["context"]
 
 
-_THEME_VS_ZOOM_SCENARIO = "theme_ids_do_not_post_the_stub_notice_but_zoom_still_does"
+_THEME_VS_ZOOM_SCENARIO = "theme_ids_do_not_post_the_stub_notice_and_zoom_applies"
 
 
 @_DARWIN_ONLY
-def test_theme_ids_post_no_stub_notice_while_zoom_ids_still_do_on_mac() -> None:
-    """Theme ids post no notice (Ok); mi_zoom_110 still posts one."""
+def test_theme_and_zoom_ids_post_no_stub_notice_while_zoom_applies_on_mac() -> None:
+    """Theme and mi_zoom_110 post no notice; zoom 110 applies.
+
+    E8.1.4 wired the zoom radios, so the old contract -- zoom still
+    posts the not-yet-implemented stub -- is gone by design. The new
+    contract: a theme click posts no stub (Ok on macOS), a zoom click
+    posts nothing at all (the status text is unchanged by it), the
+    fired radio is checked, and the settings file records 110.
+    """
     result = scenario_runner.run_scenario(_THEME_VS_ZOOM_SCENARIO)
 
-    expected_zoom_notice = f"{commands.route_for_id('mi_zoom_110').label} — not yet implemented"
-    assert result["data"] == {
-        "theme_notice_unchanged": True,
-        "theme_notice_after": "",
-        "zoom_stub_notice": expected_zoom_notice,
-    }, result["context"]
+    assert result["ok"], result["context"]
+    data = result["data"]
+    assert data["theme_notice_unchanged"] is True, result["context"]
+    assert data["theme_notice_after"] == "", result["context"]
+    assert data["zoom_notice_after"] == data["theme_notice_after"], result["context"]
+    assert data["zoom_radio_checked"] is True, result["context"]
+    assert data["zoom_percent_after"] == 110, result["context"]
 
 
 @_WIN32_ONLY
-def test_theme_ids_post_the_next_launch_notice_while_zoom_still_posts_stub_on_windows() -> None:
-    """Theme ids post the CannotChange notice, not the generic stub."""
+def test_theme_posts_next_launch_notice_while_zoom_applies_on_windows() -> None:
+    """Theme posts CannotChange; zoom still applies and posts nothing.
+
+    Never asserts an absolute appearance value -- the CannotChange
+    contract (theme.py's own module docstring) only documents that the
+    call has no runtime effect. The zoom facts hold on every platform:
+    the fired radio is checked, the settings file records 110, and the
+    status text after the zoom click still shows the theme's own
+    notice (zoom posted nothing -- no stub).
+    """
     result = scenario_runner.run_scenario(_THEME_VS_ZOOM_SCENARIO)
 
-    expected_zoom_notice = f"{commands.route_for_id('mi_zoom_110').label} — not yet implemented"
-    assert result["data"]["theme_notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
-    assert result["data"]["zoom_stub_notice"] == expected_zoom_notice, result["context"]
+    assert result["ok"], result["context"]
+    data = result["data"]
+    assert data["theme_notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
+    assert data["zoom_notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
+    assert data["zoom_radio_checked"] is True, result["context"]
+    assert data["zoom_percent_after"] == 110, result["context"]
