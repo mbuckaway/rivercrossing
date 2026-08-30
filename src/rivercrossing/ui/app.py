@@ -75,6 +75,7 @@ from rivercrossing.ui import (
     resume_flow,
     sound,
     theme,
+    zoom,
 )
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
@@ -382,6 +383,23 @@ def _check_loaded_hide_times(menubar: Any, *, hide: bool) -> None:  # noqa: ANN4
     menubar.Check(wx.xrc.XRCID(ids.MI_HIDE_TIMES), hide)
 
 
+def _check_loaded_zoom_radio(menubar: Any, percent: int) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Tick the zoom radio for *percent* (E8.1.4, startup + mirror).
+
+    ``wxMenuBar.Check`` also unchecks the zoom group's other six
+    members (measured, ``_handle_view_row``'s own note), so ticking the
+    percent's radio alone restores the selection. Called at startup
+    after ``_check_default_menu_radios`` (ticking 100 there is a no-op
+    -- it is already checked) and whenever the settings dialog applies
+    a new zoom (the mirror), where the previously checked radio must
+    be reverted too.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    menubar.Check(wx.xrc.XRCID(zoom.menu_item_id_for(percent)), True)  # noqa: FBT003 -- wx API takes a positional bool
+
+
 def _toggle_hide_times(context: _RouteContext) -> None:
     """Flip the hide-times setting live and persist it (E8.1.3).
 
@@ -422,6 +440,21 @@ def _theme_item_id_for(real_id: int) -> str | None:
     )
 
 
+def _zoom_item_id_for(real_id: int) -> str | None:
+    """Return the zoom radio's own XRC name for *real_id*, if any.
+
+    The zoom analogue of :func:`_theme_item_id_for` -- an ``EVT_MENU``
+    carries only the resolved runtime int, never the XRC name.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    return next(
+        (item_id for item_id in zoom.ZOOM_MENU_ITEM_IDS if wx.xrc.XRCID(item_id) == real_id),
+        None,
+    )
+
+
 def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: Any) -> None:  # noqa: ANN401
     """Dispatch the View row: theme, hide-times and zoom ids, else stub.
 
@@ -439,8 +472,9 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
     OK writes. E8.1.3 adds ``mi_hide_times``: a live toggle -- flip
     ``context.settings.hide_times``, apply through the console
     presenter, persist, and set the check item explicitly (a synthetic
-    event does not auto-toggle check items either). The seven
-    ``mi_zoom_*`` ids keep the stub until E8.1.4.
+    event does not auto-toggle check items either). E8.1.4 adds the
+    seven ``mi_zoom_*`` radios: apply through the zoom controller,
+    persist, and tick the fired radio explicitly.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -460,6 +494,15 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
         return
     if event.GetId() == wx.xrc.XRCID(ids.MI_HIDE_TIMES):
         _toggle_hide_times(context)
+        return
+    zoom_item_id = _zoom_item_id_for(event.GetId())
+    if zoom_item_id is not None:
+        percent = zoom.percent_for_menu_id(zoom_item_id)
+        zoom.set_percent(percent)
+        context.frame.GetMenuBar().Check(event.GetId(), True)  # noqa: FBT003 -- wx API takes a positional bool
+        updated = replace(context.settings, zoom_percent=percent)
+        settings_store.save_settings(updated, context.settings_path)
+        context.settings = updated
         return
     context.frame.SetStatusText(f"{route.label} — not yet implemented")
 
@@ -604,7 +647,7 @@ def _live_library_callbacks(
 
 
 def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
-    """Persist *settings* and apply its live paths (E8.1.2/E8.1.3).
+    """Persist *settings* and apply its live paths (E8.1.2-E8.1.4).
 
     The settings dialog's OK callback: saves to the config file,
     updates the context's current settings, then applies what has live
@@ -613,9 +656,12 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
     sound through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
     through the console presenter's ``on_hide_times`` (when a
     presenter is threaded) with the View-menu check item synced
-    (``_check_loaded_hide_times``). Zoom stays unapplied -- E8.1.4 owns
-    applying it; this only persists ``zoom_percent``.
+    (``_check_loaded_hide_times``), and zoom through
+    :func:`~rivercrossing.ui.zoom.set_percent` when the choice changed
+    (E8.1.4), with the View-menu zoom radio synced
+    (``_check_loaded_zoom_radio``).
     """
+    zoom_changed = settings.zoom_percent != context.settings.zoom_percent
     settings_store.save_settings(settings, context.settings_path)
     context.settings = settings
     mode = theme.ThemeMode(settings.appearance)
@@ -624,10 +670,13 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
         context.frame.SetStatusText(notice)
     _check_loaded_theme_radio(context.frame.GetMenuBar(), mode)
     _check_loaded_hide_times(context.frame.GetMenuBar(), hide=settings.hide_times)
+    _check_loaded_zoom_radio(context.frame.GetMenuBar(), settings.zoom_percent)
     sound.set_muted(muted=not settings.sound_on)
     presenter = context.presenter
     if presenter is not None:
         presenter.on_hide_times(hide=settings.hide_times)
+    if zoom_changed:
+        zoom.set_percent(settings.zoom_percent)
 
 
 def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each binds a different view class
@@ -1579,6 +1628,10 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     try:
         _decorate(context, window, route)
         _apply_dialog_defaults(window, route)
+        # E8.1.4: every window opened later inherits the current zoom --
+        # applied after decoration, before it shows, so each control's
+        # base font is captured once and scaled (never compounded).
+        zoom.apply_to(window)
     except Exception:
         # Fault A: any post-load failure must close the just-loaded
         # window before re-raising. _decorate's view construction runs
@@ -2074,13 +2127,14 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     :class:`~rivercrossing.ui.theme.ThemeController` (constructed with
     the loaded mode, and the matching menu radio checked), the sound
     mute through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
-    through the console presenter's ``on_hide_times``, and the saved
-    splitter sash / frame geometry through :class:`MainFrame`'s
-    layout seams. The settings file path and current
-    :class:`AppSettings` are kept on :class:`_RouteContext`, and the
-    layout save callback persists sash/geometry changes back to the
-    file. Zoom application is deferred to E8.1.4 -- this task only
-    persists ``zoom_percent``.
+    through the console presenter's ``on_hide_times`` (with the menu
+    check item synced, E8.1.3), zoom through
+    :func:`~rivercrossing.ui.zoom.set_percent` (with the menu radio
+    synced, E8.1.4), and the saved splitter sash / frame geometry
+    through :class:`MainFrame`'s layout seams. The settings file path
+    and current :class:`AppSettings` are kept on
+    :class:`_RouteContext`, and the layout save callback persists
+    sash/geometry changes back to the file.
 
     Split out of :func:`main` so a test can drive the whole
     construction path without ever entering ``MainLoop``, which
@@ -2130,6 +2184,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     _check_default_menu_radios(menubar)
     _check_loaded_theme_radio(menubar, loaded_mode)
     _check_loaded_hide_times(menubar, hide=loaded_settings.hide_times)
+    _check_loaded_zoom_radio(menubar, loaded_settings.zoom_percent)
 
     # E5.4.2: no store-backed ride is open at bootstrap, so the roster
     # is empty (rider_editor_dlg shows the empty state; the library
@@ -2189,11 +2244,12 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     _console.set_state(engine_source.ride_status())
     _console.focus_entry()
 
-    # E8.1.1: apply the persisted settings that already have live
-    # paths. Zoom application is E8.1.4's task -- this only persists
-    # zoom_percent.
+    # E8.1.1-E8.1.4: apply the persisted settings that have live
+    # paths -- appearance (the ThemeController, constructed with the
+    # loaded mode), sound, hide-times and zoom.
     sound.set_muted(muted=not loaded_settings.sound_on)
     _presenter.on_hide_times(hide=loaded_settings.hide_times)
+    zoom.set_percent(loaded_settings.zoom_percent)
 
     _apply_accelerators(frame, menubar)
     # theme_controller is kept alive by _RouteContext, threaded through
