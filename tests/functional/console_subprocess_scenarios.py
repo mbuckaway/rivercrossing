@@ -107,7 +107,6 @@ import scenario_runner
 import wx
 import wx.dataview
 import wx.xrc
-from rivercrossing.ui.views.shortcuts import ShortcutsDialog
 
 from rivercrossing.cards import Shoe
 from rivercrossing.demo import DemoDataSource
@@ -129,6 +128,7 @@ from rivercrossing.ui.presenters.settings import (
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
 from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 from rivercrossing.ui.views.ride_library import COL_NAME, COL_STATUS
+from rivercrossing.ui.views.shortcuts import ShortcutsDialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable

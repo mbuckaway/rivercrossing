@@ -690,10 +690,12 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     the real viewer (newest-first list + the two filters) over the
     live engine source. E8.1.2 adds the settings dialog:
     ``settings_dlg`` now binds the E8.1.2 viewer (renders the current
-    AppSettings and, on OK, persists + applies it). The remaining
-    plain XRC dialogs with no code-side view class (the correction
-    dialogs) need nothing further here; they already carry their own
-    canvas defaults from their own ``.xrc`` authoring.
+    AppSettings and, on OK, persists + applies it). E8.2.1 adds the
+    shortcuts dialog: ``shortcuts_dlg`` now binds the E8.2.1 viewer
+    (renders the accelerator table, Key | Action). The remaining plain
+    XRC dialogs with no code-side view class (the correction dialogs)
+    need nothing further here; they already carry their own canvas
+    defaults from their own ``.xrc`` authoring.
     """
     from rivercrossing.ui.views.audit import AuditDialog  # noqa: PLC0415
     from rivercrossing.ui.views.entry_detail import EntryDetailDialog  # noqa: PLC0415
@@ -703,6 +705,7 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
     from rivercrossing.ui.views.settings import SettingsDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.shortcuts import ShortcutsDialog  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         if context.store is not None:
@@ -788,6 +791,11 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
             settings=context.settings,
             on_save=lambda new_settings: _apply_settings_live(context, new_settings),
         )
+    elif route.target == ids.SHORTCUTS_DLG:
+        # E8.2.1: Help ▸ Keyboard Shortcuts renders the accelerator
+        # table -- one Key | Action row per Accelerator -- so the
+        # dialog cannot drift from ui.accelerators (xrc-windows.md E).
+        ShortcutsDialog(window)
     elif route.target == ids.AUDIT_DLG:
         # E7.3.1: Audit Trail… opens the real viewer -- newest-first
         # audit_list plus the search/action filters -- over the live
