@@ -418,10 +418,14 @@ def test_reassign_menu_route_reassigns_the_current_entrys_latest_lap(
     frame = context.frame
     context.detail_plate = "12"
     before = len(engine.events)
+    # The shared live_context engine accumulates crossings as the earlier
+    # menu-route tests mutate it, so the "current entry's latest lap" is
+    # engine.crossings[-1] -- name its actual time, never a hardcoded one.
+    expected_time = engine.crossings[-1].crossed_at.strftime("%H:%M:%S")
 
     def _drive(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         label = harness.find_control(dialog, ids.CROSSING_LBL).GetLabelText()
-        assert "10:30:00" in label  # the recorded crossing is named, never blank
+        assert expected_time in label  # the recorded crossing is named, never blank
         harness.type_text(dialog, ids.NEW_PLATE_INPUT, "34")
         harness.type_text(dialog, ids.REASON_INPUT, "mis-keyed plate")
         harness.click(dialog, "wxID_OK")

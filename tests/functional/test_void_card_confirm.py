@@ -212,8 +212,8 @@ def test_entry_detail_void_button_targets_the_selected_dealt_card(
     captured: dict[str, str] = {}
 
     def fake_void(
-        _resource: object, *, _frame: object, _entry_id: str, card: str, entry: str
-    ) -> None:
+        _resource: object, *, frame: object, _entry_id: str, card: str, entry: str
+    ) -> None:  # noqa: ARG001 -- the frame seam is not used by this spy
         captured["card"] = card
         captured["entry"] = entry
 
@@ -334,6 +334,12 @@ def live_context(
         presenter=presenter,
         console_view=console,
     )
+    # The menu-route tests fire real EVT_MENU events at this frame: bind
+    # the §15 routes (and apply the live binder) exactly like
+    # test_corrections' _build_live_context does, or the fired event has
+    # no handler and the route silently does nothing.
+    app_module._bind_routes(context)
+    app_module._apply_menu_state(context, engine.state)
     try:
         yield context, engine
     finally:
