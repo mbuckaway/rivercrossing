@@ -35,6 +35,8 @@ imported, keeping the exporter independent of its sibling (and of the
 UI layer's presenters).
 """
 
+import re
+import zlib
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -378,6 +380,15 @@ def _open_document(pdf: FPDF, title: str, *, created_at: datetime) -> None:
     if created_at.tzinfo is None:
         msg = "created_at must be tz-aware (D14: a naive stamp bakes a local offset)"
         raise ValueError(msg)
+    # Stream compression off (R-62/D14). Deflate output is not
+    # canonical across zlib builds: the python.org Windows builds link
+    # zlib-ng while the macOS builds use the platform zlib, and the two
+    # emit different bytes for identical input (measured: no zlib-ng
+    # level reproduces a macOS-compressed golden). A compressed stream
+    # would make the byte-for-byte golden tests fail on one OS or the
+    # other, so the streams are stored raw -- deterministic by
+    # construction, at the cost of a larger file.
+    pdf.set_compression(False)
     pdf.set_margins(_MARGIN_IN, _MARGIN_IN, _MARGIN_IN)
     pdf.set_auto_page_break(True, margin=_FOOTER_GAP_IN)
     pdf.set_creation_date(created_at)
@@ -442,6 +453,128 @@ def _maybe_page_break(pdf: FPDF, height: float) -> None:
         pdf.add_page()
 
 
+def _raw_stream_span(
+    pdf: bytes, stream_match: re.Match[bytes]
+) -> tuple[int, int, int, bytes] | None:
+    """Return one FlateDecode stream's replacement span, or None.
+
+    The span is ``(start, body_start, body_end, replacement)``; scans
+    back from *stream_match* to the owning object dict. None when the
+    stream is not FlateDecode or does not deflate. The replacement is
+    the dict (``/Filter`` dropped, ``/Length`` updated) plus the raw
+    body.
+    """
+    dict_start = pdf.rfind(b"<<", 0, stream_match.start())
+    dict_end = pdf.find(b">>", dict_start, stream_match.start())
+    if dict_end == -1 or b"/FlateDecode" not in pdf[dict_start:dict_end]:
+        return None
+    body_start = stream_match.end()
+    body_end = pdf.find(b"endstream", body_start)
+    if body_end == -1:
+        return None
+    body = pdf[body_start:body_end]
+    if body.endswith(b"\r\n"):
+        body = body[:-2]
+    elif body.endswith(b"\n"):
+        body = body[:-1]
+    try:
+        raw = zlib.decompress(body)
+    except zlib.error:
+        return None  # not really deflate despite the filter entry
+    dict_text = pdf[dict_start:dict_end]
+    # fpdf2 emits one entry per line: "/Filter /FlateDecode\n".
+    dict_text = dict_text.replace(b"/Filter /FlateDecode\n", b"")
+    dict_text = re.sub(
+        rb"/Length \d+",
+        b"/Length " + str(len(raw)).encode("ascii"),
+        dict_text,
+        count=1,
+    )
+    replacement = dict_text + b">>\nstream\n" + raw + b"\nendstream"
+    return dict_start, body_start, body_end, replacement
+
+
+def _store_streams_raw(pdf: bytes) -> bytes:
+    """Return *pdf* with every FlateDecode stream stored uncompressed.
+
+    Deflate is not canonical across zlib builds: the python.org
+    Windows builds link zlib-ng and the macOS builds use the platform
+    zlib, and the two emit different bytes for identical input, so a
+    compressed stream would break R-62's byte-identity on one OS or
+    the other (measured: no zlib-ng level reproduces a macOS-compressed
+    golden). fpdf2's ``set_compression(False)`` covers the page streams,
+    but the CIDToGIDMap and the embedded font programs are written with
+    a hardcoded ``compress=True`` and no public switch -- this pass
+    finishes the job via :func:`_raw_stream_span`, then rebuilds the
+    classic xref table plus ``startxref`` pointer for the moved object
+    offsets. Streams stored raw are byte-identical across platforms by
+    construction.
+
+    Args:
+        pdf: fpdf2 output bytes (classic xref table, no xref streams).
+
+    Returns:
+        The same document with uncompressed streams.
+    """
+    spans: list[tuple[int, int, int, bytes]] = []  # (start, body_start, end, replacement)
+    bodies: list[tuple[int, int]] = []
+    for match in re.finditer(rb"stream\r?\n", pdf):
+        span = _raw_stream_span(pdf, match)
+        if span is None:
+            continue
+        start, body_start, end, replacement = span
+        spans.append((start, body_start, end, replacement))
+        bodies.append((body_start, end))
+    if not spans:
+        return pdf
+
+    buffer = pdf
+    for start, _body_start, end, replacement in reversed(spans):
+        buffer = buffer[:start] + replacement + buffer[end:]
+
+    # Rebuild the classic xref table: the object offsets moved when the
+    # streams grew. Text outside the stream bodies is preserved
+    # verbatim, so take each object marker from the original buffer and
+    # shift it by the net length change of the spans before it (scanning
+    # the new buffer would risk matching "N 0 obj" inside raw binary
+    # streams).
+    deltas = [(len(replacement) - (end - start)) for start, _body_start, end, replacement in spans]
+    objects: list[tuple[int, int]] = []  # (original offset, object number)
+    for marker in re.finditer(rb"\n(\d+) 0 obj", pdf):
+        if any(b_start <= marker.start() < b_end for b_start, b_end in bodies):
+            continue
+        # The xref offset must point at the object's first byte, not
+        # the newline the pattern anchors on.
+        objects.append((marker.start() + 1, int(marker.group(1))))
+    count = max(number for _offset, number in objects) + 1
+    shifted: list[tuple[int, int]] = []  # (object number, new offset)
+    delta_index = 0
+    for offset, number in objects:
+        while delta_index < len(spans) and spans[delta_index][0] < offset:
+            delta_index += 1
+        shifted.append((number, offset + sum(deltas[:delta_index])))
+    entries = [b"0000000000 65535 f \n"]
+    for _number, new_offset in sorted(shifted):
+        entries.append(b"%010d 00000 n \n" % new_offset)
+    # Line-boundary anchors: a bare rfind("xref\n") would match the
+    # "xref" inside "startxref\n", which is the last such occurrence.
+    xref_match = list(re.finditer(rb"\nxref\n", buffer))[-1]
+    xref_pos = xref_match.start() + 1
+    trailer_match = list(re.finditer(rb"\ntrailer\n", buffer))[-1]
+    trailer_pos = trailer_match.start() + 1
+    trailer_end = list(re.finditer(rb"\nstartxref\n", buffer))[-1].start() + 1
+    trailer = buffer[trailer_pos:trailer_end]
+    xref = b"xref\n0 %d\n" % count + b"".join(entries)
+    return (
+        buffer[:xref_pos]
+        + xref
+        + trailer
+        + b"startxref\n"
+        + str(xref_pos).encode("ascii")
+        + b"\n%%EOF\n"
+    )
+
+
 class _PosterPDF(FPDF):
     """The one-page podium poster document ([5d]).
 
@@ -469,6 +602,15 @@ class _PosterPDF(FPDF):
         self._ride = ride
         self._generated = _format_generated(created_at)
         self._logo_path = logo_path
+
+    def file_id(self) -> None:
+        """Suppress the trailer /ID (R-62 determinism).
+
+        fpdf2 derives the default /ID by hashing the assembled buffer,
+        whose streams are compressed with the platform zlib -- the hash
+        would therefore leak the build's zlib flavour into the bytes.
+        Returning None emits no /ID at all.
+        """
 
     def header(self) -> None:
         """Draw the corner marks; a one-pager has no running title."""
@@ -586,6 +728,15 @@ class _ReportPDF(FPDF):
         self._generated = _format_generated(created_at)
         self._logo_path = logo_path
         self.alias_nb_pages("{nb}")
+
+    def file_id(self) -> None:
+        """Suppress the trailer /ID (R-62 determinism).
+
+        fpdf2 derives the default /ID by hashing the assembled buffer,
+        whose streams are compressed with the platform zlib -- the hash
+        would therefore leak the build's zlib flavour into the bytes.
+        Returning None emits no /ID at all.
+        """
 
     # -------------------------------------------------- page furniture
 
@@ -1007,7 +1158,8 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
     )
     report = _ReportPDF(ride, opts, letter=letter, created_at=stamp, logo_path=logo_path)
     report.build(placed)
-    report.output(str(path))
+    data = _store_streams_raw(bytes(report.output()))
+    Path(path).write_bytes(data)
 
 
 def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, placed, path) plus the letter/created_at/logo seams
@@ -1060,4 +1212,5 @@ def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, place
     )
     poster = _PosterPDF(ride, letter=letter, created_at=stamp, logo_path=logo_path)
     poster.build(placed)
-    poster.output(str(path))
+    data = _store_streams_raw(bytes(poster.output()))
+    Path(path).write_bytes(data)

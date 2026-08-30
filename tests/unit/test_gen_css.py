@@ -22,6 +22,7 @@ installed and skips with a reason otherwise.
 
 import base64
 import importlib.util
+import os
 import re
 import shutil
 import subprocess
@@ -121,10 +122,15 @@ def test_build_artifacts_compiled_css_matches_committed_artifact_byte_for_byte(
 
 
 def test_render_fonts_css_matches_committed_fonts_css_byte_for_byte(tmp_path: Path) -> None:
-    """The @font-face rendering reproduces fonts_css exactly."""
+    r"""The @font-face rendering reproduces fonts_css exactly.
+
+    ``write_bytes`` is load-bearing: ``write_text`` translates ``\n``
+    to the platform newline on Windows, which would rewrite the frozen
+    LF artifact as CRLF and fail the byte compare (measured).
+    """
     out_path = tmp_path / "fonts_css"
 
-    out_path.write_text(gen_css.render_fonts_css(_COMMITTED_FONTS_DIR), encoding="utf-8")
+    out_path.write_bytes(gen_css.render_fonts_css(_COMMITTED_FONTS_DIR).encode("utf-8"))
 
     assert out_path.read_bytes() == _COMMITTED_FONTS_CSS.read_bytes()
 
@@ -134,13 +140,16 @@ def test_build_artifacts_with_real_tailwind_cli_reproduces_committed_compiled_cs
 
     The honest end-to-end check: Node is present and node_modules is
     populated, so the seam is not faked and the committed artifact is
-    the expectation. Skipped with a reason when the CLI is not
-    installed, so a machine without Node never fails the suite.
+    the expectation. Skipped with a reason when the CLI or Node itself
+    is missing, so a machine without Node never fails the suite. The
+    Node check is load-bearing on Windows: npm's ``.cmd`` shim calls
+    ``node`` by bare name, and a missing PATH entry fails with "'node'
+    is not recognized" rather than a clean skip (measured).
     """
-    if not gen_css._TAILWIND_CLI.is_file():
+    if not gen_css._tailwind_executable().is_file() or shutil.which("node") is None:
         pytest.skip(
-            "pinned Tailwind CLI not installed (run npm install); "
-            "skipping the real-CLI integration check"
+            "pinned Tailwind CLI or node not installed (run npm install "
+            "and put node on PATH); skipping the real-CLI integration check"
         )
     work_dir = Path(tempfile.mkdtemp(prefix="gen_css-itest-", dir=_ROOT / "build"))
     try:
@@ -366,6 +375,72 @@ def test_run_tailwind_cli_failing_cli_raises_tailwind_compile_error(
 
     with pytest.raises(gen_css.TailwindCompileError, match=re.escape("synthetic failure")):
         gen_css._run_tailwind_cli([])
+
+
+# -------------------------------------- Windows CLI resolution (E6.2.1)
+
+
+def test_tailwind_executable_resolves_cmd_shim_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Windows cannot execute the extensionless npm shim; use .cmd.
+
+    npm installs ``tailwindcss`` (POSIX shell script), ``tailwindcss
+    .cmd`` and ``tailwindcss.ps1`` in node_modules/.bin. CreateProcess
+    raises WinError 193 on the plain script, so the resolver must pick
+    the cmd.exe shim when one exists (measured on windows-latest CI).
+    """
+    cli = tmp_path / "tailwindcss"
+    cmd = tmp_path / "tailwindcss.cmd"
+    cmd.write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+    monkeypatch.setattr(gen_css.os, "name", "nt")
+
+    assert gen_css._tailwind_executable() == cmd
+
+
+def test_tailwind_executable_falls_back_to_plain_shim_without_cmd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing .cmd sibling (odd npm state) falls back to the base."""
+    cli = tmp_path / "tailwindcss"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+    monkeypatch.setattr(gen_css.os, "name", "nt")
+
+    assert gen_css._tailwind_executable() == cli
+
+
+def test_tailwind_executable_posix_uses_plain_shim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POSIX platforms run the shebang script directly, never .cmd."""
+    cli = tmp_path / "tailwindcss"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+    monkeypatch.setattr(gen_css.os, "name", "posix")
+
+    assert gen_css._tailwind_executable() == cli
+
+
+@pytest.mark.skipif(os.name != "nt", reason=".cmd shims only exist on Windows")
+def test_run_tailwind_cli_executes_cmd_shim_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The seam really executes the .cmd shim on Windows (regression).
+
+    Without the resolver this subprocess.run targets the extensionless
+    script and dies with WinError 193 / TailwindCliMissingError; with
+    it, the cmd.exe shim runs and its stdout comes back.
+    """
+    cli = tmp_path / "tailwindcss"
+    cmd = tmp_path / "tailwindcss.cmd"
+    cmd.write_text("@echo fake-tailwind-output\r\n", encoding="utf-8")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+
+    out = gen_css._run_tailwind_cli([])
+
+    assert b"fake-tailwind-output" in out
 
 
 # ----------------------------------------------------- artifact content

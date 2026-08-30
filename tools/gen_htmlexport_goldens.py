@@ -120,7 +120,10 @@ def write_goldens(samples_dir: Path, out_dir: Path) -> tuple[Path, ...]:
     out_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for path, content in pending:
-        path.write_text(content, encoding="utf-8")
+        # write_bytes, not write_text: text mode translates "\n" to the
+        # platform newline on Windows, rewriting the frozen LF goldens
+        # as CRLF and breaking the byte-identity contract (measured).
+        path.write_bytes(content.encode("utf-8"))
         written.append(path)
     return tuple(written)
 

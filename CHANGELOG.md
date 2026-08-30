@@ -56,6 +56,27 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - Known seam: `wx.adv.EditableListBox` ships generic New/Delete buttons nothing suppresses
   (ride_setup precedent); the results presenter validates and restores.
 
+### Fixed — Windows debugging pass (2026-08-29)
+
+- Static gate: EPIC 6 left `tests/unit/test_functional_rerun.py` unformatted, so
+  `ruff format --check` failed on both platforms.
+- `tools/gen_css.py` could not run the pinned Tailwind CLI on Windows: npm's extensionless
+  `tailwindcss` shim is not executable (CreateProcess raises WinError 193). The generator now
+  resolves the `tailwindcss.cmd` sibling, and the real-CLI integration test skips cleanly when
+  node is not on PATH.
+- Line-ending integrity: git's Windows `autocrlf=true` rewrote the vendored Tailwind
+  templates/artifacts, the frozen HTML/JSON export goldens, the `design/exports` samples and
+  the CSV fixtures to CRLF on checkout, breaking the byte-compare honesty tests. `.gitattributes`
+  now pins LF for every byte-frozen artifact (same rule as `vectors/*.csv`), and the golden
+  generators/tests write bytes rather than text so Windows cannot re-introduce CRLF.
+- PDF byte-determinism (R-62/D14): the python.org Windows builds link zlib-ng while the macOS
+  builds use the platform zlib, and their deflate output differs, so compressed streams could
+  never regenerate byte-identically on both OSes. The report and poster now store all streams
+  uncompressed (fpdf2 hardcodes compression for font data; the buffer-derived `/ID` is
+  suppressed; the classic xref table is rebuilt), making regeneration byte-identical across
+  platforms. PDFs grow ~10× (report ~525 KB, poster ~438 KB) — determinism over size. The two
+  golden PDFs were regenerated; `design/docs-md/spec.md` §8b records the decision.
+
 ### Added — EPIC 4 (live ride)
 
 - **The ride engine.** `rivercrossing.ride.RideEngine`: DRAFT→RUNNING→FINISHED→REOPENED state
