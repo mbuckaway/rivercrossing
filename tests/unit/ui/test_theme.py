@@ -150,3 +150,32 @@ def test_theme_controller_constructed_with_system_mode_applies_nothing() -> None
 
     assert controller.mode is theme.ThemeMode.SYSTEM
     assert fake.appearances == []
+
+
+# --- apply: the E8.1.2 capability guard -----------------------------
+
+
+class _NoSetAppearanceApp:
+    """A wx.App double with no ``SetAppearance`` at all (E8.1.2)."""
+
+
+class _NoAppearancePyApp:
+    """A wx.PyApp stand-in exposing no ``Appearance`` enum (E8.1.2)."""
+
+
+def test_apply_returns_none_when_the_app_lacks_set_appearance() -> None:
+    """A build regressing SetAppearance away falls back silently."""
+    result = theme.apply(_NoSetAppearanceApp(), theme.ThemeMode.DARK)
+
+    assert result is None
+
+
+def test_apply_returns_none_when_wx_pyapp_appearance_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wx build exposing no wx.PyApp.Appearance also falls back."""
+    monkeypatch.setattr(wx, "PyApp", _NoAppearancePyApp)
+
+    result = theme.apply(_FakeThemeApp(), theme.ThemeMode.DARK)
+
+    assert result is None

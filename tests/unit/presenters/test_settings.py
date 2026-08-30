@@ -301,6 +301,35 @@ def test_presenter_load_returns_defaults_when_no_file_exists(tmp_path: Path) -> 
     assert loaded == default_settings()
 
 
+# --- appearance_for_radio: the dialog's radio -> appearance map -----
+# (E8.1.2: the wx-free half of SettingsDialog.collect_settings.)
+
+APPEARANCE_FOR_RADIO_CASES = (
+    ((True, False, False), "system"),
+    ((False, True, False), "light"),
+    ((False, False, True), "dark"),
+    # None checked: the xrc's structural default (settings.xrc declares
+    # the System radio the group's value).
+    ((False, False, False), "system"),
+    # Degenerate multi-checked (a programmatic SetValue that does not
+    # auto-uncheck the group): Light then Dark win, in that order.
+    ((False, True, True), "light"),
+    ((True, False, True), "dark"),
+)
+
+
+@pytest.mark.parametrize(("states", "expected"), APPEARANCE_FOR_RADIO_CASES)
+def test_appearance_for_radio_given_each_radio_state_returns_its_spelling(
+    states: tuple[bool, bool, bool], expected: str
+) -> None:
+    """The checked appearance radio names the appearance to store."""
+    system, light, dark = states
+
+    result = settings_module.appearance_for_radio(system=system, light=light, dark=dark)
+
+    assert result == expected
+
+
 # --- property: exact round-trip over valid settings (T-7) ----------
 
 _SETTINGS_STRATEGY = st.builds(

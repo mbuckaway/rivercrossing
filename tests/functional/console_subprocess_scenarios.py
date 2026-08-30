@@ -2148,9 +2148,210 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
         }
 
 
+def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
+    """Open Settings; the dialog renders the persisted values (E8.1.2).
+
+    Pre-saves a full settings set (light / sound off / hide-times on /
+    zoom 130), builds the app, opens settings_dlg through the File ▸
+    Settings… route, and reads the rendered control states. Closes via
+    Cancel: rendering must itself change nothing.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-dlg-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.LIGHT.value,
+                sound_on=False,
+                hide_times=True,
+                zoom_percent=130,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+
+        def _read_and_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            found["rendered_system"] = harness.find_control(
+                dialog, ids.APPEARANCE_SYSTEM_RADIO
+            ).GetValue()
+            found["rendered_light"] = harness.find_control(
+                dialog, ids.APPEARANCE_LIGHT_RADIO
+            ).GetValue()
+            found["rendered_dark"] = harness.find_control(
+                dialog, ids.APPEARANCE_DARK_RADIO
+            ).GetValue()
+            found["rendered_sound"] = harness.find_control(dialog, ids.SOUND_CHK).GetValue()
+            found["rendered_hide_times"] = harness.find_control(
+                dialog, ids.HIDE_TIMES_CHK
+            ).GetValue()
+            found["rendered_zoom_selection"] = harness.find_control(
+                dialog, ids.ZOOM_CHOICE
+            ).GetSelection()
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            wx.CallAfter(_read_and_cancel)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
+def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: PLR0915 -- two app runs (bootstrap + relaunch), each with a modal-driver closure
+    """Toggle Dark in Settings, OK: applied, persisted, relaunched.
+
+    E8.1.2's appearance-mirror proof. Pre-saves a LIGHT set so the
+    toggle is visible; opens Settings, sets the Dark radio (explicitly
+    clearing the others -- a programmatic ``SetValue`` may not
+    auto-uncheck the group) plus sound-off and hide-times-on, clicks
+    OK; reads the live appearance, the View-menu radio, the sound
+    mute, the hide-times columns and the saved file. A second build
+    with the same path re-opens Settings and the Dark radio renders
+    checked.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-ok-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.LIGHT.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+
+        def _drive_ok() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.APPEARANCE_LIGHT_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.SOUND_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.click(dialog, pages.WX_ID_OK)
+
+        try:
+            wx.CallAfter(_drive_ok)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["is_dark_after"] = wx.SystemSettings.GetAppearance().IsDark()
+            found["menu_dark_checked"] = _theme_radio_checked(frame, ids.MI_THEME_DARK)
+            found["sound_muted_after"] = sound._default_player._muted
+            found["hide_times_columns"] = _visible_column_titles(
+                harness.find_control(frame, ids.CROSSINGS_LIST)
+            )
+            saved = load_settings(settings_path)
+            found["saved_appearance"] = saved.appearance
+            found["saved_sound_on"] = saved.sound_on
+            found["saved_hide_times"] = saved.hide_times
+        finally:
+            _close_without_prompt(frame)
+
+        # Relaunch: the persisted appearance renders in a fresh dialog.
+        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+
+        def _read_relaunch() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["relaunch_dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            found["relaunch_dark"] = harness.find_control(
+                dialog, ids.APPEARANCE_DARK_RADIO
+            ).GetValue()
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            wx.CallAfter(_read_relaunch)
+            harness.fire_menu_event(frame2, "wxID_PREFERENCES")
+            harness.pump()
+        finally:
+            _close_without_prompt(frame2)
+        return found
+
+
+def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
+    """Toggle Dark in Settings, Cancel: nothing applied, nothing saved.
+
+    E8.1.2's cancel half. Pre-saves a LIGHT set; opens Settings, flips
+    Dark + sound off, and clicks Cancel. Reads the live appearance
+    (unchanged), the View-menu radio (still light), the sound mute
+    (still on) and the saved file (still light/on).
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-cancel-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.LIGHT.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        was_dark = wx.SystemSettings.GetAppearance().IsDark()
+
+        def _drive_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.SOUND_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            wx.CallAfter(_drive_cancel)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["appearance_unchanged"] = wx.SystemSettings.GetAppearance().IsDark() == was_dark
+            found["menu_dark_checked"] = _theme_radio_checked(frame, ids.MI_THEME_DARK)
+            found["sound_muted_after"] = sound._default_player._muted
+            saved = load_settings(settings_path)
+            found["saved_appearance"] = saved.appearance
+            found["saved_sound_on"] = saved.sound_on
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "settings_persistence_round_trip": _settings_persistence_round_trip,
+    "settings_dialog_renders_persisted_values": _settings_dialog_renders_persisted_values,
+    "settings_dialog_ok_applies_and_persists_dark": (
+        _settings_dialog_ok_applies_and_persists_dark
+    ),
+    "settings_dialog_cancel_applies_nothing": _settings_dialog_cancel_applies_nothing,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,
