@@ -203,3 +203,65 @@ def test_hide_times_view_menu_toggles_live_mirrors_settings_and_survives_relaunc
     assert data["saved_hide_times_before_relaunch"] is True, result["context"]
     assert data["relaunch_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["relaunch_menu_checked"] is True, result["context"]
+
+
+# --- E8.1.4: zoom (View menu, Settings mirror, dialogs, relaunch) ---
+
+
+def test_zoom_view_menu_scales_console_fonts_and_bounds_the_ladder() -> None:
+    """mi_zoom_120/90/150 scale the console label; the radio follows.
+
+    The scenario reports the raw point sizes; this asserts the ratio
+    against the same ``round(base * percent / 100)`` the zoom module
+    uses, so the assertion holds for any platform base font size. The
+    saved file carries the last fired zoom.
+    """
+    result = scenario_runner.run_scenario("zoom_view_menu_applies_live_and_boundaries")
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    base = data["base_pt"]
+    assert data["pt_at_120"] == round(base * 120 / 100), result["context"]
+    assert data["radio_120_checked"] is True, result["context"]
+    assert data["pt_at_90"] == round(base * 90 / 100), result["context"]
+    assert data["radio_90_checked"] is True, result["context"]
+    assert data["pt_at_150"] == round(base * 150 / 100), result["context"]
+    assert data["radio_150_checked"] is True, result["context"]
+    assert data["saved_zoom"] == 150, result["context"]
+
+
+def test_zoom_settings_choice_mirrors_the_view_radio_and_dialogs_scale() -> None:
+    """The zoom_choice mirrors the menu radio; dialogs opened scale.
+
+    The dialog-scaling half proves the base-font capture: the
+    ``zoom_choice`` control opened after zoom 120 reads
+    ``round(choice_base * 120 / 100)``, where ``choice_base`` was
+    captured by opening the same dialog at 100% first.
+    """
+    result = scenario_runner.run_scenario("zoom_settings_mirror_and_dialog")
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    base = data["base_pt"]
+    choice_base = data["choice_base_pt"]
+    assert data["dlg_shown"] is True, result["context"]
+    assert data["pt_after_menu_120"] == round(base * 120 / 100), result["context"]
+    assert data["radio_120_checked"] is True, result["context"]
+    assert data["dlg_shown_2"] is True, result["context"]
+    assert data["choice_selection_at_120"] == ZOOM_LADDER.index(120), result["context"]
+    assert data["choice_pt_at_120"] == round(choice_base * 120 / 100), result["context"]
+    assert data["pt_after_settings_130"] == round(base * 130 / 100), result["context"]
+    assert data["radio_130_checked"] is True, result["context"]
+    assert data["saved_zoom"] == 130, result["context"]
+
+
+def test_zoom_survives_a_relaunch() -> None:
+    """Zoom 140 persists; a fresh build restores it and the radio."""
+    result = scenario_runner.run_scenario("zoom_survives_relaunch")
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    base = data["base_pt"]
+    assert data["saved_zoom_before_relaunch"] == 140, result["context"]
+    assert data["relaunch_pt"] == round(base * 140 / 100), result["context"]
+    assert data["relaunch_radio_140_checked"] is True, result["context"]

@@ -118,7 +118,12 @@ from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, sound, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
-from rivercrossing.ui.presenters.settings import AppSettings, load_settings, save_settings
+from rivercrossing.ui.presenters.settings import (
+    ZOOM_LADDER,
+    AppSettings,
+    load_settings,
+    save_settings,
+)
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
 from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 from rivercrossing.ui.views.ride_library import COL_NAME, COL_STATUS
@@ -2429,6 +2434,165 @@ def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
         return found
 
 
+def _zoom_view_menu_applies_live_and_boundaries() -> dict[str, Any]:
+    """mi_zoom_* scale console fonts live; 90/150 bound the ladder.
+
+    E8.1.4's menu half. Reads the ride-status label's point size at
+    100%, fires the zoom radios, and reports each scaled size plus the
+    radio ticked right after each fire.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-zoom-menu-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        try:
+            status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+            found["base_pt"] = status_lbl.GetFont().GetPointSize()
+            harness.fire_menu_event(frame, ids.MI_ZOOM_120)
+            found["pt_at_120"] = status_lbl.GetFont().GetPointSize()
+            found["radio_120_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_120)
+            harness.fire_menu_event(frame, ids.MI_ZOOM_90)
+            found["pt_at_90"] = status_lbl.GetFont().GetPointSize()
+            found["radio_90_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_90)
+            harness.fire_menu_event(frame, ids.MI_ZOOM_150)
+            found["pt_at_150"] = status_lbl.GetFont().GetPointSize()
+            found["radio_150_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_150)
+            found["saved_zoom"] = load_settings(settings_path).zoom_percent
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
+def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
+    """Mirror the View radio in the Settings choice; dialogs scale.
+
+    E8.1.4's mirror + dialog half. Opens Settings at 100% to capture
+    the zoom_choice's base font; zooms to 120 via the View menu; opens
+    Settings again (the choice shows 120 and its font is scaled),
+    changes the choice to 130, OK -- the console scales to 130 and the
+    View radio re-checks to 130.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-zoom-mirror-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+
+        def _read_choice_base() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            found["choice_base_pt"] = (
+                harness.find_control(dialog, ids.ZOOM_CHOICE).GetFont().GetPointSize()
+            )
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+            found["base_pt"] = status_lbl.GetFont().GetPointSize()
+
+            wx.CallAfter(_read_choice_base)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+
+            harness.fire_menu_event(frame, ids.MI_ZOOM_120)
+            found["pt_after_menu_120"] = status_lbl.GetFont().GetPointSize()
+            found["radio_120_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_120)
+
+            def _drive_settings_130() -> None:
+                dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+                found["dlg_shown_2"] = dialog is not None
+                if dialog is None:
+                    return
+                found["choice_selection_at_120"] = harness.find_control(
+                    dialog, ids.ZOOM_CHOICE
+                ).GetSelection()
+                found["choice_pt_at_120"] = (
+                    harness.find_control(dialog, ids.ZOOM_CHOICE).GetFont().GetPointSize()
+                )
+                harness.find_control(dialog, ids.ZOOM_CHOICE).SetSelection(ZOOM_LADDER.index(130))
+                harness.click(dialog, pages.WX_ID_OK)
+
+            wx.CallAfter(_drive_settings_130)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["pt_after_settings_130"] = status_lbl.GetFont().GetPointSize()
+            found["radio_130_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_130)
+            found["saved_zoom"] = load_settings(settings_path).zoom_percent
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
+def _zoom_survives_relaunch() -> dict[str, Any]:
+    """Zoom 140 set via the View menu survives a relaunch (E8.1.4)."""
+    with tempfile.TemporaryDirectory(prefix="rc-zoom-relaunch-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        try:
+            status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+            found["base_pt"] = status_lbl.GetFont().GetPointSize()
+            harness.fire_menu_event(frame, ids.MI_ZOOM_140)
+            found["saved_zoom_before_relaunch"] = load_settings(settings_path).zoom_percent
+        finally:
+            _close_without_prompt(frame)
+
+        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+        try:
+            status_lbl2 = harness.find_control(frame2, ids.RIDE_STATUS_LBL)
+            found["relaunch_pt"] = status_lbl2.GetFont().GetPointSize()
+            found["relaunch_radio_140_checked"] = _menu_item_checked(frame2, ids.MI_ZOOM_140)
+        finally:
+            _close_without_prompt(frame2)
+        return found
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "settings_persistence_round_trip": _settings_persistence_round_trip,
@@ -2438,6 +2602,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     ),
     "settings_dialog_cancel_applies_nothing": _settings_dialog_cancel_applies_nothing,
     "hide_times_view_menu_mirror_round_trip": _hide_times_view_menu_mirror_round_trip,
+    "zoom_view_menu_applies_live_and_boundaries": _zoom_view_menu_applies_live_and_boundaries,
+    "zoom_settings_mirror_and_dialog": _zoom_settings_mirror_and_dialog,
+    "zoom_survives_relaunch": _zoom_survives_relaunch,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,
