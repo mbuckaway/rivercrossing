@@ -6,8 +6,10 @@ The seven tables below are spec §2's own ``ride``, ``entry``,
 column for column, plus one addition of our own: the
 :data:`SCHEMA_VERSION_DDL` ledger (a single integer row holding the
 migration version) that ``rivercrossing.store.migrations`` reads and
-records. The skeleton's ``settings`` table is deliberately deferred:
-spec.md §2 does not list one, and task E8 owns settings persistence.
+records. The skeleton's ``settings`` table is deliberately absent:
+spec.md §2 does not list one, and E8.1.1 stores per-user settings in
+a JSON config file (``rivercrossing.ui.presenters.settings``), not
+this database -- the schema stays untouched.
 
 Two schema decisions are recorded here because the spec is silent:
 

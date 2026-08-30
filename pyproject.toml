@@ -39,6 +39,7 @@ dependencies = [
     "fpdf2",
     "jinja2",
     "phevaluator",
+    "platformdirs",   # per-user settings.json location (E8.1.1; spec §10)
 ]
 
 [project.optional-dependencies]

@@ -88,12 +88,6 @@ MIN_SIZE = (1100, 700)
 # without hammering the DataView with rebuilds.
 _TICK_MS = 1000
 
-# Interim, process-lifetime sash memory. Task E8.1.1 ("all settings
-# survive relaunch") replaces this with the real, disk-backed
-# settings store; nothing else in this module depends on how that
-# eventually works, and nothing outside this module reads it.
-_persisted_main_splitter_sash: int | None = None
-
 
 class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
     """Read-only model over ``FeedRow`` rows for ``crossings_list``.
@@ -184,13 +178,17 @@ class MainFrame:
     call it after construction.
     """
 
-    def __init__(  # noqa: PLR0913 -- (frame, data_source, card_images) + the E4.4.2 stop-confirm resource
+    def __init__(  # noqa: PLR0913 -- (frame, data_source, card_images, resource) + the E4.4.2 stop-confirm and E8.1.1 layout seams
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
         card_images: CardImageList | None = None,
         resource: Any | None = None,  # noqa: ANN401 -- wx ships no stubs
+        initial_sash: int | None = None,
+        initial_geometry: tuple[int, int, int, int] | None = None,
+        on_layout_changed: Callable[[int | None, tuple[int, int, int, int] | None], None]
+        | None = None,
     ) -> None:
         """Decorate an already-loaded ``main_frame`` window.
 
@@ -209,11 +207,22 @@ class MainFrame:
             resource: The loaded ``wx.xrc.XmlResource`` the Stop
                 confirm dialog is loaded from (E4.4.2); ``None`` only
                 in constructions that never open that dialog.
+            initial_sash: The persisted splitter sash position to
+                restore at construction (E8.1.1); ``None`` keeps the
+                XRC default.
+            initial_geometry: The persisted frame placement
+                ``(x, y, width, height)`` to restore at construction
+                (E8.1.1); ``None`` keeps the canvas default size.
+            on_layout_changed: Callback ``(sash, geometry)`` the app
+                wires to the settings store; fired on sash change,
+                move/resize and close. ``None`` (test constructions)
+                reports nothing.
         """
         self.frame = frame
         self.data_source = data_source
         self.card_images = card_images if card_images is not None else default_card_images()
         self._stop_confirm_resource = resource
+        self._on_layout_changed = on_layout_changed
 
         self.crossings_list = self._find(ids.CROSSINGS_LIST, wx.dataview.DataViewCtrl)
         self.main_splitter = self._find(ids.MAIN_SPLITTER, wx.SplitterWindow)
@@ -243,9 +252,20 @@ class MainFrame:
         # (~429x373), not the canvas's 1100x700. SetMinSize alone only
         # stops *future* shrinking below the floor; SetSize is what
         # actually grows this window (and the splitter's client area)
-        # to the canvas's documented size right now.
+        # to the canvas's documented size right now. A persisted
+        # geometry (E8.1.1) replaces that default right after, so a
+        # relaunch opens where the operator left the frame.
         self.frame.SetMinSize(wx.Size(*MIN_SIZE))
         self.frame.SetSize(wx.Size(*MIN_SIZE))
+        if initial_geometry is not None:
+            x, y, width, height = initial_geometry
+            self.frame.SetPosition((x, y))
+            self.frame.SetSize((width, height))
+
+        # The console-view handle the app (and scenarios) reach the
+        # view's own methods through -- the results window's
+        # ``frame.presenter`` precedent (results_win.py).
+        self.frame.console = self
 
         self._next_infobar_slot = 1  # main.xrc's spacer placeholder sits at index 0
         self.resume_infobar = self._build_infobar(RESUME_INFOBAR)
@@ -271,7 +291,15 @@ class MainFrame:
         self.frame.Layout()
 
         self.main_splitter.Bind(wx.EVT_SPLITTER_SASH_POS_CHANGED, self._on_sash_changed)
-        self._restore_sash_position()
+        self._restore_sash_position(initial_sash)
+        # E8.1.1: persist the frame's placement on move/resize and on
+        # close -- the second half of the disk-backed layout store (the
+        # app wires on_layout_changed to the settings module). Bound
+        # here, ahead of the app's own EVT_CLOSE handler, so a quitting
+        # frame saves its final layout before that handler destroys it.
+        self.frame.Bind(wx.EVT_MOVE, self._on_geometry_changed)
+        self.frame.Bind(wx.EVT_SIZE, self._on_geometry_changed)
+        self.frame.Bind(wx.EVT_CLOSE, self._on_frame_close)
 
         self.show_feed(self.data_source.feed_rows())
         self.show_counters(self.data_source.counters())
@@ -361,27 +389,54 @@ class MainFrame:
 
     # -------------------------------------------------------- splitter
 
-    def _restore_sash_position(self) -> None:
-        """Apply any sash position already saved this process."""
-        if _persisted_main_splitter_sash is not None:
-            self.main_splitter.SetSashPosition(_persisted_main_splitter_sash)
+    def _restore_sash_position(self, initial_sash: int | None) -> None:
+        """Apply the persisted sash position, if saved (E8.1.1)."""
+        if initial_sash is not None:
+            self.main_splitter.SetSashPosition(initial_sash)
 
     def persist_layout(self) -> None:
-        """Save ``main_splitter``'s current sash position.
+        """Report the current sash position and frame geometry (E8.1.1).
 
-        Bound to the sash-changed event for real dragging; wx only
-        fires that event from genuine user drag input, never from a
+        Fires the constructor's ``on_layout_changed`` callback, which
+        the app bootstrap wires to the settings store; an unwired
+        frame (test constructions) reports nothing. wx only fires the
+        sash event from genuine user drag input, never from a
         programmatic ``SetSashPosition`` (measured), so tests call
         this directly instead (CODINGSTANDARDS-UX-DESKTOP.md section
-        6: sash positions must persist across restarts).
+        6: sash positions must persist across restarts). The
+        move/size/close handlers all route through this one seam.
         """
-        global _persisted_main_splitter_sash  # noqa: PLW0603 -- see module docstring
-        _persisted_main_splitter_sash = self.main_splitter.GetSashPosition()
+        if self._on_layout_changed is None:
+            return
+        position = self.frame.GetPosition()
+        size = self.frame.GetSize()
+        geometry = (position.x, position.y, size.width, size.height)
+        self._on_layout_changed(self.main_splitter.GetSashPosition(), geometry)
 
     def _on_sash_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Persist a real, user-driven sash drag."""
         event.Skip()
         self.persist_layout()
+
+    def _on_geometry_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Persist a move or resize, then let the event continue.
+
+        No debounce: the settings file is a few hundred bytes and the
+        write is an atomic replace, so a drag's dozens of events cost
+        less than a layout-save timer's destroy hazard would (the
+        ``_tick_timer`` segfault precedent).
+        """
+        event.Skip()
+        self.persist_layout()
+
+    def _on_frame_close(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Persist the layout, then let the app's close flow run.
+
+        ``event.Skip()`` is what lets the app bootstrap's own
+        ``EVT_CLOSE`` handler (bound after this one) still run.
+        """
+        self.persist_layout()
+        event.Skip()
 
     # ----------------------------------------------------- ConsoleView
 

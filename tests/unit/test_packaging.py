@@ -94,3 +94,23 @@ def test_require_wx_with_wx_available_returns_the_wx_module() -> None:
 
     assert isinstance(wx_module, ModuleType)
     assert wx_module.__name__ == "wx"
+
+
+def test_platformdirs_runtime_dependency_is_installed() -> None:
+    """The E8 settings store's runtime dependency is pinned (E8.0).
+
+    ``platformdirs`` backs ``settings.default_path()`` (E8.1.1); the
+    distribution must be present in the install so the settings store
+    resolves a real per-user config directory on both platforms. The
+    API call itself is asserted too -- ``user_config_dir`` is the
+    stable public entry point the store calls, and the computed path
+    is never created here (pure path arithmetic, no desktop I/O).
+    """
+    installed_version = importlib.metadata.version("platformdirs")
+    assert re.match(r"^\d+\.\d+", installed_version) is not None
+
+    import platformdirs  # noqa: PLC0415 -- dev-time dependency check
+
+    path = platformdirs.user_config_dir("RiverCrossing")
+    assert path
+    assert platformdirs.__version__ == installed_version

@@ -115,12 +115,20 @@ from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import Store
 from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import feed_model, ids, theme
+from rivercrossing.ui import feed_model, ids, sound, theme
+from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
+from rivercrossing.ui.presenters.settings import (
+    ZOOM_LADDER,
+    AppSettings,
+    load_settings,
+    save_settings,
+)
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
 from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 from rivercrossing.ui.views.ride_library import COL_NAME, COL_STATUS
+from rivercrossing.ui.views.shortcuts import ShortcutsDialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -128,6 +136,23 @@ if TYPE_CHECKING:
 __all__ = ["main"]
 
 _SCREENSHOT_DIR = Path(__file__).resolve().parent / "_screenshots"
+
+# E8.1.1 hermeticity: every scenario builds the app through
+# _build_app_window, which injects a per-process tmp settings file.
+# Each scenario runs in its OWN spawned interpreter, so a module-level
+# mkdtemp path is per-scenario, and no scenario ever reads or writes
+# the guest's real user config dir (measured: the theme-dark scenario's
+# own persisted appearance was leaking into later launches in the same
+# VM clone, flipping appearance_unchanged on rerun). Scenarios that
+# need a specific file pass settings_path= explicitly and the helper
+# leaves it untouched.
+_SCENARIO_SETTINGS_PATH = Path(tempfile.mkdtemp(prefix="rc-scenario-settings-")) / "settings.json"
+
+
+def _build_app_window(**kwargs: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """build_main_window with a per-scenario settings path (E8.1.1)."""
+    kwargs.setdefault("settings_path", _SCENARIO_SETTINGS_PATH)
+    return app_module.build_main_window(wx.GetApp(), **kwargs)
 
 
 def _visible_column_titles(crossings_list: Any) -> list[str]:  # noqa: ANN401
@@ -142,23 +167,46 @@ def _visible_column_titles(crossings_list: Any) -> list[str]:  # noqa: ANN401
 _SASH_ROUND_TRIP_ATTEMPTS = 5
 
 
-def _sash_round_trip_once(resource: Any) -> dict[str, Any]:  # noqa: ANN401
+def _sash_round_trip_once(resource: Any, settings_path: Path) -> dict[str, Any]:  # noqa: ANN401
     """One attempt at the sash round-trip; may raise ``LookupError``."""
+
+    def _save(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
+        save_settings(
+            AppSettings(
+                appearance="system",
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=sash,
+                window_geometry=geometry,
+            ),
+            settings_path,
+        )
+
     first_window = harness.load_window(resource, ids.MAIN_FRAME, frame=True)
     first_window.Show()
     first_window.Layout()
     harness.pump()
-    first_console = MainFrame(first_window, data_source=DemoDataSource())
+    first_console = MainFrame(
+        first_window,
+        data_source=DemoDataSource(),
+        on_layout_changed=_save,
+    )
     first_console.main_splitter.SetSashPosition(300)
     first_console.persist_layout()
     harness.close_window(first_window)
 
+    saved = load_settings(settings_path)
     second_window = harness.load_window(resource, ids.MAIN_FRAME, frame=True)
     second_window.Show()
     second_window.Layout()
     harness.pump()
     try:
-        second_console = MainFrame(second_window, data_source=DemoDataSource())
+        second_console = MainFrame(
+            second_window,
+            data_source=DemoDataSource(),
+            initial_sash=saved.splitter_sash,
+        )
         restored = second_console.main_splitter.GetSashPosition()
     finally:
         harness.close_window(second_window)
@@ -167,20 +215,26 @@ def _sash_round_trip_once(resource: Any) -> dict[str, Any]:  # noqa: ANN401
 
 
 def _sash_round_trip() -> dict[str, Any]:
-    """Persist a sash position, rebuild fresh, read it back (see above).
+    """Persist a sash position to disk, rebuild fresh, read it back.
+
+    E8.1.1 replaced the process-lifetime sash global with the disk-
+    backed settings store, so this writes to a temp settings file
+    (never the real user config dir) and the rebuild restores from it.
 
     Retries the whole sequence: the first attempt that raises no
     ``LookupError`` wins.
     """
     resource = harness.load_xrc_resources()
-    last_error: LookupError | None = None
-    for _attempt in range(_SASH_ROUND_TRIP_ATTEMPTS):
-        try:
-            return _sash_round_trip_once(resource)
-        except LookupError as exc:
-            last_error = exc
-    assert last_error is not None  # every iteration above sets it
-    raise last_error
+    with tempfile.TemporaryDirectory(prefix="rc-sash-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        last_error: LookupError | None = None
+        for _attempt in range(_SASH_ROUND_TRIP_ATTEMPTS):
+            try:
+                return _sash_round_trip_once(resource, settings_path)
+            except LookupError as exc:
+                last_error = exc
+        assert last_error is not None  # every iteration above sets it
+        raise last_error
 
 
 def _hide_times_columns_round_trip() -> dict[str, Any]:
@@ -301,7 +355,7 @@ def _plate_entry_round_trip() -> dict[str, Any]:
     the console's correct empty state until a store-backed ride is
     opened.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -326,7 +380,7 @@ def _plate_entry_round_trip() -> dict[str, Any]:
 
 def _record_btn_click_records_once() -> dict[str, Any]:
     """Clicking Record with no ride open rejects it (R-31, E5.4.2)."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -351,7 +405,7 @@ def _record_btn_click_records_once() -> dict[str, Any]:
 
 def _console_starts_in_running_state() -> dict[str, Any]:
     """Run the bootstrap and read the console's starting state."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -408,7 +462,7 @@ def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401
 
 def _quit_menu_confirmed_destroys() -> dict[str, Any]:
     """wxID_EXIT + Quit on exit_running_dlg (demo RUNNING)."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -425,7 +479,7 @@ def _quit_menu_confirmed_destroys() -> dict[str, Any]:
 
 def _quit_menu_cancelled_stays() -> dict[str, Any]:
     """wxID_EXIT + Cancel on exit_running_dlg: frame survives."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -444,7 +498,7 @@ def _quit_menu_cancelled_stays() -> dict[str, Any]:
 
 def _running_ride_shows_exit_running_dlg() -> dict[str, Any]:
     """Fire wxID_EXIT; check exit_running_dlg is what shows."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -475,7 +529,7 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
     original_start = RideEngine.start
     RideEngine.start = lambda _self, _at=None: None  # type: ignore[assignment]
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -498,7 +552,7 @@ def _exit_confirm_dlg_shown_when_not_running() -> dict[str, Any]:
 
 def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
     """Hide main_frame via a plain Close(); never destroy it."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -513,7 +567,7 @@ def _red_x_close_vetoes_and_hides_on_mac() -> dict[str, Any]:
 def _mac_reopen_shows_and_raises() -> dict[str, Any]:
     """Show and raise main_frame after the red X hid it."""
     app = wx.GetApp()
-    frame = app_module.build_main_window(app)
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -533,7 +587,7 @@ def _query_end_session_cancelled_vetoes() -> dict[str, Any]:
     dialogs.run_dialog = lambda _dialog, opener: wx.ID_CANCEL  # noqa: ARG005 -- opener= is a real kwarg
     try:
         app = wx.GetApp()
-        frame = app_module.build_main_window(app)
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -554,7 +608,7 @@ def _query_end_session_confirmed_does_not_veto() -> dict[str, Any]:
     dialogs.run_dialog = lambda _dialog, opener: wx.ID_OK  # noqa: ARG005 -- opener= is a real kwarg
     try:
         app = wx.GetApp()
-        frame = app_module.build_main_window(app)
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -589,7 +643,7 @@ def _session_end_confirmed_then_close_destroys_once() -> dict[str, Any]:
     dialogs.run_dialog = _counting_run_dialog
     try:
         app = wx.GetApp()
-        frame = app_module.build_main_window(app)
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -614,7 +668,7 @@ def _forced_close_destroys_without_dialog() -> dict[str, Any]:
 
     dialogs.run_dialog = _counting_run_dialog
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -636,7 +690,7 @@ def _windows_close_cancelled_stays() -> dict[str, Any]:
     exactly except for firing a plain ``Close()`` instead of the
     wxID_EXIT menu route.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -668,7 +722,7 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
     that deferred destroy before the JSON envelope is printed, so no
     further cleanup close is needed here either.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -689,7 +743,7 @@ def _windows_close_confirmed_destroys() -> dict[str, Any]:
 
 def _exit_running_dlg_probe_and_cancel() -> dict[str, Any]:
     """exit_running_dlg shows 3 buttons, message_lbl, Cancel default."""
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -749,7 +803,7 @@ def _finish_first_routes_to_the_finish_flow() -> dict[str, Any]:
 
     dialogs.run_dialog = _auto_ok_finish
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -800,7 +854,7 @@ def _quit_keep_running_writes_closed_at_and_stays_running() -> dict[str, Any]:
         boot.close()
 
     store = Store.open(db_path, active_ride_id=ride_id)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -953,7 +1007,7 @@ def _resume_dlg_quit_wording_shows() -> dict[str, Any]:
         harness.click(dialog, ids.CONTINUE_BTN)
 
     wx.CallAfter(_probe_and_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -990,7 +1044,7 @@ def _resume_dlg_crash_wording_shows() -> dict[str, Any]:
         harness.click(dialog, ids.CONTINUE_BTN)
 
     wx.CallAfter(_probe_and_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1039,7 +1093,7 @@ def _resume_continue_loads_ride_with_elapsed() -> dict[str, Any]:
         _close_without_prompt(frame)
 
     wx.CallAfter(_click_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store, clock=clock)
+    frame = _build_app_window(store=store, clock=clock)
     frame.Show()
     frame.Layout()
     wx.CallLater(1500, _read_clock_then_close)
@@ -1088,7 +1142,7 @@ def _resume_library_opens_ride_library() -> dict[str, Any]:
             wx.CallAfter(library.EndModal, wx.ID_CLOSE)
 
     wx.CallAfter(_click_library)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     wx.CallAfter(_probe_and_dismiss_library)
@@ -1126,7 +1180,7 @@ def _resume_reopened_ride_shows_reopened_infobar() -> dict[str, Any]:
             harness.click(dialog, ids.CONTINUE_BTN)
 
     wx.CallAfter(_click_continue)
-    frame = app_module.build_main_window(wx.GetApp(), store=store)
+    frame = _build_app_window(store=store)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1371,7 +1425,7 @@ def _library_live_open_switches_console_context() -> dict[str, Any]:
         harness.click(library, pages.WX_ID_OPEN)
 
     try:
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1444,7 +1498,7 @@ def _library_live_duplicate_appears_as_new_draft() -> dict[str, Any]:  # noqa: P
         wx.CallAfter(_record_rows_and_close, library)
 
     try:
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1521,7 +1575,7 @@ def _duplicate_ride_menu_route_opens_confirm_and_duplicates() -> dict[str, Any]:
 
     try:
         wx.CallAfter(_resume_then_fire_duplicate)
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1594,7 +1648,7 @@ def _reopen_ride_menu_route_opens_confirm_and_reopens() -> dict[str, Any]:
 
     try:
         wx.CallAfter(_resume_then_open_finished)
-        frame = app_module.build_main_window(wx.GetApp(), store=store)
+        frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1636,7 +1690,7 @@ def _reopen_ride_route_on_non_finished_refuses() -> dict[str, Any]:
         harness.click(dialog, pages.WX_ID_OK)
 
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1681,7 +1735,7 @@ def _csv_import_commit_reads_editor() -> dict[str, Any]:
             return wx.ID_OK
 
         dialogs.run_dialog = _click_import
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         _fire_menu_event(frame, "mi_import_csv")
 
         plates: set[str] = set()
@@ -1722,7 +1776,7 @@ def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401
     harness.pump()
 
 
-def _theme_radio_checked(frame: Any, item_id: str) -> bool:  # noqa: ANN401
+def _menu_item_checked(frame: Any, item_id: str) -> bool:  # noqa: ANN401
     """Return whether *item_id*'s own menu item is currently checked."""
     item, _menu = frame.GetMenuBar().FindItem(wx.xrc.XRCID(item_id))
     return bool(item.IsChecked())
@@ -1744,7 +1798,7 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
     invariant this caller can check without ever needing to know
     either OS's actual, environment-dependent starting appearance.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1756,7 +1810,7 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
         return {
             "is_dark_after": is_dark_after,
             "appearance_unchanged": is_dark_after == is_dark_before,
-            "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_DARK),
+            "radio_checked": _menu_item_checked(frame, ids.MI_THEME_DARK),
             "notice_after": frame.GetStatusBar().GetStatusText(0),
             "screenshot_exists": saved.exists(),
         }
@@ -1774,7 +1828,7 @@ def _theme_light_round_trip() -> dict[str, Any]:
     both times, so comparing to the untouched pre-fire text is not
     enough on its own to prove a notice posted at all.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1783,7 +1837,7 @@ def _theme_light_round_trip() -> dict[str, Any]:
         _fire_menu_event(frame, ids.MI_THEME_LIGHT)
         return {
             "is_dark_after": wx.SystemSettings.GetAppearance().IsDark(),
-            "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_LIGHT),
+            "radio_checked": _menu_item_checked(frame, ids.MI_THEME_LIGHT),
             "notice_after": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
@@ -1813,7 +1867,7 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
 
     theme.apply = _counting_apply
     try:
-        frame = app_module.build_main_window(wx.GetApp())
+        frame = _build_app_window()
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -1822,7 +1876,7 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
             _fire_menu_event(frame, ids.MI_THEME_SYSTEM)
             return {
                 "apply_call_count": len(calls),
-                "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_SYSTEM),
+                "radio_checked": _menu_item_checked(frame, ids.MI_THEME_SYSTEM),
             }
         finally:
             _close_without_prompt(frame)
@@ -1830,19 +1884,19 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
         theme.apply = original_apply
 
 
-def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, Any]:
-    """Theme ids post no stub notice (Ok/CannotChange); zoom still does.
+def _theme_ids_do_not_post_the_stub_notice_and_zoom_applies() -> dict[str, Any]:
+    """Theme and zoom ids post no stub notice; zoom applies (E8.1.4).
 
     Returns the raw post-fire theme notice text too, not only whether
     it changed: MSW's ``CannotChange`` contract means firing the theme
     id *does* change the status bar on Windows (to the documented
     next-launch text), so "unchanged" alone would read as a false
-    positive there for the one fact this scenario actually needs to
-    prove on every platform -- that the theme id's own notice, if any,
-    is never the generic ``route.label — not yet implemented`` stub
-    ``mi_zoom_110`` posts.
+    positive there for the one fact this scenario needs to prove on
+    every platform -- that neither the theme nor the zoom id posts the
+    generic ``route.label — not yet implemented`` stub. Zoom applies:
+    the fired radio is checked and the settings file records 110.
     """
-    frame = app_module.build_main_window(wx.GetApp())
+    frame = _build_app_window()
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -1855,7 +1909,9 @@ def _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does() -> dict[str, An
         return {
             "theme_notice_unchanged": after_theme == before,
             "theme_notice_after": after_theme,
-            "zoom_stub_notice": after_zoom,
+            "zoom_notice_after": after_zoom,
+            "zoom_radio_checked": _menu_item_checked(frame, ids.MI_ZOOM_110),
+            "zoom_percent_after": load_settings(_SCENARIO_SETTINGS_PATH).zoom_percent,
         }
     finally:
         _close_without_prompt(frame)
@@ -2029,8 +2085,648 @@ def _live_arm_stop_confirm_flow() -> dict[str, Any]:
         harness.close_window(window)
 
 
+def _frame_geometry(frame: Any) -> list[int]:  # noqa: ANN401
+    """Return the frame's (x, y, width, height) as a JSON-safe list."""
+    position = frame.GetPosition()
+    size = frame.GetSize()
+    return [position.x, position.y, size.width, size.height]
+
+
+def _settings_persistence_round_trip() -> dict[str, Any]:
+    """Save every setting in one app run; relaunch; read it all back.
+
+    E8.1.1's end-to-end proof (runs only in the VM): the bootstrap
+    loads the per-user settings file at startup and applies what has
+    live paths -- appearance radio, sound mute, hide-times columns,
+    splitter sash, frame geometry -- and the layout seams persist the
+    sash/geometry on change and on close. Runs against a temp file,
+    never the real user config dir.
+
+    The sash is mutated through the direct ``persist_layout`` seam (wx
+    only fires the sash event for genuine user drags, measured) and the
+    geometry through real ``Move``/``SetSize`` calls; the explicit
+    flush after them makes the saved file deterministic before the
+    close-save also runs.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        target = AppSettings(
+            appearance=theme.ThemeMode.DARK.value,
+            sound_on=False,
+            hide_times=True,
+            zoom_percent=140,
+            splitter_sash=320,
+            window_geometry=(40, 60, 1200, 800),
+        )
+        save_settings(target, settings_path)
+
+        # First run: the bootstrap loads the saved file and applies it.
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            console = frame.console
+            splitter = harness.find_control(frame, ids.MAIN_SPLITTER)
+            crossings_list = harness.find_control(frame, ids.CROSSINGS_LIST)
+            applied = {
+                "applied_dark_radio": _menu_item_checked(frame, ids.MI_THEME_DARK),
+                "applied_sound_muted": sound._default_player._muted,
+                "applied_hide_times_columns": _visible_column_titles(crossings_list),
+                "applied_sash": splitter.GetSashPosition(),
+                "applied_geometry": _frame_geometry(frame),
+            }
+
+            # Equivalence: applying the saved values directly to the
+            # frame must give the same geometry the file-driven restore
+            # produced. The exact size is platform-dependent (wxMSW
+            # pins the frame to its sizer minimum -- measured: a saved
+            # 1200x800 restores as 1100x788 on the Windows runner --
+            # while macOS honours SetSize fully), so the test compares
+            # the two application paths instead of hardcoding a size.
+            frame.SetPosition((40, 60))
+            frame.SetSize((1200, 800))
+            harness.pump()
+            direct_applied_geometry = _frame_geometry(frame)
+
+            splitter.SetSashPosition(420)
+            frame.Move((90, 110))
+            frame.SetSize((1250, 860))
+            harness.pump()
+            direct_saved_geometry = _frame_geometry(frame)
+            console.persist_layout()
+            saved_after_run1 = load_settings(settings_path)
+            saved_sash = saved_after_run1.splitter_sash
+            saved_geometry = (
+                list(saved_after_run1.window_geometry)
+                if saved_after_run1.window_geometry is not None
+                else None
+            )
+        finally:
+            _close_without_prompt(frame)
+
+        # Relaunch: a fresh build reads the file the first run saved.
+        frame2 = _build_app_window(settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+        try:
+            splitter2 = harness.find_control(frame2, ids.MAIN_SPLITTER)
+            relaunched = {
+                "relaunch_sash": splitter2.GetSashPosition(),
+                "relaunch_geometry": _frame_geometry(frame2),
+            }
+        finally:
+            _close_without_prompt(frame2)
+
+        return {
+            **applied,
+            "direct_applied_geometry": direct_applied_geometry,
+            "saved_sash_after_run1": saved_sash,
+            "saved_geometry_after_run1": saved_geometry,
+            "direct_saved_geometry": direct_saved_geometry,
+            **relaunched,
+        }
+
+
+def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
+    """Open Settings; the dialog renders the persisted values (E8.1.2).
+
+    Pre-saves a full settings set (light / sound off / hide-times on /
+    zoom 130), builds the app, opens settings_dlg through the File ▸
+    Settings… route, and reads the rendered control states. Closes via
+    Cancel: rendering must itself change nothing.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-dlg-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.LIGHT.value,
+                sound_on=False,
+                hide_times=True,
+                zoom_percent=130,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+
+        def _read_and_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            found["rendered_system"] = harness.find_control(
+                dialog, ids.APPEARANCE_SYSTEM_RADIO
+            ).GetValue()
+            found["rendered_light"] = harness.find_control(
+                dialog, ids.APPEARANCE_LIGHT_RADIO
+            ).GetValue()
+            found["rendered_dark"] = harness.find_control(
+                dialog, ids.APPEARANCE_DARK_RADIO
+            ).GetValue()
+            found["rendered_sound"] = harness.find_control(dialog, ids.SOUND_CHK).GetValue()
+            found["rendered_hide_times"] = harness.find_control(
+                dialog, ids.HIDE_TIMES_CHK
+            ).GetValue()
+            found["rendered_zoom_selection"] = harness.find_control(
+                dialog, ids.ZOOM_CHOICE
+            ).GetSelection()
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            wx.CallAfter(_read_and_cancel)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
+def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: PLR0915 -- two app runs (bootstrap + relaunch), each with a modal-driver closure
+    """Toggle Dark in Settings, OK: applied, persisted, relaunched.
+
+    E8.1.2's appearance-mirror proof. Pre-saves a LIGHT set so the
+    toggle is visible; opens Settings, sets the Dark radio (explicitly
+    clearing the others -- a programmatic ``SetValue`` may not
+    auto-uncheck the group) plus sound-off and hide-times-on, clicks
+    OK; reads the live appearance, the View-menu radio, the sound
+    mute, the hide-times columns and the saved file. A second build
+    with the same path re-opens Settings and the Dark radio renders
+    checked.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-ok-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.LIGHT.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+
+        def _drive_ok() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.APPEARANCE_LIGHT_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.SOUND_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.click(dialog, pages.WX_ID_OK)
+
+        try:
+            wx.CallAfter(_drive_ok)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["is_dark_after"] = wx.SystemSettings.GetAppearance().IsDark()
+            found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
+            found["sound_muted_after"] = sound._default_player._muted
+            found["hide_times_columns"] = _visible_column_titles(
+                harness.find_control(frame, ids.CROSSINGS_LIST)
+            )
+            saved = load_settings(settings_path)
+            found["saved_appearance"] = saved.appearance
+            found["saved_sound_on"] = saved.sound_on
+            found["saved_hide_times"] = saved.hide_times
+        finally:
+            _close_without_prompt(frame)
+
+        # Relaunch: the persisted appearance renders in a fresh dialog.
+        frame2 = _build_app_window(settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+
+        def _read_relaunch() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["relaunch_dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            found["relaunch_dark"] = harness.find_control(
+                dialog, ids.APPEARANCE_DARK_RADIO
+            ).GetValue()
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            wx.CallAfter(_read_relaunch)
+            harness.fire_menu_event(frame2, "wxID_PREFERENCES")
+            harness.pump()
+        finally:
+            _close_without_prompt(frame2)
+        return found
+
+
+def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
+    """Toggle Dark in Settings, Cancel: nothing applied, nothing saved.
+
+    E8.1.2's cancel half. Pre-saves a LIGHT set; opens Settings, flips
+    Dark + sound off, and clicks Cancel. Reads the live appearance
+    (unchanged), the View-menu radio (still light), the sound mute
+    (still on) and the saved file (still light/on).
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-cancel-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.LIGHT.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        was_dark = wx.SystemSettings.GetAppearance().IsDark()
+
+        def _drive_cancel() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.find_control(dialog, ids.SOUND_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            wx.CallAfter(_drive_cancel)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["appearance_unchanged"] = wx.SystemSettings.GetAppearance().IsDark() == was_dark
+            found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
+            found["sound_muted_after"] = sound._default_player._muted
+            saved = load_settings(settings_path)
+            found["saved_appearance"] = saved.appearance
+            found["saved_sound_on"] = saved.sound_on
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
+def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
+    """mi_hide_times toggles live, mirrors Settings, survives relaunch.
+
+    E8.1.3's end-to-end proof. Starts with hide-times OFF; toggles ON
+    via the View menu (the Lap time/Total columns hide live, the clock
+    stays, the check item ticks, the file updates); opens Settings (the
+    checkbox mirrors) and unchecks it + OK (the columns return, the
+    menu unticks, the file updates -- the reverse mirror); toggles ON
+    again; relaunches and reads the persisted hidden columns and the
+    ticked menu.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-hide-times-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        try:
+            crossings = harness.find_control(frame, ids.CROSSINGS_LIST)
+            found["before_columns"] = _visible_column_titles(crossings)
+            found["clock_shown_before"] = harness.find_control(
+                frame, ids.CLOCK_ELAPSED_LBL
+            ).IsShown()
+            found["menu_checked_before"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+
+            # Toggle ON via the View menu: hide live, clock stays, tick.
+            harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
+            found["after_on_columns"] = _visible_column_titles(crossings)
+            found["clock_shown_after_on"] = harness.find_control(
+                frame, ids.CLOCK_ELAPSED_LBL
+            ).IsShown()
+            found["menu_checked_after_on"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+            found["saved_hide_times_after_on"] = load_settings(settings_path).hide_times
+
+            # The mirror from the Settings dialog: checkbox checked, and
+            # unchecking it + OK reverts the console and the menu.
+            def _uncheck_in_settings() -> None:
+                dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+                found["settings_dlg_shown"] = dialog is not None
+                if dialog is None:
+                    return
+                found["settings_checkbox_after_on"] = harness.find_control(
+                    dialog, ids.HIDE_TIMES_CHK
+                ).GetValue()
+                harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+                harness.click(dialog, pages.WX_ID_OK)
+
+            wx.CallAfter(_uncheck_in_settings)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["after_settings_off_columns"] = _visible_column_titles(crossings)
+            found["menu_checked_after_off"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+            found["saved_hide_times_after_off"] = load_settings(settings_path).hide_times
+
+            # Toggle ON again so the relaunch check reads hidden.
+            harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
+            found["saved_hide_times_before_relaunch"] = load_settings(settings_path).hide_times
+        finally:
+            _close_without_prompt(frame)
+
+        frame2 = _build_app_window(settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+        try:
+            crossings2 = harness.find_control(frame2, ids.CROSSINGS_LIST)
+            found["relaunch_columns"] = _visible_column_titles(crossings2)
+            found["relaunch_menu_checked"] = _menu_item_checked(frame2, ids.MI_HIDE_TIMES)
+        finally:
+            _close_without_prompt(frame2)
+        return found
+
+
+def _zoom_view_menu_applies_live_and_boundaries() -> dict[str, Any]:
+    """mi_zoom_* scale console fonts live; 90/150 bound the ladder.
+
+    E8.1.4's menu half. Reads the ride-status label's point size at
+    100%, fires the zoom radios, and reports each scaled size plus the
+    radio ticked right after each fire.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-zoom-menu-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        try:
+            status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+            found["base_pt"] = status_lbl.GetFont().GetPointSize()
+            harness.fire_menu_event(frame, ids.MI_ZOOM_120)
+            found["pt_at_120"] = status_lbl.GetFont().GetPointSize()
+            found["radio_120_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_120)
+            harness.fire_menu_event(frame, ids.MI_ZOOM_90)
+            found["pt_at_90"] = status_lbl.GetFont().GetPointSize()
+            found["radio_90_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_90)
+            harness.fire_menu_event(frame, ids.MI_ZOOM_150)
+            found["pt_at_150"] = status_lbl.GetFont().GetPointSize()
+            found["radio_150_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_150)
+            found["saved_zoom"] = load_settings(settings_path).zoom_percent
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
+def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
+    """Mirror the View radio in the Settings choice; dialogs scale.
+
+    E8.1.4's mirror + dialog half. Opens Settings at 100% to capture
+    the zoom_choice's base font; zooms to 120 via the View menu; opens
+    Settings again (the choice shows 120 and its font is scaled),
+    changes the choice to 130, OK -- the console scales to 130 and the
+    View radio re-checks to 130.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-zoom-mirror-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+
+        def _read_choice_base() -> None:
+            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            found["dlg_shown"] = dialog is not None
+            if dialog is None:
+                return
+            found["choice_base_pt"] = (
+                harness.find_control(dialog, ids.ZOOM_CHOICE).GetFont().GetPointSize()
+            )
+            harness.click(dialog, pages.WX_ID_CANCEL)
+
+        try:
+            status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+            found["base_pt"] = status_lbl.GetFont().GetPointSize()
+
+            wx.CallAfter(_read_choice_base)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+
+            harness.fire_menu_event(frame, ids.MI_ZOOM_120)
+            found["pt_after_menu_120"] = status_lbl.GetFont().GetPointSize()
+            found["radio_120_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_120)
+
+            def _drive_settings_130() -> None:
+                dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+                found["dlg_shown_2"] = dialog is not None
+                if dialog is None:
+                    return
+                found["choice_selection_at_120"] = harness.find_control(
+                    dialog, ids.ZOOM_CHOICE
+                ).GetSelection()
+                found["choice_pt_at_120"] = (
+                    harness.find_control(dialog, ids.ZOOM_CHOICE).GetFont().GetPointSize()
+                )
+                harness.find_control(dialog, ids.ZOOM_CHOICE).SetSelection(ZOOM_LADDER.index(130))
+                harness.click(dialog, pages.WX_ID_OK)
+
+            wx.CallAfter(_drive_settings_130)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["pt_after_settings_130"] = status_lbl.GetFont().GetPointSize()
+            found["radio_130_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_130)
+            found["saved_zoom"] = load_settings(settings_path).zoom_percent
+        finally:
+            _close_without_prompt(frame)
+        return found
+
+
+def _zoom_survives_relaunch() -> dict[str, Any]:
+    """Zoom 140 set via the View menu survives a relaunch (E8.1.4)."""
+    with tempfile.TemporaryDirectory(prefix="rc-zoom-relaunch-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = _build_app_window(settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        try:
+            status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+            found["base_pt"] = status_lbl.GetFont().GetPointSize()
+            harness.fire_menu_event(frame, ids.MI_ZOOM_140)
+            found["saved_zoom_before_relaunch"] = load_settings(settings_path).zoom_percent
+        finally:
+            _close_without_prompt(frame)
+
+        frame2 = _build_app_window(settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+        try:
+            status_lbl2 = harness.find_control(frame2, ids.RIDE_STATUS_LBL)
+            found["relaunch_pt"] = status_lbl2.GetFont().GetPointSize()
+            found["relaunch_radio_140_checked"] = _menu_item_checked(frame2, ids.MI_ZOOM_140)
+        finally:
+            _close_without_prompt(frame2)
+        return found
+
+
+def _send_escape(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Post a real Escape ``CHAR_HOOK`` at *dialog* (proven idiom).
+
+    The same event ``test_dialog_behavior.py``'s ``_send_escape``
+    posts: it triggers wx's built-in Escape handling (which ends the
+    modal with the ``SetEscapeId`` button) without needing OS-level key
+    focus, which ``UIActionSimulator`` cannot deliver in this harness.
+    """
+    event = wx.KeyEvent(wx.wxEVT_CHAR_HOOK)
+    event.SetKeyCode(wx.WXK_ESCAPE)
+    dialog.GetEventHandler().ProcessEvent(event)
+
+
+def _shortcuts_dialog_route_shows_the_accelerator_table() -> dict[str, Any]:
+    """Open Help ▸ Keyboard Shortcuts; the dialog lists the table rows.
+
+    E8.2.1's route half: firing ``mi_shortcuts`` opens ``shortcuts_dlg``
+    whose ``shortcuts_list`` renders one Key | Action row per
+    ``ACCELERATOR_TABLE`` entry in table order. Escape closes it via
+    ``wire_close_button``'s ``wxID_CLOSE`` binding, and ``_open_target``
+    destroys it.
+    """
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+
+    def _read_rows_and_escape() -> None:
+        dialog = wx.Window.FindWindowByName(ids.SHORTCUTS_DLG)
+        found["dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        list_ctrl = harness.find_control(dialog, ids.SHORTCUTS_LIST)
+        model = list_ctrl.GetModel()
+        found["row_count"] = model.GetCount()
+        found["rows"] = [
+            [model.GetValueByRow(row, col) for col in range(2)] for row in range(model.GetCount())
+        ]
+        found["column_titles"] = [
+            list_ctrl.GetColumn(index).GetTitle() for index in range(model.GetColumnCount())
+        ]
+        _send_escape(dialog)
+
+    try:
+        wx.CallAfter(_read_rows_and_escape)
+        harness.fire_menu_event(frame, ids.MI_SHORTCUTS)
+        harness.pump()
+        found["dialog_destroyed"] = wx.Window.FindWindowByName(ids.SHORTCUTS_DLG) is None
+    finally:
+        _close_without_prompt(frame)
+    return found
+
+
+def _shortcuts_dialog_renders_injected_rows() -> dict[str, Any]:
+    """Construct ShortcutsDialog with a fake row; it must appear.
+
+    The ``rows`` constructor seam proves the dialog renders its input
+    rather than hard-coding the real four: an injected fake row shows
+    alongside a real table row.
+    """
+    found: dict[str, Any] = {}
+    resource = harness.load_xrc_resources()
+    window = harness.load_window(resource, ids.SHORTCUTS_DLG, frame=False)
+    try:
+        view = ShortcutsDialog(
+            window,
+            rows=(
+                ACCELERATOR_TABLE[0],
+                Accelerator(key="Ctrl+Alt+K", action="Fake action", menu_item_id=None),
+            ),
+        )
+        model = view.shortcuts_list.GetModel()
+        found["row_count"] = model.GetCount()
+        found["rows"] = [
+            [model.GetValueByRow(row, col) for col in range(2)] for row in range(model.GetCount())
+        ]
+    finally:
+        harness.close_window(window)
+    return found
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
+    "settings_persistence_round_trip": _settings_persistence_round_trip,
+    "settings_dialog_renders_persisted_values": _settings_dialog_renders_persisted_values,
+    "settings_dialog_ok_applies_and_persists_dark": (
+        _settings_dialog_ok_applies_and_persists_dark
+    ),
+    "settings_dialog_cancel_applies_nothing": _settings_dialog_cancel_applies_nothing,
+    "hide_times_view_menu_mirror_round_trip": _hide_times_view_menu_mirror_round_trip,
+    "zoom_view_menu_applies_live_and_boundaries": _zoom_view_menu_applies_live_and_boundaries,
+    "zoom_settings_mirror_and_dialog": _zoom_settings_mirror_and_dialog,
+    "zoom_survives_relaunch": _zoom_survives_relaunch,
+    "shortcuts_dialog_route_shows_the_accelerator_table": (
+        _shortcuts_dialog_route_shows_the_accelerator_table
+    ),
+    "shortcuts_dialog_renders_injected_rows": _shortcuts_dialog_renders_injected_rows,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,
@@ -2079,8 +2775,8 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "theme_system_reapplies_on_sys_colour_changed": (
         _theme_system_reapplies_on_sys_colour_changed
     ),
-    "theme_ids_do_not_post_the_stub_notice_but_zoom_still_does": (
-        _theme_ids_do_not_post_the_stub_notice_but_zoom_still_does
+    "theme_ids_do_not_post_the_stub_notice_and_zoom_applies": (
+        _theme_ids_do_not_post_the_stub_notice_and_zoom_applies
     ),
     "live_typed_plate_appears_in_feed": _live_typed_plate_appears_in_feed,
     "live_flagged_crossing_row_is_bold": _live_flagged_crossing_row_is_bold,

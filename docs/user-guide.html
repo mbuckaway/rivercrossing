@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RiverCrossing — User Guide</title>
+<style>
+  :root {
+    --bg: #f2f2f3; --text: #1d1f20; --accent: #5980a6; --muted: #5b5f63;
+    --card: #ffffff; --border: #d5d8db; --code-bg: #e9eaec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1d1f; --text: #e9eaeb; --accent: #8fb8e0;
+      --muted: #a8adb3; --card: #23262a; --border: #3a3f45; --code-bg: #2b2f34;
+    }
+  }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 2rem 1.5rem 5rem; }
+  h1 { font-size: 2rem; border-bottom: 2px solid var(--accent); padding-bottom: .4rem; }
+  h2 { font-size: 1.5rem; margin-top: 2.6rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+  h3 { font-size: 1.15rem; margin-top: 1.8rem; }
+  a { color: var(--accent); }
+  code, kbd { background: var(--code-bg); padding: .1em .4em; border-radius: 4px;
+              font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+  th, td { border: 1px solid var(--border); padding: .45rem .7rem; text-align: left; }
+  th { background: var(--code-bg); }
+  .toc { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+         padding: 1rem 1.4rem; margin: 1.5rem 0; }
+  .toc ol { margin: .4rem 0; }
+  .toc a { text-decoration: none; }
+  .note { background: var(--card); border-left: 4px solid var(--accent);
+          padding: .6rem 1rem; margin: 1rem 0; border-radius: 0 6px 6px 0; }
+  section { scroll-margin-top: 1rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>RiverCrossing — User Guide</h1>
+<p>Timing &amp; poker-hand scoring for poker-run rides. Opens in your browser from <strong>Help ▸ User Guide</strong> or <kbd>F1</kbd>. Chapters follow race day: set up → run → finish → publish.</p>
+
+<nav class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#getting-started">Getting started</a></li>
+    <li><a href="#setting-up-a-ride">Setting up a ride</a></li>
+    <li><a href="#riders-entries">Riders &amp; entries</a></li>
+    <li><a href="#running-the-ride">Running the ride</a></li>
+    <li><a href="#fixing-mistakes">Fixing mistakes</a></li>
+    <li><a href="#stopping-quitting-recovery">Stopping, quitting &amp; recovery</a></li>
+    <li><a href="#finishing-standings">Finishing &amp; standings</a></li>
+    <li><a href="#publishing-results">Publishing results</a></li>
+    <li><a href="#poker-the-run-way">Poker, the run way</a></li>
+    <li><a href="#troubleshooting-faq">Troubleshooting &amp; FAQ</a></li>
+    <li><a href="#appendix-a-shortcuts">Appendix A — Keyboard shortcuts</a></li>
+    <li><a href="#appendix-b-csv-reference">Appendix B — CSV reference</a></li>
+  </ol>
+</nav>
+
+<section id="getting-started">
+<h2>1 · Getting started</h2>
+<p>RiverCrossing is a keyboard-first desktop app for Windows and macOS. The operator types a rider's plate number and presses <kbd>Enter</kbd> at each lap crossing; the app records the lap, deals a card from a seeded virtual shoe, and at the finish scores every entry's best 5-card poker hand.</p>
+
+<h3 id="about">About RiverCrossing</h3>
+<p>Version and credits live in <strong>Help ▸ About RiverCrossing</strong>. The version shown there comes from the installed package, so it always matches the build you are running.</p>
+
+<h3>Installing</h3>
+<ul>
+  <li><strong>Windows:</strong> run the installer and follow the prompts. Windows may show a SmartScreen "More info → Run anyway" step on the unsigned build — the guide documents that step so volunteers can get past it safely.</li>
+  <li><strong>macOS:</strong> drag the app into Applications (or open the DMG and copy it), then launch. Gatekeeper may ask you to confirm opening an unsigned app once.</li>
+</ul>
+
+<h3>First launch &amp; the ride library</h3>
+<p>The app opens on the timing console. <strong>File ▸ Ride Library</strong> lists every ride in the database — one database, every event. From the library you can open an existing ride, create a new one, duplicate one (copies setup + riders, no timing data), or delete one (you must type the ride's name to confirm, and a backup is written first). A running ride is never deletable.</p>
+
+<h3 id="settings">Settings</h3>
+<p><strong>File ▸ Settings</strong> (or the app menu on macOS) controls the operator-comfort layer:</p>
+<ul>
+  <li><strong>Appearance</strong> — System (follow the OS), Light, or Dark. All three work on both platforms. On Windows a change applies at next launch; macOS applies it live.</li>
+  <li><strong>Sound on crossing</strong> — three cues: a click when a crossing records, a two-tone alert when a short lap holds its card, and a buzz for an unknown plate or empty entry.</li>
+  <li><strong>Hide times on the console</strong> — hides lap/total times mid-ride (it's-not-a-race mode). Times are still recorded underneath. The ride clock stays.</li>
+  <li><strong>Text zoom</strong> — 90–150%, the same ladder as the <strong>View ▸ Zoom</strong> menu.</li>
+  <li><strong>Back up now</strong> — writes a backup immediately.</li>
+</ul>
+<p>The <strong>View</strong> menu mirrors Settings: Theme radios, Hide Times, and the Zoom radios. One setting, two places — they stay in sync.</p>
+
+<h3>Where your data lives</h3>
+<p>All rides live in one SQLite database (<code>rides.db</code>) in your user data folder. Every crossing commits as it happens (WAL journal), so a crash loses at most a keystroke. Backups are written on open and hourly while a ride runs, kept in a <code>&lt;db&gt;.backups/</code> sibling folder, pruned to the newest 20.</p>
+</section>
+</main>
+</body>
+</html>

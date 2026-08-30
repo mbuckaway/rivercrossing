@@ -49,7 +49,7 @@ explains why it is hosted there, not here).
 import re
 import threading
 import webbrowser
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -66,7 +66,18 @@ from rivercrossing.ride import (
 )
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import Placed, rank, tiebreak_order_from_spellings
-from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, resume_flow, theme
+from rivercrossing.ui import (
+    accelerators,
+    commands,
+    ids,
+    quit_flow,
+    require_wx,
+    resume_flow,
+    sound,
+    theme,
+    zoom,
+)
+from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataSource, RideSummary
 
@@ -74,6 +85,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rivercrossing.store import Store
+    from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
 
@@ -160,6 +172,11 @@ class _RouteContext:
             the console (E5.4.1). ``None`` until a store-backed ride
             is opened -- by the resume flow (E5.2.2's Continue) or the
             library's Open -- and what File ▸ Duplicate Ride… reads.
+        settings: The live :class:`AppSettings` this launch loaded
+            (E8.1.1); the layout-save callback updates it as the
+            sash/geometry persist.
+        settings_path: The per-user settings file this launch loaded
+            from, what the layout-save callback writes back to.
     """
 
     frame: Any
@@ -198,6 +215,12 @@ class _RouteContext:
     # scorer was just looking at. ``None`` until an entry detail is
     # opened; a correction route with none posts a notice instead.
     detail_plate: str | None = None
+    # E8.1.1: the per-user settings file this launch loaded from and
+    # the live AppSettings. The layout-save callback updates
+    # :attr:`settings` as the sash/geometry persist, so a later
+    # settings dialog (E8.2) opens onto the same current values.
+    settings: AppSettings = field(default_factory=settings_store.default_settings)
+    settings_path: Path = field(default_factory=settings_store.default_path)
 
 
 def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]:
@@ -326,6 +349,79 @@ def _check_default_menu_radios(menubar: Any) -> None:  # noqa: ANN401 -- wx ship
     menubar.Check(wx.xrc.XRCID(ids.MI_ZOOM_100), True)  # noqa: FBT003 -- wx API takes a positional bool
 
 
+def _check_loaded_theme_radio(menubar: Any, mode: theme.ThemeMode) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Tick the appearance radio for *mode* (E8.1.1, startup + mirror).
+
+    ``wxMenuBar.Check`` also unchecks the theme trio's other two
+    members (measured, ``_handle_view_row``'s own note), so ticking the
+    mode's radio alone restores the selection. Called at startup after
+    ``_check_default_menu_radios`` (ticking System there is a no-op --
+    it is already checked) and whenever the settings dialog applies a
+    new appearance (E8.1.2's mirror), where the previously checked
+    radio must be reverted too.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    menubar.Check(wx.xrc.XRCID(theme.menu_item_id_for(mode)), True)  # noqa: FBT003 -- wx API takes a positional bool
+
+
+def _check_loaded_hide_times(menubar: Any, *, hide: bool) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Set ``mi_hide_times``'s check item to *hide* (E8.1.3).
+
+    Called at startup after ``LoadMenuBar`` (the fresh check item is
+    unchecked, so ``False`` is a no-op) and whenever the settings
+    dialog applies a new hide-times value (the mirror). ``wxMenuBar.
+    Check`` sets the check state explicitly -- a synthetic ``EVT_MENU``
+    does not auto-toggle check items on this pin (measured for the
+    radio items; the functional suite verifies the check item the same
+    way).
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    menubar.Check(wx.xrc.XRCID(ids.MI_HIDE_TIMES), hide)
+
+
+def _check_loaded_zoom_radio(menubar: Any, percent: int) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Tick the zoom radio for *percent* (E8.1.4, startup + mirror).
+
+    ``wxMenuBar.Check`` also unchecks the zoom group's other six
+    members (measured, ``_handle_view_row``'s own note), so ticking the
+    percent's radio alone restores the selection. Called at startup
+    after ``_check_default_menu_radios`` (ticking 100 there is a no-op
+    -- it is already checked) and whenever the settings dialog applies
+    a new zoom (the mirror), where the previously checked radio must
+    be reverted too.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    menubar.Check(wx.xrc.XRCID(zoom.menu_item_id_for(percent)), True)  # noqa: FBT003 -- wx API takes a positional bool
+
+
+def _toggle_hide_times(context: _RouteContext) -> None:
+    """Flip the hide-times setting live and persist it (E8.1.3).
+
+    Applies through the console presenter's ``on_hide_times`` (when a
+    presenter is threaded) and sets the ``mi_hide_times`` check item
+    explicitly -- a synthetic ``EVT_MENU`` does not auto-toggle check
+    items on this pin (measured for the radio items; verified for the
+    check item the same way in the functional suite).
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    hide = not context.settings.hide_times
+    updated = replace(context.settings, hide_times=hide)
+    settings_store.save_settings(updated, context.settings_path)
+    context.settings = updated
+    context.frame.GetMenuBar().Check(wx.xrc.XRCID(ids.MI_HIDE_TIMES), hide)
+    presenter = context.presenter
+    if presenter is not None:
+        presenter.on_hide_times(hide=hide)
+
+
 def _theme_item_id_for(real_id: int) -> str | None:
     """Return the theme radio's own XRC name for *real_id*, if any.
 
@@ -344,28 +440,71 @@ def _theme_item_id_for(real_id: int) -> str | None:
     )
 
 
-def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: Any) -> None:  # noqa: ANN401
-    """Dispatch the View row: theme ids to the controller, else stub.
+def _zoom_item_id_for(real_id: int) -> str | None:
+    """Return the zoom radio's own XRC name for *real_id*, if any.
 
-    P8-D4. The other eight ids in this row (``mi_hide_times``, the seven
-    ``mi_zoom_*``) keep the pre-Phase-8 generic ``COMMAND`` stub --
-    they carry no engine yet either. A synthetic ``EVT_MENU`` never
-    flips a radio's own checked state the way a genuine native click
-    does (measured: this harness's functional suite has no delivery
-    mechanism but direct event injection, harness.py's own module
-    docstring), so this ticks the fired radio explicitly;
-    ``wxMenuBar.Check`` also unchecks the theme trio's other two
-    members (measured), matching what a real click's own native
-    handling would already have done.
+    The zoom analogue of :func:`_theme_item_id_for` -- an ``EVT_MENU``
+    carries only the resolved runtime int, never the XRC name.
     """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    return next(
+        (item_id for item_id in zoom.ZOOM_MENU_ITEM_IDS if wx.xrc.XRCID(item_id) == real_id),
+        None,
+    )
+
+
+def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: Any) -> None:  # noqa: ANN401
+    """Dispatch the View row: theme, hide-times and zoom ids, else stub.
+
+    P8-D4. A synthetic ``EVT_MENU`` never flips a menu item's own
+    checked state the way a genuine native click does (measured: this
+    harness's functional suite has no delivery mechanism but direct
+    event injection, harness.py's own module docstring), so each
+    branch sets its item's checked state explicitly; ``wxMenuBar.
+    Check`` also unchecks the other members of a radio group
+    (measured), matching a real click's native handling.
+
+    E8.1.2 closed the appearance mirror: a theme radio click now also
+    persists the choice (and updates ``context.settings``), so the
+    next Settings dialog open renders it -- the same file the dialog's
+    OK writes. E8.1.3 adds ``mi_hide_times``: a live toggle -- flip
+    ``context.settings.hide_times``, apply through the console
+    presenter, persist, and set the check item explicitly (a synthetic
+    event does not auto-toggle check items either). E8.1.4 adds the
+    seven ``mi_zoom_*`` radios: apply through the zoom controller,
+    persist, and tick the fired radio explicitly.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
     item_id = _theme_item_id_for(event.GetId())
-    if item_id is None:
-        context.frame.SetStatusText(f"{route.label} — not yet implemented")
+    if item_id is not None:
+        context.frame.GetMenuBar().Check(event.GetId(), True)  # noqa: FBT003 -- wx API takes a positional bool
+        notice = context.theme_controller.on_menu(item_id)
+        if notice is not None:
+            context.frame.SetStatusText(notice)
+        # E8.1.2: persist the choice -- only appearance changes; the
+        # other fields stay as currently held.
+        mode = theme.mode_for_menu_id(item_id)
+        updated = replace(context.settings, appearance=mode.value)
+        settings_store.save_settings(updated, context.settings_path)
+        context.settings = updated
         return
-    context.frame.GetMenuBar().Check(event.GetId(), True)  # noqa: FBT003 -- wx API takes a positional bool
-    notice = context.theme_controller.on_menu(item_id)
-    if notice is not None:
-        context.frame.SetStatusText(notice)
+    if event.GetId() == wx.xrc.XRCID(ids.MI_HIDE_TIMES):
+        _toggle_hide_times(context)
+        return
+    zoom_item_id = _zoom_item_id_for(event.GetId())
+    if zoom_item_id is not None:
+        percent = zoom.percent_for_menu_id(zoom_item_id)
+        zoom.set_percent(percent)
+        context.frame.GetMenuBar().Check(event.GetId(), True)  # noqa: FBT003 -- wx API takes a positional bool
+        updated = replace(context.settings, zoom_percent=percent)
+        settings_store.save_settings(updated, context.settings_path)
+        context.settings = updated
+        return
+    context.frame.SetStatusText(f"{route.label} — not yet implemented")
 
 
 def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | None:
@@ -507,6 +646,39 @@ def _live_library_callbacks(
     return _open, _new, _duplicate
 
 
+def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
+    """Persist *settings* and apply its live paths (E8.1.2-E8.1.4).
+
+    The settings dialog's OK callback: saves to the config file,
+    updates the context's current settings, then applies what has live
+    paths -- appearance through the live theme controller (which
+    re-checks the View-menu radio via ``_check_loaded_theme_radio``),
+    sound through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
+    through the console presenter's ``on_hide_times`` (when a
+    presenter is threaded) with the View-menu check item synced
+    (``_check_loaded_hide_times``), and zoom through
+    :func:`~rivercrossing.ui.zoom.set_percent` when the choice changed
+    (E8.1.4), with the View-menu zoom radio synced
+    (``_check_loaded_zoom_radio``).
+    """
+    zoom_changed = settings.zoom_percent != context.settings.zoom_percent
+    settings_store.save_settings(settings, context.settings_path)
+    context.settings = settings
+    mode = theme.ThemeMode(settings.appearance)
+    notice = context.theme_controller.on_menu(theme.menu_item_id_for(mode))
+    if notice is not None:
+        context.frame.SetStatusText(notice)
+    _check_loaded_theme_radio(context.frame.GetMenuBar(), mode)
+    _check_loaded_hide_times(context.frame.GetMenuBar(), hide=settings.hide_times)
+    _check_loaded_zoom_radio(context.frame.GetMenuBar(), settings.zoom_percent)
+    sound.set_muted(muted=not settings.sound_on)
+    presenter = context.presenter
+    if presenter is not None:
+        presenter.on_hide_times(hide=settings.hide_times)
+    if zoom_changed:
+        zoom.set_percent(settings.zoom_percent)
+
+
 def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each binds a different view class
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs
@@ -516,8 +688,12 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
 
     E7.3.1 added the audit trail to that set: ``audit_dlg`` now binds
     the real viewer (newest-first list + the two filters) over the
-    live engine source. The remaining plain XRC dialogs with no
-    code-side view class (D1's settings and the correction dialogs)
+    live engine source. E8.1.2 adds the settings dialog:
+    ``settings_dlg`` now binds the E8.1.2 viewer (renders the current
+    AppSettings and, on OK, persists + applies it). E8.2.1 adds the
+    shortcuts dialog: ``shortcuts_dlg`` now binds the E8.2.1 viewer
+    (renders the accelerator table, Key | Action). The remaining plain
+    XRC dialogs with no code-side view class (the correction dialogs)
     need nothing further here; they already carry their own canvas
     defaults from their own ``.xrc`` authoring.
     """
@@ -528,6 +704,8 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     from rivercrossing.ui.views.ride_setup import RideSetup  # noqa: PLC0415
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.settings import SettingsDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.shortcuts import ShortcutsDialog  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         if context.store is not None:
@@ -603,6 +781,21 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
             ResultsWindow(window, data_source=_EMPTY_SOURCE)
     elif route.target == ids.SELFTEST_DLG:
         SelfTestDialog(window)
+    elif route.target == ids.SETTINGS_DLG:
+        # E8.1.2: Settings renders the context's current settings and,
+        # on OK, persists + applies them through the live seams (the
+        # appearance mirror to the View-menu radios). backup_now_btn
+        # stays inert -- File ▸ Back Up Database… is a later epic.
+        SettingsDialog(
+            window,
+            settings=context.settings,
+            on_save=lambda new_settings: _apply_settings_live(context, new_settings),
+        )
+    elif route.target == ids.SHORTCUTS_DLG:
+        # E8.2.1: Help ▸ Keyboard Shortcuts renders the accelerator
+        # table -- one Key | Action row per Accelerator -- so the
+        # dialog cannot drift from ui.accelerators (xrc-windows.md E).
+        ShortcutsDialog(window)
     elif route.target == ids.AUDIT_DLG:
         # E7.3.1: Audit Trail… opens the real viewer -- newest-first
         # audit_list plus the search/action filters -- over the live
@@ -1441,11 +1634,18 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         return
 
     try:
+        # E8.1.4: every window opened later inherits the current zoom.
+        # Applied BEFORE decoration so a view's value-setting runs last:
+        # the recursive SetFont walk resets a wxChoice's selection to -1
+        # on this pin (measured in the VM: settings_dlg's zoom_choice),
+        # and the view's show_settings re-sets it. Base fonts come from
+        # the fresh XRC load, scaled once (never compounded).
+        zoom.apply_to(window)
         _decorate(context, window, route)
         _apply_dialog_defaults(window, route)
     except Exception:
         # Fault A: any post-load failure must close the just-loaded
-        # window before re-raising. _decorate's view construction runs
+        # window before re-raising. The construction calls above run
         # before the dialog path's own try/finally below, and a raise
         # there (find_control's 25-retry LookupError under load) used
         # to leak the dialog fully alive, rerun-masked, until the reap
@@ -1909,11 +2109,12 @@ def _resume_console_engine(
     return None
 
 
-def build_main_window(
+def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): the four bootstrap seams
     app: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
     store: Store | None = None,
     clock: Callable[[], datetime] | None = None,
+    settings_path: Path | None = None,
 ) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Build and wire ``main_frame``, complete but not yet shown.
 
@@ -1931,6 +2132,20 @@ def build_main_window(
     live ``EngineDataSource``, and the E6/E7 windows read the
     :data:`_EMPTY_SOURCE` empty state -- no production module imports
     ``rivercrossing.demo`` any more (import-linter contract).
+
+    E8.1.1 loads the per-user settings file at startup and applies
+    what already has live paths: the persisted appearance through
+    :class:`~rivercrossing.ui.theme.ThemeController` (constructed with
+    the loaded mode, and the matching menu radio checked), the sound
+    mute through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
+    through the console presenter's ``on_hide_times`` (with the menu
+    check item synced, E8.1.3), zoom through
+    :func:`~rivercrossing.ui.zoom.set_percent` (with the menu radio
+    synced, E8.1.4), and the saved splitter sash / frame geometry
+    through :class:`MainFrame`'s layout seams. The settings file path
+    and current :class:`AppSettings` are kept on
+    :class:`_RouteContext`, and the layout save callback persists
+    sash/geometry changes back to the file.
 
     Split out of :func:`main` so a test can drive the whole
     construction path without ever entering ``MainLoop``, which
@@ -1954,11 +2169,23 @@ def build_main_window(
             by the functional suite to pin the elapsed reading at a
             fixed instant; ``None`` uses the engine's own default
             (``datetime.now``).
+        settings_path: The per-user settings file to load at startup
+            and write layout saves back to; ``None`` uses
+            :func:`~rivercrossing.ui.presenters.settings.default_path`.
+            The functional suite injects a temp path so no test ever
+            touches the real user config dir.
 
     Returns:
         The loaded, fully wired ``main_frame``, not yet shown.
     """
     from rivercrossing.ui.views import MainFrame  # noqa: PLC0415 -- deferred, see module docstring
+
+    # E8.1.1: load the per-user settings once, at startup; every apply
+    # below reads the same loaded object, and the layout save callback
+    # writes back through the same path.
+    settings_path = settings_path if settings_path is not None else settings_store.default_path()
+    loaded_settings = settings_store.load_settings(settings_path)
+    loaded_mode = theme.ThemeMode(loaded_settings.appearance)
 
     resource = _load_xrc_resources()
 
@@ -1966,6 +2193,9 @@ def build_main_window(
     menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
     _check_default_menu_radios(menubar)
+    _check_loaded_theme_radio(menubar, loaded_mode)
+    _check_loaded_hide_times(menubar, hide=loaded_settings.hide_times)
+    _check_loaded_zoom_radio(menubar, loaded_settings.zoom_percent)
 
     # E5.4.2: no store-backed ride is open at bootstrap, so the roster
     # is empty (rider_editor_dlg shows the empty state; the library
@@ -1976,7 +2206,7 @@ def build_main_window(
         plate_model=PlateModel.RIDER_POOLED,
         max_team_size=_SEEDED_MAX_TEAM_SIZE,
     )
-    theme_controller = theme.ThemeController(app)
+    theme_controller = theme.ThemeController(app, mode=loaded_mode)
     context = _RouteContext(
         frame=frame,
         resource=resource,
@@ -1984,6 +2214,8 @@ def build_main_window(
         app=app,
         theme_controller=theme_controller,
         store=store,
+        settings=loaded_settings,
+        settings_path=settings_path,
         # presenter is threaded below with dataclasses.replace, once the
         # live console exists; the resume flow and route binding only
         # need the pieces already set here.
@@ -1999,7 +2231,20 @@ def build_main_window(
     else:
         engine, engine_source = resumed
 
-    _console = MainFrame(frame, data_source=engine_source, resource=resource)
+    def _save_layout(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
+        """Persist the console's layout and keep the context current."""
+        updated = replace(context.settings, splitter_sash=sash, window_geometry=geometry)
+        settings_store.save_settings(updated, settings_path)
+        context.settings = updated
+
+    _console = MainFrame(
+        frame,
+        data_source=engine_source,
+        resource=resource,
+        initial_sash=loaded_settings.splitter_sash,
+        initial_geometry=loaded_settings.window_geometry,
+        on_layout_changed=_save_layout,
+    )
 
     # _presenter is kept alive the same way: wire_entry/wire_console's
     # closures hold its bound handlers, which wx's own event table and
@@ -2009,6 +2254,13 @@ def build_main_window(
     _console.wire_console(_presenter)
     _console.set_state(engine_source.ride_status())
     _console.focus_entry()
+
+    # E8.1.1-E8.1.4: apply the persisted settings that have live
+    # paths -- appearance (the ThemeController, constructed with the
+    # loaded mode), sound, hide-times and zoom.
+    sound.set_muted(muted=not loaded_settings.sound_on)
+    _presenter.on_hide_times(hide=loaded_settings.hide_times)
+    zoom.set_percent(loaded_settings.zoom_percent)
 
     _apply_accelerators(frame, menubar)
     # theme_controller is kept alive by _RouteContext, threaded through
