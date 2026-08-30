@@ -1752,7 +1752,7 @@ def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401
     harness.pump()
 
 
-def _theme_radio_checked(frame: Any, item_id: str) -> bool:  # noqa: ANN401
+def _menu_item_checked(frame: Any, item_id: str) -> bool:  # noqa: ANN401
     """Return whether *item_id*'s own menu item is currently checked."""
     item, _menu = frame.GetMenuBar().FindItem(wx.xrc.XRCID(item_id))
     return bool(item.IsChecked())
@@ -1786,7 +1786,7 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
         return {
             "is_dark_after": is_dark_after,
             "appearance_unchanged": is_dark_after == is_dark_before,
-            "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_DARK),
+            "radio_checked": _menu_item_checked(frame, ids.MI_THEME_DARK),
             "notice_after": frame.GetStatusBar().GetStatusText(0),
             "screenshot_exists": saved.exists(),
         }
@@ -1813,7 +1813,7 @@ def _theme_light_round_trip() -> dict[str, Any]:
         _fire_menu_event(frame, ids.MI_THEME_LIGHT)
         return {
             "is_dark_after": wx.SystemSettings.GetAppearance().IsDark(),
-            "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_LIGHT),
+            "radio_checked": _menu_item_checked(frame, ids.MI_THEME_LIGHT),
             "notice_after": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
@@ -1852,7 +1852,7 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
             _fire_menu_event(frame, ids.MI_THEME_SYSTEM)
             return {
                 "apply_call_count": len(calls),
-                "radio_checked": _theme_radio_checked(frame, ids.MI_THEME_SYSTEM),
+                "radio_checked": _menu_item_checked(frame, ids.MI_THEME_SYSTEM),
             }
         finally:
             _close_without_prompt(frame)
@@ -2104,7 +2104,7 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
             splitter = harness.find_control(frame, ids.MAIN_SPLITTER)
             crossings_list = harness.find_control(frame, ids.CROSSINGS_LIST)
             applied = {
-                "applied_dark_radio": _theme_radio_checked(frame, ids.MI_THEME_DARK),
+                "applied_dark_radio": _menu_item_checked(frame, ids.MI_THEME_DARK),
                 "applied_sound_muted": sound._default_player._muted,
                 "applied_hide_times_columns": _visible_column_titles(crossings_list),
                 "applied_sash": splitter.GetSashPosition(),
@@ -2255,7 +2255,7 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: 
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
             found["is_dark_after"] = wx.SystemSettings.GetAppearance().IsDark()
-            found["menu_dark_checked"] = _theme_radio_checked(frame, ids.MI_THEME_DARK)
+            found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
             found["sound_muted_after"] = sound._default_player._muted
             found["hide_times_columns"] = _visible_column_titles(
                 harness.find_control(frame, ids.CROSSINGS_LIST)
@@ -2334,13 +2334,98 @@ def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
             found["appearance_unchanged"] = wx.SystemSettings.GetAppearance().IsDark() == was_dark
-            found["menu_dark_checked"] = _theme_radio_checked(frame, ids.MI_THEME_DARK)
+            found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
             found["sound_muted_after"] = sound._default_player._muted
             saved = load_settings(settings_path)
             found["saved_appearance"] = saved.appearance
             found["saved_sound_on"] = saved.sound_on
         finally:
             _close_without_prompt(frame)
+        return found
+
+
+def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
+    """mi_hide_times toggles live, mirrors Settings, survives relaunch.
+
+    E8.1.3's end-to-end proof. Starts with hide-times OFF; toggles ON
+    via the View menu (the Lap time/Total columns hide live, the clock
+    stays, the check item ticks, the file updates); opens Settings (the
+    checkbox mirrors) and unchecks it + OK (the columns return, the
+    menu unticks, the file updates -- the reverse mirror); toggles ON
+    again; relaunches and reads the persisted hidden columns and the
+    ticked menu.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-hide-times-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        save_settings(
+            AppSettings(
+                appearance=theme.ThemeMode.SYSTEM.value,
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=None,
+                window_geometry=None,
+            ),
+            settings_path,
+        )
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        found: dict[str, Any] = {}
+        try:
+            crossings = harness.find_control(frame, ids.CROSSINGS_LIST)
+            found["before_columns"] = _visible_column_titles(crossings)
+            found["clock_shown_before"] = harness.find_control(
+                frame, ids.CLOCK_ELAPSED_LBL
+            ).IsShown()
+            found["menu_checked_before"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+
+            # Toggle ON via the View menu: hide live, clock stays, tick.
+            harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
+            found["after_on_columns"] = _visible_column_titles(crossings)
+            found["clock_shown_after_on"] = harness.find_control(
+                frame, ids.CLOCK_ELAPSED_LBL
+            ).IsShown()
+            found["menu_checked_after_on"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+            found["saved_hide_times_after_on"] = load_settings(settings_path).hide_times
+
+            # The mirror from the Settings dialog: checkbox checked, and
+            # unchecking it + OK reverts the console and the menu.
+            def _uncheck_in_settings() -> None:
+                dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+                found["settings_dlg_shown"] = dialog is not None
+                if dialog is None:
+                    return
+                found["settings_checkbox_after_on"] = harness.find_control(
+                    dialog, ids.HIDE_TIMES_CHK
+                ).GetValue()
+                harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+                harness.click(dialog, pages.WX_ID_OK)
+
+            wx.CallAfter(_uncheck_in_settings)
+            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            harness.pump()
+            found["after_settings_off_columns"] = _visible_column_titles(crossings)
+            found["menu_checked_after_off"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+            found["saved_hide_times_after_off"] = load_settings(settings_path).hide_times
+
+            # Toggle ON again so the relaunch check reads hidden.
+            harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
+            found["saved_hide_times_before_relaunch"] = load_settings(settings_path).hide_times
+        finally:
+            _close_without_prompt(frame)
+
+        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+        try:
+            crossings2 = harness.find_control(frame2, ids.CROSSINGS_LIST)
+            found["relaunch_columns"] = _visible_column_titles(crossings2)
+            found["relaunch_menu_checked"] = _menu_item_checked(frame2, ids.MI_HIDE_TIMES)
+        finally:
+            _close_without_prompt(frame2)
         return found
 
 
@@ -2352,6 +2437,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
         _settings_dialog_ok_applies_and_persists_dark
     ),
     "settings_dialog_cancel_applies_nothing": _settings_dialog_cancel_applies_nothing,
+    "hide_times_view_menu_mirror_round_trip": _hide_times_view_menu_mirror_round_trip,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,

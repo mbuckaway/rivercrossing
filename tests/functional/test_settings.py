@@ -26,6 +26,7 @@ import sys
 import pytest
 import scenario_runner
 
+from rivercrossing.ui import feed_model
 from rivercrossing.ui.presenters.settings import ZOOM_LADDER
 
 pytestmark = pytest.mark.functional
@@ -170,3 +171,35 @@ def test_settings_dialog_cancel_applies_and_persists_nothing() -> None:
     assert data["sound_muted_after"] is False, result["context"]
     assert data["saved_appearance"] == "light", result["context"]
     assert data["saved_sound_on"] is True, result["context"]
+
+
+# --- E8.1.3: hide-times (View menu live toggle, mirror, relaunch) ----
+
+
+def test_hide_times_view_menu_toggles_live_mirrors_settings_and_survives_relaunch() -> None:
+    """mi_hide_times: live hide (clock stays), mirror both ways.
+
+    The View-menu check item and the Settings checkbox must agree in
+    both directions -- menu toggle → checkbox, checkbox uncheck → menu
+    untick -- and the setting must survive a relaunch. The clock labels
+    stay shown throughout (R-37).
+    """
+    result = scenario_runner.run_scenario("hide_times_view_menu_mirror_round_trip")
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    assert data["before_columns"] == list(feed_model.COLUMN_LABELS), result["context"]
+    assert data["clock_shown_before"] is True, result["context"]
+    assert data["menu_checked_before"] is False, result["context"]
+    assert data["after_on_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
+    assert data["clock_shown_after_on"] is True, result["context"]
+    assert data["menu_checked_after_on"] is True, result["context"]
+    assert data["saved_hide_times_after_on"] is True, result["context"]
+    assert data["settings_dlg_shown"] is True, result["context"]
+    assert data["settings_checkbox_after_on"] is True, result["context"]
+    assert data["after_settings_off_columns"] == list(feed_model.COLUMN_LABELS), result["context"]
+    assert data["menu_checked_after_off"] is False, result["context"]
+    assert data["saved_hide_times_after_off"] is False, result["context"]
+    assert data["saved_hide_times_before_relaunch"] is True, result["context"]
+    assert data["relaunch_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
+    assert data["relaunch_menu_checked"] is True, result["context"]
