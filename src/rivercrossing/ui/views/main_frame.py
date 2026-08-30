@@ -125,6 +125,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         self._rows = tuple(rows)
         self._card_images = card_images
         self._flagged = feed_model.flagged_row_indexes(self._rows)
+        self._edited = feed_model.edited_row_indexes(self._rows)
 
     def GetColumnCount(self) -> int:
         """Return the feed's fixed seven columns."""
@@ -146,12 +147,16 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return _TEXT_ACCESSORS[col](feed_row)
 
     def GetAttrByRow(self, row: int, col: int, attr: Any) -> bool:  # noqa: ANN401, ARG002
-        """Bold the whole row when its crossing is flagged (R-34).
+        """Bold the whole row when its crossing is flagged or edited.
 
-        *col* is unused: xrc-windows.md's code-side note bolds the
-        entire flagged row, not one cell.
+        The two bold channels share one render: a flagged crossing
+        (R-34, held/short-lap) and an edited crossing (E7.2.2, one a
+        correction touched -- spec §3 design 8c's "edits highlighted
+        in the feed") both bold the entire row. *col* is unused:
+        xrc-windows.md's code-side note bolds the whole flagged row,
+        not one cell.
         """
-        if row not in self._flagged:
+        if row not in self._flagged and row not in self._edited:
             return False
         attr.SetBold(True)  # noqa: FBT003 -- wx API takes a positional bool
         return True
@@ -249,6 +254,16 @@ class MainFrame:
 
         self._hideable_columns = self._build_columns()
         self._crossings_model: CrossingsFeedModel | None = None
+
+        # E7.2.1: the menu-enablement binder's seam. set_state fires it
+        # on every ride-state change (the epic's "existing ride-state-
+        # change seam"), and show_feed fires it too -- the console
+        # re-renders the feed on every record/undo/tick, so the binder
+        # also refreshes the §15 count conditions (Edit Crossing's
+        # "≥1 crossing", Void Card's "entry has cards") within a tick
+        # of any engine change, not only on a state transition.
+        self._status: RideStatus = RideStatus.DRAFT
+        self._on_ride_changed: Callable[[RideStatus], None] | None = None
 
         # Reflow now that the size and every sizer item are final, so
         # the splitter has its real client area before a sash position
@@ -371,9 +386,15 @@ class MainFrame:
     # ----------------------------------------------------- ConsoleView
 
     def show_feed(self, rows: list[FeedRow]) -> None:
-        """Render the crossings feed, newest first (ConsoleView)."""
+        """Render the crossings feed, newest first (ConsoleView).
+
+        Also fires the E7.2.1 menu-binder seam: the feed re-renders on
+        every record/undo/tick, so §15 count conditions refresh within
+        a tick of any engine change (see the constructor comment).
+        """
         self._crossings_model = CrossingsFeedModel(rows, self.card_images)
         self.crossings_list.AssociateModel(self._crossings_model)
+        self._notify_ride_changed()
 
     def show_counters(self, c: Counters) -> None:
         """Render the four counter chips (ConsoleView)."""
@@ -397,6 +418,10 @@ class MainFrame:
         corrections-only state (spec §3, R-36), so the console shows
         ``reopened_infobar`` to say entry is off and corrections are
         on (E5.2.2), and dismisses it for every other status.
+
+        This is the E7.2.1 menu-binder's "ride-state-change seam":
+        every presenter state transition (start/stop/finish/reopen)
+        lands here, and the binder re-applies the §15 enablement.
         """
         self.ride_status_lbl.SetLabel(status.value.upper())
         running = status == RideStatus.RUNNING
@@ -406,6 +431,24 @@ class MainFrame:
             self.reopened_infobar.ShowMessage(REOPENED_BANNER, wx.ICON_INFORMATION)
         else:
             self.reopened_infobar.Dismiss()
+        self._status = status
+        self._notify_ride_changed()
+
+    def set_on_ride_changed(self, callback: Callable[[RideStatus], None]) -> None:
+        """Register the menu-binder callback fired on ride changes.
+
+        The app bootstrap wires this to its ``_apply_menu_state``;
+        fired from :meth:`set_state` (state transitions) and
+        :meth:`show_feed` (count-condition refreshes). Not part of the
+        ``ConsoleView`` Protocol -- it is an app-level seam, set once
+        after construction.
+        """
+        self._on_ride_changed = callback
+
+    def _notify_ride_changed(self) -> None:
+        """Fire the binder seam, if one is registered."""
+        if self._on_ride_changed is not None:
+            self._on_ride_changed(self._status)
 
     def focus_entry(self) -> None:
         """Return focus to the plate entry field (ConsoleView)."""

@@ -85,7 +85,7 @@ ROUTE_TARGETS = (
     (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Edit Crossing...
     (commands.TargetKind.DIALOG, ids.REASSIGN_DLG),  # Reassign Plate...
     (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Manual Card...
-    (commands.TargetKind.DIALOG, commands._UNAUTHORED_DIALOG),  # Void Card...: gap (E7)
+    (commands.TargetKind.DIALOG, ids.VOID_CARD_CONFIRM_DLG),  # Void Card... (E7)
     (commands.TargetKind.COMMAND, None),  # Review Held Cards: focuses an existing panel
     (commands.TargetKind.WINDOW, ids.RESULTS_FRAME),  # Standings
     (commands.TargetKind.COMMAND, None),  # Generate HTML...: OS-native save dialog
@@ -379,6 +379,63 @@ def test_is_route_enabled_given_start_ride_stopped_condition_matches_spec(
     result = commands.is_route_enabled(START_RIDE_ROUTE, state)
 
     assert result is expected_enabled
+
+
+# --- E7.2.1: the live binder's enable/disable table for the -----------
+# --- correction rows (menu_state applies exactly this table) ----------
+
+# spec.md §15's "Enabled when" cells for the six correction rows the
+# live menu binder targets, transcribed independently of commands.py
+# itself (the same double-transcription discipline as ALLOWED_STATES).
+# The fourth field is Void Card's own "entry has cards" requirement;
+# None means the row has no such condition.
+_RUNNING_FOR_TESTS = frozenset({RideStatus.RUNNING})
+_RUNNING_REOPENED_FOR_TESTS = frozenset({RideStatus.RUNNING, RideStatus.REOPENED})
+
+_CORRECTION_ENABLEMENT = (
+    ("Undo Last Crossing", _RUNNING_FOR_TESTS, 1, None),
+    ("Add Crossing at Time…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
+    ("Edit Crossing…", _RUNNING_REOPENED_FOR_TESTS, 1, None),
+    ("Reassign Plate…", _RUNNING_REOPENED_FOR_TESTS, 1, None),
+    ("Deal Manual Card…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
+    ("Void Card…", _RUNNING_REOPENED_FOR_TESTS, 0, 1),
+)
+
+
+@pytest.mark.parametrize(
+    ("label", "allowed", "min_crossings", "entry_cards"),
+    _CORRECTION_ENABLEMENT,
+)
+@pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
+def test_is_route_enabled_given_correction_route_matches_the_live_binder_table(  # noqa: PLR0913, PLR0917 -- (label, allowed, min_crossings, entry_cards, status)
+    label: str,
+    allowed: frozenset[RideStatus],
+    min_crossings: int,
+    entry_cards: int | None,
+    *,
+    status: RideStatus,
+) -> None:
+    """The six correction rows' verdicts are the §15 table, per state.
+
+    Every row's state gate, its numeric minimum and Void Card's own
+    entry-has-cards condition combine exactly as the live binder
+    applies them (menu_state.enablement_table).
+    """
+    state = dataclasses.replace(
+        _baseline_state(status),
+        crossings=min_crossings,
+        entry_has_cards=bool(entry_cards) if entry_cards is not None else True,
+    )
+    route = _ROUTES_BY_LABEL[label]
+    expected = (
+        status in allowed
+        and state.crossings >= min_crossings
+        and (entry_cards is None or state.entry_has_cards)
+    )
+
+    result = commands.is_route_enabled(route, state)
+
+    assert result is expected
 
 
 @pytest.mark.parametrize(("armed", "expected_enabled"), ARMED_CASES)

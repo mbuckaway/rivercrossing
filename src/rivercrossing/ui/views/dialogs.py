@@ -66,11 +66,15 @@ __all__ = [
     "bind_delete_confirmation_gate",
     "default_button_for",
     "delete_ride_message",
+    "dnf_message",
     "duplicate_ride_message",
+    "finish_again_labels",
     "first_field_for",
+    "reassign_message",
     "reopen_ride_message",
     "run_dialog",
     "set_initial_focus",
+    "void_card_message",
     "wire_close_button",
 ]
 
@@ -265,6 +269,72 @@ def reopen_ride_message(ride_name: str) -> str:
     corrections" wording.
     """
     return f'Reopen "{ride_name}" for corrections?'
+
+
+def finish_again_labels() -> tuple[str, str]:
+    """Return the REOPENED finish confirm's ``(title, ok_label)`` copy.
+
+    E7.2.2's single primary "Finish again" (spec §3 design 8c; §15's
+    "Finish Ride… (Finish again from REOPENED)"): the same
+    ``finish_confirm_dlg`` the RUNNING finish route shows, re-labelled
+    when the ride is REOPENED -- title and primary button name the
+    re-lock, never blank (UX-DESKTOP §4). The first-finish copy stays
+    the XRC-authored "Finish Ride?" / "Finish ride".
+    """
+    return "Finish again?", "Finish again"
+
+
+_SUIT_SYMBOLS = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
+_CARD_JOKER_CODE = "JK"
+_CARD_JOKER_DISPLAY = "JK★"
+
+
+def _format_card_code(code: str) -> str:
+    """Render one stored card code's canvas display text.
+
+    ``"9H"`` -> ``"9♥"``; the joker -> ``"JK★"``. The rank character
+    is already in its display form (``Card.code()``'s stored form uses
+    "T" for ten), so only the suit letter needs converting to a glyph
+    -- the same two-line mapping ``results_win.format_card`` owns,
+    duplicated here so the confirm dialogs never depend on the
+    results window's module (SIMPLECODE Rule 3's second copy).
+    """
+    if code == _CARD_JOKER_CODE:
+        return _CARD_JOKER_DISPLAY
+    rank, suit = code[:-1], code[-1]
+    return f"{rank}{_SUIT_SYMBOLS[suit]}"
+
+
+def void_card_message(card_code: str, entry: str) -> str:
+    """Return ``void_card_confirm_dlg``'s ``card_lbl`` copy (E7.2.1).
+
+    Names the card being voided and the entry it belongs to
+    (``"9♥ — 45 · J. Okafor"``) -- UX-DESKTOP §4: the confirm names
+    the object; a blank label is a failed assertion, never cosmetic
+    (the same rule the E5.4.1 message helpers pin). Mirrors
+    dialogs.xrc's own data-bearing sentence.
+    """
+    return f"{_format_card_code(card_code)} — {entry}"
+
+
+def dnf_message(plate: str, name: str) -> str:
+    """Return ``dnf_confirm_dlg``'s ``entry_lbl`` copy (E7.2.1).
+
+    Names the entry being marked DNF (``"212 · M. Chen"``), matching
+    dialogs.xrc's data-bearing line; a blank label is a failed
+    assertion.
+    """
+    return f"{plate} · {name}"
+
+
+def reassign_message(crossing_time: str, entry: str) -> str:
+    """Return ``reassign_dlg``'s ``crossing_lbl`` copy (E7.2.1).
+
+    Names the crossing being reassigned (``"Crossing 14:21:59 · lap
+    credited to 45"``), matching dialogs.xrc's data-bearing line; a
+    blank label is a failed assertion.
+    """
+    return f"Crossing {crossing_time} · lap credited to {entry}"
 
 
 def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs

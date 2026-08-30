@@ -24,8 +24,10 @@ undo (R-33). E4.3 pins that dealing exact (seed replay), the card cap X
 (R-13: laps past the cap still count, later cards still deal but never
 score), the manual-deal engine path ``deal_manual`` (spec section 4;
 unknown plate raises, DRAFT/FINISHED gate), and the shoe close on
-Finish (every later deal raises ``ShoeClosedError`` while REOPENED
-undo still reverses).
+Finish with its reopen: ``finish()`` closes the shoe, ``reopen()``
+re-opens it so ``deal_manual``/``add_crossing_at`` deal new cards in
+REOPENED (spec §15), and undo in REOPENED returns the undone card to
+the shoe front for the next deal to reproduce.
 """
 
 import re
@@ -365,7 +367,11 @@ def test_finish_from_running_transitions_to_finished() -> None:
 
 
 def test_reopen_from_finished_transitions_to_reopened() -> None:
-    """reopen() moves FINISHED -> REOPENED (corrections-only, R-64)."""
+    """reopen() moves FINISHED -> REOPENED and re-opens the shoe (R-64).
+
+    The shoe closes on Finish (E4.3); reopening a finished ride re-opens
+    it so corrections can deal new cards (spec §15, E7.1.1).
+    """
     engine, _ = _make_engine()
     engine.start()
     engine.finish()
@@ -374,6 +380,7 @@ def test_reopen_from_finished_transitions_to_reopened() -> None:
 
     assert engine.state is RideStatus.REOPENED
     assert engine.events[-1].action == "reopen"
+    assert engine._shoe.is_closed is False
 
 
 def test_finish_again_from_reopened_transitions_to_finished() -> None:
@@ -689,16 +696,17 @@ def test_snapshot_after_crossings_reflects_laps_total_and_best_lap() -> None:
     assert (results["34"].laps, results["34"].total_time, results["34"].best_lap) == (0, 0.0, 0.0)
 
 
-def test_snapshot_excludes_dnf_entries() -> None:
-    """DNF'd entries drop out of the standings snapshot (spec §6)."""
+def test_snapshot_includes_dnf_entries_with_dnf_flag() -> None:
+    """DNF'd entries stay listed, marked dnf=True for rank (spec §6)."""
     roster = _roster_with_entries("12", "34")
     engine, _ = _make_engine(roster=roster)
-    # Arranged directly: mark_dnf is E4.2's engine method, not here yet.
+    # Arranged directly; mark_dnf (E7.1.1) sets it.
     roster.entries[0].status = EntryStatus.DNF
-
     results = engine.snapshot()
 
-    assert [result.plate for result in results] == ["34"]
+    assert [result.plate for result in results] == ["12", "34"]
+    assert results[0].dnf is True
+    assert results[1].dnf is False
 
 
 def test_lap_times_empty_for_entry_without_laps() -> None:
@@ -968,6 +976,7 @@ def test_undo_last_removes_lap_restitutes_card_and_audits() -> None:
             "seq": 2,
             "crossed_at": "2026-09-20T10:32:00",
             "card": second.card.code(),
+            "reason": "Undo last crossing",
         },
     )
     assert engine.lap_times("12") == (1800.0,)
@@ -1278,15 +1287,25 @@ def test_deal_manual_unknown_plate_raises_unknown_plate_error() -> None:
         engine.deal_manual("999", reason="replacement")
 
 
-def test_deal_manual_from_reopened_after_finish_raises_shoe_closed_error() -> None:
-    """REOPENED passes the gate; the closed shoe refuses."""
+def test_deal_manual_from_reopened_after_finish_deals_and_audits() -> None:
+    """REOPENED re-opens the shoe: deal_manual deals a new card.
+
+    spec §15 lists the manual add as legal in RUNNING and REOPENED.
+    """
     engine, _ = _make_engine()
     engine.start()
     engine.finish()
     engine.reopen()
 
-    with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
-        engine.deal_manual("12", reason="replacement")
+    event = engine.deal_manual("12", reason="replacement")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    card = Card.parse(str(event.payload["card"]))
+    assert event.action == "deal_manual"
+    assert engine._shoe.dealt == 1
+    assert engine._shoe.is_closed is False
+    assert results["12"].cards == (card,)
+    assert results["12"].hand == best_hand((card,))
 
 
 def test_deal_manual_respects_card_cap() -> None:
@@ -1326,7 +1345,11 @@ def test_deal_manual_credits_directly_never_releases_held_card() -> None:
 
 
 def test_finish_closes_the_shoe_and_later_deals_raise_shoe_closed_error() -> None:
-    """finish() closes the shoe; every later deal raises (E2.2.1)."""
+    """finish() closes the shoe; every later deal raises (E2.2.1).
+
+    The shoe stays closed while FINISHED -- only ``reopen()`` opens it
+    again (see the REOPENED deal tests below).
+    """
     config = _config()
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     engine = RideEngine(
@@ -1339,6 +1362,7 @@ def test_finish_closes_the_shoe_and_later_deals_raise_shoe_closed_error() -> Non
 
     engine.finish()
 
+    assert shoe.is_closed is True
     with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
         shoe.deal()
 
@@ -1357,18 +1381,24 @@ def test_record_crossing_after_finish_refuses_without_dealing() -> None:
     assert engine._shoe.dealt == 1
 
 
-def test_undo_last_from_reopened_after_finish_reverses_with_closed_shoe() -> None:
-    """REOPENED undo still reverses; the card retires with the shoe."""
+def test_undo_last_from_reopened_after_finish_returns_card_to_the_shoe() -> None:
+    """REOPENED undo reverses; the card returns to the shoe front.
+
+    reopen() re-opens the shoe, so undo's restitution succeeds: the
+    undone card goes back to the front and the next correction deal
+    reproduces it (deterministic continuation, R-40).
+    """
     engine, _ = _make_engine()
     engine.start()
-    engine.record_crossing("12", at=_dt(10, 30))
+    crossing = engine.record_crossing("12", at=_dt(10, 30))
     engine.finish()
     engine.reopen()
 
     engine.undo_last()
 
     assert engine.lap_times("12") == ()
-    assert engine._shoe.dealt == 1  # closed shoe: card not returned
+    assert engine._shoe.dealt == 0  # reopened shoe: card returned, not retired
+    assert engine._shoe.deal()[0] == crossing.card  # next deal reproduces it
 
 
 # ------------------------------------- E4.4.1 console read accessors
@@ -1544,6 +1574,7 @@ def test_apply_undo_event_reverses_the_last_crossing() -> None:
             "seq": 2,
             "crossed_at": "2026-09-20T10:32:00",
             "card": second.card.code(),
+            "reason": "Undo last crossing",
         },
     )
 
@@ -1598,12 +1629,18 @@ def test_apply_finish_event_closes_shoe_and_marks_finished() -> None:
     engine.apply(event)
 
     assert engine.state is RideStatus.FINISHED
+    assert engine._shoe.is_closed is True
     with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
         engine._shoe.deal()
 
 
 def test_apply_reopen_event_returns_finished_ride_to_reopened() -> None:
-    """apply("reopen") moves FINISHED -> REOPENED (corrections-only)."""
+    """apply("reopen") moves FINISHED -> REOPENED and re-opens the shoe.
+
+    The replay of a ``reopen`` event must reproduce the open/closed
+    transition exactly: the fresh replay shoe closes on ``finish`` and
+    opens again on ``reopen``, so a replayed REOPENED deal_manual deals.
+    """
     engine, _ = _make_engine()
     engine.start(at=_dt(10, 0))
     engine.finish()
@@ -1612,6 +1649,35 @@ def test_apply_reopen_event_returns_finished_ride_to_reopened() -> None:
     engine.apply(event)
 
     assert engine.state is RideStatus.REOPENED
+    assert engine._shoe.is_closed is False
+
+
+def test_apply_replay_finish_reopen_deal_manual_is_equivalent() -> None:
+    """Replaying finish/reopen/deal_manual reproduces the live state.
+
+    E5.1.2's equivalence, extended to the reopened shoe: the replayed
+    ``reopen`` opens the fresh shoe exactly as the live one, so the
+    replayed ``deal_manual`` deals the identical next card at the same
+    shoe point.
+    """
+    live, _ = _make_engine()
+    live.start(at=_dt(10, 0))
+    live.record_crossing("12", at=_dt(10, 30))
+    live.finish()
+    live.reopen()
+    manual = live.deal_manual("12", reason="replacement")
+
+    replayed, _ = _make_engine()
+    for event in live.events:
+        replayed.apply(event)
+
+    replayed_manual = replayed.events[-1]
+    assert replayed.state is live.state
+    assert replayed._shoe.is_closed is live._shoe.is_closed
+    assert (replayed._shoe.dealt, replayed._shoe.cycle) == (live._shoe.dealt, live._shoe.cycle)
+    assert replayed.snapshot() == live.snapshot()
+    assert replayed_manual.action == "deal_manual"
+    assert replayed_manual.payload["card"] == manual.payload["card"]
 
 
 def test_apply_shoe_reshuffle_event_is_a_noop_not_a_reshuffle() -> None:

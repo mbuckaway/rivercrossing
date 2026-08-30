@@ -59,3 +59,28 @@ def test_shoe_same_config_and_seed_always_deals_the_identical_sequence(
     second_sequence = _deal_all_codes(second)
 
     assert first_sequence == second_sequence
+
+
+@given(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+@settings(max_examples=50, deadline=None)
+def test_shoe_reopen_after_close_continues_the_identical_deal_sequence(
+    decks: int, jokers_per_deck: int, seed: int
+) -> None:
+    """reopen() after close() continues the identical deal sequence.
+
+    The closed flag is the only thing close/reopen change: a reopened
+    shoe deals exactly the cards a never-closed shoe deals (R-40's
+    deterministic continuation, spec §15's reopened corrections).
+    """
+    reopened = Shoe(decks=decks, jokers_per_deck=jokers_per_deck, seed=seed)
+    reference = Shoe(decks=decks, jokers_per_deck=jokers_per_deck, seed=seed)
+    for _ in range(3):
+        reopened.deal()
+        reference.deal()
+    reopened.close()
+    reopened.reopen()
+
+    reopened_sequence = _deal_all_codes(reopened)
+    reference_sequence = _deal_all_codes(reference)
+
+    assert reopened_sequence == reference_sequence

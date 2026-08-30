@@ -31,7 +31,9 @@ from rivercrossing.standings import (
 )
 
 if TYPE_CHECKING:
-    from rivercrossing.ride import Event, RideEngine
+    from collections.abc import Sequence
+
+    from rivercrossing.ride import Crossing, Event, RideEngine
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +41,9 @@ class FeedRow:
     """One row of the console crossings feed (main_frame's list).
 
     ``flagged`` drives the bold per-row attribute xrc-windows.md calls
-    out as code-side for a held/short-lap crossing.
+    out as code-side for a held/short-lap crossing. ``edited`` (E7.2.2)
+    is the same visual channel for a crossing a correction touched
+    (spec §3 design 8c: "edits highlighted in the feed").
     """
 
     time: str
@@ -50,6 +54,7 @@ class FeedRow:
     total: str
     card: str
     flagged: bool = False
+    edited: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +198,16 @@ class DataSource(Protocol):
         """Return the audit trail rows, newest first."""
         ...
 
+    def results_stale(self, export_watermark: int | None) -> bool:
+        """Return whether published results are stale (E7.3.2).
+
+        ``True`` when a correction event (a :data:`CORRECTION_ACTIONS`
+        action) landed at/after *export_watermark* -- the engine event
+        count captured at the last export. ``None`` (never exported) is
+        never stale.
+        """
+        ...
+
 
 # =================================================== E4.4.1 live source
 
@@ -252,6 +267,143 @@ def _event_time(event: Event) -> str:
     return ""
 
 
+# E7.3.2: the audited correction actions whose arrival after an export
+# makes the published results stale. Exactly the E7.1.1/E7.2.1
+# correction commands the app's correction routes dispatch
+# (``add_crossing_at``, ``edit_crossing``, ``reassign``,
+# ``deal_manual``, ``dnf``, ``void_card`` -- plus ``void_crossing``,
+# the edit dialog's void mode). Live-entry mutators that are not
+# corrections -- ``record_crossing``, ``undo``, ``set_start_time``,
+# ``confirm_held``, ``void_held``, ``stop``/``finish``/``reopen`` --
+# never trip the flag (doc-silence resolution, pinned here: the flag
+# is about the E7 correction surface, not every standings-changing
+# event).
+CORRECTION_ACTIONS: frozenset[str] = frozenset(
+    {
+        "add_crossing_at",
+        "edit_crossing",
+        "reassign",
+        "deal_manual",
+        "dnf",
+        "void_card",
+        "void_crossing",
+    }
+)
+
+
+def has_correction_since(events: Sequence[Event], export_watermark: int | None) -> bool:
+    """Return whether a correction landed at/after *export_watermark*.
+
+    E7.3.2's stale-export query: the export watermark is the engine
+    event count captured at export time (``len(engine.events)``), so a
+    correction event at index ``>= export_watermark`` happened after
+    the export and makes the published results stale. ``None`` -- no
+    export ever made -- is never stale (nothing is published).
+
+    Args:
+        events: The engine's event log, oldest first.
+        export_watermark: The event count at the last export, or
+            ``None`` when nothing was exported.
+
+    Returns:
+        ``True`` when a :data:`CORRECTION_ACTIONS` event sits at an
+        index at or after *export_watermark*.
+    """
+    if export_watermark is None:
+        return False
+    return any(event.action in CORRECTION_ACTIONS for event in events[export_watermark:])
+
+
+def corrected_crossing_keys(
+    events: Sequence[Event], crossings: Sequence[Crossing]
+) -> frozenset[tuple[str, int]]:
+    """Return the (entry_id, seq) keys a correction event touched.
+
+    E7.2.2's edited-row marker (spec §3 design 8c, R-36: "edits
+    highlighted in the feed") is driven by the correction events in
+    the engine's audit log. Each correction names the crossing it
+    acted on:
+
+    - ``edit_crossing`` -- the (entry_id, seq) pair is the crossing's
+      own identity (only ``crossed_at`` moves), so the key is exact.
+    - ``add_crossing_at`` -- the added crossing is resolved by its
+      (entry_id, crossed_at) instant against the live crossings, which
+      is the one identity the event carries beyond the entry.
+    - ``reassign`` -- the moved crossing lands on ``new_entry_id`` as
+      the destination's next lap (``seq = laps + 1`` at the time of
+      the move), so it is the destination's highest-seq live crossing.
+    - ``void_crossing`` -- the crossing leaves the live lap sequence
+      (a compensating write, never a delete); its key can never match
+      a live feed row, so the voided lap simply stops rendering and
+      contributes no marker.
+
+    Resolving add/reassign against the supplied live *crossings* keeps
+    the key current when the crossing was renumbered by a later,
+    unrelated correction to a different lap. A renumber that shifts the
+    corrected crossing's own seq (a void of an earlier lap of the same
+    entry after the correction) is an edge this marker does not chase
+    -- recorded here, not silent (E7.2.2's own doc-silence).
+
+    Args:
+        events: The engine's event log, oldest first.
+        crossings: The engine's current live crossings.
+
+    Returns:
+        The (entry_id, seq) keys of every live crossing a correction
+        event touched, as a frozenset for O(1) feed-row membership.
+    """
+    keys: set[tuple[str, int]] = set()
+    for event in events:
+        action = event.action
+        payload = event.payload
+        if action == "edit_crossing":
+            keys.add((str(payload["entry_id"]), int(str(payload["seq"]))))
+        elif action == "add_crossing_at":
+            resolved = _crossing_key_at(
+                crossings, str(payload["entry_id"]), str(payload["crossed_at"])
+            )
+            if resolved is not None:
+                keys.add(resolved)
+        elif action == "reassign":
+            resolved = _latest_crossing_key(crossings, str(payload["new_entry_id"]))
+            if resolved is not None:
+                keys.add(resolved)
+    return frozenset(keys)
+
+
+def _crossing_key_at(
+    crossings: Sequence[Crossing], entry_id: str, crossed_at: str
+) -> tuple[str, int] | None:
+    """Return the live crossing key for *entry_id* at *crossed_at*.
+
+    The ``add_crossing_at`` resolution: the added crossing's (entry_id,
+    crossed_at) pair is the one identity the event payload carries
+    beyond the entry, so the marker finds the crossing by it.
+    """
+    for crossing in crossings:
+        if crossing.entry_id == entry_id and crossing.crossed_at.isoformat() == crossed_at:
+            return (crossing.entry_id, crossing.seq)
+    return None
+
+
+def _latest_crossing_key(crossings: Sequence[Crossing], entry_id: str) -> tuple[str, int] | None:
+    """Return the live crossing key for *entry_id* with the highest seq.
+
+    The ``reassign`` resolution: ``reassign_crossing`` moves the
+    crossing to its destination as the destination's next lap (``seq =
+    laps + 1`` at the time of the move), so the moved crossing is the
+    destination's highest-seq live crossing. Every appended crossing
+    for an entry carries ``count + 1``, so record order per entry is
+    seq-ascending -- the last matching crossing is the highest-seq one
+    (the engine's own invariant, ride.py).
+    """
+    result: tuple[str, int] | None = None
+    for crossing in crossings:
+        if crossing.entry_id == entry_id:
+            result = (crossing.entry_id, crossing.seq)
+    return result
+
+
 class EngineDataSource:
     """Real ``DataSource`` over ``(engine, roster)`` (E4.4.1).
 
@@ -291,9 +443,16 @@ class EngineDataSource:
         self._roster = roster
 
     def feed_rows(self) -> list[FeedRow]:
-        """Return the crossings feed, newest first, cap 30 (R-32)."""
+        """Return the crossings feed, newest first, cap 30 (R-32).
+
+        E7.2.2: a row's ``edited`` flag is driven by the correction
+        events in the engine's event log
+        (:func:`corrected_crossing_keys`) -- the feed's visual marker
+        for spec §3 design 8c's "edits highlighted in the feed".
+        """
         engine = self._engine
         held = frozenset(held.crossing for held in engine.held_crossings())
+        edited = corrected_crossing_keys(engine.events, engine.crossings)
         times_by_entry: dict[str, tuple[float, ...]] = {}
         totals_by_entry: dict[str, list[float]] = {}
         for entry in self._roster.entries:
@@ -326,6 +485,7 @@ class EngineDataSource:
                     ),
                     card="held" if flagged else engine.card_for(crossing).code(),
                     flagged=flagged,
+                    edited=(crossing.entry_id, crossing.seq) in edited,
                 )
             )
         return rows
@@ -463,6 +623,16 @@ class EngineDataSource:
             for event in reversed(self._engine.events)
         ]
 
+    def results_stale(self, export_watermark: int | None) -> bool:
+        """Return whether a correction landed after *export_watermark*.
+
+        E7.3.2: delegates to :func:`has_correction_since` over the
+        engine's live event log -- the same stream the console and the
+        audit viewer project, so a correction the audit trail records
+        is exactly what trips the stale banner.
+        """
+        return has_correction_since(self._engine.events, export_watermark)
+
 
 class EmptyDataSource:
     """The empty-state ``DataSource`` for screens with no data yet.
@@ -518,3 +688,7 @@ class EmptyDataSource:
     def audit_rows(self) -> list[AuditRow]:
         """Return no audit trail rows."""
         return []
+
+    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002 -- DataSource's signature; the empty state has no events
+        """Return False: no ride, no events, nothing to go stale."""
+        return False

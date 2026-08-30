@@ -40,6 +40,7 @@ from rivercrossing.store import (
     backup,
 )
 from rivercrossing.store.migrations import LATEST_SCHEMA_VERSION
+from rivercrossing.ui.presenters.data_source import AuditRow
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1785,5 +1786,164 @@ def test_store_duplicate_ride_unknown_ride_raises_naming_it(
     try:
         with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
             store.duplicate_ride(999)
+    finally:
+        store.close()
+
+
+# ------------------------------------------- E7.3.1 audit_rows (R-38)
+
+
+def test_store_audit_rows_projects_fields_newest_first(tmp_path: Path) -> None:
+    """audit_rows returns the display shape, newest first by id."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="edit_crossing",
+                payload={
+                    "entry_id": "12",
+                    "seq": 1,
+                    "previous_crossed_at": "2026-09-20T10:02:00",
+                    "crossed_at": "2026-09-20T10:03:00",
+                    "reason": "mis-keyed time",
+                },
+            ),
+        )
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows == [
+        AuditRow(
+            when="10:03:00",
+            who="scorer",
+            action="edit_crossing",
+            entry="12",
+            reason="mis-keyed time",
+        ),
+        AuditRow(when="10:02:00", who="scorer", action="record_crossing", entry="12", reason=""),
+        AuditRow(when="10:00:00", who="scorer", action="start", entry="", reason=""),
+    ]
+
+
+def test_store_audit_rows_for_a_ride_with_no_events_returns_empty(tmp_path: Path) -> None:
+    """A known ride with no recorded events reads an empty trail."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows == []
+
+
+def test_store_audit_rows_entry_prefers_entry_id_then_plate_then_blank(
+    tmp_path: Path,
+) -> None:
+    """Entry projects entry_id, falling back to plate, then blank."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        # A real record_crossing carries both; entry_id wins.
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "77",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+        # The plate-only branch: the projection's `or` fallback (T-3).
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={"plate": "77", "lap": 2, "crossed_at": "2026-09-20T10:04:00"},
+            ),
+        )
+        # shoe_reshuffle carries neither; entry stays blank.
+        store.append(ride_id, Event(action="shoe_reshuffle", payload={"cycle": 2}))
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert [row.entry for row in rows] == ["", "77", "12"]
+
+
+def test_store_audit_rows_when_renders_the_stored_at_as_local_time(
+    tmp_path: Path,
+) -> None:
+    """When renders the stored at epoch as local HH:MM:SS."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert rows[0].when == "10:00:00"
+
+
+def test_store_audit_rows_scopes_to_the_requested_ride(tmp_path: Path) -> None:
+    """One ride's trail never leaks another ride's rows."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        first = store.create_ride(_config(name="First"))
+        second = store.create_ride(_config(name="Second"))
+        store.append(first, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}))
+        store.append(
+            second, Event(action="start", payload={"actual_start": "2026-09-20T11:00:00"})
+        )
+
+        first_rows = store.audit_rows(first)
+        second_rows = store.audit_rows(second)
+    finally:
+        store.close()
+
+    assert [row.when for row in first_rows] == ["10:00:00"]
+    assert [row.when for row in second_rows] == ["11:00:00"]
+
+
+def test_store_audit_rows_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
+    """T-5: reading a ride id that never existed fails loudly."""
+    Store.open(tmp_path / "rides.db").close()
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.audit_rows(999)
     finally:
         store.close()

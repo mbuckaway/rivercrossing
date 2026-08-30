@@ -35,6 +35,24 @@ with an empty header/members/cards/laps until then.
 ``_find`` and the card-imagelist cache are now shared via
 ``ui.views._support`` -- see that module's docstring for why they
 used to be duplicated here.
+
+E7.2.1 wires the six action buttons (edit crossing / deal card / void
+card / move rider / mark DNF / audit trail) through
+:class:`~rivercrossing.ui.presenters.detail.DetailPresenter`, which
+this class constructs the same way ``RideSetup``/``ResultsWindow``
+build their own presenters. The view implements the grown
+``DetailView`` surface: it tracks the ``laps_list`` selection
+(``selected_lap``), opens each correction dialog through
+``ui.views.corrections``' shared runners (returning the confirmed
+request or None), and forwards notices to the app's status bar via
+the optional ``notify`` seam. The optional ``engine``/``roster`` are
+the live write sides (None in the no-store empty state, where the
+buttons post a notice instead of acting); ``resource`` is the XRC
+resource the sub-dialogs load from; ``on_corrected`` fires after a
+successful correction so the app bootstrap can refresh its menu
+enablement. The pre-E7 contract is preserved: constructing with a
+plate no entry owns raises ``LookupError`` (R-38's loud failure,
+pinned by ``test_lists_entry_detail``).
 """
 
 from typing import TYPE_CHECKING, Any
@@ -44,11 +62,22 @@ import wx.dataview
 
 from rivercrossing.ui import ids
 from rivercrossing.ui.cards_imagelist import CardImageList, asset_key
+from rivercrossing.ui.presenters.detail import (
+    CardVoid,
+    CrossingEdit,
+    DetailPresenter,
+    DnfMark,
+    ManualDeal,
+    RiderMove,
+)
+from rivercrossing.ui.views import corrections
 from rivercrossing.ui.views._support import associate_model, default_card_images, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from rivercrossing.ride import RideEngine
+    from rivercrossing.roster import Roster
     from rivercrossing.ui.presenters.data_source import DataSource, EntryDetail, EntryLapRow
 
 __all__ = [
@@ -164,19 +193,25 @@ class EntryDetailDialog:
     colliding with ``rivercrossing.ui.presenters.data_source.
     EntryDetail``, the view-model this class renders.
 
-    Implements ``DetailView.show_entry`` (module-skeletons.md's
-    presenter contract); ``move_rider_btn``'s pooled-only enablement
-    and the edit/deal/void/DNF actions are a later phase's job per
-    ``DetailPresenter``'s own docstring ("Phase 5 wires...") and are
-    not in this task's scope.
+    Implements the ``DetailView`` presenter contract
+    (module-skeletons.md) in full (E7.2.1): ``show_entry``,
+    ``set_move_rider_enabled``, the ``laps_list`` selection channel
+    (``selected_lap``), the six correction-dialog openers, and the
+    notice channel. The one live presenter is built here, the same
+    ``RideSetup``/``ResultsWindow`` precedent.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (dialog, plate, data_source) + the four optional E7 seams
         self,
         dialog: wx.Dialog,
         plate: str,
         *,
         data_source: DataSource,
+        engine: RideEngine | None = None,
+        roster: Roster | None = None,
+        resource: Any | None = None,  # noqa: ANN401 -- wx ships no stubs
+        notify: Callable[[str], None] | None = None,
+        on_corrected: Callable[[], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``entry_detail_dlg`` window.
 
@@ -188,15 +223,32 @@ class EntryDetailDialog:
                 the :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
                 implementation applies.
+            engine: The live ride engine (the corrections write side),
+                threaded to the presenter; ``None`` in the E5.4.2
+                empty state, where the correction buttons post a
+                notice instead of acting.
+            roster: The live roster (the pooled-move write side and
+                the entry-label source); ``None`` in the empty state.
+            resource: The loaded ``wx.xrc.XmlResource`` the correction
+                sub-dialogs load from; ``None`` only in constructions
+                that never open one.
+            notify: Posts notices to the app's status bar (wired by
+                the bootstrap); ``None`` in direct constructions.
+            on_corrected: Fires after a successful correction so the
+                bootstrap can refresh its menu enablement.
 
-        No ``card_images=`` override: unlike ``MainFrame``, nothing in
-        this task needs one (SIMPLECODE Rule 1) -- both DataViews'
-        Card columns always render this dialog's own private deck
-        (module docstring).
+        Raises:
+            LookupError: If no entry owns *plate* -- R-38's loud
+                failure, pinned by the functional suite.
         """
         self.dialog = dialog
         self.data_source = data_source
+        self.plate = plate
         self.card_images = default_card_images()
+        self._resource = resource
+        self._engine = engine
+        self._roster = roster
+        self._notify = notify
 
         self.entry_header_lbl = self._find(ids.ENTRY_HEADER_LBL, wx.StaticText)
         self.members_lbl = self._find(ids.MEMBERS_LBL, wx.StaticText)
@@ -206,8 +258,34 @@ class EntryDetailDialog:
         self._build_laps_columns()
         self._cards_model: CardsHeldModel | None = None
         self._laps_model: EntryLapsModel | None = None
+        self._laps_rows: tuple[EntryLapRow, ...] = ()
+        self._selected_row: int | None = None
 
+        # E7.2.1: the six action buttons, resolved once and bound to
+        # the presenter (the same wire-to-presenter idiom the console
+        # uses); move_rider_btn starts disabled until the presenter's
+        # pooled-only rule says otherwise.
+        self.edit_crossing_btn = self._find(ids.EDIT_CROSSING_BTN, wx.Button)
+        self.deal_card_btn = self._find(ids.DEAL_CARD_BTN, wx.Button)
+        self.void_card_btn = self._find(ids.VOID_CARD_BTN, wx.Button)
+        self.move_rider_btn = self._find(ids.MOVE_RIDER_BTN, wx.Button)
+        self.dnf_btn = self._find(ids.DNF_BTN, wx.Button)
+        self.audit_btn = self._find(ids.AUDIT_BTN, wx.Button)
+
+        self.presenter = DetailPresenter(
+            self,
+            data_source,
+            plate=plate,
+            engine=engine,
+            roster=roster,
+            on_corrected=on_corrected,
+        )
+        self._bind_actions()
+
+        # Render once: an unknown plate raises here (R-38), preserving
+        # the pre-E7 construction contract.
         self.show_entry(self.data_source.entry_detail(plate))
+        self.set_move_rider_enabled(enabled=self.presenter.move_rider_enabled())
         self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
@@ -245,6 +323,8 @@ class EntryDetailDialog:
 
         See ``ui.views._support.associate_model``'s docstring for
         why each DataView repaints explicitly (unverified remedy).
+        A fresh render clears the lap selection: the operator must
+        pick a row again before the edit/void buttons act on one.
         """
         self.entry_header_lbl.SetLabel(detail.header)
         self.members_lbl.SetLabel(detail.members)
@@ -252,6 +332,8 @@ class EntryDetailDialog:
         associate_model(self.cards_list, self._cards_model)
         self._laps_model = EntryLapsModel(detail.laps, self.card_images)
         associate_model(self.laps_list, self._laps_model)
+        self._laps_rows = detail.laps
+        self._selected_row = None
 
     def _apply_min_size(self) -> None:
         """Force the measured 726px floor, then ``Fit()`` (D16).
@@ -268,3 +350,163 @@ class EntryDetailDialog:
         self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
         self.dialog.Fit()
         self.dialog.SetMinSize(self.dialog.GetSize())
+
+    # ---------------------------------------------- E7.2.1 actions
+
+    def _bind_actions(self) -> None:
+        """Bind the six action buttons and the laps selection.
+
+        Each button forwards straight to the presenter (the console's
+        ``wire_entry``/``wire_console`` idiom); the laps_list
+        selection is tracked here so ``selected_lap`` can feed the
+        edit/void flows.
+        """
+        self.dialog.Bind(
+            wx.EVT_BUTTON,
+            lambda _event: self.presenter.on_edit_crossing_clicked(),
+            self.edit_crossing_btn,
+        )
+        self.dialog.Bind(
+            wx.EVT_BUTTON,
+            lambda _event: self.presenter.on_deal_card_clicked(),
+            self.deal_card_btn,
+        )
+        self.dialog.Bind(
+            wx.EVT_BUTTON,
+            lambda _event: self.presenter.on_void_card_clicked(),
+            self.void_card_btn,
+        )
+        self.dialog.Bind(
+            wx.EVT_BUTTON,
+            lambda _event: self.presenter.on_move_rider_clicked(),
+            self.move_rider_btn,
+        )
+        self.dialog.Bind(
+            wx.EVT_BUTTON,
+            lambda _event: self.presenter.on_dnf_clicked(),
+            self.dnf_btn,
+        )
+        self.dialog.Bind(
+            wx.EVT_BUTTON,
+            lambda _event: self.presenter.on_audit_clicked(),
+            self.audit_btn,
+        )
+        self.laps_list.Bind(wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_lap_selected)
+
+    def _on_lap_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Record the laps_list row the operator selected."""
+        item = event.GetItem()
+        # The model's GetRow maps a valid item back to its index
+        # (wxDataViewCtrl has no ItemToRow on this build -- the
+        # ride_library precedent).
+        row = int(self.laps_list.GetModel().GetRow(item)) if item.IsOk() else -1
+        self._selected_row = row if row >= 0 else None
+        event.Skip()
+
+    # -------------------------------------------------- DetailView
+
+    def set_move_rider_enabled(self, *, enabled: bool) -> None:
+        """Enable move_rider_btn only for rider-pooled team entries."""
+        self.move_rider_btn.Enable(enabled)
+
+    def selected_lap(self) -> EntryLapRow | None:
+        """Return the selected laps_list row, or None.
+
+        The edit/void buttons need one concrete crossing; the row
+        carries the lap number (the engine's seq), the recorded time
+        and the dealt card the flows act on.
+        """
+        if self._selected_row is None:
+            return None
+        if 0 <= self._selected_row < len(self._laps_rows):
+            return self._laps_rows[self._selected_row]
+        return None
+
+    def show_edit_crossing(self, *, adding: bool, plate: str, time: str) -> CrossingEdit | None:
+        """Open edit_crossing_dlg (the shared corrections runner).
+
+        The selected lap supplies the crossing's seq when editing; add
+        mode leaves it to the caller (the menu flow).
+        """
+        if self._resource is None:
+            self.show_notice("Edit crossing unavailable")
+            return None
+        lap = self.selected_lap()
+        seq = lap.lap if lap is not None else None
+        base = self._engine.config.event_date if self._engine is not None else None
+        return corrections.run_edit_crossing(
+            self._resource,
+            frame=self.dialog,
+            adding=adding,
+            plate=plate,
+            time=time,
+            seq=seq,
+            base_date=base,
+        )
+
+    def open_manual_deal(self, *, plate: str) -> ManualDeal | None:
+        """Open manual_deal_dlg (the shared corrections runner)."""
+        if self._resource is None:
+            self.show_notice("Deal card unavailable")
+            return None
+        return corrections.run_manual_deal(self._resource, frame=self.dialog, plate=plate)
+
+    def open_void_card(self, *, card: str, entry: str) -> CardVoid | None:
+        """Open void_card_confirm_dlg naming the card + entry."""
+        if self._resource is None:
+            self.show_notice("Void card unavailable")
+            return None
+        return corrections.run_void_card(
+            self._resource,
+            frame=self.dialog,
+            entry_id=self.plate,
+            card=card,
+            entry=entry,
+        )
+
+    def open_dnf(self, *, entry: str) -> DnfMark | None:
+        """Open dnf_confirm_dlg naming the entry."""
+        if self._resource is None:
+            self.show_notice("Mark DNF unavailable")
+            return None
+        return corrections.run_dnf(
+            self._resource,
+            frame=self.dialog,
+            entry_id=self.plate,
+            entry=entry,
+        )
+
+    def open_move_rider(
+        self, *, riders: tuple[str, ...], teams: tuple[str, ...]
+    ) -> RiderMove | None:
+        """Open the code-built team picker."""
+        return corrections.run_move_rider(self.dialog, riders=riders, teams=teams)
+
+    def open_audit(self) -> None:
+        """Open audit_dlg pre-filtered to this entry (R-38, E7.3.1).
+
+        The E7.2.1 plain open becomes the deep-link: the viewer opens
+        with ``audit_search`` pre-set to this entry's plate and the
+        list narrowed to it, over the same live display source and
+        roster the detail dialog already holds.
+        """
+        if self._resource is None:
+            self.show_notice("Audit trail unavailable")
+            return
+        corrections.run_audit(
+            self._resource,
+            frame=self.dialog,
+            data_source=self.data_source,
+            roster=self._roster,
+            entry_filter=self.plate,
+        )
+
+    def show_notice(self, text: str) -> None:
+        """Post *text* through the app's status-bar seam (DetailView).
+
+        A direct construction with no ``notify`` seam is a no-op --
+        the notice channel exists for the live app, and the presenter
+        unit suite asserts notices against its own fake view.
+        """
+        if self._notify is not None:
+            self._notify(text)

@@ -319,6 +319,64 @@ def test_shoe_restitute_after_close_raises_shoe_closed_error() -> None:
         shoe.restitute(dealt_card)
 
 
+# ---------------------------------------------------------- reopen
+
+
+def test_shoe_is_closed_is_false_for_a_freshly_built_shoe() -> None:
+    """A fresh shoe is open: is_closed reads False."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+
+    assert shoe.is_closed is False
+
+
+def test_shoe_is_closed_is_true_after_close() -> None:
+    """close() flips is_closed to True."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+
+    shoe.close()
+
+    assert shoe.is_closed is True
+
+
+def test_shoe_reopen_after_close_opens_the_shoe_for_dealing() -> None:
+    """reopen() after close() unblocks deal()/reshuffle()/restitute().
+
+    Ride Reopen re-opens the shoe (task-briefs E7.1.1: corrections
+    deal new cards in REOPENED), so the closed state is not sticky --
+    finish closes, reopen opens again.
+    """
+    shoe = Shoe(decks=1, jokers_per_deck=0, seed=_SEED)
+    shoe.close()
+    shoe.reopen()
+
+    assert shoe.is_closed is False
+    assert shoe.deal()[0] == Shoe(decks=1, jokers_per_deck=0, seed=_SEED).deal()[0]
+
+
+def test_shoe_reopen_continues_the_exact_deal_order() -> None:
+    """reopen() never resets the deal order: the next card continues.
+
+    Reopen only clears the closed flag -- the deal position, cycle
+    and sequence stay untouched -- so a reopened shoe deals exactly
+    the card a never-closed shoe would deal next (deterministic
+    continuation, R-40).
+    """
+    shoe = Shoe(decks=1, jokers_per_deck=0, seed=_SEED)
+    for _ in range(3):
+        shoe.deal()
+    reference = Shoe(decks=1, jokers_per_deck=0, seed=_SEED)
+    for _ in range(3):
+        reference.deal()
+
+    shoe.close()
+    shoe.reopen()
+    reopened_card = shoe.deal()[0]
+    never_closed_card = reference.deal()[0]
+
+    assert reopened_card == never_closed_card
+    assert shoe.dealt == 4
+
+
 # ----------------------------------- E2.2.2 composition-count matrix
 
 

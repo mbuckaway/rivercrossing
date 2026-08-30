@@ -11,6 +11,15 @@ a reorder carries an unrecognised label or a wrong row count, and
 builds the ``ExportOptions`` the export handlers (E6.4.2's menu task)
 read through :meth:`ResultsPresenter.export_options`.
 
+E7.3.2 (the stale-export flag) adds the second live channel: the
+presenter holds the engine event count captured at the last export
+(the *export watermark*, passed in at construction and advanced by
+:meth:`ResultsPresenter.mark_exported`), and on every render asks the
+data source whether a correction event landed at/after that watermark
+(:meth:`DataSource.results_stale`), then drives
+:meth:`ResultsView.set_stale` -- ``True`` when published results are
+stale, ``False`` on a fresh export or when no correction landed since.
+
 The label map is duplicated from ``ride_setup.RideSetup``'s own
 ``_TIEBREAK_LABELS`` (the brief's own "two uses is below the
 rule-of-three; do NOT refactor ride_setup in this task" -- the plain
@@ -56,7 +65,7 @@ class ResultsView(Protocol):
         ...
 
     def set_stale(self, *, stale: bool) -> None:
-        """Show/hide stale_infobar after reopened corrections."""
+        """Show/hide stale_infobar after post-export corrections."""
         ...
 
     def show_publish_options(self, options: ExportOptions) -> None:
@@ -87,15 +96,18 @@ class ResultsPresenter:
     reorder (converting plain labels back onto ``TieBreak`` members
     through its own label map), restores the last-known-good order on
     an unrecognised reorder, and holds the ``ExportOptions`` the
-    export handlers read.
+    export handlers read. E7.3.2 adds the stale-export flag: the
+    presenter holds the export watermark and drives
+    :meth:`ResultsView.set_stale` on every render.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (view, data_source) + the tie-break order and export-watermark seams
         self,
         view: ResultsView,
         data_source: DataSource,
         *,
         tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER,
+        export_watermark: int | None = None,
     ) -> None:
         """Store the view/source, seed the tie-break list, first render.
 
@@ -105,15 +117,41 @@ class ResultsPresenter:
             tiebreak_order: The ride's stored tie-break spellings, in
                 priority order (``RideConfig.tiebreak_order``);
                 defaults to R-14's order.
+            export_watermark: The engine event count captured at the
+                last export (E7.3.2); ``None`` when nothing was
+                exported. The first render evaluates the stale flag
+                against it.
         """
         self.view = view
         self.data_source = data_source
         self._order = tiebreak_order_from_spellings(tiebreak_order)
         self._last_good_labels = [_TIEBREAK_LABELS[spelling] for spelling in tiebreak_order]
         self._options = ExportOptions()
+        self._export_watermark = export_watermark
 
         self.view.set_tiebreak_labels(list(self._last_good_labels))
         self.view.show_standings(self.data_source.standings(order=self._order))
+        self._sync_stale()
+
+    @property
+    def export_watermark(self) -> int | None:
+        """Return the engine event count at the last export (E7.3.2).
+
+        ``None`` until a fresh export records one; advanced by
+        :meth:`mark_exported` (the app's export completion).
+        """
+        return self._export_watermark
+
+    def mark_exported(self, watermark: int) -> None:
+        """Record a fresh export's watermark and clear the stale flag.
+
+        E7.3.2's export-completion seam: the app calls this (on an
+        open results window's presenter) after a successful export so
+        the banner clears immediately, and the next refresh compares
+        against the advanced watermark.
+        """
+        self._export_watermark = watermark
+        self.view.set_stale(stale=False)
 
     def on_tiebreak_reordered(self, labels: list[str]) -> None:
         """Handle a tiebreak_list reorder: re-rank live (E6.4.1).
@@ -126,6 +164,10 @@ class ResultsPresenter:
         wrong row count (a Delete removed one) -- restores the
         last-known-good order and posts a notice, never a crash. The
         same New/Delete gap ride_setup.py's own docstring records.
+
+        A reorder is a refresh, so the stale flag is re-evaluated too
+        (E7.3.2): a correction that landed while the window sat open
+        shows on the next interaction.
         """
         if len(labels) != len(DEFAULT_TIEBREAK_ORDER):
             self._restore_tiebreak()
@@ -138,6 +180,7 @@ class ResultsPresenter:
         self._order = tiebreak_order_from_spellings(spellings)
         self._last_good_labels = list(labels)
         self.view.show_standings(self.data_source.standings(order=self._order))
+        self._sync_stale()
 
     def on_publish_toggled(self) -> None:
         """Handle a publish-checkbox toggle: rebuild the held options.
@@ -156,3 +199,18 @@ class ResultsPresenter:
         """Restore the last-known-good tie-break rows and notice."""
         self.view.set_tiebreak_labels(list(self._last_good_labels))
         self.view.show_notice(_UNRECOGNISED_ORDER_NOTICE)
+
+    def _sync_stale(self) -> None:
+        """Re-evaluate and apply the stale-export flag (E7.3.2).
+
+        Asks the data source whether a correction event landed at/after
+        the held export watermark and drives
+        :meth:`ResultsView.set_stale` with the answer -- the one place
+        the banner's state is decided.
+        """
+        # Pre-E7.3.2 sources (e.g. the E6-era functional stubs) carry
+        # no results_stale member -- never stale for them (no watermark)
+        # because they hold no watermark either.
+        query = getattr(self.data_source, "results_stale", None)
+        stale = bool(query(self._export_watermark)) if query is not None else False
+        self.view.set_stale(stale=stale)

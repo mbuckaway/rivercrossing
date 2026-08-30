@@ -28,6 +28,7 @@ from rivercrossing.ui.feed_model import (
     COLUMN_LABELS,
     TIME_COLUMNS,
     card_asset_key_or_none,
+    edited_row_indexes,
     flagged_row_indexes,
 )
 from rivercrossing.ui.presenters.data_source import FeedRow
@@ -104,7 +105,7 @@ def test_card_asset_key_or_none_given_arbitrary_text_never_raises_and_stays_in_t
 # --- flagged_row_indexes -------------------------------------------
 
 
-def _feed_row(*, plate: str = "1", flagged: bool = False) -> FeedRow:
+def _feed_row(*, plate: str = "1", flagged: bool = False, edited: bool = False) -> FeedRow:
     """Build a minimal ``FeedRow`` varying only what a test needs."""
     return FeedRow(
         time="14:00:00",
@@ -115,6 +116,7 @@ def _feed_row(*, plate: str = "1", flagged: bool = False) -> FeedRow:
         total="10:00",
         card="9H",
         flagged=flagged,
+        edited=edited,
     )
 
 
@@ -161,4 +163,44 @@ def test_flagged_row_indexes_given_arbitrary_flags_agrees_with_each_rows_own_bit
     indexes = flagged_row_indexes(rows)
 
     agrees = all((index in indexes) == rows[index].flagged for index in range(len(rows)))
+    assert agrees is True
+
+
+# --- edited_row_indexes (E7.2.2: corrected crossings highlight) -----
+
+
+EDITED_ROWS_CASES = (
+    ((), frozenset()),
+    ((_feed_row(edited=False),), frozenset()),
+    ((_feed_row(edited=True),), frozenset({0})),
+    (
+        (
+            _feed_row(plate="1", edited=True),
+            _feed_row(plate="2", edited=False),
+            _feed_row(plate="3", edited=True),
+            _feed_row(plate="4", edited=False),
+        ),
+        frozenset({0, 2}),
+    ),
+)
+
+
+@pytest.mark.parametrize(("rows", "expected"), EDITED_ROWS_CASES)
+def test_edited_row_indexes_given_rows_returns_the_edited_positions(
+    rows: tuple[FeedRow, ...], expected: frozenset[int]
+) -> None:
+    """Boundary collection sizes (T-4): empty, single, many rows."""
+    assert edited_row_indexes(rows) == expected
+
+
+@given(st.lists(st.booleans(), max_size=20))
+def test_edited_row_indexes_given_arbitrary_edits_agrees_with_each_rows_own_bit(
+    edits: list[bool],
+) -> None:
+    """T-7: membership matches each row's own edited bit."""
+    rows = [_feed_row(edited=edited) for edited in edits]
+
+    indexes = edited_row_indexes(rows)
+
+    agrees = all((index in indexes) == rows[index].edited for index in range(len(rows)))
     assert agrees is True

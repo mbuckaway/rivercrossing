@@ -254,6 +254,15 @@ class DemoDataSource:
         """Return the audit trail rows, newest first."""
         return list(_AUDIT_ROWS)
 
+    def results_stale(self, export_watermark: int | None) -> bool:  # noqa: ARG002 -- DataSource's signature; fixture data has no event log
+        """Return False: fixture rows never change, never go stale.
+
+        E7.3.2: the demo seam carries no engine event log behind its
+        static rows, so there is no post-export correction to detect --
+        the honest static answer is False.
+        """
+        return False
+
 
 if TYPE_CHECKING:
     # Static-only proof that DemoDataSource satisfies DataSource:
