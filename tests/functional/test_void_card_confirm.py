@@ -211,11 +211,11 @@ def test_entry_detail_void_button_targets_the_selected_dealt_card(
     dealt = engine.card_for(engine.crossings[0]).code()
     captured: dict[str, str] = {}
 
-    def fake_void(
+    def fake_void(  # noqa: PLR0913 -- (resource, frame, entry_id, card, entry): run_void_card's full signature
         _resource: object,
         *,
         frame: object,  # noqa: ARG001 -- the frame seam is not used by this spy
-        _entry_id: str,
+        entry_id: str,  # noqa: ARG001 -- the entry identity is not used by this spy
         card: str,
         entry: str,
     ) -> None:
