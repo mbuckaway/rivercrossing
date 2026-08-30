@@ -396,6 +396,11 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
     ``wxMenuBar.Check`` also unchecks the theme trio's other two
     members (measured), matching what a real click's own native
     handling would already have done.
+
+    E8.1.2 closes the appearance mirror: a theme radio click now also
+    persists the choice (and updates ``context.settings``), so the
+    next Settings dialog open renders it -- the same file the dialog's
+    OK writes.
     """
     item_id = _theme_item_id_for(event.GetId())
     if item_id is None:
@@ -405,6 +410,12 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
     notice = context.theme_controller.on_menu(item_id)
     if notice is not None:
         context.frame.SetStatusText(notice)
+    # E8.1.2: persist the choice -- only appearance changes; the other
+    # fields stay as currently held.
+    mode = theme.mode_for_menu_id(item_id)
+    updated = replace(context.settings, appearance=mode.value)
+    settings_store.save_settings(updated, context.settings_path)
+    context.settings = updated
 
 
 def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | None:
@@ -546,6 +557,31 @@ def _live_library_callbacks(
     return _open, _new, _duplicate
 
 
+def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
+    """Persist *settings* and apply its live paths (E8.1.2).
+
+    The settings dialog's OK callback: saves to the config file,
+    updates the context's current settings, then applies what has live
+    paths -- appearance through the live theme controller (which
+    re-checks the View-menu radio via ``_check_loaded_theme_radio``),
+    sound through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
+    through the console presenter's ``on_hide_times`` (when a
+    presenter is threaded). Zoom stays unapplied -- E8.1.4 owns
+    applying it; this only persists ``zoom_percent``.
+    """
+    settings_store.save_settings(settings, context.settings_path)
+    context.settings = settings
+    mode = theme.ThemeMode(settings.appearance)
+    notice = context.theme_controller.on_menu(theme.menu_item_id_for(mode))
+    if notice is not None:
+        context.frame.SetStatusText(notice)
+    _check_loaded_theme_radio(context.frame.GetMenuBar(), mode)
+    sound.set_muted(muted=not settings.sound_on)
+    presenter = context.presenter
+    if presenter is not None:
+        presenter.on_hide_times(hide=settings.hide_times)
+
+
 def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each binds a different view class
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs
@@ -555,10 +591,12 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
 
     E7.3.1 added the audit trail to that set: ``audit_dlg`` now binds
     the real viewer (newest-first list + the two filters) over the
-    live engine source. The remaining plain XRC dialogs with no
-    code-side view class (D1's settings and the correction dialogs)
-    need nothing further here; they already carry their own canvas
-    defaults from their own ``.xrc`` authoring.
+    live engine source. E8.1.2 adds the settings dialog:
+    ``settings_dlg`` now binds the E8.1.2 viewer (renders the current
+    AppSettings and, on OK, persists + applies it). The remaining
+    plain XRC dialogs with no code-side view class (the correction
+    dialogs) need nothing further here; they already carry their own
+    canvas defaults from their own ``.xrc`` authoring.
     """
     from rivercrossing.ui.views.audit import AuditDialog  # noqa: PLC0415
     from rivercrossing.ui.views.entry_detail import EntryDetailDialog  # noqa: PLC0415
@@ -567,6 +605,7 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     from rivercrossing.ui.views.ride_setup import RideSetup  # noqa: PLC0415
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.settings import SettingsDialog  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         if context.store is not None:
@@ -642,6 +681,16 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
             ResultsWindow(window, data_source=_EMPTY_SOURCE)
     elif route.target == ids.SELFTEST_DLG:
         SelfTestDialog(window)
+    elif route.target == ids.SETTINGS_DLG:
+        # E8.1.2: Settings renders the context's current settings and,
+        # on OK, persists + applies them through the live seams (the
+        # appearance mirror to the View-menu radios). backup_now_btn
+        # stays inert -- File ▸ Back Up Database… is a later epic.
+        SettingsDialog(
+            window,
+            settings=context.settings,
+            on_save=lambda new_settings: _apply_settings_live(context, new_settings),
+        )
     elif route.target == ids.AUDIT_DLG:
         # E7.3.1: Audit Trail… opens the real viewer -- newest-first
         # audit_list plus the search/action filters -- over the live

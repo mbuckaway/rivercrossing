@@ -33,6 +33,7 @@ __all__ = [
     "AppSettings",
     "SettingsPresenter",
     "SettingsView",
+    "appearance_for_radio",
     "default_path",
     "default_settings",
     "load_settings",
@@ -150,6 +151,30 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     tmp = settings_path.with_name(settings_path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     tmp.replace(settings_path)
+
+
+def appearance_for_radio(*, light: bool, dark: bool) -> str:
+    """Return the appearance spelling of the settings dialog's radios.
+
+    The dialog always renders exactly one checked radio
+    (:class:`~rivercrossing.ui.views.settings.SettingsDialog`
+    ``show_settings``). Light then Dark win; neither checked (the
+    System radio's state, implied by both false) falls back to System,
+    the xrc's structural default.
+
+    Args:
+        light: The ``appearance_light_radio`` checked state.
+        dark: The ``appearance_dark_radio`` checked state.
+
+    Returns:
+        The matching :class:`~rivercrossing.ui.theme.ThemeMode`
+        spelling (one of ``system``/``light``/``dark``).
+    """
+    if light:
+        return ThemeMode.LIGHT.value
+    if dark:
+        return ThemeMode.DARK.value
+    return ThemeMode.SYSTEM.value
 
 
 def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:

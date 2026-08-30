@@ -150,15 +150,23 @@ def apply(app: Any, mode: ThemeMode) -> Any:  # noqa: ANN401 -- wx ships no stub
     Returns:
         The raw ``wx.PyApp.AppearanceResult`` -- never truth-test it;
         compare it to a named member instead (see
-        :func:`notice_for_result`).
+        :func:`notice_for_result`). ``None`` when *app* has no
+        ``SetAppearance`` or this wx build exposes no
+        ``wx.PyApp.Appearance`` (the E8.1.2 capability guard): a build
+        regressing the API away must fall back silently, never raise
+        ``AttributeError``. There is deliberately no UI for the absent
+        arm -- the guard only stops a regression from crashing.
     """
     wx = require_wx()
+    set_appearance = getattr(app, "SetAppearance", None)
+    if set_appearance is None or not hasattr(wx.PyApp, "Appearance"):
+        return None
     appearance_by_mode = {
         ThemeMode.SYSTEM: wx.PyApp.Appearance.System,
         ThemeMode.LIGHT: wx.PyApp.Appearance.Light,
         ThemeMode.DARK: wx.PyApp.Appearance.Dark,
     }
-    return app.SetAppearance(appearance_by_mode[mode])
+    return set_appearance(appearance_by_mode[mode])
 
 
 class ThemeController:
