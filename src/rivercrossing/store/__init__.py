@@ -161,6 +161,7 @@ view-model deferred to E5.4.1.
 import json
 import secrets
 import sqlite3
+import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from enum import Enum
@@ -186,6 +187,31 @@ from rivercrossing.store.migrations import (
 )
 from rivercrossing.store.schema import apply_pragmas
 from rivercrossing.ui.presenters.data_source import AuditRow
+
+# Windows-measured: a hard-killed writer (TerminateProcess) can leave
+# the -wal lock settling for tens of milliseconds, so the app's own
+# crash-recovery reopen can hit a one-shot "disk I/O error" on the
+# first PRAGMA (R-52). Bounded retry: 5 attempts, ~0.75 s worst case;
+# the recovery path must not fail on a transient condition.
+_OPEN_RETRY_ATTEMPTS = 5
+_OPEN_RETRY_DELAY_S = 0.05
+
+# SQLite's stable messages for the transient conditions worth
+# retrying; anything else (a schema collision, a missing file) is
+# persistent and must surface on the first attempt.
+_TRANSIENT_OPEN_ERROR_MESSAGES = (
+    "disk I/O error",
+    "database is locked",
+    "database table is locked",
+    "database or disk is full",
+    "out of memory",
+)
+
+
+def _is_transient_open_error(exc: sqlite3.OperationalError) -> bool:
+    """Return True when *exc* is a transient error worth retrying."""
+    return any(message in str(exc) for message in _TRANSIENT_OPEN_ERROR_MESSAGES)
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -428,6 +454,12 @@ class Store:
         running at launch -- the row :meth:`close_session` stamps on a
         clean quit.
 
+        A transient ``OperationalError`` (a settling WAL lock after a
+        hard-killed writer, a busy/locked/full condition) is retried a
+        bounded number of times -- the crash-recovery path must not
+        fail on a one-shot condition -- while persistent errors surface
+        immediately.
+
         Args:
             path: Filesystem path to the SQLite file.
             active_ride_id: The running ride's id, when the app opens
@@ -441,17 +473,34 @@ class Store:
                 newer build than this one.
             sqlite3.IntegrityError: If *active_ride_id* names no ride
                 row (the ``REFERENCES ride(id)`` foreign key).
+            sqlite3.OperationalError: A persistent transient-class
+                error outlived the retry budget, or a non-transient
+                error occurred (raised on the first attempt).
         """
-        conn = sqlite3.connect(str(path))
-        conn.row_factory = sqlite3.Row
-        try:
-            apply_pragmas(conn)
-            migrate(conn)
-            _insert_session(conn, active_ride_id)
-        except Exception:
-            conn.close()
-            raise
-        return cls(conn, path=path)
+        # Every iteration either returns, re-raises (persistent), or
+        # sets last_error (transient); the placeholder below is never
+        # surfaced because the loop always runs at least once.
+        last_error: sqlite3.OperationalError = sqlite3.OperationalError(
+            "open retry budget exhausted"
+        )
+        for attempt in range(_OPEN_RETRY_ATTEMPTS):
+            conn = sqlite3.connect(str(path))
+            conn.row_factory = sqlite3.Row
+            try:
+                apply_pragmas(conn)
+                migrate(conn)
+                _insert_session(conn, active_ride_id)
+                return cls(conn, path=path)
+            except sqlite3.OperationalError as exc:
+                conn.close()
+                if not _is_transient_open_error(exc):
+                    raise
+                last_error = exc
+                time.sleep(_OPEN_RETRY_DELAY_S * (attempt + 1))
+            except Exception:
+                conn.close()
+                raise
+        raise last_error
 
     def close(self) -> None:
         """Close the underlying connection."""

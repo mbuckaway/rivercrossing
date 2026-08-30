@@ -26,6 +26,7 @@ the same guard ``nox -s ids_drift`` applies to the .xrc tree.
 import argparse
 import base64
 import hashlib
+import os
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,23 @@ INPUT_TEMPLATE_FILES: tuple[str, ...] = ("base.html.j2", "macros.html.j2", "them
 # shows up in the regenerated artifact.
 _TAILWIND_CLI = _ROOT / "node_modules" / ".bin" / "tailwindcss"
 _TAILWIND_VERSION = "4.3.3"
+
+
+def _tailwind_executable() -> Path:
+    """Return the npm shim this platform can actually execute.
+
+    npm installs three shims per bin: ``tailwindcss`` (POSIX shell
+    script), ``tailwindcss.cmd`` (cmd.exe shim) and ``tailwindcss.ps1``.
+    Windows cannot execute the extensionless script -- CreateProcess
+    raises WinError 193 -- so resolve the ``.cmd`` sibling there and
+    fall back to the plain shim when npm left no sibling behind.
+    """
+    if os.name == "nt":
+        cmd_shim = _TAILWIND_CLI.with_suffix(".cmd")
+        if cmd_shim.is_file():
+            return cmd_shim
+    return _TAILWIND_CLI
+
 
 # The wrapper is what makes theme.css a valid Tailwind v4 input: a
 # bare @theme file has no `@import "tailwindcss";`, so Tailwind would
@@ -146,16 +164,16 @@ def _run_tailwind_cli(argv: Sequence[str]) -> bytes:
         TailwindCliMissingError: The pinned CLI is not installed.
         TailwindCompileError: The CLI exited non-zero.
     """
-    if not _TAILWIND_CLI.is_file():
+    if not _tailwind_executable().is_file():
         msg = (
-            f"pinned Tailwind CLI not found at {_TAILWIND_CLI} -- "
+            f"pinned Tailwind CLI not found at {_tailwind_executable()} -- "
             f"run `npm install` first (pins @tailwindcss/cli "
             f"{_TAILWIND_VERSION})"
         )
         raise TailwindCliMissingError(msg)
     try:
         proc = subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
-            [str(_TAILWIND_CLI), *argv],
+            [str(_tailwind_executable()), *argv],
             cwd=_ROOT,
             capture_output=True,
             check=True,

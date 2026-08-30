@@ -555,6 +555,35 @@ def test_podium_poster_matches_committed_golden_byte_for_byte(tmp_path: Path) ->
     assert out.read_bytes() == GOLDEN_POSTER.read_bytes()
 
 
+# -------------------------------------------- compression determinism
+
+
+def test_render_pdf_stores_no_flatedecode_streams(tmp_path: Path) -> None:
+    """The report never zlib-compresses its streams (R-62/D14).
+
+    The python.org Windows build links zlib-ng while the macOS build
+    uses the platform zlib, and the two emit different deflate bytes
+    for identical input (measured: no zlib-ng level reproduces the
+    macOS-compressed golden). Any compressed stream would therefore
+    break the byte-for-byte golden tests on one OS or the other;
+    uncompressed streams are deterministic by construction.
+    """
+    out = _render(tmp_path, build_placed(), golden_opts())
+
+    assert b"/FlateDecode" not in out.read_bytes()
+
+
+def test_podium_poster_stores_no_flatedecode_streams(tmp_path: Path) -> None:
+    """The podium poster never zlib-compresses its streams (R-62/D14).
+
+    Same cross-OS determinism contract as the report document: the
+    poster must regenerate byte-identically on every platform.
+    """
+    out = _poster(tmp_path, build_placed())
+
+    assert b"/FlateDecode" not in out.read_bytes()
+
+
 @pytest.mark.parametrize(
     ("kind", "name", "laps", "expected"),
     [
