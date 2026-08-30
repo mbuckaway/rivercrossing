@@ -106,6 +106,15 @@ class ShortcutsDialog:
         self._build_columns()
         self._model = ShortcutsListModel(rows)
         associate_model(self.shortcuts_list, self._model)
+        # Keep the view alive for the dialog's lifetime: this dialog
+        # binds no events, so nothing else references it after the
+        # caller (``_open_target``) drops the construction result --
+        # and a collected view collects its model, leaving
+        # ``GetModel()`` to re-wrap the C++ model as a base
+        # ``DataViewModel`` without ``GetCount`` (measured in the VM).
+        # The ``frame.console = self`` / ``frame.presenter`` precedent
+        # (main_frame.py, results_win.py) attaches the same way.
+        dialog.shortcuts_view = self
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
