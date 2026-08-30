@@ -384,7 +384,7 @@ def test_cards_menu_route_runs_its_dialog_and_applies_its_command(  # noqa: PLR0
     _schedule_end_modal_if_undecided(dialog_name)
     harness.fire_menu_event(frame, item_id)
 
-    assert frame.GetStatusText(0) == ok_notice
+    assert frame.GetStatusBar().GetStatusText(0) == ok_notice
     assert len(engine.events) == before + 1
 
 
@@ -405,7 +405,7 @@ def test_edit_crossing_menu_route_edits_the_current_entrys_latest_lap(
     _schedule_end_modal_if_undecided(ids.EDIT_CROSSING_DLG)
     harness.fire_menu_event(frame, ids.MI_EDIT_CROSSING)
 
-    assert frame.GetStatusText(0) == "Crossing edited"
+    assert frame.GetStatusBar().GetStatusText(0) == "Crossing edited"
     assert engine.events[-1].action == "edit_crossing"
     assert len(engine.events) == before + 1
 
@@ -430,7 +430,7 @@ def test_reassign_menu_route_reassigns_the_current_entrys_latest_lap(
     _schedule_end_modal_if_undecided(ids.REASSIGN_DLG)
     harness.fire_menu_event(frame, ids.MI_REASSIGN_PLATE)
 
-    assert frame.GetStatusText(0) == "Crossing reassigned"
+    assert frame.GetStatusBar().GetStatusText(0) == "Crossing reassigned"
     assert engine.events[-1].action == "reassign"
     assert len(engine.events) == before + 1
 
@@ -454,7 +454,7 @@ def test_mark_dnf_menu_route_marks_the_current_entry(
     _schedule_end_modal_if_undecided(ids.DNF_CONFIRM_DLG)
     harness.fire_menu_event(frame, ids.MI_MARK_DNF)
 
-    assert frame.GetStatusText(0) == "Entry marked DNF"
+    assert frame.GetStatusBar().GetStatusText(0) == "Entry marked DNF"
     assert engine.events[-1].action == "dnf"
     assert roster.resolve_plate("12").status.value == "dnf"
     assert len(engine.events) == before + 1

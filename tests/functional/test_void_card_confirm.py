@@ -251,7 +251,7 @@ def test_cards_void_card_menu_route_voids_the_current_entrys_latest_card(
     _schedule_end_modal_if_undecided(ids.VOID_CARD_CONFIRM_DLG)
     harness.fire_menu_event(context.frame, ids.MI_VOID_CARD)
 
-    assert context.frame.GetStatusText(0) == "Card voided"
+    assert context.frame.GetStatusBar().GetStatusText(0) == "Card voided"
     assert engine.events[-1].action == "void_card"
     assert engine.events[-1].payload["reason"] == "wrong card dealt"
     assert len(engine.events) == before + 1

@@ -396,7 +396,10 @@ class EntryDetailDialog:
     def _on_lap_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Record the laps_list row the operator selected."""
         item = event.GetItem()
-        row = self.laps_list.ItemToRow(item) if item.IsOk() else -1
+        # The model's GetRow maps a valid item back to its index
+        # (wxDataViewCtrl has no ItemToRow on this build -- the
+        # ride_library precedent).
+        row = int(self.laps_list.GetModel().GetRow(item)) if item.IsOk() else -1
         self._selected_row = row if row >= 0 else None
         event.Skip()
 

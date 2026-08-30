@@ -74,7 +74,9 @@ def _build_engine(*, roster: Roster) -> tuple[RideEngine, EngineDataSource]:
     )
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     engine = RideEngine(
-        config=config, shoe=shoe, clock=lambda: _dt.datetime(2026, 9, 20, 12, 0),  # noqa: DTZ001 -- naive, RideConfig's contract
+        config=config,
+        shoe=shoe,
+        clock=lambda: _dt.datetime(2026, 9, 20, 12, 0),  # noqa: DTZ001 -- naive, RideConfig's contract
         roster=roster,
     )
     engine.start()
@@ -122,10 +124,9 @@ def test_entry_detail_action_buttons_resolve(button_name: str, xrc_resource: obj
 
     try:
         control = harness.find_control(window, button_name)
+        assert control.GetName() == button_name
     finally:
         harness.close_window(window)
-
-    assert control.GetName() == button_name
 
 
 # ------------------------- move_rider_btn is pooled-only
