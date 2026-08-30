@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from typing import TYPE_CHECKING, Any
 
+import wx.adv as _wx_adv  # submodule, not loaded by plain `import wx`
+
 from rivercrossing.ui import ids, require_wx
 from rivercrossing.ui.presenters.detail import (
     CardVoid,
@@ -86,7 +88,7 @@ _CONTROL_EXPECTED_TYPES: dict[str, type] = {
     ids.PLATE_INPUT: wx.TextCtrl,
     ids.NEW_PLATE_INPUT: wx.TextCtrl,
     ids.REASON_INPUT: wx.TextCtrl,
-    ids.TIME_PICKER: wx.adv.TimePickerCtrl,
+    ids.TIME_PICKER: _wx_adv.TimePickerCtrl,
     ids.VOID_BTN: wx.Button,
     ids.CARD_LBL: wx.StaticText,
     ids.ENTRY_LBL: wx.StaticText,
