@@ -318,7 +318,10 @@ def live_context(
         roster=roster,
     )
     engine.start()
-    engine.record_crossing("12", at=datetime(2026, 9, 20, 10, 30))  # noqa: DTZ001
+    # The clock is fixed at 12:00 (start => actual_start 12:00); a
+    # crossing at 12:01 laps 60s >= min_lap_s, so its card is DEALT,
+    # not held -- the Void Card route needs a credited card.
+    engine.record_crossing("12", at=datetime(2026, 9, 20, 12, 1))  # noqa: DTZ001
     source = EngineDataSource(engine, roster)
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
