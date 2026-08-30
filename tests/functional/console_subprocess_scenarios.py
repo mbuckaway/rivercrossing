@@ -107,6 +107,7 @@ import scenario_runner
 import wx
 import wx.dataview
 import wx.xrc
+from rivercrossing.ui.views.shortcuts import ShortcutsDialog
 
 from rivercrossing.cards import Shoe
 from rivercrossing.demo import DemoDataSource
@@ -116,6 +117,7 @@ from rivercrossing.store import Store
 from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, sound, theme
+from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
 from rivercrossing.ui.presenters.settings import (
@@ -2612,6 +2614,88 @@ def _zoom_survives_relaunch() -> dict[str, Any]:
         return found
 
 
+def _send_escape(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Post a real Escape ``CHAR_HOOK`` at *dialog* (proven idiom).
+
+    The same event ``test_dialog_behavior.py``'s ``_send_escape``
+    posts: it triggers wx's built-in Escape handling (which ends the
+    modal with the ``SetEscapeId`` button) without needing OS-level key
+    focus, which ``UIActionSimulator`` cannot deliver in this harness.
+    """
+    event = wx.KeyEvent(wx.wxEVT_CHAR_HOOK)
+    event.SetKeyCode(wx.WXK_ESCAPE)
+    dialog.GetEventHandler().ProcessEvent(event)
+
+
+def _shortcuts_dialog_route_shows_the_accelerator_table() -> dict[str, Any]:
+    """Open Help ▸ Keyboard Shortcuts; the dialog lists the table rows.
+
+    E8.2.1's route half: firing ``mi_shortcuts`` opens ``shortcuts_dlg``
+    whose ``shortcuts_list`` renders one Key | Action row per
+    ``ACCELERATOR_TABLE`` entry in table order. Escape closes it via
+    ``wire_close_button``'s ``wxID_CLOSE`` binding, and ``_open_target``
+    destroys it.
+    """
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+
+    def _read_rows_and_escape() -> None:
+        dialog = wx.Window.FindWindowByName(ids.SHORTCUTS_DLG)
+        found["dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        list_ctrl = harness.find_control(dialog, ids.SHORTCUTS_LIST)
+        model = list_ctrl.GetModel()
+        found["row_count"] = model.GetCount()
+        found["rows"] = [
+            [model.GetValueByRow(row, col) for col in range(2)] for row in range(model.GetCount())
+        ]
+        found["column_titles"] = [
+            list_ctrl.GetColumn(index).GetTitle() for index in range(model.GetColumnCount())
+        ]
+        _send_escape(dialog)
+
+    try:
+        wx.CallAfter(_read_rows_and_escape)
+        harness.fire_menu_event(frame, ids.MI_SHORTCUTS)
+        harness.pump()
+        found["dialog_destroyed"] = wx.Window.FindWindowByName(ids.SHORTCUTS_DLG) is None
+    finally:
+        _close_without_prompt(frame)
+    return found
+
+
+def _shortcuts_dialog_renders_injected_rows() -> dict[str, Any]:
+    """Construct ShortcutsDialog with a fake row; it must appear.
+
+    The ``rows`` constructor seam proves the dialog renders its input
+    rather than hard-coding the real four: an injected fake row shows
+    alongside a real table row.
+    """
+    found: dict[str, Any] = {}
+    resource = harness.load_xrc_resources()
+    window = harness.load_window(resource, ids.SHORTCUTS_DLG, frame=False)
+    try:
+        view = ShortcutsDialog(
+            window,
+            rows=(
+                ACCELERATOR_TABLE[0],
+                Accelerator(key="Ctrl+Alt+K", action="Fake action", menu_item_id=None),
+            ),
+        )
+        model = view.shortcuts_list.GetModel()
+        found["row_count"] = model.GetCount()
+        found["rows"] = [
+            [model.GetValueByRow(row, col) for col in range(2)] for row in range(model.GetCount())
+        ]
+    finally:
+        harness.close_window(window)
+    return found
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "settings_persistence_round_trip": _settings_persistence_round_trip,
@@ -2624,6 +2708,10 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "zoom_view_menu_applies_live_and_boundaries": _zoom_view_menu_applies_live_and_boundaries,
     "zoom_settings_mirror_and_dialog": _zoom_settings_mirror_and_dialog,
     "zoom_survives_relaunch": _zoom_survives_relaunch,
+    "shortcuts_dialog_route_shows_the_accelerator_table": (
+        _shortcuts_dialog_route_shows_the_accelerator_table
+    ),
+    "shortcuts_dialog_renders_injected_rows": _shortcuts_dialog_renders_injected_rows,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,
