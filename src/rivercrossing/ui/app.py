@@ -1626,15 +1626,18 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         return
 
     try:
+        # E8.1.4: every window opened later inherits the current zoom.
+        # Applied BEFORE decoration so a view's value-setting runs last:
+        # the recursive SetFont walk resets a wxChoice's selection to -1
+        # on this pin (measured in the VM: settings_dlg's zoom_choice),
+        # and the view's show_settings re-sets it. Base fonts come from
+        # the fresh XRC load, scaled once (never compounded).
+        zoom.apply_to(window)
         _decorate(context, window, route)
         _apply_dialog_defaults(window, route)
-        # E8.1.4: every window opened later inherits the current zoom --
-        # applied after decoration, before it shows, so each control's
-        # base font is captured once and scaled (never compounded).
-        zoom.apply_to(window)
     except Exception:
         # Fault A: any post-load failure must close the just-loaded
-        # window before re-raising. _decorate's view construction runs
+        # window before re-raising. The construction calls above run
         # before the dialog path's own try/finally below, and a raise
         # there (find_control's 25-retry LookupError under load) used
         # to leak the dialog fully alive, rerun-masked, until the reap
