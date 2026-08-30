@@ -13,8 +13,8 @@ reporting, and verify the whole suite + build on a real Windows 11 desktop.
 | Static gates (ruff, mypy, import-linter, ids_drift, css_drift) | **GREEN** locally and on CI (both OSes) |
 | Unit + property + simulations | **GREEN** — 2150 passed / 0 failed, 98.3 % coverage locally; CI windows unit green |
 | Functional suite | **GREEN ×3 locally** (runs 2, 3, 5, each converged via the fresh-process rerun wrapper); **GREEN on windows-latest CI** (first documented Windows functional green since the EPIC-3 deprioritization) |
-| Bundle + smoke | Builds clean; structural/manifest smoke green locally; **exe-launch + installer smoke GREEN on windows-latest CI** |
-| winsetup / winsetup_smoke | **GREEN on windows-latest CI** (silent install → launch → silent uninstall, E9.1.2); local run blocked by the machine's Trend Micro AV (environmental — see §3) |
+| Bundle + smoke | **GREEN locally and on CI** — PyInstaller onedir builds, bundle smoke 55 passed (incl. the exe-launch test), exe launches clean |
+| winsetup / winsetup_smoke | **GREEN locally and on windows-latest CI** — installer compiles (34 MB), all 7 smoke tests pass: silent install → Start-menu shortcut → HKCU uninstall entry → installed-app launch → silent uninstall removes all traces (E9.1.2) |
 
 ## 1 · Root causes fixed (all test-first pairs on this branch)
 
@@ -54,12 +54,12 @@ reporting, and verify the whole suite + build on a real Windows 11 desktop.
 
 ## 3 · Environment notes / open items
 
-- **Local AV:** Trend Micro Titanium quarantines the unsigned PyInstaller exe on every build
-  (evidence in `C:\ProgramData\Trend Micro\AMSP\quarantine`, `TSC_GENCLEAN` records matching
-  build times/sizes). Local exe-launch and installer-smoke verification needs a Trend Micro
-  exclusion for `C:\Users\mark\src\rivercrossing` and
-  `C:\Users\mark\AppData\Local\Programs\RiverCrossing` (or pausing real-time protection).
-  CI is unaffected (no Trend Micro on hosted runners).
+- **Local AV (resolved):** Trend Micro Titanium quarantined the unsigned PyInstaller exe on
+  every build (evidence in `C:\ProgramData\Trend Micro\AMSP\quarantine`, `TSC_GENCLEAN`
+  records matching build times/sizes). The user disabled/configured Trend Micro (2026-08-30),
+  after which the full local stage-5 chain — bundle, exe-launch smoke, NSIS compile, and the
+  E9.1.2 silent install → launch → uninstall suite — passed end to end. CI was never affected
+  (no Trend Micro on hosted runners).
 - **Windows Update rebooted the machine mid-pass (TrustedInstaller, planned upgrade)** and the
   forced restart left a corrupt `dist` exe once; a clean rebuild after the reboot was fine.
 - **macOS functional on hosted runners remains red** from the documented upstream wx/SIP
