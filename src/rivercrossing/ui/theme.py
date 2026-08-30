@@ -48,6 +48,7 @@ __all__ = [
     "ThemeMode",
     "UnknownThemeMenuItemError",
     "apply",
+    "menu_item_id_for",
     "mode_for_menu_id",
     "notice_for_result",
 ]
@@ -71,6 +72,12 @@ _MODE_BY_MENU_ID: dict[str, ThemeMode] = {
     ids.MI_THEME_LIGHT: ThemeMode.LIGHT,
     ids.MI_THEME_DARK: ThemeMode.DARK,
 }
+# The reverse mapping, for the bootstrap's restored-appearance radio
+# check (E8.1.1). ThemeMode is a closed enum and the dict above maps
+# all three members, so a lookup can never miss.
+_MENU_ID_BY_MODE: dict[ThemeMode, str] = {
+    mode: item_id for item_id, mode in _MODE_BY_MENU_ID.items()
+}
 THEME_MENU_ITEM_IDS: tuple[str, ...] = tuple(_MODE_BY_MENU_ID)
 
 _NEXT_LAUNCH_NOTICE = "Theme change takes effect at next launch"
@@ -92,6 +99,22 @@ def mode_for_menu_id(item_id: str) -> ThemeMode:
         return _MODE_BY_MENU_ID[item_id]
     except KeyError as exc:
         raise UnknownThemeMenuItemError(f"no theme mapping for menu item id {item_id!r}") from exc
+
+
+def menu_item_id_for(mode: ThemeMode) -> str:
+    """Return the theme radio's XRC name for *mode*.
+
+    The reverse of :func:`mode_for_menu_id`: the bootstrap's restored-
+    appearance radio check (E8.1.1) needs the id for a mode.
+
+    Args:
+        mode: The :class:`ThemeMode` to look up.
+
+    Returns:
+        The matching radio's XRC name (one of
+        :data:`THEME_MENU_ITEM_IDS`).
+    """
+    return _MENU_ID_BY_MODE[mode]
 
 
 def notice_for_result(result: Any) -> str | None:  # noqa: ANN401 -- wx ships no stubs
@@ -145,15 +168,25 @@ class ThemeController:
     its own :meth:`on_sys_colour_changed` becomes (mirrors ``app.py``'s
     own note about ``_console``/``_presenter``). Starts at
     ``ThemeMode.SYSTEM`` -- the checked menu default, spec.md footnote
-    (8) -- without calling :func:`apply` at construction: the OS
-    appearance is already System until something asks otherwise.
+    (8) -- without calling :func:`apply` at construction for System
+    (the OS appearance is already System until something asks
+    otherwise). A non-System mode passed in (E8.1.1's persisted
+    appearance) IS applied at construction, so a relaunch opens in the
+    saved appearance.
     """
 
-    def __init__(self, app: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Store the live *app* :meth:`on_menu` will apply modes to."""
+    def __init__(self, app: Any, *, mode: ThemeMode = ThemeMode.SYSTEM) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Store the live *app* and apply *mode*.
+
+        Args:
+            app: The live ``wx.App`` this controller drives.
+            mode: The appearance to start in; defaults to System.
+        """
         self._app = app
-        self._mode = ThemeMode.SYSTEM
+        self._mode = mode
         self._reapplying = False
+        if mode is not ThemeMode.SYSTEM:
+            apply(app, mode)
 
     @property
     def mode(self) -> ThemeMode:

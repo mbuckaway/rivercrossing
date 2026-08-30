@@ -16,10 +16,12 @@ path -- would read the real per-user config dir.
 
 import json
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from pathlib import (
+    Path,  # noqa: TC003 -- @given inspects signatures; these annotations run at runtime
+)
 
 import pytest
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from rivercrossing.ui.presenters import settings as settings_module
@@ -33,9 +35,6 @@ from rivercrossing.ui.presenters.settings import (
     save_settings,
 )
 from rivercrossing.ui.theme import ThemeMode
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _SIX_FIELDS = {
     "appearance",
@@ -321,11 +320,17 @@ _SETTINGS_STRATEGY = st.builds(
 )
 
 
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
 @given(_SETTINGS_STRATEGY)
 def test_save_then_load_round_trips_any_valid_settings(
     tmp_path: Path, settings: AppSettings
 ) -> None:
-    """Property: every valid AppSettings round-trips exactly (T-7)."""
+    """Property: every valid AppSettings round-trips exactly (T-7).
+
+    The suppressed health check is safe here: each generated example
+    writes then reads the same ``tmp_path`` file, so no state leaks
+    between inputs (the file is overwritten before every read).
+    """
     path = tmp_path / "settings.json"
 
     save_settings(settings, path)

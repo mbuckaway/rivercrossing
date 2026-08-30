@@ -20,9 +20,11 @@ R-52 resume dialog. E5.3.1 adds the backup mechanism
 :meth:`Store.delete_ride` (E5.3.2) calls ``backup.run`` before it
 deletes, so R-18's "automatic database backup is written first" is
 backup-then-delete inside the facade. The rest of S4's surface --
-``duplicate_ride`` (E5.4), the ``AsyncWriter`` (E5.4), the settings
-table (E8) -- is deliberately absent: per the task, nothing is
-stubbed that nothing calls yet.
+``duplicate_ride`` (E5.4), the ``AsyncWriter`` (E5.4) -- is
+deliberately absent: per the task, nothing is stubbed that nothing
+calls yet. (Settings persistence is not a table here: E8.1.1 stores
+per-user settings in the JSON config file under
+``rivercrossing.ui.presenters.settings``.)
 
 Doc-silence resolutions are recorded here, because the spec leaves
 them open and later EPICs will build on them:

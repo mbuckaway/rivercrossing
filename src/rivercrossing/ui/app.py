@@ -49,7 +49,7 @@ explains why it is hosted there, not here).
 import re
 import threading
 import webbrowser
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -66,7 +66,17 @@ from rivercrossing.ride import (
 )
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import Placed, rank, tiebreak_order_from_spellings
-from rivercrossing.ui import accelerators, commands, ids, quit_flow, require_wx, resume_flow, theme
+from rivercrossing.ui import (
+    accelerators,
+    commands,
+    ids,
+    quit_flow,
+    require_wx,
+    resume_flow,
+    sound,
+    theme,
+)
+from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataSource, RideSummary
 
@@ -74,6 +84,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rivercrossing.store import Store
+    from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
 
@@ -160,6 +171,11 @@ class _RouteContext:
             the console (E5.4.1). ``None`` until a store-backed ride
             is opened -- by the resume flow (E5.2.2's Continue) or the
             library's Open -- and what File ▸ Duplicate Ride… reads.
+        settings: The live :class:`AppSettings` this launch loaded
+            (E8.1.1); the layout-save callback updates it as the
+            sash/geometry persist.
+        settings_path: The per-user settings file this launch loaded
+            from, what the layout-save callback writes back to.
     """
 
     frame: Any
@@ -198,6 +214,12 @@ class _RouteContext:
     # scorer was just looking at. ``None`` until an entry detail is
     # opened; a correction route with none posts a notice instead.
     detail_plate: str | None = None
+    # E8.1.1: the per-user settings file this launch loaded from and
+    # the live AppSettings. The layout-save callback updates
+    # :attr:`settings` as the sash/geometry persist, so a later
+    # settings dialog (E8.2) opens onto the same current values.
+    settings: AppSettings = field(default_factory=settings_store.default_settings)
+    settings_path: Path = field(default_factory=settings_store.default_path)
 
 
 def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]:
@@ -324,6 +346,23 @@ def _check_default_menu_radios(menubar: Any) -> None:  # noqa: ANN401 -- wx ship
 
     menubar.Check(wx.xrc.XRCID(ids.MI_THEME_SYSTEM), True)  # noqa: FBT003 -- wx API takes a positional bool
     menubar.Check(wx.xrc.XRCID(ids.MI_ZOOM_100), True)  # noqa: FBT003 -- wx API takes a positional bool
+
+
+def _check_loaded_theme_radio(menubar: Any, mode: theme.ThemeMode) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Tick the persisted appearance radio (E8.1.1), after the defaults.
+
+    ``_check_default_menu_radios`` already checked ``mi_theme_system``;
+    ``wxMenuBar.Check`` also unchecks the theme trio's other two
+    members (measured, ``_handle_view_row``'s own note), so checking
+    the loaded mode's radio alone restores the right selection. System
+    needs no second call -- the default tick is already it.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    if mode is theme.ThemeMode.SYSTEM:
+        return
+    menubar.Check(wx.xrc.XRCID(theme.menu_item_id_for(mode)), True)  # noqa: FBT003 -- wx API takes a positional bool
 
 
 def _theme_item_id_for(real_id: int) -> str | None:
@@ -1909,11 +1948,12 @@ def _resume_console_engine(
     return None
 
 
-def build_main_window(
+def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): the four bootstrap seams
     app: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
     store: Store | None = None,
     clock: Callable[[], datetime] | None = None,
+    settings_path: Path | None = None,
 ) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Build and wire ``main_frame``, complete but not yet shown.
 
@@ -1931,6 +1971,19 @@ def build_main_window(
     live ``EngineDataSource``, and the E6/E7 windows read the
     :data:`_EMPTY_SOURCE` empty state -- no production module imports
     ``rivercrossing.demo`` any more (import-linter contract).
+
+    E8.1.1 loads the per-user settings file at startup and applies
+    what already has live paths: the persisted appearance through
+    :class:`~rivercrossing.ui.theme.ThemeController` (constructed with
+    the loaded mode, and the matching menu radio checked), the sound
+    mute through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
+    through the console presenter's ``on_hide_times``, and the saved
+    splitter sash / frame geometry through :class:`MainFrame`'s
+    layout seams. The settings file path and current
+    :class:`AppSettings` are kept on :class:`_RouteContext`, and the
+    layout save callback persists sash/geometry changes back to the
+    file. Zoom application is deferred to E8.1.4 -- this task only
+    persists ``zoom_percent``.
 
     Split out of :func:`main` so a test can drive the whole
     construction path without ever entering ``MainLoop``, which
@@ -1954,11 +2007,23 @@ def build_main_window(
             by the functional suite to pin the elapsed reading at a
             fixed instant; ``None`` uses the engine's own default
             (``datetime.now``).
+        settings_path: The per-user settings file to load at startup
+            and write layout saves back to; ``None`` uses
+            :func:`~rivercrossing.ui.presenters.settings.default_path`.
+            The functional suite injects a temp path so no test ever
+            touches the real user config dir.
 
     Returns:
         The loaded, fully wired ``main_frame``, not yet shown.
     """
     from rivercrossing.ui.views import MainFrame  # noqa: PLC0415 -- deferred, see module docstring
+
+    # E8.1.1: load the per-user settings once, at startup; every apply
+    # below reads the same loaded object, and the layout save callback
+    # writes back through the same path.
+    settings_path = settings_path if settings_path is not None else settings_store.default_path()
+    loaded_settings = settings_store.load_settings(settings_path)
+    loaded_mode = theme.ThemeMode(loaded_settings.appearance)
 
     resource = _load_xrc_resources()
 
@@ -1966,6 +2031,7 @@ def build_main_window(
     menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
     _check_default_menu_radios(menubar)
+    _check_loaded_theme_radio(menubar, loaded_mode)
 
     # E5.4.2: no store-backed ride is open at bootstrap, so the roster
     # is empty (rider_editor_dlg shows the empty state; the library
@@ -1976,7 +2042,7 @@ def build_main_window(
         plate_model=PlateModel.RIDER_POOLED,
         max_team_size=_SEEDED_MAX_TEAM_SIZE,
     )
-    theme_controller = theme.ThemeController(app)
+    theme_controller = theme.ThemeController(app, mode=loaded_mode)
     context = _RouteContext(
         frame=frame,
         resource=resource,
@@ -1984,6 +2050,8 @@ def build_main_window(
         app=app,
         theme_controller=theme_controller,
         store=store,
+        settings=loaded_settings,
+        settings_path=settings_path,
         # presenter is threaded below with dataclasses.replace, once the
         # live console exists; the resume flow and route binding only
         # need the pieces already set here.
@@ -1999,7 +2067,20 @@ def build_main_window(
     else:
         engine, engine_source = resumed
 
-    _console = MainFrame(frame, data_source=engine_source, resource=resource)
+    def _save_layout(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
+        """Persist the console's layout and keep the context current."""
+        updated = replace(context.settings, splitter_sash=sash, window_geometry=geometry)
+        settings_store.save_settings(updated, settings_path)
+        context.settings = updated
+
+    _console = MainFrame(
+        frame,
+        data_source=engine_source,
+        resource=resource,
+        initial_sash=loaded_settings.splitter_sash,
+        initial_geometry=loaded_settings.window_geometry,
+        on_layout_changed=_save_layout,
+    )
 
     # _presenter is kept alive the same way: wire_entry/wire_console's
     # closures hold its bound handlers, which wx's own event table and
@@ -2009,6 +2090,12 @@ def build_main_window(
     _console.wire_console(_presenter)
     _console.set_state(engine_source.ride_status())
     _console.focus_entry()
+
+    # E8.1.1: apply the persisted settings that already have live
+    # paths. Zoom application is E8.1.4's task -- this only persists
+    # zoom_percent.
+    sound.set_muted(muted=not loaded_settings.sound_on)
+    _presenter.on_hide_times(hide=loaded_settings.hide_times)
 
     _apply_accelerators(frame, menubar)
     # theme_controller is kept alive by _RouteContext, threaded through
