@@ -1081,13 +1081,18 @@ def test_store_previous_session_crashed_without_heartbeat_uses_opened_at(
     db_path = tmp_path / "rides.db"
     ride_id = _created_ride_id(db_path)
     Store.open(db_path, active_ride_id=ride_id).close()  # the crash
-    row = _session_row(db_path)
-    assert row["heartbeat_at"] is None
     reopened = Store.open(db_path)
     try:
         previous = reopened.previous_session()
     finally:
         reopened.close()
+    # Read the previous-session row AFTER the second open so OFFSET 1
+    # is the crash session, not the arrange helper's session -- reading
+    # earlier compared the wrong row's opened_at and flaked across a
+    # second boundary on a slow Windows runner (the sibling tests read
+    # after the second open for the same reason).
+    row = _session_row(db_path)
+    assert row["heartbeat_at"] is None
 
     assert previous.state is SessionState.CRASHED
     assert previous.ride_id == ride_id

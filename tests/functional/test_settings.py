@@ -72,11 +72,17 @@ def test_settings_persistence_applies_and_round_trips_every_control_through_a_re
     assert data["applied_sound_muted"] is True, result["context"]
     assert data["applied_hide_times_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["applied_sash"] == 320, result["context"]
-    assert data["applied_geometry"] == [40, 60, 1200, 800], result["context"]
+    # The restored geometry equals directly applying the same values
+    # (the exact size is platform-dependent: wxMSW pins the frame to
+    # its sizer minimum, macOS honours SetSize fully), and the file
+    # captures the frame's real state, which the relaunch restores
+    # exactly -- the E8.1.1 round-trip invariant, asserted without
+    # hardcoding a size.
+    assert data["applied_geometry"] == data["direct_applied_geometry"], result["context"]
     assert data["saved_sash_after_run1"] == 420, result["context"]
-    assert data["saved_geometry_after_run1"] == [90, 110, 1250, 860], result["context"]
+    assert data["saved_geometry_after_run1"] == data["direct_saved_geometry"], result["context"]
     assert data["relaunch_sash"] == 420, result["context"]
-    assert data["relaunch_geometry"] == [90, 110, 1250, 860], result["context"]
+    assert data["relaunch_geometry"] == data["saved_geometry_after_run1"], result["context"]
 
 
 # --- E8.1.2: the settings dialog (appearance finish) -----------------

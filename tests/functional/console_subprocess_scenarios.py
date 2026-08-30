@@ -2137,10 +2137,23 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
                 "applied_geometry": _frame_geometry(frame),
             }
 
+            # Equivalence: applying the saved values directly to the
+            # frame must give the same geometry the file-driven restore
+            # produced. The exact size is platform-dependent (wxMSW
+            # pins the frame to its sizer minimum -- measured: a saved
+            # 1200x800 restores as 1100x788 on the Windows runner --
+            # while macOS honours SetSize fully), so the test compares
+            # the two application paths instead of hardcoding a size.
+            frame.SetPosition((40, 60))
+            frame.SetSize((1200, 800))
+            harness.pump()
+            direct_applied_geometry = _frame_geometry(frame)
+
             splitter.SetSashPosition(420)
             frame.Move((90, 110))
             frame.SetSize((1250, 860))
             harness.pump()
+            direct_saved_geometry = _frame_geometry(frame)
             console.persist_layout()
             saved_after_run1 = load_settings(settings_path)
             saved_sash = saved_after_run1.splitter_sash
@@ -2168,8 +2181,10 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
 
         return {
             **applied,
+            "direct_applied_geometry": direct_applied_geometry,
             "saved_sash_after_run1": saved_sash,
             "saved_geometry_after_run1": saved_geometry,
+            "direct_saved_geometry": direct_saved_geometry,
             **relaunched,
         }
 
