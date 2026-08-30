@@ -115,9 +115,10 @@ from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import Store
 from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import feed_model, ids, theme
+from rivercrossing.ui import feed_model, ids, sound, theme
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
+from rivercrossing.ui.presenters.settings import AppSettings, load_settings, save_settings
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
 from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 from rivercrossing.ui.views.ride_library import COL_NAME, COL_STATUS
@@ -142,23 +143,46 @@ def _visible_column_titles(crossings_list: Any) -> list[str]:  # noqa: ANN401
 _SASH_ROUND_TRIP_ATTEMPTS = 5
 
 
-def _sash_round_trip_once(resource: Any) -> dict[str, Any]:  # noqa: ANN401
+def _sash_round_trip_once(resource: Any, settings_path: Path) -> dict[str, Any]:  # noqa: ANN401
     """One attempt at the sash round-trip; may raise ``LookupError``."""
+
+    def _save(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
+        save_settings(
+            AppSettings(
+                appearance="system",
+                sound_on=True,
+                hide_times=False,
+                zoom_percent=100,
+                splitter_sash=sash,
+                window_geometry=geometry,
+            ),
+            settings_path,
+        )
+
     first_window = harness.load_window(resource, ids.MAIN_FRAME, frame=True)
     first_window.Show()
     first_window.Layout()
     harness.pump()
-    first_console = MainFrame(first_window, data_source=DemoDataSource())
+    first_console = MainFrame(
+        first_window,
+        data_source=DemoDataSource(),
+        on_layout_changed=_save,
+    )
     first_console.main_splitter.SetSashPosition(300)
     first_console.persist_layout()
     harness.close_window(first_window)
 
+    saved = load_settings(settings_path)
     second_window = harness.load_window(resource, ids.MAIN_FRAME, frame=True)
     second_window.Show()
     second_window.Layout()
     harness.pump()
     try:
-        second_console = MainFrame(second_window, data_source=DemoDataSource())
+        second_console = MainFrame(
+            second_window,
+            data_source=DemoDataSource(),
+            initial_sash=saved.splitter_sash,
+        )
         restored = second_console.main_splitter.GetSashPosition()
     finally:
         harness.close_window(second_window)
@@ -167,20 +191,26 @@ def _sash_round_trip_once(resource: Any) -> dict[str, Any]:  # noqa: ANN401
 
 
 def _sash_round_trip() -> dict[str, Any]:
-    """Persist a sash position, rebuild fresh, read it back (see above).
+    """Persist a sash position to disk, rebuild fresh, read it back.
+
+    E8.1.1 replaced the process-lifetime sash global with the disk-
+    backed settings store, so this writes to a temp settings file
+    (never the real user config dir) and the rebuild restores from it.
 
     Retries the whole sequence: the first attempt that raises no
     ``LookupError`` wins.
     """
     resource = harness.load_xrc_resources()
-    last_error: LookupError | None = None
-    for _attempt in range(_SASH_ROUND_TRIP_ATTEMPTS):
-        try:
-            return _sash_round_trip_once(resource)
-        except LookupError as exc:
-            last_error = exc
-    assert last_error is not None  # every iteration above sets it
-    raise last_error
+    with tempfile.TemporaryDirectory(prefix="rc-sash-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        last_error: LookupError | None = None
+        for _attempt in range(_SASH_ROUND_TRIP_ATTEMPTS):
+            try:
+                return _sash_round_trip_once(resource, settings_path)
+            except LookupError as exc:
+                last_error = exc
+        assert last_error is not None  # every iteration above sets it
+        raise last_error
 
 
 def _hide_times_columns_round_trip() -> dict[str, Any]:
@@ -2029,8 +2059,98 @@ def _live_arm_stop_confirm_flow() -> dict[str, Any]:
         harness.close_window(window)
 
 
+def _frame_geometry(frame: Any) -> list[int]:  # noqa: ANN401
+    """Return the frame's (x, y, width, height) as a JSON-safe list."""
+    position = frame.GetPosition()
+    size = frame.GetSize()
+    return [position.x, position.y, size.width, size.height]
+
+
+def _settings_persistence_round_trip() -> dict[str, Any]:
+    """Save every setting in one app run; relaunch; read it all back.
+
+    E8.1.1's end-to-end proof (runs only in the VM): the bootstrap
+    loads the per-user settings file at startup and applies what has
+    live paths -- appearance radio, sound mute, hide-times columns,
+    splitter sash, frame geometry -- and the layout seams persist the
+    sash/geometry on change and on close. Runs against a temp file,
+    never the real user config dir.
+
+    The sash is mutated through the direct ``persist_layout`` seam (wx
+    only fires the sash event for genuine user drags, measured) and the
+    geometry through real ``Move``/``SetSize`` calls; the explicit
+    flush after them makes the saved file deterministic before the
+    close-save also runs.
+    """
+    with tempfile.TemporaryDirectory(prefix="rc-settings-") as tmp:
+        settings_path = Path(tmp) / "settings.json"
+        target = AppSettings(
+            appearance=theme.ThemeMode.DARK.value,
+            sound_on=False,
+            hide_times=True,
+            zoom_percent=140,
+            splitter_sash=320,
+            window_geometry=(40, 60, 1200, 800),
+        )
+        save_settings(target, settings_path)
+
+        # First run: the bootstrap loads the saved file and applies it.
+        frame = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        try:
+            console = frame.console
+            splitter = harness.find_control(frame, ids.MAIN_SPLITTER)
+            crossings_list = harness.find_control(frame, ids.CROSSINGS_LIST)
+            applied = {
+                "applied_dark_radio": _theme_radio_checked(frame, ids.MI_THEME_DARK),
+                "applied_sound_muted": sound._default_player._muted,
+                "applied_hide_times_columns": _visible_column_titles(crossings_list),
+                "applied_sash": splitter.GetSashPosition(),
+                "applied_geometry": _frame_geometry(frame),
+            }
+
+            splitter.SetSashPosition(420)
+            frame.Move((90, 110))
+            frame.SetSize((1250, 860))
+            harness.pump()
+            console.persist_layout()
+            saved_after_run1 = load_settings(settings_path)
+            saved_sash = saved_after_run1.splitter_sash
+            saved_geometry = (
+                list(saved_after_run1.window_geometry)
+                if saved_after_run1.window_geometry is not None
+                else None
+            )
+        finally:
+            _close_without_prompt(frame)
+
+        # Relaunch: a fresh build reads the file the first run saved.
+        frame2 = app_module.build_main_window(wx.GetApp(), settings_path=settings_path)
+        frame2.Show()
+        frame2.Layout()
+        harness.pump()
+        try:
+            splitter2 = harness.find_control(frame2, ids.MAIN_SPLITTER)
+            relaunched = {
+                "relaunch_sash": splitter2.GetSashPosition(),
+                "relaunch_geometry": _frame_geometry(frame2),
+            }
+        finally:
+            _close_without_prompt(frame2)
+
+        return {
+            **applied,
+            "saved_sash_after_run1": saved_sash,
+            "saved_geometry_after_run1": saved_geometry,
+            **relaunched,
+        }
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
+    "settings_persistence_round_trip": _settings_persistence_round_trip,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,
