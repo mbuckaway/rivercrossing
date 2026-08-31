@@ -33,6 +33,7 @@ UTF-8 locale rather than inheriting a possibly-empty one.
 """
 
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -74,7 +75,17 @@ LAUNCH_SETTLE_SECONDS = 20
 UNINSTALL_POLL_DEADLINE_SECONDS = 60
 UNINSTALL_POLL_INTERVAL_SECONDS = 2
 
-SETUP_PATH = ROOT / "dist" / f"RiverCrossing-{rivercrossing.__version__}-setup.exe"
+
+def _windows_arch() -> str:
+    """Return the short arch tag for the host Windows interpreter."""
+    return "arm64" if platform.machine().upper() in {"ARM64", "AARCH64"} else "x64"
+
+
+SETUP_PATH = (
+    ROOT
+    / "dist"
+    / f"RiverCrossing-{rivercrossing.__version__}-windows-{_windows_arch()}-setup.exe"
+)
 INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "RiverCrossing"
 START_MENU_LNK = (
     Path(os.environ.get("APPDATA", ""))
