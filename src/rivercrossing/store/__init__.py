@@ -168,6 +168,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from platformdirs import user_data_dir
+
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import (
@@ -226,7 +228,29 @@ __all__ = [
     "SessionState",
     "Store",
     "StoreError",
+    "default_db_path",
 ]
+
+
+def default_db_path(override: Path | None = None) -> Path:
+    """Return the rides database path (spec §10, platformdirs).
+
+    ``platformdirs.user_data_dir("RiverCrossing")`` is the per-user
+    data directory on every platform (``~/Library/Application
+    Support/RiverCrossing`` on macOS, ``%LOCALAPPDATA%`` on Windows) --
+    the settings module's own ``user_config_dir`` precedent, renamed
+    to the RiverCrossing product (the retired mockups' "PokerRunTracker"
+    is superseded). ``rides.db`` is the one database the app opens.
+
+    Args:
+        override: The path to use when the caller knows one (tests,
+            diagnostics); ``None`` uses the per-user default.
+
+    Returns:
+        The resolved database path.
+    """
+    return override if override is not None else Path(user_data_dir("RiverCrossing")) / "rides.db"
+
 
 _INSERT_RIDE_SQL = """
     INSERT INTO ride (

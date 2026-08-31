@@ -30,9 +30,11 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
 ``quit_flow``, ``theme``, ``rivercrossing.roster`` -- E3.2's seeded
-rider roster, :func:`~rivercrossing.ui.require_wx`) are imported at
-module scope, so this module itself stays importable even when wx
-cannot be (mirrors the guard the original stub's own docstring already
+rider roster, ``rivercrossing.store`` -- E9.1.1's Store and its
+:func:`~rivercrossing.store.default_db_path`, plus
+:func:`~rivercrossing.ui.require_wx`) are imported at module scope,
+so this module itself stays importable even when wx cannot be
+(mirrors the guard the original stub's own docstring already
 promised). Every wx-touching name -- ``wx`` itself, its ``xrc``
 submodule, the view classes, and the ``RiverCrossingApp`` subclass
 :func:`build_app` builds -- is imported/defined inside the function
@@ -66,6 +68,7 @@ from rivercrossing.ride import (
 )
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import Placed, rank, tiebreak_order_from_spellings
+from rivercrossing.store import Store, default_db_path
 from rivercrossing.ui import (
     accelerators,
     commands,
@@ -87,7 +90,6 @@ from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataS
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from rivercrossing.store import Store
     from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
@@ -2418,12 +2420,57 @@ def build_app() -> Any:  # noqa: ANN401 -- wx ships no stubs
     return _build_app_class()()
 
 
-def main() -> int:
+def _bootstrap_window(  # noqa: PLR0913 -- (app, db_path, clock, settings_path): the four bootstrap seams, mirroring build_main_window
+    app: Any,  # noqa: ANN401 -- wx ships no stubs
+    *,
+    db_path: Path | None = None,
+    clock: Callable[[], datetime] | None = None,
+    settings_path: Path | None = None,
+) -> tuple[Any, Store]:
+    """Open the store and build the main window, the way main() does.
+
+    E9.1.1: :func:`main`'s own store-backed bootstrap, split out so a
+    test can drive the whole open-store-and-build path without ever
+    entering ``MainLoop``, which blocks (the same reason
+    :func:`build_main_window` exists). Resolves the db path
+    (:func:`~rivercrossing.store.default_db_path` with the optional
+    override), opens the :class:`~rivercrossing.store.Store` there,
+    and threads it into the window -- so ``_resume_console_engine``
+    fires resume-on-launch (R-52) and the quit flow stamps
+    ``closed_at`` on a confirmed exit.
+
+    Args:
+        app: The live app :func:`main`/:func:`build_app` constructed.
+        db_path: The rides database to open; ``None`` uses
+            :func:`~rivercrossing.store.default_db_path`.
+        clock: Wall-clock source for a store-loaded resume engine,
+            threaded to :func:`build_main_window`.
+        settings_path: The per-user settings file, threaded to
+            :func:`build_main_window`.
+
+    Returns:
+        ``(frame, store)`` -- the loaded main frame and the Store it
+        was built over, which the caller owns until the app quits.
+    """
+    store = Store.open(default_db_path(db_path))
+    frame = build_main_window(app, store=store, clock=clock, settings_path=settings_path)
+    return frame, store
+
+
+def main(db_path: Path | None = None) -> int:
     """Run the RiverCrossing GUI application.
 
     Builds and shows ``main_frame`` with its menubar, accelerators and
     every §15 route bound (:func:`build_main_window`), then runs the
-    event loop until the last top-level window closes.
+    event loop until the last top-level window closes. E9.1.1 opens
+    the rides database first (:func:`_bootstrap_window`) so the
+    console, resume dialog and quit flow all act on the real store.
+
+    Args:
+        db_path: The rides database to open; ``None`` uses the per-user
+            default (:func:`~rivercrossing.store.default_db_path`). The
+            one argument a caller may supply -- the functional suite
+            stages a temp ``rides.db`` through it.
 
     Returns:
         The process exit code; ``0`` on a clean shutdown.
@@ -2435,8 +2482,11 @@ def main() -> int:
     app = build_app()  # bound for this whole call -- an unbound App is collected immediately
     wx.Log.SetActiveTarget(wx.LogStderr())  # see module docstring: the exit-time modal hang
 
-    frame = build_main_window(app)
-    frame.Show()
-    app.MainLoop()
+    frame, store = _bootstrap_window(app, db_path=db_path)
+    try:
+        frame.Show()
+        app.MainLoop()
+    finally:
+        store.close()
 
     return 0
