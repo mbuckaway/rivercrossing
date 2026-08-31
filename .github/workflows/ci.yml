@@ -4,16 +4,19 @@
 # which arrives in EPIC 9. Phase 9 added the unsigned per-user NSIS installer
 # to the Windows stage-5 leg (the unsigned half of E9.1.2); Phase 11 added the
 # unsigned half of stage 6 -- a version tag runs every wired stage and, when
-# green, publishes the GitHub release with both unsigned installers and
-# checksums. Signing (Authenticode, Developer ID + notarytool) stays EPIC 9.
+# green, publishes the GitHub release with the unsigned DMG, both Windows
+# installers (x64 + ARM64) and their checksums. Signing (Authenticode,
+# Developer ID + notarytool) stays EPIC 9.
 #
 # **Both platforms gate** (spec §14, R-75). The EPIC 1 deviation that made
 # macOS the only gate — no Windows test machine existed — was reversed in
 # Phase 10 after every known Windows failure was root-caused and fixed
 # (modal-harness sentinel clobber, MSW default-item focus, the scenario
-# close prompt, Fit()-derived sizing, mypy output color). Stages 1–3 run as
-# a two-OS matrix; stage 5 is one build job per OS because the artifacts
-# genuinely differ (unsigned DMG vs unsigned NSIS setup .exe).
+# close prompt, Fit()-derived sizing, mypy output color). Stages 1–2 run as
+# a three-OS matrix (macOS, Windows x64, Windows ARM64); stage 3 stays
+# macOS + Windows x64; stage 5 is one build job per OS/architecture because
+# the artifacts genuinely differ (unsigned DMG vs unsigned NSIS setup .exe
+# per Windows arch).
 
 name: CI
 
@@ -43,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +77,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-latest, windows-11-arm]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -189,14 +192,18 @@ jobs:
   # ----------------------------------------------------- stage 5 · Windows
   # The unsigned half of E9.1.2 (Phase 9), blocking since Phase 10: build
   # the dev bundle, smoke it, compile the unsigned per-user NSIS installer
-  # and drive the silent install -> launch -> silent uninstall suite. NSIS
-  # is not preinstalled on the windows-2025 image, so the job installs it
-  # with the preinstalled Chocolatey (choco nsis 3.12.0 matches the local
-  # brew makensis 3.12). Authenticode signing remains stage 6 / E9.1.2.
-  build-windows:
-    name: "5 · Build dev bundle + installer (Windows)"
+  # and drive the silent install -> launch -> silent uninstall suite. Two
+  # jobs -- one per CPU architecture -- because PyInstaller cannot cross-
+  # compile and each artifact is native to its runner. The x64 image has
+  # no NSIS, so it installs it with Chocolatey (choco nsis 3.12.0 matches
+  # the local brew makensis 3.12); the ARM64 image ships NSIS 3.10
+  # preinstalled. Authenticode signing remains stage 6 / E9.1.2.
+  build-windows-x64:
+    name: "5 · Build dev bundle + installer (Windows x64)"
     needs: [static, unit]
     runs-on: windows-latest
+    env:
+      RIVERCROSSING_EXPECT_WIN_ARCH: x64
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -221,21 +228,70 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rivercrossing-setup-windows
+          name: rivercrossing-setup-windows-x64
           path: dist/RiverCrossing-*-setup.exe
           if-no-files-found: warn
       - name: Upload the Windows dev bundle
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rivercrossing-devbundle-windows
+          name: rivercrossing-devbundle-windows-x64
           path: dist/rivercrossing/**
           if-no-files-found: ignore
       - name: Upload packaging diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: winsetup-diagnostics
+          name: winsetup-diagnostics-x64
+          path: |
+            build/winsetup-logs/**
+            *.png
+          if-no-files-found: ignore
+
+  build-windows-arm64:
+    name: "5 · Build dev bundle + installer (Windows ARM64)"
+    needs: [static, unit]
+    runs-on: windows-11-arm
+    env:
+      RIVERCROSSING_EXPECT_WIN_ARCH: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: PyInstaller onedir (unsigned dev bundle)
+        run: nox -s bundle
+      - name: Smoke the built bundle
+        run: nox -s smoke
+      # NSIS 3.10 is preinstalled on windows-11-arm; no choco install.
+      - name: Compile the unsigned installer
+        run: nox -s winsetup
+      - name: Silent install, launch, uninstall (E9.1.2)
+        run: nox -s winsetup_smoke
+      - name: Upload the setup executable
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-setup-windows-arm64
+          path: dist/RiverCrossing-*-setup.exe
+          if-no-files-found: warn
+      - name: Upload the Windows dev bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-devbundle-windows-arm64
+          path: dist/rivercrossing/**
+          if-no-files-found: ignore
+      - name: Upload packaging diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: winsetup-diagnostics-arm64
           path: |
             build/winsetup-logs/**
             *.png
@@ -243,8 +299,9 @@ jobs:
 
   # ---------------------------------------------------- stage 6 · release
   # Phase 11 (the unsigned half of stage 6): a version tag that survives
-  # the full gauntlet publishes the GitHub release with both unsigned
-  # installers and their checksums, named in the platform-tagged style the
+  # the full gauntlet publishes the GitHub release with the unsigned DMG
+  # and both Windows installers (x64 + ARM64) and their checksums, named
+  # in the platform-tagged style the
   # v0.1.0 release established. The guard fails the job -- publishing
   # nothing -- when the tag does not match rivercrossing.__version__
   # (v0.1.1 was tagged over 0.1.0 code and shipped empty; never again).
@@ -252,7 +309,7 @@ jobs:
   release:
     name: "6 · Publish release (tags)"
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [static, unit, functional, build-macos, build-windows]
+    needs: [static, unit, functional, build-macos, build-windows-x64, build-windows-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -270,19 +327,22 @@ jobs:
         with:
           name: rivercrossing-dmg
           path: assets
-      - name: Download the Windows installer
+      - name: Download the Windows x64 installer
         uses: actions/download-artifact@v4
         with:
-          name: rivercrossing-setup-windows
+          name: rivercrossing-setup-windows-x64
+          path: assets
+      - name: Download the Windows ARM64 installer
+        uses: actions/download-artifact@v4
+        with:
+          name: rivercrossing-setup-windows-arm64
           path: assets
       - name: Assemble the assets with checksums
         run: |
           version="${GITHUB_REF_NAME#v}"
           cd assets
           mv "RiverCrossing-${version}.dmg" "RiverCrossing-${version}-macos.dmg"
-          mv "RiverCrossing-${version}-setup.exe" "RiverCrossing-${version}-windows-setup.exe"
-          sha256sum "RiverCrossing-${version}-macos.dmg" \
-            "RiverCrossing-${version}-windows-setup.exe" > SHA256SUMS.txt
+          sha256sum -- * > SHA256SUMS.txt
           cat SHA256SUMS.txt
       - name: Publish
         env:
