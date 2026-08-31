@@ -18,6 +18,7 @@ bootstrap roster is empty and the E6/E7 windows read the module's
 import ast
 import inspect
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rivercrossing.roster import EntryMode, PlateModel
@@ -220,3 +221,42 @@ def test_build_main_window_is_exported_from_the_module() -> None:
 def test_build_main_window_is_callable() -> None:
     """main() delegates real construction to it; it must be callable."""
     assert inspect.isfunction(app.build_main_window)
+
+
+# --- E9.1.1: RIVERCROSSING_DB_PATH precedence -----------------------
+
+
+def test_resolve_db_path_given_no_override_and_no_env_returns_none() -> None:
+    """No override, no env: let default_db_path pick the per-user file."""
+    assert app._resolve_db_path(None) is None
+
+
+def test_resolve_db_path_given_the_env_var_returns_the_env_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The env var overrides the per-user default (E9.1.1 launch seam)."""
+    monkeypatch.setenv("RIVERCROSSING_DB_PATH", "/tmp/env-rides.db")
+
+    resolved = app._resolve_db_path(None)
+
+    assert resolved == Path("/tmp/env-rides.db")
+
+
+def test_resolve_db_path_given_an_explicit_override_beats_the_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The db_path argument -- the suite's own staging -- wins."""
+    monkeypatch.setenv("RIVERCROSSING_DB_PATH", "/tmp/env-rides.db")
+
+    resolved = app._resolve_db_path(Path("/tmp/explicit-rides.db"))
+
+    assert resolved == Path("/tmp/explicit-rides.db")
+
+
+def test_resolve_db_path_given_an_empty_env_value_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty env value is unset, never a path to open."""
+    monkeypatch.setenv("RIVERCROSSING_DB_PATH", "")
+
+    assert app._resolve_db_path(None) is None
