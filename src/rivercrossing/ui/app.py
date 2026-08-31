@@ -48,6 +48,7 @@ shared flow functions, the one place that route and
 explains why it is hosted there, not here).
 """
 
+import os
 import re
 import threading
 import webbrowser
@@ -117,6 +118,11 @@ _ENTRY_DETAIL_DEFAULT_PLATE = ""
 # route, dispatched further by event id below -- the theme trio to
 # theme.ThemeController, the other 8 to the generic COMMAND stub.
 _VIEW_ROUTE_TARGET = "view_setting"
+
+# E9.1.1's launch seam: the env var that points the bundled binary at
+# a temp rides.db (the packaged-app smoke stages one through it), with
+# an explicit ``main(db_path=...)`` argument taking precedence over it.
+_DB_PATH_ENV = "RIVERCROSSING_DB_PATH"
 
 
 @dataclass
@@ -2514,6 +2520,28 @@ def _bootstrap_window(  # noqa: PLR0913 -- (app, db_path, clock, settings_path):
     return frame, store
 
 
+def _resolve_db_path(db_path: Path | None) -> Path | None:
+    """Resolve the database path: explicit arg, env, then the default.
+
+    E9.1.1's launch seam: ``RIVERCROSSING_DB_PATH`` points the bundled
+    binary at a temp ``rides.db`` (the packaged-app smoke stages one
+    through it), while an explicit ``db_path`` -- the functional
+    suite's own staging -- still wins. ``None`` means no override:
+    :func:`~rivercrossing.store.default_db_path` falls back to the
+    per-user default.
+
+    Args:
+        db_path: The explicit override, or ``None``.
+
+    Returns:
+        The path to open, or ``None`` for the per-user default.
+    """
+    if db_path is not None:
+        return db_path
+    env_path = os.environ.get(_DB_PATH_ENV)
+    return Path(env_path) if env_path else None
+
+
 def main(db_path: Path | None = None) -> int:
     """Run the RiverCrossing GUI application.
 
@@ -2525,9 +2553,11 @@ def main(db_path: Path | None = None) -> int:
 
     Args:
         db_path: The rides database to open; ``None`` uses the per-user
-            default (:func:`~rivercrossing.store.default_db_path`). The
-            one argument a caller may supply -- the functional suite
-            stages a temp ``rides.db`` through it.
+            default (:func:`~rivercrossing.store.default_db_path`),
+            or the ``RIVERCROSSING_DB_PATH`` override when set
+            (:func:`_resolve_db_path`). The one argument a caller may
+            supply -- the functional suite stages a temp ``rides.db``
+            through it.
 
     Returns:
         The process exit code; ``0`` on a clean shutdown.
@@ -2539,7 +2569,7 @@ def main(db_path: Path | None = None) -> int:
     app = build_app()  # bound for this whole call -- an unbound App is collected immediately
     wx.Log.SetActiveTarget(wx.LogStderr())  # see module docstring: the exit-time modal hang
 
-    frame, store = _bootstrap_window(app, db_path=db_path)
+    frame, store = _bootstrap_window(app, db_path=_resolve_db_path(db_path))
     try:
         frame.Show()
         app.MainLoop()

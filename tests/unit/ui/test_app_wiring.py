@@ -18,7 +18,6 @@ bootstrap roster is empty and the E6/E7 windows read the module's
 import ast
 import inspect
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rivercrossing.roster import EntryMode, PlateModel
@@ -26,6 +25,8 @@ from rivercrossing.ui import app
 from rivercrossing.ui.presenters.data_source import EmptyDataSource
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
 
@@ -227,30 +228,32 @@ def test_build_main_window_is_callable() -> None:
 
 
 def test_resolve_db_path_given_no_override_and_no_env_returns_none() -> None:
-    """No override, no env: let default_db_path pick the per-user file."""
+    """No override, no env: default_db_path picks the per-user file."""
     assert app._resolve_db_path(None) is None
 
 
 def test_resolve_db_path_given_the_env_var_returns_the_env_path(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The env var overrides the per-user default (E9.1.1 launch seam)."""
-    monkeypatch.setenv("RIVERCROSSING_DB_PATH", "/tmp/env-rides.db")
+    """The env var overrides the per-user default (E9.1.1 seam)."""
+    env_path = tmp_path / "env-rides.db"
+    monkeypatch.setenv("RIVERCROSSING_DB_PATH", str(env_path))
 
     resolved = app._resolve_db_path(None)
 
-    assert resolved == Path("/tmp/env-rides.db")
+    assert resolved == env_path
 
 
 def test_resolve_db_path_given_an_explicit_override_beats_the_env(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The db_path argument -- the suite's own staging -- wins."""
-    monkeypatch.setenv("RIVERCROSSING_DB_PATH", "/tmp/env-rides.db")
+    explicit = tmp_path / "explicit-rides.db"
+    monkeypatch.setenv("RIVERCROSSING_DB_PATH", str(tmp_path / "env-rides.db"))
 
-    resolved = app._resolve_db_path(Path("/tmp/explicit-rides.db"))
+    resolved = app._resolve_db_path(explicit)
 
-    assert resolved == Path("/tmp/explicit-rides.db")
+    assert resolved == explicit
 
 
 def test_resolve_db_path_given_an_empty_env_value_returns_none(
