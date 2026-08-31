@@ -1293,6 +1293,50 @@ def _new_ride_writes_a_ride_row() -> dict[str, Any]:
     return found
 
 
+def _record_crossing_appends_audit_row() -> dict[str, Any]:
+    """Persist one audit row when a crossing is recorded (E9.1.3).
+
+    Resumes the staged running ride (Continue loads the store engine
+    with the event sink attached), then types a plate at the console:
+    the engine's mutation must append a ``record_crossing`` audit row
+    for the ride through Store.append -- the write path no production
+    code had before. The injected launch clock pins the crossing at
+    11:00, a clean full hour after the 10:00 start.
+    """
+    db_path = _resume_db_path("rc-audit-")
+    ride_id = _running_ride_with_roster(db_path)
+    store = Store.open(db_path)
+    clock = _ScenarioClock(datetime(2026, 9, 20, 11, 0))  # noqa: DTZ001 -- fixed fake launch clock
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _continue_resume() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if dialog is not None:
+            harness.click(dialog, ids.CONTINUE_BTN)
+
+    try:
+        wx.CallAfter(_continue_resume)
+        frame = _build_app_window(store=store, clock=clock)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+        plate_input.SetValue("12")
+        _post_text_enter(plate_input)
+        harness.pump()
+        rows = store._conn.execute(
+            "SELECT action FROM audit WHERE ride_id = ? ORDER BY id", (ride_id,)
+        ).fetchall()
+        found["actions"] = [row["action"] for row in rows]
+        found["has_record_crossing"] = any(row["action"] == "record_crossing" for row in rows)
+    finally:
+        store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
+
+
 def _confirm_delete_on_dialog(dialog: Any, ride_name: str) -> dict[str, Any]:  # noqa: ANN401
     """Type *ride_name* into the dialog and click Delete; report facts.
 
@@ -3041,6 +3085,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
         _bootstrap_main_launch_resumes_staged_running_ride
     ),
     "new_ride_writes_a_ride_row": _new_ride_writes_a_ride_row,
+    "record_crossing_appends_audit_row": _record_crossing_appends_audit_row,
     "delete_ride_dlg_backup_written_before_delete": (
         _delete_ride_dlg_backup_written_before_delete
     ),

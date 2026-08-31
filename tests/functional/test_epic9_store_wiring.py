@@ -53,3 +53,14 @@ def test_new_ride_writes_a_ride_row() -> None:
     assert data["ride_names"] == ["Fresh Ride 2026"], result["context"]
     # create_ride writes the stored status; a fresh ride starts DRAFT.
     assert data["ride_statuses"] == ["draft"], result["context"]
+
+
+def test_record_crossing_appends_an_audit_row() -> None:
+    """A recorded crossing persists through Store.append (E9.1.3)."""
+    result = scenario_runner.run_scenario("record_crossing_appends_audit_row")
+
+    data = result["data"]
+    assert data["has_record_crossing"] is True, result["context"]
+    # The staged ride already held a start event; the typed crossing
+    # appends after it -- the engine event log, in order.
+    assert data["actions"][-1] == "record_crossing", result["context"]
