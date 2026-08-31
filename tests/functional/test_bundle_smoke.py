@@ -16,7 +16,10 @@ Three separate claims, because they fail for different reasons:
 2. **The bundle carries its assets, byte for byte.** The 9 ``.xrc``
    files, 106 card bitmaps and 3 WAV cues, on the packaged package
    path, with identical contents -- and all 23 windows load from the
-   *bundled* ``.xrc`` copies.
+   *bundled* ``.xrc`` copies. E9.1.1 extends the byte-identity claim
+   to the release docs: the user guide and the four license texts land
+   under ``rivercrossing/docs/`` in both built layouts, identical to
+   their two source trees (repo root + package).
 3. **A missing asset fails the build.** Not first paint. Asserted by
    running the real ``pyinstaller`` against a copy of the tree with
    one bitmap deleted, and requiring a non-zero exit that names the
@@ -86,6 +89,12 @@ APP_PACKAGE = APP_UI.parent
 SHIPPED_PACKAGE_DIRS = (
     (ONEDIR_PACKAGE, APP_PACKAGE) if sys.platform == "darwin" else (ONEDIR_PACKAGE,)
 )
+
+# The docs each layout ships (E9.1.1) -- one level under the package
+# root above, where the guide + license texts land.
+ONEDIR_DOCS = ONEDIR_PACKAGE / "docs"
+APP_DOCS = APP_PACKAGE / "docs"
+SHIPPED_DOCS_DIRS = (ONEDIR_DOCS, APP_DOCS) if sys.platform == "darwin" else (ONEDIR_DOCS,)
 
 EXECUTABLES = {
     "darwin": DIST / "RiverCrossing.app" / "Contents" / "MacOS" / "rivercrossing",
@@ -165,6 +174,22 @@ def _vector_digests(package_dir: Path) -> dict[str, str]:
             (package_dir / manifest.VECTORS_SUBDIR / name).read_bytes()
         ).hexdigest()
         for name in manifest.REQUIRED_VECTORS
+    }
+
+
+def _doc_digests(package_dir: Path) -> dict[str, str]:
+    """Map every required doc name to its bundled sha256."""
+    return {
+        name: hashlib.sha256((package_dir / manifest.DOCS_SUBDIR / name).read_bytes()).hexdigest()
+        for name in manifest.REQUIRED_DOCS
+    }
+
+
+def _source_doc_digests() -> dict[str, str]:
+    """Map every required doc name to its source-tree sha256."""
+    return {
+        Path(source).name: hashlib.sha256(Path(source).read_bytes()).hexdigest()
+        for source, _destination in manifest.docs_data_entries(SOURCE_PACKAGE)
     }
 
 
@@ -534,6 +559,42 @@ def test_bundled_vector_bytes_are_identical_to_the_source_tree(
 
     assert {
         package_dir: _vector_digests(package_dir) for package_dir in bundle_package_dirs
+    } == dict.fromkeys(bundle_package_dirs, expected)
+
+
+def test_bundled_doc_names_match_the_required_manifest_exactly(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """All five docs land under each layout's own rivercrossing/docs/.
+
+    A wrong ``DOCS_PACKAGE_DEST`` (e.g. the containing-folder mistake
+    the vectors manifest's own pinned test catches) would leave this
+    directory missing or empty -- the on-disk, built-bundle catch the
+    other manifests already have.
+    """
+    packaged = {
+        package_dir: _names_present(package_dir, manifest.DOCS_SUBDIR)
+        for package_dir in bundle_package_dirs
+    }
+
+    assert packaged == {
+        package_dir: set(manifest.REQUIRED_DOCS) for package_dir in bundle_package_dirs
+    }
+
+
+def test_bundled_doc_bytes_are_identical_to_the_source_tree(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """Content, not just presence: the originals ship verbatim.
+
+    The docs are shipped from two trees (repo root + package), so the
+    expected digests come from the manifest's own entry sources, never
+    from a copied list.
+    """
+    expected = _source_doc_digests()
+
+    assert {
+        package_dir: _doc_digests(package_dir) for package_dir in bundle_package_dirs
     } == dict.fromkeys(bundle_package_dirs, expected)
 
 
