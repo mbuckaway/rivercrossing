@@ -1423,6 +1423,94 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
     return found
 
 
+# --- E9.1.1: the packaged-app claim: open ride, one crossing, export -
+
+
+def _bundle_launch_open_crossing_exports_html() -> dict[str, Any]:
+    """main()'s store path: open ride, one crossing, export HTML.
+
+    E9.1.1's "launch, open ride, one crossing, export HTML" claim,
+    driven the way ``main()`` drives it -- ``_bootstrap_window`` (this
+    file's documented E9 store-open seam, main()'s own code minus
+    MainLoop) over a staged running ride at the previous exit: resume
+    Continue opens the ride, one plate typed records a crossing, and
+    ``mi_export_html`` writes a real file through the real renderer.
+    The returned facts are the store's audit row, the console feed,
+    and the exported file's content -- every route real, no UI
+    invented.
+    """
+    db_path = _resume_db_path("rc-bundle-claim-")
+    ride_id = _running_ride_with_roster(db_path)
+    found: dict[str, Any] = {}
+    frame: Any = None
+    store: Any = None
+    export_path = (
+        Path(tempfile.mkdtemp(prefix="rc-bundle-export-")) / "gorba-epic-2026-results.html"
+    )
+    original_pick = app_module._pick_export_path
+    original_offloop = app_module._run_export_offloop
+    clock = _ScenarioClock(datetime(2026, 9, 20, 11, 0))  # noqa: DTZ001 -- fixed fake launch clock
+
+    def _continue_resume() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if dialog is not None:
+            harness.click(dialog, ids.CONTINUE_BTN)
+
+    def _sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
+        context: Any,  # noqa: ANN401 -- wx ships no stubs
+        target: str,
+        path: Any,  # noqa: ANN401 -- the picker's returned Path
+        *,
+        config: Any,  # noqa: ANN401 -- the captured RideConfig
+        placed: Any,  # noqa: ANN401 -- the captured placed standings
+        opts: Any,  # noqa: ANN401 -- the captured ExportOptions
+        watermark: int,
+    ) -> None:
+        app_module._write_export(config, placed, opts, target, path)
+        context.last_export_path = path
+        context.export_watermark = watermark
+
+    app_module._pick_export_path = lambda _suggested: export_path
+    app_module._run_export_offloop = _sync_offloop
+    try:
+        # No store is opened before _bootstrap_window: previous_session
+        # reads the *second-newest* app_session row, so a probe open
+        # here would bury the staged running ride and silence resume.
+        wx.CallAfter(_continue_resume)
+        frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=db_path, clock=clock)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+        plate_input.SetValue("12")
+        _post_text_enter(plate_input)
+        harness.pump()
+        harness.fire_menu_event(frame, "mi_export_html")
+        harness.pump()
+        model = harness.find_control(frame, ids.CROSSINGS_LIST).GetModel()
+        rows = store._conn.execute(
+            "SELECT action FROM audit WHERE ride_id = ? ORDER BY id", (ride_id,)
+        ).fetchall()
+        found["feed_rows"] = model.GetCount()
+        found["feed_plate"] = (
+            model.GetValueByRow(0, feed_model.COL_PLATE) if model.GetCount() > 0 else ""
+        )
+        found["audit_actions"] = [row["action"] for row in rows]
+        found["html_exists"] = export_path.is_file()
+        found["html_size"] = export_path.stat().st_size if export_path.is_file() else 0
+        found["html_text"] = (
+            export_path.read_text(encoding="utf-8") if export_path.is_file() else ""
+        )
+    finally:
+        app_module._pick_export_path = original_pick
+        app_module._run_export_offloop = original_offloop
+        if store is not None:
+            store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
+
+
 def _confirm_delete_on_dialog(dialog: Any, ride_name: str) -> dict[str, Any]:  # noqa: ANN401
     """Type *ride_name* into the dialog and click Delete; report facts.
 
@@ -3175,6 +3263,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "new_ride_switches_console_and_accepts_crossings": (
         _new_ride_switches_console_and_accepts_crossings
     ),
+    "bundle_launch_open_crossing_exports_html": _bundle_launch_open_crossing_exports_html,
     "delete_ride_dlg_backup_written_before_delete": (
         _delete_ride_dlg_backup_written_before_delete
     ),

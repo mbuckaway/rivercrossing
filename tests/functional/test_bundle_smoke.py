@@ -31,17 +31,20 @@ having built one gets a skip naming what is missing, never a
 confusing error.
 
 **Where "main_frame opens" is asserted, and why here.** The brief
-asks the launched bundle to open ``main_frame``. It cannot yet:
-``ui/app.py``'s ``main()`` builds a ``wx.App`` and returns, with no
-frame and no main loop, so the built binary launches and exits 0
-without drawing anything. Until the bootstrap opens a window, the
-claim is asserted where it can be: every window is loaded from the
-bundle's *own* packaged ``.xrc`` copies, and those copies are
-proven byte-identical to the source tree the stage-3 suite drives.
-Measured with a throwaway frozen ``.app`` over the same spec: all
+asks the launched bundle to open ``main_frame``. E9.1.1 lands the
+store-backed bootstrap: ``ui/app.py``'s ``main()`` opens the rides
+database and shows the frame before entering the event loop (the
+frame-show claim is proven in ``test_app_bootstrap.py``'s spawned
+MainLoop probe). Here the launch claim is asserted against the real
+binary -- it launches without a frozen-import failure -- and, E9.1.1,
+that the env seam ``RIVERCROSSING_DB_PATH`` points the frozen
+``main()`` at a temp db (a pre-created ``rides.db`` gains a session
+row across the launch window). The "open ride, one crossing, export
+HTML" half runs through the suite's subprocess scenario harness,
+which drives the exact store path ``main()`` runs over a staged temp
+db. Measured with a throwaway frozen ``.app`` over the same spec: all
 23 windows load, the card imagelist decodes its 53 bitmaps and the
-DataView feed builds its 7 columns from inside a bundle. When the
-bootstrap lands, add the window assertion to the launch test.
+DataView feed builds its 7 columns from inside a bundle.
 """
 
 import hashlib
@@ -51,6 +54,7 @@ import platform
 import plistlib
 import re
 import shutil
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -63,6 +67,8 @@ import pages
 import pytest
 import scenario_runner
 import wx.xrc
+
+from rivercrossing.store import Store
 
 pytestmark = pytest.mark.functional
 
@@ -157,6 +163,14 @@ def _launch(executable: Path) -> Launch:
     except subprocess.TimeoutExpired as exc:
         return Launch(None, exc.stdout or "", exc.stderr or "")
     return Launch(completed.returncode, completed.stdout, completed.stderr)
+
+
+def _app_session_count(db_path: Path) -> int:
+    """Count ``app_session`` rows (0 when the file is absent)."""
+    if not db_path.is_file():
+        return 0
+    with sqlite3.connect(str(db_path)) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM app_session").fetchone()[0])
 
 
 def _digests(ui_dir: Path) -> dict[str, str]:
@@ -640,6 +654,58 @@ def test_bundle_executable_launches_without_a_frozen_import_failure(
 
     assert launch.returncode in {0, None}, context
     assert "Traceback (most recent call last)" not in launch.stderr, context
+
+
+def test_bundle_executable_opens_the_environment_db_at_launch(
+    bundle_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """E9.1.1: RIVERCROSSING_DB_PATH points the bundle at a temp db.
+
+    Launch the real bundle with the env var set to a pre-created,
+    empty rides.db; after the settle-and-kill window the session count
+    must have grown. The binary inherits the env var (``_launch``
+    passes no ``env=``), so a frozen ``main()`` that ignored the seam
+    and opened the per-user default leaves the temp db untouched and
+    fails here.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    store.close_session()
+    store.close()
+    before = _app_session_count(db_path)
+    monkeypatch.setenv("RIVERCROSSING_DB_PATH", str(db_path))
+
+    launch = _launch(bundle_executable)
+    context = f"stdout:\n{launch.stdout}\nstderr:\n{launch.stderr}"
+
+    assert launch.returncode in {0, None}, context
+    assert _app_session_count(db_path) == before + 1, context
+
+
+def test_bundle_launch_opens_a_ride_records_a_crossing_and_exports_html() -> None:
+    """E9.1.1: open ride, one crossing, export HTML, on a temp db.
+
+    The launch-against-the-bundle half is :func:`bundle_executable`
+    probes; this drives the open-crossing-export half through the
+    suite's subprocess scenario harness, which runs the exact store
+    path ``main()`` runs (``_bootstrap_window``) over a staged temp
+    ``rides.db`` -- resume opens the ride, one plate records a
+    crossing, ``mi_export_html`` writes the real file.
+    """
+    result = scenario_runner.run_scenario("bundle_launch_open_crossing_exports_html")
+
+    data = result["data"]
+    assert data["feed_rows"] >= 1, result["context"]
+    assert data["feed_plate"] == "12", result["context"]
+    assert data["audit_actions"][-1] == "record_crossing", result["context"]
+    assert data["html_exists"] is True, result["context"]
+    assert data["html_size"] > 0, result["context"]
+    assert "race-data" in data["html_text"], result["context"]
+    # The crossed plate is in the exported race-data standings JSON
+    # (json.dumps(indent=2) spells the integer plate with a space).
+    assert '"plate": 12' in data["html_text"], result["context"]
 
 
 def test_built_app_resources_carry_the_branded_icns(bundle_app_path: Path) -> None:
