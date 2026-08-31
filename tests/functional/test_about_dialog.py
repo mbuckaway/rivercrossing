@@ -46,4 +46,8 @@ def test_about_dialog_uses_the_ride_logo_bitmap_when_one_is_present() -> None:
     assert result["ok"], result["context"]
     data = result["data"]
     assert data["logo_bitmap_ok"] is True, result["context"]
-    assert data["logo_matches_file"] is True, result["context"]
+    # The resolved logo is the file's own 8x8 bitmap (the helper
+    # writes 8x8), not the 16x16 stock-icon fallback, and the control
+    # carries a non-null bitmap.
+    assert data["logo_bitmap_size"] == [8, 8], result["context"]
+    assert data["control_bitmap_ok"] is True, result["context"]

@@ -2876,17 +2876,18 @@ def _about_dialog_uses_the_ride_logo_bitmap() -> dict[str, Any]:
             view = AboutDialog(window, logo_path=logo_path)
             # The control's GetBitmap can be a scaled copy (measured:
             # wxStaticBitmap on macOS renders the 8x8 file as 16x16),
-            # so the "file was used" assertion compares the view's
-            # resolved logo_bitmap against the file's own decode; the
-            # control only has to carry a non-null bitmap.
+            # and IsSameAs between two freshly-decoded macOS bitmaps is
+            # unreliable, so the "file was used" claim is: the view's
+            # resolved logo_bitmap is valid AND its size is the file's
+            # own 8x8 -- never the 16x16 stock-icon fallback -- while
+            # the control merely carries a non-null bitmap.
             control_bitmap = view.about_logo_bmp.GetBitmap()
-            file_bitmap = wx.Bitmap(str(logo_path), wx.BITMAP_TYPE_PNG)
-            found["logo_bitmap_ok"] = control_bitmap.IsOk()
+            found["logo_bitmap_ok"] = view.logo_bitmap.IsOk()
             found["logo_bitmap_size"] = [
-                control_bitmap.GetWidth(),
-                control_bitmap.GetHeight(),
+                view.logo_bitmap.GetWidth(),
+                view.logo_bitmap.GetHeight(),
             ]
-            found["logo_matches_file"] = view.logo_bitmap.IsSameAs(file_bitmap)
+            found["control_bitmap_ok"] = control_bitmap.IsOk()
     finally:
         harness.close_window(window)
     return found
