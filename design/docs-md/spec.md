@@ -276,9 +276,9 @@ Grounded in platform dialog guidelines (Windows ContentDialog, Carbon/Primer acc
 
 ### 14 · CI — building & testing a GUI app
 
-GitHub Actions, matrix `windows-latest + macos-latest` — both runners have a real desktop session, so wx windows open without a virtual display (no Xvfb; that's only needed if a Linux target is ever added). GUI suites are kept lean by design: logic lives in the sync core modules (§11), so the bulk of the pyramid runs headless-fast.
+GitHub Actions, matrix `macos-latest + windows-latest + windows-11-arm` — all runners have a real desktop session, so wx windows open without a virtual display (no Xvfb; that's only needed if a Linux target is ever added). `windows-11-arm` builds the native Windows ARM64 installer (PyInstaller cannot cross-compile), and `macos-latest` is Apple Silicon, so the macOS artifact is arm64-native. GUI suites are kept lean by design: logic lives in the sync core modules (§11), so the bulk of the pyramid runs headless-fast.
 
-**Both platforms gate.** The temporary macOS-only deviation (recorded here and in R-75 from EPIC 1 until Phase 10) is reversed: Windows testers are now available, every previously known Windows failure was root-caused and fixed in EPIC 1 Phase 10 (the modal-harness sentinel clobber, MSW default-item focus, the scenario close prompt, Fit()-derived sizing, mypy output color), and the windows-latest legs run the same blocking stages as macOS with the same screenshot/diagnostic artifacts.
+**Both platforms and both Windows architectures gate.** The temporary macOS-only deviation (recorded here and in R-75 from EPIC 1 until Phase 10) is reversed: Windows testers are now available, every previously known Windows failure was root-caused and fixed in EPIC 1 Phase 10 (the modal-harness sentinel clobber, MSW default-item focus, the scenario close prompt, Fit()-derived sizing, mypy output color), and the `windows-latest` and `windows-11-arm` legs run the same blocking stages as macOS with the same screenshot/diagnostic artifacts.
 
 | Stage (both OSes) | What runs · gate |
 |---|---|

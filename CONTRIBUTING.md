@@ -109,8 +109,9 @@ Measured on 2026-08-07 (Apple Silicon host, Tart 2.35.0, `macos-tahoe-base` gues
 | `ui/ids.py` matches the `.xrc` files (R-05) | `nox -s ids_drift` |
 | Every window, control and menu route drivable by the harness (R-73) | stage 3 |
 
-**Both platforms gate.** Stages 1–3 run as a `macos-latest` + `windows-latest` matrix and both
-stage-5 build jobs block, exactly as R-75 and spec §14 always intended. The EPIC 1 deviation that made
+**Both platforms and both Windows architectures gate.** Stages 1–2 run as a `macos-latest` +
+`windows-latest` + `windows-11-arm` matrix; stage 3 stays macOS + Windows x64. All three stage-5
+build jobs block, exactly as R-75 and spec §14 always intended. The EPIC 1 deviation that made
 macOS the only gate (no Windows test machine) was reversed in Phase 10 after every known Windows
 failure was root-caused and fixed; the Windows legs upload the same probe screenshots, coverage and
 failure artifacts as macOS.
@@ -211,11 +212,11 @@ nox -s winsetup_smoke       # compile tests everywhere; install/launch/uninstall
 ```
 
 The real artifact only ever comes from CI: PyInstaller cannot cross-compile, so the Windows payload
-exists only on a Windows runner. The blocking `build-windows` job builds the dev bundle, compiles
-`dist/RiverCrossing-<version>-setup.exe` (NSIS arrives via `choco install nsis` — the windows-2025
-image does not preinstall it), and drives E9.1.2's silent install → launch → uninstall tests. The
-setup `.exe`, the Windows dev bundle and the `build/winsetup-logs/` diagnostics upload as artifacts on
-every outcome.
+exists only on a Windows runner. The blocking `build-windows-x64` and `build-windows-arm64` jobs build
+the dev bundle, compile `dist/RiverCrossing-<version>-windows-<arch>-setup.exe` (the x64 image installs
+NSIS via `choco install nsis`; the ARM64 image ships NSIS 3.10 preinstalled), and drive E9.1.2's silent
+install → launch → uninstall tests. The setup `.exe`, the Windows dev bundle and the
+`build/winsetup-logs/` diagnostics upload as artifacts on every outcome.
 
 Measured quirk, encoded in `noxfile.py` and the smoke tests: `makensis` crashes with `std::bad_alloc`
 when `LANG`/`LC_ALL` are unset (NSIS bug 1165), so every invocation forces a UTF-8 locale.
@@ -229,9 +230,10 @@ unsigned until EPIC 9):
 2. Merge to `master` through a PR (the tag must sit on gated code).
 3. `git tag v<version> && git push origin v<version>` — the exact `v<version>` spelling matters:
    the release job fails on a tag that does not match `rivercrossing.__version__`.
-4. The tag runs the full two-OS gauntlet; when green, the `release` job publishes the GitHub
-   release with `RiverCrossing-<version>-macos.dmg`, `RiverCrossing-<version>-windows-setup.exe`
-   and `SHA256SUMS.txt`. Nothing publishes if any gate is red.
+4. The tag runs the full gauntlet; when green, the `release` job publishes the GitHub release with
+   `RiverCrossing-<version>-macos.dmg`, `RiverCrossing-<version>-windows-x64-setup.exe`,
+   `RiverCrossing-<version>-windows-arm64-setup.exe` and `SHA256SUMS.txt`. Nothing publishes if any
+   gate is red.
 
 ## CI secrets contract
 

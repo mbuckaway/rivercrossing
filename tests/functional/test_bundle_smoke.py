@@ -43,9 +43,12 @@ bootstrap lands, add the window assertion to the launch test.
 
 import hashlib
 import importlib.util
+import os
+import platform
 import plistlib
 import re
 import shutil
+import struct
 import subprocess
 import sys
 from pathlib import Path
@@ -636,3 +639,64 @@ def test_pyinstaller_build_given_a_missing_asset_fails_naming_it(tmp_path: Path)
     assert completed.returncode != 0, output
     assert "Ah-2x.png" in output, output
     assert sorted(path.name for path in dist.iterdir()) == []
+
+
+def _pe_machine(executable: Path) -> int:
+    """Return the PE ``Machine`` field of *executable*.
+
+    ``e_lfanew`` (offset 0x3C) points at the PE header; the first
+    WORD after the 4-byte PE signature is the Machine type.
+    """
+    with executable.open("rb") as handle:
+        handle.seek(0x3C)
+        e_lfanew = struct.unpack("<I", handle.read(4))[0]
+        handle.seek(e_lfanew + 4)
+        return struct.unpack("<H", handle.read(2))[0]
+
+
+def _expected_pe_machine() -> int:
+    """Return the PE Machine type the build must have produced.
+
+    The expected arch is pinned per CI job via
+    ``RIVERCROSSING_EXPECT_WIN_ARCH`` (``x64`` or ``arm64``), so an
+    emulated-Python misconfig cannot false-green the check. Unset (a
+    local dev run) falls back to the interpreter's own arch.
+    """
+    want = os.environ.get("RIVERCROSSING_EXPECT_WIN_ARCH")
+    if want is None:
+        want = "arm64" if platform.machine().upper() in {"ARM64", "AARCH64"} else "x64"
+    return 0xAA64 if want == "arm64" else 0x8664
+
+
+def test_built_app_is_apple_silicon_arm64(bundle_executable: Path) -> None:
+    """The .app's Mach-O is arm64 -- the macOS build is Apple Silicon.
+
+    ``lipo -archs`` prints a bare token for a thin binary, so the
+    assertion is exact: any x86_64 or universal2 output fails.
+    """
+    if sys.platform != "darwin":
+        pytest.skip("BUNDLE() only wraps a .app on darwin")
+    lipo = shutil.which("lipo")
+    if lipo is None:
+        pytest.skip("lipo (Xcode command line tools) not found")
+    completed = subprocess.run(  # noqa: S603 -- resolved absolute path, fixed argv
+        [lipo, "-archs", str(bundle_executable)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "arm64"
+
+
+def test_built_binary_architecture_matches_expected(bundle_executable: Path) -> None:
+    """The frozen exe's PE Machine matches the arch the job promised.
+
+    The expected arch comes from ``RIVERCROSSING_EXPECT_WIN_ARCH`` (set
+    per Windows build job), so this proves the runner actually produced
+    the arch its installer filename claims -- not just that the exe
+    matches whatever Python happened to run PyInstaller.
+    """
+    if sys.platform != "win32":
+        pytest.skip("the PE Machine field only exists on win32")
+    assert _pe_machine(bundle_executable) == _expected_pe_machine()

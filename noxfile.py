@@ -14,6 +14,7 @@ Run `nox -l` to list them, `nox -s <name>` to run one.
 """
 
 import os
+import platform
 import shutil
 import sys
 from pathlib import Path
@@ -315,15 +316,25 @@ def _write_synthetic_payload(payload_dir: Path) -> None:
     (internal_dir / "data.bin").write_bytes(b"\x00\x01\x02\x03")
 
 
+def _windows_arch(machine: str | None = None) -> str:
+    """Map a Windows machine string to the x64 or arm64 tag."""
+    tag = (machine or platform.machine()).lower()
+    if tag in {"arm64", "aarch64"}:
+        return "arm64"
+    if tag in {"amd64", "x86_64", "x64"}:
+        return "x64"
+    return tag
+
+
 @nox.session(python=PYTHON)
 def winsetup(session):
     """Compile the unsigned per-user NSIS installer (CI stage 5).
 
     On win32 this packages the real dist/rivercrossing onedir into
-    dist/RiverCrossing-<version>-setup.exe. Off win32 (this Mac) it
-    is compile smoke only: a synthetic payload compiles to build/,
-    never dist/ -- dist/ stays reserved for the real artifact
-    windows-latest CI produces.
+    dist/RiverCrossing-<version>-windows-<arch>-setup.exe. Off win32
+    (this Mac) it is compile smoke only: a synthetic payload compiles
+    to build/, never dist/ -- dist/ stays reserved for the real
+    artifact windows-latest CI produces.
     """
     makensis = _find_makensis()
     if makensis is None:
@@ -336,7 +347,7 @@ def winsetup(session):
         payload = ROOT / "dist" / "rivercrossing"
         if not payload.is_dir():
             session.error(f"no built payload -- run `nox -s bundle` first; missing {payload}")
-        outfile = ROOT / "dist" / f"RiverCrossing-{version}-setup.exe"
+        outfile = ROOT / "dist" / f"RiverCrossing-{version}-windows-{_windows_arch()}-setup.exe"
     else:
         payload = ROOT / "build" / "winsetup-payload"
         _write_synthetic_payload(payload)
