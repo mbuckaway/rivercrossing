@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 import wx
+import wx.adv
 
 from rivercrossing import __version__
 from rivercrossing.ui import ids
@@ -123,7 +124,10 @@ class AboutDialog:
         """
         self.dialog = dialog
         self.version_lbl = find_control(dialog, ids.VERSION_LBL, wx.StaticText)
-        self.gorba_link = find_control(dialog, ids.GORBA_LINK, wx.HyperlinkCtrl)
+        # wxHyperlinkCtrl lives under wx.adv (like wx.adv.Sound) -- the
+        # XRC class name is wxHyperlinkCtrl, the Python type is
+        # wx.adv.HyperlinkCtrl (measured in the VM).
+        self.gorba_link = find_control(dialog, ids.GORBA_LINK, wx.adv.HyperlinkCtrl)
         self.about_logo_bmp = find_control(dialog, ids.ABOUT_LOGO_BMP, wx.StaticBitmap)
         self.logo_bitmap = _resolve_logo_bitmap(logo_path)
         self.about_logo_bmp.SetBitmap(self.logo_bitmap)

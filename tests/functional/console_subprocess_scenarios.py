@@ -106,6 +106,7 @@ import harness
 import pages
 import scenario_runner
 import wx
+import wx.adv
 import wx.dataview
 import wx.xrc
 
@@ -2833,7 +2834,7 @@ def _about_dialog_route_renders_version_and_gorba_link() -> dict[str, Any]:
         version_lbl = harness.find_control(dialog, ids.VERSION_LBL)
         found["version_text"] = version_lbl.GetLabelText()
         gorba_link = harness.find_control(dialog, ids.GORBA_LINK)
-        found["gorba_is_hyperlink"] = isinstance(gorba_link, wx.HyperlinkCtrl)
+        found["gorba_is_hyperlink"] = isinstance(gorba_link, wx.adv.HyperlinkCtrl)
         found["gorba_url"] = gorba_link.GetURL()
         logo_bmp = harness.find_control(dialog, ids.ABOUT_LOGO_BMP)
         bitmap = logo_bmp.GetBitmap()
