@@ -2874,11 +2874,19 @@ def _about_dialog_uses_the_ride_logo_bitmap() -> dict[str, Any]:
             logo_path = Path(tmp) / "logo.png"
             _write_tiny_logo(logo_path)
             view = AboutDialog(window, logo_path=logo_path)
-            bitmap = view.about_logo_bmp.GetBitmap()
+            # The control's GetBitmap can be a scaled copy (measured:
+            # wxStaticBitmap on macOS renders the 8x8 file as 16x16),
+            # so the "file was used" assertion compares the view's
+            # resolved logo_bitmap against the file's own decode; the
+            # control only has to carry a non-null bitmap.
+            control_bitmap = view.about_logo_bmp.GetBitmap()
             file_bitmap = wx.Bitmap(str(logo_path), wx.BITMAP_TYPE_PNG)
-            found["logo_bitmap_ok"] = bitmap.IsOk()
-            found["logo_bitmap_size"] = [bitmap.GetWidth(), bitmap.GetHeight()]
-            found["logo_matches_file"] = bitmap.IsSameAs(file_bitmap)
+            found["logo_bitmap_ok"] = control_bitmap.IsOk()
+            found["logo_bitmap_size"] = [
+                control_bitmap.GetWidth(),
+                control_bitmap.GetHeight(),
+            ]
+            found["logo_matches_file"] = view.logo_bitmap.IsSameAs(file_bitmap)
     finally:
         harness.close_window(window)
     return found
