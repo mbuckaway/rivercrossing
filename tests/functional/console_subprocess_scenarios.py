@@ -116,6 +116,7 @@ from rivercrossing.store import Store
 from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, sound, theme
+from rivercrossing.ui import help as help_module
 from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
@@ -2711,6 +2712,92 @@ def _shortcuts_dialog_renders_injected_rows() -> dict[str, Any]:
     return found
 
 
+# --- E8.2.2: Help ▸ User Guide / F1 deep-links the active window ---
+
+
+def _user_guide_url_from_dialog(dialog_name: str, menu_item_id: str) -> dict[str, Any]:
+    """Open *dialog_name*, fire F1 inside it, return the captured facts.
+
+    The dialog opens through its own menu route and runs its real
+    modal loop; inside that loop F1 (``mi_user_guide``) fires and
+    ``webbrowser.open``'s URL is captured -- the I/O boundary is
+    monkeypatched (T-10), never the route or the URL builder. The
+    dialog closes via Escape. Reports the shown flag, the captured
+    URL and the status-bar notice the handler posted.
+    """
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+    urls: list[str] = []
+    original_open = help_module.webbrowser.open
+
+    def _capture(url: str) -> bool:
+        urls.append(url)
+        return True
+
+    help_module.webbrowser.open = _capture
+
+    def _probe() -> None:
+        dialog = wx.Window.FindWindowByName(dialog_name)
+        found["dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        _fire_menu_event(frame, ids.MI_USER_GUIDE)
+        harness.pump()
+        found["url"] = urls[-1] if urls else None
+        found["status_text"] = frame.GetStatusBar().GetStatusText(0)
+        _send_escape(dialog)
+
+    try:
+        wx.CallAfter(_probe)
+        harness.fire_menu_event(frame, menu_item_id)
+        harness.pump()
+    finally:
+        help_module.webbrowser.open = original_open
+        _close_without_prompt(frame)
+    return found
+
+
+def _user_guide_from_settings_dialog_opens_anchor() -> dict[str, Any]:
+    """F1 from settings_dlg opens the guide at the Settings anchor."""
+    return _user_guide_url_from_dialog(ids.SETTINGS_DLG, "wxID_PREFERENCES")
+
+
+def _user_guide_from_about_dialog_opens_anchor() -> dict[str, Any]:
+    """F1 from about_dlg opens the guide at the About anchor."""
+    return _user_guide_url_from_dialog(ids.ABOUT_DLG, "wxID_ABOUT")
+
+
+def _user_guide_from_shortcuts_dialog_opens_anchor() -> dict[str, Any]:
+    """F1 from shortcuts_dlg opens the shortcuts appendix anchor."""
+    return _user_guide_url_from_dialog(ids.SHORTCUTS_DLG, ids.MI_SHORTCUTS)
+
+
+def _user_guide_with_no_dialog_opens_default_anchor() -> dict[str, Any]:
+    """F1 with only the main frame open uses the default anchor."""
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    urls: list[str] = []
+    original_open = help_module.webbrowser.open
+
+    def _capture(url: str) -> bool:
+        urls.append(url)
+        return True
+
+    help_module.webbrowser.open = _capture
+    try:
+        _fire_menu_event(frame, ids.MI_USER_GUIDE)
+        harness.pump()
+        return {"url": urls[-1] if urls else None}
+    finally:
+        help_module.webbrowser.open = original_open
+        _close_without_prompt(frame)
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "settings_persistence_round_trip": _settings_persistence_round_trip,
@@ -2727,6 +2814,16 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
         _shortcuts_dialog_route_shows_the_accelerator_table
     ),
     "shortcuts_dialog_renders_injected_rows": _shortcuts_dialog_renders_injected_rows,
+    "user_guide_from_settings_dialog_opens_anchor": (
+        _user_guide_from_settings_dialog_opens_anchor
+    ),
+    "user_guide_from_about_dialog_opens_anchor": _user_guide_from_about_dialog_opens_anchor,
+    "user_guide_from_shortcuts_dialog_opens_anchor": (
+        _user_guide_from_shortcuts_dialog_opens_anchor
+    ),
+    "user_guide_with_no_dialog_opens_default_anchor": (
+        _user_guide_with_no_dialog_opens_default_anchor
+    ),
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,

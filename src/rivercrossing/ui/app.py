@@ -77,6 +77,9 @@ from rivercrossing.ui import (
     theme,
     zoom,
 )
+from rivercrossing.ui import (
+    help as help_module,
+)
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataSource, RideSummary
@@ -1115,6 +1118,52 @@ def _handle_preview_browser(context: _RouteContext) -> None:
     context.frame.SetStatusText(f"Opened {context.last_export_path.name}")
 
 
+def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return the app's currently active top-level window, if any.
+
+    The keyboard-focus path first: the focused control's top-level
+    parent is the dialog or frame the operator is actually in. When
+    nothing has focus -- measured: ``FindFocus()`` reads ``None`` for
+    a terminal-launched, unbundled Python that is never the frontmost
+    macOS app (tests/functional/test_dialog_behavior.py), even with a
+    modal dialog open -- the topmost modal dialog stands in (the
+    modal IS the active window while it runs), then the app's top
+    window.
+    """
+    focused = wx.Window.FindFocus()
+    if focused is not None:
+        top = focused.GetTopLevelParent()
+        if top is not None:
+            return top
+    for top in reversed(wx.GetTopLevelWindows()):
+        if top.IsModal():
+            return top
+    app = wx.GetApp()
+    if app is not None:
+        top = app.GetTopWindow()
+        if top is not None:
+            return top
+    return None
+
+
+def _handle_open_user_guide(context: _RouteContext) -> None:
+    """Help ▸ User Guide / F1: open the guide at the active anchor.
+
+    E8.2.2: resolves the currently active top-level window
+    (:func:`_active_top_level_window`), maps its XRC name to its
+    user-guide chapter (:func:`~rivercrossing.ui.help.anchor_for`),
+    opens the guide at that anchor in the OS-default browser, and
+    posts the opened URL to the status bar. With no mapped window
+    active the guide opens at its default opening chapter.
+    """
+    wx = require_wx()
+    top = _active_top_level_window(wx)
+    window_name = top.GetName() if top is not None else None
+    anchor = help_module.anchor_for(window_name)
+    url = help_module.open_guide(anchor)
+    context.frame.SetStatusText(f"Opened user guide: {url}")
+
+
 def _handle_focus_tiebreak(context: _RouteContext) -> None:
     """Results ▸ Tie-break Order…: open Results and focus the list."""
     wx = require_wx()
@@ -1864,6 +1913,7 @@ _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
 _TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
 _TARGET_ACTIONS["focus_tiebreak_control"] = _handle_focus_tiebreak
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
+_TARGET_ACTIONS["open_user_guide"] = _handle_open_user_guide
 
 
 def _correction_route_handler(
@@ -1905,13 +1955,16 @@ def _make_route_handler(  # noqa: PLR0911, C901 -- one early-return per route sp
     :func:`_open_target`'s generic open-and-return. ``csv_preview_dlg``
     (E3.4) is the one
     ``DIALOG`` target that needs a picker run before it opens, ahead
-    of :func:`_open_target`'s generic path. Every other ``COMMAND``
-    row has no window to open and no ride engine yet to run its real
-    action (EPIC 4+); it posts a status-bar notice instead of
-    silently doing nothing. Every other ``WINDOW``/``DIALOG`` row
-    always attempts to open its target through :func:`_open_target`,
-    which posts the same kind of notice if that target has no frozen
-    window yet.
+    of :func:`_open_target`'s generic path. ``open_user_guide``
+    (E8.2.2) opens the bundled guide deep-linked to the active
+    window's anchor (:func:`_handle_open_user_guide`), registered in
+    :data:`_TARGET_ACTIONS` with the export targets. Every other
+    ``COMMAND`` row has no window to open and no ride engine yet to
+    run its real action (EPIC 4+); it posts a status-bar notice
+    instead of silently doing nothing. Every other ``WINDOW``/
+    ``DIALOG`` row always attempts to open its target through
+    :func:`_open_target`, which posts the same kind of notice if that
+    target has no frozen window yet.
     """
     if route.target == "exit_or_quit":
         return lambda _event: _handle_exit_route(context)
