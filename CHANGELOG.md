@@ -6,6 +6,19 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added — Windows ARM64 + Apple Silicon verification
+
+- **Windows ARM64 installer.** CI builds on `windows-11-arm` (stages 1–2 matrix plus a
+  `build-windows-arm64` stage-5 job), producing `RiverCrossing-<version>-windows-arm64-setup.exe`
+  alongside the renamed x64 installer `RiverCrossing-<version>-windows-x64-setup.exe`. PyInstaller
+  builds natively per runner (no cross-compile); the ARM64 image ships NSIS 3.10 preinstalled.
+- **Architecture verified, not assumed.** A stage-5 smoke assertion (`lipo -archs` == `arm64`) and
+  a Windows PE-machine assertion (`0xAA64`/`0x8664` against `RIVERCROSSING_EXPECT_WIN_ARCH`) prove
+  each build's architecture matches its filename. `noxfile._windows_arch` maps the runner to the
+  installer tag.
+- **Both architectures gate the release.** The tag pipeline publishes all three assets —
+  `-macos.dmg`, `-windows-x64-setup.exe`, `-windows-arm64-setup.exe` — with checksums.
+
 ### Added — EPIC 7 (corrections & audit)
 
 - **Audited corrections on the engine** (`rivercrossing.ride`): `edit_crossing`, `void_crossing`,
