@@ -608,6 +608,7 @@ def _switch_console_to_ride(
     source = EngineDataSource(engine, roster)
     presenter = ConsolePresenter(context.console_view, engine=engine, source=source)
     context.console_view.set_presenter(presenter)
+    context.console_view.show_ride_name(engine.config.name)
     context.console_view.set_state(source.ride_status())
     context.console_view.show_feed(source.feed_rows())
     context.console_view.show_counters(source.counters())
@@ -615,6 +616,37 @@ def _switch_console_to_ride(
     context.presenter = presenter
     context.roster = roster
     context.active_ride_id = ride_id
+
+
+def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
+    """Persist a New Ride, then switch the console onto it (E9.1.4).
+
+    The ride-setup dialog's submit callback (``_decorate``'s
+    ``RIDE_SETUP_DLG`` branch): with a store open, creates the ride
+    row, persists the roster the dialog was opened on, marks the new
+    ride active on the open session -- so a quit after creating it
+    resumes the right ride, the same call the resume flow's Continue
+    makes -- and switches the console onto the new ride. With no store
+    the dialog keeps its E3.5 in-memory behavior.
+
+    The switch is deferred through ``wx.CallAfter``, the same
+    modal-chaining rule the library Open uses (``_live_library_
+    callbacks``'s own docstring): this runs inside the setup dialog's
+    submit, before ``EndModal``, and a post-modal action performed
+    synchronously inside a modal's unwind is not dismissible by the
+    functional harness (measured there).
+
+    Args:
+        context: The route context whose store/roster to act on.
+        config: The committed ride configuration.
+    """
+    store = context.store
+    if store is None:
+        return
+    ride_id = store.create_ride(config)
+    store.save_roster(ride_id, context.roster)
+    store.set_active_ride(ride_id)
+    require_wx().CallAfter(_switch_console_to_ride, context, ride_id)
 
 
 def _live_library_callbacks(
@@ -756,17 +788,15 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # correct empty state until a real ride is opened.
         RiderEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
-        # E9.1.2: with a store open, a committed New Ride persists the
-        # ride row and the roster the dialog was opened on; with no
+        # E9.1.2/E9.1.4: with a store open, a committed New Ride
+        # persists the ride row and the roster the dialog was opened
+        # on, then switches the console onto the new ride; with no
         # store the dialog keeps its E3.5 in-memory behavior.
-        def _persist_created_ride(config: RideConfig) -> None:
-            store = context.store
-            if store is None:
-                return
-            ride_id = store.create_ride(config)
-            store.save_roster(ride_id, context.roster)
-
-        RideSetup(window, roster=context.roster, on_submitted=_persist_created_ride)
+        RideSetup(
+            window,
+            roster=context.roster,
+            on_submitted=lambda config: _persist_created_ride(context, config),
+        )
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1: with a live console threaded AND a concrete entry
         # selected (context.detail_plate, recorded when entry detail

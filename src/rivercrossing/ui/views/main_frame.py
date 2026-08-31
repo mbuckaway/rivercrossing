@@ -229,6 +229,7 @@ class MainFrame:
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)
         self.record_btn = self._find(ids.RECORD_BTN, wx.Button)
         self.last_crossing_lbl = self._find(ids.LAST_CROSSING_LBL, wx.StaticText)
+        self.ride_name_lbl = self._find(ids.RIDE_NAME_LBL, wx.StaticText)
         self.ride_status_lbl = self._find(ids.RIDE_STATUS_LBL, wx.StaticText)
         self.crossings_count_lbl = self._find(ids.CROSSINGS_COUNT_LBL, wx.StaticText)
         self.cards_count_lbl = self._find(ids.CARDS_COUNT_LBL, wx.StaticText)
@@ -488,6 +489,16 @@ class MainFrame:
             self.reopened_infobar.Dismiss()
         self._status = status
         self._notify_ride_changed()
+
+    def show_ride_name(self, name: str) -> None:
+        """Render the open ride's name (ConsoleView, E9.1.4).
+
+        ``ride_name_lbl`` is the frozen design's ride-identity line
+        (xrc-windows.md section A); every console switch onto a
+        store ride renders the ride's name here -- the library Open
+        and the New Ride flow alike.
+        """
+        self.ride_name_lbl.SetLabel(name)
 
     def set_on_ride_changed(self, callback: Callable[[RideStatus], None]) -> None:
         """Register the menu-binder callback fired on ride changes.
