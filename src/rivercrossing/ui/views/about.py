@@ -43,12 +43,17 @@ def _resolve_logo_bitmap(logo_path: str | Path | None) -> Any:  # noqa: ANN401 -
     stale saved path can never blank the canvas.
     """
     if logo_path is not None and Path(logo_path).is_file():
-        return wx.Bitmap(str(logo_path), wx.BITMAP_TYPE_PNG)
-    # logic-coverage-exempt: T-3 -- the missing-file arm of the guard
-    # above is unreachable through the route: the store never restores
-    # logo_path on load (store's load_engine sets it to None), so the
-    # only live input is None or an existing file; a stale path is
-    # defensive only.
+        bitmap = wx.Bitmap(str(logo_path), wx.BITMAP_TYPE_PNG)
+        if bitmap.IsOk():
+            return bitmap
+        # The file exists but wx cannot decode it: fall through to the
+        # app icon rather than blanking the canvas (measured in the
+        # VM -- wx's PNG decoder is stricter than PIL's).
+    # logic-coverage-exempt: T-3 -- the missing-file/undecodable-file
+    # arms of the guard above are unreachable through the route: the
+    # store never restores logo_path on load (store's load_engine sets
+    # it to None), so the only live input is None or an existing,
+    # decodable file; the arms are defensive only.
     return _app_icon_bitmap()
 
 

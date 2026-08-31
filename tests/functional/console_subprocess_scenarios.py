@@ -89,7 +89,6 @@ code to diagnose -- the same empty-pipe failure mode
 case.
 """
 
-import base64
 import faulthandler
 import json
 import os
@@ -2803,12 +2802,20 @@ def _user_guide_with_no_dialog_opens_default_anchor() -> dict[str, Any]:
 
 # --- E8.2.3: the About box (version, gorba link, logo fallback) ------
 
-# An 8x8 solid PNG, embedded so the logo scenario needs no image
-# generator or committed asset (GitLab forbids committing PNGs; P8-D5).
-_TINY_PNG = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGPQSFiAFTEMLQkAzGxKAZU"
-    "LedcAAAAASUVORK5CYII="
-)
+
+# An 8x8 solid PNG, generated with PIL at runtime so the logo scenario
+# needs no committed asset (GitLab forbids committing PNGs; P8-D5). PIL
+# writes a standard RGBA PNG that wx's decoder accepts -- this replaces
+# a hand-embedded base64 PNG that PIL tolerated but wx rejected (VM).
+def _write_tiny_logo(path: Path) -> None:
+    """Write a deterministic 8x8 solid PNG to *path* (PIL, dev dep)."""
+    import io  # noqa: PLC0415 -- dev-time generator, not a runtime import
+
+    from PIL import Image  # noqa: PLC0415 -- dev-time generator, not a runtime import
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", (8, 8), (30, 90, 160, 255)).save(buffer, format="PNG")
+    path.write_bytes(buffer.getvalue())
 
 
 def _about_dialog_route_renders_version_and_gorba_link() -> dict[str, Any]:
@@ -2865,7 +2872,7 @@ def _about_dialog_uses_the_ride_logo_bitmap() -> dict[str, Any]:
     try:
         with tempfile.TemporaryDirectory(prefix="rc-about-logo-") as tmp:
             logo_path = Path(tmp) / "logo.png"
-            logo_path.write_bytes(base64.b64decode(_TINY_PNG))
+            _write_tiny_logo(logo_path)
             view = AboutDialog(window, logo_path=logo_path)
             bitmap = view.about_logo_bmp.GetBitmap()
             file_bitmap = wx.Bitmap(str(logo_path), wx.BITMAP_TYPE_PNG)

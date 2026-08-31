@@ -1153,7 +1153,10 @@ def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stu
         if top is not None:
             return top
     for top in reversed(wx.GetTopLevelWindows()):
-        if top.IsModal():
+        # IsModal is a wx.Dialog method -- the top-level scan also
+        # yields frames (measured: 'Frame' object has no attribute
+        # 'IsModal' in the VM), so only dialogs are tested.
+        if isinstance(top, wx.Dialog) and top.IsModal():
             return top
     app = wx.GetApp()
     if app is not None:
