@@ -206,9 +206,13 @@ def _unresolved(window: Any, names: tuple[str, ...]) -> list[str]:  # noqa: ANN4
 def _broken_tree(destination: Path, delete: str) -> Path:
     """Copy the build inputs to *destination*, minus one asset.
 
-    Copies ``src/``, ``tools/`` and ``installers/`` -- everything the
-    spec reads -- so the build is hermetic and the deletion cannot
-    touch the real tree.
+    Copies ``src/``, ``tools/``, ``installers/``, ``docs/`` and the
+    repo-root ``LICENSE`` -- everything the spec reads -- so the build
+    is hermetic and the deletion cannot touch the real tree. ``docs/``
+    and ``LICENSE`` join the copy because the E9.1.1 docs manifest
+    resolves them against the copied tree's root; without them the
+    build would fail naming a missing doc instead of the deleted
+    bitmap this test is about.
 
     Args:
         destination: An existing, empty directory to copy into.
@@ -218,8 +222,9 @@ def _broken_tree(destination: Path, delete: str) -> Path:
         The copied spec file's path.
     """
     ignore = shutil.ignore_patterns("__pycache__", "*.egg-info")
-    for tree in ("src", "tools", "installers"):
+    for tree in ("src", "tools", "installers", "docs"):
         shutil.copytree(ROOT / tree, destination / tree, ignore=ignore)
+    shutil.copy2(ROOT / "LICENSE", destination / "LICENSE")
     (destination / "src" / "rivercrossing" / "ui" / delete).unlink()
     return destination / "installers" / SPEC.name
 
