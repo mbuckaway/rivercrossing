@@ -73,8 +73,9 @@ from check_asset_manifest import (  # noqa: E402 -- needs the path above
 APP_NAME = "RiverCrossing"  # the .app and its display name
 EXE_NAME = "rivercrossing"  # the executable and the onedir folder
 # Reverse-DNS form of the project's own repository URL
-# (pyproject.toml [project.urls] Repository). E9.1.3 must confirm it
-# against whatever identifier the Apple developer account signs.
+# (pyproject.toml [project.urls] Repository).
+# TODO(E9.1.3): confirm io.github.mbuckaway.rivercrossing against the
+# Apple developer account identifier when signing creds land (E1.1.2).
 BUNDLE_ID = "io.github.mbuckaway.rivercrossing"
 
 ENTRY_SCRIPT = ROOT / "src" / "rivercrossing" / "__main__.py"
