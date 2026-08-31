@@ -121,11 +121,17 @@ def test_main_is_annotated_with_an_int_return_type() -> None:
     assert return_annotation is int
 
 
-def test_main_takes_no_parameters() -> None:
-    """main() is the entry point; nothing supplies it arguments."""
+def test_main_takes_only_the_optional_db_path_override() -> None:
+    """main() is the entry point; only the db override may be passed.
+
+    E9.1.1: the db path override (defaulting to ``None``) is the one
+    argument a caller may supply -- the functional suite stages a temp
+    ``rides.db`` through it. Nothing else may be threaded in.
+    """
     parameters = inspect.signature(app.main).parameters
 
-    assert parameters == {}
+    assert tuple(parameters) == ("db_path",)
+    assert parameters["db_path"].default is None
 
 
 # --- E5.4.2 demo retirement: the seam is gone from app code --------

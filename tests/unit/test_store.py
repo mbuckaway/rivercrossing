@@ -22,9 +22,10 @@ import re
 import sqlite3
 from contextlib import closing
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
+from platformdirs import user_data_dir
 
 import rivercrossing.store as store_module
 from rivercrossing.ride import Event, RideConfig, RideStatus
@@ -42,9 +43,6 @@ from rivercrossing.store import (
 )
 from rivercrossing.store.migrations import LATEST_SCHEMA_VERSION
 from rivercrossing.ui.presenters.data_source import AuditRow
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # The same always-valid kwarg set test_ride.py builds from, so a
 # store test probes one field at a time without second-guessing the
@@ -2007,3 +2005,32 @@ def test_store_audit_rows_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
             store.audit_rows(999)
     finally:
         store.close()
+
+
+# ------------------------------------------------- default_db_path
+# E9.1.1: the bootstrap resolves the rides database path the same way
+# settings.py's default_path resolves settings.json -- platformdirs,
+# per-user, named "RiverCrossing" (the retired mockups'
+# "PokerRunTracker" is superseded). The helper owns both the default
+# and any explicit override so main() has exactly one place the path
+# decision lives.
+
+
+def test_default_db_path_returns_rides_db_under_the_user_data_dir() -> None:
+    """The default db lives directly in platformdirs' user data dir."""
+    path = store_module.default_db_path()
+
+    assert path.name == "rides.db"
+    assert path.parent == Path(user_data_dir("RiverCrossing"))
+
+
+def test_default_db_path_given_an_override_returns_it_verbatim() -> None:
+    """An explicit path wins untouched (tests, diagnostics)."""
+    override = Path("/tmp/rc-custom/rides.db")  # noqa: S108 -- a stored value, never opened here
+
+    assert store_module.default_db_path(override) == override
+
+
+def test_default_db_path_given_none_returns_the_default() -> None:
+    """None means "no override": the platformdirs default stands."""
+    assert store_module.default_db_path(None) == store_module.default_db_path()

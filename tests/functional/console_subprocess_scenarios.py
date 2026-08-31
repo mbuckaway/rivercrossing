@@ -1199,6 +1199,56 @@ def _resume_reopened_ride_shows_reopened_infobar() -> dict[str, Any]:
         _close_without_prompt(frame)
 
 
+# --- E9.1.1: the store-backed bootstrap (main() opens rides.db) -----
+
+
+def _bootstrap_main_launch_resumes_staged_running_ride() -> dict[str, Any]:
+    """main()'s own store-open path: a staged crash shows resume_dlg.
+
+    Unlike the E5.2.2 resume scenarios -- which pass ``store=``
+    straight into ``build_main_window`` -- this drives the exact code
+    :func:`rivercrossing.ui.app.main` runs: ``_bootstrap_window``
+    resolves the db path (:func:`store.default_db_path` with the
+    scenario's override), opens the Store there, and threads it into
+    the window, so the R-52 resume dialog fires with no test-supplied
+    store at all. The staged previous session is a crash (closed_at
+    NULL), so the copy reads the crash wording.
+    """
+    db_path = _resume_db_path("rc-boot-resume-")
+    _create_resumed_ride(
+        db_path,
+        _ResumeRideSpec(
+            quit_cleanly=False,
+            ended_at=datetime(2026, 9, 20, 12, 37),  # noqa: DTZ001 -- local, pinned for the copy
+        ),
+    )
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _probe_and_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["resume_shown"] = dialog is not None and dialog.IsShown()
+        if dialog is None:
+            return
+        found["message_lbl"] = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
+        harness.click(dialog, ids.CONTINUE_BTN)
+
+    wx.CallAfter(_probe_and_continue)
+    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=db_path)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    try:
+        return {
+            "resume_dlg_shown": found.get("resume_shown", False),
+            "message_lbl": found.get("message_lbl", ""),
+            "store_open": store is not None,
+        }
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+
+
 def _confirm_delete_on_dialog(dialog: Any, ride_name: str) -> dict[str, Any]:  # noqa: ANN401
     """Type *ride_name* into the dialog and click Delete; report facts.
 
@@ -2943,6 +2993,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "resume_continue_loads_ride_with_elapsed": _resume_continue_loads_ride_with_elapsed,
     "resume_library_opens_ride_library": _resume_library_opens_ride_library,
     "resume_reopened_ride_shows_reopened_infobar": _resume_reopened_ride_shows_reopened_infobar,
+    "bootstrap_main_launch_resumes_staged_running_ride": (
+        _bootstrap_main_launch_resumes_staged_running_ride
+    ),
     "delete_ride_dlg_backup_written_before_delete": (
         _delete_ride_dlg_backup_written_before_delete
     ),
