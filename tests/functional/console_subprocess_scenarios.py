@@ -105,6 +105,7 @@ import harness
 import pages
 import scenario_runner
 import wx
+import wx.adv
 import wx.dataview
 import wx.xrc
 
@@ -116,6 +117,7 @@ from rivercrossing.store import Store
 from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids, sound, theme
+from rivercrossing.ui import help as help_module
 from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
@@ -126,6 +128,7 @@ from rivercrossing.ui.presenters.settings import (
     save_settings,
 )
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
+from rivercrossing.ui.views.about import AboutDialog
 from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 from rivercrossing.ui.views.ride_library import COL_NAME, COL_STATUS
 from rivercrossing.ui.views.shortcuts import ShortcutsDialog
@@ -2711,6 +2714,185 @@ def _shortcuts_dialog_renders_injected_rows() -> dict[str, Any]:
     return found
 
 
+# --- E8.2.2: Help ▸ User Guide / F1 deep-links the active window ---
+
+
+def _user_guide_url_from_dialog(dialog_name: str, menu_item_id: str) -> dict[str, Any]:
+    """Open *dialog_name*, fire F1 inside it, return the captured facts.
+
+    The dialog opens through its own menu route and runs its real
+    modal loop; inside that loop F1 (``mi_user_guide``) fires and
+    ``webbrowser.open``'s URL is captured -- the I/O boundary is
+    monkeypatched (T-10), never the route or the URL builder. The
+    dialog closes via Escape. Reports the shown flag, the captured
+    URL and the status-bar notice the handler posted.
+    """
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+    urls: list[str] = []
+    original_open = help_module.webbrowser.open
+
+    def _capture(url: str) -> bool:
+        urls.append(url)
+        return True
+
+    help_module.webbrowser.open = _capture
+
+    def _probe() -> None:
+        dialog = wx.Window.FindWindowByName(dialog_name)
+        found["dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        _fire_menu_event(frame, ids.MI_USER_GUIDE)
+        harness.pump()
+        found["url"] = urls[-1] if urls else None
+        found["status_text"] = frame.GetStatusBar().GetStatusText(0)
+        _send_escape(dialog)
+
+    try:
+        wx.CallAfter(_probe)
+        harness.fire_menu_event(frame, menu_item_id)
+        harness.pump()
+    finally:
+        help_module.webbrowser.open = original_open
+        _close_without_prompt(frame)
+    return found
+
+
+def _user_guide_from_settings_dialog_opens_anchor() -> dict[str, Any]:
+    """F1 from settings_dlg opens the guide at the Settings anchor."""
+    return _user_guide_url_from_dialog(ids.SETTINGS_DLG, "wxID_PREFERENCES")
+
+
+def _user_guide_from_about_dialog_opens_anchor() -> dict[str, Any]:
+    """F1 from about_dlg opens the guide at the About anchor."""
+    return _user_guide_url_from_dialog(ids.ABOUT_DLG, "wxID_ABOUT")
+
+
+def _user_guide_from_shortcuts_dialog_opens_anchor() -> dict[str, Any]:
+    """F1 from shortcuts_dlg opens the shortcuts appendix anchor."""
+    return _user_guide_url_from_dialog(ids.SHORTCUTS_DLG, ids.MI_SHORTCUTS)
+
+
+def _user_guide_with_no_dialog_opens_default_anchor() -> dict[str, Any]:
+    """F1 with only the main frame open uses the default anchor."""
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    urls: list[str] = []
+    original_open = help_module.webbrowser.open
+
+    def _capture(url: str) -> bool:
+        urls.append(url)
+        return True
+
+    help_module.webbrowser.open = _capture
+    try:
+        _fire_menu_event(frame, ids.MI_USER_GUIDE)
+        harness.pump()
+        return {"url": urls[-1] if urls else None}
+    finally:
+        help_module.webbrowser.open = original_open
+        _close_without_prompt(frame)
+
+
+# --- E8.2.3: the About box (version, gorba link, logo fallback) ------
+
+
+# An 8x8 solid PNG, generated with PIL at runtime so the logo scenario
+# needs no committed asset (GitLab forbids committing PNGs; P8-D5). PIL
+# writes a standard RGBA PNG that wx's decoder accepts -- this replaces
+# a hand-embedded base64 PNG that PIL tolerated but wx rejected (VM).
+def _write_tiny_logo(path: Path) -> None:
+    """Write a deterministic 8x8 solid PNG to *path* (PIL, dev dep)."""
+    import io  # noqa: PLC0415 -- dev-time generator, not a runtime import
+
+    from PIL import Image  # noqa: PLC0415 -- dev-time generator, not a runtime import
+
+    buffer = io.BytesIO()
+    Image.new("RGBA", (8, 8), (30, 90, 160, 255)).save(buffer, format="PNG")
+    path.write_bytes(buffer.getvalue())
+
+
+def _about_dialog_route_renders_version_and_gorba_link() -> dict[str, Any]:
+    """Open Help ▸ About; read version, gorba link, fallback logo facts.
+
+    The bootstrap presenter threads no ride logo (its engine config's
+    ``logo_path`` is None), so ``about_logo_bmp`` must show the
+    non-null app-icon fallback -- dialogs.xrc's own contract. Escape
+    closes the dialog through ``wire_close_button``'s ``wxID_CLOSE``
+    binding.
+    """
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+
+    def _probe() -> None:
+        dialog = wx.Window.FindWindowByName(ids.ABOUT_DLG)
+        found["dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        version_lbl = harness.find_control(dialog, ids.VERSION_LBL)
+        found["version_text"] = version_lbl.GetLabelText()
+        gorba_link = harness.find_control(dialog, ids.GORBA_LINK)
+        found["gorba_is_hyperlink"] = isinstance(gorba_link, wx.adv.HyperlinkCtrl)
+        found["gorba_url"] = gorba_link.GetURL()
+        logo_bmp = harness.find_control(dialog, ids.ABOUT_LOGO_BMP)
+        bitmap = logo_bmp.GetBitmap()
+        found["logo_bitmap_ok"] = bitmap.IsOk()
+        found["logo_bitmap_size"] = [bitmap.GetWidth(), bitmap.GetHeight()]
+        _send_escape(dialog)
+
+    try:
+        wx.CallAfter(_probe)
+        harness.fire_menu_event(frame, "wxID_ABOUT")
+        harness.pump()
+    finally:
+        _close_without_prompt(frame)
+    return found
+
+
+def _about_dialog_uses_the_ride_logo_bitmap() -> dict[str, Any]:
+    """Construct AboutDialog with a logo file; the logo bitmap is used.
+
+    Exercises the constructor seam directly (the shortcuts
+    "renders_injected_rows" pattern): a real PNG ``logo_path`` must
+    set ``about_logo_bmp`` to exactly that file's decoded bitmap, not
+    the app-icon fallback.
+    """
+    found: dict[str, Any] = {}
+    resource = harness.load_xrc_resources()
+    window = harness.load_window(resource, ids.ABOUT_DLG, frame=False)
+    try:
+        with tempfile.TemporaryDirectory(prefix="rc-about-logo-") as tmp:
+            logo_path = Path(tmp) / "logo.png"
+            _write_tiny_logo(logo_path)
+            view = AboutDialog(window, logo_path=logo_path)
+            # The control's GetBitmap can be a scaled copy (measured:
+            # wxStaticBitmap on macOS renders the 8x8 file as 16x16),
+            # and IsSameAs between two freshly-decoded macOS bitmaps is
+            # unreliable, so the "file was used" claim is: the view's
+            # resolved logo_bitmap is valid AND its size is the file's
+            # own 8x8 -- never the 16x16 stock-icon fallback -- while
+            # the control merely carries a non-null bitmap.
+            control_bitmap = view.about_logo_bmp.GetBitmap()
+            found["logo_bitmap_ok"] = view.logo_bitmap.IsOk()
+            found["logo_bitmap_size"] = [
+                view.logo_bitmap.GetWidth(),
+                view.logo_bitmap.GetHeight(),
+            ]
+            found["control_bitmap_ok"] = control_bitmap.IsOk()
+    finally:
+        harness.close_window(window)
+    return found
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "settings_persistence_round_trip": _settings_persistence_round_trip,
@@ -2727,6 +2909,20 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
         _shortcuts_dialog_route_shows_the_accelerator_table
     ),
     "shortcuts_dialog_renders_injected_rows": _shortcuts_dialog_renders_injected_rows,
+    "user_guide_from_settings_dialog_opens_anchor": (
+        _user_guide_from_settings_dialog_opens_anchor
+    ),
+    "user_guide_from_about_dialog_opens_anchor": _user_guide_from_about_dialog_opens_anchor,
+    "user_guide_from_shortcuts_dialog_opens_anchor": (
+        _user_guide_from_shortcuts_dialog_opens_anchor
+    ),
+    "user_guide_with_no_dialog_opens_default_anchor": (
+        _user_guide_with_no_dialog_opens_default_anchor
+    ),
+    "about_dialog_route_renders_version_and_gorba_link": (
+        _about_dialog_route_renders_version_and_gorba_link
+    ),
+    "about_dialog_uses_the_ride_logo_bitmap": _about_dialog_uses_the_ride_logo_bitmap,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,

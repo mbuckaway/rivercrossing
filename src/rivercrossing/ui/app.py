@@ -77,6 +77,9 @@ from rivercrossing.ui import (
     theme,
     zoom,
 )
+from rivercrossing.ui import (
+    help as help_module,
+)
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataSource, RideSummary
@@ -679,7 +682,7 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
         zoom.set_percent(settings.zoom_percent)
 
 
-def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each binds a different view class
+def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target; each binds a different view class
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs
     route: commands.MenuRoute,
@@ -692,11 +695,14 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     ``settings_dlg`` now binds the E8.1.2 viewer (renders the current
     AppSettings and, on OK, persists + applies it). E8.2.1 adds the
     shortcuts dialog: ``shortcuts_dlg`` now binds the E8.2.1 viewer
-    (renders the accelerator table, Key | Action). The remaining plain
-    XRC dialogs with no code-side view class (the correction dialogs)
-    need nothing further here; they already carry their own canvas
+    (renders the accelerator table, Key | Action). E8.2.3 adds the
+    About box: ``about_dlg`` now binds the E8.2.3 viewer (package
+    version, ride-logo-or-app-icon). The remaining plain XRC dialogs
+    with no code-side view class (the correction dialogs) need
+    nothing further here; they already carry their own canvas
     defaults from their own ``.xrc`` authoring.
     """
+    from rivercrossing.ui.views.about import AboutDialog  # noqa: PLC0415
     from rivercrossing.ui.views.audit import AuditDialog  # noqa: PLC0415
     from rivercrossing.ui.views.entry_detail import EntryDetailDialog  # noqa: PLC0415
     from rivercrossing.ui.views.results_win import ResultsWindow  # noqa: PLC0415
@@ -796,6 +802,14 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
         # table -- one Key | Action row per Accelerator -- so the
         # dialog cannot drift from ui.accelerators (xrc-windows.md E).
         ShortcutsDialog(window)
+    elif route.target == ids.ABOUT_DLG:
+        # E8.2.3: the About box renders the package version and the
+        # ride logo -- the live config's logo_path when a ride is
+        # threaded, the app-icon fallback otherwise (about.py's own
+        # contract).
+        presenter = context.presenter
+        logo_path = presenter.engine.config.logo_path if presenter is not None else None
+        AboutDialog(window, logo_path=logo_path)
     elif route.target == ids.AUDIT_DLG:
         # E7.3.1: Audit Trail… opens the real viewer -- newest-first
         # audit_list plus the search/action filters -- over the live
@@ -1113,6 +1127,64 @@ def _handle_preview_browser(context: _RouteContext) -> None:
         return
     _open_in_browser(context.last_export_path)
     context.frame.SetStatusText(f"Opened {context.last_export_path.name}")
+
+
+def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return the app's currently active top-level window, if any.
+
+    The keyboard-focus path first: the focused control's top-level
+    parent is the dialog or frame the operator is actually in. When
+    nothing has focus -- measured: ``FindFocus()`` reads ``None`` for
+    a terminal-launched, unbundled Python that is never the frontmost
+    macOS app (tests/functional/test_dialog_behavior.py), even with a
+    modal dialog open -- the topmost modal dialog stands in (the
+    modal IS the active window while it runs), then the app's top
+    window.
+    """
+    focused = wx.Window.FindFocus()
+    if focused is not None:
+        # logic-coverage-exempt: T-3 -- the keyboard-focus path is
+        # measured unobservable in the VM harness (FindFocus reads
+        # None for a terminal-launched app that is never frontmost,
+        # test_dialog_behavior.py), so its two arms are exercised only
+        # on a real frontmost desktop; the modal/GetTopWindow paths
+        # below carry the functional coverage.
+        top = focused.GetTopLevelParent()
+        if top is not None:
+            return top
+    for top in reversed(wx.GetTopLevelWindows()):
+        # IsModal is a wx.Dialog method -- the top-level scan also
+        # yields frames (measured: 'Frame' object has no attribute
+        # 'IsModal' in the VM), so only dialogs are tested.
+        if isinstance(top, wx.Dialog) and top.IsModal():
+            return top
+    app = wx.GetApp()
+    if app is not None:
+        top = app.GetTopWindow()
+        if top is not None:
+            return top
+    # logic-coverage-exempt: T-3 -- no route handler runs without a
+    # live app and its top window; None only narrows the type for the
+    # caller's default anchor.
+    return None
+
+
+def _handle_open_user_guide(context: _RouteContext) -> None:
+    """Help ▸ User Guide / F1: open the guide at the active anchor.
+
+    E8.2.2: resolves the currently active top-level window
+    (:func:`_active_top_level_window`), maps its XRC name to its
+    user-guide chapter (:func:`~rivercrossing.ui.help.anchor_for`),
+    opens the guide at that anchor in the OS-default browser, and
+    posts the opened URL to the status bar. With no mapped window
+    active the guide opens at its default opening chapter.
+    """
+    wx = require_wx()
+    top = _active_top_level_window(wx)
+    window_name = top.GetName() if top is not None else None
+    anchor = help_module.anchor_for(window_name)
+    url = help_module.open_guide(anchor)
+    context.frame.SetStatusText(f"Opened user guide: {url}")
 
 
 def _handle_focus_tiebreak(context: _RouteContext) -> None:
@@ -1864,6 +1936,7 @@ _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
 _TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
 _TARGET_ACTIONS["focus_tiebreak_control"] = _handle_focus_tiebreak
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
+_TARGET_ACTIONS["open_user_guide"] = _handle_open_user_guide
 
 
 def _correction_route_handler(
@@ -1905,13 +1978,16 @@ def _make_route_handler(  # noqa: PLR0911, C901 -- one early-return per route sp
     :func:`_open_target`'s generic open-and-return. ``csv_preview_dlg``
     (E3.4) is the one
     ``DIALOG`` target that needs a picker run before it opens, ahead
-    of :func:`_open_target`'s generic path. Every other ``COMMAND``
-    row has no window to open and no ride engine yet to run its real
-    action (EPIC 4+); it posts a status-bar notice instead of
-    silently doing nothing. Every other ``WINDOW``/``DIALOG`` row
-    always attempts to open its target through :func:`_open_target`,
-    which posts the same kind of notice if that target has no frozen
-    window yet.
+    of :func:`_open_target`'s generic path. ``open_user_guide``
+    (E8.2.2) opens the bundled guide deep-linked to the active
+    window's anchor (:func:`_handle_open_user_guide`), registered in
+    :data:`_TARGET_ACTIONS` with the export targets. Every other
+    ``COMMAND`` row has no window to open and no ride engine yet to
+    run its real action (EPIC 4+); it posts a status-bar notice
+    instead of silently doing nothing. Every other ``WINDOW``/
+    ``DIALOG`` row always attempts to open its target through
+    :func:`_open_target`, which posts the same kind of notice if that
+    target has no frozen window yet.
     """
     if route.target == "exit_or_quit":
         return lambda _event: _handle_exit_route(context)

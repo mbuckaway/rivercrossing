@@ -189,9 +189,11 @@ main() {
 
   # Headless: RiverCrossing needs no TCC grants, so nothing requires a
   # visible first boot. The only interaction left is the ssh-copy-id
-  # password prompt below, in the terminal.
+  # password prompt below, in the terminal. --no-audio keeps the
+  # template's boot (and any app it ever launches) off the host
+  # speakers -- the functional suite's WAV cues must never pass through.
   echo "Booting ${TEMPLATE_NAME} (headless)..."
-  tart run --no-graphics "${TEMPLATE_NAME}" &
+  tart run --no-graphics --no-audio "${TEMPLATE_NAME}" &
 
   local vm_ip
   if ! vm_ip="$(wait_for_vm_ip "${TEMPLATE_NAME}")"; then

@@ -188,7 +188,10 @@ main() {
   fi
   CLONE_CREATED="true"
 
-  tart run --no-graphics "${CLONE_NAME}" &
+  # --no-audio: the guest's wx.adv.Sound cues (recorded/flagged/error)
+  # must not pass through to the host Mac's speakers during a test run;
+  # sound.py already degrades to silence when no audio device exists.
+  tart run --no-graphics --no-audio "${CLONE_NAME}" &
 
   local vm_ip
   if ! vm_ip="$(wait_for_guest "${CLONE_NAME}")"; then
