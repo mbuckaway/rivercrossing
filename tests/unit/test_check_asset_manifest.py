@@ -155,7 +155,7 @@ def test_missing_docs_given_the_real_source_tree_finds_nothing_absent() -> None:
 
 
 def test_docs_data_entries_maps_every_doc_onto_the_package_docs_path() -> None:
-    """PyInstaller datas must land every doc under ``rivercrossing/docs``.
+    """PyInstaller datas land every doc under ``rivercrossing/docs``.
 
     Pinned to the literal string, not ``manifest.DOCS_PACKAGE_DEST``
     itself: the destination is the *containing folder* PyInstaller
@@ -176,9 +176,7 @@ def test_verify_docs_given_a_deleted_font_license_names_the_missing_file(
     tmp_path: Path,
 ) -> None:
     """T-5 negative: the raise carries the path, not just a count."""
-    shutil.copytree(
-        _PACKAGE_DIR / "pdfexport" / "fonts", tmp_path / "pdfexport" / "fonts"
-    )
+    shutil.copytree(_PACKAGE_DIR / "pdfexport" / "fonts", tmp_path / "pdfexport" / "fonts")
     shutil.copytree(
         _PACKAGE_DIR / "htmlexport" / "templates" / "fonts",
         tmp_path / "htmlexport" / "templates" / "fonts",
@@ -195,9 +193,7 @@ def test_docs_data_entries_given_a_missing_doc_raises_instead_of_listing_entries
     tmp_path: Path,
 ) -> None:
     """The spec cannot obtain doc datas without passing the check."""
-    shutil.copytree(
-        _PACKAGE_DIR / "pdfexport" / "fonts", tmp_path / "pdfexport" / "fonts"
-    )
+    shutil.copytree(_PACKAGE_DIR / "pdfexport" / "fonts", tmp_path / "pdfexport" / "fonts")
     shutil.copytree(
         _PACKAGE_DIR / "htmlexport" / "templates" / "fonts",
         tmp_path / "htmlexport" / "templates" / "fonts",

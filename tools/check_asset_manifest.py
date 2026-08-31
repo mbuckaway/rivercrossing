@@ -20,18 +20,24 @@ package *root* rather than under ``ui/``, so they get their own small
 manifest instead of a root-level entry inside ``required_assets()``,
 whose every other entry is ``ui/``-relative.
 
+``docs_data_entries`` is the E9.1.1 addition: the user guide and the
+four license texts ship under ``rivercrossing/docs/``, sourced from
+two trees -- the guide and the project ``LICENSE`` at the repo root,
+and the three font OFL texts inside the package next to the fonts they
+cover.
+
 Run it directly to check a tree without waiting for a build::
 
     python tools/check_asset_manifest.py
     python tools/check_asset_manifest.py --ui-dir path/to/ui
     python tools/check_asset_manifest.py --package-dir path/to/pkg
 
-``main()`` checks all four manifests -- ``verify_assets``,
-``verify_vectors``, ``verify_templates`` and ``verify_pdf_fonts`` --
-so a tree missing either the ``ui/`` assets, the two self-test vector
-CSVs, the five htmlexport template artifacts or the three PDF report
-TTFs fails this direct check the same way it would fail the real
-build.
+``main()`` checks all five manifests -- ``verify_assets``,
+``verify_vectors``, ``verify_templates``, ``verify_pdf_fonts`` and
+``verify_docs`` -- so a tree missing either the ``ui/`` assets, the
+two self-test vector CSVs, the five htmlexport template artifacts, the
+three PDF report TTFs or any of the five docs fails this direct check
+the same way it would fail the real build.
 """
 
 import argparse
@@ -134,6 +140,81 @@ REQUIRED_PDF_FONTS: tuple[str, ...] = (
     "DejaVuSans.ttf",
 )
 PDF_FONTS_PACKAGE_DEST = f"rivercrossing/{PDF_FONTS_SUBDIR}"
+
+# E9.1.1: the release bundle's docs -- the user guide (E8.2.2) and the
+# license texts the bundle must carry: the project's GPL-3.0 LICENSE,
+# and the OFL texts for the three vendored font faces (Barlow, Barlow
+# Condensed, DejaVu). All five land under ``rivercrossing/docs/`` in
+# the bundle, where ``rivercrossing.ui.help.guide_path`` resolves the
+# guide from its own ``__file__`` (``module_path.parents[1] / "docs" /
+# "user-guide.html"``). The sources are not one tree: the guide and
+# the project license live at the repo root beside ``tools/``, and the
+# three font licenses ride in the package next to the fonts they
+# cover. The originals ship verbatim -- SIMPLECODE rule 1: nothing in
+# the bundle renders an aggregate notices file, so none is authored.
+DOCS_SUBDIR = "docs"
+REQUIRED_DOCS: tuple[str, ...] = (
+    "user-guide.html",
+    "LICENSE",
+    "OFL-Barlow.txt",
+    "OFL-DejaVu.txt",
+    "OFL.txt",
+)
+DOCS_PACKAGE_DEST = f"rivercrossing/{DOCS_SUBDIR}"
+
+# Where each shipped doc lives in the source tree, per name. The
+# repo-root pair resolve against the module's own ``_ROOT``; the
+# package pair resolve against the package dir the spec passes in.
+_REPO_ROOT_DOCS: dict[str, str] = {
+    "user-guide.html": "docs/user-guide.html",
+    "LICENSE": "LICENSE",
+}
+_PACKAGE_DOCS: dict[str, str] = {
+    "OFL-Barlow.txt": "pdfexport/fonts/OFL-Barlow.txt",
+    "OFL-DejaVu.txt": "pdfexport/fonts/OFL-DejaVu.txt",
+    "OFL.txt": "htmlexport/templates/fonts/OFL.txt",
+}
+
+
+def _doc_source_paths(package_dir: Path) -> dict[str, Path]:
+    """Map every required doc name to its source path."""
+    sources = {name: _ROOT / relative for name, relative in _REPO_ROOT_DOCS.items()}
+    sources.update({name: package_dir / relative for name, relative in _PACKAGE_DOCS.items()})
+    return sources
+
+
+def _doc_relative_paths() -> dict[str, str]:
+    """Map every required doc name to its source-relative path."""
+    return {**_REPO_ROOT_DOCS, **_PACKAGE_DOCS}
+
+
+def missing_docs(package_dir: Path) -> tuple[str, ...]:
+    """List every required doc absent from its source location."""
+    sources = _doc_source_paths(package_dir)
+    return tuple(
+        relative for name, relative in _doc_relative_paths().items() if not sources[name].is_file()
+    )
+
+
+def verify_docs(package_dir: Path) -> None:
+    """Assert the tree ships every required doc.
+
+    Raises:
+        MissingAssetError: Naming every absent file.
+    """
+    missing = missing_docs(package_dir)
+    if missing:
+        raise MissingAssetError(f"docs missing from {package_dir}: {', '.join(missing)}")
+
+
+def docs_data_entries(package_dir: Path) -> list[tuple[str, str]]:
+    """Return PyInstaller ``(source, destination)`` pairs, docs.
+
+    Raises:
+        MissingAssetError: If any required doc is absent.
+    """
+    verify_docs(package_dir)
+    return [(str(source), DOCS_PACKAGE_DEST) for source in _doc_source_paths(package_dir).values()]
 
 
 class MissingAssetError(FileNotFoundError):
@@ -317,13 +398,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Check all four trees for a missing asset; 0 if complete."""
+    """Check all five trees for a missing asset; 0 if complete."""
     args = _build_parser().parse_args(argv)
     try:
         verify_assets(args.ui_dir)
         verify_vectors(args.package_dir)
         verify_templates(args.package_dir)
         verify_pdf_fonts(args.package_dir)
+        verify_docs(args.package_dir)
     except MissingAssetError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
@@ -331,6 +413,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"{args.package_dir}: all {len(REQUIRED_VECTORS)} required vectors present")
     print(f"{args.package_dir}: all {len(REQUIRED_TEMPLATES)} required templates present")
     print(f"{args.package_dir}: all {len(REQUIRED_PDF_FONTS)} required pdf fonts present")
+    print(f"{args.package_dir}: all {len(REQUIRED_DOCS)} required docs present")
     return 0
 
 
