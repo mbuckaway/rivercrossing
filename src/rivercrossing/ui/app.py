@@ -570,6 +570,19 @@ class _StoreLibrarySource:
         ]
 
 
+def _wire_store_append(engine: RideEngine, store: Store, ride_id: int) -> None:
+    """Persist every future engine event to *store* (E9.1.3).
+
+    Attaches the store's append as the engine's event sink: from here
+    on, every mutation the engine records -- crossings, undo,
+    corrections, lifecycle -- writes one audit row per event. Called
+    only after ``store.load_engine``'s replay completes, so the
+    replayed tail is never re-persisted (the sink is off during
+    replay; ``RideEngine.on_event`` docstring).
+    """
+    engine.on_event = lambda event: store.append(ride_id, event)
+
+
 def _switch_console_to_ride(
     context: _RouteContext, ride_id: int, clock: Callable[[], datetime] | None = None
 ) -> None:
@@ -591,6 +604,7 @@ def _switch_console_to_ride(
         return
     roster = store.roster_for(ride_id)
     engine = store.load_engine(ride_id, roster, clock=clock)
+    _wire_store_append(engine, store, ride_id)
     source = EngineDataSource(engine, roster)
     presenter = ConsolePresenter(context.console_view, engine=engine, source=source)
     context.console_view.set_presenter(presenter)
@@ -2181,6 +2195,9 @@ def _resume_console_engine(
             context.active_ride_id = ride_id
             roster = store.roster_for(ride_id)
             engine = store.load_engine(ride_id, roster, clock=clock)
+            # E9.1.3: after replay, every live event the resumed
+            # engine records persists to the store.
+            _wire_store_append(engine, store, ride_id)
             return engine, EngineDataSource(engine, roster)
     finally:
         if not dialog.IsBeingDeleted():

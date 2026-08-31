@@ -390,7 +390,9 @@ class RideEngine:
     - **Event shape.** Every mutation appends and returns an
       ``Event(action, payload)`` mirroring ``roster.AuditEvent``;
       ``record_crossing`` additionally returns ``CrossingResult`` for
-      the caller while its ``Event`` lands in :attr:`events`.
+      the caller while its ``Event`` lands in :attr:`events`. Each
+      append also hands the event to :attr:`on_event` when a sink is
+      attached (E9.1.3) -- the app's Store.append seam.
     - **CrossingResult shape.** ``accepted`` + ``reason`` carry the
       refusal; ``entry_id``/``entry_name``/``lap``/``lap_time`` carry
       the success. The skeleton's ``card``/``ShortLapFlagged`` fields
@@ -569,6 +571,11 @@ class RideEngine:
         self._held: dict[Crossing, Card] = {}
         self._hand: dict[str, list[Card]] = {}
         self._events: list[Event] = []
+        # E9.1.3: the persistence sink. The app attaches
+        # Store.append(ride_id, event) here AFTER load_engine's replay,
+        # so every live mutation writes one audit row and the replayed
+        # tail is never re-persisted (see _append).
+        self.on_event: Callable[[Event], None] | None = None
         # E7.1.1: voided crossings (crossing + card, in void order) and
         # voided cards. Compensating writes, never deletes -- the live
         # lap sequence drops the crossing, the record keeps it.
@@ -1542,8 +1549,15 @@ class RideEngine:
         return self._actual_start
 
     def _append(self, event: Event) -> Event:
-        """Append *event* to :attr:`events` and return it."""
+        """Append *event* to :attr:`events` and return it.
+
+        Also hands *event* to :attr:`on_event` when a sink is attached
+        (E9.1.3) -- the one seam every engine mutation persists
+        through, whatever command produced it.
+        """
         self._events.append(event)
+        if self.on_event is not None:
+            self.on_event(event)
         return event
 
     # ------------------------------------- E5.1.2 replay seam: apply
