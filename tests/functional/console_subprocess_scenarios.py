@@ -1249,6 +1249,50 @@ def _bootstrap_main_launch_resumes_staged_running_ride() -> dict[str, Any]:
         _close_without_prompt(frame)
 
 
+def _new_ride_writes_a_ride_row() -> dict[str, Any]:
+    """Persist a ride row when New Ride submits over an open store.
+
+    Drives the real ``mi_new_ride`` route on a store-backed app: the
+    setup dialog opens (modal), the scenario fills the required fields
+    and clicks OK, and the app's on-submitted wiring calls
+    ``Store.create_ride`` + ``Store.save_roster``. The library summary
+    then lists exactly the new ride -- the write path no production
+    code had before.
+    """
+    db_path = _resume_db_path("rc-new-ride-")
+    store = Store.open(db_path)
+    frame = _build_app_window(store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+
+    def _fill_and_submit() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
+        if dialog is None:
+            return
+        harness.type_text(dialog, ids.NAME_INPUT, "Fresh Ride 2026")
+        harness.type_text(dialog, ids.VENUE_INPUT, "Guelph Lake")
+        harness.type_text(dialog, ids.ORGANIZER_INPUT, "GORBA")
+        harness.type_text(dialog, ids.SCORER_INPUT, "K. Singh")
+        harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
+        harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+        harness.click(dialog, "wxID_OK")
+
+    try:
+        wx.CallAfter(_fill_and_submit)
+        harness.fire_menu_event(frame, "mi_new_ride")
+        harness.pump()
+        rides = store.rides()
+        found["ride_count"] = len(rides)
+        found["ride_names"] = [ride.name for ride in rides]
+        found["ride_statuses"] = [ride.status.value for ride in rides]
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+    return found
+
+
 def _confirm_delete_on_dialog(dialog: Any, ride_name: str) -> dict[str, Any]:  # noqa: ANN401
     """Type *ride_name* into the dialog and click Delete; report facts.
 
@@ -2996,6 +3040,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "bootstrap_main_launch_resumes_staged_running_ride": (
         _bootstrap_main_launch_resumes_staged_running_ride
     ),
+    "new_ride_writes_a_ride_row": _new_ride_writes_a_ride_row,
     "delete_ride_dlg_backup_written_before_delete": (
         _delete_ride_dlg_backup_written_before_delete
     ),

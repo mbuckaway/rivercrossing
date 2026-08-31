@@ -42,3 +42,14 @@ def test_bootstrap_opens_the_store_and_resume_dlg_shows_crash_wording() -> None:
     assert "GORBA EPIC 2026" in data["message_lbl"], result["context"]
     # spec §3's crash wording, from the pinned last heartbeat.
     assert "closed unexpectedly at 12:37" in data["message_lbl"], result["context"]
+
+
+def test_new_ride_writes_a_ride_row() -> None:
+    """New Ride over an open store persists a ride row (E9.1.2)."""
+    result = scenario_runner.run_scenario("new_ride_writes_a_ride_row")
+
+    data = result["data"]
+    assert data["ride_count"] == 1, result["context"]
+    assert data["ride_names"] == ["Fresh Ride 2026"], result["context"]
+    # create_ride writes the stored status; a fresh ride starts DRAFT.
+    assert data["ride_statuses"] == ["draft"], result["context"]
