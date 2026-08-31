@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Unit tests for the PDF-font manifest in check_asset_manifest.py (P7).
+"""Unit tests for the PDF-font and docs manifests (P7, E9.1.1).
 
 The bundle-smoke suite (tests/functional/test_bundle_smoke.py) asserts
 the full manifest against a *built* bundle; this module pins the new
-PDF-font half against the *source* tree, so the wiring fails fast in
-the headless suite without waiting for a PyInstaller build. ``tools/``
-is a dev-script tree, not an installed package, so the module under
-test is loaded from its file path (the pattern
-test_gen_htmlexport_goldens.py established).
+PDF-font half (P7) and the E9.1.1 docs half against the *source* tree,
+so the wiring fails fast in the headless suite without waiting for a
+PyInstaller build. ``tools/`` is a dev-script tree, not an installed
+package, so the module under test is loaded from its file path (the
+pattern test_gen_htmlexport_goldens.py established).
 """
 
 import importlib.util
@@ -115,3 +115,96 @@ def test_main_given_a_complete_tree_reports_the_pdf_font_count(
     expected = f"all {len(manifest.REQUIRED_PDF_FONTS)} required pdf fonts present"
     assert exit_code == 0
     assert expected in capsys.readouterr().out
+
+
+# ------------------------------------------------- the docs manifest
+
+# E9.1.1: the release bundle's docs -- the user guide (E8.2.2) and the
+# four license texts -- land under rivercrossing/docs/, sourced from
+# two trees: the guide + project LICENSE at the repo root, and the
+# three font OFL texts inside the package next to the fonts they cover.
+
+
+def test_required_docs_declares_the_five_shipped_docs() -> None:
+    """A doc disappearing must shrink this, not the suite."""
+    assert len(manifest.REQUIRED_DOCS) == 5
+    assert set(manifest.REQUIRED_DOCS) == {
+        "user-guide.html",
+        "LICENSE",
+        "OFL-Barlow.txt",
+        "OFL-DejaVu.txt",
+        "OFL.txt",
+    }
+
+
+def test_source_tree_doc_names_match_the_required_manifest_exactly() -> None:
+    """Sets, not counts: a renamed doc leaves the sets unequal.
+
+    The manifest ships only what ``docs_data_entries`` names, so the
+    entry sources' names must equal ``REQUIRED_DOCS`` exactly -- a
+    stray or renamed file would leave the sets unequal.
+    """
+    sources = [Path(source) for source, _destination in manifest.docs_data_entries(_PACKAGE_DIR)]
+
+    assert sorted(path.name for path in sources) == sorted(manifest.REQUIRED_DOCS)
+
+
+def test_missing_docs_given_the_real_source_tree_finds_nothing_absent() -> None:
+    """The tree both the wheel and the bundle are built from."""
+    assert manifest.missing_docs(_PACKAGE_DIR) == ()
+
+
+def test_docs_data_entries_maps_every_doc_onto_the_package_docs_path() -> None:
+    """PyInstaller datas must land every doc under ``rivercrossing/docs``.
+
+    Pinned to the literal string, not ``manifest.DOCS_PACKAGE_DEST``
+    itself: the destination is the *containing folder* PyInstaller
+    puts a source's own filename into, so ``"rivercrossing"`` alone
+    would drop the guide one directory too high -- exactly where
+    ``help.guide_path``'s bundled lookup (``parents[1] / "docs"``)
+    would never find it.
+    """
+    entries = manifest.docs_data_entries(_PACKAGE_DIR)
+    destinations = {destination for _source, destination in entries}
+    sources = [Path(source) for source, _destination in entries]
+
+    assert destinations == {"rivercrossing/docs"}
+    assert sorted(path.name for path in sources) == sorted(manifest.REQUIRED_DOCS)
+
+
+def test_verify_docs_given_a_deleted_font_license_names_the_missing_file(
+    tmp_path: Path,
+) -> None:
+    """T-5 negative: the raise carries the path, not just a count."""
+    shutil.copytree(
+        _PACKAGE_DIR / "pdfexport" / "fonts", tmp_path / "pdfexport" / "fonts"
+    )
+    shutil.copytree(
+        _PACKAGE_DIR / "htmlexport" / "templates" / "fonts",
+        tmp_path / "htmlexport" / "templates" / "fonts",
+    )
+    (tmp_path / "pdfexport" / "fonts" / "OFL-Barlow.txt").unlink()
+
+    with pytest.raises(
+        manifest.MissingAssetError, match=re.escape("pdfexport/fonts/OFL-Barlow.txt")
+    ):
+        manifest.verify_docs(tmp_path)
+
+
+def test_docs_data_entries_given_a_missing_doc_raises_instead_of_listing_entries(
+    tmp_path: Path,
+) -> None:
+    """The spec cannot obtain doc datas without passing the check."""
+    shutil.copytree(
+        _PACKAGE_DIR / "pdfexport" / "fonts", tmp_path / "pdfexport" / "fonts"
+    )
+    shutil.copytree(
+        _PACKAGE_DIR / "htmlexport" / "templates" / "fonts",
+        tmp_path / "htmlexport" / "templates" / "fonts",
+    )
+    (tmp_path / "htmlexport" / "templates" / "fonts" / "OFL.txt").unlink()
+
+    with pytest.raises(
+        manifest.MissingAssetError, match=re.escape("htmlexport/templates/fonts/OFL.txt")
+    ):
+        manifest.docs_data_entries(tmp_path)
