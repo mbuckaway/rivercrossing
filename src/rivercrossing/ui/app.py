@@ -742,7 +742,17 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # correct empty state until a real ride is opened.
         RiderEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
-        RideSetup(window, roster=context.roster)
+        # E9.1.2: with a store open, a committed New Ride persists the
+        # ride row and the roster the dialog was opened on; with no
+        # store the dialog keeps its E3.5 in-memory behavior.
+        def _persist_created_ride(config: RideConfig) -> None:
+            store = context.store
+            if store is None:
+                return
+            ride_id = store.create_ride(config)
+            store.save_roster(ride_id, context.roster)
+
+        RideSetup(window, roster=context.roster, on_submitted=_persist_created_ride)
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1: with a live console threaded AND a concrete entry
         # selected (context.detail_plate, recorded when entry detail
