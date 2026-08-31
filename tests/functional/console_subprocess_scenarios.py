@@ -89,6 +89,7 @@ code to diagnose -- the same empty-pipe failure mode
 case.
 """
 
+import base64
 import faulthandler
 import json
 import os
@@ -127,6 +128,7 @@ from rivercrossing.ui.presenters.settings import (
     save_settings,
 )
 from rivercrossing.ui.views import MainFrame, dialogs, rider_editor
+from rivercrossing.ui.views.about import AboutDialog
 from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 from rivercrossing.ui.views.ride_library import COL_NAME, COL_STATUS
 from rivercrossing.ui.views.shortcuts import ShortcutsDialog
@@ -2798,6 +2800,82 @@ def _user_guide_with_no_dialog_opens_default_anchor() -> dict[str, Any]:
         _close_without_prompt(frame)
 
 
+# --- E8.2.3: the About box (version, gorba link, logo fallback) ------
+
+# An 8x8 solid PNG, embedded so the logo scenario needs no image
+# generator or committed asset (GitLab forbids committing PNGs; P8-D5).
+_TINY_PNG = (
+    "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGPQSFiAFTEMLQkAzGxKAZU"
+    "LedcAAAAASUVORK5CYII="
+)
+
+
+def _about_dialog_route_renders_version_and_gorba_link() -> dict[str, Any]:
+    """Open Help ▸ About; read version, gorba link, fallback logo facts.
+
+    The bootstrap presenter threads no ride logo (its engine config's
+    ``logo_path`` is None), so ``about_logo_bmp`` must show the
+    non-null app-icon fallback -- dialogs.xrc's own contract. Escape
+    closes the dialog through ``wire_close_button``'s ``wxID_CLOSE``
+    binding.
+    """
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+
+    def _probe() -> None:
+        dialog = wx.Window.FindWindowByName(ids.ABOUT_DLG)
+        found["dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        version_lbl = harness.find_control(dialog, ids.VERSION_LBL)
+        found["version_text"] = version_lbl.GetLabelText()
+        gorba_link = harness.find_control(dialog, ids.GORBA_LINK)
+        found["gorba_is_hyperlink"] = isinstance(gorba_link, wx.HyperlinkCtrl)
+        found["gorba_url"] = gorba_link.GetURL()
+        logo_bmp = harness.find_control(dialog, ids.ABOUT_LOGO_BMP)
+        bitmap = logo_bmp.GetBitmap()
+        found["logo_bitmap_ok"] = bitmap.IsOk()
+        found["logo_bitmap_size"] = [bitmap.GetWidth(), bitmap.GetHeight()]
+        _send_escape(dialog)
+
+    try:
+        wx.CallAfter(_probe)
+        harness.fire_menu_event(frame, "wxID_ABOUT")
+        harness.pump()
+    finally:
+        _close_without_prompt(frame)
+    return found
+
+
+def _about_dialog_uses_the_ride_logo_bitmap() -> dict[str, Any]:
+    """Construct AboutDialog with a logo file; the logo bitmap is used.
+
+    Exercises the constructor seam directly (the shortcuts
+    "renders_injected_rows" pattern): a real PNG ``logo_path`` must
+    set ``about_logo_bmp`` to exactly that file's decoded bitmap, not
+    the app-icon fallback.
+    """
+    found: dict[str, Any] = {}
+    resource = harness.load_xrc_resources()
+    window = harness.load_window(resource, ids.ABOUT_DLG, frame=False)
+    try:
+        with tempfile.TemporaryDirectory(prefix="rc-about-logo-") as tmp:
+            logo_path = Path(tmp) / "logo.png"
+            logo_path.write_bytes(base64.b64decode(_TINY_PNG))
+            view = AboutDialog(window, logo_path=logo_path)
+            bitmap = view.about_logo_bmp.GetBitmap()
+            file_bitmap = wx.Bitmap(str(logo_path), wx.BITMAP_TYPE_PNG)
+            found["logo_bitmap_ok"] = bitmap.IsOk()
+            found["logo_bitmap_size"] = [bitmap.GetWidth(), bitmap.GetHeight()]
+            found["logo_matches_file"] = bitmap.IsSameAs(file_bitmap)
+    finally:
+        harness.close_window(window)
+    return found
+
+
 _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "sash_round_trip": _sash_round_trip,
     "settings_persistence_round_trip": _settings_persistence_round_trip,
@@ -2824,6 +2902,10 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "user_guide_with_no_dialog_opens_default_anchor": (
         _user_guide_with_no_dialog_opens_default_anchor
     ),
+    "about_dialog_route_renders_version_and_gorba_link": (
+        _about_dialog_route_renders_version_and_gorba_link
+    ),
+    "about_dialog_uses_the_ride_logo_bitmap": _about_dialog_uses_the_ride_logo_bitmap,
     "hide_times_columns_round_trip": _hide_times_columns_round_trip,
     "hide_times_leaves_clock_shown": _hide_times_leaves_clock_shown,
     "state_enablement_round_trip": _state_enablement_round_trip,
