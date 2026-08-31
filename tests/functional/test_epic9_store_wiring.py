@@ -16,6 +16,10 @@ end against a real ``rides.db``:
   when a store is open.
 - (c) every recorded crossing appends an ``audit`` row via
   ``Store.append`` -- not just plate entry, but every engine event.
+- (d) after the New Ride flow submits, the console switches onto the
+  new ride (E9.1.4): the ride-name label shows it, the state is DRAFT,
+  and a crossing typed after Start lands on the new ride (a feed row
+  appears and an ``audit`` row is written for the new ride's id).
 
 Each scenario mutates process-global state (the bootstrap modal, the
 live console engine, the quit flag), so each runs in a fresh, spawned
@@ -64,3 +68,23 @@ def test_record_crossing_appends_an_audit_row() -> None:
     # The staged ride already held a start event; the typed crossing
     # appends after it -- the engine event log, in order.
     assert data["actions"][-1] == "record_crossing", result["context"]
+
+
+def test_new_ride_switches_console_and_accepts_crossings() -> None:
+    """After New Ride, the console runs the new ride (E9.1.4)."""
+    result = scenario_runner.run_scenario("new_ride_switches_console_and_accepts_crossings")
+
+    data = result["data"]
+    # The console switched onto the new ride: its name is on the label.
+    assert data["ride_name_lbl"] == "Fresh Ride 2026", result["context"]
+    # A fresh ride is DRAFT: Start enabled, plate entry disabled.
+    assert data["status_lbl"] == "DRAFT", result["context"]
+    assert data["start_enabled"] is True, result["context"]
+    assert data["plate_enabled"] is False, result["context"]
+    # A crossing typed after the switch lands on the new ride: a feed
+    # row appears and an audit row is written for the new ride.
+    assert data["feed_rows"] >= 1, result["context"]
+    assert data["feed_plate"] == "12", result["context"]
+    assert data["crossings_label"] == "1", result["context"]
+    assert data["has_record_crossing"] is True, result["context"]
+    assert data["audit_actions"][-1] == "record_crossing", result["context"]

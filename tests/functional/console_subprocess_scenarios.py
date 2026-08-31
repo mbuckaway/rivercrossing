@@ -1337,6 +1337,92 @@ def _record_crossing_appends_audit_row() -> dict[str, Any]:
     return found
 
 
+def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noqa: PLR0915 -- scripted modal-driving flow: nested probes + store facts, the scenario pattern this file owns
+    """After New Ride submits, the console runs the new store ride.
+
+    E9.1.4 closes Phase 1's gap: the ride row was persisted, but the
+    console stayed on the bootstrap engine, so crossings typed right
+    after the setup dialog closed hit the empty engine instead of the
+    new ride. This scenario builds a store-backed app, adds one rider
+    to the bootstrap roster (the flow a real operator follows), drives
+    the real ``mi_new_ride`` route through the setup dialog, and then
+    proves the console switched onto the new ride: the ride-name label
+    shows the new ride, the state is DRAFT (Start enabled, plate entry
+    disabled), and after Start a typed crossing lands on the new ride
+    -- a feed row appears and an ``audit`` row is written for the new
+    ride's id.
+    """
+    db_path = _resume_db_path("rc-new-ride-switch-")
+    store = Store.open(db_path)
+    frame = _build_app_window(store=store)
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+    ride_name = "Fresh Ride 2026"
+
+    def _add_rider_and_close() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG)
+        if dialog is None:
+            return
+        harness.type_text(dialog, ids.PLATE_INPUT, "12")
+        harness.type_text(dialog, ids.NAME_INPUT, "Sam Ellis")
+        harness.click(dialog, ids.ADD_BTN)
+        harness.click(dialog, pages.WX_ID_CLOSE)
+
+    def _fill_and_submit() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
+        if dialog is None:
+            return
+        harness.type_text(dialog, ids.NAME_INPUT, ride_name)
+        harness.type_text(dialog, ids.VENUE_INPUT, "Guelph Lake")
+        harness.type_text(dialog, ids.ORGANIZER_INPUT, "GORBA")
+        harness.type_text(dialog, ids.SCORER_INPUT, "K. Singh")
+        harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
+        harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+        harness.click(dialog, "wxID_OK")
+
+    try:
+        wx.CallAfter(_add_rider_and_close)
+        harness.fire_menu_event(frame, "mi_rider_editor")
+        harness.pump()
+
+        wx.CallAfter(_fill_and_submit)
+        harness.fire_menu_event(frame, "mi_new_ride")
+        harness.pump()
+
+        rides = store.rides()
+        ride_id = rides[0].id
+        found["ride_name_lbl"] = harness.find_control(frame, ids.RIDE_NAME_LBL).GetLabelText()
+        found["status_lbl"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
+        found["start_enabled"] = harness.find_control(frame, ids.START_BTN).IsEnabled()
+        found["plate_enabled"] = harness.find_control(frame, ids.PLATE_INPUT).IsEnabled()
+
+        harness.click(frame, ids.START_BTN)
+        plate_input = harness.find_control(frame, ids.PLATE_INPUT)
+        plate_input.SetValue("12")
+        _post_text_enter(plate_input)
+        harness.pump()
+
+        model = harness.find_control(frame, ids.CROSSINGS_LIST).GetModel()
+        found["feed_rows"] = model.GetCount()
+        found["feed_plate"] = (
+            model.GetValueByRow(0, feed_model.COL_PLATE) if model.GetCount() > 0 else ""
+        )
+        found["crossings_label"] = harness.find_control(
+            frame, ids.CROSSINGS_COUNT_LBL
+        ).GetLabelText()
+        rows = store._conn.execute(
+            "SELECT action FROM audit WHERE ride_id = ? ORDER BY id", (ride_id,)
+        ).fetchall()
+        found["audit_actions"] = [row["action"] for row in rows]
+        found["has_record_crossing"] = any(row["action"] == "record_crossing" for row in rows)
+    finally:
+        store.close()
+        _close_without_prompt(frame)
+    return found
+
+
 def _confirm_delete_on_dialog(dialog: Any, ride_name: str) -> dict[str, Any]:  # noqa: ANN401
     """Type *ride_name* into the dialog and click Delete; report facts.
 
@@ -3086,6 +3172,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     ),
     "new_ride_writes_a_ride_row": _new_ride_writes_a_ride_row,
     "record_crossing_appends_audit_row": _record_crossing_appends_audit_row,
+    "new_ride_switches_console_and_accepts_crossings": (
+        _new_ride_switches_console_and_accepts_crossings
+    ),
     "delete_ride_dlg_backup_written_before_delete": (
         _delete_ride_dlg_backup_written_before_delete
     ),
