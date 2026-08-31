@@ -96,7 +96,6 @@ import sqlite3
 import sys
 import tempfile
 import threading
-from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -109,10 +108,27 @@ import wx.adv
 import wx.dataview
 import wx.xrc
 
+# E9.2.1: the store-staging helpers the E5/E9 scenarios share moved to
+# store_staging.py (their second consumer, test_full_race.py, made the
+# extraction the rule-of-three call); this file keeps its historical
+# private call sites through the aliases below, so no scenario body
+# needed to change.
+from store_staging import (
+    ResumeRideSpec,
+    append_ride_events,
+    create_library_ride,
+    create_resumed_ride,
+    library_ride_config,
+    library_roster,
+    resume_db_path,
+    resume_ride_config,
+    running_ride_with_roster,
+)
+
 from rivercrossing.cards import Shoe
 from rivercrossing.demo import DemoDataSource
 from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
-from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
@@ -139,6 +155,18 @@ if TYPE_CHECKING:
 __all__ = ["main"]
 
 _SCREENSHOT_DIR = Path(__file__).resolve().parent / "_screenshots"
+
+# Compatibility aliases for this file's private scenario call sites;
+# the shared home is store_staging (module-level comment above).
+_resume_db_path = resume_db_path
+_resume_ride_config = resume_ride_config
+_ResumeRideSpec = ResumeRideSpec
+_append_ride_events = append_ride_events
+_create_resumed_ride = create_resumed_ride
+_library_ride_config = library_ride_config
+_library_roster = library_roster
+_create_library_ride = create_library_ride
+_running_ride_with_roster = running_ride_with_roster
 
 # E8.1.1 hermeticity: every scenario builds the app through
 # _build_app_window, which injects a per-process tmp settings file.
@@ -890,102 +918,6 @@ def _quit_keep_running_writes_closed_at_and_stays_running() -> dict[str, Any]:
 # --- E5.2.2: the resume dialog + reopened banner (R-52) -------------
 
 
-def _resume_db_path(prefix: str) -> Path:
-    """Return a fresh db file path under a temp dir named *prefix*."""
-    return Path(tempfile.mkdtemp(prefix=prefix)) / "rides.db"
-
-
-def _resume_ride_config() -> RideConfig:
-    """Return the store ride config the resume scenarios use."""
-    return RideConfig(
-        name="GORBA EPIC 2026",
-        event_date=date(2026, 9, 20),
-        venue="Sea to Sky Gondola",
-        lap_km=8.0,
-        organizer="GORBA",
-        scorer="K. Singh",
-        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
-        planned_duration_s=21600,
-        min_lap_s=1080,
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class _ResumeRideSpec:
-    """What a resume scenario's store ride must look like.
-
-    ``quit_cleanly`` chooses the previous session's bookkeeping (a
-    clean quit-keep-running, or a crash). ``ended_at`` pins the copy's
-    time in that session row -- ``closed_at`` for a quit,
-    ``heartbeat_at`` for a crash. ``start_at`` appends the ride's
-    start event (the elapsed proof), and ``finish_and_reopen`` appends
-    finish + reopen so the replay lands in REOPENED.
-    """
-
-    quit_cleanly: bool
-    ended_at: datetime | None = None
-    start_at: datetime | None = None
-    finish_and_reopen: bool = False
-
-
-def _append_ride_events(store: Store, ride_id: int, spec: _ResumeRideSpec) -> None:
-    """Append start (and finish+reopen) events for the replay state.
-
-    The events are produced by a real engine over an empty roster with
-    the ride's own shape, exactly as ``store.roster_for`` will rebuild
-    it at launch -- the store persists only the events, and
-    ``load_engine`` reproduces the state by replaying them (E5.1.2).
-    """
-    if spec.start_at is None:
-        return
-    config = _resume_ride_config()
-    roster = Roster(
-        entry_mode=config.entry_mode,
-        plate_model=config.plate_model,
-        max_team_size=config.max_team_size,
-    )
-    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
-    engine = RideEngine(config=config, shoe=shoe, clock=lambda: spec.start_at, roster=roster)
-    store.append(ride_id, engine.start(at=spec.start_at))
-    if spec.finish_and_reopen:
-        store.append(ride_id, engine.finish())
-        store.append(ride_id, engine.reopen())
-
-
-def _create_resumed_ride(db_path: Path, spec: _ResumeRideSpec) -> int:
-    """Create a store ride and a previous session that warrants resume.
-
-    The previous session records the ride as running at exit: closed
-    cleanly (``spec.quit_cleanly`` -- a quit-keep-running) or left
-    open (a crash). ``spec.ended_at`` pins the copy's time in the
-    session row -- ``closed_at`` for a quit, ``heartbeat_at`` for a
-    crash -- so the scenario can assert the exact HH:MM in the wording.
-    """
-    boot = Store.open(db_path)
-    try:
-        ride_id = boot.create_ride(_resume_ride_config())
-        _append_ride_events(boot, ride_id, spec)
-    finally:
-        boot.close()
-
-    session = Store.open(db_path, active_ride_id=ride_id)
-    if spec.quit_cleanly:
-        session.close_session()
-    session.close()
-
-    if spec.ended_at is not None:
-        column = "closed_at" if spec.quit_cleanly else "heartbeat_at"
-        with sqlite3.connect(str(db_path)) as conn:  # commits on exit
-            conn.execute(
-                f"UPDATE app_session SET {column} = ?"  # noqa: S608 -- column is a fixed literal, never input
-                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
-                (int(spec.ended_at.timestamp()),),
-            )
-    return ride_id
-
-
 def _resume_dlg_quit_wording_shows() -> dict[str, Any]:
     """RUNNING_AT_EXIT launch: resume_dlg shows the quit wording."""
     db_path = _resume_db_path("rc-resume-quit-")
@@ -1627,95 +1559,6 @@ def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
 
 
 # --- E5.4.1: the library live on the real DB + the two new routes
-
-
-def _library_ride_config(name: str) -> RideConfig:
-    """Return the store ride config the E5.4.1 scenarios use."""
-    return RideConfig(
-        name=name,
-        event_date=date(2026, 9, 20),
-        venue="Sea to Sky Gondola",
-        lap_km=8.0,
-        organizer="GORBA",
-        scorer="K. Singh",
-        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
-        planned_duration_s=21600,
-        min_lap_s=1080,
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-    )
-
-
-def _library_roster() -> Roster:
-    """Build the MIXED rider_pooled roster the E5.4.1 scenarios persist.
-
-    One solo entry plus one team of two riders with their own plates
-    -- the roster shape ``Store.duplicate_ride`` must copy verbatim
-    and ``Store.roster_for`` must rebuild identically.
-    """
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
-    roster.create_team_entry(
-        display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
-    )
-    return roster
-
-
-def _create_library_ride(path: Path, *, name: str, running: bool) -> int:
-    """Create a store ride with a saved roster; timing when *running*.
-
-    ``running`` appends start + one crossing so the ride reads RUNNING
-    with a recorded lap -- the timing data ``duplicate_ride`` must
-    leave out of the copy.
-    """
-    boot = Store.open(path)
-    try:
-        ride_id = boot.create_ride(_library_ride_config(name))
-        boot.save_roster(ride_id, _library_roster())
-        if running:
-            boot.append(
-                ride_id,
-                Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
-            )
-            boot.append(
-                ride_id,
-                Event(
-                    action="record_crossing",
-                    payload={
-                        "plate": "12",
-                        "entry_id": "12",
-                        "lap": 1,
-                        "crossed_at": "2026-09-20T10:02:00",
-                    },
-                ),
-            )
-    finally:
-        boot.close()
-    return ride_id
-
-
-def _running_ride_with_roster(path: Path) -> int:
-    """Create a running store ride and a quit-keep-running session.
-
-    The previous session records the ride as running at a clean exit,
-    so the launch shows resume_dlg and Continue sets the context's
-    ``active_ride_id`` -- what File ▸ Duplicate Ride… reads (E5.4.1).
-    """
-    boot = Store.open(path)
-    try:
-        ride_id = boot.create_ride(_library_ride_config("GORBA EPIC 2026"))
-        boot.save_roster(ride_id, _library_roster())
-        boot.append(
-            ride_id,
-            Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
-        )
-    finally:
-        boot.close()
-    session = Store.open(path, active_ride_id=ride_id)
-    session.close_session()
-    session.close()
-    return ride_id
 
 
 def _library_live_open_switches_console_context() -> dict[str, Any]:

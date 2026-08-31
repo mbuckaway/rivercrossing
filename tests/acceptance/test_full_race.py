@@ -219,6 +219,14 @@ def _assert_report_ok(report: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def _elapsed_minutes(label: str) -> float:
+    """Parse an ``H:MM:SS`` clock label into minutes."""
+    parts = label.split(":")
+    assert len(parts) == 3, f"unexpected clock label {label!r}"
+    hours, minutes, seconds = (int(part) for part in parts)
+    return hours * 60 + minutes + seconds / 60
+
+
 def test_full_race_kill_quit_relaunch_resumes_ride(
     race_support: ModuleType, tmp_path: Path
 ) -> None:
@@ -233,7 +241,7 @@ def test_full_race_kill_quit_relaunch_resumes_ride(
 
     # Phase 0: the staged db reads RUNNING_AT_EXIT with no crossings.
     staged = store_staging.race_db_facts(db_path)
-    assert staged["crossings"] == 0
+    assert staged["record_crossing_count"] == 0
     assert staged["audit_actions"] == ["start"]
     assert staged["sessions"][-1]["closed_at"] is not None
     assert staged["sessions"][-1]["active_ride_id"] == ride_id
@@ -254,7 +262,7 @@ def test_full_race_kill_quit_relaunch_resumes_ride(
     ], report_a["context"]
 
     killed = store_staging.race_db_facts(db_path)
-    assert killed["crossings"] == 3
+    assert killed["record_crossing_count"] == 3
     assert killed["sessions"][-1]["closed_at"] is None  # the kill never stamped
     assert killed["sessions"][-1]["active_ride_id"] == ride_id
 
@@ -266,12 +274,16 @@ def test_full_race_kill_quit_relaunch_resumes_ride(
     assert data_b["resume_state"] == "crashed", report_b["context"]
     assert "closed unexpectedly" in data_b["resume_message"], report_b["context"]
     assert data_b["status_label"] == "RUNNING", report_b["context"]
-    assert data_b["clock_elapsed"] != "0:00:00", report_b["context"]
+    # The ride clock resumed: elapsed reads ~the staged 90-minute lead
+    # (the preserved actual_start), never a zeroed/fresh-start clock.
+    assert _elapsed_minutes(data_b["clock_elapsed"]) >= _RACE_START_LEAD_MINUTES - 1, (
+        report_b["context"]
+    )
     assert data_b["crossings_recorded"] == 2, report_b["context"]
     assert data_b["feed_rows"] == 5, report_b["context"]  # 3 survived + 2 new
 
     quit_after_crash = store_staging.race_db_facts(db_path)
-    assert quit_after_crash["crossings"] == 5
+    assert quit_after_crash["record_crossing_count"] == 5
     assert quit_after_crash["sessions"][-1]["closed_at"] is not None  # clean quit stamped
     assert quit_after_crash["sessions"][-1]["active_ride_id"] == ride_id
 
@@ -282,8 +294,8 @@ def test_full_race_kill_quit_relaunch_resumes_ride(
     assert data_c["resume_state"] == "running_at_exit", report_c["context"]
     assert "You quit at" in data_c["resume_message"], report_c["context"]
     assert data_c["feed_rows"] == 5, report_c["context"]  # everything survived
-    assert data_c["crossing_rows"] == 5, report_c["context"]
+    assert data_c["recorded_crossings"] == 5, report_c["context"]
 
     final = store_staging.race_db_facts(db_path)
-    assert final["crossings"] == 5
+    assert final["record_crossing_count"] == 5
     assert final["sessions"][-1]["closed_at"] is not None

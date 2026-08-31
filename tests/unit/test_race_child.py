@@ -137,7 +137,7 @@ def test_race_data_carries_verbatim_facts(race_child_module: ModuleType) -> None
         feed_rows=3,
         feed_plates=["12", "12", "12"],
         audit_actions=["start", "record_crossing", "record_crossing"],
-        crossing_rows=3,
+        recorded_crossings=3,
         status_label="RUNNING",
         clock_elapsed="",
     )
@@ -152,7 +152,7 @@ def test_race_data_carries_verbatim_facts(race_child_module: ModuleType) -> None
     assert data["feed_rows"] == 3
     assert data["feed_plates"] == ["12", "12", "12"]
     assert data["audit_actions"] == ["start", "record_crossing", "record_crossing"]
-    assert data["crossing_rows"] == 3
+    assert data["recorded_crossings"] == 3
     assert data["status_label"] == "RUNNING"
     assert data["clock_elapsed"] == ""
 
@@ -195,15 +195,32 @@ def test_race_db_facts_reports_rows_without_inserting_a_session(
 ) -> None:
     """race_db_facts reads tables directly; it never opens a Store."""
     db_path = tmp_path / "rides.db"
-    ride_id = store_staging_module.running_ride_with_roster(db_path)
+    ride_id = store_staging_module.create_library_ride(
+        db_path, name="GORBA EPIC 2026", running=True
+    )
     facts = store_staging_module.race_db_facts(db_path)
     facts_again = store_staging_module.race_db_facts(db_path)
 
-    assert facts["crossings"] == 0
-    assert facts["audit_actions"] == ["start"]
+    # The audit trail is the recorded-crossing proof (Store.append's
+    # one channel); the spec §2 crossing table is only populated by
+    # EPIC 5's writer, so it is deliberately not the fact reported.
+    assert facts["record_crossing_count"] == 1
+    assert facts["audit_actions"] == ["start", "record_crossing"]
     assert [row["id"] for row in facts["rides"]] == [ride_id]
-    # The staged session row is quit-stamped and carries the ride.
-    assert facts["sessions"][-1]["closed_at"] is not None
-    assert facts["sessions"][-1]["active_ride_id"] == ride_id
+    # A staged, non-running ride's session is quit-stamped and carries
+    # no ride (create_library_ride opens no active_ride_id session).
+    assert facts["sessions"][-1]["closed_at"] is None
     # A read must never grow the session table (Store.open would).
     assert len(facts_again["sessions"]) == len(facts["sessions"])
+
+
+def test_running_ride_with_roster_session_carries_the_ride(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """The staged session row is quit-stamped and names the ride."""
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.running_ride_with_roster(db_path)
+    facts = store_staging_module.race_db_facts(db_path)
+
+    assert facts["sessions"][-1]["closed_at"] is not None
+    assert facts["sessions"][-1]["active_ride_id"] == ride_id
