@@ -4,6 +4,21 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-09-01
+
+### Changed — python-review cleanup
+
+- **Per-entry lap index** in the ride engine: `_laps_for` is O(1), removing the O(C²)
+  store-replay path on large rides.
+- **Atomic export writes.** CSV and PDF/poster exports stage to a same-directory temp file
+  and `os.replace`, so a crash mid-export never leaves a truncated artifact.
+- **Subprocess timeouts** in the build tooling (Tailwind CSS compile, icon rasterisation),
+  so a hung tool cannot block a build or CI run indefinitely.
+- **Dead presenters removed** (`SettingsPresenter`, `LibraryPresenter`); the views keep the
+  presenter/view split.
+- **`__all__` declared** on the public modules that lacked it; comment and doc drift cleaned
+  up (README status, demo-seam rule, dialog counts, audit wiring).
+
 ## [1.0.0] - 2026-09-01
 
 ### Added — EPIC 9 (packaging & release)
