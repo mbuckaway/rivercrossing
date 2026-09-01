@@ -96,6 +96,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -193,6 +194,39 @@ def _visible_column_titles(crossings_list: Any) -> list[str]:  # noqa: ANN401
         for index in range(crossings_list.GetColumnCount())
         if not crossings_list.GetColumn(index).IsHidden()
     ]
+
+
+# A CallAfter that drives a route-opened modal can fire mid-decoration,
+# before ShowModal starts: the route's view construction pumps the event
+# queue through its SafeYield-retried control lookups, and a drive that
+# runs then finds the dialog not yet shown -- its OK click is lost and
+# the modal hangs until the child bound (measured on a local Windows
+# box: the ride-setup decoration pumps reliably; the rider-editor one
+# does not). Re-arm on a timer so the synchronous decoration can unwind
+# between attempts; a same-drain CallAfter re-queue would spin instead.
+_DRIVE_WAIT_MS = 50
+_DRIVE_WAIT_ATTEMPTS = 100
+_PENDING_DRIVES: list[Any] = []
+
+
+def _drive_when_shown(
+    name: str, drive: Callable[[Any], None], attempts_left: int = _DRIVE_WAIT_ATTEMPTS
+) -> None:
+    """Run *drive* on dialog *name* once it is a shown modal window.
+
+    Re-schedules itself on a timer while the dialog is not yet shown,
+    and raises after :data:`_DRIVE_WAIT_ATTEMPTS` so a dialog that never
+    opens fails fast instead of hanging the scenario.
+    """
+    dialog = wx.Window.FindWindowByName(name)
+    if dialog is not None and dialog.IsShown():
+        drive(dialog)
+        return
+    if attempts_left <= 0:
+        raise AssertionError(f"dialog {name!r} never became a shown modal window")
+    _PENDING_DRIVES.append(
+        wx.CallLater(_DRIVE_WAIT_MS, _drive_when_shown, name, drive, attempts_left - 1)
+    )
 
 
 _SASH_ROUND_TRIP_ATTEMPTS = 5
@@ -1199,10 +1233,7 @@ def _new_ride_writes_a_ride_row() -> dict[str, Any]:
     harness.pump()
     found: dict[str, Any] = {}
 
-    def _fill_and_submit() -> None:
-        dialog = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
-        if dialog is None:
-            return
+    def _fill_and_submit(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         harness.type_text(dialog, ids.NAME_INPUT, "Fresh Ride 2026")
         harness.type_text(dialog, ids.VENUE_INPUT, "Guelph Lake")
         harness.type_text(dialog, ids.ORGANIZER_INPUT, "GORBA")
@@ -1212,7 +1243,7 @@ def _new_ride_writes_a_ride_row() -> dict[str, Any]:
         harness.click(dialog, "wxID_OK")
 
     try:
-        wx.CallAfter(_fill_and_submit)
+        wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _fill_and_submit)
         harness.fire_menu_event(frame, "mi_new_ride")
         harness.pump()
         rides = store.rides()
@@ -1293,19 +1324,13 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
     found: dict[str, Any] = {}
     ride_name = "Fresh Ride 2026"
 
-    def _add_rider_and_close() -> None:
-        dialog = wx.Window.FindWindowByName(ids.RIDER_EDITOR_DLG)
-        if dialog is None:
-            return
+    def _add_rider_and_close(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         harness.type_text(dialog, ids.PLATE_INPUT, "12")
         harness.type_text(dialog, ids.NAME_INPUT, "Sam Ellis")
         harness.click(dialog, ids.ADD_BTN)
         harness.click(dialog, pages.WX_ID_CLOSE)
 
-    def _fill_and_submit() -> None:
-        dialog = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
-        if dialog is None:
-            return
+    def _fill_and_submit(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         harness.type_text(dialog, ids.NAME_INPUT, ride_name)
         harness.type_text(dialog, ids.VENUE_INPUT, "Guelph Lake")
         harness.type_text(dialog, ids.ORGANIZER_INPUT, "GORBA")
@@ -1315,11 +1340,11 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
         harness.click(dialog, "wxID_OK")
 
     try:
-        wx.CallAfter(_add_rider_and_close)
+        wx.CallAfter(_drive_when_shown, ids.RIDER_EDITOR_DLG, _add_rider_and_close)
         harness.fire_menu_event(frame, "mi_rider_editor")
         harness.pump()
 
-        wx.CallAfter(_fill_and_submit)
+        wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _fill_and_submit)
         harness.fire_menu_event(frame, "mi_new_ride")
         harness.pump()
 
