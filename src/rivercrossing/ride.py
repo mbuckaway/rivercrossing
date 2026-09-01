@@ -33,6 +33,7 @@ reason as above); ``RideEngine``'s own docstring records the full
 doc-silence list.
 """
 
+from bisect import insort
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
@@ -567,6 +568,13 @@ class RideEngine:
         self._actual_start: datetime | None = None
         self._stopped = False
         self._crossings: list[Crossing] = []
+        # Per-entry lap index (review fix): entry_id -> its live
+        # crossings sorted by crossed_at, holding the SAME Crossing
+        # objects _crossings holds. _laps_for reads this instead of
+        # scanning the ride-wide list, so Store.load_engine replay and
+        # snapshot() stay linear; _insert_crossing/_remove_crossing/
+        # _replace_crossing keep the two structures in lockstep.
+        self._laps: dict[str, list[Crossing]] = {}
         self._dealt: dict[Crossing, Card] = {}
         self._held: dict[Crossing, Card] = {}
         self._hand: dict[str, list[Card]] = {}
@@ -781,7 +789,7 @@ class RideEngine:
         seq = len(laps) + 1
         card = self._deal_card()
         crossing = Crossing(entry_id=entry.plate, seq=seq, crossed_at=crossed_at)
-        self._crossings.append(crossing)
+        self._insert_crossing(crossing)
         self._dealt[crossing] = card
         self._roster.mark_has_data(entry)
         previous = laps[-1].crossed_at if laps else start
@@ -914,7 +922,8 @@ class RideEngine:
             raise IllegalStateError(f"cannot undo from {self._state}")
         if not self._crossings:
             raise IllegalStateError("no crossings to undo")
-        last = self._crossings.pop()
+        last = self._crossings[-1]
+        self._remove_crossing(last)
         card = self._dealt.pop(last)
         self._held.pop(last, None)
         hand = self._hand.get(last.entry_id)
@@ -1083,7 +1092,7 @@ class RideEngine:
         if hand is not None and card in hand:
             hand.remove(card)
         self._voided_cards.add(card)
-        self._crossings.remove(crossing)
+        self._remove_crossing(crossing)
         self._voided.append((crossing, card))
         self._renumber_later(crossing.entry_id, crossing.seq)
         return self._append(
@@ -1136,7 +1145,7 @@ class RideEngine:
         seq = len(laps) + 1
         card = self._deal_card()
         crossing = Crossing(entry_id=entry.plate, seq=seq, crossed_at=crossed_at)
-        self._crossings.append(crossing)
+        self._insert_crossing(crossing)
         self._dealt[crossing] = card
         self._hand.setdefault(entry.plate, []).append(card)
         self._roster.mark_has_data(entry)
@@ -1206,11 +1215,11 @@ class RideEngine:
         if hand is not None and card in hand:
             hand.remove(card)
         self._dealt.pop(crossing)
-        self._crossings.remove(crossing)
+        self._remove_crossing(crossing)
         self._renumber_later(old_entry_id, old_seq)
         new_seq = len(self._laps_for(entry.plate)) + 1
         replacement = Crossing(entry_id=entry.plate, seq=new_seq, crossed_at=crossing.crossed_at)
-        self._crossings.append(replacement)
+        self._insert_crossing(replacement)
         self._dealt[replacement] = card
         if held is not None:
             self._held[replacement] = held
@@ -1492,17 +1501,40 @@ class RideEngine:
     def _laps_for(self, entry_id: str) -> tuple[Crossing, ...]:
         """Return *entry_id*'s live crossings, earliest crossing first.
 
-        Sorted by ``crossed_at`` (stable), never by record order:
-        corrections can insert or move a crossing to an explicit past
-        time (``add_crossing_at``/``edit_crossing``/
-        ``reassign_crossing``), so the derived lap sequence -- and
-        therefore every lap time -- must follow the clock, not the
-        append log. Two crossings at the same instant keep record order
-        (Python's stable sort).
+        A plain read of the per-entry index: O(1), never a scan of the
+        ride-wide record list. The index is kept time-sorted by the
+        three private mutators below, so the derived lap sequence --
+        and therefore every lap time -- follows the clock, not the
+        append log: corrections can insert or move a crossing to an
+        explicit past time (``add_crossing_at``/``edit_crossing``/
+        ``reassign_crossing``). Two crossings at the same instant keep
+        record order (``insort`` inserts after equal keys).
         """
-        laps = [crossing for crossing in self._crossings if crossing.entry_id == entry_id]
-        laps.sort(key=lambda crossing: crossing.crossed_at)
-        return tuple(laps)
+        return tuple(self._laps.get(entry_id, ()))
+
+    def _insert_crossing(self, crossing: Crossing) -> None:
+        """Append *crossing* to the ride record and index it per entry.
+
+        The record list keeps ride-wide append order; the per-entry
+        index keeps ``crossed_at`` order so ``_laps_for`` is a dict
+        read. ``insort`` (right) inserts after equal keys, matching
+        the record-order tie-break the old stable sort gave.
+        """
+        self._crossings.append(crossing)
+        laps = self._laps.setdefault(crossing.entry_id, [])
+        insort(laps, crossing, key=lambda c: c.crossed_at)
+
+    def _remove_crossing(self, crossing: Crossing) -> None:
+        """Drop *crossing* from the ride record and its entry's index.
+
+        The index key disappears with its last crossing, so entries
+        with no live laps keep reporting an empty tuple.
+        """
+        self._crossings.remove(crossing)
+        laps = self._laps[crossing.entry_id]
+        laps.remove(crossing)
+        if not laps:
+            del self._laps[crossing.entry_id]
 
     def _require_crossing(self, entry_id: str, seq: int) -> Crossing:
         """Return the live crossing *entry_id*/*seq* names, or raise.
@@ -1526,7 +1558,11 @@ class RideEngine:
         (``edit_crossing`` re-times it, ``void_crossing``/
         ``reassign_crossing`` renumber later laps): the crossing's
         dealt card -- and its hold, when held -- travel to the
-        replacement so the deal accounting never drifts.
+        replacement so the deal accounting never drifts. The per-entry
+        index follows: a same-entry replacement takes *old*'s slot
+        (stable re-sort only when the time changed, so tied instants
+        keep record order); a cross-entry move re-indexes under the
+        new entry.
         """
         index = self._crossings.index(old)
         self._crossings[index] = new
@@ -1535,6 +1571,20 @@ class RideEngine:
         held = self._held.pop(old, None)
         if held is not None:
             self._held[new] = held
+        laps = self._laps[old.entry_id]
+        if old.entry_id == new.entry_id:
+            position = laps.index(old)
+            laps[position] = new
+            if new.crossed_at != old.crossed_at:
+                laps.sort(key=lambda c: c.crossed_at)
+        else:
+            # logic-coverage-exempt: T-3 -- defensive for a cross-entry
+            # caller; today edit_crossing/_renumber_later are always
+            # same-entry, so this arm is unreachable.
+            laps.remove(old)
+            if not laps:
+                del self._laps[old.entry_id]
+            self._insert_crossing(new)
 
     def _renumber_later(self, entry_id: str, after_seq: int) -> None:
         """Decrement every later live crossing's seq by one (E7.1.2).

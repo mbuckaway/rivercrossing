@@ -44,6 +44,7 @@ Written FIRST, against a module that does not exist yet: this file is
 red until rivercrossing/csvio.py lands.
 """
 
+import os
 import re
 import tempfile
 from dataclasses import replace
@@ -54,6 +55,7 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from rivercrossing import csvio
 from rivercrossing.cards import Card
 from rivercrossing.csvio import (
     CsvIoError,
@@ -1764,6 +1766,98 @@ def test_export_placed_none_on_finished_ride_writes_plain_header(tmp_path: Path)
     export(roster, path)
 
     assert _read_lines(path)[0] == _relay_header(DEFAULT_MAX_TEAM_SIZE)
+
+
+# ------------------------------------------- R-52 atomic export writes
+
+
+def test_export_stages_a_same_directory_temp_file_then_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """export() swaps the destination in wholesale via os.replace().
+
+    The recording double forwards to the real os.replace, so the test
+    proves both halves of the R-52 guarantee at once: the write goes to
+    a same-directory temp sibling first (never truncating the
+    destination in place), and after the swap no temp file remains.
+    """
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+    calls: list[tuple[str, str]] = []
+    real_replace = os.replace
+
+    def recording_replace(src: str, dst: str) -> None:
+        calls.append((str(src), str(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+
+    export(roster, path)
+
+    assert calls == [(str(path.with_name(path.name + ".tmp")), str(path))]
+    assert _read_lines(path) == [_relay_header(DEFAULT_MAX_TEAM_SIZE), "1,Alex,solo,,,,,"]
+    assert sorted(tmp_path.iterdir()) == [path]
+
+
+def test_export_standings_stages_a_temp_file_then_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """export_standings() stages a temp sibling, then swaps it in."""
+    path = tmp_path / "standings.csv"
+    placed = [_placed("88", "9S 9D 9C 9H 2C", laps=11, total_time=20_000.0)]
+    calls: list[tuple[str, str]] = []
+    real_replace = os.replace
+
+    def recording_replace(src: str, dst: str) -> None:
+        calls.append((str(src), str(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+
+    export_standings(placed, path, show_times=True)
+
+    assert calls == [(str(path.with_name(path.name + ".tmp")), str(path))]
+    assert _read_lines(path)[1] == "1,88,Rider,11,Four of a Kind — Nines,20000.0"
+    assert sorted(tmp_path.iterdir()) == [path]
+
+
+def test_export_failure_during_replace_leaves_the_previous_file_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash at the swap leaves the old complete file intact."""
+    path = tmp_path / "out.csv"
+    path.write_text("previous complete export\n", encoding="utf-8")
+    roster = _relay_roster()
+    roster.create_solo_entry(name="Alex", plate="1")
+
+    def crashing_replace(_src: str, _dst: str) -> None:
+        raise OSError("simulated crash during atomic replace")
+
+    monkeypatch.setattr(os, "replace", crashing_replace)
+
+    with pytest.raises(OSError, match=re.escape("simulated crash")):
+        export(roster, path)
+
+    assert path.read_text(encoding="utf-8") == "previous complete export\n"
+
+
+def test_csvio_all_lists_the_public_api_sorted() -> None:
+    """csvio.__all__ exposes every public symbol, sorted (RUF022)."""
+    assert csvio.__all__ == sorted(csvio.__all__)
+    assert set(csvio.__all__) == {
+        "CsvIoError",
+        "ImportConflict",
+        "ImportConflictsPresentError",
+        "ImportPreview",
+        "ImportReport",
+        "ParsedEntry",
+        "ParsedRider",
+        "commit",
+        "export",
+        "export_standings",
+        "preview",
+    }
 
 
 def test_export_finished_ride_with_empty_placed_raises_naming_plate(tmp_path: Path) -> None:

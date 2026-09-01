@@ -48,7 +48,7 @@ def main() -> int:
         harness.close_window(frame)
         harness.flush_deferred_deletions()
         gc.collect()
-        # pump longer than the 1 s tick period so a dangling timer fires
+        # Pump longer than the 1 s tick period so a dangling timer fires
         deadline = time.time() + 1.6
         while time.time() < deadline:
             wx.SafeYield()

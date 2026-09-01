@@ -41,6 +41,18 @@ if TYPE_CHECKING:
     from rivercrossing.hands import EvaluatedHand
     from rivercrossing.standings import Placed
 
+__all__ = [
+    "CardPair",
+    "EventInfo",
+    "ExportOptions",
+    "LapsBoardRow",
+    "RacePayload",
+    "ResultRow",
+    "TimeBoardRow",
+    "racejson",
+    "render",
+]
+
 CardPair = tuple[str, str]
 """One drawn card as embedded in the JSON record: ``(rank, suit)``,
 e.g. ``("9", "s")``, or ``("JK", "j")`` for a joker.

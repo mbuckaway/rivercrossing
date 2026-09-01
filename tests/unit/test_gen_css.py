@@ -33,6 +33,7 @@ from collections.abc import (  # noqa: TC003 -- used at runtime as return types 
 )
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
+from unittest.mock import Mock
 
 import pytest
 from hypothesis import given
@@ -375,6 +376,66 @@ def test_run_tailwind_cli_failing_cli_raises_tailwind_compile_error(
 
     with pytest.raises(gen_css.TailwindCompileError, match=re.escape("synthetic failure")):
         gen_css._run_tailwind_cli([])
+
+
+def test_run_tailwind_cli_passes_timeout_120_to_subprocess_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pinned CLI cannot hang the build; run() gets timeout=120."""
+    cli = tmp_path / "tailwindcss"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+    mock_run = Mock(return_value=Mock())
+    monkeypatch.setattr(gen_css.subprocess, "run", mock_run)
+
+    gen_css._run_tailwind_cli(["--cwd", str(tmp_path)])
+
+    mock_run.assert_called_once_with(
+        [str(cli), "--cwd", str(tmp_path)],
+        cwd=gen_css._ROOT,
+        capture_output=True,
+        check=True,
+        timeout=120,
+    )
+
+
+def test_run_tailwind_cli_timeout_raises_tailwind_timeout_error_naming_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung CLI surfaces as TailwindTimeoutError, never silently."""
+    cli = tmp_path / "tailwindcss"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+
+    def _run_times_out(*_args: object, **_kwargs: object) -> bytes:
+        raise subprocess.TimeoutExpired("tailwindcss", timeout=120)
+
+    monkeypatch.setattr(gen_css.subprocess, "run", _run_times_out)
+
+    with pytest.raises(gen_css.TailwindTimeoutError, match=re.escape("120")):
+        gen_css._run_tailwind_cli([])
+
+
+def test_main_check_flag_returns_two_when_tailwind_cli_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A hung CLI fails the build loudly, never a silent pass."""
+    fixture = _fixture_templates_dir(tmp_path / "templates")
+    cli = tmp_path / "fake-cli"
+    cli.write_bytes(b"#!/bin/sh\nexit 0\n")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+
+    def _run_times_out(*_args: object, **_kwargs: object) -> bytes:
+        raise subprocess.TimeoutExpired("tailwindcss", timeout=120)
+
+    monkeypatch.setattr(gen_css.subprocess, "run", _run_times_out)
+
+    exit_code = gen_css.main(
+        ["--check", "--templates-dir", str(fixture), "--out-dir", str(tmp_path / "out")]
+    )
+
+    assert exit_code == 2
+    assert "120" in capsys.readouterr().err
 
 
 # -------------------------------------- Windows CLI resolution (E6.2.1)

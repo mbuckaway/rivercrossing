@@ -2375,7 +2375,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
         store=store,
         settings=loaded_settings,
         settings_path=settings_path,
-        # presenter is threaded below with dataclasses.replace, once the
+        # Presenter is threaded below with dataclasses.replace, once the
         # live console exists; the resume flow and route binding only
         # need the pieces already set here.
     )

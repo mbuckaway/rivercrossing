@@ -44,7 +44,6 @@ from rivercrossing.ui.presenters import (
     EntryDetail,
     EntryLapRow,
     FeedRow,
-    LibraryPresenter,
     LibraryView,
     ManualDeal,
     ResultsPresenter,
@@ -53,7 +52,6 @@ from rivercrossing.ui.presenters import (
     RiderRow,
     RidersView,
     RideSummary,
-    SettingsPresenter,
     SettingsView,
     SetupView,
     StandingsRow,
@@ -411,10 +409,8 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
         # (view, engine, source) -- covered by its own dedicated
         # tests/unit/presenters/test_console.py suite.
         (ResultsPresenter, FakeResultsView()),
-        (LibraryPresenter, FakeLibraryView()),
         (DetailPresenter, FakeDetailView()),
         (AuditPresenter, FakeAuditView()),
-        (SettingsPresenter, FakeSettingsView()),
     ],
 )
 def test_presenter_holds_the_view_and_data_source_it_was_given(

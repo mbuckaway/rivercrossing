@@ -17,9 +17,10 @@ lap length, duration, shoe composition, card cap and tie-break order are all per
 
 ## Status
 
-**Pre-release, in active development.** EPIC 1 of 9 — the runnable UI shell — is being built now: all 23
-windows, the full menu system and every dialog, running on macOS and Windows with demo data behind a
-removable seam. No scoring engine and no database yet.
+**EPIC 9 of 9 — v1.0.0.** The scoring engine (cards, hands, standings, ride) is wired into the running
+app, every crossing persists to SQLite through the store, and results export as HTML, PDF and CSV.
+Corrections — edit, void, reassign, reopen — land in an append-only audit trail, and the macOS and
+Windows installers are built and smoke-tested.
 
 See [design/docs-md/project-plan.md](design/docs-md/project-plan.md) for the full nine-EPIC plan.
 
@@ -59,8 +60,9 @@ and `RiverCrossing-<version>-windows-arm64-setup.exe`, and uploads them as build
    unsigned by decision until EPIC 9 (R-01). Click **More info**, then **Run anyway**.
 3. The app installs per-user — no administrator prompt — under
    `%LOCALAPPDATA%\Programs\RiverCrossing`, with a Start-menu entry. Launch **RiverCrossing** from the
-   Start menu. The current build opens the D1 demo shell: all 23 windows, the full menu system and
-   every dialog, on demo data.
+   Start menu. The app opens its store-backed main window: a ride that was running at the last exit
+   resumes from SQLite, otherwise you land in the empty state (no demo data), ready to create or open
+   a ride.
 4. Uninstall from Windows **Settings ▸ Apps**, or run `uninstall.exe` from the install directory.
    Removal cleans the install directory, the Start-menu entry and the registry entry.
 

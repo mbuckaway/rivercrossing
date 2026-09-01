@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from rivercrossing import hands
 from rivercrossing.ride import IllegalStateError, RideStatus, StartBlockedError
 from rivercrossing.ui.presenters.data_source import format_duration
-from rivercrossing.ui.sound import Cue  # re-exported; see module docstring
+from rivercrossing.ui.sound import Cue  # Re-exported; see module docstring
 
 if TYPE_CHECKING:
     from collections.abc import Callable

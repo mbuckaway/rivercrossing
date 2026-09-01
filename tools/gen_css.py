@@ -99,6 +99,10 @@ class TailwindCompileError(RuntimeError):
     """Raised when the Tailwind CLI exits non-zero."""
 
 
+class TailwindTimeoutError(RuntimeError):
+    """Raised when the pinned Tailwind CLI does not finish in time."""
+
+
 def _sha256_hex(path: Path) -> str:
     """Return the lowercase hex sha256 of *path*."""
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -163,6 +167,7 @@ def _run_tailwind_cli(argv: Sequence[str]) -> bytes:
     Raises:
         TailwindCliMissingError: The pinned CLI is not installed.
         TailwindCompileError: The CLI exited non-zero.
+        TailwindTimeoutError: The CLI did not finish within 120s.
     """
     if not _tailwind_executable().is_file():
         msg = (
@@ -177,7 +182,11 @@ def _run_tailwind_cli(argv: Sequence[str]) -> bytes:
             cwd=_ROOT,
             capture_output=True,
             check=True,
+            timeout=120,
         )
+    except subprocess.TimeoutExpired as exc:
+        msg = f"tailwindcss did not finish within {exc.timeout}s"
+        raise TailwindTimeoutError(msg) from exc
     except subprocess.CalledProcessError as exc:
         stderr = exc.stderr.decode("utf-8", errors="replace").strip()
         msg = f"tailwindcss exited {exc.returncode}: {stderr}"
@@ -215,6 +224,7 @@ def build_artifacts(templates_dir: Path, work_dir: Path) -> tuple[bytes, bytes]:
     Raises:
         TailwindCliMissingError: The pinned CLI is not installed.
         TailwindCompileError: The CLI exited non-zero.
+        TailwindTimeoutError: The CLI did not finish within 120s.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
     (work_dir / "wrapper.css").write_text(_WRAPPER_CSS, encoding="utf-8")
@@ -326,7 +336,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.write:
             return _run_write(args.templates_dir, args.out_dir)
         return _run_check(args.templates_dir, args.out_dir)
-    except (TailwindCliMissingError, TailwindCompileError, OSError) as exc:
+    except (TailwindCliMissingError, TailwindCompileError, TailwindTimeoutError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

@@ -13,6 +13,7 @@ established for ``tools/gen_ids.py``.
 import importlib.util
 import re
 import string
+import subprocess
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
 from unittest.mock import Mock
@@ -220,3 +221,103 @@ def test_main_given_a_successful_pipeline_returns_zero_and_reports_the_dir(
     fake_generate.assert_called_once_with(branding_dir, build_dir)
     assert exit_code == 0
     assert str(branding_dir) in capsys.readouterr().out
+
+
+# ------------------------------------------- subprocess timeout guard
+
+
+def test_run_rsvg_convert_passes_timeout_60_and_creates_output_parent_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """rsvg-convert runs with a 60s timeout (hung render)."""
+    svg_path = tmp_path / "icon.svg"
+    svg_path.write_text("<svg/>", encoding="utf-8")
+    out_path = tmp_path / "nested" / "icon_16x16.png"
+    mock_run = Mock(return_value=Mock())
+    monkeypatch.setattr(gen_app_icons.subprocess, "run", mock_run)
+
+    gen_app_icons._run_rsvg_convert(svg_path, out_path, (16, 16))
+
+    assert out_path.parent.is_dir()
+    mock_run.assert_called_once_with(
+        [
+            "rsvg-convert",
+            "--width",
+            "16",
+            "--height",
+            "16",
+            "--output",
+            str(out_path),
+            str(svg_path),
+        ],
+        check=True,
+        timeout=60,
+    )
+
+
+def test_run_rsvg_convert_timeout_propagates_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung rsvg-convert raises TimeoutExpired; never swallowed."""
+    svg_path = tmp_path / "icon.svg"
+    svg_path.write_text("<svg/>", encoding="utf-8")
+    out_path = tmp_path / "icon_16x16.png"
+
+    def _run_times_out(*_args: object, **_kwargs: object) -> None:
+        raise subprocess.TimeoutExpired("rsvg-convert", timeout=60)
+
+    monkeypatch.setattr(gen_app_icons.subprocess, "run", _run_times_out)
+
+    with pytest.raises(subprocess.TimeoutExpired, match=re.escape("rsvg-convert")):
+        gen_app_icons._run_rsvg_convert(svg_path, out_path, (16, 16))
+
+
+def test_run_iconutil_passes_timeout_60(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """/usr/bin/iconutil runs with a 60s timeout."""
+    iconset_path = tmp_path / "AppIcon.iconset"
+    icns_path = tmp_path / "RiverCrossing.icns"
+    mock_run = Mock(return_value=Mock())
+    monkeypatch.setattr(gen_app_icons.subprocess, "run", mock_run)
+
+    gen_app_icons._run_iconutil(iconset_path, icns_path)
+
+    mock_run.assert_called_once_with(
+        ["/usr/bin/iconutil", "-c", "icns", "-o", str(icns_path), str(iconset_path)],
+        check=True,
+        timeout=60,
+    )
+
+
+def test_render_background_tiffutil_passes_timeout_60(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """/usr/bin/tiffutil runs with a 60s timeout."""
+    branding_dir = tmp_path / "branding"
+    build_dir = tmp_path / "build"
+    build_dir.mkdir(parents=True)
+    svg_path = branding_dir / "svg" / "dmg_background.svg"
+    svg_path.parent.mkdir(parents=True)
+    svg_path.write_text("<svg/>", encoding="utf-8")
+    one_x = build_dir / "dmg_background_660x400.png"
+    two_x = build_dir / "dmg_background_1320x800.png"
+    one_x.write_bytes(b"png")
+    two_x.write_bytes(b"png")
+    mock_run = Mock(return_value=Mock())
+    monkeypatch.setattr(gen_app_icons.subprocess, "run", mock_run)
+
+    gen_app_icons._render_background(branding_dir, build_dir)
+
+    assert mock_run.call_count == 3
+    assert all(call.kwargs["timeout"] == 60 for call in mock_run.call_args_list)
+    mock_run.assert_called_with(
+        [
+            "/usr/bin/tiffutil",
+            "-cathidpicheck",
+            str(one_x),
+            str(two_x),
+            "-out",
+            str(branding_dir / "dmg_background.tiff"),
+        ],
+        check=True,
+        timeout=60,
+    )

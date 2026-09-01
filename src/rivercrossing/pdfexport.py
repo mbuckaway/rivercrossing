@@ -35,6 +35,7 @@ imported, keeping the exporter independent of its sibling (and of the
 UI layer's presenters).
 """
 
+import os
 import re
 import zlib
 from dataclasses import dataclass
@@ -1109,6 +1110,21 @@ class _ReportPDF(FPDF):
         self.ln(0.04)
 
 
+def _atomic_write_bytes(path: Path | str, data: bytes) -> None:
+    """Write *data* to *path* atomically: temp sibling, then os.replace.
+
+    The bytes land in a same-directory ``<name>.tmp`` sibling first,
+    then that file is swapped over *path* with :func:`os.replace` --
+    the temp is fully written and closed before the swap -- so a crash
+    mid-export leaves the previous complete PDF in place and a reader
+    never observes a truncated one (R-52).
+    """
+    destination = Path(path)
+    tmp = destination.with_name(destination.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, destination)  # noqa: PTH105 -- R-52 mandates the os.replace atomic swap; tests patch it
+
+
 def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, placed, opts, path) plus the letter/created_at/logo seams
     ride: _RideLike,
     placed: Sequence[Placed],
@@ -1159,7 +1175,7 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
     report = _ReportPDF(ride, opts, letter=letter, created_at=stamp, logo_path=logo_path)
     report.build(placed)
     data = _store_streams_raw(bytes(report.output()))
-    Path(path).write_bytes(data)
+    _atomic_write_bytes(path, data)
 
 
 def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, placed, path) plus the letter/created_at/logo seams
@@ -1213,4 +1229,4 @@ def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, place
     poster = _PosterPDF(ride, letter=letter, created_at=stamp, logo_path=logo_path)
     poster.build(placed)
     data = _store_streams_raw(bytes(poster.output()))
-    Path(path).write_bytes(data)
+    _atomic_write_bytes(path, data)

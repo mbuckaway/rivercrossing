@@ -57,6 +57,21 @@ from rivercrossing.cards import Card, Rank, Suit
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
 
+__all__ = [
+    "NATURAL_HAND_SIZE",
+    "NATURAL_RANK_COUNT",
+    "EvaluatedHand",
+    "HandClass",
+    "InvalidHandError",
+    "SelfTestCheck",
+    "SelfTestReport",
+    "best_hand",
+    "classify_pattern",
+    "compare",
+    "eval5",
+    "self_test",
+]
+
 NATURAL_HAND_SIZE = 5
 # spec section 5: "the 7,462 distinct natural ranks are stored as one
 # integer per entry".
