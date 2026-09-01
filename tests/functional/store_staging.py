@@ -217,9 +217,7 @@ def running_ride_with_roster(path: Path, *, actual_start: datetime | None = None
     start so the resumed clock reads a positive elapsed); the default
     keeps the E5-era pinned 10:00 start for the existing scenarios.
     """
-    start_iso = (
-        actual_start.isoformat() if actual_start is not None else "2026-09-20T10:00:00"
-    )
+    start_iso = actual_start.isoformat() if actual_start is not None else "2026-09-20T10:00:00"
     boot = Store.open(path)
     try:
         ride_id = boot.create_ride(library_ride_config("GORBA EPIC 2026"))
@@ -256,8 +254,7 @@ def race_db_facts(path: Path) -> dict[str, Any]:
     with sqlite3.connect(str(path)) as conn:
         conn.row_factory = sqlite3.Row
         rides = [
-            dict(row)
-            for row in conn.execute("SELECT id, name, status FROM ride ORDER BY id")
+            dict(row) for row in conn.execute("SELECT id, name, status FROM ride ORDER BY id")
         ]
         sessions = [
             dict(row)

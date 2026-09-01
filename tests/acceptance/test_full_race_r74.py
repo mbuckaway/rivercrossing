@@ -410,9 +410,9 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     assert data_b["feed_rows_before"] == _WAVE_CROSSINGS, report_b["context"]
     assert data_b["recorded_crossings_before"] == _WAVE_CROSSINGS, report_b["context"]
     assert data_b["crossings_recorded"] == _RESUME_EXTRA_CROSSINGS, report_b["context"]
-    assert data_b["feed_rows_after"] == _WAVE_CROSSINGS + _RESUME_EXTRA_CROSSINGS, (
-        report_b["context"]
-    )
+    assert data_b["feed_rows_after"] == _WAVE_CROSSINGS + _RESUME_EXTRA_CROSSINGS, report_b[
+        "context"
+    ]
     assert data_b["recorded_crossings_after"] == _WAVE_CROSSINGS + _RESUME_EXTRA_CROSSINGS, (
         report_b["context"]
     )

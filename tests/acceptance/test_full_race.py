@@ -276,9 +276,9 @@ def test_full_race_kill_quit_relaunch_resumes_ride(
     assert data_b["status_label"] == "RUNNING", report_b["context"]
     # The ride clock resumed: elapsed reads ~the staged 90-minute lead
     # (the preserved actual_start), never a zeroed/fresh-start clock.
-    assert _elapsed_minutes(data_b["clock_elapsed"]) >= _RACE_START_LEAD_MINUTES - 1, (
-        report_b["context"]
-    )
+    assert _elapsed_minutes(data_b["clock_elapsed"]) >= _RACE_START_LEAD_MINUTES - 1, report_b[
+        "context"
+    ]
     assert data_b["crossings_recorded"] == 2, report_b["context"]
     assert data_b["feed_rows"] == 5, report_b["context"]  # 3 survived + 2 new
 

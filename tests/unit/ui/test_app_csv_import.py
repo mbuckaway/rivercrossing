@@ -13,8 +13,9 @@ same headless route-test shape ``test_app_exports.py`` /
 ``test_app_ride_switch.py`` use).
 """
 
+from __future__ import annotations
+
 from datetime import date, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
@@ -25,6 +26,8 @@ from rivercrossing.ui import app as app_module
 from rivercrossing.ui.views import rider_editor
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import pytest
 
 
@@ -78,7 +81,7 @@ def _context(
     ride_id: int | None,
     roster: Roster | None = None,
 ) -> app_module._RouteContext:
-    """Build a route context carrying *store*, *ride_id* and *roster*."""
+    """Build a route context carrying *store*, *ride_id*, *roster*."""
     return app_module._RouteContext(
         frame=_StubFrame(),
         resource=None,
@@ -93,7 +96,7 @@ def _context(
 def test_handle_import_csv_committed_import_persists_roster_to_the_active_ride(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A committed CSV import saves the roster to the active store ride."""
+    """A committed CSV import saves the roster to the active ride."""
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     try:
@@ -131,7 +134,7 @@ def test_handle_import_csv_cancelled_import_leaves_the_stored_roster_untouched(
 def test_handle_import_csv_without_a_store_backed_ride_still_runs_the_import_flow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bootstrap (no store ride open) keeps the in-memory-only import."""
+    """Bootstrap (no store ride) keeps the in-memory-only import."""
     roster = _imported_roster()
     context = _context(store=None, ride_id=None, roster=roster)
     flow = Mock(return_value=True)

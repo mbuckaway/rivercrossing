@@ -384,9 +384,7 @@ def _race_record_quit(env: RaceEnv) -> dict[str, Any]:
     plates = [_RECORD_PLATE] * env.crossings
 
     def _read_clock_record_and_quit() -> None:
-        found["clock_elapsed"] = harness.find_control(
-            frame, ids.CLOCK_ELAPSED_LBL
-        ).GetLabelText()
+        found["clock_elapsed"] = harness.find_control(frame, ids.CLOCK_ELAPSED_LBL).GetLabelText()
         found["status_label"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
         feed = _record_crossings(frame, plates)
         found["feed_rows"] = feed["feed_rows"]
