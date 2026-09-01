@@ -88,10 +88,97 @@ def test_parse_race_env_crossings_boundaries(
     race_child_module: ModuleType, crossings_env: str | None, expected: int
 ) -> None:
     """Unset/empty defaults to 3; 0, 1 and many parse verbatim."""
-    db_path, crossings = race_child_module.parse_race_env("race-shared.db", crossings_env)
+    env = race_child_module.parse_race_env("race-shared.db", crossings_env)
 
-    assert db_path == Path("race-shared.db")
-    assert crossings == expected
+    assert env.db_path == Path("race-shared.db")
+    assert env.crossings == expected
+
+
+def test_parse_race_env_returns_the_full_race_env_defaults(
+    race_child_module: ModuleType,
+) -> None:
+    """The new fields default: no CSV, 20 plates, default bound."""
+    env = race_child_module.parse_race_env("race-shared.db", None)
+
+    assert env.csv_path is None
+    assert env.plates == 20
+    assert env.exports_dir is None
+    assert env.bound_seconds == race_child_module.scenario_runner.SCENARIO_CHILD_BOUND_SECONDS
+
+
+def test_parse_race_env_optional_csv_and_exports_dir_parse_to_paths(
+    race_child_module: ModuleType,
+) -> None:
+    """A set RIVERCROSSING_RACE_CSV / _EXPORTS_DIR parse to Paths."""
+    env = race_child_module.parse_race_env(
+        "race-shared.db",
+        None,
+        csv_env="tmp/riders.csv",
+        exports_dir_env="tmp/exports",
+    )
+
+    assert env.csv_path == Path("tmp/riders.csv")
+    assert env.exports_dir == Path("tmp/exports")
+
+
+@pytest.mark.parametrize(
+    ("plates_env", "expected"),
+    [
+        (None, 20),
+        ("", 20),
+        ("1", 1),
+        ("20", 20),
+        ("24", 24),
+    ],
+)
+def test_parse_race_env_plates_boundaries(
+    race_child_module: ModuleType, plates_env: str | None, expected: int
+) -> None:
+    """Unset/empty defaults to 20; 1 and many parse verbatim."""
+    env = race_child_module.parse_race_env("race-shared.db", None, plates_env=plates_env)
+
+    assert env.plates == expected
+
+
+@pytest.mark.parametrize("plates_env", ["0", "-1", "abc"])
+def test_parse_race_env_non_positive_plates_raise_value_error(
+    race_child_module: ModuleType, plates_env: str
+) -> None:
+    """A non-positive or non-integer plate count is refused."""
+    expected = "RIVERCROSSING_RACE_PLATES must be a positive integer"
+    with pytest.raises(ValueError, match=re.escape(expected)):
+        race_child_module.parse_race_env("race-shared.db", None, plates_env=plates_env)
+
+
+def test_parse_race_env_bound_seconds_defaults_and_parses(
+    race_child_module: ModuleType,
+) -> None:
+    """Unset bound uses the passed default; a set one parses."""
+    default = race_child_module.parse_race_env("race-shared.db", None)
+    explicit = race_child_module.parse_race_env(
+        "race-shared.db", None, bound_env="45", default_bound=12
+    )
+
+    assert default.bound_seconds == race_child_module.scenario_runner.SCENARIO_CHILD_BOUND_SECONDS
+    assert explicit.bound_seconds == 45
+
+
+@pytest.mark.parametrize("bound_env", ["0", "abc"])
+def test_parse_race_env_non_positive_bound_raises_value_error(
+    race_child_module: ModuleType, bound_env: str
+) -> None:
+    """A non-positive or non-integer bound is refused."""
+    with pytest.raises(
+        ValueError, match=re.escape("RIVERCROSSING_RACE_BOUND_SECONDS must be a positive integer")
+    ):
+        race_child_module.parse_race_env("race-shared.db", None, bound_env=bound_env)
+
+
+def test_wave_plates_cycles_plates_in_wave_order(race_child_module: ModuleType) -> None:
+    """The scripted wave pattern cycles 1..plates in strict order."""
+    assert race_child_module._wave_plates(5, 3) == ["1", "2", "3", "1", "2"]
+    assert race_child_module._wave_plates(0, 20) == []
+    assert race_child_module._wave_plates(1, 20) == ["1"]
 
 
 def test_parse_race_env_non_numeric_crossings_raises_value_error(
