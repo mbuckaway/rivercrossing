@@ -25,6 +25,7 @@ plates and the per-page footer.
 """
 
 import base64
+import os
 import re
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
@@ -780,3 +781,73 @@ def test_render_logo_keeps_byte_determinism(tmp_path: Path) -> None:
     pdfexport.render(ride, placed, ExportOptions(), second, created_at=stamp, logo_path=logo)
 
     assert first.read_bytes() == second.read_bytes()
+
+
+# -------------------------------------------- R-52 atomic export writes
+
+
+def test_render_stages_a_temp_file_then_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """render() swaps the destination in wholesale via os.replace().
+
+    The recording double forwards to the real os.replace, proving both
+    halves of the R-52 guarantee: the PDF bytes land in a same-directory
+    temp sibling first (the destination is never truncated in place),
+    and after the swap no temp file remains next to it.
+    """
+    out = tmp_path / "results.pdf"
+    calls: list[tuple[str, str]] = []
+    real_replace = os.replace
+
+    def recording_replace(src: str, dst: str) -> None:
+        calls.append((str(src), str(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+
+    pdfexport.render(build_ride(), build_placed(), golden_opts(), out, created_at=FIXED_CREATED)
+
+    assert calls == [(str(out.with_name(out.name + ".tmp")), str(out))]
+    assert out.read_bytes() == GOLDEN_PDF.read_bytes()
+    assert sorted(tmp_path.iterdir()) == [out]
+
+
+def test_podium_poster_stages_a_temp_file_then_atomic_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """podium_poster() also writes via a temp sibling + os.replace()."""
+    out = tmp_path / "poster.pdf"
+    calls: list[tuple[str, str]] = []
+    real_replace = os.replace
+
+    def recording_replace(src: str, dst: str) -> None:
+        calls.append((str(src), str(dst)))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", recording_replace)
+
+    pdfexport.podium_poster(build_ride(), build_placed(), out, created_at=FIXED_CREATED)
+
+    assert calls == [(str(out.with_name(out.name + ".tmp")), str(out))]
+    assert out.read_bytes() == GOLDEN_POSTER.read_bytes()
+    assert sorted(tmp_path.iterdir()) == [out]
+
+
+def test_render_failure_during_replace_leaves_the_previous_file_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crash at the swap leaves the old complete PDF intact."""
+    out = tmp_path / "results.pdf"
+    out.write_bytes(GOLDEN_PDF.read_bytes())
+    ride, placed = build_ride(), build_placed()
+
+    def crashing_replace(_src: str, _dst: str) -> None:
+        raise OSError("simulated crash during atomic replace")
+
+    monkeypatch.setattr(os, "replace", crashing_replace)
+
+    with pytest.raises(OSError, match=re.escape("simulated crash")):
+        pdfexport.render(ride, placed, golden_opts(), out, created_at=FIXED_CREATED)
+
+    assert out.read_bytes() == GOLDEN_PDF.read_bytes()
