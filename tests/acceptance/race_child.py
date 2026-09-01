@@ -40,6 +40,7 @@ from __future__ import annotations
 import faulthandler
 import json
 import os
+import sqlite3
 import sys
 import threading
 from dataclasses import dataclass
@@ -431,20 +432,21 @@ class _ScenarioClock:
         self._now = self._now + timedelta(seconds=seconds)
 
 
-def _staged_timing(store: Store, ride_id: int) -> tuple[datetime, datetime | None]:
+def _staged_timing(conn: sqlite3.Connection, ride_id: int) -> tuple[datetime, datetime | None]:
     """Return ``(actual_start, latest_crossed_at)`` from the audit log.
 
     The child's injected clock bases itself on these so new crossings
     always land strictly after every replayed one (module docstring's
-    R-34 note). Reads the store's own connection like ``_ride_facts``,
-    never a reopen (a reopen would insert another session row).
+    R-34 note). Reads through a plain connection -- ``store._conn`` or
+    a short-lived read connection before the app bootstraps -- never a
+    ``Store.open`` (a reopen would insert another session row).
 
     Raises:
         RuntimeError: *ride_id* has no start event on the shared db.
     """
     start: datetime | None = None
     latest: datetime | None = None
-    rows = store._conn.execute(
+    rows = conn.execute(
         "SELECT action, payload_json FROM audit WHERE ride_id = ? ORDER BY id", (ride_id,)
     ).fetchall()
     for row in rows:
@@ -460,15 +462,23 @@ def _staged_timing(store: Store, ride_id: int) -> tuple[datetime, datetime | Non
     return start, latest
 
 
-def _ride_min_lap_s(store: Store, ride_id: int) -> int:
+def _ride_min_lap_s(conn: sqlite3.Connection, ride_id: int) -> int:
     """Return *ride_id*'s configured ``min_lap_s`` from the ride row."""
-    row = store._conn.execute("SELECT min_lap_s FROM ride WHERE id = ?", (ride_id,)).fetchone()
+    row = conn.execute("SELECT min_lap_s FROM ride WHERE id = ?", (ride_id,)).fetchone()
     if row is None:
         raise RuntimeError(f"no ride with id {ride_id}")
     return int(row["min_lap_s"])
 
 
-def _race_clock(store: Store, ride_id: int) -> _ScenarioClock:
+def _latest_active_ride_id(conn: sqlite3.Connection) -> int | None:
+    """Return the newest session's active ride id, or None."""
+    row = conn.execute(
+        "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return row["active_ride_id"] if row is not None else None
+
+
+def _race_clock(conn: sqlite3.Connection, ride_id: int) -> _ScenarioClock:
     """Build the advanceable clock for the scripted crossing typing.
 
     Starts one lap past the ride's latest recorded crossing (or five
@@ -477,9 +487,9 @@ def _race_clock(store: Store, ride_id: int) -> _ScenarioClock:
     ride's ``min_lap_s`` -- no card is held (R-34) and the standings
     stay deterministic.
     """
-    start, latest = _staged_timing(store, ride_id)
+    start, latest = _staged_timing(conn, ride_id)
     base = (
-        latest + timedelta(seconds=_ride_min_lap_s(store, ride_id))
+        latest + timedelta(seconds=_ride_min_lap_s(conn, ride_id))
         if latest is not None
         else start + timedelta(minutes=5)
     )
@@ -692,8 +702,18 @@ def _race_setup_import_and_run(env: RaceEnv) -> dict[str, Any]:
     if csv_path is None:
         raise RuntimeError(f"{RACE_CSV_ENV} must name a riders CSV")
     found: dict[str, Any] = {"resume_message": ""}
+    # The scripted clock is computed from a plain read BEFORE the app
+    # bootstraps so it can be injected into the engine at launch --
+    # otherwise every typed lap lands milliseconds apart (real wall
+    # time) and flags, holding every card (R-34).
+    with sqlite3.connect(str(env.db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        ride_id = _latest_active_ride_id(conn)
+        if ride_id is None:
+            raise RuntimeError("no ride to resume on the shared db")
+        clock = _race_clock(conn, ride_id)
     wx.CallAfter(lambda: _click_continue_resume(found))
-    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path)
+    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path, clock=clock)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -702,8 +722,7 @@ def _race_setup_import_and_run(env: RaceEnv) -> dict[str, Any]:
     if ride_id is None:
         store.close()
         raise RuntimeError("no ride to resume on the shared db")
-    clock = _race_clock(store, ride_id)
-    lap_seconds = _ride_min_lap_s(store, ride_id)
+    lap_seconds = _ride_min_lap_s(store._conn, ride_id)
     _import_csv_via_route(frame, csv_path)
     status_label = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
     entry_enabled = harness.find_control(frame, ids.PLATE_INPUT).IsEnabled()
@@ -746,8 +765,16 @@ def _race_resume_verify_quit(env: RaceEnv) -> dict[str, Any]:
     File ▸ Exit flow so ``closed_at`` is stamped.
     """
     found: dict[str, Any] = {"resume_message": ""}
+    # Same pre-bootstrap clock injection as the import leg: the extra
+    # crossings must land past the replayed tail without flagging.
+    with sqlite3.connect(str(env.db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        ride_id = _latest_active_ride_id(conn)
+        if ride_id is None:
+            raise RuntimeError("no ride to resume on the shared db")
+        clock = _race_clock(conn, ride_id)
     wx.CallAfter(lambda: _click_continue_resume(found))
-    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path)
+    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path, clock=clock)
     frame.Show()
     frame.Layout()
     harness.pump()
@@ -758,8 +785,7 @@ def _race_resume_verify_quit(env: RaceEnv) -> dict[str, Any]:
         raise RuntimeError("no ride to resume on the shared db")
     feed_before = _feed_rows(frame)
     facts_before = _ride_facts(store, ride_id)
-    clock = _race_clock(store, ride_id)
-    lap_seconds = _ride_min_lap_s(store, ride_id)
+    lap_seconds = _ride_min_lap_s(store._conn, ride_id)
     plates = _wave_plates(env.crossings, env.plates)
     feed = _record_crossings_lapped(frame, clock, plates, lap_seconds)
     status_label = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()

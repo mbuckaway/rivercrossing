@@ -982,7 +982,12 @@ def _handle_import_csv(context: _RouteContext) -> None:
     store = context.store
     if committed and store is not None and context.active_ride_id is not None:
         store.save_roster(context.active_ride_id, context.roster)
-        _switch_console_to_ride(context, context.active_ride_id)
+        presenter = context.presenter
+        # Carry the live engine's clock across the rebuild: a scripted
+        # (injected) clock must survive, or every typed lap after the
+        # import lands milliseconds apart and flags (R-34).
+        clock = presenter.engine.clock if presenter is not None else None
+        _switch_console_to_ride(context, context.active_ride_id, clock=clock)
 
 
 def _handle_export_csv(context: _RouteContext) -> None:

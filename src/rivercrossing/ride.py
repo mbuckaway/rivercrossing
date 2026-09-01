@@ -588,6 +588,18 @@ class RideEngine:
         return self._state
 
     @property
+    def clock(self) -> Callable[[], datetime]:
+        """Return this ride's wall-clock source.
+
+        Exposed read-only so the app's console-rebuild seam
+        (``_switch_console_to_ride``) can carry an injected clock
+        across a store reload -- the R-74 race injects a scripted
+        clock at launch, and the CSV-import rebuild must not drop it
+        or every typed lap would land milliseconds apart and flag.
+        """
+        return self._clock
+
+    @property
     def stopped(self) -> bool:
         """Return whether plate entry is locked by Stop (R-35's guard).
 
