@@ -874,6 +874,10 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
 
     app_module._pick_export_path = original_pick
     app_module._run_export_offloop = original_offloop
+    # Quit cleanly through the real File ▸ Exit route: the session
+    # row's closed_at is stamped (the parent's final session fact).
+    wx.CallAfter(_click_ok_on_exit_confirm)
+    _fire_exit_route(frame)
     try:
         facts = _ride_facts(store, ride_id)
     finally:

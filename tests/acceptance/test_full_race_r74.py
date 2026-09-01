@@ -91,12 +91,12 @@ _RESUME_EXTRA_CROSSINGS = 5
 _ADDED_CROSSINGS = 1
 
 # The children self-terminate (os._exit 124) after their own bound;
-# heavy children (300 typed crossings + CSV import) get 90 s, the
-# quit-only children 60 s. The parent's timeouts sit above both.
-_HEAVY_BOUND_S = 90
-_QUIT_BOUND_S = 60
-_CRASH_READY_TIMEOUT_S = 90.0
-_RUN_CHILD_TIMEOUT_S = 120.0
+# heavy children (300 typed crossings + CSV import) get 120 s, the
+# quit-only children 90 s. The parent's timeouts sit above both.
+_HEAVY_BOUND_S = 120
+_QUIT_BOUND_S = 90
+_CRASH_READY_TIMEOUT_S = 120.0
+_RUN_CHILD_TIMEOUT_S = 150.0
 
 # The staged ride's pinned actual_start (store_staging); the child's
 # injected clock reads it back from the audit log, so no cross-file
