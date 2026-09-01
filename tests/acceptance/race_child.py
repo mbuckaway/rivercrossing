@@ -650,6 +650,21 @@ def _drive_add_crossing() -> None:
     wx.CallAfter(_drive)
 
 
+def _drive_void_card() -> None:
+    """Schedule the void-card confirm (required reason, then OK)."""
+
+    def _drive() -> None:
+        dialog = wx.Window.FindWindowByName(ids.VOID_CARD_CONFIRM_DLG)
+        if dialog is None:
+            return
+        # The OK is gated on a non-empty reason (corrections._bind_reason_gate),
+        # so a plain OK click keeps the modal open and the child hangs.
+        harness.type_text(dialog, ids.REASON_INPUT, _VOID_CARD_REASON)
+        harness.click(dialog, "wxID_OK")
+
+    wx.CallAfter(_drive)
+
+
 def _click_ok_on_exit_confirm() -> None:
     """Click Quit (wxID_OK) on the non-running exit-confirm dialog."""
     dialog = wx.Window.FindWindowByName(ids.EXIT_CONFIRM_DLG)
@@ -876,7 +891,7 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     _drive_add_crossing()
     harness.fire_menu_event(frame, ids.MI_ADD_CROSSING_AT)
     context.detail_plate = cast("str", _standings_rows(engine)[0]["plate"])
-    _drive_dialog_ok(ids.VOID_CARD_CONFIRM_DLG)
+    _drive_void_card()
     harness.fire_menu_event(frame, ids.MI_VOID_CARD)
     voided_card = _voided_card_code(store, ride_id)
 
