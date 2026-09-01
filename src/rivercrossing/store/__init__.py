@@ -501,6 +501,11 @@ class Store:
                 error outlived the retry budget, or a non-transient
                 error occurred (raised on the first attempt).
         """
+        # E9.1 (store-backed bootstrap): the app's first launch opens
+        # user_data_dir()/rides.db, whose parent directory does not
+        # exist on a clean machine -- sqlite3 alone cannot create it,
+        # so create it before the retry loop touches the connection.
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         # Every iteration either returns, re-raises (persistent), or
         # sets last_error (transient); the placeholder below is never
         # surfaced because the loop always runs at least once.

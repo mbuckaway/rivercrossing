@@ -118,6 +118,25 @@ def test_store_open_fresh_db_creates_all_spec_tables(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
+def test_store_open_creates_missing_parent_directories(tmp_path: Path) -> None:
+    """A db path whose parent dirs do not exist yet opens fine.
+
+    E9.1 (the store-backed bootstrap): the app's first launch on a
+    clean machine opens ``user_data_dir()/rides.db``, and that
+    directory does not exist until the app creates it -- sqlite3 alone
+    would raise ``unable to open database file`` and the frozen binary
+    would crash at launch (measured on clean CI images).
+    """
+    db_path = tmp_path / "app" / "data" / "nested" / "rides.db"
+
+    store = Store.open(db_path)
+    store.close()
+
+    assert db_path.is_file()
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
 def test_store_open_records_ledger_at_latest_version(tmp_path: Path) -> None:
     """schema_version holds exactly one row at LATEST_SCHEMA_VERSION."""
     db_path = tmp_path / "rides.db"
