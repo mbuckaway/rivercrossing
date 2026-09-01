@@ -85,9 +85,16 @@ numeric seconds (``repr``-clean) -- human formatting belongs to the
 HTML/PDF exports only. The standalone spec §15 standings CSV ships as
 :func:`export_standings` (E6.4.2): rows ``place, plate, entry, laps,
 hand`` plus a raw-seconds ``total_time`` column when asked (R-63).
+
+**Atomic export writes (R-52).** Both writers stage their CSV in a
+same-directory temp file (``<name>.tmp``) and swap it over the
+destination with :func:`os.replace` -- never truncating *path* in
+place -- so a crash mid-export leaves the previous complete artifact
+behind, never a partial file.
 """
 
 import csv
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -110,6 +117,20 @@ from rivercrossing.standings import Placed, hand_name
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
+
+__all__ = [
+    "CsvIoError",
+    "ImportConflict",
+    "ImportConflictsPresentError",
+    "ImportPreview",
+    "ImportReport",
+    "ParsedEntry",
+    "ParsedRider",
+    "commit",
+    "export",
+    "export_standings",
+    "preview",
+]
 
 _HEADER_PROBLEM = "missing or malformed header for this ride's plate model"
 _FINISHED_COLUMNS = ("laps", "cards", "best_hand", "total_time")
@@ -314,11 +335,15 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
     (``laps, cards, best_hand, total_time``) after the roster's own
     ones and fills them from each matching entry's
     :class:`~rivercrossing.standings.Placed` row; ``placed=None``
-    keeps the export byte-identical to the roster-only shape.
+    keeps the export byte-identical to the roster-only shape. The
+    write is atomic (R-52): the CSV is staged in a same-directory temp
+    file and swapped over *path* with :func:`os.replace`, so a crash
+    mid-export leaves the previous complete file in place.
 
     Args:
         ride: The roster to export. Never mutated.
-        path: The file to write. Overwritten if it already exists.
+        path: The file to write. Replaced atomically; a pre-existing
+            file is overwritten wholesale, never truncated in place.
         placed: Optional standings for a FINISHED ride; the caller may
             pass the whole ranked field (rows with no matching entry
             are ignored, DNFs included). Defaults to None, the
@@ -333,23 +358,23 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
     if placed is not None and ride.status is not RideStatus.FINISHED:
         msg = f"standings columns require a finished ride (ride is {ride.status})"
         raise CsvIoError(msg)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(_expected_header(ride, with_standings=placed is not None))
-        by_plate = _finished_by_plate(ride, placed) if placed is not None else None
-        if ride.plate_model is PlateModel.TEAM_RELAY:
-            for entry in ride.entries:
-                row = _relay_export_row(entry, ride.max_team_size)
-                if by_plate is not None:
-                    row.extend(_stats_values(by_plate[entry.plate]))
-                writer.writerow(row)
-        else:
-            for entry in ride.entries:
-                rows = _pooled_export_rows(entry)
-                if by_plate is not None:
-                    stats = _stats_values(by_plate[entry.plate])
-                    rows = [row + stats for row in rows]
-                writer.writerows(rows)
+    header = _expected_header(ride, with_standings=placed is not None)
+    by_plate = _finished_by_plate(ride, placed) if placed is not None else None
+    rows: list[list[str]] = []
+    if ride.plate_model is PlateModel.TEAM_RELAY:
+        for entry in ride.entries:
+            row = _relay_export_row(entry, ride.max_team_size)
+            if by_plate is not None:
+                row.extend(_stats_values(by_plate[entry.plate]))
+            rows.append(row)
+    else:
+        for entry in ride.entries:
+            entry_rows = _pooled_export_rows(entry)
+            if by_plate is not None:
+                stats = _stats_values(by_plate[entry.plate])
+                entry_rows = [row + stats for row in entry_rows]
+            rows.extend(entry_rows)
+    _write_csv_rows(path, header, rows)
 
 
 def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool = False) -> None:
@@ -361,31 +386,51 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
     (CSVs are machine-readable; human formatting is the HTML/PDF
     exports' job). DNF entries keep their row with their laps and
     cards (R-33); an entry that never crossed renders a blank hand.
+    The write is atomic (R-52), exactly like :func:`export`: staged in
+    a same-directory temp file, then swapped over *path* with
+    :func:`os.replace`.
 
     Args:
         placed: Ranked standings, one row each.
-        path: The file to write. Overwritten if it already exists.
+        path: The file to write. Replaced atomically; a pre-existing
+            file is overwritten wholesale, never truncated in place.
         show_times: Append the ``total_time`` column (R-63: times
             only when the export setting says so).
     """
     header = ["place", "plate", "entry", "laps", "hand"]
     if show_times:
         header.append("total_time")
-    with path.open("w", encoding="utf-8", newline="") as handle:
+    rows: list[list[str]] = []
+    for placed_row in placed:
+        result = placed_row.result
+        row = [
+            str(placed_row.place),
+            result.plate,
+            result.name,
+            str(result.laps),
+            hand_name(result.hand) if result.cards else "",
+        ]
+        if show_times:
+            row.append(repr(result.total_time))
+        rows.append(row)
+    _write_csv_rows(path, header, rows)
+
+
+def _write_csv_rows(path: Path, header: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
+    """Write *header* and *rows* to *path* as CSV, atomically (R-52).
+
+    Content is staged in a same-directory temp sibling and swapped over
+    *path* with :func:`os.replace` -- the temp handle is closed (and
+    therefore flushed) before the swap -- so a crash mid-export leaves
+    the previous complete file in place and a reader never observes a
+    truncated CSV.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(header)
-        for placed_row in placed:
-            result = placed_row.result
-            row = [
-                str(placed_row.place),
-                result.plate,
-                result.name,
-                str(result.laps),
-                hand_name(result.hand) if result.cards else "",
-            ]
-            if show_times:
-                row.append(repr(result.total_time))
-            writer.writerow(row)
+        writer.writerows(rows)
+    os.replace(tmp, path)  # noqa: PTH105 -- R-52 mandates the os.replace atomic swap; tests patch it
 
 
 def _stats_values(placed: Placed) -> list[str]:
