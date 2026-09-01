@@ -477,9 +477,13 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     }, report_c["context"]
 
     finished = store_staging.race_db_facts(db_path)
+    # The missed crossing persisted as its own audited action (E7.1:
+    # add_crossing_at), not a record_crossing event, so the record
+    # count stays 305 and the add shows up in the action list.
     assert finished["record_crossing_count"] == (
-        _WAVE_CROSSINGS + _RESUME_EXTRA_CROSSINGS + _ADDED_CROSSINGS
+        _WAVE_CROSSINGS + _RESUME_EXTRA_CROSSINGS
     )
+    assert finished["audit_actions"].count("add_crossing_at") == _ADDED_CROSSINGS
     assert finished["sessions"][-1]["closed_at"] is not None  # child D quit cleanly
 
     # Phase D: every export's content matches the standings the child
