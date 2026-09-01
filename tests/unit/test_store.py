@@ -347,6 +347,24 @@ def test_store_create_ride_sets_db_owned_rng_seed(tmp_path: Path) -> None:
     assert row["rng_seed"] > 0
 
 
+def test_store_create_ride_honours_an_explicit_rng_seed(tmp_path: Path) -> None:
+    """An explicit rng_seed override lands in the ride row verbatim.
+
+    E9.2.2 (R-77): the nightly acceptance race owns its seed -- it
+    generates one, injects it here, and files it on failure, so a
+    failed night is reproducible by re-running with the same env.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(), rng_seed=20260920)
+    finally:
+        store.close()
+
+    row = _fetch_ride_row(db_path, ride_id)
+    assert row["rng_seed"] == 20260920
+
+
 def test_store_create_ride_stores_logo_blob_round_trip(tmp_path: Path) -> None:
     """A configured logo file is stored as a BLOB, byte-identical."""
     logo_bytes = base64.b64decode(_TINY_PNG_B64)

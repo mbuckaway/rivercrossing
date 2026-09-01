@@ -206,7 +206,9 @@ def create_library_ride(path: Path, *, name: str, running: bool) -> int:
     return ride_id
 
 
-def running_ride_with_roster(path: Path, *, actual_start: datetime | None = None) -> int:
+def running_ride_with_roster(
+    path: Path, *, actual_start: datetime | None = None, rng_seed: int | None = None
+) -> int:
     """Create a running store ride and a quit-keep-running session.
 
     The previous session records the ride as running at a clean exit,
@@ -216,11 +218,14 @@ def running_ride_with_roster(path: Path, *, actual_start: datetime | None = None
     overrides the pinned staged start (the race test stages a recent
     start so the resumed clock reads a positive elapsed); the default
     keeps the E5-era pinned 10:00 start for the existing scenarios.
+    ``rng_seed`` pins the ride's shoe seed (E9.2.2/R-77): the nightly
+    acceptance race owns its seed -- it injects it here and files it
+    on failure; ``None`` keeps the DB-owned random seed (spec §4).
     """
     start_iso = actual_start.isoformat() if actual_start is not None else "2026-09-20T10:00:00"
     boot = Store.open(path)
     try:
-        ride_id = boot.create_ride(library_ride_config("GORBA EPIC 2026"))
+        ride_id = boot.create_ride(library_ride_config("GORBA EPIC 2026"), rng_seed=rng_seed)
         boot.save_roster(ride_id, library_roster())
         boot.append(ride_id, Event(action="start", payload={"actual_start": start_iso}))
     finally:

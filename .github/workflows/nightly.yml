@@ -1,0 +1,64 @@
+# RiverCrossing nightly acceptance race (E9.2.2, R-77).
+#
+# Every night this replays the R-74 acceptance race (the same
+# tests/acceptance suite stage 4 gates CI with) under a fresh random
+# seed, so deal orders drift and any hand-evaluation edge case has a
+# chance to surface. On failure it files a GitHub issue whose body
+# carries the seed verbatim (tools/nightly_issue.py) -- re-running the
+# race with RIVERCROSSING_ACCEPTANCE_SEED=<seed> reproduces the exact
+# failed run. The job stays red on failure (the race step fails); the
+# issue is the reproduction record, not a band-aid.
+#
+# The seed is generated here and injected via the env, never parsed
+# out of test output: Store.create_ride accepts an explicit rng_seed
+# (spec §4's DB-owned default when unset), and the race tests stage the
+# ride with it.
+
+name: Nightly acceptance race
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # daily 03:17 local (off-:00 minute)
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  acceptance:
+    name: "Nightly R-74 acceptance race (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Generate the night's seed
+        run: |
+          seed="$(python -c "import secrets; print(secrets.randbits(63))")"
+          echo "RACE_SEED=${seed}" >> "${GITHUB_ENV}"
+      - name: Run the seeded acceptance race
+        id: race
+        env:
+          RIVERCROSSING_ACCEPTANCE_SEED: ${{ env.RACE_SEED }}
+        run: python tools/functional_rerun.py pytest tests/acceptance -v --no-cov -n auto --dist loadfile --reruns 2
+      - name: File the seed on failure (R-77)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python tools/nightly_issue.py --seed "${RACE_SEED}" --os "${{ matrix.os }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > body.txt
+          gh issue create \
+            --title "Nightly acceptance race failed on ${{ matrix.os }} (seed ${RACE_SEED})" \
+            --body-file body.txt

@@ -237,7 +237,13 @@ def test_full_race_kill_quit_relaunch_resumes_ride(
     actual_start = datetime.now() - timedelta(  # noqa: DTZ005 -- naive local, Store's own contract
         minutes=_RACE_START_LEAD_MINUTES
     )
-    ride_id = store_staging.running_ride_with_roster(db_path, actual_start=actual_start)
+    # E9.2.2 (R-77): the nightly owns the seed and files it on failure;
+    # None keeps the DB-owned random seed (spec §4).
+    seed_env = os.environ.get("RIVERCROSSING_ACCEPTANCE_SEED")
+    rng_seed = int(seed_env) if seed_env else None
+    ride_id = store_staging.running_ride_with_roster(
+        db_path, actual_start=actual_start, rng_seed=rng_seed
+    )
 
     # Phase 0: the staged db reads RUNNING_AT_EXIT with no crossings.
     staged = store_staging.race_db_facts(db_path)

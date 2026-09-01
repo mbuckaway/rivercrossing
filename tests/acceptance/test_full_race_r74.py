@@ -348,7 +348,13 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     exports_dir = tmp_path / "exports"
     exports_dir.mkdir()
     _write_riders_csv(csv_path, _RIDER_COUNT)
-    ride_id = store_staging.running_ride_with_roster(db_path, actual_start=_RACE_ACTUAL_START)
+    # E9.2.2 (R-77): the nightly owns the seed and files it on failure;
+    # None keeps the DB-owned random seed (spec §4).
+    seed_env = os.environ.get("RIVERCROSSING_ACCEPTANCE_SEED")
+    rng_seed = int(seed_env) if seed_env else None
+    ride_id = store_staging.running_ride_with_roster(
+        db_path, actual_start=_RACE_ACTUAL_START, rng_seed=rng_seed
+    )
 
     # Phase 0: the staged db reads RUNNING_AT_EXIT with no crossings.
     staged = store_staging.race_db_facts(db_path)

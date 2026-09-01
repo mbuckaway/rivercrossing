@@ -793,11 +793,16 @@ class Store:
                         (entry_id, rider.name, rider.plate, rider.sort_order),
                     )
 
-    def create_ride(self, config: RideConfig) -> int:
+    def create_ride(self, config: RideConfig, *, rng_seed: int | None = None) -> int:
         """Persist one ride from its config; return the new ride id.
 
         Args:
             config: The ride's setup settings (RideConfig).
+            rng_seed: The shoe's shuffle seed to store, or ``None`` for
+                the DB-owned random seed (spec §4). E9.2.2 (R-77) lets
+                the nightly acceptance race own its seed: it injects
+                one here and files it on failure, so a failed night is
+                reproducible by re-running with the same value.
 
         Returns:
             The new ride's id.
@@ -832,7 +837,9 @@ class Store:
             config.jokers_per_deck,
             config.max_cards,
             json.dumps(list(config.tiebreak_order)),
-            secrets.randbits(63),  # DB-owned seed (spec §4), never from config
+            (
+                rng_seed if rng_seed is not None else secrets.randbits(63)
+            ),  # DB-owned seed (spec §4), never from config
             now,
             now,
         )
