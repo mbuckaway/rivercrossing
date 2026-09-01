@@ -178,7 +178,7 @@ def _run_rsvg_convert(svg_path: Path, out_path: Path, size: tuple[int, int]) -> 
         str(out_path),
         str(svg_path),
     ]
-    subprocess.run(cmd, check=True)  # noqa: S603
+    subprocess.run(cmd, check=True, timeout=60)  # noqa: S603
 
 
 def _render_iconset(branding_dir: Path, build_dir: Path) -> Path:
@@ -194,6 +194,7 @@ def _run_iconutil(iconset_path: Path, icns_path: Path) -> None:
     subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
         ["/usr/bin/iconutil", "-c", "icns", "-o", str(icns_path), str(iconset_path)],
         check=True,
+        timeout=60,
     )
 
 
@@ -225,6 +226,7 @@ def _render_background(branding_dir: Path, build_dir: Path) -> None:
             str(branding_dir / BACKGROUND_TIFF_NAME),
         ],
         check=True,
+        timeout=60,
     )
 
 
