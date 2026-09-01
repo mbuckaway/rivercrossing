@@ -117,8 +117,9 @@ Source files carry a single SPDX line and no other licence header:
 - **MVP, passive view.** Views are dumb: they render view-models and forward events. Presenters are pure
   Python holding UI logic, unit-tested headless with fake views. Business logic lives below both.
 - **`wx` imports only under `rivercrossing.ui`** — enforced by an import-linter contract (R-71).
-- **`rivercrossing.demo`** is the removable hard-coding seam: importable only from the app bootstrap and
-  tests, enforced by lint. It is deleted from the app path in EPIC 5.
+- **`rivercrossing.demo`** is the removable hard-coding seam: importable only from tests, enforced by an
+  import-linter contract (E5.4.2 retired it from the app path; the module remains as test-only fixture
+  data).
 - Keep functions short and single-purpose in every language.
 
 ## Comments & docstrings
@@ -136,7 +137,7 @@ Python tooling only — no Makefiles. `pyproject.toml` is the whole config; `nox
 runner, and `scripts/*.sh` are one-line wrappers around it.
 
 ```bash
-uv venv .venv && uv pip install -e '.[dev]'   # or: python -m venv .venv && pip install -e '.[dev]'
+uv venv .venv && uv pip install -e '.[dev]'   # or: python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
 nox -s lint typecheck importlint ids_drift    # CI stage 1 — static
 nox -s unit                                   # CI stage 2 — unit + coverage gate

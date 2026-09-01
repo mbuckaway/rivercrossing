@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Wiring for the spec.md §13 / R-76 dialog-behaviour contract.
 
-Every one of the 21 dialogs in ``ui/xrc/*.xrc`` is already authored:
+Every one of the 25 dialogs in ``ui/xrc/*.xrc`` is already authored:
 layout, control names, and (per dialog) an XRC ``<default>`` button
 and, on the four destructive confirms, an XRC ``<focused>`` marker
 too. This module adds no layout and no business logic -- it wires
 the small, generic mechanics spec.md §13 asks of *every* dialog that
 XRC alone cannot express, and that the individual view/presenter
-tasks opening these dialogs would otherwise have to repeat 21 times:
+tasks opening these dialogs would otherwise have to repeat 25 times:
 
 * **Escape safely dismisses a Close-only dialog.** Measured: wx's
   built-in Escape handling (``wxDialogBase``'s ``CHAR_HOOK``) only
@@ -17,7 +17,7 @@ tasks opening these dialogs would otherwise have to repeat 21 times:
   dismiss button is ``wxID_CLOSE`` (``about_dlg``, ``audit_dlg``,
   ``rider_editor_dlg``, ...) is otherwise inert to both Escape and a
   mouse/keyboard activation of that button. :func:`wire_close_button`
-  fixes both in one call; it is a no-op on the 13 dialogs that carry
+  fixes both in one call; it is a no-op on the 17 dialogs that carry
   a ``wxID_CANCEL`` instead, so callers never need to branch on which
   case a given dialog is.
 * **Form dialogs focus their first field, not their default button.**

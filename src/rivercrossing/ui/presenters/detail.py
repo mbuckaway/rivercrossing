@@ -23,8 +23,9 @@ class (replacing the Phase-5 no-op):
   :meth:`RideEngine.mark_dnf` on confirm.
 - **Move rider…** (pooled team entries only) opens the team picker and
   calls :meth:`Roster.move_rider` on confirm.
-- **Audit trail** opens ``audit_dlg`` plain -- the viewer + pre-filter
-  are E7.3.1's scope; this only wires the button so it opens.
+- **Audit trail** opens ``audit_dlg`` bound to the audit viewer and
+  pre-filtered to this entry (E7.3.1's deep-link): the list opens with
+  ``audit_search`` pre-set to this entry's plate and narrowed to it.
 
 Every engine refusal (wrong ride state, unknown plate, empty reason,
 closed shoe, locked move) is caught and surfaced through the view's
@@ -188,7 +189,11 @@ class DetailView(Protocol):
         ...
 
     def open_audit(self) -> None:
-        """Open audit_dlg (plain for now; the pre-filter is E7.3.1)."""
+        """Open audit_dlg pre-filtered to this entry (E7.3.1).
+
+        The viewer is bound and ``audit_search`` opens pre-set to this
+        entry's plate, the list narrowed to it.
+        """
         ...
 
     def show_notice(self, text: str) -> None:
@@ -438,5 +443,8 @@ class DetailPresenter:
         self._corrected()
 
     def on_audit_clicked(self) -> None:
-        """Handle audit_btn: open audit_dlg plain (viewer is E7.3.1)."""
+        """Handle audit_btn: open audit_dlg pre-filtered (E7.3.1).
+
+        The viewer is bound and the list pre-set to this entry.
+        """
         self.view.open_audit()
