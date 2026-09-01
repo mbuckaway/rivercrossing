@@ -969,10 +969,12 @@ def _handle_import_csv(context: _RouteContext) -> None:
 
     R-74: a committed import into a store-backed ride persists the
     in-memory roster to the active ride (``Store.save_roster``), so
-    the imported riders survive a relaunch. ``run_csv_import_flow``
-    commits into ``context.roster`` only; this is the store half the
-    race depends on. With no store-backed ride open the import keeps
-    its bootstrap in-memory behavior.
+    the imported riders survive a relaunch -- and rebuilds the console
+    onto that roster (:func:`_switch_console_to_ride`), because the
+    live engine otherwise still resolves plates against its pre-import
+    roster and typed plates would be rejected as unknown. With no
+    store-backed ride open the import keeps its bootstrap in-memory
+    behavior.
     """
     from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
 
@@ -980,6 +982,7 @@ def _handle_import_csv(context: _RouteContext) -> None:
     store = context.store
     if committed and store is not None and context.active_ride_id is not None:
         store.save_roster(context.active_ride_id, context.roster)
+        _switch_console_to_ride(context, context.active_ride_id)
 
 
 def _handle_export_csv(context: _RouteContext) -> None:

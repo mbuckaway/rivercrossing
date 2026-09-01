@@ -277,8 +277,14 @@ def _assert_report_ok(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def _imported_plates() -> list[str]:
-    """Return the roster plates the import must leave on the ride."""
-    return sorted({str(number) for number in range(1, _RIDER_COUNT + 1)} | {"77"})
+    """Return the roster plates the import must leave on the ride.
+
+    The import REPLACES the ride's roster with the CSV's riders (the
+    staged team's plates are not carried over -- csvio.commit defines
+    the roster from the file), so the expected set is exactly the CSV's
+    plates.
+    """
+    return sorted(str(number) for number in range(1, _RIDER_COUNT + 1))
 
 
 # ------------------------------------------- export verification (R-74)
@@ -381,8 +387,9 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     assert "You quit at" in data_a["resume_message"], report_a["context"]
     assert data_a["status_label"] == "RUNNING", report_a["context"]
     assert data_a["entry_enabled"] is True, report_a["context"]
-    # The import persisted to the store ride (the R-74 gap), so the
-    # rebuilt roster carries every CSV rider plus the staged team.
+    # The import replaced the staged roster with the CSV's riders and
+    # persisted to the store ride (the R-74 gap), so the rebuilt roster
+    # carries exactly the CSV's plates.
     assert data_a["imported_plates"] == _imported_plates(), report_a["context"]
     assert data_a["crossings_typed"] == _WAVE_CROSSINGS, report_a["context"]
     assert data_a["feed_rows"] == _WAVE_CROSSINGS, report_a["context"]
