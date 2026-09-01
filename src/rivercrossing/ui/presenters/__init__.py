@@ -55,7 +55,7 @@ from rivercrossing.ui.presenters.detail import (
     ManualDeal,
     RiderMove,
 )
-from rivercrossing.ui.presenters.library import LibraryPresenter, LibraryView
+from rivercrossing.ui.presenters.library import LibraryView
 from rivercrossing.ui.presenters.results import ResultsPresenter, ResultsView
 from rivercrossing.ui.presenters.riders import (
     NEW_TEAM_CHOICE,
@@ -67,7 +67,7 @@ from rivercrossing.ui.presenters.riders import (
     RidersView,
 )
 from rivercrossing.ui.presenters.selftest import SelfTestPresenter, SelfTestView
-from rivercrossing.ui.presenters.settings import AppSettings, SettingsPresenter, SettingsView
+from rivercrossing.ui.presenters.settings import AppSettings, SettingsView
 from rivercrossing.ui.presenters.setup import SetupFormValues, SetupPresenter, SetupView
 
 __all__ = [
@@ -93,7 +93,6 @@ __all__ = [
     "EntryDetail",
     "EntryLapRow",
     "FeedRow",
-    "LibraryPresenter",
     "LibraryView",
     "ManualDeal",
     "ResultsPresenter",
@@ -106,7 +105,6 @@ __all__ = [
     "RidersView",
     "SelfTestPresenter",
     "SelfTestView",
-    "SettingsPresenter",
     "SettingsView",
     "SetupFormValues",
     "SetupPresenter",

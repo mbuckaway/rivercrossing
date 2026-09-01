@@ -2,10 +2,10 @@
 """Unit tests for the E8.1.1 per-user settings persistence (headless).
 
 ``ui.presenters.settings`` stays wx-free (R-71), so its whole surface
--- the ``AppSettings`` dataclass, ``default_path``, ``load_settings``,
-``save_settings`` and the presenter's ``load`` -- is testable on the
-host without ever constructing a window. Every test writes to a
-``tmp_path``, never the real user config dir (E8.1.1's own rule).
+-- the ``AppSettings`` dataclass, ``default_path``, ``load_settings``
+and ``save_settings`` -- is testable on the host without ever
+constructing a window. Every test writes to a ``tmp_path``, never the
+real user config dir (E8.1.1's own rule).
 
 The ``path is None`` defaulting branch in both ``load_settings`` and
 ``save_settings`` is exercised by monkeypatching the module's own
@@ -28,7 +28,6 @@ from rivercrossing.ui.presenters import settings as settings_module
 from rivercrossing.ui.presenters.settings import (
     ZOOM_LADDER,
     AppSettings,
-    SettingsPresenter,
     default_path,
     default_settings,
     load_settings,
@@ -47,17 +46,6 @@ _SIX_FIELDS = {
 
 # The 90-150 zoom ladder, as the JSON-safe rung list files carry.
 _ZOOM_RUNGS = list(ZOOM_LADDER)
-
-
-class _FakeSettingsView:
-    """A ``SettingsView`` double the presenter only stores (unused)."""
-
-    def show_settings(self, settings: AppSettings) -> None:
-        """No-op fake."""
-
-
-class _FakeDataSource:
-    """A ``DataSource`` double the presenter only stores (unused)."""
 
 
 # --- round-trip + defaults ----------------------------------------
@@ -267,38 +255,6 @@ def test_save_settings_uses_default_path_when_none_given(
 def test_default_path_ends_with_settings_json() -> None:
     """The per-user config path names the settings file (E8.1.1)."""
     assert str(default_path()).endswith("settings.json")
-
-
-# --- SettingsPresenter.load ---------------------------------------
-
-
-def test_presenter_load_returns_persisted_settings_when_a_file_exists(
-    tmp_path: Path,
-) -> None:
-    """The presenter's load exposes the persisted file to the dialog."""
-    path = tmp_path / "settings.json"
-    save_settings(replace(default_settings(), appearance="dark"), path)
-    presenter = SettingsPresenter(_FakeSettingsView(), _FakeDataSource())
-
-    loaded = presenter.load(path)
-
-    assert loaded == AppSettings(
-        appearance="dark",
-        sound_on=True,
-        hide_times=False,
-        zoom_percent=100,
-        splitter_sash=None,
-        window_geometry=None,
-    )
-
-
-def test_presenter_load_returns_defaults_when_no_file_exists(tmp_path: Path) -> None:
-    """A missing file reads as defaults through the presenter too."""
-    presenter = SettingsPresenter(_FakeSettingsView(), _FakeDataSource())
-
-    loaded = presenter.load(tmp_path / "nope.json")
-
-    assert loaded == default_settings()
 
 
 # --- appearance_for_radio: the dialog's radio -> appearance map -----

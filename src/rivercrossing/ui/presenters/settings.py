@@ -9,8 +9,8 @@ the ride database -- the user's decision recorded in the task, so the
 SQLite schema stays untouched. The store is plain module functions
 (SIMPLECODE Rule 5 -- no state, so no class): :func:`default_path`
 locates the file, :func:`load_settings` reads it (never raising),
-:func:`save_settings` writes it atomically, and the dialog's
-:class:`SettingsPresenter` stays wx-free like every other presenter.
+:func:`save_settings` writes it atomically, and the dialog's view
+stays wx-free like every other presenter.
 """
 
 import json
@@ -25,13 +25,10 @@ from rivercrossing.ui.theme import ThemeMode
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from rivercrossing.ui.presenters.data_source import DataSource
-
 __all__ = [
     "DEFAULT_ZOOM_PERCENT",
     "ZOOM_LADDER",
     "AppSettings",
-    "SettingsPresenter",
     "SettingsView",
     "appearance_for_radio",
     "default_path",
@@ -253,31 +250,3 @@ class SettingsView(Protocol):
     def show_settings(self, settings: AppSettings) -> None:
         """Render the current appearance/sound/times/zoom values."""
         ...
-
-
-class SettingsPresenter:
-    """Presenter for the settings dialog (settings_dlg, 3a).
-
-    Holds ``(view, data_source)`` like every other presenter. E8.1.1
-    gives it the loading half: :meth:`load` returns the persisted
-    :class:`AppSettings` (or the defaults) the dialog opens onto.
-    E8.2 wires the appearance radios, sound/hide-times toggles, zoom
-    choice and backup_now_btn to this view.
-    """
-
-    def __init__(self, view: SettingsView, data_source: DataSource) -> None:
-        """Store the view and data source this presenter drives."""
-        self.view = view
-        self.data_source = data_source
-
-    def load(self, path: Path | None = None) -> AppSettings:
-        """Return the persisted settings, or defaults when none exist.
-
-        Args:
-            path: The settings file to read; ``None`` uses
-                :func:`default_path`.
-
-        Returns:
-            The current :class:`AppSettings` for the dialog to render.
-        """
-        return load_settings(path)
