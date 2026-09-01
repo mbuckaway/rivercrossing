@@ -4,7 +4,23 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-09-01
+
+### Added — EPIC 9 (packaging & release)
+
+- **Store-backed app layer wired.** `main()` opens `rides.db` (per-user data dir) and the resume
+  flow fires on launch; New Ride persists via `Store.create_ride`/`save_roster` and switches the
+  console onto the new ride; every engine event persists via `Store.append`. `RIVERCROSSING_DB_PATH`
+  overrides the db path for tests.
+- **Release bundles.** The user guide and the GPL/OFL license texts ship in the bundle
+  (`rivercrossing/docs/`); the packaged-app smoke covers launch → open ride → crossing → HTML export.
+- **macOS signing lane (advisory).** `.github/workflows/release.yml` codesigns, notarizes, staples and
+  `spctl`-assesses on tags when `APPLE_*` secrets are present; the unsigned DMG ships until then.
+- **Full acceptance race (stage 4).** `tests/acceptance/` runs R-74 end-to-end — CSV in, hundreds of
+  typed crossings, stop/continue, kill+relaunch, quit+relaunch, finish, reopen → correct → finish
+  again, all four exports verified — gating both OSes and the tag release.
+- **Nightly seeded race.** A scheduled run replays the acceptance race with a fresh random seed and
+  files the seed on failure (R-77).
 
 ### Added — Windows ARM64 + Apple Silicon verification
 

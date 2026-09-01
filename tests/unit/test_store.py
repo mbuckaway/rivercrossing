@@ -22,9 +22,10 @@ import re
 import sqlite3
 from contextlib import closing
 from datetime import UTC, date, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
+from platformdirs import user_data_dir
 
 import rivercrossing.store as store_module
 from rivercrossing.ride import Event, RideConfig, RideStatus
@@ -42,9 +43,6 @@ from rivercrossing.store import (
 )
 from rivercrossing.store.migrations import LATEST_SCHEMA_VERSION
 from rivercrossing.ui.presenters.data_source import AuditRow
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 # The same always-valid kwarg set test_ride.py builds from, so a
 # store test probes one field at a time without second-guessing the
@@ -117,6 +115,25 @@ def test_store_open_fresh_db_creates_all_spec_tables(tmp_path: Path) -> None:
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         assert expected <= names
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_store_open_creates_missing_parent_directories(tmp_path: Path) -> None:
+    """A db path whose parent dirs do not exist yet opens fine.
+
+    E9.1 (the store-backed bootstrap): the app's first launch on a
+    clean machine opens ``user_data_dir()/rides.db``, and that
+    directory does not exist until the app creates it -- sqlite3 alone
+    would raise ``unable to open database file`` and the frozen binary
+    would crash at launch (measured on clean CI images).
+    """
+    db_path = tmp_path / "app" / "data" / "nested" / "rides.db"
+
+    store = Store.open(db_path)
+    store.close()
+
+    assert db_path.is_file()
+    with closing(sqlite3.connect(str(db_path))) as conn:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
@@ -347,6 +364,24 @@ def test_store_create_ride_sets_db_owned_rng_seed(tmp_path: Path) -> None:
     row = _fetch_ride_row(db_path, ride_id)
     assert isinstance(row["rng_seed"], int)
     assert row["rng_seed"] > 0
+
+
+def test_store_create_ride_honours_an_explicit_rng_seed(tmp_path: Path) -> None:
+    """An explicit rng_seed override lands in the ride row verbatim.
+
+    E9.2.2 (R-77): the nightly acceptance race owns its seed -- it
+    generates one, injects it here, and files it on failure, so a
+    failed night is reproducible by re-running with the same env.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(), rng_seed=20260920)
+    finally:
+        store.close()
+
+    row = _fetch_ride_row(db_path, ride_id)
+    assert row["rng_seed"] == 20260920
 
 
 def test_store_create_ride_stores_logo_blob_round_trip(tmp_path: Path) -> None:
@@ -2007,3 +2042,32 @@ def test_store_audit_rows_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
             store.audit_rows(999)
     finally:
         store.close()
+
+
+# ------------------------------------------------- default_db_path
+# E9.1.1: the bootstrap resolves the rides database path the same way
+# settings.py's default_path resolves settings.json -- platformdirs,
+# per-user, named "RiverCrossing" (the retired mockups'
+# "PokerRunTracker" is superseded). The helper owns both the default
+# and any explicit override so main() has exactly one place the path
+# decision lives.
+
+
+def test_default_db_path_returns_rides_db_under_the_user_data_dir() -> None:
+    """The default db lives directly in platformdirs' user data dir."""
+    path = store_module.default_db_path()
+
+    assert path.name == "rides.db"
+    assert path.parent == Path(user_data_dir("RiverCrossing"))
+
+
+def test_default_db_path_given_an_override_returns_it_verbatim() -> None:
+    """An explicit path wins untouched (tests, diagnostics)."""
+    override = Path("/tmp/rc-custom/rides.db")  # noqa: S108 -- a stored value, never opened here
+
+    assert store_module.default_db_path(override) == override
+
+
+def test_default_db_path_given_none_returns_the_default() -> None:
+    """None means "no override": the platformdirs default stands."""
+    assert store_module.default_db_path(None) == store_module.default_db_path()

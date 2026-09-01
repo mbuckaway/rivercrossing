@@ -24,7 +24,7 @@ import harness
 import pytest
 import wx
 
-from rivercrossing.ride import RideStatus
+from rivercrossing.ride import RideConfig, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import ids
 from rivercrossing.ui.views.ride_setup import SETUP_INFOBAR, RideSetup
@@ -372,6 +372,56 @@ def test_ride_setup_dlg_find_given_an_unknown_control_name_raises_naming_it(
             view._find("no_such_control")
     finally:
         harness.close_window(dialog)
+
+
+# --------------------------------------------- on_submitted (E9.1.2)
+# The New Ride persistence seam: a committed submit hands the built
+# config to the optional on_submitted callback (the app wires it to
+# Store.create_ride + Store.save_roster when a store is open); a
+# refused submit must never fire it.
+
+
+def test_ride_setup_dlg_ok_invokes_on_submitted_with_the_built_config(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A committed submit fires on_submitted exactly once, in order."""
+    dialog = harness.load_window_verified(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
+    submitted: list[RideConfig] = []
+    try:
+        RideSetup(dialog, roster=_mixed_pooled_roster(), on_submitted=submitted.append)
+        dialog.Show()
+        harness.pump()
+        harness.type_text(dialog, ids.NAME_INPUT, "GORBA EPIC 2026")
+        harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
+        harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+
+        harness.click(dialog, "wxID_OK")
+    finally:
+        harness.close_window(dialog)
+
+    assert len(submitted) == 1
+    assert submitted[0].name == "GORBA EPIC 2026"
+    assert submitted[0].planned_duration_s == 21600
+
+
+def test_ride_setup_dlg_refused_submit_never_fires_on_submitted(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A refused submit (bad duration) keeps the callback silent."""
+    dialog = harness.load_window_verified(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
+    submitted: list[RideConfig] = []
+    try:
+        RideSetup(dialog, roster=_mixed_pooled_roster(), on_submitted=submitted.append)
+        dialog.Show()
+        harness.pump()
+        harness.type_text(dialog, ids.DURATION_INPUT, "not-a-duration")
+        harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+
+        harness.click(dialog, "wxID_OK")
+    finally:
+        harness.close_window(dialog)
+
+    assert submitted == []
 
 
 # ------------------------------- Fault A: the load-construct seam

@@ -168,6 +168,8 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from platformdirs import user_data_dir
+
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import (
@@ -226,7 +228,29 @@ __all__ = [
     "SessionState",
     "Store",
     "StoreError",
+    "default_db_path",
 ]
+
+
+def default_db_path(override: Path | None = None) -> Path:
+    """Return the rides database path (spec §10, platformdirs).
+
+    ``platformdirs.user_data_dir("RiverCrossing")`` is the per-user
+    data directory on every platform (``~/Library/Application
+    Support/RiverCrossing`` on macOS, ``%LOCALAPPDATA%`` on Windows) --
+    the settings module's own ``user_config_dir`` precedent, renamed
+    to the RiverCrossing product (the retired mockups' "PokerRunTracker"
+    is superseded). ``rides.db`` is the one database the app opens.
+
+    Args:
+        override: The path to use when the caller knows one (tests,
+            diagnostics); ``None`` uses the per-user default.
+
+    Returns:
+        The resolved database path.
+    """
+    return override if override is not None else Path(user_data_dir("RiverCrossing")) / "rides.db"
+
 
 _INSERT_RIDE_SQL = """
     INSERT INTO ride (
@@ -477,6 +501,11 @@ class Store:
                 error outlived the retry budget, or a non-transient
                 error occurred (raised on the first attempt).
         """
+        # E9.1 (store-backed bootstrap): the app's first launch opens
+        # user_data_dir()/rides.db, whose parent directory does not
+        # exist on a clean machine -- sqlite3 alone cannot create it,
+        # so create it before the retry loop touches the connection.
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         # Every iteration either returns, re-raises (persistent), or
         # sets last_error (transient); the placeholder below is never
         # surfaced because the loop always runs at least once.
@@ -769,11 +798,16 @@ class Store:
                         (entry_id, rider.name, rider.plate, rider.sort_order),
                     )
 
-    def create_ride(self, config: RideConfig) -> int:
+    def create_ride(self, config: RideConfig, *, rng_seed: int | None = None) -> int:
         """Persist one ride from its config; return the new ride id.
 
         Args:
             config: The ride's setup settings (RideConfig).
+            rng_seed: The shoe's shuffle seed to store, or ``None`` for
+                the DB-owned random seed (spec §4). E9.2.2 (R-77) lets
+                the nightly acceptance race own its seed: it injects
+                one here and files it on failure, so a failed night is
+                reproducible by re-running with the same value.
 
         Returns:
             The new ride's id.
@@ -808,7 +842,9 @@ class Store:
             config.jokers_per_deck,
             config.max_cards,
             json.dumps(list(config.tiebreak_order)),
-            secrets.randbits(63),  # DB-owned seed (spec §4), never from config
+            (
+                rng_seed if rng_seed is not None else secrets.randbits(63)
+            ),  # DB-owned seed (spec §4), never from config
             now,
             now,
         )

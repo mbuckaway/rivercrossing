@@ -49,6 +49,8 @@ from rivercrossing.ui.presenters.setup import SetupFormValues, SetupPresenter
 from rivercrossing.ui.views._support import find_control
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rivercrossing.ride import RideConfig
     from rivercrossing.roster import Roster
 
@@ -74,7 +76,13 @@ _TIEBREAK_IDS_BY_LABEL: dict[str, str] = {label: id_ for id_, label in _TIEBREAK
 class RideSetup:
     """Code-side behaviour for ``ride_setup_dlg`` (1c/7a, R-17)."""
 
-    def __init__(self, dialog: wx.Dialog, *, roster: Roster) -> None:
+    def __init__(
+        self,
+        dialog: wx.Dialog,
+        *,
+        roster: Roster,
+        on_submitted: Callable[[RideConfig], None] | None = None,
+    ) -> None:
         """Decorate an already-loaded ``ride_setup_dlg`` window.
 
         Args:
@@ -83,9 +91,15 @@ class RideSetup:
             roster: The in-memory roster whose own entry_mode/
                 max_team_size/plate_model/status this dialog reads
                 (``SetupPresenter``'s own module docstring).
+            on_submitted: A callback invoked with the built
+                :class:`~rivercrossing.ride.RideConfig` when a submit
+                commits (E9.1.2 -- the app wires it to
+                ``Store.create_ride`` + ``Store.save_roster`` when a
+                store is open); ``None`` keeps the in-memory behavior.
         """
         self.dialog = dialog
         self.config: RideConfig | None = None
+        self.on_submitted = on_submitted
 
         self.name_input = self._find(ids.NAME_INPUT, wx.TextCtrl)
         self.date_picker = self._find(ids.DATE_PICKER, wx.adv.DatePickerCtrl)
@@ -194,6 +208,8 @@ class RideSetup:
         config = self.presenter.on_submit(self._form_values())
         if config is not None:
             self.config = config
+            if self.on_submitted is not None:
+                self.on_submitted(config)
             self.dialog.EndModal(wx.ID_OK)
 
     def _form_values(self) -> SetupFormValues:

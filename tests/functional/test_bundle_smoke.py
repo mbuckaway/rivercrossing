@@ -16,7 +16,10 @@ Three separate claims, because they fail for different reasons:
 2. **The bundle carries its assets, byte for byte.** The 9 ``.xrc``
    files, 106 card bitmaps and 3 WAV cues, on the packaged package
    path, with identical contents -- and all 23 windows load from the
-   *bundled* ``.xrc`` copies.
+   *bundled* ``.xrc`` copies. E9.1.1 extends the byte-identity claim
+   to the release docs: the user guide and the four license texts land
+   under ``rivercrossing/docs/`` in both built layouts, identical to
+   their two source trees (repo root + package).
 3. **A missing asset fails the build.** Not first paint. Asserted by
    running the real ``pyinstaller`` against a copy of the tree with
    one bitmap deleted, and requiring a non-zero exit that names the
@@ -28,17 +31,20 @@ having built one gets a skip naming what is missing, never a
 confusing error.
 
 **Where "main_frame opens" is asserted, and why here.** The brief
-asks the launched bundle to open ``main_frame``. It cannot yet:
-``ui/app.py``'s ``main()`` builds a ``wx.App`` and returns, with no
-frame and no main loop, so the built binary launches and exits 0
-without drawing anything. Until the bootstrap opens a window, the
-claim is asserted where it can be: every window is loaded from the
-bundle's *own* packaged ``.xrc`` copies, and those copies are
-proven byte-identical to the source tree the stage-3 suite drives.
-Measured with a throwaway frozen ``.app`` over the same spec: all
+asks the launched bundle to open ``main_frame``. E9.1.1 lands the
+store-backed bootstrap: ``ui/app.py``'s ``main()`` opens the rides
+database and shows the frame before entering the event loop (the
+frame-show claim is proven in ``test_app_bootstrap.py``'s spawned
+MainLoop probe). Here the launch claim is asserted against the real
+binary -- it launches without a frozen-import failure -- and, E9.1.1,
+that the env seam ``RIVERCROSSING_DB_PATH`` points the frozen
+``main()`` at a temp db (a pre-created ``rides.db`` gains a session
+row across the launch window). The "open ride, one crossing, export
+HTML" half runs through the suite's subprocess scenario harness,
+which drives the exact store path ``main()`` runs over a staged temp
+db. Measured with a throwaway frozen ``.app`` over the same spec: all
 23 windows load, the card imagelist decodes its 53 bitmaps and the
-DataView feed builds its 7 columns from inside a bundle. When the
-bootstrap lands, add the window assertion to the launch test.
+DataView feed builds its 7 columns from inside a bundle.
 """
 
 import hashlib
@@ -48,6 +54,7 @@ import platform
 import plistlib
 import re
 import shutil
+import sqlite3
 import struct
 import subprocess
 import sys
@@ -60,6 +67,8 @@ import pages
 import pytest
 import scenario_runner
 import wx.xrc
+
+from rivercrossing.store import Store
 
 pytestmark = pytest.mark.functional
 
@@ -86,6 +95,12 @@ APP_PACKAGE = APP_UI.parent
 SHIPPED_PACKAGE_DIRS = (
     (ONEDIR_PACKAGE, APP_PACKAGE) if sys.platform == "darwin" else (ONEDIR_PACKAGE,)
 )
+
+# The docs each layout ships (E9.1.1) -- one level under the package
+# root above, where the guide + license texts land.
+ONEDIR_DOCS = ONEDIR_PACKAGE / "docs"
+APP_DOCS = APP_PACKAGE / "docs"
+SHIPPED_DOCS_DIRS = (ONEDIR_DOCS, APP_DOCS) if sys.platform == "darwin" else (ONEDIR_DOCS,)
 
 EXECUTABLES = {
     "darwin": DIST / "RiverCrossing.app" / "Contents" / "MacOS" / "rivercrossing",
@@ -150,6 +165,14 @@ def _launch(executable: Path) -> Launch:
     return Launch(completed.returncode, completed.stdout, completed.stderr)
 
 
+def _app_session_count(db_path: Path) -> int:
+    """Count ``app_session`` rows (0 when the file is absent)."""
+    if not db_path.is_file():
+        return 0
+    with sqlite3.connect(str(db_path)) as conn:
+        return int(conn.execute("SELECT COUNT(*) FROM app_session").fetchone()[0])
+
+
 def _digests(ui_dir: Path) -> dict[str, str]:
     """Map every required asset's relative path to its sha256."""
     return {
@@ -168,6 +191,22 @@ def _vector_digests(package_dir: Path) -> dict[str, str]:
     }
 
 
+def _doc_digests(package_dir: Path) -> dict[str, str]:
+    """Map every required doc name to its bundled sha256."""
+    return {
+        name: hashlib.sha256((package_dir / manifest.DOCS_SUBDIR / name).read_bytes()).hexdigest()
+        for name in manifest.REQUIRED_DOCS
+    }
+
+
+def _source_doc_digests() -> dict[str, str]:
+    """Map every required doc name to its source-tree sha256."""
+    return {
+        Path(source).name: hashlib.sha256(Path(source).read_bytes()).hexdigest()
+        for source, _destination in manifest.docs_data_entries(SOURCE_PACKAGE)
+    }
+
+
 def _names_present(ui_dir: Path, subdir: str) -> set[str]:
     """List what *ui_dir*'s *subdir* actually holds on disk."""
     return {entry.name for entry in (ui_dir / subdir).iterdir() if entry.is_file()}
@@ -181,9 +220,13 @@ def _unresolved(window: Any, names: tuple[str, ...]) -> list[str]:  # noqa: ANN4
 def _broken_tree(destination: Path, delete: str) -> Path:
     """Copy the build inputs to *destination*, minus one asset.
 
-    Copies ``src/``, ``tools/`` and ``installers/`` -- everything the
-    spec reads -- so the build is hermetic and the deletion cannot
-    touch the real tree.
+    Copies ``src/``, ``tools/``, ``installers/``, ``docs/`` and the
+    repo-root ``LICENSE`` -- everything the spec reads -- so the build
+    is hermetic and the deletion cannot touch the real tree. ``docs/``
+    and ``LICENSE`` join the copy because the E9.1.1 docs manifest
+    resolves them against the copied tree's root; without them the
+    build would fail naming a missing doc instead of the deleted
+    bitmap this test is about.
 
     Args:
         destination: An existing, empty directory to copy into.
@@ -193,8 +236,9 @@ def _broken_tree(destination: Path, delete: str) -> Path:
         The copied spec file's path.
     """
     ignore = shutil.ignore_patterns("__pycache__", "*.egg-info")
-    for tree in ("src", "tools", "installers"):
+    for tree in ("src", "tools", "installers", "docs"):
         shutil.copytree(ROOT / tree, destination / tree, ignore=ignore)
+    shutil.copy2(ROOT / "LICENSE", destination / "LICENSE")
     (destination / "src" / "rivercrossing" / "ui" / delete).unlink()
     return destination / "installers" / SPEC.name
 
@@ -537,6 +581,42 @@ def test_bundled_vector_bytes_are_identical_to_the_source_tree(
     } == dict.fromkeys(bundle_package_dirs, expected)
 
 
+def test_bundled_doc_names_match_the_required_manifest_exactly(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """All five docs land under each layout's own rivercrossing/docs/.
+
+    A wrong ``DOCS_PACKAGE_DEST`` (e.g. the containing-folder mistake
+    the vectors manifest's own pinned test catches) would leave this
+    directory missing or empty -- the on-disk, built-bundle catch the
+    other manifests already have.
+    """
+    packaged = {
+        package_dir: _names_present(package_dir, manifest.DOCS_SUBDIR)
+        for package_dir in bundle_package_dirs
+    }
+
+    assert packaged == {
+        package_dir: set(manifest.REQUIRED_DOCS) for package_dir in bundle_package_dirs
+    }
+
+
+def test_bundled_doc_bytes_are_identical_to_the_source_tree(
+    bundle_package_dirs: tuple[Path, ...],
+) -> None:
+    """Content, not just presence: the originals ship verbatim.
+
+    The docs are shipped from two trees (repo root + package), so the
+    expected digests come from the manifest's own entry sources, never
+    from a copied list.
+    """
+    expected = _source_doc_digests()
+
+    assert {
+        package_dir: _doc_digests(package_dir) for package_dir in bundle_package_dirs
+    } == dict.fromkeys(bundle_package_dirs, expected)
+
+
 @pytest.mark.parametrize("spec", pages.WINDOWS, ids=lambda spec: spec.name)
 def test_bundled_window_loads_from_the_packaged_xrc_and_resolves_its_names(
     spec: pages.WindowSpec, bundled_xrc: object
@@ -574,6 +654,58 @@ def test_bundle_executable_launches_without_a_frozen_import_failure(
 
     assert launch.returncode in {0, None}, context
     assert "Traceback (most recent call last)" not in launch.stderr, context
+
+
+def test_bundle_executable_opens_the_environment_db_at_launch(
+    bundle_executable: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """E9.1.1: RIVERCROSSING_DB_PATH points the bundle at a temp db.
+
+    Launch the real bundle with the env var set to a pre-created,
+    empty rides.db; after the settle-and-kill window the session count
+    must have grown. The binary inherits the env var (``_launch``
+    passes no ``env=``), so a frozen ``main()`` that ignored the seam
+    and opened the per-user default leaves the temp db untouched and
+    fails here.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    store.close_session()
+    store.close()
+    before = _app_session_count(db_path)
+    monkeypatch.setenv("RIVERCROSSING_DB_PATH", str(db_path))
+
+    launch = _launch(bundle_executable)
+    context = f"stdout:\n{launch.stdout}\nstderr:\n{launch.stderr}"
+
+    assert launch.returncode in {0, None}, context
+    assert _app_session_count(db_path) == before + 1, context
+
+
+def test_bundle_launch_opens_a_ride_records_a_crossing_and_exports_html() -> None:
+    """E9.1.1: open ride, one crossing, export HTML, on a temp db.
+
+    The launch-against-the-bundle half is :func:`bundle_executable`
+    probes; this drives the open-crossing-export half through the
+    suite's subprocess scenario harness, which runs the exact store
+    path ``main()`` runs (``_bootstrap_window``) over a staged temp
+    ``rides.db`` -- resume opens the ride, one plate records a
+    crossing, ``mi_export_html`` writes the real file.
+    """
+    result = scenario_runner.run_scenario("bundle_launch_open_crossing_exports_html")
+
+    data = result["data"]
+    assert data["feed_rows"] >= 1, result["context"]
+    assert data["feed_plate"] == "12", result["context"]
+    assert data["audit_actions"][-1] == "record_crossing", result["context"]
+    assert data["html_exists"] is True, result["context"]
+    assert data["html_size"] > 0, result["context"]
+    assert "race-data" in data["html_text"], result["context"]
+    # The crossed plate is in the exported race-data standings JSON
+    # (json.dumps(indent=2) spells the integer plate with a space).
+    assert '"plate": 12' in data["html_text"], result["context"]
 
 
 def test_built_app_resources_carry_the_branded_icns(bundle_app_path: Path) -> None:

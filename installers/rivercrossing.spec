@@ -39,7 +39,12 @@ must land on exactly that package path. ``pdfexport_font_entries``
 adds the three PDF report TTFs (P7, spec §8b): ``pdfexport._FONTS_DIR``
 resolves ``rivercrossing/pdfexport/fonts`` relative to its own
 ``__file__``, so the fonts must land on that package path for
-``render`` to embed them.
+``render`` to embed them. ``docs_data_entries`` adds the release
+bundle's docs (E9.1.1): the user guide and the four license texts
+ship under ``rivercrossing/docs/`` -- the guide's bundled location
+``rivercrossing.ui.help.guide_path`` resolves from its own
+``__file__`` (``module_path.parents[1] / "docs"``), and the licenses
+ride along in the same directory.
 
 **The UI is reached by name, not by import.** Windows come from XRC
 at runtime, so PyInstaller's import graph cannot see most of the
@@ -59,6 +64,7 @@ from PyInstaller.utils.hooks import collect_submodules  # noqa: E402
 import rivercrossing  # noqa: E402 -- check_asset_manifest puts src/ on the path
 from check_asset_manifest import (  # noqa: E402 -- needs the path above
     data_entries,
+    docs_data_entries,
     htmlexport_data_entries,
     pdfexport_font_entries,
     vector_data_entries,
@@ -67,8 +73,9 @@ from check_asset_manifest import (  # noqa: E402 -- needs the path above
 APP_NAME = "RiverCrossing"  # the .app and its display name
 EXE_NAME = "rivercrossing"  # the executable and the onedir folder
 # Reverse-DNS form of the project's own repository URL
-# (pyproject.toml [project.urls] Repository). E9.1.3 must confirm it
-# against whatever identifier the Apple developer account signs.
+# (pyproject.toml [project.urls] Repository).
+# TODO(E9.1.3): confirm io.github.mbuckaway.rivercrossing against the
+# Apple developer account identifier when signing creds land (E1.1.2).
 BUNDLE_ID = "io.github.mbuckaway.rivercrossing"
 
 ENTRY_SCRIPT = ROOT / "src" / "rivercrossing" / "__main__.py"
@@ -135,6 +142,7 @@ analysis = Analysis(  # noqa: F821 -- PyInstaller injects Analysis
         *vector_data_entries(PACKAGE_DIR),
         *htmlexport_data_entries(PACKAGE_DIR),
         *pdfexport_font_entries(PACKAGE_DIR),
+        *docs_data_entries(PACKAGE_DIR),
     ],
     hiddenimports=HIDDEN_IMPORTS,
 )

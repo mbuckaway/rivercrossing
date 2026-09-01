@@ -23,6 +23,11 @@
 # auto (measured 2026-08-29: 4-6 wx-churn segfaults per run), so local
 # runs may set it to 2 for a deterministic pass.
 #
+# Test paths: RIVERCROSSING_VM_TEST_PATHS (default "tests/functional")
+# overrides what pytest runs in the guest -- the E9.2.1 acceptance
+# suite (tests/acceptance) is run the same way:
+#     RIVERCROSSING_VM_TEST_PATHS="tests/acceptance" scripts/run_functional_tests_vm.sh
+#
 # Usage: scripts/run_functional_tests_vm.sh
 
 set -uo pipefail
@@ -217,7 +222,7 @@ main() {
   # The RIVERCROSSING_FUNCTIONAL_JOBS expansion is intentionally
   # client-side: the local value selects the guest's xdist parallelism.
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
-    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python tools/functional_rerun.py pytest tests/functional -v --no-cov -n '${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2" &
+    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python tools/functional_rerun.py pytest ${RIVERCROSSING_VM_TEST_PATHS:-tests/functional} -v --no-cov -n '${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2" &
   local run_pid=$!
 
   run_watchdog "${VM_TIMEOUT}" "${run_pid}" "${sentinel}" &

@@ -30,9 +30,11 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
 ``quit_flow``, ``theme``, ``rivercrossing.roster`` -- E3.2's seeded
-rider roster, :func:`~rivercrossing.ui.require_wx`) are imported at
-module scope, so this module itself stays importable even when wx
-cannot be (mirrors the guard the original stub's own docstring already
+rider roster, ``rivercrossing.store`` -- E9.1.1's Store and its
+:func:`~rivercrossing.store.default_db_path`, plus
+:func:`~rivercrossing.ui.require_wx`) are imported at module scope,
+so this module itself stays importable even when wx cannot be
+(mirrors the guard the original stub's own docstring already
 promised). Every wx-touching name -- ``wx`` itself, its ``xrc``
 submodule, the view classes, and the ``RiverCrossingApp`` subclass
 :func:`build_app` builds -- is imported/defined inside the function
@@ -46,6 +48,7 @@ shared flow functions, the one place that route and
 explains why it is hosted there, not here).
 """
 
+import os
 import re
 import threading
 import webbrowser
@@ -66,6 +69,7 @@ from rivercrossing.ride import (
 )
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import Placed, rank, tiebreak_order_from_spellings
+from rivercrossing.store import Store, default_db_path
 from rivercrossing.ui import (
     accelerators,
     commands,
@@ -87,7 +91,6 @@ from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataS
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from rivercrossing.store import Store
     from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
@@ -115,6 +118,11 @@ _ENTRY_DETAIL_DEFAULT_PLATE = ""
 # route, dispatched further by event id below -- the theme trio to
 # theme.ThemeController, the other 8 to the generic COMMAND stub.
 _VIEW_ROUTE_TARGET = "view_setting"
+
+# E9.1.1's launch seam: the env var that points the bundled binary at
+# a temp rides.db (the packaged-app smoke stages one through it), with
+# an explicit ``main(db_path=...)`` argument taking precedence over it.
+_DB_PATH_ENV = "RIVERCROSSING_DB_PATH"
 
 
 @dataclass
@@ -568,6 +576,19 @@ class _StoreLibrarySource:
         ]
 
 
+def _wire_store_append(engine: RideEngine, store: Store, ride_id: int) -> None:
+    """Persist every future engine event to *store* (E9.1.3).
+
+    Attaches the store's append as the engine's event sink: from here
+    on, every mutation the engine records -- crossings, undo,
+    corrections, lifecycle -- writes one audit row per event. Called
+    only after ``store.load_engine``'s replay completes, so the
+    replayed tail is never re-persisted (the sink is off during
+    replay; ``RideEngine.on_event`` docstring).
+    """
+    engine.on_event = lambda event: store.append(ride_id, event)
+
+
 def _switch_console_to_ride(
     context: _RouteContext, ride_id: int, clock: Callable[[], datetime] | None = None
 ) -> None:
@@ -589,9 +610,11 @@ def _switch_console_to_ride(
         return
     roster = store.roster_for(ride_id)
     engine = store.load_engine(ride_id, roster, clock=clock)
+    _wire_store_append(engine, store, ride_id)
     source = EngineDataSource(engine, roster)
     presenter = ConsolePresenter(context.console_view, engine=engine, source=source)
     context.console_view.set_presenter(presenter)
+    context.console_view.show_ride_name(engine.config.name)
     context.console_view.set_state(source.ride_status())
     context.console_view.show_feed(source.feed_rows())
     context.console_view.show_counters(source.counters())
@@ -599,6 +622,37 @@ def _switch_console_to_ride(
     context.presenter = presenter
     context.roster = roster
     context.active_ride_id = ride_id
+
+
+def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
+    """Persist a New Ride, then switch the console onto it (E9.1.4).
+
+    The ride-setup dialog's submit callback (``_decorate``'s
+    ``RIDE_SETUP_DLG`` branch): with a store open, creates the ride
+    row, persists the roster the dialog was opened on, marks the new
+    ride active on the open session -- so a quit after creating it
+    resumes the right ride, the same call the resume flow's Continue
+    makes -- and switches the console onto the new ride. With no store
+    the dialog keeps its E3.5 in-memory behavior.
+
+    The switch is deferred through ``wx.CallAfter``, the same
+    modal-chaining rule the library Open uses (``_live_library_
+    callbacks``'s own docstring): this runs inside the setup dialog's
+    submit, before ``EndModal``, and a post-modal action performed
+    synchronously inside a modal's unwind is not dismissible by the
+    functional harness (measured there).
+
+    Args:
+        context: The route context whose store/roster to act on.
+        config: The committed ride configuration.
+    """
+    store = context.store
+    if store is None:
+        return
+    ride_id = store.create_ride(config)
+    store.save_roster(ride_id, context.roster)
+    store.set_active_ride(ride_id)
+    require_wx().CallAfter(_switch_console_to_ride, context, ride_id)
 
 
 def _live_library_callbacks(
@@ -740,7 +794,15 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # correct empty state until a real ride is opened.
         RiderEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
-        RideSetup(window, roster=context.roster)
+        # E9.1.2/E9.1.4: with a store open, a committed New Ride
+        # persists the ride row and the roster the dialog was opened
+        # on, then switches the console onto the new ride; with no
+        # store the dialog keeps its E3.5 in-memory behavior.
+        RideSetup(
+            window,
+            roster=context.roster,
+            on_submitted=lambda config: _persist_created_ride(context, config),
+        )
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1: with a live console threaded AND a concrete entry
         # selected (context.detail_plate, recorded when entry detail
@@ -904,10 +966,28 @@ def _handle_import_csv(context: _RouteContext) -> None:
     ``rider_editor_dlg``'s own ``import_btn`` both run the picker ->
     preview -> commit flow through (that module's own banner comment
     explains why it is hosted there, not here).
+
+    R-74: a committed import into a store-backed ride persists the
+    in-memory roster to the active ride (``Store.save_roster``), so
+    the imported riders survive a relaunch -- and rebuilds the console
+    onto that roster (:func:`_switch_console_to_ride`), because the
+    live engine otherwise still resolves plates against its pre-import
+    roster and typed plates would be rejected as unknown. With no
+    store-backed ride open the import keeps its bootstrap in-memory
+    behavior.
     """
     from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
 
-    rider_editor.run_csv_import_flow(context.frame, context.roster)
+    committed = rider_editor.run_csv_import_flow(context.frame, context.roster)
+    store = context.store
+    if committed and store is not None and context.active_ride_id is not None:
+        store.save_roster(context.active_ride_id, context.roster)
+        presenter = context.presenter
+        # Carry the live engine's clock across the rebuild: a scripted
+        # (injected) clock must survive, or every typed lap after the
+        # import lands milliseconds apart and flags (R-34).
+        clock = presenter.engine.clock if presenter is not None else None
+        _switch_console_to_ride(context, context.active_ride_id, clock=clock)
 
 
 def _handle_export_csv(context: _RouteContext) -> None:
@@ -2169,6 +2249,9 @@ def _resume_console_engine(
             context.active_ride_id = ride_id
             roster = store.roster_for(ride_id)
             engine = store.load_engine(ride_id, roster, clock=clock)
+            # E9.1.3: after replay, every live event the resumed
+            # engine records persists to the store.
+            _wire_store_append(engine, store, ride_id)
             return engine, EngineDataSource(engine, roster)
     finally:
         if not dialog.IsBeingDeleted():
@@ -2418,12 +2501,81 @@ def build_app() -> Any:  # noqa: ANN401 -- wx ships no stubs
     return _build_app_class()()
 
 
-def main() -> int:
+def _bootstrap_window(  # noqa: PLR0913 -- (app, db_path, clock, settings_path): the four bootstrap seams, mirroring build_main_window
+    app: Any,  # noqa: ANN401 -- wx ships no stubs
+    *,
+    db_path: Path | None = None,
+    clock: Callable[[], datetime] | None = None,
+    settings_path: Path | None = None,
+) -> tuple[Any, Store]:
+    """Open the store and build the main window, the way main() does.
+
+    E9.1.1: :func:`main`'s own store-backed bootstrap, split out so a
+    test can drive the whole open-store-and-build path without ever
+    entering ``MainLoop``, which blocks (the same reason
+    :func:`build_main_window` exists). Resolves the db path
+    (:func:`~rivercrossing.store.default_db_path` with the optional
+    override), opens the :class:`~rivercrossing.store.Store` there,
+    and threads it into the window -- so ``_resume_console_engine``
+    fires resume-on-launch (R-52) and the quit flow stamps
+    ``closed_at`` on a confirmed exit.
+
+    Args:
+        app: The live app :func:`main`/:func:`build_app` constructed.
+        db_path: The rides database to open; ``None`` uses
+            :func:`~rivercrossing.store.default_db_path`.
+        clock: Wall-clock source for a store-loaded resume engine,
+            threaded to :func:`build_main_window`.
+        settings_path: The per-user settings file, threaded to
+            :func:`build_main_window`.
+
+    Returns:
+        ``(frame, store)`` -- the loaded main frame and the Store it
+        was built over, which the caller owns until the app quits.
+    """
+    store = Store.open(default_db_path(db_path))
+    frame = build_main_window(app, store=store, clock=clock, settings_path=settings_path)
+    return frame, store
+
+
+def _resolve_db_path(db_path: Path | None) -> Path | None:
+    """Resolve the database path: explicit arg, env, then the default.
+
+    E9.1.1's launch seam: ``RIVERCROSSING_DB_PATH`` points the bundled
+    binary at a temp ``rides.db`` (the packaged-app smoke stages one
+    through it), while an explicit ``db_path`` -- the functional
+    suite's own staging -- still wins. ``None`` means no override:
+    :func:`~rivercrossing.store.default_db_path` falls back to the
+    per-user default.
+
+    Args:
+        db_path: The explicit override, or ``None``.
+
+    Returns:
+        The path to open, or ``None`` for the per-user default.
+    """
+    if db_path is not None:
+        return db_path
+    env_path = os.environ.get(_DB_PATH_ENV)
+    return Path(env_path) if env_path else None
+
+
+def main(db_path: Path | None = None) -> int:
     """Run the RiverCrossing GUI application.
 
     Builds and shows ``main_frame`` with its menubar, accelerators and
     every §15 route bound (:func:`build_main_window`), then runs the
-    event loop until the last top-level window closes.
+    event loop until the last top-level window closes. E9.1.1 opens
+    the rides database first (:func:`_bootstrap_window`) so the
+    console, resume dialog and quit flow all act on the real store.
+
+    Args:
+        db_path: The rides database to open; ``None`` uses the per-user
+            default (:func:`~rivercrossing.store.default_db_path`),
+            or the ``RIVERCROSSING_DB_PATH`` override when set
+            (:func:`_resolve_db_path`). The one argument a caller may
+            supply -- the functional suite stages a temp ``rides.db``
+            through it.
 
     Returns:
         The process exit code; ``0`` on a clean shutdown.
@@ -2435,8 +2587,11 @@ def main() -> int:
     app = build_app()  # bound for this whole call -- an unbound App is collected immediately
     wx.Log.SetActiveTarget(wx.LogStderr())  # see module docstring: the exit-time modal hang
 
-    frame = build_main_window(app)
-    frame.Show()
-    app.MainLoop()
+    frame, store = _bootstrap_window(app, db_path=_resolve_db_path(db_path))
+    try:
+        frame.Show()
+        app.MainLoop()
+    finally:
+        store.close()
 
     return 0

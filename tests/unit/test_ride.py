@@ -336,6 +336,69 @@ def test_start_from_draft_transitions_to_running_and_writes_audit_row() -> None:
     assert engine.events == (event,)
 
 
+# ---------------------------------------------- event sink (E9.1.3)
+# The one seam EVERY engine mutation persists through: an optional
+# on_event callback receives each event as _append records it. The app
+# attaches Store.append to it after load_engine's replay completes, so
+# live mutations -- crossings, undo, corrections, lifecycle -- write
+# one audit row each, and the replayed tail is never re-persisted.
+
+
+def test_engine_on_event_receives_every_event_appended_after_wiring() -> None:
+    """The sink sees each live mutation, exactly matching the log."""
+    received: list[Event] = []
+    engine, clock = _make_engine()
+    engine.on_event = received.append
+    engine.start()
+    clock.advance(60)
+    engine.record_crossing("12")
+    engine.undo_last()
+
+    assert received == list(engine.events)
+    assert [event.action for event in received] == ["start", "record_crossing", "undo"]
+
+
+def test_engine_on_event_receives_the_exact_crossing_payload() -> None:
+    """The sink gets the very event record_crossing appended."""
+    received: list[Event] = []
+    engine, clock = _make_engine()
+    engine.start()
+    engine.on_event = received.append
+    clock.advance(60)
+
+    engine.record_crossing("12")
+
+    assert received == [
+        Event(
+            action="record_crossing",
+            payload={
+                "plate": "12",
+                "entry_id": "12",
+                "lap": 1,
+                "crossed_at": "2026-09-20T10:01:00",
+            },
+        )
+    ]
+
+
+def test_engine_on_event_never_receives_events_recorded_before_wiring() -> None:
+    """Replay-safety: events before the sink attaches stay silent.
+
+    E9.1.3: Store.load_engine replays persisted events onto a fresh
+    engine whose sink is not yet attached; a later attach must not
+    re-persist that tail.
+    """
+    received: list[Event] = []
+    engine, _clock = _make_engine()
+    engine.start()
+    engine.record_crossing("12")
+    engine.on_event = received.append
+
+    engine.undo_last()
+
+    assert [event.action for event in received] == ["undo"]
+
+
 def test_start_with_explicit_at_retro_sets_actual_start() -> None:
     """start(at=...) back-dates actual_start (R-30, the missed gun)."""
     engine, _ = _make_engine()
