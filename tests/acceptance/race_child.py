@@ -657,8 +657,8 @@ def _drive_void_card() -> None:
         dialog = wx.Window.FindWindowByName(ids.VOID_CARD_CONFIRM_DLG)
         if dialog is None:
             return
-        # The OK is gated on a non-empty reason (corrections._bind_reason_gate),
-        # so a plain OK click keeps the modal open and the child hangs.
+        # The OK is gated on a non-empty reason (the corrections
+        # _bind_reason_gate), so a plain OK click leaves the modal open.
         harness.type_text(dialog, ids.REASON_INPUT, _VOID_CARD_REASON)
         harness.click(dialog, "wxID_OK")
 
