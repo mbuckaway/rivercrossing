@@ -966,10 +966,20 @@ def _handle_import_csv(context: _RouteContext) -> None:
     ``rider_editor_dlg``'s own ``import_btn`` both run the picker ->
     preview -> commit flow through (that module's own banner comment
     explains why it is hosted there, not here).
+
+    R-74: a committed import into a store-backed ride persists the
+    in-memory roster to the active ride (``Store.save_roster``), so
+    the imported riders survive a relaunch. ``run_csv_import_flow``
+    commits into ``context.roster`` only; this is the store half the
+    race depends on. With no store-backed ride open the import keeps
+    its bootstrap in-memory behavior.
     """
     from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
 
-    rider_editor.run_csv_import_flow(context.frame, context.roster)
+    committed = rider_editor.run_csv_import_flow(context.frame, context.roster)
+    store = context.store
+    if committed and store is not None and context.active_ride_id is not None:
+        store.save_roster(context.active_ride_id, context.roster)
 
 
 def _handle_export_csv(context: _RouteContext) -> None:
