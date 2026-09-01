@@ -58,6 +58,16 @@ if TYPE_CHECKING:
 
     from rivercrossing.roster import Entry, Roster
 
+__all__ = [
+    "NEW_TEAM_CHOICE",
+    "SOLO_TEAM_CHOICE",
+    "CsvConflict",
+    "CsvPreview",
+    "RiderFormValues",
+    "RidersPresenter",
+    "RidersView",
+]
+
 # team_choice's two frozen sentinel entries (xrc-windows.md's Rider
 # Editor mock: "-- solo --" first, team display names, "New team..."
 # last).

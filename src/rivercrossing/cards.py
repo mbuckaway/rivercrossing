@@ -11,6 +11,16 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 from typing import cast
 
+__all__ = [
+    "Card",
+    "Rank",
+    "RestitutionError",
+    "Shoe",
+    "ShoeClosedError",
+    "ShoeEmpty",
+    "Suit",
+]
+
 
 class Suit(Enum):
     """The four natural suits; a joker card carries no suit."""

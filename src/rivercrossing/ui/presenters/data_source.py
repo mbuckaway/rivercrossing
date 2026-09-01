@@ -35,6 +35,25 @@ if TYPE_CHECKING:
 
     from rivercrossing.ride import Crossing, Event, RideEngine
 
+__all__ = [
+    "CORRECTION_ACTIONS",
+    "FEED_CAP",
+    "AuditRow",
+    "Counters",
+    "DataSource",
+    "EmptyDataSource",
+    "EngineDataSource",
+    "EntryDetail",
+    "EntryLapRow",
+    "FeedRow",
+    "RideSummary",
+    "RiderRow",
+    "StandingsRow",
+    "corrected_crossing_keys",
+    "format_duration",
+    "has_correction_since",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class FeedRow:

@@ -42,6 +42,8 @@ if TYPE_CHECKING:
     from rivercrossing.standings import TieBreak
     from rivercrossing.ui.presenters.data_source import DataSource
 
+__all__ = ["DemoDataSource", "UnknownPlateError"]
+
 # ----------------------------------------------------------- console
 
 _FEED_ROWS: tuple[FeedRow, ...] = (

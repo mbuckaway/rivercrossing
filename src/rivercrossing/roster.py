@@ -57,6 +57,35 @@ from rivercrossing.ride import RideStatus
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+__all__ = [
+    "DEFAULT_MAX_TEAM_SIZE",
+    "MAX_TEAM_SIZE_LIMIT",
+    "MIN_TEAM_SIZE",
+    "AuditEvent",
+    "DuplicatePlateError",
+    "Entry",
+    "EntryMode",
+    "EntryNotFoundError",
+    "EntryStatus",
+    "EntryType",
+    "InvalidMoveError",
+    "LockedError",
+    "PlateModel",
+    "PlateShapeError",
+    "Rider",
+    "RiderNotFoundError",
+    "Roster",
+    "RosterError",
+    "SoloOnlyRideError",
+    "StartViolation",
+    "TeamSizeError",
+    "can_add_entry",
+    "can_delete_entry",
+    "can_edit_structure",
+    "can_fix_name",
+    "can_move_rider",
+]
+
 MIN_TEAM_SIZE = 2
 MAX_TEAM_SIZE_LIMIT = 10
 DEFAULT_MAX_TEAM_SIZE = 4

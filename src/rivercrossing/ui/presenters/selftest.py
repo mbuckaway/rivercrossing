@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
     from rivercrossing.hands import SelfTestCheck, SelfTestReport
 
+__all__ = ["SelfTestPresenter", "SelfTestView", "format_check_line", "format_report"]
+
 # The selftest_dlg canvas's own dotted-line column (xrc-windows.md
 # section E): every check's name, space-padded with dots, lines up
 # its PASS/FAIL in the same column regardless of the name's length.
