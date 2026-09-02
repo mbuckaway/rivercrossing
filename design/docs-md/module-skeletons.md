@@ -25,12 +25,11 @@ rivercrossing/
 ├── pyproject.toml              # PEP 621 metadata + ruff/mypy/pytest/coverage config
 ├── README.md · LICENSE · CHANGELOG.md
 ├── .github/workflows/
-│   ├── ci.yml                  # §14 six-stage matrix: windows-latest + macos-latest
-│   └── release.yml             # tag → PyInstaller → NSIS .exe / notarized .dmg (the unsigned tag release lives in ci.yml since Phase 11; this file arrives with EPIC 9 signing)
+│   └── ci.yml                  # §14 six-stage matrix: windows-latest + macos-latest (Developer ID signing + notarization for the macOS DMG live in its tag release job, E9.1.3)
 ├── installers/
 │   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec; branded icons since Phase 8)
-│   ├── windows.nsi             # NSIS, per-user, unsigned (exists — Phase 9; NSIS replaces Inno Setup, R-01); Authenticode in release.yml (E9.1.2)
-│   ├── dmg_settings.py         # dmgbuild config (exists — Phase 8, unsigned); codesign + notarize in release.yml (E9.1.3)
+│   ├── windows.nsi             # NSIS, per-user, unsigned (exists — Phase 9; NSIS replaces Inno Setup, R-01); Windows stays unsigned by decision (R-01, no Authenticode certificate)
+│   ├── dmg_settings.py         # dmgbuild config (exists — Phase 8, unsigned); codesign + notarize happen in ci.yml's release job (E9.1.3)
 │   └── branding/               # icon + DMG-background SVG sources and their COMMITTED generated
 │                               #   artifacts (.icns/.ico/dual-res .tiff — no PNG in git);
 │                               #   regenerate with tools/gen_app_icons.py via `nox -s gen_branding`
