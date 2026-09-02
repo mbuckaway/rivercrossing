@@ -7,6 +7,6 @@ distribution version (module-skeletons.md S2); ``pyproject.toml``'s
 "rivercrossing.__version__"``.
 """
 
-__version__ = "1.0.5"
+__version__ = "1.0.6"
 
 __all__ = ["__version__"]
