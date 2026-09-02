@@ -4,15 +4,21 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-09-02
+
+### Changed — codesign fix for the signed release
+
+- The signing steps now sign `Python.framework` explicitly and the `.app` **without** `--deep`
+  (`codesign --deep` fails on some runner versions with "bundle format is ambiguous" when it walks
+  into the framework). Verified locally: the resulting bundle passes `codesign --verify --deep
+  --strict`. v1.0.4's attempt hit this bug and did not publish.
+
 ## [1.0.4] - 2026-09-02
 
-### Changed — first published signed macOS release
+### Changed — signed release attempt (superseded)
 
-- **Developer-ID signed + notarized DMG.** The tag `release` job signs the app, rebuilds the DMG
-  from the signed app, notarizes and staples it, and `spctl`-checks it before publishing. v1.0.3's
-  attempt exposed two signed-lane bugs, both fixed here: the `.p12` is now exported with openssl
-  `-legacy` algorithms (Apple `security` rejects the modern defaults), and the signing steps locate
-  the `.app` at the dev-bundle artifact's real (flat) path.
+- The v1.0.4 tag's `release` job reached codesign but failed there (`codesign --deep` ambiguity on
+  `Python.framework`, fixed in 1.0.5); no v1.0.4 release was published.
 
 ## [1.0.3] - 2026-09-02
 
