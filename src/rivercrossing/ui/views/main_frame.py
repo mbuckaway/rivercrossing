@@ -49,6 +49,7 @@ __all__ = [
     "FINISHED_INFOBAR",
     "MIN_SIZE",
     "REOPENED_INFOBAR",
+    "REQUIRED_CONTROLS",
     "RESUME_INFOBAR",
     "CrossingsFeedModel",
     "MainFrame",
@@ -163,6 +164,34 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return self._card_images.bitmap(key)
 
 
+# Fault-B (degraded-XRC-load) completeness contract: the exact 17 frozen
+# control names ``MainFrame.__init__`` resolves via ``_find`` (see the
+# ``_find`` calls there). ``ui.app._load_frame_verified`` verifies every
+# name in this tuple resolves in a freshly loaded ``main_frame`` and
+# rebuilds once from a fresh private ``XmlResource`` if one was skipped.
+# This is the single source both sides read, so the guard and
+# ``__init__`` cannot silently drift apart -- keep the two in lockstep.
+REQUIRED_CONTROLS: tuple[str, ...] = (
+    ids.CROSSINGS_LIST,
+    ids.MAIN_SPLITTER,
+    ids.PLATE_INPUT,
+    ids.RECORD_BTN,
+    ids.LAST_CROSSING_LBL,
+    ids.RIDE_NAME_LBL,
+    ids.RIDE_STATUS_LBL,
+    ids.CROSSINGS_COUNT_LBL,
+    ids.CARDS_COUNT_LBL,
+    ids.ON_COURSE_LBL,
+    ids.SHOE_LBL,
+    ids.START_BTN,
+    ids.ARM_STOP_CHK,
+    ids.STOP_BTN,
+    ids.UNDO_BTN,
+    ids.CLOCK_ELAPSED_LBL,
+    ids.CLOCK_REMAINING_LBL,
+)
+
+
 class MainFrame:
     """Code-side behaviour for ``main_frame`` (the console, 1a).
 
@@ -224,6 +253,10 @@ class MainFrame:
         self._stop_confirm_resource = resource
         self._on_layout_changed = on_layout_changed
 
+        # Every name resolved below is also in module-level
+        # REQUIRED_CONTROLS, the Fault-B completeness contract
+        # ui.app._load_frame_verified verifies before this constructor
+        # runs. Keep the two in lockstep.
         self.crossings_list = self._find(ids.CROSSINGS_LIST, wx.dataview.DataViewCtrl)
         self.main_splitter = self._find(ids.MAIN_SPLITTER, wx.SplitterWindow)
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)

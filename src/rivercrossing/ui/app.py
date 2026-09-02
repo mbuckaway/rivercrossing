@@ -301,6 +301,97 @@ def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
     return resource
 
 
+def _fresh_xrc_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
+    """Return a private ``XmlResource`` loaded from every packaged .xrc.
+
+    The Fault-B rebuild source: a *new* ``wx.xrc.XmlResource()`` (never
+    the process-wide singleton :func:`_load_xrc_resources` loads, whose
+    degraded builds under worker load are what this works around),
+    loaded from the same ``ui/xrc/*.xrc`` files. Mirrors
+    ``tests/functional/harness._fresh_resource``.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    xrc_dir = Path(__file__).resolve().parent / "xrc"
+    resource = wx.xrc.XmlResource()
+    for path in sorted(xrc_dir.glob("*.xrc")):
+        resource.Load(str(path))
+    return resource
+
+
+def _missing_required_control(
+    frame: Any,  # noqa: ANN401 -- wx ships no stubs; Any is honest
+    required: tuple[str, ...],
+) -> str | None:
+    """Return *required*'s first name that does not resolve in *frame*.
+
+    The verify step of :func:`_load_frame_verified`: a name
+    ``wx.Window.FindWindowByName`` (scoped to *frame*) cannot resolve
+    means XRC silently skipped a subtree during the load (the Fault-B
+    degraded-load class); ``None`` means the build is complete. No
+    settle loop -- yielding during verification is exactly the event
+    processing the degradation hides in (harness's own measured note).
+    """
+    require_wx()
+    import wx  # noqa: PLC0415 -- deferred, see module docstring
+
+    for name in required:
+        if wx.Window.FindWindowByName(name, frame) is None:
+            return name
+    return None
+
+
+def _load_frame_verified(
+    resource: Any,  # noqa: ANN401 -- wx ships no stubs; Any is honest
+    required: tuple[str, ...],
+) -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
+    """Load ``main_frame`` from *resource* and verify *required*.
+
+    Fault-B (degraded-XRC-load) production mirror of
+    ``tests/functional/harness.load_window_verified``: under worker load
+    the process-global ``wx.xrc.XmlResource`` singleton can silently
+    skip a subtree during a load, so the frame comes back missing a
+    control ``MainFrame.__init__`` later needs -- which would otherwise
+    surface as a bare ``LookupError`` from
+    ``ui.views._support.find_control``. This verifies every name in
+    *required* resolves; a genuinely incomplete build is rebuilt ONCE
+    from a fresh private ``wx.xrc.XmlResource()`` (never the degraded
+    singleton) and re-verified. The rebuild happens while the degraded
+    frame is still alive -- mirroring the harness's ordering, so the
+    rebuilt controls cannot land on the degraded frame's just-freed
+    addresses -- and the degraded frame is then destroyed (a plain
+    ``frame.Destroy()``; its deferred deletion is processed by the
+    app's later ``MainLoop``). A healthy build costs one extra
+    name-walk and nothing else.
+
+    Raises:
+        LookupError: If the fresh rebuild is itself still missing a
+            required control. The message carries the rebuilt frame's
+            first-level-child inventory, in the same shape
+            ``ui.views._support.find_control`` uses.
+    """
+    frame = resource.LoadFrame(None, ids.MAIN_FRAME)
+    if _missing_required_control(frame, required) is None:
+        return frame
+
+    fresh = _fresh_xrc_resource()
+    rebuilt = fresh.LoadFrame(None, ids.MAIN_FRAME)
+    frame.Destroy()
+    if rebuilt is None:
+        raise LookupError(f"fresh XmlResource found no window named {ids.MAIN_FRAME!r} to rebuild")
+    missing = _missing_required_control(rebuilt, required)
+    if missing is not None:
+        window_name = rebuilt.GetName()
+        children = [child.GetName() for child in rebuilt.GetChildren()]
+        rebuilt.Destroy()
+        raise LookupError(
+            f"{window_name} has no control named {missing!r} "
+            f"(first-level children: {len(children)} -- {children!r})"
+        )
+    return rebuilt
+
+
 def _accelerator_entries(menubar: Any) -> list[Any]:  # noqa: ANN401 -- wx ships no stubs
     """Return each menu-bound row's own ``wx.AcceleratorEntry``.
 
@@ -2338,6 +2429,9 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
         The loaded, fully wired ``main_frame``, not yet shown.
     """
     from rivercrossing.ui.views import MainFrame  # noqa: PLC0415 -- deferred, see module docstring
+    from rivercrossing.ui.views.main_frame import (  # noqa: PLC0415 -- deferred, see module docstring
+        REQUIRED_CONTROLS,
+    )
 
     # E8.1.1: load the per-user settings once, at startup; every apply
     # below reads the same loaded object, and the layout save callback
@@ -2348,7 +2442,11 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
 
     resource = _load_xrc_resources()
 
-    frame = resource.LoadFrame(None, ids.MAIN_FRAME)
+    # Fault-B (degraded-XRC-load) guard: verify every control
+    # MainFrame.__init__ needs actually resolved, and rebuild once from
+    # a fresh private XmlResource if the singleton skipped a subtree;
+    # the frame and resource used downstream are the verified ones.
+    frame = _load_frame_verified(resource, REQUIRED_CONTROLS)
     menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
     _check_default_menu_radios(menubar)
