@@ -4,6 +4,26 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed — functional-suite flakiness (macOS settings/zoom)
+
+- **Settings/zoom modal drives wait for the dialog to be shown.** The settings and zoom scenarios
+  drove their modal Settings dialog with a bare `wx.CallAfter` that could fire before `ShowModal`
+  started, dropping the OK/Cancel click. They now route through the existing `_drive_when_shown`
+  helper (`tests/functional/console_subprocess_scenarios.py`).
+- **Production Fault-B guard in `build_main_window`.** A degraded XRC load (which silently skips a
+  subtree under load) could surface as a bare `LookupError` from `MainFrame.__init__` (for example
+  `main_frame has no control named 'record_btn'`). The frame's required controls are now verified
+  after load and rebuilt once from a fresh private `XmlResource` if any is missing
+  (`ui.app._load_frame_verified`, `ui.views.main_frame.REQUIRED_CONTROLS`).
+
+### Changed
+
+- **Bundle identifier** changed from `io.github.mbuckaway.rivercrossing` to
+  `ca.buckaway.rivercrossing` (registered under Apple team `XYXZZT45G4`), matching the account's
+  existing `ca.buckaway.*` identifiers.
+
 ## [1.0.6] - 2026-09-02
 
 ### Fixed — first published signed macOS release
