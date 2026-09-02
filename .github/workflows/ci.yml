@@ -440,7 +440,13 @@ jobs:
             find devbundle -maxdepth 3 -name 'RiverCrossing.app' 2>/dev/null || ls devbundle >&2
             exit 1
           fi
-          codesign --deep --force --options runtime --sign "${APPLE_DEVELOPER_ID}" "${app}"
+          codesign --force --options runtime --sign "${APPLE_DEVELOPER_ID}" \
+            "${app}/Contents/Frameworks/Python.framework"
+          # No --deep: its traversal into Python.framework fails as "bundle
+          # format is ambiguous" on some runner codesign versions (measured
+          # on macos-latest). Signing the framework explicitly first, then
+          # the app without --deep, verifies clean with --deep --strict.
+          codesign --force --options runtime --sign "${APPLE_DEVELOPER_ID}" "${app}"
       - name: Rebuild the DMG from the signed .app
         if: steps.signing.outputs.signed == '1'
         run: |
