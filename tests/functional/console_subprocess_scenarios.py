@@ -2399,11 +2399,8 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
         harness.pump()
         found: dict[str, Any] = {}
 
-        def _read_and_cancel() -> None:
-            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+        def _read_and_cancel(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             found["dlg_shown"] = dialog is not None
-            if dialog is None:
-                return
             found["rendered_system"] = harness.find_control(
                 dialog, ids.APPEARANCE_SYSTEM_RADIO
             ).GetValue()
@@ -2423,7 +2420,7 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
             harness.click(dialog, pages.WX_ID_CANCEL)
 
         try:
-            wx.CallAfter(_read_and_cancel)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _read_and_cancel)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
         finally:
@@ -2431,7 +2428,7 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
         return found
 
 
-def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: PLR0915 -- two app runs (bootstrap + relaunch), each with a modal-driver closure
+def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:
     """Toggle Dark in Settings, OK: applied, persisted, relaunched.
 
     E8.1.2's appearance-mirror proof. Pre-saves a LIGHT set so the
@@ -2462,11 +2459,8 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: 
         harness.pump()
         found: dict[str, Any] = {}
 
-        def _drive_ok() -> None:
-            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+        def _drive_ok(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             found["dlg_shown"] = dialog is not None
-            if dialog is None:
-                return
             harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
             harness.find_control(dialog, ids.APPEARANCE_LIGHT_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
             harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
@@ -2475,7 +2469,7 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: 
             harness.click(dialog, pages.WX_ID_OK)
 
         try:
-            wx.CallAfter(_drive_ok)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _drive_ok)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
             found["is_dark_after"] = wx.SystemSettings.GetAppearance().IsDark()
@@ -2497,18 +2491,15 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: 
         frame2.Layout()
         harness.pump()
 
-        def _read_relaunch() -> None:
-            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+        def _read_relaunch(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             found["relaunch_dlg_shown"] = dialog is not None
-            if dialog is None:
-                return
             found["relaunch_dark"] = harness.find_control(
                 dialog, ids.APPEARANCE_DARK_RADIO
             ).GetValue()
             harness.click(dialog, pages.WX_ID_CANCEL)
 
         try:
-            wx.CallAfter(_read_relaunch)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _read_relaunch)
             harness.fire_menu_event(frame2, "wxID_PREFERENCES")
             harness.pump()
         finally:
@@ -2544,17 +2535,14 @@ def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
         found: dict[str, Any] = {}
         was_dark = wx.SystemSettings.GetAppearance().IsDark()
 
-        def _drive_cancel() -> None:
-            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+        def _drive_cancel(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             found["dlg_shown"] = dialog is not None
-            if dialog is None:
-                return
             harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
             harness.find_control(dialog, ids.SOUND_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
             harness.click(dialog, pages.WX_ID_CANCEL)
 
         try:
-            wx.CallAfter(_drive_cancel)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _drive_cancel)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
             found["appearance_unchanged"] = wx.SystemSettings.GetAppearance().IsDark() == was_dark
@@ -2616,18 +2604,15 @@ def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
 
             # The mirror from the Settings dialog: checkbox checked, and
             # unchecking it + OK reverts the console and the menu.
-            def _uncheck_in_settings() -> None:
-                dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            def _uncheck_in_settings(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
                 found["settings_dlg_shown"] = dialog is not None
-                if dialog is None:
-                    return
                 found["settings_checkbox_after_on"] = harness.find_control(
                     dialog, ids.HIDE_TIMES_CHK
                 ).GetValue()
                 harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
                 harness.click(dialog, pages.WX_ID_OK)
 
-            wx.CallAfter(_uncheck_in_settings)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _uncheck_in_settings)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
             found["after_settings_off_columns"] = _visible_column_titles(crossings)
@@ -2724,11 +2709,8 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
         harness.pump()
         found: dict[str, Any] = {}
 
-        def _read_choice_base() -> None:
-            dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+        def _read_choice_base(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             found["dlg_shown"] = dialog is not None
-            if dialog is None:
-                return
             found["choice_base_pt"] = (
                 harness.find_control(dialog, ids.ZOOM_CHOICE).GetFont().GetPointSize()
             )
@@ -2738,7 +2720,7 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
             status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
             found["base_pt"] = status_lbl.GetFont().GetPointSize()
 
-            wx.CallAfter(_read_choice_base)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _read_choice_base)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
 
@@ -2746,11 +2728,8 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
             found["pt_after_menu_120"] = status_lbl.GetFont().GetPointSize()
             found["radio_120_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_120)
 
-            def _drive_settings_130() -> None:
-                dialog = wx.Window.FindWindowByName(ids.SETTINGS_DLG)
+            def _drive_settings_130(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
                 found["dlg_shown_2"] = dialog is not None
-                if dialog is None:
-                    return
                 found["choice_selection_at_120"] = harness.find_control(
                     dialog, ids.ZOOM_CHOICE
                 ).GetSelection()
@@ -2760,7 +2739,7 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
                 harness.find_control(dialog, ids.ZOOM_CHOICE).SetSelection(ZOOM_LADDER.index(130))
                 harness.click(dialog, pages.WX_ID_OK)
 
-            wx.CallAfter(_drive_settings_130)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _drive_settings_130)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
             found["pt_after_settings_130"] = status_lbl.GetFont().GetPointSize()
