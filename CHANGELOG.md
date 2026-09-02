@@ -4,6 +4,19 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-09-01
+
+### Fixed — Windows functional-suite reliability
+
+- **New-ride scenario no longer hangs** (`tests/functional/console_subprocess_scenarios.py`, PR #21):
+  a `wx.CallAfter` driving a route-opened dialog could fire before the modal's `ShowModal` started
+  (the view's decoration pumps the event queue), losing the submit click and hanging the child to
+  its bound; the drives now wait for the dialog to be a shown modal before acting.
+- **Local Windows functional run orchestration** (`tools/functional_rerun.py`, `noxfile.py`,
+  `CONTRIBUTING.md`, PR #23): `RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S` and
+  `RIVERCROSSING_FUNCTIONAL_JOBS` let a slow or crash-saturated local box converge in one pass
+  instead of two killed passes plus a whole-suite fallback.
+
 ## [1.0.1] - 2026-09-01
 
 ### Changed — python-review cleanup
