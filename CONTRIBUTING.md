@@ -223,8 +223,7 @@ when `LANG`/`LC_ALL` are unset (NSIS bug 1165), so every invocation forces a UTF
 
 ## Releasing
 
-A version tag is the whole release procedure — the pipeline does the rest (spec §14 stage 6,
-unsigned until EPIC 9):
+A version tag is the whole release procedure — the pipeline does the rest (spec §14 stage 6):
 
 1. Bump `__version__` in `src/rivercrossing/__init__.py` and add the version's CHANGELOG section.
 2. Merge to `master` through a PR (the tag must sit on gated code).
@@ -232,22 +231,26 @@ unsigned until EPIC 9):
    the release job fails on a tag that does not match `rivercrossing.__version__`.
 4. The tag runs the full gauntlet; when green, the `release` job publishes the GitHub release with
    `RiverCrossing-<version>-macos.dmg`, `RiverCrossing-<version>-windows-x64-setup.exe`,
-   `RiverCrossing-<version>-windows-arm64-setup.exe` and `SHA256SUMS.txt`. Nothing publishes if any
-   gate is red.
+   `RiverCrossing-<version>-windows-arm64-setup.exe` and `SHA256SUMS.txt`. The macOS DMG is
+   Developer-ID signed, notarized and stapled when all six `APPLE_*` secrets are set (see below);
+   otherwise it ships unsigned. Nothing publishes if any gate is red.
 
 ## CI secrets contract
 
-Named here so the release lane in EPIC 9 has a defined interface. The organisation supplies the values;
-nothing in EPIC 1 consumes them.
+Named here so the tag release lane has a defined interface. `ci.yml`'s `release` job reads these
+when it runs on a version tag. The organisation supplies the values; when all six `APPLE_*` secrets
+are present the macOS DMG is Developer-ID signed, notarized and stapled; if any is missing the gate
+falls back to publishing the unsigned DMG (partial sets count as absent).
 
 | Secret | Used by | Purpose |
 |---|---|---|
-| `APPLE_ID` | EPIC 9 (E9.1.3) | Apple Developer account for `notarytool` |
-| `APPLE_ID_PASSWORD` | EPIC 9 (E9.1.3) | App-specific password for notarisation |
-| `APPLE_TEAM_ID` | EPIC 9 (E9.1.3) | Developer ID team identifier |
-| `CERT_P12` | EPIC 9 (E9.1.3) | Base64 Developer ID Application certificate |
-| `CERT_P12_PASSWORD` | EPIC 9 (E9.1.3) | Passphrase for the above |
+| `APPLE_DEVELOPER_ID` | ci.yml `release` | Developer ID signing identity, e.g. `Developer ID Application: <Name> (<TeamID>)` — `security find-identity -v -p codesigning` |
+| `APPLE_CERTIFICATE_B64` | ci.yml `release` | Base64 of the Developer ID Application `.p12` (certificate + private key) — `base64 -i RiverCrossing.p12` |
+| `APPLE_CERT_PASSWORD` | ci.yml `release` | Passphrase for the `.p12` above |
+| `APPLE_NOTARY_KEY_ID` | ci.yml `release` | App Store Connect API key ID (for `notarytool`) |
+| `APPLE_NOTARY_KEY` | ci.yml `release` | App Store Connect API key `.p8` contents (multi-line PEM) |
+| `APPLE_NOTARY_ISSUER` | ci.yml `release` | App Store Connect API issuer ID (UUID) |
 | — | Windows | **Unused in v1.** The Windows installer ships unsigned by decision (R-01); the user guide documents the SmartScreen "More info → Run anyway" step. |
 
-Until the Apple credentials land, the macOS packaging stage emits an unsigned `.dmg` and the notarisation
+Until the Apple credentials land, the macOS packaging stage emits an unsigned `.dmg` and the signing
 gate is advisory.
