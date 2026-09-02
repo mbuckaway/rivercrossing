@@ -4,13 +4,22 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.4] - 2026-09-02
+
+### Changed — first published signed macOS release
+
+- **Developer-ID signed + notarized DMG.** The tag `release` job signs the app, rebuilds the DMG
+  from the signed app, notarizes and staples it, and `spctl`-checks it before publishing. v1.0.3's
+  attempt exposed two signed-lane bugs, both fixed here: the `.p12` is now exported with openssl
+  `-legacy` algorithms (Apple `security` rejects the modern defaults), and the signing steps locate
+  the `.app` at the dev-bundle artifact's real (flat) path.
+
 ## [1.0.3] - 2026-09-02
 
-### Changed — first signed macOS release
+### Changed — signed release attempt (superseded)
 
-- **Developer-ID signed + notarized DMG.** The six `APPLE_*` secrets are now set, so the tag
-  `release` job (ci.yml, PR #22) signs the app, rebuilds the DMG from the signed app, notarizes and
-  staples it, and `spctl`-checks it before publishing. This release exercises that lane end-to-end.
+- The v1.0.3 tag attempted the first signed release, but its `release` job failed (PKCS12 import
+  and dev-bundle path bugs, fixed in 1.0.4); no v1.0.3 release was published.
 
 ## [1.0.2] - 2026-09-01
 

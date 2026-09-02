@@ -431,12 +431,29 @@ jobs:
       - name: Developer ID codesign the .app
         if: steps.signing.outputs.signed == '1'
         run: |
-          codesign --deep --force --options runtime --sign "${APPLE_DEVELOPER_ID}" "devbundle/dist/RiverCrossing.app"
+          app="devbundle/RiverCrossing.app"
+          if [[ ! -d "${app}" && -d "devbundle/dist/RiverCrossing.app" ]]; then
+            app="devbundle/dist/RiverCrossing.app"
+          fi
+          if [[ ! -d "${app}" ]]; then
+            echo "no RiverCrossing.app in the rivercrossing-devbundle-macos artifact" >&2
+            find devbundle -maxdepth 3 -name 'RiverCrossing.app' 2>/dev/null || ls devbundle >&2
+            exit 1
+          fi
+          codesign --deep --force --options runtime --sign "${APPLE_DEVELOPER_ID}" "${app}"
       - name: Rebuild the DMG from the signed .app
         if: steps.signing.outputs.signed == '1'
         run: |
+          app="devbundle/RiverCrossing.app"
+          if [[ ! -d "${app}" && -d "devbundle/dist/RiverCrossing.app" ]]; then
+            app="devbundle/dist/RiverCrossing.app"
+          fi
+          if [[ ! -d "${app}" ]]; then
+            echo "no RiverCrossing.app in the rivercrossing-devbundle-macos artifact" >&2
+            exit 1
+          fi
           mkdir -p dist
-          cp -R "devbundle/dist/RiverCrossing.app" "dist/RiverCrossing.app"
+          cp -R "${app}" "dist/RiverCrossing.app"
           nox -s dmg
       - name: Notarize the DMG
         if: steps.signing.outputs.signed == '1'
