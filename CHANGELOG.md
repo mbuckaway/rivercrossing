@@ -4,14 +4,23 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.6] - 2026-09-02
+
+### Fixed — first published signed macOS release
+
+- **Developer-ID signed + notarized DMG.** The signed lane now ships the `.app` as a tarball
+  (`tar` preserves the symlinks PyInstaller creates; `upload/download-artifact`'s zip dereferenced
+  them, which made `codesign` report the bundle as "ambiguous"), signs inside-out without `--deep`,
+  and applies the PyInstaller hardened-runtime entitlements. Verified locally: the signed app
+  launches and `codesign --verify --deep --strict` passes. v1.0.3–1.0.5 attempts hit this and did
+  not publish.
+
 ## [1.0.5] - 2026-09-02
 
-### Changed — codesign fix for the signed release
+### Changed — codesign attempt (superseded)
 
-- The signing steps now sign `Python.framework` explicitly and the `.app` **without** `--deep`
-  (`codesign --deep` fails on some runner versions with "bundle format is ambiguous" when it walks
-  into the framework). Verified locally: the resulting bundle passes `codesign --verify --deep
-  --strict`. v1.0.4's attempt hit this bug and did not publish.
+- The v1.0.5 tag's `release` job reached codesign but still failed (symlink dereferencing in the
+  artifact round-trip, fixed in 1.0.6); no v1.0.5 release was published.
 
 ## [1.0.4] - 2026-09-02
 
