@@ -190,3 +190,32 @@ def test_load_frame_verified_raises_when_the_fresh_resource_has_no_frame(
         app._load_frame_verified(resource, required)
 
     degraded.Destroy.assert_called_once_with()
+
+
+def test_load_xrc_resources_memoizes_the_global_resource(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The process-global XRC resource is loaded once and reused.
+
+    Re-loading on every ``build_main_window`` call re-parses the .xrc
+    files, and a later re-parse can re-roll the Fault-B degradation
+    the guard exists to work around. The app loader memoizes the
+    singleton, matching the harness's load-once pattern.
+    """
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    monkeypatch.setattr(app, "_loaded_xrc_resource", None)
+    get_calls = 0
+
+    def _fake_get() -> MagicMock:
+        nonlocal get_calls
+        get_calls += 1
+        return MagicMock()
+
+    monkeypatch.setattr(wx.xrc.XmlResource, "Get", staticmethod(_fake_get))
+
+    first = app._load_xrc_resources()
+    second = app._load_xrc_resources()
+
+    assert first is second
+    assert get_calls == 1

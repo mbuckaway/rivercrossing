@@ -281,16 +281,30 @@ def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]
     return engine, EngineDataSource(engine, roster)
 
 
+_loaded_xrc_resource: Any | None = None
+"""The process-global ``XmlResource``, loaded once and reused.
+
+Re-parsing the .xrc files on every ``build_main_window`` call is
+wasteful and re-rolls the Fault-B degraded-load die (a parse under
+load can skip a subtree, and a later re-parse can overwrite an earlier
+clean one). Load once per process and reuse, matching
+``tests/functional/harness.load_xrc_resources``'s session-scoped
+load-once pattern.
+"""
+
+
 def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
-    """Load every packaged ``.xrc`` file into the global resource.
+    """Load every packaged ``.xrc`` file into the global resource once.
 
     Mirrors ``tests/functional/harness.load_xrc_resources`` exactly,
     but is not imported from there: that module is test-only
     infrastructure, absent from a frozen bundle's own package path.
-    ``wx.xrc.XmlResource.Get()`` is a process-wide singleton and
-    ``Load`` is idempotent, so this is harmless to call more than
-    once in a session (harness.py's own measured note).
+    ``wx.xrc.XmlResource.Get()`` is a process-wide singleton, so the
+    loaded resource is memoized and returned on later calls.
     """
+    global _loaded_xrc_resource  # noqa: PLW0603 -- module-level memoization cache
+    if _loaded_xrc_resource is not None:
+        return _loaded_xrc_resource
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
 
@@ -298,6 +312,7 @@ def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
     resource = wx.xrc.XmlResource.Get()
     for path in sorted(xrc_dir.glob("*.xrc")):
         resource.Load(str(path))
+    _loaded_xrc_resource = resource
     return resource
 
 
