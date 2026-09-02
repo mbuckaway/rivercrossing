@@ -36,14 +36,16 @@ stdout/stderr into one pipe and a daemon reader thread echoes every
 line to the wrapper's stdout live, so progress is visible while the
 pass runs and a hang leaves its last lines in the log instead of
 nothing at all. If the child is still running after ``PASS_TIMEOUT_S``
-(600s) it is killed and a diagnostic naming the elapsed time and the
-last ~20 lines is printed to stderr; the pass then reports exit code
-124, which is outside {0, 1} and is therefore propagated without a
-rerun, consistent with the crash rule above. Killing the wrapper's
-pytest process orphans its xdist workers, but they exit on their own
-once the controller's pipe closes.
+(default 600s; overridable via the ``RIVERCROSSING_FUNCTIONAL_PASS_
+TIMEOUT_S`` env var) it is killed and a diagnostic naming the elapsed
+time and the last ~20 lines is printed to stderr; the pass then
+reports exit code 124, which is outside {0, 1} and is therefore
+propagated without a rerun, consistent with the crash rule above.
+Killing the wrapper's pytest process orphans its xdist workers, but
+they exit on their own once the controller's pipe closes.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -68,8 +70,10 @@ _MAX_RERUNS = 4
 # pass and killed it seconds from green. 600 s clears that crawl with
 # margin while still bounding a true hang to a ten-minute pass whose
 # timeout (124) triggers the whole-suite fresh-process fallback in
-# rerun_failed_files.
-PASS_TIMEOUT_S = 600
+# rerun_failed_files. A slower local box whose passes crawl past the
+# bound (measured: a Windows 11 desktop with the suite's wx-churn
+# access-violation dumps) can raise it via the env override.
+PASS_TIMEOUT_S = int(os.environ.get("RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S", "600"))
 
 # How long _spawn's stream reader is joined after the child exits.
 # The timeout path already used this bound; the normal path needs it

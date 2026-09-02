@@ -138,6 +138,7 @@ def functional(session):
         session.error(message)
 
     session.install(DEV)
+    jobs = os.environ.get("RIVERCROSSING_FUNCTIONAL_JOBS", "auto")
     session.run(
         "python",
         str(ROOT / "tools" / "functional_rerun.py"),
@@ -146,7 +147,7 @@ def functional(session):
         "-v",
         "--no-cov",
         "-n",
-        "auto",
+        jobs,
         "--dist",
         "loadfile",
         "--reruns",
