@@ -4,6 +4,14 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-09-02
+
+### Changed — first signed macOS release
+
+- **Developer-ID signed + notarized DMG.** The six `APPLE_*` secrets are now set, so the tag
+  `release` job (ci.yml, PR #22) signs the app, rebuilds the DMG from the signed app, notarizes and
+  staples it, and `spctl`-checks it before publishing. This release exercises that lane end-to-end.
+
 ## [1.0.2] - 2026-09-01
 
 ### Fixed — Windows functional-suite reliability
