@@ -36,6 +36,11 @@ Stage 3 needs a **real desktop session** — no virtual display. It cannot run h
 run it inside the Tart VM (next section): a bare `nox -s functional` on a Mac refuses unless
 `RIVERCROSSING_HOST_FUNCTIONAL=1` is set. CI is exempt — the hosted runners set `CI`.
 
+Local Windows knobs: `RIVERCROSSING_FUNCTIONAL_JOBS` (default `auto`) selects the xdist worker
+count — the measured `-n 2` setting for deterministic local runs on busy machines — and
+`RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S` (default 600) raises the per-pass bound for a slow or
+crash-saturated local box whose passes otherwise get killed at ~98% and re-run wholesale.
+
 ## macOS functional tests — run them in a VM
 
 Stage 3 opens all 23 windows for real. On your own Mac that takes over the desktop: the windows

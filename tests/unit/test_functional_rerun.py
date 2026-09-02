@@ -27,6 +27,7 @@ ever spawning pytest.
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 import sys
 import time
@@ -84,6 +85,20 @@ def test_pass_timeout_s_at_least_600_seconds(rerun_module: ModuleType) -> None:
     clears that crawl with margin while still bounding a true hang.
     """
     assert rerun_module.PASS_TIMEOUT_S >= 600
+
+
+def test_pass_timeout_s_obeys_the_env_override(
+    rerun_module: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S overrides the default.
+
+    A slower local box whose crash-saturated passes crawl past the
+    default bound needs one generous pass instead of the killed-at-98%
+    whole-suite fallback churn (measured on a Windows 11 desktop).
+    """
+    monkeypatch.setenv("RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S", "1800")
+    importlib.reload(rerun_module)
+    assert rerun_module.PASS_TIMEOUT_S == 1800
 
 
 # ------------------------------------------------- parse_summary
