@@ -206,6 +206,11 @@ def _visible_column_titles(crossings_list: Any) -> list[str]:  # noqa: ANN401
 # between attempts; a same-drain CallAfter re-queue would spin instead.
 _DRIVE_WAIT_MS = 50
 _DRIVE_WAIT_ATTEMPTS = 100
+# The second XRC dialog instantiation in one process is flaky under
+# full-suite load (measured on the VM): the menu route can return
+# without opening the dialog, so the relaunch half retries the route a
+# bounded number of times while one _drive_when_shown chain polls.
+_RELAUNCH_ROUTE_ATTEMPTS = 3
 _PENDING_DRIVES: list[Any] = []
 
 
@@ -2499,9 +2504,16 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:
             harness.click(dialog, pages.WX_ID_CANCEL)
 
         try:
+            # One _drive_when_shown chain polls for the relaunch dialog
+            # while the menu route is retried a bounded number of times:
+            # the second XRC dialog instantiation in one process can
+            # return without opening the dialog under full-suite load.
             wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _read_relaunch)
-            harness.fire_menu_event(frame2, "wxID_PREFERENCES")
-            harness.pump()
+            for _attempt in range(_RELAUNCH_ROUTE_ATTEMPTS):
+                harness.fire_menu_event(frame2, "wxID_PREFERENCES")
+                harness.pump()
+                if "relaunch_dlg_shown" in found:
+                    break
         finally:
             _close_without_prompt(frame2)
         return found
