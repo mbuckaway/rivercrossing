@@ -72,11 +72,13 @@ from check_asset_manifest import (  # noqa: E402 -- needs the path above
 
 APP_NAME = "RiverCrossing"  # the .app and its display name
 EXE_NAME = "rivercrossing"  # the executable and the onedir folder
-# Reverse-DNS form of the project's own repository URL
-# (pyproject.toml [project.urls] Repository).
-# TODO(E9.1.3): confirm io.github.mbuckaway.rivercrossing against the
-# Apple developer account identifier when signing creds land (E1.1.2).
-BUNDLE_ID = "io.github.mbuckaway.rivercrossing"
+# Registered bundle identifier under Apple team XYXZZT45G4, created
+# 2026-09-02 via:
+#   asc bundle-ids create --identifier ca.buckaway.rivercrossing --name RiverCrossing
+# (id A9FG3FS938). Developer ID direct distribution needs no
+# pre-registration; this matches the account's existing ca.buckaway.*
+# identifiers.
+BUNDLE_ID = "ca.buckaway.rivercrossing"
 
 ENTRY_SCRIPT = ROOT / "src" / "rivercrossing" / "__main__.py"
 PACKAGE_DIR = ROOT / "src" / "rivercrossing"
