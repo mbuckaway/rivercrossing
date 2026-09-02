@@ -4,9 +4,11 @@
 # which arrives in EPIC 9. Phase 9 added the unsigned per-user NSIS installer
 # to the Windows stage-5 leg (the unsigned half of E9.1.2); Phase 11 added the
 # unsigned half of stage 6 -- a version tag runs every wired stage and, when
-# green, publishes the GitHub release with the unsigned DMG, both Windows
-# installers (x64 + ARM64) and their checksums. Signing (Authenticode,
-# Developer ID + notarytool) stays EPIC 9.
+# green, publishes the GitHub release with the macOS DMG, both Windows
+# installers (x64 + ARM64) and their checksums. E9.1.3 wires Developer ID
+# signing + notarization into the same tag release job (below), gated on
+# the APPLE_* secrets; the unsigned DMG is the fallback until they land.
+# Windows stays unsigned by decision (R-01 -- no Authenticode certificate).
 #
 # **Both platforms gate** (spec §14, R-75). The EPIC 1 deviation that made
 # macOS the only gate — no Windows test machine existed — was reversed in
@@ -335,24 +337,42 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------- stage 6 · release
-  # Phase 11 (the unsigned half of stage 6): a version tag that survives
-  # the full gauntlet publishes the GitHub release with the unsigned DMG
-  # and both Windows installers (x64 + ARM64) and their checksums, named
-  # in the platform-tagged style the
-  # v0.1.0 release established. The guard fails the job -- publishing
-  # nothing -- when the tag does not match rivercrossing.__version__
-  # (v0.1.1 was tagged over 0.1.0 code and shipped empty; never again).
-  # Signing remains stage 6 / EPIC 9. E9.1.3 adds
-  # .github/workflows/release.yml as the signed tag lane; retire this
-  # job when that lane is wired -- two tag lanes would both call
-  # `gh release create` and one would fail on the existing release.
+  # A version tag that survives the full gauntlet publishes the GitHub
+  # release: the macOS DMG and both Windows installers (x64 + ARM64) with
+  # their checksums, named in the platform-tagged style the v0.1.0 release
+  # established. The guard fails the job -- publishing nothing -- when the
+  # tag does not match rivercrossing.__version__ (v0.1.1 was tagged over
+  # 0.1.0 code and shipped empty; never again).
+  #
+  # macOS signing (E9.1.3) is wired directly into this job because it runs
+  # in the same workflow run that holds the artifacts: when all six
+  # APPLE_* secrets are present, the macOS leg Developer-ID signs the .app,
+  # rebuilds the DMG from the signed app, notarizes and staples it, and
+  # spctl-checks it before staging; with any secret missing it publishes
+  # the unsigned DMG built by build-macos (the advisory gate -- partial
+  # sets count as absent, so the unsigned path stays green until the org
+  # supplies credentials). The signed lane once lived in
+  # .github/workflows/release.yml, but GitHub resolves `needs` only inside
+  # one workflow file and download-artifact reads artifacts from one run,
+  # so a separate lane cannot reach the gauntlet's jobs or artifacts;
+  # release.yml was retired so two lanes never both call `gh release
+  # create` and one fails on the existing release.
   release:
     name: "6 · Publish release (tags)"
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [static, unit, functional, acceptance, build-macos, build-windows-x64, build-windows-arm64]
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     permissions:
       contents: write
+    env:
+      # Org supplies these (E1.1.2). An unset secret evaluates to the
+      # empty string, which is what the advisory gate below checks.
+      APPLE_DEVELOPER_ID: ${{ secrets.APPLE_DEVELOPER_ID }}
+      APPLE_CERTIFICATE_B64: ${{ secrets.APPLE_CERTIFICATE_B64 }}
+      APPLE_CERT_PASSWORD: ${{ secrets.APPLE_CERT_PASSWORD }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_KEY: ${{ secrets.APPLE_NOTARY_KEY }}
+      APPLE_NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_ISSUER }}
     steps:
       - uses: actions/checkout@v4
       - name: Tag matches rivercrossing.__version__
@@ -362,11 +382,111 @@ jobs:
             echo "tag ${GITHUB_REF_NAME} does not match rivercrossing.__version__ ${version} -- bump the version before tagging" >&2
             exit 1
           fi
-      - name: Download the DMG
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Detect Apple signing secrets (advisory gate)
+        id: signing
+        run: |
+          missing=0
+          for secret in APPLE_DEVELOPER_ID APPLE_CERTIFICATE_B64 APPLE_CERT_PASSWORD \
+            APPLE_NOTARY_KEY_ID APPLE_NOTARY_KEY APPLE_NOTARY_ISSUER; do
+            if [[ -z "${!secret}" ]]; then
+              missing=1
+            fi
+          done
+          if (( missing == 0 )); then
+            echo "signed=1" >> "${GITHUB_OUTPUT}"
+            echo "Apple signing secrets present -- Developer ID + notarization enabled"
+          else
+            echo "signed=0" >> "${GITHUB_OUTPUT}"
+            echo "APPLE_* signing secrets absent (E1.1.2) -- publishing the unsigned DMG; signed path green once creds land" >&2
+          fi
+      # ------------------------------------------------ signed path
+      - name: Download the macOS dev bundle
+        if: steps.signing.outputs.signed == '1'
+        uses: actions/download-artifact@v4
+        with:
+          name: rivercrossing-devbundle-macos
+          path: devbundle
+      # Standard Apple CI keychain recipe: import the Developer ID .p12
+      # into a throwaway keychain and let codesign use it without a GUI
+      # prompt. RUNNER_TEMP is cleaned with the job.
+      - name: Import the Apple Developer ID certificate
+        if: steps.signing.outputs.signed == '1'
+        run: |
+          keychain="${RUNNER_TEMP}/rivercrossing-signing.keychain-db"
+          echo "${APPLE_CERTIFICATE_B64}" | base64 --decode > "${RUNNER_TEMP}/certificate.p12"
+          security create-keychain -p "${RUNNER_TEMP}" "${keychain}"
+          security set-keychain-settings -lut 21600 "${keychain}"
+          security unlock-keychain -p "${RUNNER_TEMP}" "${keychain}"
+          security import "${RUNNER_TEMP}/certificate.p12" -k "${keychain}" -P "${APPLE_CERT_PASSWORD}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${RUNNER_TEMP}" "${keychain}"
+          security default-keychain -s "${keychain}"
+      - name: Developer ID codesign the .app
+        if: steps.signing.outputs.signed == '1'
+        run: |
+          codesign --deep --force --options runtime --sign "${APPLE_DEVELOPER_ID}" "devbundle/dist/RiverCrossing.app"
+      - name: Rebuild the DMG from the signed .app
+        if: steps.signing.outputs.signed == '1'
+        run: |
+          mkdir -p dist
+          cp -R "devbundle/dist/RiverCrossing.app" "dist/RiverCrossing.app"
+          nox -s dmg
+      - name: Notarize the DMG
+        if: steps.signing.outputs.signed == '1'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # APPLE_NOTARY_KEY holds the App Store Connect API key (.p8).
+          echo "${APPLE_NOTARY_KEY}" > "${RUNNER_TEMP}/authkey.p8"
+          xcrun notarytool submit "dist/RiverCrossing-${version}.dmg" \
+            --key-id "${APPLE_NOTARY_KEY_ID}" \
+            --key "${RUNNER_TEMP}/authkey.p8" \
+            --issuer "${APPLE_NOTARY_ISSUER}" \
+            --wait
+      - name: Staple the notarization ticket
+        if: steps.signing.outputs.signed == '1'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          xcrun stapler staple "dist/RiverCrossing-${version}.dmg"
+      - name: Gatekeeper assessment of the signed .app
+        if: steps.signing.outputs.signed == '1'
+        run: |
+          spctl --assess --type open --context context:primary-signature "dist/RiverCrossing.app"
+      - name: Stage the signed DMG
+        if: steps.signing.outputs.signed == '1'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p assets
+          mv "dist/RiverCrossing-${version}.dmg" "assets/RiverCrossing-${version}.dmg"
+      # ------------------------------------ unsigned fallback path
+      - name: Download the unsigned DMG (advisory fallback)
+        if: steps.signing.outputs.signed != '1'
         uses: actions/download-artifact@v4
         with:
           name: rivercrossing-dmg
           path: assets
+      # upload-artifact@v4 preserves workspace-relative paths, so the
+      # artifact lands as assets/dist/RiverCrossing-<version>.dmg; the
+      # flat layout is handled too.
+      - name: Normalize the unsigned DMG
+        if: steps.signing.outputs.signed != '1'
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cd assets || exit 1
+          if [[ ! -f "RiverCrossing-${version}.dmg" && -f "dist/RiverCrossing-${version}.dmg" ]]; then
+            mv "dist/RiverCrossing-${version}.dmg" "RiverCrossing-${version}.dmg"
+          fi
+          if [[ ! -f "RiverCrossing-${version}.dmg" ]]; then
+            echo "no RiverCrossing-${version}.dmg inside the rivercrossing-dmg artifact" >&2
+            exit 1
+          fi
+      # -------------------------------------------------- both paths
       - name: Download the Windows x64 installer
         uses: actions/download-artifact@v4
         with:
@@ -377,12 +497,36 @@ jobs:
         with:
           name: rivercrossing-setup-windows-arm64
           path: assets
+      # The build jobs name the installers already arch-tagged
+      # (RiverCrossing-<version>-windows-x64-setup.exe etc.); move them
+      # up from the artifact's dist/ prefix if it has one.
+      - name: Normalize the Windows installers
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          cd assets || exit 1
+          for arch in x64 arm64; do
+            file="RiverCrossing-${version}-windows-${arch}-setup.exe"
+            if [[ ! -f "${file}" && -f "dist/${file}" ]]; then
+              mv "dist/${file}" "${file}"
+            fi
+            if [[ ! -f "${file}" ]]; then
+              echo "no ${file} inside the rivercrossing-setup-windows-${arch} artifact" >&2
+              exit 1
+            fi
+          done
       - name: Assemble the assets with checksums
         run: |
           version="${GITHUB_REF_NAME#v}"
-          cd assets
+          cd assets || exit 1
+          rm -rf dist
           mv "RiverCrossing-${version}.dmg" "RiverCrossing-${version}-macos.dmg"
-          sha256sum -- * > SHA256SUMS.txt
+          # macOS lacks GNU sha256sum unless coreutils is linked; the
+          # BSD shasum emits the same "hash  filename" format.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -- * > SHA256SUMS.txt
+          else
+            shasum -a 256 -- * > SHA256SUMS.txt
+          fi
           cat SHA256SUMS.txt
       - name: Publish
         env:
