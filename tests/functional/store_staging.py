@@ -40,6 +40,7 @@ __all__ = [
     "race_db_facts",
     "resume_db_path",
     "resume_ride_config",
+    "rich_race_roster",
     "running_ride_with_roster",
 ]
 
@@ -173,6 +174,32 @@ def library_roster() -> Roster:
     return roster
 
 
+def rich_race_roster() -> Roster:
+    """Build the MIXED rider_pooled roster the E9.2.1 race stages.
+
+    Four solo entries plus two teams -- one of two riders, one of
+    three -- all ACTIVE (DNF is marked at runtime, not staged). The
+    six plates round-trip verbatim through ``Store.save_roster`` and
+    ``Store.roster_for``.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    for plate in ("1", "2", "3", "4"):
+        roster.create_solo_entry(name=f"Solo {plate}", plate=plate)
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[Rider(name="Rider 11", plate="11"), Rider(name="Rider 12", plate="12")],
+    )
+    roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(name="Rider 21", plate="21"),
+            Rider(name="Rider 22", plate="22"),
+            Rider(name="Rider 23", plate="23"),
+        ],
+    )
+    return roster
+
+
 def create_library_ride(path: Path, *, name: str, running: bool) -> int:
     """Create a store ride with a saved roster; timing when *running*.
 
@@ -206,8 +233,12 @@ def create_library_ride(path: Path, *, name: str, running: bool) -> int:
     return ride_id
 
 
-def running_ride_with_roster(
-    path: Path, *, actual_start: datetime | None = None, rng_seed: int | None = None
+def running_ride_with_roster(  # noqa: PLR0913 -- (path, actual_start, rng_seed) + the E9.2.1 rich-roster seam
+    path: Path,
+    *,
+    actual_start: datetime | None = None,
+    rng_seed: int | None = None,
+    roster: Roster | None = None,
 ) -> int:
     """Create a running store ride and a quit-keep-running session.
 
@@ -221,12 +252,15 @@ def running_ride_with_roster(
     ``rng_seed`` pins the ride's shoe seed (E9.2.2/R-77): the nightly
     acceptance race owns its seed -- it injects it here and files it
     on failure; ``None`` keeps the DB-owned random seed (spec §4).
+    ``roster`` replaces the saved roster (E9.2.1 stages its rich six-
+    entry roster here); ``None`` keeps the E5-era
+    :func:`library_roster` default.
     """
     start_iso = actual_start.isoformat() if actual_start is not None else "2026-09-20T10:00:00"
     boot = Store.open(path)
     try:
         ride_id = boot.create_ride(library_ride_config("GORBA EPIC 2026"), rng_seed=rng_seed)
-        boot.save_roster(ride_id, library_roster())
+        boot.save_roster(ride_id, roster if roster is not None else library_roster())
         boot.append(ride_id, Event(action="start", payload={"actual_start": start_iso}))
     finally:
         boot.close()
