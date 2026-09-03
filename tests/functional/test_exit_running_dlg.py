@@ -66,15 +66,20 @@ def test_exit_running_dlg_finish_first_routes_to_the_finish_flow() -> None:
 def test_exit_running_dlg_quit_keep_running_stamps_closed_at_and_quits() -> None:
     """Quit-keep-running: session closed cleanly, ride untouched, quit.
 
-    The store-backed app records the running ride on open (E5.2.1);
-    the quit flow must stamp that session's ``closed_at``, never touch
-    the ride row, and destroy the frame -- so the next launch reads
-    RUNNING_AT_EXIT, not CRASHED.
+    The scenario resumes a staged RUNNING store ride, so the app's
+    open session carries the running ride's id (E5.2.1/E5.2.2's
+    Continue -> ``Store.set_active_ride``); the quit flow must stamp
+    that session's ``closed_at``, never touch the ride row, and
+    destroy the frame -- so the next launch reads RUNNING_AT_EXIT,
+    not CRASHED. The ride row's own status column is written once at
+    ``create_ride`` and never synced when events are appended (the
+    documented E5.4 engine-sync gap, store module docstring), so the
+    "untouched" pin reads the row exactly as staging wrote it.
     """
     result = scenario_runner.run_scenario("quit_keep_running_writes_closed_at_and_stays_running")
 
     assert result["data"] == {
         "frame_being_deleted": True,
         "session_state": "running_at_exit",
-        "ride_status": "draft",  # untouched by the quit path
+        "ride_status": "draft",  # the quit path writes nothing to the ride row
     }, result["context"]

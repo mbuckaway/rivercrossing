@@ -235,18 +235,18 @@ class _RouteContext:
 
 
 def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]:
-    """Build the started ride the console runs at bootstrap (E4.4.1).
+    """Build the empty DRAFT ride the console runs at bootstrap (R-31).
 
     With no store-backed ride open yet (E5.4.2), the console still
     opens on a real engine: a valid :class:`~rivercrossing.ride.
     RideConfig` matching *roster*'s own settings, an 8-deck seeded
-    shoe, and the real wall clock. The engine is started so the
-    console opens live (RUNNING), and a typed plate records on the
-    very first Enter once the roster holds that entry. The bootstrap
-    roster is empty until the library Open / resume flow loads a
-    store ride, so the fresh console is the correct empty state: zero
-    crossings, zero counters, full shoe, every plate refused as
-    unknown (R-31).
+    shoe, and the real wall clock. The engine is left DRAFT -- no ride
+    is running at a fresh launch -- so File ▸ Quit shows the plain
+    ``exit_confirm_dlg``, not the "stop the running ride" dialog. The
+    bootstrap roster is empty until the library Open / resume flow
+    loads a store ride, so the fresh console is the correct empty
+    state: zero crossings, zero counters, full shoe, plate entry
+    disabled (R-31).
 
     This is the one place a ride is created at bootstrap; E5's
     store-backed create/reopen flow replaces it (``_switch_console_
@@ -277,7 +277,6 @@ def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]
         clock=lambda: datetime.now(UTC),
         roster=roster,
     )
-    engine.start()
     return engine, EngineDataSource(engine, roster)
 
 
@@ -2589,7 +2588,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     # set_on_ride_changed fires on every ride-state change (the
     # console's own seam) and on every feed re-render, so the §15
     # "Enabled when" cells hold in the app -- the initial call below
-    # applies them to the bootstrap's already-started RUNNING ride.
+    # applies them to the bootstrap's DRAFT ride.
     _console.set_on_ride_changed(lambda status: _apply_menu_state(context, status))
     _apply_menu_state(context, engine.state)
     _run_launch_self_test(context)
