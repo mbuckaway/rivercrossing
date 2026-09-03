@@ -100,8 +100,10 @@ machine-readable, decided for P3: laps an int, cards
 :func:`~rivercrossing.standings.hand_name`'s prose, total_time raw
 numeric seconds (``repr``-clean) -- human formatting belongs to the
 HTML/PDF exports only. The standalone spec §15 standings CSV ships as
-:func:`export_standings` (E6.4.2): rows ``place, plate, entry, laps,
-hand`` plus a raw-seconds ``total_time`` column when asked (R-63).
+:func:`export_standings` (E6.4.2): rows ``place, plate, entry, type,
+laps, hand`` -- the ``type`` column carries each row's entry kind
+(``team``/``solo``, Phase 3's team/solo results split) -- plus a
+raw-seconds ``total_time`` column when asked (R-63).
 
 **Atomic export writes (R-52).** Both writers stage their CSV in a
 same-directory temp file (``<name>.tmp``) and swap it over the
@@ -480,24 +482,27 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
 def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool = False) -> None:
     """Write *placed* as the spec §15 standings CSV to *path* (E6.4.2).
 
-    Rows are ``place, plate, entry, laps, hand`` with a
+    Rows are ``place, plate, entry, type, laps, hand`` with a
     ``total_time`` column appended when *show_times* -- raw numeric
     seconds, consistent with :func:`export`'s finished-ride columns
     (CSVs are machine-readable; human formatting is the HTML/PDF
-    exports' job). DNF entries keep their row with their laps and
-    cards (R-33); an entry that never crossed renders a blank hand.
-    The write is atomic (R-52), exactly like :func:`export`: staged in
-    a same-directory temp file, then swapped over *path* with
-    :func:`os.replace`.
+    exports' job). ``type`` is each row's entry kind -- ``team`` or
+    ``solo`` from ``Placed.result.kind`` (Phase 3's team/solo results
+    split: the caller feeds the two ranked groups Teams-then-Solo, so
+    the kind column labels each section and the places are per-kind).
+    DNF entries keep their row with their laps and cards (R-33); an
+    entry that never crossed renders a blank hand. The write is atomic
+    (R-52), exactly like :func:`export`: staged in a same-directory
+    temp file, then swapped over *path* with :func:`os.replace`.
 
     Args:
-        placed: Ranked standings, one row each.
+        placed: Ranked standings, one row each (teams then solo).
         path: The file to write. Replaced atomically; a pre-existing
             file is overwritten wholesale, never truncated in place.
         show_times: Append the ``total_time`` column (R-63: times
             only when the export setting says so).
     """
-    header = ["place", "plate", "entry", "laps", "hand"]
+    header = ["place", "plate", "entry", "type", "laps", "hand"]
     if show_times:
         header.append("total_time")
     rows: list[list[str]] = []
@@ -507,6 +512,7 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
             str(placed_row.place),
             result.plate,
             result.name,
+            result.kind,
             str(result.laps),
             hand_name(result.hand) if result.cards else "",
         ]

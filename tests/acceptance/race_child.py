@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Any, cast
 import wx
 import wx.xrc
 
-from rivercrossing.standings import hand_name, rank, tiebreak_order_from_spellings
+from rivercrossing.standings import hand_name, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids
 from rivercrossing.ui.presenters.data_source import EngineDataSource
@@ -594,13 +594,17 @@ def _stop_and_continue(frame: Any) -> dict[str, bool]:  # noqa: ANN401 -- wx shi
 def _standings_rows(engine: RideEngine) -> list[dict[str, object]]:
     """Return ranked standings as (place, plate, laps, hand) rows.
 
-    The hand names use ``standings.hand_name``'s prose (the exact
-    strings the HTML/PDF/CSV exports render), blank for a zero-card
-    entry -- the same guard the export writers apply.
+    Phase 3 (team/solo results split): ``rank_by_kind`` ranks each
+    kind from 1 and the rows flatten Teams-then-Solo -- the exact
+    order the results window, the exports' full fields and the
+    standings CSV present. The hand names use ``standings.hand_name``'s
+    prose (the exact strings the HTML/PDF/CSV exports render), blank
+    for a zero-card entry -- the same guard the export writers apply.
     """
     order = tiebreak_order_from_spellings(engine.config.tiebreak_order)
+    teams, solo = rank_by_kind(engine.snapshot(), order)
     rows: list[dict[str, object]] = []
-    for placed in rank(engine.snapshot(), order):
+    for placed in (*teams, *solo):
         result = placed.result
         rows.append(
             {
@@ -696,11 +700,12 @@ def _install_sync_exports(exports_dir: Path, paths: dict[str, Path]) -> None:
         path: Path,
         *,
         config: object,
-        placed: object,
+        teams: object,
+        solo: object,
         opts: object,
         watermark: int | None = None,
     ) -> None:
-        app_module._write_export(config, placed, opts, target, path)
+        app_module._write_export(config, teams, solo, opts, target, path)
         ctx.last_export_path = path  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
         paths[target] = path
@@ -1035,11 +1040,14 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -- the full
         clock_label = harness.find_control(frame, ids.CLOCK_ELAPSED_LBL).GetLabelText()
         standing_rows = None
         if standings:
-            # ``asdict`` keeps ``best5`` as a tuple; the oracle's
-            # ``expected_standings`` reads it back as a list, so the
-            # tuple is widened here to match the record schema it pins.
+            # Phase 3: ``standings`` returns the (teams, solo) pair, so
+            # the record flattens Teams-then-Solo -- the same order the
+            # oracle's ``expected_standings`` produces. ``asdict`` keeps
+            # ``best5`` as a tuple; the oracle reads it back as a list,
+            # so the tuple is widened here to match the record schema.
+            teams, solo_rows = source.standings(order=order)
             standing_rows = [
-                {**asdict(row), "best5": list(row.best5)} for row in source.standings(order=order)
+                {**asdict(row), "best5": list(row.best5)} for row in (*teams, *solo_rows)
             ]
         return {
             "id": snap_id,

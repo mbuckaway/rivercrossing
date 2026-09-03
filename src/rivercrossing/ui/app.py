@@ -68,7 +68,7 @@ from rivercrossing.ride import (
     UnknownPlateError,
 )
 from rivercrossing.roster import EntryMode, PlateModel, Roster
-from rivercrossing.standings import Placed, rank, tiebreak_order_from_spellings
+from rivercrossing.standings import Placed, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.store import Store, default_db_path
 from rivercrossing.ui import (
     accelerators,
@@ -1160,13 +1160,25 @@ def _export_engine(context: _RouteContext) -> RideEngine | None:
     return presenter.engine if presenter is not None else None
 
 
-def _placed_for_export(context: _RouteContext) -> tuple[Placed, ...]:
-    """Rank the snapshot with the ride's stored tie-break order."""
+def _placed_for_export(
+    context: _RouteContext,
+) -> tuple[tuple[Placed, ...], tuple[Placed, ...]]:
+    """Rank the snapshot's teams and solos with the stored tie-break.
+
+    Phase 3 (team/solo results split): returns ``(teams, solo)`` --
+    each kind ranked from 1 with its own DNF tail via
+    ``standings.rank_by_kind``. The export writers receive both groups
+    and merge them Teams-then-Solo for the shared single-``placed``
+    surfaces (htmlexport/pdfexport render the two full-field sections
+    by partitioning on ``result.kind``; the standings CSV carries the
+    ``type`` column). With no ride threaded both groups are empty.
+    """
     engine = _export_engine(context)
     if engine is None:
-        return ()
+        return (), ()
     order = tiebreak_order_from_spellings(engine.config.tiebreak_order)
-    return tuple(rank(engine.snapshot(), order))
+    teams, solo = rank_by_kind(engine.snapshot(), order)
+    return tuple(teams), tuple(solo)
 
 
 def _export_options() -> ExportOptions:
@@ -1186,9 +1198,10 @@ def _export_options() -> ExportOptions:
     return ExportOptions()
 
 
-def _write_export(  # noqa: PLR0913, PLR0917 -- (config, placed, opts, target, path): the pure writer's inputs
+def _write_export(  # noqa: PLR0913, PLR0917 -- (config, teams, solo, opts, target, path): the pure writer's inputs
     config: RideConfig,
-    placed: tuple[Placed, ...],
+    teams: tuple[Placed, ...],
+    solo: tuple[Placed, ...],
     opts: ExportOptions,
     target: str,
     path: Path,
@@ -1197,9 +1210,16 @@ def _write_export(  # noqa: PLR0913, PLR0917 -- (config, placed, opts, target, p
 
     Pure -- no wx, no context: it runs on the off-loop thread, so it
     must never touch wx (measured: a wx call from the worker thread
-    bus-errors the process). The handler captures *config*/*placed*/
-    *opts* on the main thread first.
+    bus-errors the process). The handler captures *config*/*teams*/
+    *solo*/*opts* on the main thread first.
+
+    Phase 3 (team/solo results split): the two groups merge
+    Teams-then-Solo into the single ``placed`` sequence each frozen
+    writer takes -- the HTML/PDF full fields partition it back into the
+    two sections on ``result.kind``, and the standings CSV emits the
+    ``type`` column.
     """
+    placed = (*teams, *solo)
     if target == "export_html":
         html = htmlexport.render(config, placed, opts, logo_path=config.logo_path)
         path.write_text(html, encoding="utf-8")
@@ -1220,7 +1240,8 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
     path: Path,
     *,
     config: RideConfig,
-    placed: tuple[Placed, ...],
+    teams: tuple[Placed, ...],
+    solo: tuple[Placed, ...],
     opts: ExportOptions,
     watermark: int,
 ) -> None:
@@ -1240,7 +1261,7 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
 
     def write() -> None:
         try:
-            _write_export(config, placed, opts, target, path)
+            _write_export(config, teams, solo, opts, target, path)
         except Exception as exc:  # noqa: BLE001 -- a failed export is a notice, not a crash
             wx = require_wx()
             wx.CallAfter(context.frame.SetStatusText, f"Export failed: {exc}")
@@ -1276,8 +1297,8 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     """Run one Results ▸ export row (E6.4.2): pick, write off-loop.
 
     A cancelled picker is a silent no-op like the roster export. The
-    wx-touching reads (engine/config/placed/options) happen here on
-    the main thread; the off-loop thread only renders and writes.
+    wx-touching reads (engine/config/teams/solo/options) happen here
+    on the main thread; the off-loop thread only renders and writes.
     E7.3.2: the export watermark -- the engine event count right now,
     the state the rendered file captures -- is read alongside the
     snapshot and stored on success, so a correction after this instant
@@ -1292,7 +1313,7 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     if path is None:
         return
     config = engine.config
-    placed = _placed_for_export(context)
+    teams, solo = _placed_for_export(context)
     opts = _export_options()
     watermark = len(engine.events)
     _run_export_offloop(
@@ -1300,7 +1321,8 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
         target,
         path,
         config=config,
-        placed=placed,
+        teams=teams,
+        solo=solo,
         opts=opts,
         watermark=watermark,
     )

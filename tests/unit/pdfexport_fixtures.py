@@ -27,7 +27,7 @@ from pathlib import Path
 from rivercrossing.cards import Shoe
 from rivercrossing.hands import best_hand
 from rivercrossing.htmlexport import ExportOptions
-from rivercrossing.standings import EntryResult, Placed, rank
+from rivercrossing.standings import EntryResult, Placed, rank_by_kind
 
 _ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = _ROOT / "tests" / "unit" / "fixtures" / "pdfexport"
@@ -84,12 +84,17 @@ def build_ride() -> StubRide:
 
 
 def build_placed(count: int = 50) -> tuple[Placed, ...]:
-    """Rank *count* deterministic entries drawn from one seeded shoe.
+    """Rank *count* deterministic entries into Phase 3's two sections.
 
     Each entry deals 6..8 cards and records 4..10 laps; the last entry
     is a DNF. All values follow from the seed, so the golden is
     reproducible -- and the totals the cover block shows are exact
     (50 entries, 347 laps, 349 cards for the default *count*).
+
+    The mixed field (every third entry is a team) is ranked through
+    ``rank_by_kind`` and merged Teams-then-Solo -- the exact sequence
+    the app hands the exporters, so the golden's full field shows the
+    two per-kind sections with per-kind places.
     """
     shoe = Shoe(decks=8, jokers_per_deck=2, seed=_GOLDEN_SEED)
     results: list[EntryResult] = []
@@ -111,7 +116,8 @@ def build_placed(count: int = 50) -> tuple[Placed, ...]:
                 dnf=(index == count - 1),
             )
         )
-    return tuple(rank(results))
+    teams, solo = rank_by_kind(results)
+    return (*teams, *solo)
 
 
 def golden_opts() -> ExportOptions:

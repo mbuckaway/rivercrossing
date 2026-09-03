@@ -38,6 +38,7 @@ from rivercrossing.standings import (
     hand_name,
     laps_leaderboard,
     rank,
+    rank_by_kind,
     tiebreak_order_from_spellings,
     time_leaderboard,
 )
@@ -52,6 +53,7 @@ def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 10
     entry_id: str,
     codes: str,
     *,
+    kind: str = "solo",
     laps: int = 0,
     total_time: float = 0.0,
     dnf: bool = False,
@@ -62,7 +64,7 @@ def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 10
         entry_id=entry_id,
         plate=entry_id,
         name="Rider",
-        kind="solo",
+        kind=kind,
         laps=laps,
         total_time=total_time,
         best_lap=0.0,
@@ -246,6 +248,121 @@ def test_rank_all_dnf_results_keep_input_order_numbered_from_one() -> None:
     placed = rank([second, first])
 
     assert [(p.place, p.result.entry_id) for p in placed] == [(1, "2"), (2, "1")]
+
+
+# ---------------------------------------- Phase 3 team/solo split
+
+
+def test_rank_by_kind_splits_mixed_results_into_two_ranked_lists() -> None:
+    """Teams rank against teams; solos rank against solos (Phase 3)."""
+    team_weak = _result("1", "AS QD 9H 5C 3S", kind="team")
+    team_strong = _result("2", "AS KS QS JS TS", kind="team")
+    solo_weak = _result("3", "9H 8C 7D 6S 5H", kind="solo")
+    solo_strong = _result("4", "JH JC JD 4H 4C", kind="solo")
+
+    teams, solo = rank_by_kind([team_weak, solo_weak, team_strong, solo_strong])
+
+    assert [p.result.entry_id for p in teams] == ["2", "1"]
+    assert [p.result.entry_id for p in solo] == ["4", "3"]
+    assert all(p.result.kind == "team" for p in teams)
+    assert all(p.result.kind == "solo" for p in solo)
+
+
+def test_rank_by_kind_renumbers_each_section_places_from_one() -> None:
+    """Each section starts at place 1, however the kinds interleave."""
+    team_a = _result("1", "AS KS QS JS TS", kind="team")
+    team_b = _result("2", "9H 8C 7D 6S 5H", kind="team")
+    solo_a = _result("3", "AS QD 9H 5C 3S", kind="solo")
+    solo_b = _result("4", "JH JC JD 4H 4C", kind="solo")
+    solo_c = _result("5", "KH KC 5H 5D AS", kind="solo")
+
+    teams, solo = rank_by_kind([solo_a, team_a, solo_b, team_b, solo_c])
+
+    assert [p.place for p in teams] == [1, 2]
+    assert [p.place for p in solo] == [1, 2, 3]
+
+
+def test_rank_by_kind_each_section_carries_its_own_dnf_tail() -> None:
+    """A section's DNFs follow that section's actives, numbered on."""
+    team_active = _result("1", "AS KS QS JS TS", kind="team", laps=5)
+    team_dnf = _result("2", "9H 8C 7D 6S 5H", kind="team", laps=9, dnf=True)
+    solo_active = _result("3", "JH JC JD 4H 4C", kind="solo", laps=4)
+    solo_dnf = _result("4", "KH KC 5H 5D AS", kind="solo", laps=6, dnf=True)
+
+    teams, solo = rank_by_kind([team_dnf, solo_active, team_active, solo_dnf])
+
+    assert [(p.place, p.result.entry_id, p.result.dnf) for p in teams] == [
+        (1, "1", False),
+        (2, "2", True),
+    ]
+    assert [(p.place, p.result.entry_id, p.result.dnf) for p in solo] == [
+        (1, "3", False),
+        (2, "4", True),
+    ]
+
+
+def test_rank_by_kind_solo_only_results_return_an_empty_teams_section() -> None:
+    """A solo-only ride has an empty Teams section."""
+    solo = [_result("1", "AS KS QS JS TS", kind="solo")]
+
+    teams, solo_rows = rank_by_kind(solo)
+
+    assert teams == []
+    assert [p.result.entry_id for p in solo_rows] == ["1"]
+
+
+def test_rank_by_kind_team_only_results_return_an_empty_solo_section() -> None:
+    """A team-only ride has an empty Solo section."""
+    teams = [_result("1", "AS KS QS JS TS", kind="team")]
+
+    team_rows, solo = rank_by_kind(teams)
+
+    assert [p.result.entry_id for p in team_rows] == ["1"]
+    assert solo == []
+
+
+def test_rank_by_kind_empty_results_returns_two_empty_lists() -> None:
+    """An empty field splits into two empty sections."""
+    assert rank_by_kind([]) == ([], [])
+
+
+def test_rank_by_kind_default_order_matches_the_r14_constant() -> None:
+    """Omitting order behaves like passing DEFAULT_TIEBREAK_ORDER."""
+    results = [
+        _result("1", "AS KS QS JS TS", kind="team", laps=5, total_time=100.0),
+        _result("2", "AH KH QH JH TH", kind="team", laps=5, total_time=90.0),
+        _result("3", "9H 8C 7D 6S 5H", kind="solo"),
+    ]
+
+    assert rank_by_kind(results) == rank_by_kind(results, DEFAULT_TIEBREAK_ORDER)
+
+
+def test_rank_by_kind_sections_flag_their_draws_independently() -> None:
+    """A draw in one section never flags a same-hand pair elsewhere."""
+    team_first = _result("1", "AS KS QS JS TS", kind="team", laps=5, total_time=100.0)
+    team_second = _result("2", "AH KH QH JH TH", kind="team", laps=5, total_time=100.0)
+    solo_first = _result("3", "9H 8C 7D 6S 5H", kind="solo", laps=4, total_time=50.0)
+    solo_second = _result("4", "9C 8D 7H 6C 5D", kind="solo", laps=4, total_time=50.0)
+
+    teams, solo = rank_by_kind([solo_first, team_first, solo_second, team_second])
+
+    assert [(p.place, p.draw_required, p.tie_note) for p in teams] == [
+        (1, True, "draw required"),
+        (1, True, "draw required"),
+    ]
+    assert [(p.place, p.draw_required, p.tie_note) for p in solo] == [
+        (1, True, "draw required"),
+        (1, True, "draw required"),
+    ]
+
+
+def test_rank_by_kind_unknown_tiebreak_member_raises_type_error() -> None:
+    """A non-TieBreak criterion is rejected in the split path too."""
+    with pytest.raises(TypeError, match=re.escape("non-TieBreak")):
+        rank_by_kind(
+            [_result("1", "AS KS QS JS TS")],
+            order=(TieBreak.MOST_LAPS, "laps"),
+        )
 
 
 # ------------------------------------------------------ empty input
@@ -457,6 +574,29 @@ def test_laps_leaderboard_orders_laps_desc_then_time_asc_and_respects_top(
 
     assert len(placed) <= 3
     assert keys == sorted(keys)
+
+
+@given(results=st.lists(_entry_result(), min_size=0, max_size=8))
+@settings(max_examples=50, deadline=None)
+def test_rank_by_kind_partitions_every_result_into_its_kind_and_numbers_from_one(
+    results: list[EntryResult],
+) -> None:
+    """Invariant: teams-then-solo covers the field; each section from 1.
+
+    The Phase 3 split renumbers each kind from 1, so the concatenated
+    teams-then-solo output covers exactly the input field with every
+    team before every solo and each section's places ascending from 1.
+    """
+    teams, solo = rank_by_kind(results)
+    placed = [*teams, *solo]
+
+    assert sorted(p.result.entry_id for p in placed) == sorted(r.entry_id for r in results)
+    assert all(p.result.kind == "team" for p in teams)
+    assert all(p.result.kind == "solo" for p in solo)
+    for section in (teams, solo):
+        if section:
+            assert section[0].place == 1
+            assert [p.place for p in section] == sorted(p.place for p in section)
 
 
 # -------------------------------------------------- hand names (E6.1.1)

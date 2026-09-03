@@ -1948,6 +1948,7 @@ def _placed(  # noqa: PLR0913 -- mirrors standings.EntryResult's 10 fields
     plate: str,
     codes: str,
     *,
+    kind: str = "solo",
     laps: int = 0,
     total_time: float = 0.0,
     dnf: bool = False,
@@ -1958,7 +1959,7 @@ def _placed(  # noqa: PLR0913 -- mirrors standings.EntryResult's 10 fields
         entry_id=plate,
         plate=plate,
         name="Rider",
-        kind="solo",
+        kind=kind,
         laps=laps,
         total_time=total_time,
         best_lap=0.0,
@@ -2175,7 +2176,7 @@ def test_export_standings_stages_a_temp_file_then_atomic_replace(
     export_standings(placed, path, show_times=True)
 
     assert calls == [(str(path.with_name(path.name + ".tmp")), str(path))]
-    assert _read_lines(path)[1] == "1,88,Rider,11,Four of a Kind — Nines,20000.0"
+    assert _read_lines(path)[1] == "1,88,Rider,solo,11,Four of a Kind — Nines,20000.0"
     assert sorted(tmp_path.iterdir()) == [path]
 
 
@@ -2292,11 +2293,11 @@ def test_preview_gorba_fixture_imports_as_is_against_a_relay_roster() -> None:
 
 
 def test_export_standings_writes_the_s15_header_without_times() -> None:
-    """§15: place, plate, entry, laps, hand -- no total_time column."""
+    """§15: place, plate, entry, type, laps, hand -- no total_time."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings([], path)
-        assert _read_lines(path)[0] == "place,plate,entry,laps,hand"
+        assert _read_lines(path)[0] == "place,plate,entry,type,laps,hand"
 
 
 def test_export_standings_show_times_appends_total_time_column() -> None:
@@ -2304,13 +2305,13 @@ def test_export_standings_show_times_appends_total_time_column() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings([], path, show_times=True)
-        assert _read_lines(path)[0] == "place,plate,entry,laps,hand,total_time"
+        assert _read_lines(path)[0] == "place,plate,entry,type,laps,hand,total_time"
 
 
-def test_export_standings_rows_carry_the_placed_values() -> None:
-    """One row per Placed: place, plate, entry, laps, hand prose."""
+def test_export_standings_rows_carry_the_placed_values_and_kind() -> None:
+    """One row per Placed: place, plate, entry, type, laps, hand."""
     placed = [
-        _placed("88", "9S 9D 9C 9H 2C", laps=11, total_time=20_000.0),
+        _placed("88", "9S 9D 9C 9H 2C", kind="team", laps=11, total_time=20_000.0),
         replace(_placed("7", "KH KC 5H 5D AS", laps=10, total_time=21_000.0), place=2),
     ]
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -2318,8 +2319,8 @@ def test_export_standings_rows_carry_the_placed_values() -> None:
         export_standings(placed, path, show_times=True)
         lines = _read_lines(path)
 
-    assert lines[1] == "1,88,Rider,11,Four of a Kind — Nines,20000.0"
-    assert lines[2] == "2,7,Rider,10,Two Pair — Kings & Fives,21000.0"
+    assert lines[1] == "1,88,Rider,team,11,Four of a Kind — Nines,20000.0"
+    assert lines[2] == "2,7,Rider,solo,10,Two Pair — Kings & Fives,21000.0"
 
 
 def test_export_standings_keeps_dnf_rows() -> None:
@@ -2328,7 +2329,7 @@ def test_export_standings_keeps_dnf_rows() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings(placed, path)
-        assert _read_lines(path)[1] == "1,3,Rider,5,Royal Flush"
+        assert _read_lines(path)[1] == "1,3,Rider,solo,5,Royal Flush"
 
 
 def test_export_standings_zero_card_hand_writes_a_blank_hand() -> None:
@@ -2337,7 +2338,7 @@ def test_export_standings_zero_card_hand_writes_a_blank_hand() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings(placed, path)
-        assert _read_lines(path)[1] == "1,9,Rider,0,"
+        assert _read_lines(path)[1] == "1,9,Rider,solo,0,"
 
 
 # ========================================================= T-7 property

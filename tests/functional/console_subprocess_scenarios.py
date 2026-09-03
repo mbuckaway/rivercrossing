@@ -1425,11 +1425,12 @@ def _bundle_launch_open_crossing_exports_html() -> dict[str, Any]:
         path: Any,  # noqa: ANN401 -- the picker's returned Path
         *,
         config: Any,  # noqa: ANN401 -- the captured RideConfig
-        placed: Any,  # noqa: ANN401 -- the captured placed standings
+        teams: Any,  # noqa: ANN401 -- the captured teams standings
+        solo: Any,  # noqa: ANN401 -- the captured solo standings
         opts: Any,  # noqa: ANN401 -- the captured ExportOptions
         watermark: int,
     ) -> None:
-        app_module._write_export(config, placed, opts, target, path)
+        app_module._write_export(config, teams, solo, opts, target, path)
         context.last_export_path = path
         context.export_watermark = watermark
 

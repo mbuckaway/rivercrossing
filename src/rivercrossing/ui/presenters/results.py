@@ -60,8 +60,8 @@ _UNRECOGNISED_ORDER_NOTICE = "Unrecognised tie-break order — restored"
 class ResultsView(Protocol):
     """View surface for the results window (results_frame, 1f)."""
 
-    def show_standings(self, rows: list[StandingsRow]) -> None:
-        """Render standings_list (draw-required rows carry a flag)."""
+    def show_standings(self, teams: list[StandingsRow], solo: list[StandingsRow]) -> None:
+        """Render standings_list's two sections (teams, then solo)."""
         ...
 
     def set_stale(self, *, stale: bool) -> None:
@@ -130,7 +130,8 @@ class ResultsPresenter:
         self._export_watermark = export_watermark
 
         self.view.set_tiebreak_labels(list(self._last_good_labels))
-        self.view.show_standings(self.data_source.standings(order=self._order))
+        teams, solo = self.data_source.standings(order=self._order)
+        self.view.show_standings(teams, solo)
         self._sync_stale()
 
     @property
@@ -179,7 +180,8 @@ class ResultsPresenter:
             return
         self._order = tiebreak_order_from_spellings(spellings)
         self._last_good_labels = list(labels)
-        self.view.show_standings(self.data_source.standings(order=self._order))
+        teams, solo = self.data_source.standings(order=self._order)
+        self.view.show_standings(teams, solo)
         self._sync_stale()
 
     def on_publish_toggled(self) -> None:

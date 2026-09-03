@@ -41,7 +41,7 @@ EXPORT_ROWS = (
     ("mi_export_html", "results.html", "race-data"),
     ("mi_export_pdf", "results.pdf", None),
     ("mi_export_poster", "podium.pdf", None),
-    ("mi_export_results_csv", "standings.csv", "place,plate,entry,laps,hand"),
+    ("mi_export_results_csv", "standings.csv", "place,plate,entry,type,laps,hand"),
 )
 
 
@@ -74,7 +74,8 @@ def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s in
     path: object,
     *,
     config: object,
-    placed: object,
+    teams: object,
+    solo: object,
     opts: object,
     watermark: int | None = None,
 ) -> None:
@@ -85,7 +86,7 @@ def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s in
     results window's banner clear (E7.3.2) -- so the walk can assert
     the file AND the stale flag in one call.
     """
-    app_module._write_export(config, placed, opts, target, path)  # type: ignore[arg-type]
+    app_module._write_export(config, teams, solo, opts, target, path)  # type: ignore[arg-type]
     context.last_export_path = path  # type: ignore[attr-defined]
     context.export_watermark = watermark  # type: ignore[attr-defined]
     if watermark is not None:

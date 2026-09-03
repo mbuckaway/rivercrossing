@@ -344,11 +344,15 @@ def _html_standings(path: Path) -> tuple[tuple[int, str, int, str], ...]:
 
 
 def _csv_standings(path: Path) -> tuple[tuple[int, str, int, str], ...]:
-    """Read the standings CSV rows as ``(place, plate, laps, hand)``."""
+    """Read the standings CSV rows as ``(place, plate, laps, hand)``.
+
+    Phase 3's ``type`` column (``team``/``solo``) sits between entry
+    and laps; the projection ignores it.
+    """
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.reader(handle))
-    assert rows[0] == ["place", "plate", "entry", "laps", "hand"]
-    return tuple((int(row[0]), row[1], int(row[3]), row[4]) for row in rows[1:])
+    assert rows[0] == ["place", "plate", "entry", "type", "laps", "hand"]
+    return tuple((int(row[0]), row[1], int(row[4]), row[5]) for row in rows[1:])
 
 
 def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noqa: PLR0915 -- the script IS the test: one acceptance scenario

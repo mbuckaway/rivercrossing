@@ -11,6 +11,12 @@ is EPIC 6 display copy (decision D1): one title-case em-dash style,
 vocabulary pinned by the golden exports, that the results window and
 exports both consume.
 
+Phase 3 adds :func:`rank_by_kind`, the team/solo split for MIXED
+rides: a team's pooled cards would dominate most solo hands, so the
+two kinds never compete for one place -- the function runs :func:`rank`
+once per kind (``"team"``, then ``"solo"``), each section numbered
+from 1 with its own DNF tail.
+
 Handling rules, in order of application:
 
 - ACTIVE entries sort best hand first (``placed[0]`` is the winner).
@@ -73,6 +79,7 @@ __all__ = [
     "hand_name",
     "laps_leaderboard",
     "rank",
+    "rank_by_kind",
     "tiebreak_order_from_spellings",
     "time_leaderboard",
 ]
@@ -297,6 +304,38 @@ def rank(
         placed.append(Placed(place=dnf_place, result=result, tie_note=None, draw_required=False))
         dnf_place += 1
     return placed
+
+
+def rank_by_kind(
+    results: Sequence[EntryResult],
+    order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,
+) -> tuple[list[Placed], list[Placed]]:
+    """Rank a mixed field as two sections: teams, then solos.
+
+    Phase 3's team/solo split: in a MIXED ride a team's pooled cards
+    would dominate most solo hands, so the two kinds never compete
+    for one place -- :func:`rank` runs once over the ``"team"``
+    results and once over the ``"solo"`` results (``kind`` is
+    ``entry.type.value``, module docstring), each section re-numbering
+    places from 1 and carrying its own DNF tail. A section with no
+    results is empty.
+
+    Args:
+        results: The ride's finished snapshots, in any order.
+        order: Tie-break criteria in priority sequence; defaults to
+            ``(MOST_LAPS, TOTAL_TIME, HIGH_CARD_DRAW)`` (R-14).
+
+    Returns:
+        ``(teams, solo)`` -- each a :func:`rank` output over that
+        kind's results, best hand first, DNFs last.
+
+    Raises:
+        TypeError: *order* contains something other than a
+            :class:`TieBreak` member.
+    """
+    teams = [result for result in results if result.kind == "team"]
+    solo = [result for result in results if result.kind == "solo"]
+    return rank(teams, order), rank(solo, order)
 
 
 def _lap_time_key(result: EntryResult) -> tuple[int, float]:

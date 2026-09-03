@@ -183,7 +183,7 @@ class FakeRidersView:
 class FakeResultsView:
     """A complete ``ResultsView`` implementation for headless tests."""
 
-    def show_standings(self, rows: list[StandingsRow]) -> None:
+    def show_standings(self, teams: list[StandingsRow], solo: list[StandingsRow]) -> None:
         """No-op fake."""
 
     def set_stale(self, *, stale: bool) -> None:
@@ -346,8 +346,8 @@ class FakeDataSource:
     def standings(
         self,
         order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; the fake ignores order
-    ) -> list[StandingsRow]:
-        """Return one fixed standings row for any order."""
+    ) -> tuple[list[StandingsRow], list[StandingsRow]]:
+        """Return one fixed team standings row for any order."""
         return [
             StandingsRow(
                 place=1,
@@ -358,7 +358,7 @@ class FakeDataSource:
                 best5=("KS", "KC", "KD", "JK", "9H"),
                 hand="Four of a kind, kings",
             )
-        ]
+        ], []
 
     def audit_rows(self) -> list[AuditRow]:
         """Return one fixed audit row."""
