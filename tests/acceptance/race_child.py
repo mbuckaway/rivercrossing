@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any, cast
 import wx
 import wx.xrc
 
+from rivercrossing.roster import Roster
 from rivercrossing.standings import hand_name, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids
@@ -112,7 +113,7 @@ class RaceEnv:
         crossings: How many crossings the scenario records
             (RIVERCROSSING_RACE_CROSSINGS; default 3).
         csv_path: The riders CSV to import for ``setup_import_and_run``
-            (RIVERCROSSING_RACE_CSV), or None.
+            and ``sim_race`` (RIVERCROSSING_RACE_CSV), or None.
         plates: The wave pattern's plate count
             (RIVERCROSSING_RACE_PLATES; default 20).
         exports_dir: Where ``finish_and_exports`` writes the four
@@ -959,21 +960,25 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     }
 
 
-def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -- the full-breadth race's fixed script
-    """Resume, script every correction path, finish twice, export, quit.
+def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- the full-breadth race's fixed script
+    """Resume, import the roster CSV, script every path, finish, quit.
 
     The full-breadth scenario behind ``tests/acceptance/test_race_sim``:
-    the child resumes the staged rich-roster ride on an injected clock,
-    types the deterministic lap schedule (normal laps, two short-lap
-    holds -- one confirmed, one voided), runs every audited correction
-    -- manual deal, DNF, add-crossing-at-time, void-crossing and
-    void-card -- across the two finish/reopen legs, writes the four
-    results exports, and records a ``race-record.json`` checkpoint
-    journal the parent's oracle replays against the saved db. The route
-    context is captured through the ``_bind_routes`` seam (the
-    ``_race_finish_and_exports`` pattern) so the live presenter/engine,
-    the export watermark and the Void Card route's ``detail_plate`` are
-    observable.
+    the child resumes the staged relay placeholder ride on an injected
+    clock, imports the phase-6 roster CSV (``tests/acceptance/
+    fixtures/race_roster.csv``) through the real ``mi_import_csv``
+    route -- the fixture REPLACES the placeholder on the store ride,
+    the same replace semantics R-74's ``setup_import_and_run`` relies
+    on -- types the deterministic lap schedule (normal laps, two
+    short-lap holds -- one confirmed, one voided), runs every audited
+    correction -- manual deal, DNF, add-crossing-at-time,
+    void-crossing and void-card -- across the two finish/reopen legs,
+    writes the four results exports, and records a ``race-record.json``
+    checkpoint journal the parent's oracle replays against the saved
+    db. The route context is captured through the ``_bind_routes``
+    seam (the ``_race_finish_and_exports`` pattern) so the live
+    presenter/engine, the export watermark and the Void Card route's
+    ``detail_plate`` are observable.
     """
     exports_dir = env.exports_dir
     if exports_dir is None:
@@ -1016,6 +1021,31 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -- the full
         store.close()
         raise RuntimeError("no ride to resume or no route context on the shared db")
     context = captured[0]
+    # Phase 6: the riders CSV REPLACES the staged placeholder roster
+    # through the real mi_import_csv route (the R-74 import half:
+    # preview against the in-memory roster, commit, save_roster, then
+    # _switch_console_to_ride rebuilds the console onto the saved
+    # roster). Resume leaves context.roster as the bootstrap
+    # RIDER_POOLED shell (app.py's resume flow never swaps it), and
+    # the route previews against that shell -- a team_relay fixture
+    # would refuse there with duplicate-plate conflicts. Pre-position
+    # the empty shell carrying the ride's own shape (the roster the
+    # app would present if resume replaced the bootstrap shell), so
+    # the fixture previews clean and its 21 entries commit.
+    csv_path = env.csv_path
+    if csv_path is None:
+        store.close()
+        raise RuntimeError(f"{RACE_CSV_ENV} must name a riders CSV")
+    staged = store.roster_for(ride_id)
+    context.roster = Roster(
+        entry_mode=staged.entry_mode,
+        plate_model=staged.plate_model,
+        max_team_size=staged.max_team_size,
+    )
+    _import_csv_via_route(frame, csv_path)
+    # The import's route half rebuilt the console presenter onto the
+    # saved roster, so everything below reads the post-import engine
+    # and roster -- the same re-read _race_setup_import_and_run makes.
     engine = context.presenter.engine
     roster = store.roster_for(ride_id)
     source = EngineDataSource(engine, roster)
@@ -1063,7 +1093,36 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -- the full
     checkpoints: list[dict[str, Any]] = []
     checkpoints.append(_snapshot("resumed", standings=False))
     min_lap_s = _ride_min_lap_s(store._conn, ride_id)
-    plates = ["1", "1", "1", "2", "2", "3", "3", "3", "3", "11", "11", "11", "21", "21", "4"]
+    # Phase 6: the scripted wave on the imported 21-entry relay roster
+    # (plates 1-11 teams, 12-21 solo). Each plate's laps type
+    # consecutively, one min_lap apart (never short, R-34), with
+    # descending counts so the leaders lap ~10-11 times; the two
+    # short-lap hold pairs and every correction path then land on
+    # plates that already carry laps (1/2 holds and void-crossing,
+    # 3 manual deal, 4 DNF) exactly once each.
+    plates = (
+        ["1"] * 8
+        + ["2"] * 7
+        + ["3"] * 8
+        + ["4"] * 7
+        + ["5"] * 6
+        + ["6"] * 6
+        + ["7"] * 5
+        + ["8"] * 5
+        + ["9"] * 4
+        + ["10"] * 4
+        + ["11"] * 4
+        + ["12"] * 3
+        + ["13"] * 3
+        + ["14"] * 3
+        + ["15"] * 3
+        + ["16"] * 2
+        + ["17"] * 2
+        + ["18"] * 2
+        + ["19"] * 2
+        + ["20"] * 2
+        + ["21"] * 2
+    )
     _record_crossings_lapped(frame, clock, plates, min_lap_s)
     checkpoints.append(_snapshot("after_normal", standings=False))
     # A short-lap hold needs the entry crossed again 30 s after its OWN

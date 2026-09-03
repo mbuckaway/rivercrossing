@@ -38,6 +38,7 @@ __all__ = [
     "library_ride_config",
     "library_roster",
     "race_db_facts",
+    "relay_placeholder_roster",
     "resume_db_path",
     "resume_ride_config",
     "rich_race_roster",
@@ -141,8 +142,16 @@ def create_resumed_ride(db_path: Path, spec: ResumeRideSpec) -> int:
     return ride_id
 
 
-def library_ride_config(name: str) -> RideConfig:
-    """Return the store ride config the E5.4.1 scenarios use."""
+def library_ride_config(
+    name: str, *, plate_model: PlateModel = PlateModel.RIDER_POOLED
+) -> RideConfig:
+    """Return the store ride config the E5.4.1 scenarios use.
+
+    ``plate_model`` picks the ride's plate policy: the E5-era default
+    stays ``RIDER_POOLED``; the E9.2.2 relay sim stages
+    ``PlateModel.TEAM_RELAY`` so the ride row's shape (fixed at
+    ``create_ride``) matches the relay roster its CSV import commits.
+    """
     return RideConfig(
         name=name,
         event_date=date(2026, 9, 20),
@@ -154,7 +163,7 @@ def library_ride_config(name: str) -> RideConfig:
         planned_duration_s=21600,
         min_lap_s=1080,
         entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
+        plate_model=plate_model,
     )
 
 
@@ -178,7 +187,13 @@ def library_roster() -> Roster:
 
 
 def rich_race_roster() -> Roster:
-    """Build the MIXED rider_pooled roster the E9.2.1 race stages.
+    """Build the MIXED rider_pooled rich roster the E9.2.2 sim staged.
+
+    The pre-CSV (phase-6) sim staged this six-entry roster; the phase-6
+    sim now stages :func:`relay_placeholder_roster` and imports the
+    CSV fixture instead, but the pooled rich shape is retained as the
+    counterpart staging fixture, pinned by ``tests/unit/
+    test_race_child.py``.
 
     Four solo entries plus two teams -- one of two riders, one of
     three -- all ACTIVE (DNF is marked at runtime, not staged). The
@@ -239,11 +254,12 @@ def create_library_ride(path: Path, *, name: str, running: bool) -> int:
     return ride_id
 
 
-def running_ride_with_roster(  # noqa: PLR0913 -- (path, actual_start, rng_seed) + the E9.2.1 rich-roster seam
+def running_ride_with_roster(  # noqa: PLR0913 -- (path, actual_start, rng_seed, plate_model) + the E9.2.1 rich-roster seam
     path: Path,
     *,
     actual_start: datetime | None = None,
     rng_seed: int | None = None,
+    plate_model: PlateModel = PlateModel.RIDER_POOLED,
     roster: Roster | None = None,
 ) -> int:
     """Create a running store ride and a quit-keep-running session.
@@ -258,14 +274,20 @@ def running_ride_with_roster(  # noqa: PLR0913 -- (path, actual_start, rng_seed)
     ``rng_seed`` pins the ride's shoe seed (E9.2.2/R-77): the nightly
     acceptance race owns its seed -- it injects it here and files it
     on failure; ``None`` keeps the DB-owned random seed (spec §4).
+    ``plate_model`` picks the ride row's plate policy, fixed at
+    ``create_ride`` (the E9.2.2 relay sim stages ``TEAM_RELAY`` so the
+    roster its CSV import commits reloads in the same shape);
     ``roster`` replaces the saved roster (E9.2.1 stages its rich six-
     entry roster here); ``None`` keeps the E5-era
-    :func:`library_roster` default.
+    :func:`library_roster` default. Callers switching ``plate_model``
+    must also pass a roster of that shape.
     """
     start_iso = actual_start.isoformat() if actual_start is not None else "2026-09-20T10:00:00"
     boot = Store.open(path)
     try:
-        ride_id = boot.create_ride(library_ride_config("GORBA EPIC 2026"), rng_seed=rng_seed)
+        ride_id = boot.create_ride(
+            library_ride_config("GORBA EPIC 2026", plate_model=plate_model), rng_seed=rng_seed
+        )
         boot.save_roster(ride_id, roster if roster is not None else library_roster())
         boot.append(ride_id, Event(action="start", payload={"actual_start": start_iso}))
     finally:
@@ -274,6 +296,26 @@ def running_ride_with_roster(  # noqa: PLR0913 -- (path, actual_start, rng_seed)
     session.close_session()
     session.close()
     return ride_id
+
+
+def relay_placeholder_roster() -> Roster:
+    """Build the MIXED team_relay placeholder the E9.2.2 race stages.
+
+    One two-rider relay team on plate 1 plus one solo on plate 12 --
+    relay riders carry no plate of their own (S1), so only the entry's
+    plate resolves. The E9.2.2/phase-6 sim stages this ride, then its
+    child imports ``race_roster.csv`` through the real route and the
+    committed roster REPLACES the placeholder on the store ride (the
+    same replace semantics ``test_full_race_r74`` relies on).
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="Placeholder Team",
+        plate="1",
+        riders=[Rider(first_name="A.", last_name="One"), Rider(first_name="B.", last_name="Two")],
+    )
+    roster.create_solo_entry(first_name="Placeholder", last_name="Solo", plate="12")
+    return roster
 
 
 def race_db_facts(path: Path) -> dict[str, Any]:

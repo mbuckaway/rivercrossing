@@ -374,3 +374,44 @@ def test_running_ride_with_roster_without_roster_keeps_library_roster(
 
     assert [entry.plate for entry in loaded.entries] == ["12", "77"]
     assert [entry.team_size for entry in loaded.entries] == [1, 2]
+
+
+def test_relay_placeholder_roster_builds_two_mixed_relay_entries(
+    store_staging_module: ModuleType,
+) -> None:
+    """relay_placeholder_roster returns 1 relay team + 1 solo.
+
+    The roster carries the placeholder entries the sim stages before
+    its CSV import replaces them.
+    """
+    roster = store_staging_module.relay_placeholder_roster()
+
+    assert roster.plate_model.value == "team_relay"
+    assert [entry.plate for entry in roster.entries] == ["1", "12"]
+    assert [entry.type.value for entry in roster.entries] == ["team", "solo"]
+    assert [entry.team_size for entry in roster.entries] == [2, 1]
+    # Relay riders carry no plate of their own (S1); the entry's plate
+    # is the only plate a typed crossing resolves.
+    assert all(rider.plate is None for entry in roster.entries for rider in entry.riders)
+
+
+def test_running_ride_with_roster_stages_a_team_relay_ride(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """plate_model=TEAM_RELAY creates a relay ride; its roster fits."""
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.running_ride_with_roster(
+        db_path,
+        plate_model=store_staging_module.PlateModel.TEAM_RELAY,
+        roster=store_staging_module.relay_placeholder_roster(),
+    )
+    store = Store.open(db_path)
+    try:
+        config = store.load_engine(ride_id).config
+        loaded = store.roster_for(ride_id)
+    finally:
+        store.close()
+
+    assert config.plate_model.value == "team_relay"
+    assert [entry.plate for entry in loaded.entries] == ["1", "12"]
+    assert [entry.team_size for entry in loaded.entries] == [2, 1]

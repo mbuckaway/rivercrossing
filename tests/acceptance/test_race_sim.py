@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Full-breadth scripted race acceptance: child record vs. oracle.
 
-The E9.2.2 full-breadth race: the parent stages a rich six-entry
-roster ride on a fresh ``rides.db``, spawns ``race_child.py sim_race``
--- which opens the real store-backed app on an injected clock and
+The E9.2.2 full-breadth race: the parent stages a relay placeholder
+ride (TEAM_RELAY config, two placeholder entries) on a fresh
+``rides.db``, spawns ``race_child.py sim_race`` -- which opens the real
+store-backed app on an injected clock, imports ``fixtures/
+race_roster.csv`` (50 riders, 21 relay plates) through the real
+``mi_import_csv`` route so the fixture REPLACES the placeholder, and
 drives every correction path (short-lap holds, manual deal, DNF,
 add-crossing-at-time, void-crossing, void-card) across two
 finish/reopen legs before exporting the four results files -- and then
@@ -53,9 +56,11 @@ pytestmark = pytest.mark.functional
 # drift surfaces as a child failure, never a silent pass.
 RACE_DB_ENV = "RIVERCROSSING_RACE_DB"
 RACE_OUTPUT_DIR_ENV = "RIVERCROSSING_RACE_OUTPUT_DIR"
+RACE_CSV_ENV = "RIVERCROSSING_RACE_CSV"
 RACE_EXPORTS_DIR_ENV = "RIVERCROSSING_RACE_EXPORTS_DIR"
 RACE_BOUND_ENV = "RIVERCROSSING_RACE_BOUND_SECONDS"
 RACE_CHILD = Path(__file__).resolve().parent / "race_child.py"
+FIXTURE_CSV = Path(__file__).resolve().parent / "fixtures" / "race_roster.csv"
 
 # The race's pinned shoe seed (E9.2.2/R-77): the nightly owns it and
 # injects it here, filing it on failure; RIVERCROSSING_ACCEPTANCE_SEED
@@ -71,6 +76,7 @@ _RUN_CHILD_TIMEOUT_S = 150.0
 _RACE_ENV_NAMES = (
     RACE_DB_ENV,
     RACE_OUTPUT_DIR_ENV,
+    RACE_CSV_ENV,
     RACE_EXPORTS_DIR_ENV,
     RACE_BOUND_ENV,
 )
@@ -88,10 +94,11 @@ def race_support() -> ModuleType:
     )
 
 
-def _run_sim_race_child(  # noqa: PLR0913 -- the spawn inputs (support, db, output, exports, timeout)
+def _run_sim_race_child(  # noqa: PLR0913 -- the spawn inputs (support, db, csv, output, exports, timeout)
     support: Any,  # noqa: ANN401 -- the lazily-imported module namespace
     *,
     db_path: Path,
+    csv_path: Path,
     output_dir: Path,
     exports_dir: Path,
     timeout: float = _RUN_CHILD_TIMEOUT_S,
@@ -106,6 +113,7 @@ def _run_sim_race_child(  # noqa: PLR0913 -- the spawn inputs (support, db, outp
     saved = {name: os.environ.get(name) for name in _RACE_ENV_NAMES}
     os.environ[RACE_DB_ENV] = str(db_path)
     os.environ[RACE_OUTPUT_DIR_ENV] = str(output_dir)
+    os.environ[RACE_CSV_ENV] = str(csv_path)
     os.environ[RACE_EXPORTS_DIR_ENV] = str(exports_dir)
     os.environ[RACE_BOUND_ENV] = str(_CHILD_BOUND_S)
     try:
@@ -140,13 +148,21 @@ def test_race_sim_full_breadth_race_matches_the_algorithm(
     # RIVERCROSSING_ACCEPTANCE_SEED overrides the fixed default.
     seed_env = os.environ.get("RIVERCROSSING_ACCEPTANCE_SEED")
     rng_seed = int(seed_env) if seed_env else _SIM_SEED
+    # Phase 6: the ride is staged TEAM_RELAY (the EPIC's format, spec
+    # §1) with a two-entry placeholder roster -- the child's CSV import
+    # REPLACES it, so the fixture's 21 relay entries are the roster
+    # every typed lap and correction resolves against.
     ride_id = store_staging.running_ride_with_roster(
-        db_path, rng_seed=rng_seed, roster=store_staging.rich_race_roster()
+        db_path,
+        rng_seed=rng_seed,
+        plate_model=store_staging.PlateModel.TEAM_RELAY,
+        roster=store_staging.relay_placeholder_roster(),
     )
 
     envelope = _run_sim_race_child(
         support,
         db_path=db_path,
+        csv_path=FIXTURE_CSV,
         output_dir=output_dir,
         exports_dir=exports_dir,
     )
@@ -163,8 +179,8 @@ def test_race_sim_full_breadth_race_matches_the_algorithm(
     # and driven every correction path, so a broken typed-entry path
     # cannot pass vacuously (adversarial-review fix).
     actions = record["audit_actions"]
-    assert len(record["dealt_cards"]) >= 20, "no meaningful deals recorded"
-    assert actions.count("record_crossing") >= 15, "no typed crossings recorded"
+    assert len(record["dealt_cards"]) >= 80, "no meaningful deals recorded"
+    assert actions.count("record_crossing") >= 80, "no typed crossings recorded"
     for action in (
         "confirm_held",
         "void_held",
@@ -176,6 +192,13 @@ def test_race_sim_full_breadth_race_matches_the_algorithm(
     ):
         assert actions.count(action) == 1, f"expected exactly one {action}"
     assert len(record["checkpoints"]) >= 12, "too few display checkpoints"
+
+    # Phase 6: the import REPLACED the staged placeholder, so the final
+    # standings carry every fixture entry -- 11 relay teams + 10 solos,
+    # the DNF'd plate 4 listed last in the teams section (rank keeps
+    # the DNF tail). A stub or failed import would leave the
+    # placeholder's two entries instead.
+    assert len(record["final_standings"]) == 21, "imported roster did not replace the placeholder"
 
     report = race_sim_oracle.compare(facts, record, exports_dir)
 
