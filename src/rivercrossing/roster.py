@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
+from rivercrossing.cards import seeded_card_codes
 from rivercrossing.ride import RideStatus
 
 if TYPE_CHECKING:
@@ -217,6 +218,10 @@ class Entry:
     E3.1.2's permanent delete guard (R-15): once
     :meth:`Roster.mark_has_data` sets it, ``delete_entry`` refuses in
     every ride state -- DNF or void is the only path from there.
+    ``logo_card``/``logo_png`` are Phase 4's team logo: a natural
+    card code and/or image bytes, set only through
+    :meth:`Roster.set_team_logo_card`/:meth:`Roster.set_team_logo_image`
+    (an image wins over a card -- either clears the other).
     """
 
     plate: str
@@ -226,6 +231,8 @@ class Entry:
     status: EntryStatus = EntryStatus.ACTIVE
     notes: str = ""
     has_data: bool = False
+    logo_card: str | None = None
+    logo_png: bytes | None = None
 
     @property
     def team_size(self) -> int:
@@ -331,14 +338,26 @@ class Roster:
     store-less, in-memory model -- EPIC 5's Store persists it.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- four keyword-only ride settings; bundle with care
         self,
         *,
         entry_mode: EntryMode = EntryMode.SOLO,
         max_team_size: int = DEFAULT_MAX_TEAM_SIZE,
         plate_model: PlateModel = PlateModel.RIDER_POOLED,
+        team_logo_seed: int | None = None,
     ) -> None:
         """Build an empty roster under the given ride-wide settings.
+
+        Args:
+            entry_mode: The ride's team policy (R-11).
+            max_team_size: The ride's configured max riders per team.
+            plate_model: The ride's plate policy (R-16).
+            team_logo_seed: Phase 4's team-logo shuffle seed (a
+                ride's stored ``rng_seed``); when given, each new
+                team auto-assigns the next unused natural card code
+                from :func:`~rivercrossing.cards.seeded_card_codes`
+                as its logo (:meth:`next_team_logo_card`). Without
+                one, teams carry no auto-assigned logo.
 
         Raises:
             TeamSizeError: *max_team_size* is outside 2..10.
@@ -355,6 +374,9 @@ class Roster:
         self._status = RideStatus.DRAFT
         self._entries: list[Entry] = []
         self._audit_log: list[AuditEvent] = []
+        self._team_logo_codes = (
+            seeded_card_codes(team_logo_seed) if team_logo_seed is not None else None
+        )
 
     @property
     def entry_mode(self) -> EntryMode:
@@ -411,6 +433,62 @@ class Roster:
             entries: The entries to restore, in creation order.
         """
         self._entries.extend(entries)
+
+    def next_team_logo_card(self, after: str | None = None) -> str | None:
+        """Return the next unused seeded logo card at/after *after*.
+
+        Phase 4's logo source, shared by auto-assignment at team
+        creation and the editor's Pick card cycling: the next code in
+        this roster's deterministic ``team_logo_seed`` sequence that
+        no current team's entry already holds as ``logo_card``. With
+        *after* (a team's current card), the scan starts just past it
+        and wraps around the sequence end, so repeated picks walk the
+        whole deck without ever offering a card another team shows.
+
+        Returns:
+            The next unused code, or ``None`` when this roster has no
+            ``team_logo_seed`` or all 52 codes are already claimed.
+        """
+        if self._team_logo_codes is None:
+            return None
+        codes = self._team_logo_codes
+        if after is not None and after in codes:
+            start = codes.index(after) + 1
+            ordered = codes[start:] + codes[:start]
+        else:
+            ordered = codes
+        in_use = {entry.logo_card for entry in self._entries if entry.logo_card is not None}
+        return next((code for code in ordered if code not in in_use), None)
+
+    def set_team_logo_card(self, entry: Entry, *, code: str) -> None:
+        """Set *entry*'s logo to the natural card *code* (Phase 4).
+
+        A picked card wins over an image: any ``logo_png`` on *entry*
+        is cleared, so the two logo forms never both display.
+
+        Raises:
+            EntryNotFoundError: *entry* is not a member of this
+                roster.
+        """
+        self._require_known_entry(entry)
+        entry.logo_card = code
+        entry.logo_png = None
+        self._log("set_team_logo_card", {"plate": entry.plate, "code": code})
+
+    def set_team_logo_image(self, entry: Entry, *, image: bytes) -> None:
+        """Set *entry*'s logo to the image *image* (Phase 4).
+
+        An image wins over a card: any ``logo_card`` on *entry* is
+        cleared, so the two logo forms never both display.
+
+        Raises:
+            EntryNotFoundError: *entry* is not a member of this
+                roster.
+        """
+        self._require_known_entry(entry)
+        entry.logo_png = image
+        entry.logo_card = None
+        self._log("set_team_logo_image", {"plate": entry.plate})
 
     def next_free_plate(self) -> str:
         """Return one past the highest numeric plate in use (R-20).
@@ -481,10 +559,21 @@ class Roster:
         self._log("create_solo_entry", {"plate": entry.plate, "name": rider.full_name})
         return entry
 
-    def create_team_entry(
-        self, *, display_name: str, riders: Sequence[Rider], plate: str | None = None
+    def create_team_entry(  # noqa: PLR0913 -- (display_name, riders, plate, logo_card), keyword-only
+        self,
+        *,
+        display_name: str,
+        riders: Sequence[Rider],
+        plate: str | None = None,
+        logo_card: str | None = None,
     ) -> Entry:
         """Create a team of 2..max_team_size riders (S1, R-12/R-16).
+
+        *logo_card* (Phase 4) names the team's logo card when the
+        caller has one to give (CSV previews, tests); ``None``
+        auto-assigns the next unused code from this roster's
+        ``team_logo_seed`` sequence -- never a code another team
+        already holds.
 
         Raises:
             SoloOnlyRideError: this ride's entry_mode is solo-only.
@@ -506,7 +595,11 @@ class Roster:
             raise TeamSizeError(msg)
         entry_plate = self._shape_and_validate(team_riders, plate)
         entry = Entry(
-            plate=entry_plate, display_name=display_name, type=EntryType.TEAM, riders=team_riders
+            plate=entry_plate,
+            display_name=display_name,
+            type=EntryType.TEAM,
+            riders=team_riders,
+            logo_card=self._resolved_logo_card(logo_card),
         )
         self._entries.append(entry)
         self._log(
@@ -515,8 +608,13 @@ class Roster:
         )
         return entry
 
-    def create_team_entry_of_one(
-        self, *, display_name: str, rider: Rider, plate: str | None = None
+    def create_team_entry_of_one(  # noqa: PLR0913 -- (display_name, rider, plate, logo_card), keyword-only
+        self,
+        *,
+        display_name: str,
+        rider: Rider,
+        plate: str | None = None,
+        logo_card: str | None = None,
     ) -> Entry:
         """Create a team of exactly one rider -- transient, DRAFT only.
 
@@ -527,6 +625,10 @@ class Roster:
         check (:meth:`validate_for_start`) rather than a construction
         invariant. :meth:`create_team_entry` (the CSV bulk path)
         keeps its own 2..max_team_size contract, unchanged.
+
+        *logo_card* (Phase 4) is the caller-supplied team logo, the
+        same shape as :meth:`create_team_entry`'s own -- ``None``
+        auto-assigns the next unused seeded code.
 
         Raises:
             LockedError: the ride has left DRAFT.
@@ -544,7 +646,11 @@ class Roster:
             raise SoloOnlyRideError(msg)
         entry_plate = self._shape_and_validate([rider], plate)
         entry = Entry(
-            plate=entry_plate, display_name=display_name, type=EntryType.TEAM, riders=[rider]
+            plate=entry_plate,
+            display_name=display_name,
+            type=EntryType.TEAM,
+            riders=[rider],
+            logo_card=self._resolved_logo_card(logo_card),
         )
         self._entries.append(entry)
         self._log(
@@ -960,6 +1066,17 @@ class Roster:
         """
         if new_plate != exclude:
             self._require_plates_free([new_plate])
+
+    def _resolved_logo_card(self, supplied: str | None) -> str | None:
+        """Return *supplied*, else the next unused auto-assigned code.
+
+        ``None`` both ways when the caller supplied none and this
+        roster carries no ``team_logo_seed`` (or every code is
+        claimed) -- a caller-supplied card is always kept verbatim.
+        """
+        if supplied is not None:
+            return supplied
+        return self.next_team_logo_card()
 
     def _require_known_entry(self, entry: Entry) -> None:
         """Raise EntryNotFoundError unless *entry* is a member here."""

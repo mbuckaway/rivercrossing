@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from rivercrossing.cards import seeded_card_codes
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import (
     DEFAULT_MAX_TEAM_SIZE,
@@ -2161,3 +2162,245 @@ def test_move_rider_audit_payload_rider_name_is_the_full_name() -> None:
         action="move_rider",
         payload={"rider_name": "Aya Chen", "from_plate": "2", "to_plate": "1"},
     )
+
+
+# ------------------------------------------------------- team logos
+# (Phase 4: an Entry carries a logo -- one natural card code and/or
+# image bytes; a Roster constructed with team_logo_seed auto-assigns
+# each new team the next unused code from cards.seeded_card_codes, so
+# no two auto-assigned teams share -- xrc-windows.md section C's
+# Team | Logo column.)
+
+
+def _seeded_mixed_roster(seed: int = 8843) -> Roster:
+    """Return a DRAFT mixed pooled roster that auto-assigns logos."""
+    roster = Roster(entry_mode=EntryMode.MIXED, team_logo_seed=seed)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    return roster
+
+
+def test_roster_bare_entry_carries_no_logo() -> None:
+    """A hand-built Entry defaults to card-less and image-less."""
+    entry = Entry(plate="88", display_name="Moss Ridge", type=EntryType.TEAM)
+
+    assert (entry.logo_card, entry.logo_png) == (None, None)
+
+
+def test_roster_create_team_entry_without_a_seed_assigns_no_logo() -> None:
+    """No team_logo_seed, no auto-assigned logo card (Phase 4)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+
+    assert entry.logo_card is None
+    assert entry.logo_png is None
+
+
+def test_roster_create_team_entry_auto_assigns_the_first_seeded_card() -> None:
+    """A seeded roster gives a new team the shuffle's first card."""
+    roster = _seeded_mixed_roster()
+
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+
+    assert entry.logo_card == seeded_card_codes(8843)[0]
+
+
+def test_roster_auto_assigned_logos_never_share_a_card_across_teams() -> None:
+    """Each new team draws the next unused code -- no duplicates."""
+    roster = _seeded_mixed_roster()
+    first = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    second = roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="D.", last_name="Patel", plate="80"),
+            Rider(first_name="J.", last_name="Park", plate="81"),
+        ],
+    )
+
+    assert first.logo_card != second.logo_card
+    assert second.logo_card == seeded_card_codes(8843)[1]
+
+
+def test_roster_create_team_entry_of_one_also_auto_assigns_a_logo() -> None:
+    """The transient size-1 team path assigns like its sibling."""
+    roster = _seeded_mixed_roster()
+
+    entry = roster.create_team_entry_of_one(
+        display_name="New Team", rider=Rider(first_name="A.", last_name="Roy", plate="77")
+    )
+
+    assert entry.logo_card == seeded_card_codes(8843)[0]
+
+
+def test_roster_create_team_entry_honours_a_caller_supplied_logo_card() -> None:
+    """A caller-supplied logo_card is kept, not overwritten."""
+    roster = _seeded_mixed_roster()
+
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+        logo_card="AS",
+    )
+
+    assert entry.logo_card == "AS"
+
+
+def test_roster_restored_logos_stay_out_of_the_auto_assign_pool() -> None:
+    """load_entries' cards are in use, so a new team skips them."""
+    seeded = seeded_card_codes(8843)
+    roster = _seeded_mixed_roster()
+    roster.load_entries(
+        [
+            Entry(
+                plate="77",
+                display_name="Trail Blazers",
+                type=EntryType.TEAM,
+                riders=[
+                    Rider(first_name="A.", last_name="Roy", plate="77"),
+                    Rider(first_name="K.", last_name="Singh", plate="78"),
+                ],
+                logo_card=seeded[0],
+            )
+        ]
+    )
+
+    created = roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="D.", last_name="Patel", plate="80"),
+            Rider(first_name="J.", last_name="Park", plate="81"),
+        ],
+    )
+
+    assert created.logo_card == seeded[1]
+
+
+def test_roster_next_team_logo_card_wraps_past_the_end_of_the_sequence() -> None:
+    """Pick cycling: the code after the current one, wrapping around."""
+    seeded = seeded_card_codes(8843)
+    roster = _seeded_mixed_roster()
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+        logo_card=seeded[-1],
+    )
+
+    nxt = roster.next_team_logo_card(after=entry.logo_card)
+
+    assert nxt == seeded[0]
+
+
+def test_roster_next_team_logo_card_skips_other_teams_cards() -> None:
+    """Cycling never offers a code another team already holds."""
+    seeded = seeded_card_codes(8843)
+    roster = _seeded_mixed_roster()
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+        logo_card=seeded[0],
+    )
+
+    nxt = roster.next_team_logo_card()
+
+    assert nxt == seeded[1]
+
+
+def test_roster_next_team_logo_card_returns_none_once_every_card_is_used() -> None:
+    """All 52 codes claimed: the pick and auto-assign pool is empty."""
+    roster = Roster(entry_mode=EntryMode.MIXED, team_logo_seed=8843)
+    for index in range(52):
+        roster.create_team_entry(
+            display_name=f"Team {index}",
+            riders=[
+                Rider(first_name="A", last_name="B", plate=str(index * 2)),
+                Rider(first_name="C", last_name="D", plate=str(index * 2 + 1)),
+            ],
+        )
+
+    nxt = roster.next_team_logo_card()
+
+    assert nxt is None
+
+
+def test_roster_next_team_logo_card_returns_none_without_a_seed() -> None:
+    """An unseeded roster never offers a logo card to pick."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    assert roster.next_team_logo_card() is None
+
+
+def test_roster_set_team_logo_card_replaces_any_image_and_audits() -> None:
+    """A picked card wins over an image: logo_png clears, log grows."""
+    roster = _seeded_mixed_roster()
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    roster.set_team_logo_image(entry, image=b"png-bytes")
+
+    roster.set_team_logo_card(entry, code="AS")
+
+    assert entry.logo_card == "AS"
+    assert entry.logo_png is None
+    assert roster.audit_log[-1] == AuditEvent(
+        action="set_team_logo_card", payload={"plate": entry.plate, "code": "AS"}
+    )
+
+
+def test_roster_set_team_logo_image_wins_over_a_card_and_audits() -> None:
+    """An image replaces any card: logo_card clears, log grows."""
+    roster = _seeded_mixed_roster()
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+
+    roster.set_team_logo_image(entry, image=b"png-bytes")
+
+    assert entry.logo_png == b"png-bytes"
+    assert entry.logo_card is None
+    assert roster.audit_log[-1] == AuditEvent(
+        action="set_team_logo_image", payload={"plate": entry.plate}
+    )
+
+
+def test_roster_set_team_logo_card_unknown_entry_raises_naming_it() -> None:
+    """T-5: both logo setters refuse an entry outside this roster."""
+    roster = _seeded_mixed_roster()
+    stranger = Entry(plate="99", display_name="Alien", type=EntryType.SOLO)
+
+    with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
+        roster.set_team_logo_card(stranger, code="AS")

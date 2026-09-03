@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Wiring for the spec.md §13 / R-76 dialog-behaviour contract.
 
-Every one of the 25 dialogs in ``ui/xrc/*.xrc`` is already authored:
+Every dialog in ``ui/xrc/*.xrc`` is already authored:
 layout, control names, and (per dialog) an XRC ``<default>`` button
 and, on the four destructive confirms, an XRC ``<focused>`` marker
 too. This module adds no layout and no business logic -- it wires
@@ -36,14 +36,15 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   dialog's ``ShowModal`` through; it always restores focus to the
   caller-supplied *opener*, whichever way the dialog ends.
 
-``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg`` and
-``entry_detail_dlg`` carry no ``<default>`` button at all in their
+``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``,
+``entry_detail_dlg`` and Phase 4's ``team_editor_dlg`` carry no
+``<default>`` button at all in their
 already-authored XRC, so "Enter activates the marked default button"
-has nothing to activate for these four --
+has nothing to activate for these five --
 :data:`DEFAULT_BUTTON_DECISIONS` is the per-dialog product call
 (E1.5.3) that fills the gap, and :data:`FORM_FIRST_FIELDS` is
 spec.md §13's matching initial-focus decision for every form dialog,
-``rider_editor_dlg`` included. Both
+``rider_editor_dlg`` and ``team_editor_dlg`` included. Both
 are the one place these decisions are recorded -- ``app.py``'s
 ``_apply_dialog_defaults`` applies them when a real menu route opens
 the dialog, and ``tests/functional/test_dialog_behavior.py`` asserts
@@ -89,12 +90,14 @@ WX_ID_CLOSE = "wxID_CLOSE"
 # E1.5.3's product decision: the four already-authored dialogs with no
 # XRC <default> each get one (module docstring). rider_editor_dlg's
 # own choice -- Save, not Close or Add -- is explained in
-# set_default_button's docstring.
+# set_default_button's docstring; Phase 4's team_editor_dlg carries
+# the same shape (Save, not Close or Add/Remove) and joins the list.
 DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
     (ids.RIDE_SETUP_DLG, WX_ID_OK),
     (ids.CSV_PREVIEW_DLG, WX_ID_OK),
     (ids.ENTRY_DETAIL_DLG, WX_ID_CLOSE),
     (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
+    (ids.TEAM_EDITOR_DLG, ids.SAVE_BTN),
 )
 
 # spec.md §13's initial-focus decision for every form dialog: the
@@ -107,6 +110,7 @@ FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.MANUAL_DEAL_DLG, ids.PLATE_INPUT),
     (ids.RIDE_SETUP_DLG, ids.NAME_INPUT),
     (ids.RIDER_EDITOR_DLG, ids.PLATE_INPUT),
+    (ids.TEAM_EDITOR_DLG, ids.NAME_INPUT),
 )
 
 

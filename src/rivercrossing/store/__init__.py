@@ -687,7 +687,7 @@ class Store:
             RideNotFoundError: No ``ride`` row has *ride_id*.
         """
         row = self._conn.execute(
-            "SELECT entry_mode, plate_model, max_team_size FROM ride WHERE id = ?",
+            "SELECT entry_mode, plate_model, max_team_size, rng_seed FROM ride WHERE id = ?",
             (ride_id,),
         ).fetchone()
         if row is None:
@@ -696,10 +696,13 @@ class Store:
             entry_mode=EntryMode(row["entry_mode"]),
             plate_model=PlateModel(row["plate_model"]),
             max_team_size=row["max_team_size"],
+            # Phase 4: the ride's own rng_seed seeds new teams' logo
+            # cards, so an added team's logo is deterministic per ride.
+            team_logo_seed=row["rng_seed"],
         )
         entries: list[Entry] = []
         for entry_row in self._conn.execute(
-            "SELECT id, plate, display_name, type, status, notes"
+            "SELECT id, plate, display_name, type, status, notes, logo_card, logo_png"
             " FROM entry WHERE ride_id = ? ORDER BY id",
             (ride_id,),
         ).fetchall():
@@ -730,6 +733,8 @@ class Store:
                 riders=riders,
                 status=EntryStatus(entry_row["status"]),
                 notes=entry_row["notes"] or "",
+                logo_card=entry_row["logo_card"],
+                logo_png=entry_row["logo_png"],
             )
             entry.has_data = has_data
             entries.append(entry)
@@ -741,17 +746,17 @@ class Store:
 
         E5.4.1's roster persistence into spec §2's entry/rider tables:
         every entry (plate, display_name, type, team_size, status,
-        notes, plus the nullable logo_card/logo_png columns -- the
-        in-memory model carries no logo, so they store NULL) and every
-        rider (first_name, last_name, plate, sort_order) is written in
-        one transaction, after removing any previously saved rows -- a
-        save is a snapshot of the live roster, never an append (the
-        replace semantics the rider editor's DRAFT edits need).
-        ``has_data`` is deliberately not stored (derived at load time
-        from recorded rows), and ``dnf_at``/``emergency_contact``/
-        ``waiver_signed``/``ccn_reg_id`` stay NULL -- the in-memory
-        Roster model carries no such fields (module docstring's E5.4.1
-        resolutions).
+        notes, plus the Phase 1 logo_card/logo_png columns -- Phase 4
+        writes the real values now, NULL only when the entry carries
+        no logo) and every rider (first_name, last_name, plate,
+        sort_order) is written in one transaction, after removing any
+        previously saved rows -- a save is a snapshot of the live
+        roster, never an append (the replace semantics the rider
+        editor's DRAFT edits need). ``has_data`` is deliberately not
+        stored (derived at load time from recorded rows), and
+        ``dnf_at``/``emergency_contact``/``waiver_signed``/``ccn_reg_id``
+        stay NULL -- the in-memory Roster model carries no such fields
+        (module docstring's E5.4.1 resolutions).
 
         Args:
             ride_id: The ride whose roster to write.
@@ -774,7 +779,7 @@ class Store:
                     "INSERT INTO entry"
                     " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
                     " logo_card, logo_png)"
-                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL)",
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
                     (
                         ride_id,
                         entry.plate,
@@ -783,6 +788,8 @@ class Store:
                         len(entry.riders),
                         entry.status.value,
                         entry.notes,
+                        entry.logo_card,
+                        entry.logo_png,
                     ),
                 )
                 entry_id = cursor.lastrowid

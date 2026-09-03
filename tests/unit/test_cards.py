@@ -38,6 +38,7 @@ from rivercrossing.cards import (
     ShoeClosedError,
     ShoeEmpty,
     Suit,
+    seeded_card_codes,
 )
 
 if TYPE_CHECKING:
@@ -409,3 +410,42 @@ def test_shoe_composition_matches_every_ride_setup_cards_config(
     assert len(dealt) == decks * (52 + jokers_per_deck)
     assert joker_count == decks * jokers_per_deck
     assert set(naturals.values()) == {decks}
+
+
+# -------------------------------------------------- seeded_card_codes
+# (Phase 4 team-logos: the deterministic natural-card sequence a
+# Roster draws a team's logo card from, spec-independent -- every
+# team logo is one natural card code, never a joker, and no two
+# auto-assigned logos share.)
+
+
+def test_seeded_card_codes_returns_every_natural_card_once_in_seed_order() -> None:
+    """One deck's shuffle, jokers excluded -- 52 unique codes."""
+    codes = seeded_card_codes(_SEED)
+
+    assert len(codes) == 52
+    assert len(set(codes)) == 52
+    assert "JK" not in codes
+
+
+def test_seeded_card_codes_multi_deck_is_deduped_across_decks() -> None:
+    """More decks reshuffle the same 52 naturals -- never duplicates."""
+    codes = seeded_card_codes(_SEED, decks=8)
+
+    assert len(codes) == 52
+    assert len(set(codes)) == 52
+    assert "JK" not in codes
+
+
+def test_seeded_card_codes_is_deterministic_for_a_given_seed() -> None:
+    """R-40's replay discipline: the seed reproduces the sequence."""
+    assert seeded_card_codes(_SEED, decks=2) == seeded_card_codes(_SEED, decks=2)
+
+
+def test_seeded_card_codes_different_seeds_shuffle_differently() -> None:
+    """Two seeds agree on the code set but not on its order."""
+    a = seeded_card_codes(8843, decks=1)
+    b = seeded_card_codes(8844, decks=1)
+
+    assert set(a) == set(b)
+    assert a != b

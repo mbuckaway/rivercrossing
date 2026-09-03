@@ -29,7 +29,7 @@ from platformdirs import user_data_dir
 
 import rivercrossing.store as store_module
 from rivercrossing.ride import Event, RideConfig, RideStatus
-from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
+from rivercrossing.roster import Entry, EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import (
     FutureSchemaVersionError,
     RideNameMismatchError,
@@ -1617,7 +1617,13 @@ def test_store_save_roster_round_trips_two_part_rider_names(tmp_path: Path) -> N
 
 
 def test_store_save_roster_writes_null_logo_columns_on_every_entry(tmp_path: Path) -> None:
-    """Entry logo_card/logo_png stay NULL: the model carries no logo."""
+    """Entries with no logo still store NULL in both logo columns.
+
+    Phase 4 added the real write path (``test_store_save_roster_
+    round_trips_a_teams_logo_card``/``_image``); this pins the other
+    half -- an unseeded in-memory roster carries no logo, and its
+    rows must stay NULL, never an empty string or empty blob.
+    """
     db_path = tmp_path / "rides.db"
     ride_id = _save_roster_ride(
         db_path,
@@ -2190,3 +2196,83 @@ def test_default_db_path_given_an_override_returns_it_verbatim() -> None:
 def test_default_db_path_given_none_returns_the_default() -> None:
     """None means "no override": the platformdirs default stands."""
     assert store_module.default_db_path(None) == store_module.default_db_path()
+
+
+# ------------------------------------------------ Phase 4 team logos
+# (A team's logo_card/logo_png now round-trip through the entry
+# table's Phase-1 columns instead of always storing NULL, and the
+# rebuilt roster inherits the ride's rng_seed as its team_logo_seed
+# so new teams auto-assign logo cards deterministically.)
+
+
+def _team_of(roster: Roster) -> Entry:
+    """Return *roster*'s single TEAM entry (its second entry)."""
+    return roster.entries[1]
+
+
+def test_store_save_roster_round_trips_a_teams_logo_card(tmp_path: Path) -> None:
+    """Phase 4: logo_card is written and rebuilt, not NULLed."""
+    db_path = tmp_path / "rides.db"
+    roster = _pooled_roster()
+    _team_of(roster).logo_card = "AS"
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    reloaded = _round_trip_roster(db_path, ride_id)
+
+    assert _team_of(reloaded).logo_card == "AS"
+    assert _team_of(reloaded).logo_png is None
+
+
+def test_store_save_roster_round_trips_a_teams_logo_image(tmp_path: Path) -> None:
+    """Phase 4: logo_png bytes are written and rebuilt, not NULLed."""
+    db_path = tmp_path / "rides.db"
+    roster = _pooled_roster()
+    _team_of(roster).logo_png = b"team-logo-png"
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    reloaded = _round_trip_roster(db_path, ride_id)
+
+    assert _team_of(reloaded).logo_png == b"team-logo-png"
+    assert _team_of(reloaded).logo_card is None
+
+
+def test_store_load_roster_gives_the_rebuilt_roster_the_rides_logo_seed(
+    tmp_path: Path,
+) -> None:
+    """Phase 4: a reloaded roster auto-assigns from the ride's rng_seed.
+
+    ``_load_roster`` reads the ride row's ``rng_seed`` and passes it
+    as ``team_logo_seed=``, so a team added after reload draws the
+    same deterministic first code on every reload of the same ride.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    def _new_team_logo() -> str:
+        roster = _round_trip_roster(db_path, ride_id)
+        created = roster.create_team_entry(
+            display_name="Late Team",
+            riders=[
+                Rider(first_name="A", last_name="B", plate="90"),
+                Rider(first_name="C", last_name="D", plate="91"),
+            ],
+        )
+        assert created.logo_card is not None
+        return created.logo_card
+
+    assert _new_team_logo() == _new_team_logo()

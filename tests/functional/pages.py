@@ -249,6 +249,36 @@ CSV_PREVIEW_DLG = WindowSpec(
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
+# --- xrc-windows section C: Phase 4 teams editor ---
+
+TEAM_EDITOR_DLG = WindowSpec(
+    name=ids.TEAM_EDITOR_DLG,
+    xrc_file="teams.xrc",
+    is_frame=False,
+    controls=(
+        ids.TEAMS_LIST,
+        ids.NAME_INPUT,
+        ids.RELAY_PLATE_INPUT,
+        ids.NOTES_INPUT,
+        ids.LOGO_PREVIEW,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        ids.MEMBERS_LIST,
+        ids.ADD_BTN,
+        ids.REMOVE_BTN,
+        ids.SAVE_BTN,
+        WX_ID_CLOSE,
+    ),
+    buttons=(
+        ids.ADD_BTN,
+        ids.REMOVE_BTN,
+        ids.SAVE_BTN,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        WX_ID_CLOSE,
+    ),
+)
+
 ENTRY_DETAIL_DLG = WindowSpec(
     name=ids.ENTRY_DETAIL_DLG,
     xrc_file="detail.xrc",
@@ -429,6 +459,7 @@ WINDOWS: tuple[WindowSpec, ...] = (
     EXIT_CONFIRM_DLG,
     RIDER_EDITOR_DLG,
     CSV_PREVIEW_DLG,
+    TEAM_EDITOR_DLG,
     ENTRY_DETAIL_DLG,
     EDIT_CROSSING_DLG,
     REASSIGN_DLG,

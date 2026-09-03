@@ -62,6 +62,11 @@ def demo_seeded_roster() -> Roster:
         entry_mode=EntryMode.MIXED,
         plate_model=PlateModel.RIDER_POOLED,
         max_team_size=4,
+        # Phase 4: seed the demo like a store-backed ride (whose
+        # _load_roster passes rng_seed through), so demo teams carry
+        # deterministic logo cards -- the teams editor's own suite
+        # reads them off the seeded sequence.
+        team_logo_seed=8843,
     )
     for team_name, rows in itertools.groupby(DemoDataSource().riders(), key=lambda row: row.team):
         if team_name is None:

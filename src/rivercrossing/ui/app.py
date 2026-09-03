@@ -857,7 +857,10 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     shortcuts dialog: ``shortcuts_dlg`` now binds the E8.2.1 viewer
     (renders the accelerator table, Key | Action). E8.2.3 adds the
     About box: ``about_dlg`` now binds the E8.2.3 viewer (package
-    version, ride-logo-or-app-icon). The remaining plain XRC dialogs
+    version, ride-logo-or-app-icon). Phase 4 adds the teams editor:
+    ``team_editor_dlg`` now binds the TeamEditor view over the live
+    roster (team records -- name, relay plate, notes, logo). The
+    remaining plain XRC dialogs
     with no code-side view class (the correction dialogs) need
     nothing further here; they already carry their own canvas
     defaults from their own ``.xrc`` authoring.
@@ -872,6 +875,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
     from rivercrossing.ui.views.settings import SettingsDialog  # noqa: PLC0415
     from rivercrossing.ui.views.shortcuts import ShortcutsDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.team_editor import TeamEditor  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         if context.store is not None:
@@ -899,6 +903,13 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # empty bootstrap roster otherwise -- the rider editor shows a
         # correct empty state until a real ride is opened.
         RiderEditor(window, roster=context.roster)
+    elif route.target == ids.TEAM_EDITOR_DLG:
+        # Phase 4: the same live-roster wiring as the rider editor --
+        # team records (name, relay plate, notes, logo) over the
+        # store's roster when one is open, the empty bootstrap roster
+        # otherwise. The menu's own teams_allowed gate (entry_mode is
+        # MIXED) is what lets this route fire at all.
+        TeamEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
         # E9.1.2/E9.1.4: with a store open, a committed New Ride
         # persists the ride row and the roster the dialog was opened
@@ -1041,6 +1052,10 @@ def _menu_ride_state(context: _RouteContext, status: RideStatus) -> commands.Rid
         audit_rows=len(engine.events),
         entry_has_cards=any(result.cards for result in engine.snapshot()),
         export_exists=context.last_export_path is not None,
+        # Phase 4: teams only exist on a mixed ride, so the Teams
+        # Editor menu row follows the config's entry_mode -- the
+        # same fact the roster itself records (R-11).
+        teams_allowed=engine.config.entry_mode is EntryMode.MIXED,
     )
 
 

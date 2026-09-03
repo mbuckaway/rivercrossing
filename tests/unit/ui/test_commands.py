@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 38-row route table,
+``commands.py`` imports no ``wx`` at all, so its 39-row route table,
 its ``route_for_id`` dispatch, and its ``is_route_enabled`` /
 ``is_stop_button_enabled`` rules are pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -45,7 +45,7 @@ from rivercrossing.ui import commands, ids
 ROUTE_COUNTS_BY_MENU = (
     ("File", 8),
     ("Ride", 7),
-    ("Riders", 4),
+    ("Riders", 5),
     ("Cards", 7),
     ("Results", 7),
     ("View", 1),
@@ -77,6 +77,7 @@ ROUTE_TARGETS = (
     (commands.TargetKind.WINDOW, ids.AUDIT_DLG),  # Audit Trail...
     (commands.TargetKind.WINDOW, ids.RIDE_SETUP_DLG),  # Ride Setup...
     (commands.TargetKind.WINDOW, ids.RIDER_EDITOR_DLG),  # Rider Editor
+    (commands.TargetKind.WINDOW, ids.TEAM_EDITOR_DLG),  # Teams Editor (Phase 4: mixed rides)
     (commands.TargetKind.WINDOW, ids.RIDER_EDITOR_DLG),  # Add Rider/Entry...
     (commands.TargetKind.DIALOG, ids.DNF_CONFIRM_DLG),  # Mark DNF...
     (commands.TargetKind.WINDOW, ids.ENTRY_DETAIL_DLG),  # Entry Detail...
@@ -111,25 +112,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_eight_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 38
+    assert len(commands.ROUTE_TABLE) == 39
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 7, Riders 4, Cards 7, Results 7, View 1, Help 4."""
+    """File 8, Ride 7, Riders 5, Cards 7, Results 7, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_eight_real_menu_item_ids_once_each() -> None:
-    """45 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_forty_nine_real_menu_item_ids_once_each() -> None:
+    """46 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 48
-    assert len(set(flat_ids)) == 48
+    assert len(flat_ids) == 49
+    assert len(set(flat_ids)) == 49
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -194,6 +195,8 @@ ALLOWED_STATES = (
     None,  # Ride > Audit Trail...: "ride open, >=1 audit row"
     None,  # Ride > Ride Setup...: "ride open (locks tighten after start)"
     None,  # Riders > Rider Editor: "ride open"
+    None,  # Riders > Teams Editor: "ride open, mixed (teams allowed)" -- teams_allowed is a
+    # condition-only gate, never a RideStatus membership rule
     None,  # Riders > Add Rider/Entry...: "ride open (new plates any time)"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Riders > Mark DNF...
     None,  # Riders > Entry Detail...: "ride open"
@@ -234,6 +237,7 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
         audit_rows=1,
         entry_has_cards=True,
         export_exists=True,
+        teams_allowed=True,
     )
 
 
@@ -249,6 +253,9 @@ ITEM_STATE_IDS = [
 RIDE_OPEN_REQUIRING_ROUTES = tuple(
     route for route in commands.ROUTE_TABLE if route.enabled_when.requires_ride_open
 )
+TEAMS_GATED_ROUTES = tuple(
+    route for route in commands.ROUTE_TABLE if route.enabled_when.teams_allowed
+)
 CROSSINGS_GATED_ROUTES = tuple(
     route for route in commands.ROUTE_TABLE if route.enabled_when.min_crossings > 0
 )
@@ -261,6 +268,7 @@ START_RIDE_ROUTE = _ROUTES_BY_LABEL["Start Ride"]
 
 RIDE_OPEN_CASES = (True, False)
 RIDE_OPEN_CASE_IDS = ("ride_open", "no_ride_open")
+TEAMS_ALLOWED_CASES = (False, True)
 CROSSINGS_BOUNDARY_CASES = (0, 1, 2)
 HELD_CARDS_BOUNDARY_CASES = (0, 1, 2)
 AUDIT_ROWS_BOUNDARY_CASES = (0, 1, 2)
@@ -304,6 +312,23 @@ def test_is_route_enabled_given_ride_open_condition_gates_the_route(
     result = commands.is_route_enabled(route, state)
 
     assert result is ride_open
+
+
+@pytest.mark.parametrize(
+    "route", TEAMS_GATED_ROUTES, ids=lambda route: f"{route.menu}:{route.label}"
+)
+@pytest.mark.parametrize(
+    "teams_allowed", TEAMS_ALLOWED_CASES, ids=("teams_disallowed", "teams_allowed")
+)
+def test_is_route_enabled_given_teams_allowed_condition_gates_the_route(
+    route: commands.MenuRoute, *, teams_allowed: bool
+) -> None:
+    """T-3: both branches of the teams_allowed guard."""
+    state = dataclasses.replace(_baseline_state(RideStatus.DRAFT), teams_allowed=teams_allowed)
+
+    result = commands.is_route_enabled(route, state)
+
+    assert result is teams_allowed
 
 
 @pytest.mark.parametrize(

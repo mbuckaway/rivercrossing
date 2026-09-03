@@ -75,6 +75,7 @@ RIDE_MENU_ITEMS = (
 )
 RIDERS_MENU_ITEMS = (
     "mi_rider_editor",
+    "mi_team_editor",
     "mi_add_entry",
     "mi_mark_dnf",
     "mi_entry_detail",
@@ -165,13 +166,13 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15 has 38 rows: File 8, Ride 7, Riders 4, Cards 7,
+# spec.md section 15 has 39 rows: File 8, Ride 7, Riders 5, Cards 7,
 # Results 7, View 1, Help 4. The single View row expands into the 11
 # items section 15b names for it.
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 7),
-    ("Ri&ders", 4),
+    ("Ri&ders", 5),
     ("&Cards", 7),
     ("Re&sults", 7),
     ("&View", 11),
@@ -375,13 +376,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_five_menu_item_names() -> None:
-    """spec.md 15b names 45 ``mi_*`` items across the seven menus."""
+def test_main_menubar_declares_forty_six_menu_item_names() -> None:
+    """spec.md 15b names 46 ``mi_*`` items across the seven menus."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 45
+    assert len(menu_item_names) == 46
 
 
 def test_file_menu_declares_the_spec_15_row_order() -> None:

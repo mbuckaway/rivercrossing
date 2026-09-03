@@ -247,6 +247,46 @@ ImportCancel
 
 ⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). Opened from File ▸ Import Riders CSV… or the editor's import_btn, after the OS-native picker.
 
+Teams Editor`team_editor_dlg`✕
+
+| Team | Logo |
+|---|---|
+| Trail Blazers | A♠ |
+| Moss Ridge Riders | K♥ |
+
+`teams_list (wxDataViewCtrl)`
+
+Add teamRemove
+
+`add_btn · remove_btn`
+
+Team
+
+Name
+Plate (relay)
+Notes
+
+`name_input · relay_plate_input (row hidden on a rider_pooled ride) · notes_input`
+
+Logo
+
+A♠ Pick card…Image…
+
+`logo_preview (wxStaticText) · pick_card_btn · image_btn`
+
+Members (read-only)
+
+| A. Roy |
+| K. Singh |
+
+`members_list (wxDataViewCtrl · read-only — membership is managed in the Rider Editor)`
+
+SaveClose
+
+`save_btn (default, §15b dialogs.py decisions) · wxID_CLOSE`
+
+⚠ code-side (Phase 4): rows for both lists; the Plate (relay) row's team_relay-only visibility — a rider_pooled team's plate is derived from its members (S1), never settable here; logo_preview text — the card code with its suit glyph (rank-first, e.g. A♠ — results display convention), or "Image" when a PNG is set (image wins over a card; picking a card clears an image and vice-versa); a team's logo card auto-assigns from the ride's seeded shoe seed (rng_seed → team_logo_seed) at creation — no two auto-assigned teams share — and Pick card cycles the seeded sequence; add_btn/remove_btn are DRAFT-only (refused via teams_infobar, an wxInfoBar built code-side with SetName like roster_infobar, once the ride has started); refused saves show there too; the native text-entry prompt behind Add team. Teams here are *records*: Add team creates the roster's transient size-1 team (spec S2's floor is start-time), anchored by one rider named from the team's own name — rename/move that rider in the Rider Editor, which owns membership.
+
 Entry Detail — 77 Trail Blazers`entry_detail_dlg`✕
 
 - **Team · 3 riders · 9 laps · 3:02:11** — A. Roy (77) · K. Singh (78) · L. Marchetti (79) `entry_header_lbl · members_lbl`
