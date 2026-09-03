@@ -1,21 +1,36 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""CSV roster import/export: preview-then-commit (spec S7, R-21, E3.3).
+"""CSV roster import/export: preview-then-commit (spec S7, R-21).
 
-Spec section 7 defines two CSV shapes, selected by the target ride's
-plate model (S1): ``team_relay``'s
-``plate,entry_name,type,rider_1..rider_N,notes`` (N =
-``ride.max_team_size``, ``type`` one of ``solo``/``teamN``) or
-``rider_pooled``'s one-row-per-rider ``plate,name,team_name,notes``,
-where riders sharing a ``team_name`` form a team (blank = solo).
-:func:`preview` reads either shape and reports every conflict found
-without raising for content problems; :func:`commit` then applies a
-conflict-free preview to its roster, atomically (spec S7's own
-words: "preview first, commit second, nothing touched on preview").
+Phase 2 replaces spec S7's two CSV shapes -- relay
+``plate,entry_name,type,rider_1..rider_N,notes`` and rider_pooled's
+one-row-per-rider ``plate,name,team_name,notes``, selected by the ride's
+plate model -- with ONE unified, header-mapped format. The file's actual
+header row resolves to canonical fields (:func:`_map_header`) through an
+ordered matcher list -- TEAMNAME, TYPE, FIRSTNAME, LASTNAME, NUMBER,
+NOTES -- first match per column wins, all case-insensitive, and a column
+matching nothing is ignored. Every data row is one RIDER; rows with
+neither first nor last name are skipped (the trailing footer/empty rows
+registration exports carry), unless they still name a plate/team/type,
+which is a missing-name conflict instead of a silent drop. TYPE is
+``solo``/``team`` after case folding (blank derives: team when a
+TEAMNAME is present, else solo); team rows group by TEAMNAME's
+normalized form -- trim, collapse internal whitespace, lowercase, "a
+team name is its normalized form" -- across the whole file, never by
+adjacency, so "BNBA1" and "BNBA 1" are two teams while "Full Send" and
+"full   send" are one. NUMBER auto-assigns sequential numeric plates
+from :meth:`Roster.next_free_plate` when blank; under
+``rider_pooled`` each rider owns their row's plate, under
+``team_relay`` a team's member rows share the team's single plate
+(solo rows get their own).
 
-Only a truly unreadable *path* (e.g. missing file) propagates as an
-``OSError``; a malformed or wrong-shaped CSV is reported as one or
-more :class:`ImportConflict` rows instead ("a missing/malformed
-header is a conflict, not a crash").
+:func:`preview` reads the file and reports every conflict found without
+raising for content problems and without writing anything -- to the
+filesystem or the roster; :func:`commit` then applies a conflict-free
+preview to its roster, atomically (spec S7's own words: "preview first,
+commit second, nothing touched on preview"). Only a truly unreadable
+*path* (e.g. missing file) propagates as an ``OSError``; a malformed or
+wrong-shaped CSV is reported as one or more :class:`ImportConflict`
+rows instead ("a missing/malformed header is a conflict, not a crash").
 
 This module's ``ride`` parameter -- the frozen name from
 module-skeletons.md's ``csvio.preview(path, ride) -> ImportPreview``
@@ -25,26 +40,26 @@ EPIC 3's build order, so csvio operates directly on the in-memory
 roster aggregate until persistence lands. A design write-back should
 record this once Store arrives.
 
-**Match/insert/reshape (R-21, spec S7:173-177).** ``commit`` matches
-a row on plate: an existing plate updates that entry's name/notes in
-place; a new plate inserts. A row's ride-model composition -- a
-relay entry's ``type``/rider list, a pooled rider's team_name -- may
-also *reshape* an existing match, applying every change through the
-roster's own mutators (so it is fully audit-logged) subject to the
-same lock matrix E3.1.2 already governs edits with: DRAFT reshapes
-freely; once started, relay keeps its permanent lock, while pooled
-keeps team-to-team moves open per
-:func:`~rivercrossing.roster.can_move_rider` (spec S7:171 -- "a
-changed team_name is treated as an audited membership move, not a
-conflict"). A status/model combination that
-cannot safely reshape becomes a conflict at preview time instead of a
-partial or unaudited mutation. **An entry present in the roster but
-absent from the file is left alone** -- neither the spec nor commit
-ever deletes on that basis; only DNF/void (E4) or the rider editor
-remove an entry with no matching row.
+**Match/insert/reshape (R-21, spec S7:173-177).** ``commit`` matches a
+parsed entry on its plate: an existing entry updates that entry's
+name/notes (and a solo match's rider first/last, the same rename the
+rider editor performs) in place; a new plate inserts. A row's ride-model
+composition -- a relay entry's rider set, a pooled rider's team
+membership -- may also *reshape* an existing match, applying every
+change through the roster's own mutators (so it is fully audit-logged)
+subject to the same lock matrix E3.1.2 already governs edits with:
+DRAFT reshapes freely; once started, relay keeps its permanent lock,
+while pooled keeps team-to-team moves open per
+:func:`~rivercrossing.roster.can_move_rider` (spec S7:171 -- "a changed
+team_name is treated as an audited membership move, not a conflict"). A
+status/model combination that cannot safely reshape becomes a conflict
+at preview time instead of a partial or unaudited mutation. **An entry
+present in the roster but absent from the file is
+left alone** -- neither the spec nor commit ever deletes on that basis;
+only DNF/void (E4) or the rider editor removes an entry with no row.
 
 **Pooled team<->solo conversions are DRAFT-only (the pooled-reshape
-follow-on).** A team member's row losing its team_name applies via
+follow-on).** A team member's row losing its team name applies via
 :meth:`~rivercrossing.roster.Roster.extract_rider_to_solo`; a
 brand-new or currently-solo rider's row gaining one applies via
 :meth:`~rivercrossing.roster.Roster.add_rider_to_team` (a solo rider's
@@ -57,29 +72,31 @@ open through RUNNING/REOPENED via
 a team-to-team move. A conversion the current status locks becomes a
 conflict at preview time instead of a partial or unaudited mutation.
 
-**Pooled team notes (decided 2026-08-09).** On import, a team's
-``notes`` is every non-empty member row's own notes, joined with
+**Team notes (decided 2026-08-09, unified format).** On import, a
+team's ``notes`` is every non-empty member row's own notes, joined with
 ``"; "`` in file order -- no member's note is silently dropped.
 :func:`export` writes that joined value back onto the team's first
-row only, leaving the other member rows' notes blank -- so a
+member row only, leaving the other member rows' notes blank -- so a
 commit-then-export-then-preview round trip reproduces the same
 ``notes`` string.
 
 **Export (E3.3.3).** ``export(ride, path, *, placed=None)`` writes
-*ride*'s current roster in the same shape :func:`preview` reads,
-selected by ``ride.plate_model`` -- an export of a conflict-free
-preview's target therefore previews clean again (spec §7's own
-"export mirrors the columns"; task-briefs.md E3.3.3's round-trip
-property). Passing *placed* -- a sequence of
+*ride*'s current roster in the same unified shape :func:`preview`
+reads -- one row per rider, header
+``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES`` -- so an export of a
+conflict-free preview's target therefore previews clean again (spec
+§7's own "export mirrors the columns"; task-briefs.md E3.3.3's
+round-trip property). Under ``rider_pooled`` each row carries its
+rider's own plate; under ``team_relay`` every member row of a team
+carries the team's single plate. Passing *placed* -- a sequence of
 :class:`rivercrossing.standings.Placed` from EPIC 6's rankings, the
-module's first standings dependency (approved decision D3) --
-appends spec §7's four finished-ride columns ``laps, cards,
-best_hand, total_time`` after the roster's own columns
-(plate/entry_name-or-name/type-or-team_name/riders/notes), guarded to
-a FINISHED ride and filled from the matching entry's Placed row (an
-entry missing from *placed* fails loudly; extra rows are ignored).
-Value formats are machine-readable, decided for P3: laps an int,
-cards ``len(result.cards)``, best_hand
+module's first standings dependency (approved decision D3) -- appends
+spec §7's four finished-ride columns ``laps, cards, best_hand,
+total_time`` after the roster's own columns, guarded to a FINISHED ride
+and filled from the matching entry's Placed row (an entry missing from
+*placed* fails loudly; extra rows are ignored). Value formats are
+machine-readable, decided for P3: laps an int, cards
+``len(result.cards)``, best_hand
 :func:`~rivercrossing.standings.hand_name`'s prose, total_time raw
 numeric seconds (``repr``-clean) -- human formatting belongs to the
 HTML/PDF exports only. The standalone spec §15 standings CSV ships as
@@ -115,7 +132,7 @@ from rivercrossing.roster import (
 from rivercrossing.standings import Placed, hand_name
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
     from pathlib import Path
 
 __all__ = [
@@ -132,11 +149,16 @@ __all__ = [
     "preview",
 ]
 
-_HEADER_PROBLEM = "missing or malformed header for this ride's plate model"
+_HEADER_PROBLEM = "missing or malformed header: no first or last name column"
 _FINISHED_COLUMNS = ("laps", "cards", "best_hand", "total_time")
 _MISSING_NAME_PROBLEM = "missing name"
-_POOLED_HEADER = ("plate", "name", "team_name", "notes")
-_TEAM_TYPE_PATTERN = re.compile(r"team(\d+)")
+_UNIFIED_COLUMNS = ("FIRSTNAME", "LASTNAME", "TYPE", "TEAMNAME", "NUMBER", "NOTES")
+
+_TEAM_NAME_PATTERN = re.compile(r"team\s*name", re.IGNORECASE)
+_FIRST_NAME_PATTERN = re.compile(r"first\s*name", re.IGNORECASE)
+_LAST_NAME_PATTERN = re.compile(r"last\s*name", re.IGNORECASE)
+_NUMBER_PATTERN = re.compile(r"\s*(?:number|plate|bib)\s*", re.IGNORECASE)
+_NOTES_PATTERN = re.compile(r"\bnotes?\b", re.IGNORECASE)
 
 
 class CsvIoError(Exception):
@@ -151,15 +173,73 @@ class ImportConflictsPresentError(CsvIoError):
     """
 
 
+def _map_header(header_row: Sequence[str]) -> dict[str, int]:
+    r"""Map each header column to one canonical field (Phase 2 spec).
+
+    The ordered matcher list is TEAMNAME, TYPE, FIRSTNAME, LASTNAME,
+    NUMBER, NOTES; for every column the first matcher that fires claims
+    it, and a column matching nothing is ignored. All matching is
+    case-insensitive. The canonical export tokens map too -- FIRSTNAME
+    via ``first\\s*name``, TEAMNAME via ``team\\s*name``, TYPE via its
+    exact token -- so an app-written export round-trips.
+
+    Args:
+        header_row: The file's header cells, in column order.
+
+    Returns:
+        A mapping of canonical field name to column index. Absent
+        fields are omitted; a repeated field keeps its first column.
+    """
+    matchers: tuple[tuple[str, Callable[[str], bool]], ...] = (
+        ("TEAMNAME", lambda header: _TEAM_NAME_PATTERN.search(header) is not None),
+        ("TYPE", _is_type_header),
+        ("FIRSTNAME", lambda header: _FIRST_NAME_PATTERN.search(header) is not None),
+        ("LASTNAME", lambda header: _LAST_NAME_PATTERN.search(header) is not None),
+        ("NUMBER", lambda header: _NUMBER_PATTERN.fullmatch(header) is not None),
+        ("NOTES", lambda header: _NOTES_PATTERN.search(header) is not None),
+    )
+    mapping: dict[str, int] = {}
+    for index, header in enumerate(header_row):
+        for field, matcher in matchers:
+            if matcher(header):
+                mapping.setdefault(field, index)
+                break
+    return mapping
+
+
+def _is_type_header(header: str) -> bool:
+    """Return True when *header* names the solo/team discriminator.
+
+    The registration forms ask "Are you riding Solo or on a Team?", so
+    a header containing BOTH words is the TYPE column; the app's own
+    export writes the exact canonical token ``TYPE``, which must map
+    too for the export/import round trip.
+    """
+    lowered = header.lower()
+    if "solo" in lowered and "team" in lowered:
+        return True
+    return "".join(header.split()).lower() == "type"
+
+
+def _normalize_team_name(name: str) -> str:
+    """Return *name*'s normalized form: the team's identity (Phase 2).
+
+    Trim, collapse every run of internal whitespace to one space, and
+    lowercase: "Full Send", " full   send " and "FULL SEND" are one
+    team ("full send"), while "BNBA1" and "BNBA 1" stay distinct.
+    """
+    return " ".join(name.split()).lower()
+
+
 @dataclass(frozen=True)
 class ParsedRider:
     """One rider parsed from a CSV row, not yet applied to any roster.
 
     A value object, unlike :class:`rivercrossing.roster.Rider`: two
     riders parsed with the same first/last names and plate compare
-    equal, which is exactly what a preview assertion needs. The CSV's
-    single name column is split into ``first_name``/``last_name`` at
-    parse time (Phase 1 rider-name split) -- see :func:`_split_name`.
+    equal, which is exactly what a preview assertion needs. ``plate``
+    is the rider's own plate under ``rider_pooled``; under
+    ``team_relay`` riders stay plateless (the entry owns the plate).
     """
 
     first_name: str
@@ -172,27 +252,6 @@ class ParsedRider:
         return " ".join(part for part in (self.first_name.strip(), self.last_name.strip()) if part)
 
 
-def _split_name(name: str) -> tuple[str, str]:
-    """Split one CSV name column into (first_name, last_name).
-
-    The single-column CSV shape stays for now (Phase 1 does not
-    rewrite the two-shape design); a name is split at its first
-    space -- "A. Roy" -> ("A.", "Roy"), "Mary Jane Watson" ->
-    ("Mary", "Jane Watson") -- and a single-word name keeps an empty
-    last name. ``name`` is already edge-stripped by :func:`_field`.
-    """
-    first, separator, remainder = name.partition(" ")
-    if not separator:
-        return first, ""
-    return first, remainder.strip()
-
-
-def _parsed_rider(name: str, *, plate: str | None = None) -> ParsedRider:
-    """Build one ParsedRider by splitting a single-column *name*."""
-    first_name, last_name = _split_name(name)
-    return ParsedRider(first_name=first_name, last_name=last_name, plate=plate)
-
-
 @dataclass(frozen=True)
 class ParsedEntry:
     """One structurally valid entry parsed from the CSV (spec S7).
@@ -200,12 +259,15 @@ class ParsedEntry:
     ``plate`` is already resolved to the same shape
     :meth:`~rivercrossing.roster.Roster.create_solo_entry` and
     :meth:`~rivercrossing.roster.Roster.create_team_entry` expect --
-    direct under ``team_relay``, the lowest-numbered rider's plate
-    under ``rider_pooled`` -- so :func:`commit` can hand these
-    straight to those constructors without re-deriving anything. A
-    row with a *content* conflict (a duplicate plate, a missing
-    name) still becomes one of these -- its shape parsed fine -- but
-    a row that fails shape validation never does (see
+    the entry's own plate under ``team_relay`` (a team's member rows
+    share it), the lowest-numbered rider's plate under
+    ``rider_pooled`` -- so :func:`commit` can hand these straight to
+    those constructors without re-deriving anything. ``display_name``
+    is a solo entry's rider full name or a team's normalized name. A
+    row with a *content* conflict (a duplicate plate, a missing name,
+    an over/under-sized team) still becomes one of these -- its shape
+    parsed fine -- but a row that fails shape validation (an unknown
+    TYPE, or relay team rows naming two plates) never does (see
     :class:`ImportPreview`).
     """
 
@@ -235,13 +297,14 @@ class ImportPreview:
 
     ``entries`` carries every structurally valid row -- including one
     flagged in ``conflicts`` for a content problem such as a
-    duplicate plate or a missing name -- ready for :func:`commit` to
-    apply without re-reading ``source_path``. A row that fails shape
-    validation (an unrecognized ``type``, a ``teamN`` outside
-    2..max_team_size, or a malformed/mismatched header) contributes to
-    ``conflicts`` only, never to ``entries``. ``rider_count`` and
-    ``team_count`` are derived from ``entries`` rather than stored, so
-    they can never drift out of sync with it.
+    duplicate plate or an over/under-sized team -- ready for
+    :func:`commit` to apply without re-reading ``source_path``. A row
+    that fails shape validation (an unknown ``type``, a missing rider
+    name, a relay team straddling two plates, or a header naming no
+    first/last column) contributes to ``conflicts`` only, never to
+    ``entries``. ``rider_count`` and ``team_count`` are derived from
+    ``entries`` rather than stored, so they can never drift out of
+    sync with it.
     """
 
     source_path: Path
@@ -287,9 +350,10 @@ class ImportReport:
 def preview(path: Path, ride: Roster) -> ImportPreview:
     """Preview a CSV import against *ride*; write nothing (R-21).
 
-    The file's header must match *ride*'s plate_model exactly, or the
-    whole file is reported as one header conflict at row 1 and no
-    rows are parsed (spec S7).
+    The file's header is resolved through :func:`_map_header`; unmapped
+    columns are ignored, and a header that names neither a first nor a
+    last name column reports the whole file as one header conflict at
+    row 1 with no rows parsed (spec S7).
 
     Args:
         path: The CSV file to read. Never written to.
@@ -306,13 +370,25 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
             Preview does not catch or wrap I/O errors.
     """
     with path.open(encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        if list(reader.fieldnames or []) != _expected_header(ride):
+        reader = csv.reader(handle)
+        try:
+            header_row = next(reader)
+        except StopIteration:
             conflict = ImportConflict(row=1, problem=_HEADER_PROBLEM)
             return ImportPreview(source_path=path, ride=ride, entries=(), conflicts=(conflict,))
-        if ride.plate_model is PlateModel.TEAM_RELAY:
-            return _preview_relay(reader, path, ride)
-        return _preview_pooled(reader, path, ride)
+        mapping = _map_header(header_row)
+        if "FIRSTNAME" not in mapping and "LASTNAME" not in mapping:
+            conflict = ImportConflict(row=1, problem=_HEADER_PROBLEM)
+            return ImportPreview(source_path=path, ride=ride, entries=(), conflicts=(conflict,))
+        rows, row_conflicts = _read_data_rows(reader, mapping)
+    entries, entry_conflicts = _assemble(rows, ride)
+    conflicts = sorted((*row_conflicts, *entry_conflicts), key=lambda conflict: conflict.row)
+    return ImportPreview(
+        source_path=path,
+        ride=ride,
+        entries=tuple(entries),
+        conflicts=tuple(conflicts),
+    )
 
 
 def commit(preview: ImportPreview) -> ImportReport:
@@ -356,13 +432,13 @@ def commit(preview: ImportPreview) -> ImportReport:
 def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) -> None:
     """Write *ride*'s current roster to *path* as CSV (R-21, spec S7).
 
-    The header and column shape match *ride*'s plate_model exactly --
-    the same shape :func:`preview` requires -- so re-importing the
-    result against an equivalent roster previews with zero conflicts
-    (module docstring's round-trip note). Passing *placed* -- a
-    finished ride's standings -- appends spec §7's four columns
-    (``laps, cards, best_hand, total_time``) after the roster's own
-    ones and fills them from each matching entry's
+    The header is the unified ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,
+    NUMBER,NOTES`` -- one row per rider, the same shape :func:`preview`
+    reads -- so re-importing the result against an equivalent roster
+    previews with zero conflicts (module docstring's round-trip note).
+    Passing *placed* -- a finished ride's standings -- appends spec
+    §7's four columns (``laps, cards, best_hand, total_time``) after
+    the roster's own ones and fills them from each matching entry's
     :class:`~rivercrossing.standings.Placed` row; ``placed=None``
     keeps the export byte-identical to the roster-only shape. The
     write is atomic (R-52): the CSV is staged in a same-directory temp
@@ -387,22 +463,17 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
     if placed is not None and ride.status is not RideStatus.FINISHED:
         msg = f"standings columns require a finished ride (ride is {ride.status})"
         raise CsvIoError(msg)
-    header = _expected_header(ride, with_standings=placed is not None)
     by_plate = _finished_by_plate(ride, placed) if placed is not None else None
     rows: list[list[str]] = []
-    if ride.plate_model is PlateModel.TEAM_RELAY:
-        for entry in ride.entries:
-            row = _relay_export_row(entry, ride.max_team_size)
-            if by_plate is not None:
-                row.extend(_stats_values(by_plate[entry.plate]))
-            rows.append(row)
-    else:
-        for entry in ride.entries:
-            entry_rows = _pooled_export_rows(entry)
-            if by_plate is not None:
-                stats = _stats_values(by_plate[entry.plate])
-                entry_rows = [row + stats for row in entry_rows]
-            rows.extend(entry_rows)
+    for entry in ride.entries:
+        entry_rows = _entry_rows(ride, entry)
+        if by_plate is not None:
+            stats = _stats_values(by_plate[entry.plate])
+            entry_rows = [row + stats for row in entry_rows]
+        rows.extend(entry_rows)
+    header = [*_UNIFIED_COLUMNS]
+    if placed is not None:
+        header.extend(_FINISHED_COLUMNS)
     _write_csv_rows(path, header, rows)
 
 
@@ -445,109 +516,165 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
     _write_csv_rows(path, header, rows)
 
 
-def _write_csv_rows(path: Path, header: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
-    """Write *header* and *rows* to *path* as CSV, atomically (R-52).
+@dataclass(frozen=True)
+class _DataRow:
+    """One usable rider row parsed from the file, pre-assembly."""
 
-    Content is staged in a same-directory temp sibling and swapped over
-    *path* with :func:`os.replace` -- the temp handle is closed (and
-    therefore flushed) before the swap -- so a crash mid-export leaves
-    the previous complete file in place and a reader never observes a
-    truncated CSV.
+    row: int
+    first_name: str
+    last_name: str
+    is_team: bool
+    team_name: str
+    number: str
+    notes: str
+
+
+def _cell(row: Sequence[str], mapping: Mapping[str, int], field: str) -> str:
+    """Return *field*'s cell from *row*; missing or blank is ''."""
+    index = mapping.get(field)
+    if index is None or index >= len(row):
+        return ""
+    return (row[index] or "").strip()
+
+
+def _read_data_rows(
+    reader: Iterable[Sequence[str]], mapping: Mapping[str, int]
+) -> tuple[list[_DataRow], list[ImportConflict]]:
+    """Parse every usable data row *reader* yields (Phase 2 spec).
+
+    A row with neither first nor last name is a footer/empty row and is
+    skipped -- unless it still names a NUMBER/TEAMNAME/TYPE, in which
+    case it is a missing-name conflict (a plated rider is never
+    silently dropped). TYPE resolves to solo/team (blank derives from
+    TEAMNAME); an unrecognized type value conflicts and is excluded.
     """
-    tmp = path.with_name(path.name + ".tmp")
-    with tmp.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(header)
-        writer.writerows(rows)
-    os.replace(tmp, path)  # noqa: PTH105 -- R-52 mandates the os.replace atomic swap; tests patch it
+    rows: list[_DataRow] = []
+    conflicts: list[ImportConflict] = []
+    for row_num, raw_row in enumerate(reader, start=2):
+        first_name = _cell(raw_row, mapping, "FIRSTNAME")
+        last_name = _cell(raw_row, mapping, "LASTNAME")
+        type_field = _cell(raw_row, mapping, "TYPE")
+        team_raw = _cell(raw_row, mapping, "TEAMNAME")
+        number = _cell(raw_row, mapping, "NUMBER")
+        notes = _cell(raw_row, mapping, "NOTES")
+        if not first_name and not last_name:
+            if number or team_raw or type_field:
+                conflicts.append(ImportConflict(row_num, _MISSING_NAME_PROBLEM))
+            continue
+        team_name = _normalize_team_name(team_raw) if team_raw else ""
+        kind = _classify_row(type_field, team_name)
+        if kind == "solo":
+            is_team = False
+            team_key = ""
+        elif kind == "team":
+            is_team = True
+            team_key = team_name
+        else:
+            conflicts.append(ImportConflict(row_num, kind))
+            continue
+        rows.append(
+            _DataRow(
+                row=row_num,
+                first_name=first_name,
+                last_name=last_name,
+                is_team=is_team,
+                team_name=team_key,
+                number=number,
+                notes=notes,
+            )
+        )
+    return rows, conflicts
 
 
-def _stats_values(placed: Placed) -> list[str]:
-    """Return *placed*'s four finished-ride column values (spec §7).
+def _classify_row(type_field: str, team_name: str) -> str:
+    """Return 'solo', 'team', or the conflict text for *type_field*.
 
-    Machine-readable formats (P3 decision): laps an int, cards the
-    count, best_hand :func:`~rivercrossing.standings.hand_name`'s
-    prose, total_time raw numeric seconds (``repr``-clean) -- human
-    formatting belongs to the HTML/PDF exports only.
+    An explicit TYPE value is authoritative after case folding; blank
+    TYPE derives team when a TEAMNAME is present, else solo. An
+    explicit team with no team name is a nameless, ungroupable row
+    (missing name); any other non-blank TYPE value is unknown.
     """
-    result = placed.result
-    return [
-        str(result.laps),
-        str(len(result.cards)),
-        hand_name(result.hand),
-        repr(result.total_time),
-    ]
+    lowered = type_field.lower()
+    if lowered == "solo":
+        return "solo"
+    if lowered == "team":
+        if not team_name:
+            return _MISSING_NAME_PROBLEM
+        return "team"
+    if lowered == "":
+        return "team" if team_name else "solo"
+    return f"unknown entry type {type_field!r}"
 
 
-def _finished_by_plate(ride: Roster, placed: Sequence[Placed]) -> dict[str, Placed]:
-    """Map every *ride* entry's plate to its Placed row (spec §7).
-
-    An entry with no matching row is an invariant violation -- the
-    caller passed standings that do not cover the roster -- so export
-    fails loudly rather than inventing placeholder values; extra
-    placed rows (the caller may pass the whole ranked field, DNF
-    entries included) are ignored.
-    """
-    by_plate = {placed_row.result.plate: placed_row for placed_row in placed}
-    missing = [entry.plate for entry in ride.entries if entry.plate not in by_plate]
-    if missing:
-        raise CsvIoError(f"no standings for plate {missing[0]}")
-    return by_plate
-
-
-def _relay_export_row(entry: Entry, max_team_size: int) -> list[str]:
-    """Return one team_relay CSV row for *entry* (spec S7)."""
-    if entry.type is EntryType.SOLO:
-        type_field = "solo"
-        names: list[str] = []
-    else:
-        type_field = f"team{len(entry.riders)}"
-        names = [rider.full_name for rider in entry.riders]
-    slots = [*names, *([""] * (max_team_size - len(names)))]
-    return [entry.plate, entry.display_name, type_field, *slots, entry.notes]
-
-
-def _pooled_export_rows(entry: Entry) -> list[list[str]]:
-    """Return one rider_pooled CSV row per *entry*'s rider (spec S7).
-
-    A team's ``notes`` is written on its first row only -- the export
-    half of the notes-join rule (module docstring) -- so re-importing
-    joins it right back onto that one value; a solo entry has only
-    the one row, so its own notes always land on it.
-    """
-    team_name = entry.display_name if entry.type is EntryType.TEAM else ""
-    return [
-        [
-            cast("str", rider.plate),
-            rider.full_name,
-            team_name,
-            entry.notes if index == 0 else "",
-        ]
-        for index, rider in enumerate(entry.riders)
-    ]
-
-
-def _expected_header(ride: Roster, *, with_standings: bool = False) -> list[str]:
-    """Return the CSV header *ride*'s plate_model requires (spec S7).
-
-    A finished ride's standings export appends spec §7's four columns
-    (laps, cards, best_hand, total_time) after the model's own ones;
-    :func:`preview` never sets *with_standings*, so its header check
-    stays byte-identical to the roster-only shape.
-    """
+def _assemble(
+    rows: Sequence[_DataRow], ride: Roster
+) -> tuple[list[ParsedEntry], list[ImportConflict]]:
+    """Turn parsed rows into entries and per-entry conflicts (S7)."""
     if ride.plate_model is PlateModel.TEAM_RELAY:
-        rider_cols = [f"rider_{i}" for i in range(1, ride.max_team_size + 1)]
-        header = ["plate", "entry_name", "type", *rider_cols, "notes"]
-    else:
-        header = list(_POOLED_HEADER)
-    if with_standings:
-        header.extend(_FINISHED_COLUMNS)
-    return header
+        return _assemble_relay(rows, ride)
+    return _assemble_pooled(rows, ride)
 
 
-def _field(row: Mapping[str, str | None], column: str) -> str:
-    """Return *column* from *row*, stripped; blank/None becomes ''."""
-    return (row.get(column) or "").strip()
+class _PlateAllocator:
+    """Assign sequential numeric plates that collide with nothing.
+
+    Blank NUMBER cells auto-assign from :meth:`Roster.next_free_plate`,
+    skipping every plate already in use on the roster or named anywhere
+    else in the file (R-20: one plate namespace per ride).
+    """
+
+    def __init__(self, ride: Roster, explicit_numbers: Iterable[str]) -> None:
+        """Reserve explicit and roster plates; find the first free."""
+        self._used = {number for number in explicit_numbers if number} | _roster_plates(ride)
+        self._next = self._first_free(ride)
+
+    def _first_free(self, ride: Roster) -> int:
+        """Return the first integer plate past the roster's own next."""
+        candidate = int(ride.next_free_plate())
+        while str(candidate) in self._used:
+            candidate += 1
+        return candidate
+
+    def allocate(self) -> str:
+        """Return and reserve the next sequential free plate."""
+        plate = str(self._next)
+        self._used.add(plate)
+        self._next += 1
+        while str(self._next) in self._used:
+            self._next += 1
+        return plate
+
+
+def _roster_plates(ride: Roster) -> set[str]:
+    """Return every plate already claimed in *ride* (R-20)."""
+    plates: set[str] = set()
+    for entry in ride.entries:
+        plates.add(entry.plate)
+        plates.update(rider.plate for rider in entry.riders if rider.plate is not None)
+    return plates
+
+
+def _duplicate_plate_problem(plate: str) -> str:
+    """Return the conflict text for *plate* repeating in the file."""
+    return f"duplicate plate {plate}"
+
+
+def _team_size_problem(size: int, max_team_size: int) -> str | None:
+    """Return the team size conflict text, or None in 2..max (R-12)."""
+    if size < MIN_TEAM_SIZE:
+        return f"team of {size} rider is below the minimum of {MIN_TEAM_SIZE} (team-under-min)"
+    if size > max_team_size:
+        return f"team of {size} riders exceeds the maximum of {max_team_size} (team-over-max)"
+    return None
+
+
+def _group_team_rows(rows: Sequence[_DataRow]) -> dict[str, list[_DataRow]]:
+    """Group team rows by normalized team name, first-seen order."""
+    groups: dict[str, list[_DataRow]] = {}
+    for row in rows:
+        if row.is_team:
+            groups.setdefault(row.team_name, []).append(row)
+    return groups
 
 
 def _find_entry_by_plate(ride: Roster, plate: str) -> Entry | None:
@@ -558,73 +685,12 @@ def _find_entry_by_plate(ride: Roster, plate: str) -> Entry | None:
     return None
 
 
-def _pooled_owner_index(ride: Roster) -> dict[str, tuple[Entry, Rider]]:
-    """Map every pooled plate already claimed in *ride* to its owner.
-
-    Every rider_pooled rider carries a plate by construction
-    (roster.py's own ``_shape_and_validate`` enforces it), so this
-    only ever runs against entries where that is already true.
-    """
-    return {
-        cast("str", rider.plate): (entry, rider)
-        for entry in ride.entries
-        for rider in entry.riders
-    }
-
-
-def _duplicate_plate_problem(plate: str, seen_plates: set[str]) -> str | None:
-    """Return a conflict message when *plate* repeats in the file."""
-    if plate in seen_plates:
-        return f"duplicate plate {plate}"
-    return None
-
-
-# --------------------------------------------------------- team_relay
-
-
-def _team_size_from_type(type_field: str) -> int | None:
-    """Return teamN's N, or None if *type_field* is not a teamN."""
-    match = _TEAM_TYPE_PATTERN.fullmatch(type_field)
-    if match is None:
-        return None
-    return int(match.group(1))
-
-
-def _shape_relay_row(row: Mapping[str, str | None], *, max_team_size: int) -> ParsedEntry | str:
-    """Parse one team_relay row, or return its shape problem text."""
-    plate = _field(row, "plate")
-    entry_name = _field(row, "entry_name")
-    type_field = _field(row, "type")
-    notes = _field(row, "notes")
-    if type_field == "solo":
-        rider = _parsed_rider(entry_name)
-        return ParsedEntry(
-            plate=plate, display_name=entry_name, type=EntryType.SOLO, riders=(rider,), notes=notes
-        )
-    size = _team_size_from_type(type_field)
-    if size is None:
-        return f"unknown entry type {type_field!r}"
-    if not MIN_TEAM_SIZE <= size <= max_team_size:
-        return f"team size must be between {MIN_TEAM_SIZE} and {max_team_size}, got {size}"
-    riders = tuple(_parsed_rider(_field(row, f"rider_{i}")) for i in range(1, size + 1))
-    return ParsedEntry(
-        plate=plate, display_name=entry_name, type=EntryType.TEAM, riders=riders, notes=notes
-    )
-
-
-def _missing_name_problem(entry: ParsedEntry) -> str | None:
-    """Return a missing-name conflict if any required name is blank."""
-    if not entry.display_name or any(not rider.full_name for rider in entry.riders):
-        return _MISSING_NAME_PROBLEM
-    return None
-
-
 def _relay_composition_changed(existing: Entry, parsed: ParsedEntry) -> bool:
     """Return True if *parsed*'s riders/type differ from *existing*'s.
 
     A solo entry's one "rider" is just its own display name (S1), so
     a solo-to-solo match is never a composition change -- renaming it
-    is exactly :func:`_update_name_notes`'s job, not a reshape.
+    is exactly :func:`_update_solo_entry`'s job, not a reshape.
     """
     if existing.type != parsed.type:
         return True
@@ -638,7 +704,7 @@ def _relay_composition_changed(existing: Entry, parsed: ParsedEntry) -> bool:
 def _relay_structural_problem(
     existing: Entry | None, parsed: ParsedEntry, status: RideStatus
 ) -> str | None:
-    """Return a conflict if a matched relay row's shape is unsafe now.
+    """Return a conflict if a matched relay entry's shape is unsafe now.
 
     A relay entry's roster is only reshaped through delete+recreate
     (no roster.py mutator resizes one in place), which needs DRAFT's
@@ -655,130 +721,163 @@ def _relay_structural_problem(
     )
 
 
-def _preview_relay(reader: csv.DictReader[str], path: Path, ride: Roster) -> ImportPreview:
-    """Parse every team_relay data row *reader* yields (spec S7)."""
+def _plate_disagreement_problem(numbers: set[str]) -> str:
+    """Return the conflict text for relay team rows naming plates."""
+    ordered = ", ".join(sorted(numbers))
+    return f"team rows carry different plates ({ordered})"
+
+
+def _assemble_relay(
+    rows: Sequence[_DataRow], ride: Roster
+) -> tuple[list[ParsedEntry], list[ImportConflict]]:
+    """Build relay entries: solo rows plus normalized-name team groups.
+
+    A team's member rows share the team's single plate: the rows must
+    name one plate between them (or none, which auto-assigns); rows
+    naming two plates are a shape conflict and contribute no entry.
+    """
+    groups = _group_team_rows(rows)
+    allocator = _PlateAllocator(ride, (row.number for row in rows))
+    plan: list[tuple[int, _DataRow | list[_DataRow]]] = []
+    seen_groups: set[str] = set()
+    for row in rows:
+        if not row.is_team:
+            plan.append((row.row, row))
+        elif row.team_name not in seen_groups:
+            seen_groups.add(row.team_name)
+            plan.append((row.row, groups[row.team_name]))
     entries: list[ParsedEntry] = []
     conflicts: list[ImportConflict] = []
     seen_plates: set[str] = set()
-    for row_num, row in enumerate(reader, start=2):
-        parsed = _shape_relay_row(row, max_team_size=ride.max_team_size)
-        if isinstance(parsed, str):
-            conflicts.append(ImportConflict(row=row_num, problem=parsed))
+    for anchor_row, payload in plan:
+        if isinstance(payload, list):
+            parsed, problem = _relay_team_entry(payload, allocator, ride)
+        else:
+            parsed, problem = _relay_solo_entry(payload, allocator, ride)
+        if parsed is None:
+            # parsed is None exactly when the team's rows named several
+            # plates, and that producer always sets *problem*.
+            conflicts.append(ImportConflict(anchor_row, cast("str", problem)))
             continue
-        existing = _find_entry_by_plate(ride, parsed.plate)
-        problem = (
-            _missing_name_problem(parsed)
-            or _duplicate_plate_problem(parsed.plate, seen_plates)
-            or _relay_structural_problem(existing, parsed, ride.status)
-        )
-        if problem is not None:
-            conflicts.append(ImportConflict(row=row_num, problem=problem))
-        seen_plates.add(parsed.plate)
+        if parsed.plate in seen_plates:
+            conflicts.append(ImportConflict(anchor_row, _duplicate_plate_problem(parsed.plate)))
+        else:
+            seen_plates.add(parsed.plate)
         entries.append(parsed)
-    return ImportPreview(
-        source_path=path, ride=ride, entries=tuple(entries), conflicts=tuple(conflicts)
+        if problem is not None:
+            conflicts.append(ImportConflict(anchor_row, problem))
+    return entries, conflicts
+
+
+def _relay_solo_entry(
+    row: _DataRow, allocator: _PlateAllocator, ride: Roster
+) -> tuple[ParsedEntry, str | None]:
+    """Build one relay solo ParsedEntry from *row*."""
+    plate = row.number or allocator.allocate()
+    parsed_rider = ParsedRider(first_name=row.first_name, last_name=row.last_name)
+    parsed = ParsedEntry(
+        plate=plate,
+        display_name=parsed_rider.full_name,
+        type=EntryType.SOLO,
+        riders=(parsed_rider,),
+        notes=row.notes,
     )
+    existing = _find_entry_by_plate(ride, plate)
+    problem = _relay_structural_problem(existing, parsed, ride.status)
+    return parsed, problem
 
 
-def _commit_relay(ride: Roster, entries: Sequence[ParsedEntry]) -> tuple[int, int]:
-    """Apply every parsed relay entry: insert, reshape, or rename it."""
-    inserted = 0
-    updated = 0
-    for parsed in entries:
-        existing = _find_entry_by_plate(ride, parsed.plate)
-        if existing is None:
-            _insert_relay_entry(ride, parsed)
-            inserted += 1
-        elif _relay_composition_changed(existing, parsed):
-            ride.delete_entry(existing)
-            _insert_relay_entry(ride, parsed)
-            updated += 1
-        elif _update_name_notes(ride, existing, parsed):
-            updated += 1
-    return inserted, updated
+def _relay_team_entry(
+    group_rows: list[_DataRow], allocator: _PlateAllocator, ride: Roster
+) -> tuple[ParsedEntry | None, str | None]:
+    """Build one relay team ParsedEntry from *group_rows* (S7)."""
+    numbers = {row.number for row in group_rows if row.number}
+    if len(numbers) > 1:
+        return None, _plate_disagreement_problem(numbers)
+    plate = next(iter(numbers), "")
+    if not plate:
+        plate = allocator.allocate()
+    riders = tuple(
+        ParsedRider(first_name=row.first_name, last_name=row.last_name) for row in group_rows
+    )
+    notes = "; ".join(row.notes for row in group_rows if row.notes)
+    parsed = ParsedEntry(
+        plate=plate,
+        display_name=group_rows[0].team_name,
+        type=EntryType.TEAM,
+        riders=riders,
+        notes=notes,
+    )
+    problem = _team_size_problem(len(riders), ride.max_team_size)
+    if problem is None:
+        existing = _find_entry_by_plate(ride, plate)
+        problem = _relay_structural_problem(existing, parsed, ride.status)
+    return parsed, problem
 
 
-def _insert_relay_entry(ride: Roster, parsed: ParsedEntry) -> None:
-    """Create *parsed* as a fresh relay entry, keeping its own plate."""
-    if parsed.type is EntryType.SOLO:
-        parsed_rider = parsed.riders[0]
-        entry = ride.create_solo_entry(
-            first_name=parsed_rider.first_name,
-            last_name=parsed_rider.last_name,
-            plate=parsed.plate,
-        )
-    else:
-        riders = [
-            Rider(first_name=rider.first_name, last_name=rider.last_name)
-            for rider in parsed.riders
-        ]
-        entry = ride.create_team_entry(
-            display_name=parsed.display_name, riders=riders, plate=parsed.plate
-        )
-    if parsed.notes:
-        ride.update_entry(entry, notes=parsed.notes)
+def _pooled_owner_index(ride: Roster) -> dict[str, tuple[Entry, Rider]]:
+    """Map every pooled plate already claimed in *ride* to its owner.
+
+    Every rider_pooled rider carries a plate by construction
+    (roster.py's own ``_shape_and_validate`` enforces it), so this
+    only ever runs against entries where that is already true.
+    """
+    return {
+        cast("str", rider.plate): (entry, rider)
+        for entry in ride.entries
+        for rider in entry.riders
+    }
 
 
-def _update_name_notes(ride: Roster, existing: Entry, parsed: ParsedEntry) -> bool:
-    """Rename/renote *existing* to match *parsed*; True if changed."""
-    changes: dict[str, str] = {}
-    if existing.display_name != parsed.display_name:
-        changes["display_name"] = parsed.display_name
-    if existing.notes != parsed.notes:
-        changes["notes"] = parsed.notes
-    if not changes:
-        return False
-    ride.update_entry(existing, **changes)
-    return True
+def _pooled_solo_problem(
+    index: Mapping[str, tuple[Entry, Rider]], plate: str, status: RideStatus
+) -> str | None:
+    """Return a conflict if a pooled solo row's plate must leave a team.
+
+    A matched plate that currently belongs to a solo entry is the
+    match/update path; one belonging to a team member is a team->solo
+    conversion, gated to DRAFT by spec S1.
+    """
+    owner = index.get(plate)
+    if owner is not None and owner[0].type is EntryType.TEAM and not can_edit_structure(status):
+        return _team_to_solo_problem(status)
+    return None
 
 
-# --------------------------------------------------------- rider_pooled
-
-
-def _preview_pooled(reader: csv.DictReader[str], path: Path, ride: Roster) -> ImportPreview:
-    """Parse every rider_pooled row, grouped by team_name (spec S7)."""
+def _assemble_pooled(
+    rows: Sequence[_DataRow], ride: Roster
+) -> tuple[list[ParsedEntry], list[ImportConflict]]:
+    """Build pooled entries: every row keeps its own plate (S1)."""
     existing_index = _pooled_owner_index(ride)
+    allocator = _PlateAllocator(ride, (row.number for row in rows))
     solo_entries: list[ParsedEntry] = []
     groups: dict[str, list[tuple[int, ParsedRider, str]]] = {}
     conflicts: list[ImportConflict] = []
     seen_plates: set[str] = set()
-    for row_num, row in enumerate(reader, start=2):
-        plate = _field(row, "plate")
-        name = _field(row, "name")
-        team_name = _field(row, "team_name")
-        notes = _field(row, "notes")
-        owner = existing_index.get(plate) if plate else None
-        problem = (_MISSING_NAME_PROBLEM if not name else None) or _duplicate_plate_problem(
-            plate, seen_plates
-        )
-        if (
-            problem is None
-            and not team_name
-            and owner is not None
-            and owner[0].type is EntryType.TEAM
-            and not can_edit_structure(ride.status)
-        ):
-            problem = _team_to_solo_problem(ride.status)
-        if problem is not None:
-            conflicts.append(ImportConflict(row=row_num, problem=problem))
+    for row in rows:
+        plate = row.number or allocator.allocate()
+        if plate in seen_plates:
+            conflicts.append(ImportConflict(row.row, _duplicate_plate_problem(plate)))
         seen_plates.add(plate)
-        rider = _parsed_rider(name, plate=plate)
-        if not team_name:
-            solo_entries.append(
-                ParsedEntry(
-                    plate=plate,
-                    display_name=name,
-                    type=EntryType.SOLO,
-                    riders=(rider,),
-                    notes=notes,
-                )
+        parsed_rider = ParsedRider(first_name=row.first_name, last_name=row.last_name, plate=plate)
+        if row.is_team:
+            groups.setdefault(row.team_name, []).append((row.row, parsed_rider, row.notes))
+            continue
+        problem = _pooled_solo_problem(existing_index, plate, ride.status)
+        if problem is not None:
+            conflicts.append(ImportConflict(row.row, problem))
+        solo_entries.append(
+            ParsedEntry(
+                plate=plate,
+                display_name=parsed_rider.full_name,
+                type=EntryType.SOLO,
+                riders=(parsed_rider,),
+                notes=row.notes,
             )
-        else:
-            groups.setdefault(team_name, []).append((row_num, rider, notes))
+        )
     team_entries, team_conflicts = _assemble_pooled_teams(groups, ride)
     conflicts.extend(team_conflicts)
-    entries = (*solo_entries, *team_entries)
-    return ImportPreview(source_path=path, ride=ride, entries=entries, conflicts=tuple(conflicts))
+    return [*solo_entries, *team_entries], conflicts
 
 
 def _pooled_team_target(
@@ -799,7 +898,7 @@ def _pooled_team_target(
 
 def _assemble_pooled_teams(
     groups: Mapping[str, Sequence[tuple[int, ParsedRider, str]]], ride: Roster
-) -> tuple[tuple[ParsedEntry, ...], list[ImportConflict]]:
+) -> tuple[list[ParsedEntry], list[ImportConflict]]:
     """Build one team ParsedEntry per team_name group (spec S7, R-12).
 
     A group of exactly one rider still becomes a team entry -- the
@@ -814,7 +913,7 @@ def _assemble_pooled_teams(
     for team_name, rows in groups.items():
         riders = tuple(rider for _, rider, _ in rows)
         notes = "; ".join(note for _, _, note in rows if note)
-        plate = min((rider.plate for rider in riders if rider.plate), key=int)
+        plate = _lowest_rider_plate(riders)
         entries.append(
             ParsedEntry(
                 plate=plate,
@@ -824,30 +923,17 @@ def _assemble_pooled_teams(
                 notes=notes,
             )
         )
-        if len(riders) < MIN_TEAM_SIZE:
-            conflicts.append(
-                ImportConflict(row=rows[0][0], problem=_team_under_min_problem(riders))
-            )
-            continue
-        if len(riders) > ride.max_team_size:
-            conflicts.append(
-                ImportConflict(
-                    row=rows[0][0], problem=_team_over_max_problem(riders, ride.max_team_size)
-                )
-            )
+        problem = _team_size_problem(len(riders), ride.max_team_size)
+        if problem is not None:
+            conflicts.append(ImportConflict(row=rows[0][0], problem=problem))
             continue
         conflicts.extend(_pooled_team_structural_conflicts(rows, existing_index, ride.status))
-    return tuple(entries), conflicts
+    return entries, conflicts
 
 
-def _team_under_min_problem(riders: Sequence[ParsedRider]) -> str:
-    """Return the team-under-min conflict text for *riders* (R-12)."""
-    return f"team of {len(riders)} rider is below the minimum of {MIN_TEAM_SIZE} (team-under-min)"
-
-
-def _team_over_max_problem(riders: Sequence[ParsedRider], max_team_size: int) -> str:
-    """Return the team-over-max conflict text for *riders* (R-12)."""
-    return f"team of {len(riders)} riders exceeds the maximum of {max_team_size} (team-over-max)"
+def _lowest_rider_plate(riders: Sequence[ParsedRider]) -> str:
+    """Return the numerically lowest rider plate (S1's "adopts...")."""
+    return min(cast("str", rider.plate) for rider in riders)
 
 
 def _pooled_move_problem(status: RideStatus) -> str:
@@ -889,16 +975,14 @@ def _pooled_team_structural_conflicts(
             continue
         if owner is not None and owner[0].type is EntryType.TEAM:
             if not can_move_rider(status, PlateModel.RIDER_POOLED):
-                conflicts.append(ImportConflict(row=row_num, problem=_pooled_move_problem(status)))
+                conflicts.append(ImportConflict(row_num, _pooled_move_problem(status)))
             continue
         if owner is not None:  # currently solo, converting to a team member
             if not can_edit_structure(status):
-                conflicts.append(
-                    ImportConflict(row=row_num, problem=_solo_to_team_problem(status))
-                )
+                conflicts.append(ImportConflict(row_num, _solo_to_team_problem(status)))
             continue
         if target is not None and not can_move_rider(status, PlateModel.RIDER_POOLED):
-            conflicts.append(ImportConflict(row=row_num, problem=_pooled_move_problem(status)))
+            conflicts.append(ImportConflict(row_num, _pooled_move_problem(status)))
     return conflicts
 
 
@@ -944,12 +1028,12 @@ def _commit_pooled_solo(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
     existing_entry, existing_rider = owner
     if existing_entry.type is EntryType.TEAM:
         entry = ctx.ride.extract_rider_to_solo(existing_rider)
-        if _update_name_notes(ctx.ride, entry, parsed):
+        if _update_solo_entry(ctx.ride, entry, parsed):
             ctx.updated += 1
         ctx.index[parsed.plate] = (entry, existing_rider)
         ctx.extracted += 1
         return
-    if _update_name_notes(ctx.ride, existing_entry, parsed):
+    if _update_solo_entry(ctx.ride, existing_entry, parsed):
         ctx.updated += 1
 
 
@@ -1034,3 +1118,170 @@ def _join_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry, target: Entry) -> No
         ctx.ride.add_rider_to_team(new_rider, to_entry=target)
         ctx.index[plate] = (target, new_rider)
         ctx.joined += 1
+
+
+def _commit_relay(ride: Roster, entries: Sequence[ParsedEntry]) -> tuple[int, int]:
+    """Apply every parsed relay entry: insert, reshape, or rename it."""
+    inserted = 0
+    updated = 0
+    for parsed in entries:
+        existing = _find_entry_by_plate(ride, parsed.plate)
+        if existing is None:
+            _insert_relay_entry(ride, parsed)
+            inserted += 1
+        elif existing.type is EntryType.SOLO and parsed.type is EntryType.SOLO:
+            if _update_solo_entry(ride, existing, parsed):
+                updated += 1
+        elif _relay_composition_changed(existing, parsed):
+            ride.delete_entry(existing)
+            _insert_relay_entry(ride, parsed)
+            updated += 1
+        elif _update_name_notes(ride, existing, parsed):
+            updated += 1
+    return inserted, updated
+
+
+def _insert_relay_entry(ride: Roster, parsed: ParsedEntry) -> None:
+    """Create *parsed* as a fresh relay entry, keeping its own plate."""
+    if parsed.type is EntryType.SOLO:
+        parsed_rider = parsed.riders[0]
+        entry = ride.create_solo_entry(
+            first_name=parsed_rider.first_name,
+            last_name=parsed_rider.last_name,
+            plate=parsed.plate,
+        )
+    else:
+        riders = [
+            Rider(first_name=rider.first_name, last_name=rider.last_name)
+            for rider in parsed.riders
+        ]
+        entry = ride.create_team_entry(
+            display_name=parsed.display_name, riders=riders, plate=parsed.plate
+        )
+    if parsed.notes:
+        ride.update_entry(entry, notes=parsed.notes)
+
+
+def _update_solo_entry(ride: Roster, entry: Entry, parsed: ParsedEntry) -> bool:
+    """Rename a matched solo entry's rider and display; True if changed.
+
+    Mirrors the rider editor's own save path: the rider's first/last
+    fields are updated in place and, when the display name changes,
+    ``update_entry`` logs the rename (name fixes stay open in any
+    ride state).
+    """
+    parsed_rider = parsed.riders[0]
+    rider = entry.riders[0]
+    rider_changed = False
+    if rider.first_name != parsed_rider.first_name:
+        rider.first_name = parsed_rider.first_name
+        rider_changed = True
+    if rider.last_name != parsed_rider.last_name:
+        rider.last_name = parsed_rider.last_name
+        rider_changed = True
+    changes: dict[str, str] = {}
+    if entry.display_name != parsed.display_name:
+        changes["display_name"] = parsed.display_name
+    if entry.notes != parsed.notes:
+        changes["notes"] = parsed.notes
+    if changes:
+        ride.update_entry(entry, **changes)
+    return rider_changed or bool(changes)
+
+
+def _update_name_notes(ride: Roster, existing: Entry, parsed: ParsedEntry) -> bool:
+    """Rename/renote *existing* to match *parsed*; True if changed."""
+    changes: dict[str, str] = {}
+    if existing.display_name != parsed.display_name:
+        changes["display_name"] = parsed.display_name
+    if existing.notes != parsed.notes:
+        changes["notes"] = parsed.notes
+    if not changes:
+        return False
+    ride.update_entry(existing, **changes)
+    return True
+
+
+def _write_csv_rows(path: Path, header: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
+    """Write *header* and *rows* to *path* as CSV, atomically (R-52).
+
+    Content is staged in a same-directory temp sibling and swapped over
+    *path* with :func:`os.replace` -- the temp handle is closed (and
+    therefore flushed) before the swap -- so a crash mid-export leaves
+    the previous complete file in place and a reader never observes a
+    truncated CSV.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(header)
+        writer.writerows(rows)
+    os.replace(tmp, path)  # noqa: PTH105 -- R-52 mandates the os.replace atomic swap; tests patch it
+
+
+def _stats_values(placed: Placed) -> list[str]:
+    """Return *placed*'s four finished-ride column values (spec §7).
+
+    Machine-readable formats (P3 decision): laps an int, cards the
+    count, best_hand :func:`~rivercrossing.standings.hand_name`'s
+    prose, total_time raw numeric seconds (``repr``-clean) -- human
+    formatting belongs to the HTML/PDF exports only.
+    """
+    result = placed.result
+    return [
+        str(result.laps),
+        str(len(result.cards)),
+        hand_name(result.hand),
+        repr(result.total_time),
+    ]
+
+
+def _finished_by_plate(ride: Roster, placed: Sequence[Placed]) -> dict[str, Placed]:
+    """Map every *ride* entry's plate to its Placed row (spec §7).
+
+    An entry with no matching row is an invariant violation -- the
+    caller passed standings that do not cover the roster -- so export
+    fails loudly rather than inventing placeholder values; extra
+    placed rows (the caller may pass the whole ranked field, DNF
+    entries included) are ignored.
+    """
+    by_plate = {placed_row.result.plate: placed_row for placed_row in placed}
+    missing = [entry.plate for entry in ride.entries if entry.plate not in by_plate]
+    if missing:
+        raise CsvIoError(f"no standings for plate {missing[0]}")
+    return by_plate
+
+
+def _entry_rows(ride: Roster, entry: Entry) -> list[list[str]]:
+    """Return one unified CSV row per *entry*'s rider (spec S7).
+
+    A team's ``notes`` is written on its first member row only -- the
+    export half of the notes-join rule (module docstring) -- so
+    re-importing joins it right back onto that one value; a solo entry
+    has only the one row, so its own notes always land on it.
+    """
+    type_field = "team" if entry.type is EntryType.TEAM else "solo"
+    team_name = entry.display_name if entry.type is EntryType.TEAM else ""
+    return [
+        [
+            rider.first_name,
+            rider.last_name,
+            type_field,
+            team_name,
+            _rider_number(ride, entry, rider),
+            entry.notes if index == 0 else "",
+        ]
+        for index, rider in enumerate(entry.riders)
+    ]
+
+
+def _rider_number(ride: Roster, entry: Entry, rider: Rider) -> str:
+    """Return one exported row's NUMBER cell for its plate model (S1).
+
+    ``rider_pooled`` riders each carry their own plate;
+    ``team_relay`` riders carry none, so every member row of a team
+    exports the entry's own shared plate.
+    """
+    if ride.plate_model is PlateModel.RIDER_POOLED:
+        return cast("str", rider.plate)
+    return entry.plate

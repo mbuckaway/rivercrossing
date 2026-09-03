@@ -25,9 +25,9 @@ pytestmark = pytest.mark.functional
 
 
 def _write_pooled_csv(directory: Any, rows: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Write a minimal rider_pooled CSV fixture; return its path."""
+    """Write a minimal unified-format CSV fixture; return its path."""
     path = directory / "riders.csv"
-    path.write_text(f"plate,name,team_name,notes\n{rows}", encoding="utf-8")
+    path.write_text(f"firstname,lastname,type,teamname,number,notes\n{rows}", encoding="utf-8")
     return path
 
 
@@ -62,7 +62,7 @@ def test_csv_preview_dlg_conflicted_file_shows_the_exact_rows_and_disables_impor
     """xrc-windows.md C: summary_lbl + Row|Problem, wxID_OK disabled."""
     roster = Roster()
     dialog, view = _show(xrc_resource, roster)
-    path = _write_pooled_csv(tmp_path, "1,Alex One,,\n1,Bo Two,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,One,solo,,1,\nBo,Two,solo,,1,\n")
 
     try:
         view.presenter.on_pick_csv_import(path)
@@ -84,7 +84,7 @@ def test_csv_preview_dlg_clean_file_shows_the_exact_summary_and_enables_import(
     """A conflict-free file enables the stock wxID_OK "Import"."""
     roster = Roster()
     dialog, view = _show(xrc_resource, roster)
-    path = _write_pooled_csv(tmp_path, "1,Alex One,,\n2,Bo Two,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,One,solo,,1,\nBo,Two,solo,,2,\n")
 
     try:
         view.presenter.on_pick_csv_import(path)
@@ -107,7 +107,7 @@ def test_csv_preview_dlg_import_click_commits_into_the_roster(
     """Clicking "Import" (wxID_OK) applies the preview (R-21)."""
     roster = Roster()
     dialog, view = _show(xrc_resource, roster)
-    path = _write_pooled_csv(tmp_path, "1,Alex One,,\n2,Bo Two,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,One,solo,,1,\nBo,Two,solo,,2,\n")
     view.presenter.on_pick_csv_import(path)
 
     try:
@@ -126,7 +126,7 @@ def test_csv_preview_dlg_import_click_closes_the_dialog(
     """A successful Import ends the dialog with wxID_OK (§13)."""
     roster = Roster()
     dialog, view = _show(xrc_resource, roster)
-    path = _write_pooled_csv(tmp_path, "1,Alex One,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,One,solo,,1,\n")
     view.presenter.on_pick_csv_import(path)
 
     try:
@@ -154,7 +154,7 @@ def test_csv_preview_dlg_import_disabled_by_conflicts_leaves_the_dialog_open(
     """
     roster = Roster()
     dialog, view = _show(xrc_resource, roster)
-    path = _write_pooled_csv(tmp_path, "1,Alex One,,\n1,Bo Two,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,One,solo,,1,\nBo,Two,solo,,1,\n")
     view.presenter.on_pick_csv_import(path)
 
     try:
@@ -181,7 +181,7 @@ def test_csv_preview_dlg_cancel_click_writes_nothing(
     roster = Roster()
     roster.create_solo_entry(first_name="Existing", last_name="Rider", plate="9")
     dialog, view = _show(xrc_resource, roster)
-    path = _write_pooled_csv(tmp_path, "1,Alex One,,\n2,Bo Two,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,One,solo,,1,\nBo,Two,solo,,2,\n")
     view.presenter.on_pick_csv_import(path)
 
     try:
@@ -200,7 +200,7 @@ def test_csv_preview_dlg_cancel_click_closes_the_dialog(
     """Cancel ends the dialog too, via wx's own native handling."""
     roster = Roster()
     dialog, view = _show(xrc_resource, roster)
-    path = _write_pooled_csv(tmp_path, "1,Alex One,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,One,solo,,1,\n")
     view.presenter.on_pick_csv_import(path)
 
     try:

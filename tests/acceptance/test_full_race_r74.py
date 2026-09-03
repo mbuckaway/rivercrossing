@@ -121,9 +121,13 @@ def race_support() -> ModuleType:
 
 
 def _write_riders_csv(path: Path, count: int) -> None:
-    """Write a rider_pooled CSV of *count* solo riders ``1..count``."""
-    lines = ["plate,name,team_name,notes"]
-    lines.extend(f"{number},Rider {number:02d},," for number in range(1, count + 1))
+    """Write a unified-format CSV of *count* solo riders ``1..count``.
+
+    Names are split ``Rider``/``NN`` so the imported roster's full name
+    stays ``Rider NN`` (the same string the results exports show).
+    """
+    lines = ["firstname,lastname,type,teamname,number,notes"]
+    lines.extend(f"Rider,{number:02d},solo,,{number}," for number in range(1, count + 1))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 

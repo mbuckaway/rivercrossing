@@ -143,4 +143,7 @@ def test_mi_export_csv_given_a_picked_path_writes_the_rosters_own_header(
 
     _fire_menu_event(firing_frame, "mi_export_csv")
 
-    assert export_path.read_text(encoding="utf-8").splitlines()[0] == "plate,name,team_name,notes"
+    assert (
+        export_path.read_text(encoding="utf-8").splitlines()[0]
+        == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
+    )

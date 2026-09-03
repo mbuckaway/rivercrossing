@@ -939,9 +939,9 @@ def test_riders_presenter_given_load_false_skips_the_initial_render() -> None:
 
 
 def _write_pooled_csv(directory: Path, rows: str) -> Path:
-    """Write a minimal rider_pooled CSV fixture; return its path."""
+    """Write a minimal unified-format CSV fixture; return its path."""
     path = directory / "riders.csv"
-    path.write_text(f"plate,name,team_name,notes\n{rows}", encoding="utf-8")
+    path.write_text(f"firstname,lastname,type,teamname,number,notes\n{rows}", encoding="utf-8")
     return path
 
 
@@ -951,7 +951,7 @@ def test_on_pick_csv_import_given_a_clean_file_shows_the_exact_summary(
     """R-21: "<name> -> N riders x M teams x K conflicts" (E3.4)."""
     view = RecordingRidersView()
     presenter = RidersPresenter(view, Roster(), load=False)
-    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n2,Bo Lindqvist,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,Ferreira,solo,,1,\nBo,Lindqvist,solo,,2,\n")
 
     presenter.on_pick_csv_import(path)
 
@@ -1047,7 +1047,7 @@ def test_on_confirm_csv_import_given_a_clean_preview_applies_it_to_the_roster(
     """A clean commit inserts the file's riders into the roster."""
     roster = Roster()
     presenter = RidersPresenter(RecordingRidersView(), roster, load=False)
-    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n2,Bo Lindqvist,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,Ferreira,solo,,1,\nBo,Lindqvist,solo,,2,\n")
     presenter.on_pick_csv_import(path)
 
     result = presenter.on_confirm_csv_import()
@@ -1070,7 +1070,7 @@ def test_on_confirm_csv_import_given_a_clean_preview_makes_no_further_view_call(
     roster = Roster()
     view = RecordingRidersView()
     presenter = RidersPresenter(view, roster, load=False)
-    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,Ferreira,solo,,1,\n")
     presenter.on_pick_csv_import(path)
     view.calls.clear()
 
@@ -1086,7 +1086,7 @@ def test_on_confirm_csv_import_given_conflicts_present_shows_validation_not_cras
     roster = Roster()
     view = RecordingRidersView()
     presenter = RidersPresenter(view, roster, load=False)
-    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n1,Bo Lindqvist,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,Ferreira,solo,,1,\nBo,Lindqvist,solo,,1,\n")
     presenter.on_pick_csv_import(path)
     view.calls.clear()
 
@@ -1104,7 +1104,7 @@ def test_on_confirm_csv_import_given_conflicts_present_leaves_the_roster_unchang
     """A refused commit mutates nothing (a state, not a call, check)."""
     roster = Roster()
     presenter = RidersPresenter(RecordingRidersView(), roster, load=False)
-    path = _write_pooled_csv(tmp_path, "1,Alex Ferreira,,\n1,Bo Lindqvist,,\n")
+    path = _write_pooled_csv(tmp_path, "Alex,Ferreira,solo,,1,\nBo,Lindqvist,solo,,1,\n")
     presenter.on_pick_csv_import(path)
 
     presenter.on_confirm_csv_import()
@@ -1124,7 +1124,10 @@ def test_on_export_csv_writes_the_rosters_own_header(tmp_path: Path) -> None:
 
     presenter.on_export_csv(path)
 
-    assert path.read_text(encoding="utf-8").splitlines()[0] == "plate,name,team_name,notes"
+    assert (
+        path.read_text(encoding="utf-8").splitlines()[0]
+        == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
+    )
 
 
 # ------------------------------------------------------------ refresh
