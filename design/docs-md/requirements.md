@@ -35,9 +35,12 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 
 | ID | Level | Requirement | Trace |
 |---|---|---|---|
-| R-20 | MUST | Rider editor: add/edit solo entries and teams (plate, name, members); plate unique per ride, prefilled with next free. | §2 · [ridereditor](xrc-windows.md) |
-| R-21 | MUST | CSV import and export per the §7 column spec (solo and teamN forms, rider_1…rider_N). Import previews counts + conflicts and writes nothing until confirmed; re-import reshapes teams freely until start. | §7 · [csvdlg](xrc-windows.md) |
+| R-20 | MUST | Rider editor: add/edit solo entries and teams (plate, rider first/last names, team membership); plate unique per ride, prefilled with next free. | §2 · [ridereditor](xrc-windows.md) |
+| R-21 | MUST | CSV import and export per the §7 column spec — one unified, header-mapped format for every plate model (Phase 2; the two old shapes, relay `plate,entry_name,type,rider_1…rider_N` and pooled `plate,name,team_name`, are gone), one row per rider, header resolution and plate/team rules per R-24. Import previews counts + conflicts and writes nothing until confirmed; re-import reshapes teams freely until start. | §7 · [csvdlg](xrc-windows.md) |
 | R-22 | MUST | Team relay model: one plate per entry, one rider on course at a time; crossings may record which member rode the lap. | §1/§2 · [entrydetail](xrc-windows.md) |
+| R-23 | MUST | Rider names are first/last: the `rider` record stores `first_name`/`last_name` (last optional — a one-word rider renders as the first name alone), `Rider.full_name` joins them for display, and a solo entry's `display_name` mirrors its rider's `full_name`. Phase 1 split of the old single `name` — a greenfield schema reset, no migration (a database from an older build is stale and must be recreated). | §1/§2 · [ridereditor](xrc-windows.md) |
+| R-24 | MUST | Unified header-mapped roster CSV (Phase 2). Canonical fields, in the export header `FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES`. Import resolves each header column to a canonical field through ordered, case-insensitive matchers (TEAMNAME contains `team\s*name` · TYPE contains both `solo` and `team`, or is exactly `type` · FIRSTNAME/LASTNAME contain `first\s*name`/`last\s*name` · NUMBER is the whole header matching `number`/`plate`/`bib` · NOTES contains `notes?`); the first matching field claims a column and an unmatched column is ignored. One row per rider; a row with neither first nor last name is skipped as a footer/blank unless it still names a plate/team/type, which is a missing-name conflict. TYPE is `solo`/`team` after case folding; blank TYPE derives team when a TEAMNAME is present, else solo. Team rows group by normalized TEAMNAME (trim, collapse whitespace, lowercase) across the whole file. Blank NUMBER auto-assigns sequential numeric plates from the roster's next free; on `rider_pooled` each row keeps its own plate, on `team_relay` a team's rows share its single plate. Export writes the same header (a finished ride appends `laps, cards, best_hand, total_time`). | §7 · [csvdlg](xrc-windows.md) |
+| R-25 | MUST | Teams Editor (`mi_team_editor` → `team_editor_dlg`), routed only on mixed rides (`teams_allowed`): edits a team's record — name, notes, relay plate (relay rides only; a pooled team's plate derives from its members, never settable here), and logo: a card default and/or an optional image, image wins and either clears the other (`entry.logo_card`/`logo_png`; a team's card auto-assigns from the ride's seeded sequence at creation — no two teams share). Membership is read-only in this window (managed in the Rider Editor); add/remove are DRAFT-only and refused edits show on `teams_infobar`. | §15/§15b · [team_editor_dlg](xrc-windows.md) |
 
 ### 4 · Timing console
 
@@ -62,6 +65,7 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 | R-42 | MUST | The hand algorithm handles 0–2+ jokers and any card count up to the cap; whole-field evaluation (180 entries × 12 cards) completes in under 1 s. | §5/§11 |
 | R-43 | MUST | Identical hands resolve by the configured tie-break order; unresolved ties are flagged "draw required", never silently ordered. | §5 · [resultsframe](xrc-windows.md) |
 | R-44 | MUST | Evaluator self-test (7,462 ranks + joker vectors) runs at launch and on demand from Help; failure blocks finishing a ride. | §12 · [selftestdlg](xrc-windows.md) |
+| R-45 | MUST | Team-mode scoring: every lap's card credits the **team entry**, never an individual rider — on `rider_pooled` a member's laps deal into the team's pooled hand (R-16); on `team_relay` the entry's crossings deal into the team's hand (R-22). Riders never hold or score a hand of their own. | §1/§5 |
 
 ### 6 · Resilience
 
@@ -72,6 +76,7 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 | R-52 | MUST | On launch with a running ride, a resume dialog always appears; session bookkeeping distinguishes clean quit from crash and words the dialog accordingly. Continuing preserves start time and all data. | §2/§3 · [resumedlg](xrc-windows.md) |
 | R-53 | MUST | Start pressed on a ride with data asks continue-vs-new; continue loses no time or data; "new" archives first. | §3 · [continuedlg](xrc-windows.md) |
 | R-54 | MUST | Automatic backups on open + hourly while running (keep 20); manual Back Up Now; restoring a backup is documented in the guide. | §2 · [settingsdlg](xrc-windows.md) |
+| R-55 | MUST | Fresh-launch console state: with no running ride to resume, the bootstrap console opens in **DRAFT with no ride running** — File ▸ Exit / ⌘Q shows the plain quit confirm (`exit_confirm_dlg`, R-51's no-ride-running path), never the ride-running exit dialog. The clock labels (`clock_elapsed_lbl`/`clock_remaining_lbl`) reserve a fixed minimum width so long elapsed/remaining text never overlaps the Start/Stop buttons. | §3/§13 · [mainframe](xrc-windows.md) |
 
 ### 7 · Results & publishing
 
@@ -82,6 +87,7 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 | R-62 | MUST | PDF export via fpdf2 with the same sections and flags; deterministic output; optional one-page podium poster. | §8b · [5a–5d](ui-designs-retired.md) (design doc) |
 | R-63 | MUST | Times appear in published results only when the export setting says so — hidden by default, no toggle on the page, and with times off the time data is not embedded at all; laps/time leaderboards are opt-in. | §8 · [resultsframe](xrc-windows.md) |
 | R-64 | SHOULD | Finished rides reopen into a corrections-only REOPENED state (clock closed, add-at-time/edit/void, moves on pooled rides); Finish again re-locks; stale exports are flagged. | §3 · [resultsframe](xrc-windows.md) |
+| R-65 | MUST | Mixed-ride results split into **two sections — Teams and Solo**: teams rank among teams and solos among solos, each section renumbered from 1 with its own DNF tail (`standings.rank_by_kind`) — never one combined field. The results window, the HTML full field and the PDF report render the two sections (a kind absent from the ride has no section); the standings CSV carries the `type` column: `place, plate, entry, type, laps, hand[, total_time]`. | §5/§8/§8b · [resultsframe](xrc-windows.md) |
 
 ### 8 · Quality, testing & CI — "works the first time"
 
