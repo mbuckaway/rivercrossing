@@ -195,8 +195,8 @@ def test_rider_editor_team_column_is_hidden_for_a_solo_only_roster(
 ) -> None:
     """Req 3: a solo-only roster hides the Team column entirely."""
     roster = Roster()
-    roster.create_solo_entry(name="Solo One", plate="1")
-    roster.create_solo_entry(name="Solo Two", plate="2")
+    roster.create_solo_entry(first_name="Solo", last_name="One", plate="1")
+    roster.create_solo_entry(first_name="Solo", last_name="Two", plate="2")
 
     window = harness.load_window_verified(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     try:

@@ -134,7 +134,7 @@ def _apply_add(roster: Roster, action: _AddRiderToTeam) -> None:
     if not entries:
         return
     to_entry = entries[action.to_index % len(entries)]
-    rider = Rider(name=action.rider_name, plate=action.rider_plate)
+    rider = Rider(first_name=action.rider_name, last_name="", plate=action.rider_plate)
     roster.add_rider_to_team(rider, to_entry=to_entry)
 
 
@@ -154,10 +154,10 @@ def _apply(roster: Roster, action: _Action) -> None:
     """Apply *action*, treating a rejected mutation as a no-op."""
     try:
         if isinstance(action, _CreateSolo):
-            roster.create_solo_entry(name=action.name, plate=action.plate)
+            roster.create_solo_entry(first_name=action.name, last_name="", plate=action.plate)
         elif isinstance(action, _CreateTeam):
             riders = [
-                Rider(name=name, plate=plate)
+                Rider(first_name=name, last_name="", plate=plate)
                 for name, plate in zip(action.rider_names, action.plates, strict=True)
             ]
             roster.create_team_entry(display_name=action.display_name, riders=riders)
@@ -223,7 +223,7 @@ def test_roster_any_valid_mutation_sequence_preserves_plate_and_size_invariants(
 def _fill_relay_plates(roster: Roster, plates: list[int]) -> None:
     """Register one relay solo entry per plate in *plates*."""
     for plate in plates:
-        roster.create_solo_entry(name="rider", plate=str(plate))
+        roster.create_solo_entry(first_name="rider", last_name="", plate=str(plate))
 
 
 @given(plates=st.lists(st.integers(min_value=1, max_value=500), max_size=20, unique=True))

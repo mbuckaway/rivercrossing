@@ -122,7 +122,7 @@ def _roster_with_entries(*plates: str) -> Roster:
     """Build a MIXED rider_pooled roster of one solo entry per plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
-        roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
     return roster
 
 
@@ -562,10 +562,13 @@ def test_engine_data_source_audit_rows_maps_engine_events_newest_first() -> None
 def test_engine_data_source_riders_maps_roster_entries_and_team_members() -> None:
     """Rider editor rows project solo and pooled team members."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Sam Ellis", plate="123")
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     engine, _clock = _make_engine(roster=roster)
     source = EngineDataSource(engine, roster)

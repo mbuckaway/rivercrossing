@@ -90,7 +90,9 @@ def _random_roster(draw: st.DrawFn) -> Roster:
 def _draw_solos(ctx: _DrawCtx, count: int) -> None:
     """Create *count* solo entries, drawing each name and plate."""
     for _ in range(count):
-        ctx.roster.create_solo_entry(name=ctx.draw(_NAME), plate=next(ctx.plates))
+        ctx.roster.create_solo_entry(
+            first_name=ctx.draw(_NAME), last_name="", plate=next(ctx.plates)
+        )
 
 
 def _draw_teams(ctx: _DrawCtx, sizes: list[int], names: list[str]) -> None:
@@ -106,7 +108,7 @@ def _draw_team_riders(ctx: _DrawCtx, size: int) -> list[Rider]:
     riders = []
     for _ in range(size):
         plate = next(ctx.plates) if ctx.roster.plate_model is PlateModel.RIDER_POOLED else None
-        riders.append(Rider(name=ctx.draw(_NAME), plate=plate))
+        riders.append(Rider(first_name=ctx.draw(_NAME), last_name="", plate=plate))
     return riders
 
 
@@ -125,7 +127,7 @@ def _projected_entries(roster: Roster) -> frozenset[tuple[object, ...]]:
             entry.type,
             entry.display_name,
             entry.notes,
-            frozenset((rider.name, rider.plate) for rider in entry.riders),
+            frozenset((rider.full_name, rider.plate) for rider in entry.riders),
         )
         for entry in roster.entries
     )

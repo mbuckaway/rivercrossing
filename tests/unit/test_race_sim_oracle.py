@@ -74,8 +74,8 @@ def _config(*, deck_count: int = 8, jokers_per_deck: int = 2) -> RideConfig:
 def _roster() -> Roster:
     """Return the two-solo-entry roster the tests persist/read back."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
-    roster.create_solo_entry(name="Bob", plate="5")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
+    roster.create_solo_entry(first_name="Bob", last_name="", plate="5")
     return roster
 
 

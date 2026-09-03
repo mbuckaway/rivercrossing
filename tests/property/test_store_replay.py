@@ -135,10 +135,13 @@ def _config() -> RideConfig:
 def _make_roster() -> Roster:
     """Build the replay ride's field: one solo, one pooled team."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
     )
     return roster
 

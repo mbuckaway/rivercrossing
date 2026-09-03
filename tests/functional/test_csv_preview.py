@@ -179,7 +179,7 @@ def test_csv_preview_dlg_cancel_click_writes_nothing(
 ) -> None:
     """Cancel leaves the roster exactly as it was (spec.md §7)."""
     roster = Roster()
-    roster.create_solo_entry(name="Existing Rider", plate="9")
+    roster.create_solo_entry(first_name="Existing", last_name="Rider", plate="9")
     dialog, view = _show(xrc_resource, roster)
     path = _write_pooled_csv(tmp_path, "1,Alex One,,\n2,Bo Two,,\n")
     view.presenter.on_pick_csv_import(path)

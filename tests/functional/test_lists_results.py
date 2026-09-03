@@ -113,8 +113,8 @@ def finished_ride_view(xrc_resource: object) -> ResultsWindow:
         window.Layout()
         harness.pump()
         roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-        roster.create_solo_entry(name="Sam Ellis", plate="123")
-        roster.create_solo_entry(name="R. Dubois", plate="8")
+        roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+        roster.create_solo_entry(first_name="R.", last_name="Dubois", plate="8")
         config = RideConfig(
             name="GORBA EPIC 2026",
             event_date=date(2026, 9, 20),

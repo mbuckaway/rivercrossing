@@ -178,17 +178,32 @@ class LockedError(RosterError):
 
 @dataclass(eq=False)
 class Rider:
-    """One rider (spec S2 ``rider`` table: name, plate, sort_order).
+    """One rider on an entry (spec S2 ``rider`` table).
 
-    ``plate`` holds this rider's own plate only under
+    ``first_name`` and ``last_name`` split what was a single ``name``
+    field (Phase 1 rider-name split); :attr:`full_name` is the display
+    projection every caller shows or audits -- a solo entry's
+    ``display_name`` mirrors its rider's ``full_name``. ``plate``
+    holds this rider's own plate only under
     ``PlateModel.RIDER_POOLED``; under ``PlateModel.TEAM_RELAY`` it
     always ends up ``None`` -- the plate belongs to the entry, not
     the individual rider (S1).
     """
 
-    name: str
+    first_name: str
+    last_name: str = ""
     plate: str | None = None
     sort_order: int = 0
+
+    @property
+    def full_name(self) -> str:
+        """Return this rider's display name, first and last joined.
+
+        A single-word rider (no last name) renders as just the first
+        name, never ``"Alex "`` with a trailing space; stray blanks
+        around either part collapse so the two never double-space.
+        """
+        return " ".join(part for part in (self.first_name.strip(), self.last_name.strip()) if part)
 
 
 @dataclass(eq=False)
@@ -447,18 +462,23 @@ class Roster:
             if entry.type is EntryType.TEAM and entry.team_size < MIN_TEAM_SIZE
         ]
 
-    def create_solo_entry(self, *, name: str, plate: str) -> Entry:
-        """Create a solo entry for *name*, plated per S1's plate model.
+    def create_solo_entry(self, *, first_name: str, last_name: str = "", plate: str) -> Entry:
+        """Create a solo entry for *first_name*/*last_name*.
+
+        Plated per S1's plate model; the entry's ``display_name``
+        mirrors the rider's :attr:`Rider.full_name`.
 
         Raises:
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
-        rider = Rider(name=name, plate=plate)
+        rider = Rider(first_name=first_name, last_name=last_name, plate=plate)
         entry_plate = self._shape_and_validate([rider], plate)
-        entry = Entry(plate=entry_plate, display_name=name, type=EntryType.SOLO, riders=[rider])
+        entry = Entry(
+            plate=entry_plate, display_name=rider.full_name, type=EntryType.SOLO, riders=[rider]
+        )
         self._entries.append(entry)
-        self._log("create_solo_entry", {"plate": entry.plate, "name": name})
+        self._log("create_solo_entry", {"plate": entry.plate, "name": rider.full_name})
         return entry
 
     def create_team_entry(
@@ -617,7 +637,7 @@ class Roster:
         self._recompute_pooled_plate(entry)
         self._log(
             "change_pooled_rider_plate",
-            {"rider_name": rider.name, "old_plate": old_plate, "new_plate": plate},
+            {"rider_name": rider.full_name, "old_plate": old_plate, "new_plate": plate},
         )
 
     def change_team_plate(self, entry: Entry, *, plate: str) -> None:
@@ -736,7 +756,11 @@ class Roster:
         self._recompute_pooled_plate(to_entry)
         self._log(
             "move_rider",
-            {"rider_name": rider.name, "from_plate": from_entry.plate, "to_plate": to_entry.plate},
+            {
+                "rider_name": rider.full_name,
+                "from_plate": from_entry.plate,
+                "to_plate": to_entry.plate,
+            },
         )
         if not from_entry.riders:
             self._dissolve_entry(from_entry)
@@ -794,7 +818,7 @@ class Roster:
         self._log(
             "add_rider_to_team",
             {
-                "rider_name": rider.name,
+                "rider_name": rider.full_name,
                 "rider_plate": rider.plate,
                 "to_plate": to_entry.plate,
                 "display_name": to_entry.display_name,
@@ -829,7 +853,7 @@ class Roster:
         entry.riders.remove(rider)
         solo = Entry(
             plate=cast("str", rider.plate),
-            display_name=rider.name,
+            display_name=rider.full_name,
             type=EntryType.SOLO,
             riders=[rider],
         )
@@ -839,7 +863,7 @@ class Roster:
         self._log(
             "extract_rider_to_solo",
             {
-                "rider_name": rider.name,
+                "rider_name": rider.full_name,
                 "plate": solo.plate,
                 "from_display_name": entry.display_name,
             },

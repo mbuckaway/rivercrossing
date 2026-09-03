@@ -545,7 +545,7 @@ class EngineDataSource:
                 rows.extend(
                     RiderRow(
                         plate=rider.plate if rider.plate is not None else entry.plate,
-                        name=rider.name,
+                        name=rider.full_name,
                         team=entry.display_name,
                     )
                     for rider in entry.riders
@@ -588,7 +588,7 @@ class EngineDataSource:
             f"{kind} · {len(entry.riders)} riders · {len(laps)} laps · "
             f"{format_duration(sum(times))}"
         )
-        members = " · ".join(rider.name for rider in entry.riders)
+        members = " · ".join(rider.full_name for rider in entry.riders)
         return EntryDetail(
             header=header,
             members=members,

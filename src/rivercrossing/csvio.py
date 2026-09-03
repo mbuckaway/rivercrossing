@@ -156,12 +156,41 @@ class ParsedRider:
     """One rider parsed from a CSV row, not yet applied to any roster.
 
     A value object, unlike :class:`rivercrossing.roster.Rider`: two
-    riders parsed with the same name and plate compare equal, which
-    is exactly what a preview assertion needs.
+    riders parsed with the same first/last names and plate compare
+    equal, which is exactly what a preview assertion needs. The CSV's
+    single name column is split into ``first_name``/``last_name`` at
+    parse time (Phase 1 rider-name split) -- see :func:`_split_name`.
     """
 
-    name: str
+    first_name: str
+    last_name: str
     plate: str | None = None
+
+    @property
+    def full_name(self) -> str:
+        """Return this rider's display name, first and last joined."""
+        return " ".join(part for part in (self.first_name.strip(), self.last_name.strip()) if part)
+
+
+def _split_name(name: str) -> tuple[str, str]:
+    """Split one CSV name column into (first_name, last_name).
+
+    The single-column CSV shape stays for now (Phase 1 does not
+    rewrite the two-shape design); a name is split at its first
+    space -- "A. Roy" -> ("A.", "Roy"), "Mary Jane Watson" ->
+    ("Mary", "Jane Watson") -- and a single-word name keeps an empty
+    last name. ``name`` is already edge-stripped by :func:`_field`.
+    """
+    first, separator, remainder = name.partition(" ")
+    if not separator:
+        return first, ""
+    return first, remainder.strip()
+
+
+def _parsed_rider(name: str, *, plate: str | None = None) -> ParsedRider:
+    """Build one ParsedRider by splitting a single-column *name*."""
+    first_name, last_name = _split_name(name)
+    return ParsedRider(first_name=first_name, last_name=last_name, plate=plate)
 
 
 @dataclass(frozen=True)
@@ -473,7 +502,7 @@ def _relay_export_row(entry: Entry, max_team_size: int) -> list[str]:
         names: list[str] = []
     else:
         type_field = f"team{len(entry.riders)}"
-        names = [rider.name for rider in entry.riders]
+        names = [rider.full_name for rider in entry.riders]
     slots = [*names, *([""] * (max_team_size - len(names)))]
     return [entry.plate, entry.display_name, type_field, *slots, entry.notes]
 
@@ -488,7 +517,12 @@ def _pooled_export_rows(entry: Entry) -> list[list[str]]:
     """
     team_name = entry.display_name if entry.type is EntryType.TEAM else ""
     return [
-        [cast("str", rider.plate), rider.name, team_name, entry.notes if index == 0 else ""]
+        [
+            cast("str", rider.plate),
+            rider.full_name,
+            team_name,
+            entry.notes if index == 0 else "",
+        ]
         for index, rider in enumerate(entry.riders)
     ]
 
@@ -563,7 +597,7 @@ def _shape_relay_row(row: Mapping[str, str | None], *, max_team_size: int) -> Pa
     type_field = _field(row, "type")
     notes = _field(row, "notes")
     if type_field == "solo":
-        rider = ParsedRider(name=entry_name)
+        rider = _parsed_rider(entry_name)
         return ParsedEntry(
             plate=plate, display_name=entry_name, type=EntryType.SOLO, riders=(rider,), notes=notes
         )
@@ -572,7 +606,7 @@ def _shape_relay_row(row: Mapping[str, str | None], *, max_team_size: int) -> Pa
         return f"unknown entry type {type_field!r}"
     if not MIN_TEAM_SIZE <= size <= max_team_size:
         return f"team size must be between {MIN_TEAM_SIZE} and {max_team_size}, got {size}"
-    riders = tuple(ParsedRider(name=_field(row, f"rider_{i}")) for i in range(1, size + 1))
+    riders = tuple(_parsed_rider(_field(row, f"rider_{i}")) for i in range(1, size + 1))
     return ParsedEntry(
         plate=plate, display_name=entry_name, type=EntryType.TEAM, riders=riders, notes=notes
     )
@@ -580,7 +614,7 @@ def _shape_relay_row(row: Mapping[str, str | None], *, max_team_size: int) -> Pa
 
 def _missing_name_problem(entry: ParsedEntry) -> str | None:
     """Return a missing-name conflict if any required name is blank."""
-    if not entry.display_name or any(not rider.name for rider in entry.riders):
+    if not entry.display_name or any(not rider.full_name for rider in entry.riders):
         return _MISSING_NAME_PROBLEM
     return None
 
@@ -596,8 +630,8 @@ def _relay_composition_changed(existing: Entry, parsed: ParsedEntry) -> bool:
         return True
     if parsed.type is EntryType.SOLO:
         return False
-    existing_names = tuple(rider.name for rider in existing.riders)
-    parsed_names = tuple(rider.name for rider in parsed.riders)
+    existing_names = tuple(rider.full_name for rider in existing.riders)
+    parsed_names = tuple(rider.full_name for rider in parsed.riders)
     return existing_names != parsed_names
 
 
@@ -667,9 +701,17 @@ def _commit_relay(ride: Roster, entries: Sequence[ParsedEntry]) -> tuple[int, in
 def _insert_relay_entry(ride: Roster, parsed: ParsedEntry) -> None:
     """Create *parsed* as a fresh relay entry, keeping its own plate."""
     if parsed.type is EntryType.SOLO:
-        entry = ride.create_solo_entry(name=parsed.display_name, plate=parsed.plate)
+        parsed_rider = parsed.riders[0]
+        entry = ride.create_solo_entry(
+            first_name=parsed_rider.first_name,
+            last_name=parsed_rider.last_name,
+            plate=parsed.plate,
+        )
     else:
-        riders = [Rider(name=rider.name) for rider in parsed.riders]
+        riders = [
+            Rider(first_name=rider.first_name, last_name=rider.last_name)
+            for rider in parsed.riders
+        ]
         entry = ride.create_team_entry(
             display_name=parsed.display_name, riders=riders, plate=parsed.plate
         )
@@ -720,7 +762,7 @@ def _preview_pooled(reader: csv.DictReader[str], path: Path, ride: Roster) -> Im
         if problem is not None:
             conflicts.append(ImportConflict(row=row_num, problem=problem))
         seen_plates.add(plate)
-        rider = ParsedRider(name=name, plate=plate)
+        rider = _parsed_rider(name, plate=plate)
         if not team_name:
             solo_entries.append(
                 ParsedEntry(
@@ -888,7 +930,12 @@ def _commit_pooled_solo(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
     """Insert, rename, or extract-to-solo a matched pooled solo row."""
     owner = ctx.index.get(parsed.plate)
     if owner is None:
-        entry = ctx.ride.create_solo_entry(name=parsed.display_name, plate=parsed.plate)
+        parsed_rider = parsed.riders[0]
+        entry = ctx.ride.create_solo_entry(
+            first_name=parsed_rider.first_name,
+            last_name=parsed_rider.last_name,
+            plate=parsed.plate,
+        )
         if parsed.notes:
             ctx.ride.update_entry(entry, notes=parsed.notes)
         ctx.index[parsed.plate] = (entry, entry.riders[0])
@@ -933,7 +980,13 @@ def _form_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
         plate = cast("str", parsed_rider.plate)
         owner = ctx.index.get(plate)
         if owner is None:
-            riders.append(Rider(name=parsed_rider.name, plate=plate))
+            riders.append(
+                Rider(
+                    first_name=parsed_rider.first_name,
+                    last_name=parsed_rider.last_name,
+                    plate=plate,
+                )
+            )
         else:
             old_entry, old_rider = owner
             ctx.ride.delete_entry(old_entry)
@@ -973,7 +1026,11 @@ def _join_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry, target: Entry) -> No
             ctx.index[plate] = (target, old_rider)
             ctx.joined += 1
             continue
-        new_rider = Rider(name=parsed_rider.name, plate=plate)
+        new_rider = Rider(
+            first_name=parsed_rider.first_name,
+            last_name=parsed_rider.last_name,
+            plate=plate,
+        )
         ctx.ride.add_rider_to_team(new_rider, to_entry=target)
         ctx.index[plate] = (target, new_rider)
         ctx.joined += 1

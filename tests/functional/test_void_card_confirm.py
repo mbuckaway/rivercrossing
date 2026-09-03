@@ -89,7 +89,7 @@ def _build_live_entry_detail(
     import datetime as _dt  # noqa: PLC0415 -- local helper import, matching test_console_live
 
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
     config = RideConfig(
         name="GORBA EPIC 2026",
         event_date=date(2026, 9, 20),
@@ -296,7 +296,7 @@ def live_context(
     from rivercrossing.ui.views import MainFrame  # noqa: PLC0415
 
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
     config = RideConfig(
         name="GORBA EPIC 2026",
         event_date=date(2026, 9, 20),

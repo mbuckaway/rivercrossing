@@ -73,10 +73,13 @@ def _row(  # noqa: PLR0913, PLR0917 -- (action, entry, reason, when): one fixed 
 def _roster() -> Roster:
     """Build a MIXED rider_pooled roster: one solo + one pooled team."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="J. Okafor", plate="45")
+    roster.create_solo_entry(first_name="J.", last_name="Okafor", plate="45")
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     return roster
 

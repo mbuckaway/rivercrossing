@@ -553,7 +553,7 @@ def test_store_rides_orders_by_created_at(tmp_path: Path) -> None:
 def _replay_roster() -> Roster:
     """Build the MIXED rider_pooled roster load_engine tests pass in."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     return roster
 
 
@@ -1392,8 +1392,8 @@ def test_store_delete_ride_removes_all_dependent_rows(tmp_path: Path) -> None:
                 (ride_id,),
             ).lastrowid
             rider_id = store._conn.execute(
-                "INSERT INTO rider (entry_id, name, plate, sort_order)"
-                " VALUES (?, 'Alice', '12', 1)",
+                "INSERT INTO rider (entry_id, first_name, last_name, plate, sort_order)"
+                " VALUES (?, 'Alice', '', '12', 1)",
                 (entry_id,),
             ).lastrowid
             crossing_id = store._conn.execute(
@@ -1485,7 +1485,7 @@ def test_store_delete_ride_error_types_are_store_errors() -> None:
 def _solo_roster() -> Roster:
     """Build a solo-only rider_pooled roster for round-trip tests."""
     roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     return roster
 
 
@@ -1496,10 +1496,13 @@ def _pooled_roster() -> Roster:
     own plate -- the team's derived plate is the lowest ("77").
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     return roster
 
@@ -1511,10 +1514,13 @@ def _relay_roster() -> Roster:
     (S1 -- the plate belongs to the entry, not the individual).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
-    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     roster.create_team_entry(
         display_name="Moss Ridge",
-        riders=[Rider(name="R. Dubois"), Rider(name="M. Chen")],
+        riders=[
+            Rider(first_name="R.", last_name="Dubois"),
+            Rider(first_name="M.", last_name="Chen"),
+        ],
         plate="88",
     )
     return roster
@@ -1566,7 +1572,66 @@ def test_store_save_roster_solo_round_trips_entry_and_rider(tmp_path: Path) -> N
     assert (entry.plate, entry.display_name, entry.type.value) == ("12", "Alice", "solo")
     assert entry.team_size == 1
     (rider,) = entry.riders
-    assert (rider.name, rider.plate, rider.sort_order) == ("Alice", "12", 0)
+    assert (rider.first_name, rider.last_name, rider.full_name) == ("Alice", "", "Alice")
+    assert (rider.plate, rider.sort_order) == ("12", 0)
+
+
+def test_store_save_roster_writes_first_and_last_name_columns(tmp_path: Path) -> None:
+    """The rider table stores the split, not a single name column."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        rows = conn.execute(
+            "SELECT first_name, last_name FROM rider"
+            " WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?) ORDER BY id",
+            (ride_id,),
+        ).fetchall()
+
+    assert rows == [("Alice", ""), ("A.", "Roy"), ("K.", "Singh")]
+
+
+def test_store_save_roster_round_trips_two_part_rider_names(tmp_path: Path) -> None:
+    """A team's two-part rider names survive as first/last/full."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    roster = _round_trip_roster(db_path, ride_id)
+
+    assert [
+        (rider.first_name, rider.last_name, rider.full_name) for rider in roster.entries[1].riders
+    ] == [
+        ("A.", "Roy", "A. Roy"),
+        ("K.", "Singh", "K. Singh"),
+    ]
+
+
+def test_store_save_roster_writes_null_logo_columns_on_every_entry(tmp_path: Path) -> None:
+    """Entry logo_card/logo_png stay NULL: the model carries no logo."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        rows = conn.execute(
+            "SELECT logo_card, logo_png FROM entry WHERE ride_id = ?", (ride_id,)
+        ).fetchall()
+
+    assert rows == [(None, None), (None, None)]
 
 
 def test_store_save_roster_pooled_team_round_trips_rider_plates(
@@ -1591,7 +1656,7 @@ def test_store_save_roster_pooled_team_round_trips_rider_plates(
         "Trail Blazers",
         "team",
     )
-    assert [(rider.name, rider.plate) for rider in team.riders] == [
+    assert [(rider.full_name, rider.plate) for rider in team.riders] == [
         ("A. Roy", "77"),
         ("K. Singh", "78"),
     ]
@@ -1615,7 +1680,7 @@ def test_store_save_roster_relay_team_round_trips_plateless_riders(
     solo, team = roster.entries
     assert (solo.plate, team.plate) == ("12", "88")
     assert [rider.plate for rider in team.riders] == [None, None]
-    assert [rider.name for rider in team.riders] == ["R. Dubois", "M. Chen"]
+    assert [rider.full_name for rider in team.riders] == ["R. Dubois", "M. Chen"]
 
 
 def test_store_save_roster_entry_notes_round_trip(tmp_path: Path) -> None:
@@ -1869,6 +1934,60 @@ def test_store_duplicate_ride_keeps_the_source_untouched(tmp_path: Path) -> None
 
     assert source.state is RideStatus.RUNNING
     assert [crossing.entry_id for crossing in source.crossings] == ["12"]
+
+
+def test_store_duplicate_ride_copies_first_and_last_name_columns(tmp_path: Path) -> None:
+    """The copy's rider rows carry the split, not a single name."""
+    db_path = tmp_path / "rides.db"
+    source_id = _source_ride_with_timing_data(db_path, _pooled_roster())
+    store = Store.open(db_path)
+    try:
+        copy_id = store.duplicate_ride(source_id)
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        copied = conn.execute(
+            "SELECT first_name, last_name FROM rider"
+            " WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?) ORDER BY id",
+            (copy_id,),
+        ).fetchall()
+    assert [tuple(row) for row in copied] == [("Alice", ""), ("A.", "Roy"), ("K.", "Singh")]
+
+
+def test_store_duplicate_ride_copies_the_entry_logo_columns(tmp_path: Path) -> None:
+    """R-15: an entry's logo_card/logo_png copy over with the roster."""
+    db_path = tmp_path / "rides.db"
+    source_id = _source_ride_with_timing_data(db_path, _solo_roster())
+    logo_bytes = base64.b64decode(_TINY_PNG_B64)
+    store = Store.open(db_path)
+    try:
+        with store._conn:
+            store._conn.execute(
+                "UPDATE entry SET logo_card = ?, logo_png = ? WHERE ride_id = ?",
+                ("club-logo", logo_bytes, source_id),
+            )
+        copy_id = store.duplicate_ride(source_id)
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        source_row = conn.execute(
+            "SELECT logo_card, logo_png FROM entry WHERE ride_id = ?", (source_id,)
+        ).fetchone()
+        copy_row = conn.execute(
+            "SELECT logo_card, logo_png FROM entry WHERE ride_id = ?", (copy_id,)
+        ).fetchone()
+    assert source_row is not None
+    assert copy_row is not None
+    assert (copy_row["logo_card"], copy_row["logo_png"]) == (
+        source_row["logo_card"],
+        source_row["logo_png"],
+    )
+    assert copy_row["logo_card"] == "club-logo"
+    assert copy_row["logo_png"] == logo_bytes
 
 
 def test_store_duplicate_ride_unknown_ride_raises_naming_it(

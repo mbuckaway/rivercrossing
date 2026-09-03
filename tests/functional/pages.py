@@ -221,7 +221,8 @@ RIDER_EDITOR_DLG = WindowSpec(
     controls=(
         ids.RIDERS_LIST,
         ids.PLATE_INPUT,
-        ids.NAME_INPUT,
+        ids.FIRST_NAME_INPUT,
+        ids.LAST_NAME_INPUT,
         ids.TEAM_CHOICE,
         ids.ADD_BTN,
         ids.SAVE_BTN,

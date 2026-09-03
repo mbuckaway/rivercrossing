@@ -194,9 +194,9 @@ def test_preview_pooled_clean_sample_falcons_entry_derives_plate_from_lowest_rid
         display_name="Falcons",
         type=EntryType.TEAM,
         riders=(
-            ParsedRider(name="Elin Novak", plate="10"),
-            ParsedRider(name="Faisal Rahman", plate="11"),
-            ParsedRider(name="Gita Sundaram", plate="12"),
+            ParsedRider(first_name="Elin", last_name="Novak", plate="10"),
+            ParsedRider(first_name="Faisal", last_name="Rahman", plate="11"),
+            ParsedRider(first_name="Gita", last_name="Sundaram", plate="12"),
         ),
     )
 
@@ -364,7 +364,7 @@ def test_preview_relay_plate_matching_an_existing_roster_entry_is_not_a_conflict
     *within the file itself* is still a duplicate-plate conflict.
     """
     roster = _relay_roster()
-    roster.create_solo_entry(name="Existing Rider", plate="1")
+    roster.create_solo_entry(first_name="Existing", last_name="Rider", plate="1")
     row = _relay_line(
         _RelayRow(plate="1", entry_name="Existing Rider", type_field="solo"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -440,7 +440,7 @@ def test_preview_relay_solo_row_parses_into_one_rider_named_like_the_entry(
             plate="9",
             display_name="Marc Tremblay",
             type=EntryType.SOLO,
-            riders=(ParsedRider(name="Marc Tremblay"),),
+            riders=(ParsedRider(first_name="Marc", last_name="Tremblay"),),
             notes="late scratch",
         ),
     )
@@ -458,7 +458,7 @@ def test_preview_pooled_solo_row_carries_its_own_notes_onto_the_entry(tmp_path: 
             plate="5",
             display_name="Alex Ferreira",
             type=EntryType.SOLO,
-            riders=(ParsedRider(name="Alex Ferreira", plate="5"),),
+            riders=(ParsedRider(first_name="Alex", last_name="Ferreira", plate="5"),),
             notes="late scratch",
         ),
     )
@@ -480,7 +480,10 @@ def test_preview_relay_team_row_riders_carry_no_plate_of_their_own(tmp_path: Pat
             plate="7",
             display_name="Team A",
             type=EntryType.TEAM,
-            riders=(ParsedRider(name="Alex"), ParsedRider(name="Bo")),
+            riders=(
+                ParsedRider(first_name="Alex", last_name=""),
+                ParsedRider(first_name="Bo", last_name=""),
+            ),
         ),
     )
 
@@ -677,9 +680,9 @@ def test_commit_relay_insert_creates_matching_roster_entries(tmp_path: Path) -> 
 
     commit(result)
 
-    assert [(e.plate, e.display_name, [r.name for r in e.riders]) for e in roster.entries] == [
-        ("2", "Team A", ["Bo", "Cy"])
-    ]
+    assert [
+        (e.plate, e.display_name, [r.full_name for r in e.riders]) for e in roster.entries
+    ] == [("2", "Team A", ["Bo", "Cy"])]
 
 
 def test_commit_pooled_inserts_solo_and_team_and_reports_counts(tmp_path: Path) -> None:
@@ -713,7 +716,7 @@ def test_commit_pooled_insert_derives_the_new_teams_plate(tmp_path: Path) -> Non
     commit(result)
 
     team = roster.entries[0]
-    assert (team.plate, [r.name for r in team.riders]) == ("2", ["Bo", "Cy"])
+    assert (team.plate, [r.full_name for r in team.riders]) == ("2", ["Bo", "Cy"])
 
 
 def test_commit_relay_insert_with_notes_sets_them_on_the_new_entry(tmp_path: Path) -> None:
@@ -772,7 +775,7 @@ def test_commit_relay_matched_plate_renames_the_existing_entry_in_place(
 ) -> None:
     """A matched relay plate with only a name change updates it."""
     roster = _relay_roster()
-    entry = roster.create_solo_entry(name="Alex", plate="1")
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     row = _relay_line(
         _RelayRow(plate="1", entry_name="Alexandra", type_field="solo"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -792,7 +795,7 @@ def test_commit_relay_matched_plate_renames_the_existing_entry_in_place(
 def test_commit_pooled_matched_solo_plate_renames_in_place(tmp_path: Path) -> None:
     """A matched pooled solo plate with only a name change updates."""
     roster = _pooled_roster()
-    entry = roster.create_solo_entry(name="Alex", plate="1")
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     path = _write_csv(tmp_path, [_POOLED_HEADER_LINE, _pooled_line(_PooledRow("1", "Alexandra"))])
     result = preview(path, roster)
 
@@ -806,7 +809,7 @@ def test_commit_pooled_matched_solo_plate_notes_only_change_updates_in_place(
 ) -> None:
     """A matched pooled solo plate with only a notes change updates."""
     roster = _pooled_roster()
-    entry = roster.create_solo_entry(name="Alex", plate="1")
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     path = _write_csv(
         tmp_path, [_POOLED_HEADER_LINE, _pooled_line(_PooledRow("1", "Alex", "", "flat tire"))]
     )
@@ -822,7 +825,7 @@ def test_commit_relay_matched_plate_with_no_changes_reports_zero_updates(
 ) -> None:
     """A re-import that changes nothing updates nothing (no noise)."""
     roster = _relay_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     row = _relay_line(
         _RelayRow(plate="1", entry_name="Alex", type_field="solo"),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -844,7 +847,9 @@ def test_commit_relay_matched_plate_composition_change_reshapes_in_draft(
     """A matched relay plate with a changed roster is reshaped (S7)."""
     roster = _relay_roster()
     roster.create_team_entry(
-        display_name="Team X", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="10"
+        display_name="Team X",
+        riders=[Rider(first_name="Alex", last_name=""), Rider(first_name="Bo", last_name="")],
+        plate="10",
     )
     row = _relay_line(
         _RelayRow(
@@ -860,7 +865,7 @@ def test_commit_relay_matched_plate_composition_change_reshapes_in_draft(
 
     report = commit(result)
 
-    assert ([r.name for r in roster.entries[0].riders], report.updated_count) == (
+    assert ([r.full_name for r in roster.entries[0].riders], report.updated_count) == (
         ["Alex", "Bo", "Cy"],
         1,
     )
@@ -871,7 +876,7 @@ def test_commit_relay_matched_plate_type_change_from_solo_to_team_reshapes(
 ) -> None:
     """A matched plate switching solo<->team is a composition change."""
     roster = _relay_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     row = _relay_line(
         _RelayRow(plate="1", entry_name="Team A", type_field="team2", rider_names=("Alex", "Bo")),
         max_team_size=DEFAULT_MAX_TEAM_SIZE,
@@ -890,7 +895,9 @@ def test_preview_relay_matched_plate_composition_change_while_running_conflicts(
     """The same reshape is a conflict once the ride is RUNNING (S7)."""
     roster = _relay_roster()
     roster.create_team_entry(
-        display_name="Team X", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="10"
+        display_name="Team X",
+        riders=[Rider(first_name="Alex", last_name=""), Rider(first_name="Bo", last_name="")],
+        plate="10",
     )
     roster.status = RideStatus.RUNNING
     row = _relay_line(
@@ -914,7 +921,9 @@ def test_commit_relay_structural_change_while_running_refuses(tmp_path: Path) ->
     """commit() refuses the RUNNING structural conflict, unmutated."""
     roster = _relay_roster()
     roster.create_team_entry(
-        display_name="Team X", riders=[Rider(name="Alex"), Rider(name="Bo")], plate="10"
+        display_name="Team X",
+        riders=[Rider(first_name="Alex", last_name=""), Rider(first_name="Bo", last_name="")],
+        plate="10",
     )
     roster.status = RideStatus.RUNNING
     row = _relay_line(
@@ -928,12 +937,12 @@ def test_commit_relay_structural_change_while_running_refuses(tmp_path: Path) ->
     )
     path = _write_csv(tmp_path, [_relay_header(DEFAULT_MAX_TEAM_SIZE), row])
     result = preview(path, roster)
-    before = [r.name for r in roster.entries[0].riders]
+    before = [r.full_name for r in roster.entries[0].riders]
 
     with pytest.raises(ImportConflictsPresentError, match=re.escape("1 conflict")):
         commit(result)
 
-    assert [r.name for r in roster.entries[0].riders] == before
+    assert [r.full_name for r in roster.entries[0].riders] == before
 
 
 def test_preview_relay_new_plate_insert_while_running_is_not_a_conflict(
@@ -958,18 +967,21 @@ def test_preview_relay_new_plate_insert_while_running_is_not_a_conflict(
 
 def _seed_wolves_and_falcons(roster: Roster) -> None:
     """Seed *roster* with Wolves{Bo,Cy,Zed} and Falcons{Do,El}."""
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     roster.create_team_entry(
         display_name="Wolves",
         riders=[
-            Rider(name="Bo", plate="2"),
-            Rider(name="Cy", plate="3"),
-            Rider(name="Zed", plate="4"),
+            Rider(first_name="Bo", last_name="", plate="2"),
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Zed", last_name="", plate="4"),
         ],
     )
     roster.create_team_entry(
         display_name="Falcons",
-        riders=[Rider(name="Do", plate="5"), Rider(name="El", plate="6")],
+        riders=[
+            Rider(first_name="Do", last_name="", plate="5"),
+            Rider(first_name="El", last_name="", plate="6"),
+        ],
     )
 
 
@@ -1000,8 +1012,8 @@ def test_commit_pooled_moved_rider_updates_team_membership_in_draft(
     wolves = next(e for e in roster.entries if e.display_name == "Wolves")
     falcons = next(e for e in roster.entries if e.display_name == "Falcons")
     assert (
-        [r.name for r in wolves.riders],
-        [r.name for r in falcons.riders],
+        [r.full_name for r in wolves.riders],
+        [r.full_name for r in falcons.riders],
         report.moved_count,
     ) == (
         ["Cy", "Zed"],
@@ -1091,9 +1103,9 @@ def _wolves_of_three(roster: Roster) -> None:
     roster.create_team_entry(
         display_name="Wolves",
         riders=[
-            Rider(name="Bo", plate="2"),
-            Rider(name="Cy", plate="3"),
-            Rider(name="Zed", plate="4"),
+            Rider(first_name="Bo", last_name="", plate="2"),
+            Rider(first_name="Cy", last_name="", plate="3"),
+            Rider(first_name="Zed", last_name="", plate="4"),
         ],
     )
 
@@ -1148,8 +1160,8 @@ def test_commit_pooled_team_member_reclassified_solo_extracts_in_draft(
     wolves = next(e for e in roster.entries if e.display_name == "Wolves")
     bo = next(e for e in roster.entries if e.display_name == "Bo")
     assert (
-        [r.name for r in wolves.riders],
-        (bo.plate, bo.type, [r.name for r in bo.riders]),
+        [r.full_name for r in wolves.riders],
+        (bo.plate, bo.type, [r.full_name for r in bo.riders]),
         report.extracted_count,
     ) == (["Cy", "Zed"], ("2", EntryType.SOLO, ["Bo"]), 1)
 
@@ -1197,7 +1209,10 @@ def _falcons_of_two(roster: Roster) -> None:
     """Seed *roster* with a single team, Falcons{Do,El}."""
     roster.create_team_entry(
         display_name="Falcons",
-        riders=[Rider(name="Do", plate="5"), Rider(name="El", plate="6")],
+        riders=[
+            Rider(first_name="Do", last_name="", plate="5"),
+            Rider(first_name="El", last_name="", plate="6"),
+        ],
     )
 
 
@@ -1262,7 +1277,7 @@ def test_commit_pooled_new_rider_joining_an_existing_team_in_draft(
     report = commit(result)
 
     falcons = roster.entries[0]
-    assert ([r.name for r in falcons.riders], report.joined_count) == (
+    assert ([r.full_name for r in falcons.riders], report.joined_count) == (
         ["Do", "El", "Fay"],
         1,
     )
@@ -1298,7 +1313,7 @@ def test_preview_pooled_solo_rider_joining_an_existing_team_is_not_a_conflict_in
 ) -> None:
     """DRAFT allows a currently-solo rider to convert onto a team."""
     roster = _pooled_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     _falcons_of_two(roster)
 
     result = preview(_alex_joins_falcons_csv(tmp_path), roster)
@@ -1315,7 +1330,7 @@ def test_preview_pooled_solo_rider_joining_an_existing_team_while_running_confli
     plate, not a currently-solo rider converting.
     """
     roster = _pooled_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     _falcons_of_two(roster)
     roster.status = RideStatus.RUNNING
 
@@ -1330,14 +1345,18 @@ def test_commit_pooled_solo_rider_joining_an_existing_team_in_draft(
 ) -> None:
     """commit() dissolves Alex's solo entry, joins him onto Falcons."""
     roster = _pooled_roster()
-    alex = roster.create_solo_entry(name="Alex", plate="1")
+    alex = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     _falcons_of_two(roster)
     result = preview(_alex_joins_falcons_csv(tmp_path), roster)
 
     report = commit(result)
 
     falcons = next(e for e in roster.entries if e.display_name == "Falcons")
-    assert (alex in roster.entries, [r.name for r in falcons.riders], report.joined_count) == (
+    assert (
+        alex in roster.entries,
+        [r.full_name for r in falcons.riders],
+        report.joined_count,
+    ) == (
         False,
         ["Do", "El", "Alex"],
         1,
@@ -1349,7 +1368,7 @@ def test_commit_pooled_solo_rider_joining_an_existing_team_audits_both_steps(
 ) -> None:
     """Dissolving the solo entry and the join are both audited."""
     roster = _pooled_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     _falcons_of_two(roster)
     result = preview(_alex_joins_falcons_csv(tmp_path), roster)
 
@@ -1376,7 +1395,7 @@ def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_in_draft(
 ) -> None:
     """DRAFT allows folding a solo rider into a brand-new team."""
     roster = _pooled_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     result = preview(_newbies_forming_csv(tmp_path), roster)
 
@@ -1392,7 +1411,7 @@ def test_preview_pooled_promoting_a_solo_rider_into_a_fresh_team_while_running_c
     conversion folded into it is DRAFT-only regardless.
     """
     roster = _pooled_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     roster.status = RideStatus.RUNNING
 
     result = preview(_newbies_forming_csv(tmp_path), roster)
@@ -1406,7 +1425,7 @@ def test_commit_pooled_promoting_a_solo_rider_into_a_fresh_team_in_draft(
 ) -> None:
     """commit() dissolves Alex's solo entry into the Newbies team."""
     roster = _pooled_roster()
-    alex = roster.create_solo_entry(name="Alex", plate="1")
+    alex = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     result = preview(_newbies_forming_csv(tmp_path), roster)
 
     report = commit(result)
@@ -1414,7 +1433,7 @@ def test_commit_pooled_promoting_a_solo_rider_into_a_fresh_team_in_draft(
     newbies = roster.entries[0]
     assert (
         alex in roster.entries,
-        [r.name for r in newbies.riders],
+        [r.full_name for r in newbies.riders],
         (report.inserted_count, report.joined_count, report.extracted_count),
     ) == (False, ["Alex", "Newby"], (1, 0, 0))
 
@@ -1502,7 +1521,7 @@ def test_export_relay_solo_entry_writes_one_row(tmp_path: Path) -> None:
     """A relay solo entry exports as one solo row, riders blank."""
     path = tmp_path / "out.csv"
     roster = _relay_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     export(roster, path)
 
@@ -1514,7 +1533,9 @@ def test_export_relay_team_entry_writes_type_and_rider_columns(tmp_path: Path) -
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.create_team_entry(
-        display_name="Team A", riders=[Rider(name="Bo"), Rider(name="Cy")], plate="7"
+        display_name="Team A",
+        riders=[Rider(first_name="Bo", last_name=""), Rider(first_name="Cy", last_name="")],
+        plate="7",
     )
 
     export(roster, path)
@@ -1526,7 +1547,7 @@ def test_export_relay_entry_notes_land_in_the_final_column(tmp_path: Path) -> No
     """A relay entry's notes are the CSV row's final column."""
     path = tmp_path / "out.csv"
     roster = _relay_roster()
-    entry = roster.create_solo_entry(name="Alex", plate="1")
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     roster.update_entry(entry, notes="late scratch")
 
     export(roster, path)
@@ -1538,7 +1559,7 @@ def test_export_pooled_solo_entry_writes_its_own_notes(tmp_path: Path) -> None:
     """A pooled solo entry's one row carries its own notes."""
     path = tmp_path / "out.csv"
     roster = _pooled_roster()
-    entry = roster.create_solo_entry(name="Alex", plate="1")
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     roster.update_entry(entry, notes="late scratch")
 
     export(roster, path)
@@ -1552,7 +1573,10 @@ def test_export_pooled_team_writes_notes_on_first_row_only(tmp_path: Path) -> No
     roster = _pooled_roster()
     entry = roster.create_team_entry(
         display_name="Wolves",
-        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3")],
+        riders=[
+            Rider(first_name="Bo", last_name="", plate="2"),
+            Rider(first_name="Cy", last_name="", plate="3"),
+        ],
     )
     roster.update_entry(entry, notes="flat tire; spare batteries")
 
@@ -1570,10 +1594,13 @@ def test_export_then_preview_reimports_a_pooled_team_with_zero_conflicts(
     """A worked example: export, then re-preview a fresh roster."""
     path = tmp_path / "out.csv"
     source = _pooled_roster()
-    source.create_solo_entry(name="Alex", plate="1")
+    source.create_solo_entry(first_name="Alex", last_name="", plate="1")
     source.create_team_entry(
         display_name="Wolves",
-        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3")],
+        riders=[
+            Rider(first_name="Bo", last_name="", plate="2"),
+            Rider(first_name="Cy", last_name="", plate="3"),
+        ],
     )
     export(source, path)
     target = _pooled_roster()
@@ -1616,9 +1643,11 @@ def test_export_placed_none_omitted_is_byte_identical(tmp_path: Path) -> None:
     path_omitted = tmp_path / "omitted.csv"
     path_none = tmp_path / "none.csv"
     roster = _relay_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     roster.create_team_entry(
-        display_name="Team A", riders=[Rider(name="Bo"), Rider(name="Cy")], plate="7"
+        display_name="Team A",
+        riders=[Rider(first_name="Bo", last_name=""), Rider(first_name="Cy", last_name="")],
+        plate="7",
     )
 
     export(roster, path_omitted)
@@ -1634,7 +1663,7 @@ def test_export_finished_relay_header_appends_standings_columns_after_existing_c
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     export(roster, path, placed=[_placed("1", "AS AH")])
 
@@ -1651,9 +1680,11 @@ def test_export_finished_relay_rows_carry_the_matching_placed_values(
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     roster.create_team_entry(
-        display_name="Team A", riders=[Rider(name="Bo"), Rider(name="Cy")], plate="7"
+        display_name="Team A",
+        riders=[Rider(first_name="Bo", last_name=""), Rider(first_name="Cy", last_name="")],
+        plate="7",
     )
     placed = [
         _placed("1", "AS AH", laps=5, total_time=20811.0),
@@ -1675,10 +1706,13 @@ def test_export_finished_pooled_rows_repeat_entry_stats_on_every_rider_row(
     path = tmp_path / "out.csv"
     roster = _pooled_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     roster.create_team_entry(
         display_name="Wolves",
-        riders=[Rider(name="Bo", plate="2"), Rider(name="Cy", plate="3")],
+        riders=[
+            Rider(first_name="Bo", last_name="", plate="2"),
+            Rider(first_name="Cy", last_name="", plate="3"),
+        ],
     )
     placed = [
         _placed("1", "AS AH", laps=2, total_time=6000.0),
@@ -1703,7 +1737,7 @@ def test_export_finished_ride_writes_dnf_entry_stats_from_placed(tmp_path: Path)
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     export(roster, path, placed=[_placed("1", "AS AH", laps=3, total_time=12345.0, dnf=True)])
 
@@ -1717,7 +1751,7 @@ def test_export_finished_ride_ignores_extra_placed_rows_with_no_matching_entry(
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     placed = [
         _placed("1", "AS AH", laps=5, total_time=20811.0),
         _placed("99", "KS KD", laps=2, total_time=999.0),  # no such entry
@@ -1736,7 +1770,7 @@ def test_export_with_standings_before_finish_raises_csv_io_error(
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = status
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     with pytest.raises(CsvIoError, match=re.escape("finished ride")):
         export(roster, path, placed=[_placed("1", "AS AH")])
@@ -1749,8 +1783,8 @@ def test_export_finished_ride_with_entry_missing_from_standings_raises_naming_pl
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
-    roster.create_solo_entry(name="Bo", plate="2")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    roster.create_solo_entry(first_name="Bo", last_name="", plate="2")
 
     with pytest.raises(CsvIoError, match=re.escape("no standings for plate 1")):
         export(roster, path, placed=[_placed("2", "AS AH")])
@@ -1761,7 +1795,7 @@ def test_export_placed_none_on_finished_ride_writes_plain_header(tmp_path: Path)
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     export(roster, path)
 
@@ -1783,7 +1817,7 @@ def test_export_stages_a_same_directory_temp_file_then_atomic_replace(
     """
     path = tmp_path / "out.csv"
     roster = _relay_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     calls: list[tuple[str, str]] = []
     real_replace = os.replace
 
@@ -1829,7 +1863,7 @@ def test_export_failure_during_replace_leaves_the_previous_file_intact(
     path = tmp_path / "out.csv"
     path.write_text("previous complete export\n", encoding="utf-8")
     roster = _relay_roster()
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     def crashing_replace(_src: str, _dst: str) -> None:
         raise OSError("simulated crash during atomic replace")
@@ -1865,7 +1899,7 @@ def test_export_finished_ride_with_empty_placed_raises_naming_plate(tmp_path: Pa
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 
     with pytest.raises(CsvIoError, match=re.escape("no standings for plate 1")):
         export(roster, path, placed=[])
@@ -1888,7 +1922,7 @@ def test_export_finished_relay_total_time_column_round_trips_as_float(
     """The total_time cell is repr-clean: float(repr(t)) round-trips."""
     roster = _relay_roster()
     roster.status = RideStatus.FINISHED
-    roster.create_solo_entry(name="Alex", plate="1")
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
     placed = [_placed("1", " ".join(codes), laps=laps, total_time=total_time)]
 
     with tempfile.TemporaryDirectory() as tmp_dir:

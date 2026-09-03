@@ -1331,7 +1331,8 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
 
     def _add_rider_and_close(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         harness.type_text(dialog, ids.PLATE_INPUT, "12")
-        harness.type_text(dialog, ids.NAME_INPUT, "Sam Ellis")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Sam")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Ellis")
         harness.click(dialog, ids.ADD_BTN)
         harness.click(dialog, pages.WX_ID_CLOSE)
 
@@ -2139,7 +2140,7 @@ def _live_console_parts(
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
-        roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
     config = RideConfig(
         name="GORBA EPIC 2026",
         event_date=date(2026, 9, 20),

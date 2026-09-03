@@ -11,6 +11,14 @@ spec.md §2 does not list one, and E8.1.1 stores per-user settings in
 a JSON config file (``rivercrossing.ui.presenters.settings``), not
 this database -- the schema stays untouched.
 
+**Greenfield reset (Phase 1 rider-name split).** This DDL is edited
+in place, not migrated: the ``rider.name`` column becomes
+``first_name``/``last_name`` and ``entry`` gains nullable
+``logo_card``/``logo_png`` columns. The project has no production
+data to preserve, so no ALTER TABLE migration was written -- any
+database file created by an older build is stale and must be
+recreated (existing dev DBs are not upgraded).
+
 Two schema decisions are recorded here because the spec is silent:
 
 - ``event_date`` is stored as ISO-8601 ``TEXT`` (``YYYY-MM-DD``), not
@@ -107,6 +115,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         status       TEXT    NOT NULL CHECK (status IN ('active', 'dnf')),
         dnf_at       INTEGER,
         notes        TEXT,
+        logo_card    TEXT,
+        logo_png     BLOB,
         UNIQUE (ride_id, plate)
     )
     """,
@@ -114,7 +124,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE TABLE rider (
         id                INTEGER PRIMARY KEY,
         entry_id          INTEGER NOT NULL REFERENCES entry(id),
-        name              TEXT    NOT NULL,
+        first_name        TEXT    NOT NULL,
+        last_name         TEXT    NOT NULL,
         plate             TEXT,
         sort_order        INTEGER NOT NULL,
         emergency_contact TEXT,

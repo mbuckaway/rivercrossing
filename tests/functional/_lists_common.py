@@ -66,11 +66,11 @@ def demo_seeded_roster() -> Roster:
     for team_name, rows in itertools.groupby(DemoDataSource().riders(), key=lambda row: row.team):
         if team_name is None:
             for row in rows:
-                roster.create_solo_entry(name=row.name, plate=row.plate)
+                roster.create_solo_entry(first_name=row.name, last_name="", plate=row.plate)
             continue
         roster.create_team_entry(
             display_name=team_name,
-            riders=[Rider(name=row.name, plate=row.plate) for row in rows],
+            riders=[Rider(first_name=row.name, last_name="", plate=row.plate) for row in rows],
         )
     return roster
 

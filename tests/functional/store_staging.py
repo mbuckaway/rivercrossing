@@ -166,10 +166,13 @@ def library_roster() -> Roster:
     and ``Store.roster_for`` must rebuild identically.
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     return roster
 
@@ -184,17 +187,20 @@ def rich_race_roster() -> Roster:
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in ("1", "2", "3", "4"):
-        roster.create_solo_entry(name=f"Solo {plate}", plate=plate)
+        roster.create_solo_entry(first_name=f"Solo {plate}", last_name="", plate=plate)
     roster.create_team_entry(
         display_name="Team A",
-        riders=[Rider(name="Rider 11", plate="11"), Rider(name="Rider 12", plate="12")],
+        riders=[
+            Rider(first_name="Rider", last_name="11", plate="11"),
+            Rider(first_name="Rider", last_name="12", plate="12"),
+        ],
     )
     roster.create_team_entry(
         display_name="Team B",
         riders=[
-            Rider(name="Rider 21", plate="21"),
-            Rider(name="Rider 22", plate="22"),
-            Rider(name="Rider 23", plate="23"),
+            Rider(first_name="Rider", last_name="21", plate="21"),
+            Rider(first_name="Rider", last_name="22", plate="22"),
+            Rider(first_name="Rider", last_name="23", plate="23"),
         ],
     )
     return roster

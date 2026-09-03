@@ -463,7 +463,7 @@ def _engine_source_with_correction() -> tuple[RideEngine, EngineDataSource]:
     own builder carries, recorded in this task's report).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
     config = RideConfig(
         name="GORBA EPIC 2026",
         event_date=date(2026, 9, 20),
