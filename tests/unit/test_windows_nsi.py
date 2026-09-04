@@ -33,7 +33,7 @@ import pytest
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _NSI_PATH = _REPO_ROOT / "installers" / "windows.nsi"
 
-_REQUIRED_DEFINES = ("APPVERSION", "PAYLOAD_DIR", "OUTFILE")
+_REQUIRED_DEFINES = ("APPVERSION", "PAYLOAD_DIR", "OUTFILE", "VERSIONINFO")
 
 _UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\RiverCrossing"
 _REGISTRY_VALUE_NAMES = (
@@ -142,6 +142,36 @@ def test_windows_nsi_declares_the_classic_install_and_uninstall_pages(
 ) -> None:
     """All four classic pages appear -- no Modern UI wizard."""
     assert page_directive in nsi_text
+
+
+# -------------------------------------------------- version metadata
+
+
+def test_windows_nsi_declares_viproductversion_from_the_versioninfo_define(
+    nsi_text: str,
+) -> None:
+    """VIProductVersion uses -DVERSIONINFO, never a literal version."""
+    assert 'VIProductVersion "${VERSIONINFO}"' in nsi_text
+
+
+@pytest.mark.parametrize(
+    "key_name",
+    ["ProductName", "FileDescription", "FileVersion", "ProductVersion"],
+)
+def test_windows_nsi_declares_each_version_info_key(nsi_text: str, key_name: str) -> None:
+    """Every VIAddVersionKey SignPath requires is declared."""
+    assert f'VIAddVersionKey "{key_name}"' in nsi_text
+
+
+def test_windows_nsi_product_name_version_key_is_rivercrossing(nsi_text: str) -> None:
+    """The signed binary names RiverCrossing, not a placeholder."""
+    assert 'VIAddVersionKey "ProductName" "RiverCrossing"' in nsi_text
+
+
+def test_windows_nsi_version_keys_reference_appversion(nsi_text: str) -> None:
+    """FileVersion and ProductVersion track APPVERSION."""
+    for key_name in ("FileVersion", "ProductVersion"):
+        assert f'VIAddVersionKey "{key_name}" "${{APPVERSION}}"' in nsi_text
 
 
 # -------------------------------------------------- the install section

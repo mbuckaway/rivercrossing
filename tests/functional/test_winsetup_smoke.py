@@ -190,6 +190,7 @@ def test_windows_nsi_compiles_with_all_defines_to_the_named_outfile(
         [
             makensis_path,
             f"-DAPPVERSION={rivercrossing.__version__}",
+            f"-DVERSIONINFO={rivercrossing.__version__}.0",
             # Native separators: Windows makensis finds no files
             # behind a forward-slash File glob (measured on
             # windows-latest); POSIX makensis takes both.
