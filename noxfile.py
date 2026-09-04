@@ -344,6 +344,9 @@ def winsetup(session):
         )
 
     version = _project_version()
+    # NSIS VIProductVersion and the spec's FixedFileInfo need a 4-part
+    # x.x.x.x; pad rivercrossing.__version__ (3-part) with a .0 build.
+    version_info = f"{version}.0"
     if sys.platform == "win32":
         payload = ROOT / "dist" / "rivercrossing"
         if not payload.is_dir():
@@ -357,6 +360,7 @@ def winsetup(session):
     session.run(
         makensis,
         f"-DAPPVERSION={version}",
+        f"-DVERSIONINFO={version_info}",
         # Native separators: Windows makensis finds no files behind a
         # forward-slash File glob (measured on windows-latest).
         f"-DPAYLOAD_DIR={payload}",
