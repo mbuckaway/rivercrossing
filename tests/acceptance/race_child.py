@@ -622,8 +622,8 @@ def _leader_plate(engine: RideEngine) -> str:
     """Return the first ranked entry's plate that has recorded cards.
 
     Teams rank ahead of solos in the two-section order, and a surviving
-    staged team may rank first with zero laps and no cards; the void-card
-    step must target an entry that actually holds a credited card.
+    staged team may rank first with zero laps and no cards, so the
+    void-card step must target an entry that holds a credited card.
     """
     return cast(
         "str",
