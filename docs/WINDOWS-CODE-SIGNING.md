@@ -382,13 +382,19 @@ timeline and verification procedure are **not publicly documented** — they com
 from the application itself or `support@signpath.io`. The steps that *are*
 known:
 
-- There is **no "generate a cert" step.** On approval, SignPath provisions the
-  project with the free "Open Source Code Signing" subscription, already holding
-  the **SignPath Foundation certificate** — issued to **"SignPath Foundation"**,
-  with the private key on their HSM. The user never imports or generates a key.
-- The project then **selects that certificate in the signing-policy Certificate
+- **Two certificate options.** The free OSS subscription can use either the
+  **SignPath Foundation certificate** (issued to **"SignPath Foundation"**, the
+  publisher users see, key on their HSM) or a **bring-your-own certificate**.
+  The bring-your-own path is the one with a CSR: create an X.509 CSR in SignPath
+  (key generated on the HSM), buy a cert from a CA issued to *your* legal entity,
+  upload it back. The Foundation-cert path has no "generate a cert" step — the
+  Foundation provisions it and the project just selects it.
+- The project then **selects the certificate in the signing-policy Certificate
   dropdown** (and enables trusted-build-system verification, origin
-  verification, and manual approval).
+  verification, and manual approval). For a CSR, the CA/B Forum code-signing
+  subject fields are **Organization (O)** and **Country (C)** (required) plus
+  **Common Name (CN)** (standard); Organizational Unit / Locality / State are
+  optional.
 - **Version metadata:** the installer and the app exe originally carried no
   VERSIONINFO; both now declare `ProductName`/`FileVersion`/`ProductVersion`
   (`installers/windows.nsi` `VIProductVersion` + `VIAddVersionKey`,

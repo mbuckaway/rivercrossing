@@ -38,11 +38,32 @@ Ordered:
    documented.
 2. **Await review.** The SignPath Foundation does a one-time reputation/control
    check; the timeline is not published. Ask `support@signpath.io` if it stalls.
-3. **Certificate.** There is **no "generate a cert" step.** On approval, SignPath
-   provisions the organization with the free "Open Source Code Signing"
-   subscription, already holding the **SignPath Foundation certificate** (issued
-   to "SignPath Foundation"; the key lives on their HSM). You never import or
-   generate a key.
+3. **Certificate.** SignPath's free OSS program offers two certificate options —
+   pick one when you create the `release-signing` policy:
+
+   - **SignPath Foundation certificate (free):** issued to "SignPath Foundation"
+     (the publisher users see); the key lives on SignPath's HSM. Select it in the
+     signing policy's Certificate dropdown — no CSR, no key of your own.
+   - **Bring your own certificate (free subscription, paid cert):** create an
+     X.509 CSR in SignPath (the private key is generated on SignPath's HSM), buy
+     a certificate from a CA issued to *your* legal entity, then upload it back.
+     The publisher shows *you*, not "SignPath Foundation".
+
+   **CSR X.509 subject fields** (bring-your-own path only). CA/B Forum code-signing
+   rules require Organization (O) and Country (C); Common Name (CN) is standard:
+
+   | Field | Required | Enter |
+   |---|---|---|
+   | Common Name (CN) | yes | your legal/org name — what users see as publisher |
+   | Organization (O) | yes | the verified legal entity name |
+   | Country (C) | yes | 2-letter ISO 3166 code (e.g. `AT`, `US`, `CA`) |
+   | Organizational Unit (OU) | no | optional division/department |
+   | Locality (L) | no | city |
+   | State/Province (ST) | no | state/province |
+
+   If you choose the free SignPath Foundation certificate, the subject is fixed to
+   "SignPath Foundation" and you do not fill these in — confirm with
+   `support@signpath.io` if the portal still asks for a subject on that path.
 4. **Team + MFA.** Invite the team, define Author/Reviewer/Approver roles, and
    enable MFA on both SignPath and the GitHub org (required for OSS).
 5. **Project.** Create the project: name, slug, and the repository URL (needed
