@@ -47,7 +47,7 @@ rivercrossing            # or: python -m rivercrossing
 
 ## Testing on Windows
 
-Every CI run builds two unsigned Windows installers, `RiverCrossing-<version>-windows-x64-setup.exe`
+Every CI run builds two Windows installers, `RiverCrossing-<version>-windows-x64-setup.exe`
 and `RiverCrossing-<version>-windows-arm64-setup.exe`, and uploads them as build artifacts.
 
 1. Download the installer matching your Windows architecture (`-x64` or `-arm64`) from the newest
@@ -56,8 +56,10 @@ and `RiverCrossing-<version>-windows-arm64-setup.exe`, and uploads them as build
    [Actions](https://github.com/mbuckaway/rivercrossing/actions) page carries the same installers
    as the **rivercrossing-setup-windows-x64** and **rivercrossing-setup-windows-arm64** artifacts
    (unzip them; artifacts need a GitHub login).
-2. Run the setup executable. **SmartScreen warns that the app is unrecognised** — the installer is
-   unsigned by decision until EPIC 9 (R-01). Click **More info**, then **Run anyway**.
+2. Run the setup executable. **SmartScreen may warn that the app is unrecognised** — the installer is
+   Authenticode-signed via SignPath once the `SIGNPATH_*` config lands, but a new-but-signed app still
+   shows the "unrecognised app" warning until SmartScreen reputation accrues, so click **More info**,
+   then **Run anyway** on early releases.
 3. The app installs per-user — no administrator prompt — under
    `%LOCALAPPDATA%\Programs\RiverCrossing`, with a Start-menu entry. Launch **RiverCrossing** from the
    Start menu. The app opens its store-backed main window: a ride that was running at the last exit

@@ -136,6 +136,42 @@ INFO_PLIST = {
     "NSRequiresAquaSystemAppearance": False,
 }
 
+# Authenticode metadata (SignPath requires product name + version on
+# signed binaries). Win32 only: macOS BUNDLE below sets its own
+# CFBundleVersion, and PyInstaller ignores `version` off Windows.
+version_info = None
+if sys.platform == "win32":
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo,
+        StringFileInfo,
+        StringStruct,
+        StringTable,
+        VarFileInfo,
+        VarStruct,
+        VSVersionInfo,
+    )
+
+    version_parts = tuple(int(part) for part in f"{rivercrossing.__version__}.0".split("."))
+    version_info = VSVersionInfo(
+        ffi=FixedFileInfo(filevers=version_parts, prodvers=version_parts),
+        kids=[
+            StringFileInfo(
+                [
+                    StringTable(
+                        "040904B0",
+                        [
+                            StringStruct("FileDescription", "RiverCrossing"),
+                            StringStruct("FileVersion", rivercrossing.__version__),
+                            StringStruct("ProductName", "RiverCrossing"),
+                            StringStruct("ProductVersion", rivercrossing.__version__),
+                        ],
+                    ),
+                ]
+            ),
+            VarFileInfo([VarStruct("Translation", [1033, 1200])]),
+        ],
+    )
+
 analysis = Analysis(  # noqa: F821 -- PyInstaller injects Analysis
     [str(ENTRY_SCRIPT)],
     pathex=[str(ROOT / "src")],
@@ -169,6 +205,7 @@ executable = EXE(  # noqa: F821 -- PyInstaller injects EXE
     argv_emulation=False,
     codesign_identity=None,  # unsigned dev bundle (spec.md section 14)
     entitlements_file=None,
+    version=version_info,  # win32 VERSIONINFO; None on macOS (ignored)
     # Proven by the gating Windows build job: the packaged exe builds
     # and installs with this .ico on windows-latest (Phase 10). macOS
     # keeps None here; BUNDLE() below applies the .icns instead.

@@ -247,7 +247,7 @@ when it runs on a version tag. The organisation supplies the values; when all si
 are present the macOS DMG is Developer-ID signed, notarized and stapled; if any is missing the gate
 falls back to publishing the unsigned DMG (partial sets count as absent).
 
-| Secret | Used by | Purpose |
+| Secret / variable | Used by | Purpose |
 |---|---|---|
 | `APPLE_DEVELOPER_ID` | ci.yml `release` | Developer ID signing identity, e.g. `Developer ID Application: <Name> (<TeamID>)` — `security find-identity -v -p codesigning` |
 | `APPLE_CERTIFICATE_B64` | ci.yml `release` | Base64 of the Developer ID Application `.p12` (certificate + private key) — `base64 -i RiverCrossing.p12` |
@@ -255,7 +255,12 @@ falls back to publishing the unsigned DMG (partial sets count as absent).
 | `APPLE_NOTARY_KEY_ID` | ci.yml `release` | App Store Connect API key ID (for `notarytool`) |
 | `APPLE_NOTARY_KEY` | ci.yml `release` | App Store Connect API key `.p8` contents (multi-line PEM) |
 | `APPLE_NOTARY_ISSUER` | ci.yml `release` | App Store Connect API issuer ID (UUID) |
-| — | Windows | **Unused in v1.** The Windows installer ships unsigned by decision (R-01); the user guide documents the SmartScreen "More info → Run anyway" step. |
+| `SIGNPATH_API_TOKEN` | ci.yml `build-windows-*` / `release` | SignPath CI-user token (secret) for `signpath/github-action-submit-signing-request` |
+| `SIGNPATH_ORGANIZATION_ID` | ci.yml `build-windows-*` / `release` | SignPath organization id (repo variable) |
+| `SIGNPATH_PROJECT_SLUG` | ci.yml `build-windows-*` / `release` | SignPath project slug (repo variable) |
+| `SIGNPATH_SIGNING_POLICY_SLUG` | ci.yml `build-windows-*` / `release` | SignPath signing-policy slug — `release-signing` (repo variable) |
+| `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | ci.yml `build-windows-*` / `release` | SignPath artifact-configuration slug (repo variable) |
+| — | Windows | The installer and PyInstaller bootloader are Authenticode-signed via SignPath when all five `SIGNPATH_*` values are present; until they land, the installer ships unsigned and the user guide documents the SmartScreen "More info → Run anyway" step. |
 
 Until the Apple credentials land, the macOS packaging stage emits an unsigned `.dmg` and the signing
 gate is advisory.

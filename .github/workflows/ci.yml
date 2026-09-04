@@ -245,6 +245,11 @@ jobs:
     runs-on: windows-latest
     env:
       RIVERCROSSING_EXPECT_WIN_ARCH: x64
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+      SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -255,14 +260,96 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv pip install --system -e ".[dev]"
+      - name: Detect SignPath signing config (advisory gate)
+        id: signing
+        shell: pwsh
+        run: |
+          $required = @(
+            'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG',
+            'SIGNPATH_SIGNING_POLICY_SLUG', 'SIGNPATH_ARTIFACT_CONFIGURATION_SLUG'
+          )
+          $missing = $required | Where-Object { [string]::IsNullOrEmpty((Get-Item "Env:$_").Value) }
+          if ($missing.Count -gt 0) {
+            "signed=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "SignPath config absent ($($missing -join ', ')) -- unsigned installer; signed path green once creds land"
+          }
+          else {
+            "signed=1" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "SignPath config present -- Authenticode signing enabled"
+          }
       - name: PyInstaller onedir (unsigned dev bundle)
         run: nox -s bundle
       - name: Smoke the built bundle
         run: nox -s smoke
+      - name: Upload the bootloader for signing
+        id: upload-bootloader
+        if: steps.signing.outputs.signed == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-bootloader-x64
+          path: dist/rivercrossing/rivercrossing.exe
+          if-no-files-found: error
+      - name: Submit the bootloader signing request
+        if: steps.signing.outputs.signed == '1'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-bootloader.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed/bootloader
+      - name: Restore the signed bootloader
+        if: steps.signing.outputs.signed == '1'
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem -Path signed/bootloader -Recurse -Filter rivercrossing.exe | Select-Object -First 1
+          if (-not $signed) { throw "no signed rivercrossing.exe in signed/bootloader" }
+          Copy-Item $signed.FullName dist/rivercrossing/rivercrossing.exe -Force
       - name: Install NSIS (absent from the windows-2025 image)
         run: choco install nsis -y --no-progress
-      - name: Compile the unsigned installer
+      - name: Compile the installer
         run: nox -s winsetup
+      - name: Upload the installer for signing
+        id: upload-setup
+        if: steps.signing.outputs.signed == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-setup-signing-x64
+          path: dist/RiverCrossing-*-setup.exe
+          if-no-files-found: error
+      - name: Submit the installer signing request
+        if: steps.signing.outputs.signed == '1'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed/setup
+      - name: Restore the signed installer
+        if: steps.signing.outputs.signed == '1'
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem -Path signed/setup -Recurse -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $signed) { throw "no signed setup.exe in signed/setup" }
+          Copy-Item $signed.FullName "dist/$($signed.Name)" -Force
+      - name: Verify the Authenticode signatures
+        if: steps.signing.outputs.signed == '1'
+        shell: pwsh
+        run: |
+          $boot = Get-AuthenticodeSignature "dist/rivercrossing/rivercrossing.exe"
+          $setup = Get-AuthenticodeSignature (Get-ChildItem -Path dist -Filter '*-setup.exe').FullName
+          if ($boot.Status -ne 'Valid') { throw "bootloader signature invalid: $($boot.Status)" }
+          if ($setup.Status -ne 'Valid') { throw "installer signature invalid: $($setup.Status)" }
+          Write-Host "bootloader: $($boot.Status)  installer: $($setup.Status)"
       - name: Silent install, launch, uninstall (E9.1.2)
         run: nox -s winsetup_smoke
       - name: Upload the setup executable
@@ -295,6 +382,11 @@ jobs:
     runs-on: windows-11-arm
     env:
       RIVERCROSSING_EXPECT_WIN_ARCH: arm64
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+      SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+      SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+      SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+      SIGNPATH_ARTIFACT_CONFIGURATION_SLUG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -305,13 +397,95 @@ jobs:
           enable-cache: true
       - name: Install
         run: uv pip install --system -e ".[dev]"
+      - name: Detect SignPath signing config (advisory gate)
+        id: signing
+        shell: pwsh
+        run: |
+          $required = @(
+            'SIGNPATH_API_TOKEN', 'SIGNPATH_ORGANIZATION_ID', 'SIGNPATH_PROJECT_SLUG',
+            'SIGNPATH_SIGNING_POLICY_SLUG', 'SIGNPATH_ARTIFACT_CONFIGURATION_SLUG'
+          )
+          $missing = $required | Where-Object { [string]::IsNullOrEmpty((Get-Item "Env:$_").Value) }
+          if ($missing.Count -gt 0) {
+            "signed=0" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "SignPath config absent ($($missing -join ', ')) -- unsigned installer; signed path green once creds land"
+          }
+          else {
+            "signed=1" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "SignPath config present -- Authenticode signing enabled"
+          }
       - name: PyInstaller onedir (unsigned dev bundle)
         run: nox -s bundle
       - name: Smoke the built bundle
         run: nox -s smoke
+      - name: Upload the bootloader for signing
+        id: upload-bootloader
+        if: steps.signing.outputs.signed == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-bootloader-arm64
+          path: dist/rivercrossing/rivercrossing.exe
+          if-no-files-found: error
+      - name: Submit the bootloader signing request
+        if: steps.signing.outputs.signed == '1'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-bootloader.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed/bootloader
+      - name: Restore the signed bootloader
+        if: steps.signing.outputs.signed == '1'
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem -Path signed/bootloader -Recurse -Filter rivercrossing.exe | Select-Object -First 1
+          if (-not $signed) { throw "no signed rivercrossing.exe in signed/bootloader" }
+          Copy-Item $signed.FullName dist/rivercrossing/rivercrossing.exe -Force
       # NSIS 3.10 is preinstalled on windows-11-arm; no choco install.
-      - name: Compile the unsigned installer
+      - name: Compile the installer
         run: nox -s winsetup
+      - name: Upload the installer for signing
+        id: upload-setup
+        if: steps.signing.outputs.signed == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: rivercrossing-setup-signing-arm64
+          path: dist/RiverCrossing-*-setup.exe
+          if-no-files-found: error
+      - name: Submit the installer signing request
+        if: steps.signing.outputs.signed == '1'
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 1800
+          output-artifact-directory: signed/setup
+      - name: Restore the signed installer
+        if: steps.signing.outputs.signed == '1'
+        shell: pwsh
+        run: |
+          $signed = Get-ChildItem -Path signed/setup -Recurse -Filter '*-setup.exe' | Select-Object -First 1
+          if (-not $signed) { throw "no signed setup.exe in signed/setup" }
+          Copy-Item $signed.FullName "dist/$($signed.Name)" -Force
+      - name: Verify the Authenticode signatures
+        if: steps.signing.outputs.signed == '1'
+        shell: pwsh
+        run: |
+          $boot = Get-AuthenticodeSignature "dist/rivercrossing/rivercrossing.exe"
+          $setup = Get-AuthenticodeSignature (Get-ChildItem -Path dist -Filter '*-setup.exe').FullName
+          if ($boot.Status -ne 'Valid') { throw "bootloader signature invalid: $($boot.Status)" }
+          if ($setup.Status -ne 'Valid') { throw "installer signature invalid: $($setup.Status)" }
+          Write-Host "bootloader: $($boot.Status)  installer: $($setup.Status)"
       - name: Silent install, launch, uninstall (E9.1.2)
         run: nox -s winsetup_smoke
       - name: Upload the setup executable

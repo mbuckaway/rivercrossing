@@ -16,6 +16,7 @@
 ; ever hard-coded here:
 ;
 ;   makensis -DAPPVERSION=<rivercrossing.__version__>
+;            -DVERSIONINFO=<rivercrossing.__version__ + '.0'>
 ;            -DPAYLOAD_DIR=<built payload dir, native separators>
 ;            -DOUTFILE=<absolute output path for the setup .exe>
 ;            installers/windows.nsi
@@ -37,6 +38,9 @@
 !ifndef OUTFILE
   !error "OUTFILE not defined -- pass -DOUTFILE=<output installer path>"
 !endif
+!ifndef VERSIONINFO
+  !error "VERSIONINFO not defined -- pass -DVERSIONINFO=<4-part version>"
+!endif
 
 Name "RiverCrossing"
 OutFile "${OUTFILE}"
@@ -45,6 +49,11 @@ RequestExecutionLevel user
 InstallDir "$LOCALAPPDATA\Programs\RiverCrossing"
 Icon "branding/rivercrossing.ico"
 UninstallIcon "branding/rivercrossing.ico"
+VIProductVersion "${VERSIONINFO}"
+VIAddVersionKey "ProductName" "RiverCrossing"
+VIAddVersionKey "FileDescription" "RiverCrossing"
+VIAddVersionKey "FileVersion" "${APPVERSION}"
+VIAddVersionKey "ProductVersion" "${APPVERSION}"
 
 Page directory
 Page instfiles

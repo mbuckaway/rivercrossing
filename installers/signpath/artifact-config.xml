@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration (reference copy). The live copy is
+     edited in the SignPath UI; keep this in sync so the signing scope is
+     reviewable in-repo. Each CI signing request uploads a single PE -- the
+     bootloader rivercrossing.exe or the NSIS setup.exe -- zipped by
+     actions/upload-artifact, so this signs every .exe in the ZIP and enforces
+     the product-name metadata SignPath's OSS terms require. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="*.exe" max-matches="unbounded" product-name="RiverCrossing">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="**/*.exe" max-matches="unbounded" product-name="RiverCrossing">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
