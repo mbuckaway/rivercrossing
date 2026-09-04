@@ -618,6 +618,19 @@ def _standings_rows(engine: RideEngine) -> list[dict[str, object]]:
     return rows
 
 
+def _leader_plate(engine: RideEngine) -> str:
+    """Return the first ranked entry's plate that has recorded cards.
+
+    Teams rank ahead of solos in the two-section order, and a surviving
+    staged team may rank first with zero laps and no cards; the void-card
+    step must target an entry that actually holds a credited card.
+    """
+    return cast(
+        "str",
+        next(row["plate"] for row in _standings_rows(engine) if int(row["laps"]) > 0),
+    )
+
+
 def _voided_card_code(store: Store, ride_id: int) -> str:
     """Return the card code the latest void_card audit event carried."""
     row = store._conn.execute(
@@ -903,7 +916,7 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     reopened = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText() == "REOPENED"
     _drive_add_crossing()
     harness.fire_menu_event(frame, ids.MI_ADD_CROSSING_AT)
-    context.detail_plate = cast("str", _standings_rows(engine)[0]["plate"])
+    context.detail_plate = _leader_plate(engine)
     _drive_void_card()
     harness.fire_menu_event(frame, ids.MI_VOID_CARD)
     voided_card = _voided_card_code(store, ride_id)
@@ -1146,7 +1159,7 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
     checkpoints.append(_snapshot("after_add_crossing", standings=False))
     engine.void_crossing("2", 1, "mis-key")
     checkpoints.append(_snapshot("after_void_crossing", standings=False))
-    context.detail_plate = cast("str", _standings_rows(engine)[0]["plate"])
+    context.detail_plate = _leader_plate(engine)
     _drive_void_card()
     harness.fire_menu_event(frame, ids.MI_VOID_CARD)
     checkpoints.append(_snapshot("after_void_card", standings=False))
