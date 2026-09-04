@@ -444,7 +444,8 @@ SELFTEST_DLG = WindowSpec(
 )
 
 # xrc-windows's own A-E order: 1 console + 10 setup/lifecycle dialogs +
-# 7 rider/card dialogs + 4 results/library/audit + 4 system/help = 26.
+# 8 rider/card dialogs (team_editor_dlg is Phase 4's section-C member)
+# + 4 results/library/audit + 4 system/help = 27.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,

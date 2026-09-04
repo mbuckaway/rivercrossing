@@ -13,7 +13,7 @@ Three separate claims, because they fail for different reasons:
 1. **The built binary launches.** Proves the frozen interpreter
    resolves every import the app needs -- the failure mode a missing
    hidden import produces, and one no source-tree test can see.
-2. **The bundle carries its assets, byte for byte.** The 9 ``.xrc``
+2. **The bundle carries its assets, byte for byte.** The 10 ``.xrc``
    files, 106 card bitmaps and 3 WAV cues, on the packaged package
    path, with identical contents -- and all 23 windows load from the
    *bundled* ``.xrc`` copies. E9.1.1 extends the byte-identity claim
@@ -115,7 +115,7 @@ LAUNCH_SETTLE_SECONDS = 20
 # has to outlast that, never a real build.
 BUILD_TIMEOUT_SECONDS = 180
 
-EXPECTED_XRC_FILES = 9
+EXPECTED_XRC_FILES = 10
 EXPECTED_CARD_BITMAPS = 106
 EXPECTED_WAV_CUES = 3
 EXPECTED_VECTOR_CSVS = 2
@@ -246,7 +246,7 @@ def _broken_tree(destination: Path, delete: str) -> Path:
 # --------------------------------------------------------- the manifest
 
 
-def test_required_assets_declares_the_nine_frozen_xrc_files() -> None:
+def test_required_assets_declares_the_ten_frozen_xrc_files() -> None:
     """An .xrc file disappearing must shrink this, not the suite."""
     assert len(manifest.REQUIRED_XRC) == EXPECTED_XRC_FILES
 

@@ -247,9 +247,7 @@ class TeamsPresenter:
 
     def _load(self) -> None:
         """Render the editor's full initial state from the roster."""
-        self.view.set_relay_plate_visible(
-            visible=self.roster.plate_model is PlateModel.TEAM_RELAY
-        )
+        self.view.set_relay_plate_visible(visible=self.roster.plate_model is PlateModel.TEAM_RELAY)
         self._refresh_rows()
         self._show_add_form()
 
@@ -291,9 +289,7 @@ class TeamsPresenter:
     def _show_add_form(self) -> None:
         """Reset the form: nothing selected, blank fields."""
         self._selected = None
-        self.view.show_form(
-            name="", relay_plate="", notes="", logo_card=None, has_image=False
-        )
+        self.view.show_form(name="", relay_plate="", notes="", logo_card=None, has_image=False)
         self.view.show_members([])
 
     def _create_team(self, name: str) -> Entry:

@@ -261,7 +261,7 @@ _RIDER_EDITOR_ONLY_CALLS: tuple[tuple[str, tuple[Any, ...], dict[str, Any]], ...
     ("show_riders", ([],), {}),
     ("show_team_choices", ([],), {}),
     ("set_delete_enabled", (), {"enabled": True}),
-    ("show_form", (), {"plate": "1", "name": "A", "team": "— solo —"}),
+    ("show_form", (), {"plate": "1", "first_name": "A", "last_name": "B", "team": "— solo —"}),
     ("set_team_ui_visible", (), {"visible": True}),
     ("prompt_new_team_name", (), {}),
 )
