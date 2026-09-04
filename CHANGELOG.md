@@ -4,15 +4,69 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-09-04
+
+### Added
+
+- **Teams Editor** — Riders ▸ Teams Editor (`team_editor_dlg`) creates, renames and removes teams, edits a team's relay plate, notes and logo (a seeded card by default, or an uploaded image), and shows its members read-only. Enabled for solo+teams rides.
+- **Team-mode results split into two sets** — a mixed ride ranks Teams and Solo riders separately (each numbered from 1 with its own DNF tail) in the Results window and the HTML/PDF exports, and the standings CSV gains a `type` column.
+
+### Changed
+
+- **Rider names are first/last** — a rider now has separate first and last names; the Rider Editor collects them in two fields and every roster surface uses the joined name.
+- **Unified header-mapped roster CSV** — import and export use one format for every ride (`FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER[,NOTES]`): import resolves columns by header, ignores unsupported columns and non-data rows, auto-assigns race plates when blank, and groups teams by name.
+- **Cards credit the team, not the rider** — a team rider's lap deals into the team's hand; a relay team keeps one rider on course at a time.
+- **A fresh launch starts DRAFT** — no ride is auto-started, so File ▸ Quit shows the plain confirm rather than "stop the running ride".
+- **Resume loads the ride's roster** — continuing a ride installs its entries on the shared context, so the Rider/Teams editors and CSV import act on the real ride.
+
+### Fixed
+
+- **Clock/button overlap** — the elapsed/remaining clock labels reserve a fixed width and re-layout each tick, so they no longer overlap the Start/Stop buttons at the default window size.
+
+## [1.0.7] - 2026-09-02
+
+### Fixed — functional-suite flakiness (macOS settings/zoom)
+
+- **Settings/zoom modal drives wait for the dialog to be shown.** The settings and zoom scenarios
+  drove their modal Settings dialog with a bare `wx.CallAfter` that could fire before `ShowModal`
+  started, dropping the OK/Cancel click. They now route through the existing `_drive_when_shown`
+  helper (`tests/functional/console_subprocess_scenarios.py`).
+- **Production Fault-B guard in `build_main_window`.** A degraded XRC load (which silently skips a
+  subtree under load) could surface as a bare `LookupError` from `MainFrame.__init__` (for example
+  `main_frame has no control named 'record_btn'`). The frame's required controls are now verified
+  after load and rebuilt once from a fresh private `XmlResource` if any is missing
+  (`ui.app._load_frame_verified`, `ui.views.main_frame.REQUIRED_CONTROLS`).
+
+### Changed
+
+- **Bundle identifier** changed from `io.github.mbuckaway.rivercrossing` to
+  `ca.buckaway.rivercrossing` (registered under Apple team `XYXZZT45G4`), matching the account's
+  existing `ca.buckaway.*` identifiers.
+
+## [1.0.6] - 2026-09-02
+
+### Fixed — first published signed macOS release
+
+- **Developer-ID signed + notarized DMG.** The signed lane now ships the `.app` as a tarball
+  (`tar` preserves the symlinks PyInstaller creates; `upload/download-artifact`'s zip dereferenced
+  them, which made `codesign` report the bundle as "ambiguous"), signs inside-out without `--deep`,
+  and applies the PyInstaller hardened-runtime entitlements. Verified locally: the signed app
+  launches and `codesign --verify --deep --strict` passes. v1.0.3–1.0.5 attempts hit this and did
+  not publish.
+
+## [1.0.5] - 2026-09-02
+
+### Changed — codesign attempt (superseded)
+
+- The v1.0.5 tag's `release` job reached codesign but still failed (symlink dereferencing in the
+  artifact round-trip, fixed in 1.0.6); no v1.0.5 release was published.
+
 ## [1.0.4] - 2026-09-02
 
-### Changed — first published signed macOS release
+### Changed — signed release attempt (superseded)
 
-- **Developer-ID signed + notarized DMG.** The tag `release` job signs the app, rebuilds the DMG
-  from the signed app, notarizes and staples it, and `spctl`-checks it before publishing. v1.0.3's
-  attempt exposed two signed-lane bugs, both fixed here: the `.p12` is now exported with openssl
-  `-legacy` algorithms (Apple `security` rejects the modern defaults), and the signing steps locate
-  the `.app` at the dev-bundle artifact's real (flat) path.
+- The v1.0.4 tag's `release` job reached codesign but failed there (`codesign --deep` ambiguity on
+  `Python.framework`, fixed in 1.0.5); no v1.0.4 release was published.
 
 ## [1.0.3] - 2026-09-02
 

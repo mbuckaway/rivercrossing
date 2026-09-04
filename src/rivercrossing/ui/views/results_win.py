@@ -36,6 +36,7 @@ here like ``RideSetup`` builds its own) owns that label map and the
 see that module's docstring for why it used to be duplicated here.
 """
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import wx
@@ -164,6 +165,21 @@ _TEXT_ACCESSORS: tuple[Callable[[StandingsRow], str], ...] = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class _SectionHeader:
+    """One standings_list section marker ("Teams" or "Solo").
+
+    Phase 3 (team/solo results split): the two lists
+    :meth:`ResultsWindow.show_standings` receives carry the kind
+    distinction, so the model renders a non-empty section as a header
+    row (the label in the Entry column, every other cell blank) in the
+    same seven columns -- never an eighth column (xrc-windows.md pins
+    the layout). An empty section is skipped, header and all.
+    """
+
+    label: str
+
+
 class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
     """Read-only model over ``StandingsRow`` rows, standings_list.
 
@@ -172,8 +188,8 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
     ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
     """
 
-    def __init__(self, rows: Sequence[StandingsRow]) -> None:
-        """Wrap *rows*, in placed order."""
+    def __init__(self, rows: Sequence[StandingsRow | _SectionHeader]) -> None:
+        """Wrap *rows*: standings rows plus section-header markers."""
         super().__init__(len(rows))
         self._rows = tuple(rows)
 
@@ -186,8 +202,18 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return "string"
 
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the cell value at *row*/*col*."""
-        return _TEXT_ACCESSORS[col](self._rows[row])
+        """Return the cell value at *row*/*col*.
+
+        A :class:`_SectionHeader` row names its section in the Entry
+        column (``COL_ENTRY``) and leaves the other six blank, so the
+        section label never shifts the frozen column layout.
+        """
+        value = self._rows[row]
+        if isinstance(value, _SectionHeader):
+            if col == COL_ENTRY:
+                return value.label
+            return ""
+        return _TEXT_ACCESSORS[col](value)
 
 
 class ResultsWindow:
@@ -370,12 +396,26 @@ class ResultsWindow:
         """Hide the Total column unless show_times_chk is checked."""
         self._total_column.SetHidden(not self.show_times_chk.GetValue())
 
-    def show_standings(self, rows: list[StandingsRow]) -> None:
-        """Render ``standings_list`` (``ResultsView``).
+    def show_standings(self, teams: list[StandingsRow], solo: list[StandingsRow]) -> None:
+        """Render ``standings_list`` (``ResultsView``, Phase 3).
+
+        The two lists carry the kind distinction: a non-empty Teams
+        section renders as a "Teams" header row (the label in the Entry
+        column, other cells blank) followed by its rows, then the Solo
+        section the same way; an empty section is skipped, header and
+        all -- a solo-only ride shows only the Solo section. The frozen
+        seven-column layout never grows an eighth column.
 
         See ``ui.views._support.associate_model``'s docstring for
         why this repaints explicitly (unverified remedy).
         """
+        rows: list[StandingsRow | _SectionHeader] = []
+        if teams:
+            rows.append(_SectionHeader("Teams"))
+            rows.extend(teams)
+        if solo:
+            rows.append(_SectionHeader("Solo"))
+            rows.extend(solo)
         self._model = StandingsListModel(rows)
         associate_model(self.standings_list, self._model)
 

@@ -121,9 +121,13 @@ def race_support() -> ModuleType:
 
 
 def _write_riders_csv(path: Path, count: int) -> None:
-    """Write a rider_pooled CSV of *count* solo riders ``1..count``."""
-    lines = ["plate,name,team_name,notes"]
-    lines.extend(f"{number},Rider {number:02d},," for number in range(1, count + 1))
+    """Write a unified-format CSV of *count* solo riders ``1..count``.
+
+    Names are split ``Rider``/``NN`` so the imported roster's full name
+    stays ``Rider NN`` (the same string the results exports show).
+    """
+    lines = ["firstname,lastname,type,teamname,number,notes"]
+    lines.extend(f"Rider,{number:02d},solo,,{number}," for number in range(1, count + 1))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -280,15 +284,19 @@ def _assert_report_ok(report: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
-def _imported_plates() -> list[str]:
+def _imported_plates(staged_plates: list[str]) -> list[str]:
     """Return the roster plates the import must leave on the ride.
 
-    The import REPLACES the ride's roster with the CSV's riders (the
-    staged team's plates are not carried over -- csvio.commit defines
-    the roster from the file), so the expected set is exactly the CSV's
-    plates.
+    The import applies the CSV to the resumed ride's actual roster --
+    csvio.commit matches/inserts/reshapes, it never deletes an entry
+    absent from the file -- so every CSV plate is present together
+    with any staged entry whose plate the CSV does not name (the
+    staged team's own entry plate survives; a staged plate the CSV
+    does name, like the staged solo's "12", is updated in place).
+    *staged_plates* are the resumed ride's entry plates before the
+    import.
     """
-    return sorted(str(number) for number in range(1, _RIDER_COUNT + 1))
+    return sorted({*(str(number) for number in range(1, _RIDER_COUNT + 1)), *staged_plates})
 
 
 # ------------------------------------------- export verification (R-74)
@@ -340,11 +348,15 @@ def _html_standings(path: Path) -> tuple[tuple[int, str, int, str], ...]:
 
 
 def _csv_standings(path: Path) -> tuple[tuple[int, str, int, str], ...]:
-    """Read the standings CSV rows as ``(place, plate, laps, hand)``."""
+    """Read the standings CSV rows as ``(place, plate, laps, hand)``.
+
+    Phase 3's ``type`` column (``team``/``solo``) sits between entry
+    and laps; the projection ignores it.
+    """
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.reader(handle))
-    assert rows[0] == ["place", "plate", "entry", "laps", "hand"]
-    return tuple((int(row[0]), row[1], int(row[3]), row[4]) for row in rows[1:])
+    assert rows[0] == ["place", "plate", "entry", "type", "laps", "hand"]
+    return tuple((int(row[0]), row[1], int(row[4]), row[5]) for row in rows[1:])
 
 
 def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noqa: PLR0915 -- the script IS the test: one acceptance scenario
@@ -391,10 +403,15 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     assert "You quit at" in data_a["resume_message"], report_a["context"]
     assert data_a["status_label"] == "RUNNING", report_a["context"]
     assert data_a["entry_enabled"] is True, report_a["context"]
-    # The import replaced the staged roster with the CSV's riders and
-    # persisted to the store ride (the R-74 gap), so the rebuilt roster
-    # carries exactly the CSV's plates.
-    assert data_a["imported_plates"] == _imported_plates(), report_a["context"]
+    # Resume installed the staged ride's roster on the shared context
+    # (the resume-roster fix), so the import previewed against the
+    # staged library_roster -- CSV plates 1..20 insert, the staged
+    # solo "12" is renamed in place, and the staged team's own plate
+    # "77" survives (match/insert/reshape, never delete-on-import) --
+    # then persisted to the store ride (the R-74 gap), so the rebuilt
+    # roster carries the CSV's plates plus the surviving staged one.
+    staged_plates = [entry.plate for entry in store_staging.library_roster().entries]
+    assert data_a["imported_plates"] == _imported_plates(staged_plates), report_a["context"]
     assert data_a["crossings_typed"] == _WAVE_CROSSINGS, report_a["context"]
     assert data_a["feed_rows"] == _FEED_CAP, report_a["context"]  # feed caps at 30 (R-32)
     assert data_a["recorded_crossings"] == _WAVE_CROSSINGS, report_a["context"]

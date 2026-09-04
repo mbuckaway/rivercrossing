@@ -65,8 +65,13 @@ _FIVE_CARDS = (
 )
 
 
-def _sample_entry(  # noqa: PLR0913 -- (plate, name, laps, dnf): the EntryResult's own fields
-    plate: str, name: str, laps: int, *, dnf: bool = False
+def _sample_entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf): the EntryResult's own fields
+    plate: str,
+    name: str,
+    laps: int,
+    *,
+    kind: str = "solo",
+    dnf: bool = False,
 ) -> EntryResult:
     """Build one finished-ride EntryResult for the render() seam tests.
 
@@ -76,7 +81,7 @@ def _sample_entry(  # noqa: PLR0913 -- (plate, name, laps, dnf): the EntryResult
         entry_id=plate,
         plate=plate,
         name=name,
-        kind="solo",
+        kind=kind,
         laps=laps,
         total_time=float(laps * 1800 + 120),
         best_lap=1800.0,
@@ -168,6 +173,64 @@ def test_render_payload_generated_override_replaces_footer_and_embedded_record()
     assert "Generated 01:00, Jan 1 2026" in rendered
     record = json.loads(race_data_block(rendered))
     assert record["event"]["generated"] == "Generated 01:00, Jan 1 2026"
+
+
+def test_render_payload_full_field_renders_teams_then_solo_sections(
+    rendered_times: str,
+) -> None:
+    """Phase 3: the Full field splits into Teams then Solo sections."""
+    assert ">Teams</td>" in rendered_times
+    assert ">Solo</td>" in rendered_times
+    assert rendered_times.find(">Teams</td>") < rendered_times.find(">Solo</td>")
+
+
+def test_render_public_solo_only_field_omits_the_teams_section() -> None:
+    """A solo-only field renders only the Solo section (no Teams)."""
+    html = render(_StubRide(), _placed_pair(), ExportOptions())
+
+    assert ">Solo</td>" in html
+    assert ">Teams</td>" not in html
+
+
+def _placed_two_kinds() -> tuple[Placed, Placed]:
+    """Return a team and a solo, each first in its own section."""
+    return (
+        Placed(
+            place=1,
+            result=_sample_entry("88", "Moss Ridge Riders", 11, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        Placed(
+            place=1,
+            result=_sample_entry("7", "Luca Ferrari", 10),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+
+def test_render_public_mixed_field_orders_full_field_teams_before_solo() -> None:
+    """Teams-then-Solo input stays ordered in page and record."""
+    html = render(_StubRide(), _placed_two_kinds(), ExportOptions(show_times=True))
+
+    teams = html.find(">Teams</td>")
+    solo = html.find(">Solo</td>")
+    assert teams != -1
+    assert solo != -1
+    assert teams < solo
+    record = json.loads(race_data_block(html))
+    assert [row["type"] for row in record["results"]] == ["TEAM", "SOLO"]
+    assert [row["place"] for row in record["results"]] == [1, 1]
+
+
+def test_render_public_full_field_off_omits_the_section_labels() -> None:
+    """full_field=False drops the Full field section and its headers."""
+    html = render(_StubRide(), _placed_two_kinds(), ExportOptions(full_field=False))
+
+    assert "Full field" not in html
+    assert ">Teams</td>" not in html
+    assert ">Solo</td>" not in html
 
 
 # -------------------------------------------------- record round-trip

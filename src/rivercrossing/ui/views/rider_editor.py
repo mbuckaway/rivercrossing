@@ -200,7 +200,8 @@ class RiderEditor:
         self._model: RidersListModel = RidersListModel([])
 
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)
-        self.name_input = self._find(ids.NAME_INPUT, wx.TextCtrl)
+        self.first_name_input = self._find(ids.FIRST_NAME_INPUT, wx.TextCtrl)
+        self.last_name_input = self._find(ids.LAST_NAME_INPUT, wx.TextCtrl)
         self.team_choice = self._find(ids.TEAM_CHOICE, wx.Choice)
         self.add_btn = self._find(ids.ADD_BTN, wx.Button)
         self.save_btn = self._find(ids.SAVE_BTN, wx.Button)
@@ -287,7 +288,8 @@ class RiderEditor:
         """
         return RiderFormValues(
             plate=self.plate_input.GetValue(),
-            name=self.name_input.GetValue(),
+            first_name=self.first_name_input.GetValue(),
+            last_name=self.last_name_input.GetValue(),
             team=self.team_choice.GetStringSelection(),
         )
 
@@ -381,10 +383,17 @@ class RiderEditor:
         """
         raise NotImplementedError(_CSV_PREVIEW_NOT_IMPLEMENTED)
 
-    def show_form(self, *, plate: str, name: str, team: str) -> None:
-        """Fill plate_input/name_input/team_choice (R-20)."""
+    def show_form(  # noqa: PLR0913 -- the passive view fills the four form fields verbatim
+        self, *, plate: str, first_name: str, last_name: str, team: str
+    ) -> None:
+        """Fill plate_input and the two name inputs (``RidersView``).
+
+        ``RidersView``, R-20: the passive view fills exactly what the
+        presenter asks for.
+        """
         self.plate_input.SetValue(plate)
-        self.name_input.SetValue(name)
+        self.first_name_input.SetValue(first_name)
+        self.last_name_input.SetValue(last_name)
         self.team_choice.SetStringSelection(team)
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
@@ -603,8 +612,10 @@ class CsvPreviewDialog:
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
-    def show_form(self, *, plate: str, name: str, team: str) -> None:
-        """Fill plate_input/name_input/team_choice; that dialog's job.
+    def show_form(  # noqa: PLR0913 -- mirrors RiderEditor.show_form's four-field signature
+        self, *, plate: str, first_name: str, last_name: str, team: str
+    ) -> None:
+        """Fill the form fields; that dialog's own job.
 
         Raises:
             NotImplementedError: Always -- ``csv_preview_dlg`` has no

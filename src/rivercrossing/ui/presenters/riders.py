@@ -103,7 +103,8 @@ class RiderFormValues:
     """
 
     plate: str
-    name: str
+    first_name: str
+    last_name: str
     team: str
 
 
@@ -131,8 +132,10 @@ class RidersView(Protocol):
         """Gate wxID_OK "Import" while conflicts > 0."""
         ...
 
-    def show_form(self, *, plate: str, name: str, team: str) -> None:
-        """Fill plate_input/name_input/team_choice (add or select)."""
+    def show_form(  # noqa: PLR0913 -- the passive view fills the four form fields verbatim
+        self, *, plate: str, first_name: str, last_name: str, team: str
+    ) -> None:
+        """Fill the rider editor's form fields (R-20)."""
         ...
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
@@ -169,7 +172,7 @@ def _rider_rows(roster: Roster) -> list[RiderRow]:
     return [
         RiderRow(
             plate=_rider_plate(roster, entry, rider),
-            name=rider.name,
+            name=rider.full_name,
             team=entry.display_name if entry.type is EntryType.TEAM else None,
         )
         for entry, rider in _rider_pairs(roster)
@@ -221,7 +224,10 @@ class RidersPresenter:
         self._selected = (entry, rider)
         team = entry.display_name if entry.type is EntryType.TEAM else SOLO_TEAM_CHOICE
         self.view.show_form(
-            plate=_rider_plate(self.roster, entry, rider), name=rider.name, team=team
+            plate=_rider_plate(self.roster, entry, rider),
+            first_name=rider.first_name,
+            last_name=rider.last_name,
+            team=team,
         )
         self.view.set_delete_enabled(
             enabled=can_delete_entry(self.roster.status, has_data=entry.has_data)
@@ -258,12 +264,13 @@ class RidersPresenter:
         entry, rider = self._selected
         try:
             self._apply_plate_change(entry, rider, form.plate)
+            rider.first_name = form.first_name
+            rider.last_name = form.last_name
             if entry.type is EntryType.SOLO:
-                self.roster.update_entry(entry, display_name=form.name)
+                self.roster.update_entry(entry, display_name=rider.full_name)
         except RosterError as exc:
             self.view.show_validation(str(exc))
             return
-        rider.name = form.name
         self._refresh_rows()
 
     def on_delete(self) -> None:
@@ -359,7 +366,9 @@ class RidersPresenter:
     def _create_entry(self, form: RiderFormValues) -> bool:
         """Create *form*'s entry; False if new-team prompt cancels."""
         if form.team == SOLO_TEAM_CHOICE:
-            self.roster.create_solo_entry(name=form.name, plate=form.plate)
+            self.roster.create_solo_entry(
+                first_name=form.first_name, last_name=form.last_name, plate=form.plate
+            )
             return True
         if form.team == NEW_TEAM_CHOICE:
             new_name = self.view.prompt_new_team_name()
@@ -372,7 +381,7 @@ class RidersPresenter:
 
     def _create_new_team(self, form: RiderFormValues, team_name: str) -> None:
         """Create a transient size-1 team named *team_name* (R-12)."""
-        rider = Rider(name=form.name, plate=form.plate)
+        rider = Rider(first_name=form.first_name, last_name=form.last_name, plate=form.plate)
         entry_plate = form.plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
         self.roster.create_team_entry_of_one(
             display_name=team_name, rider=rider, plate=entry_plate
@@ -387,7 +396,7 @@ class RidersPresenter:
         back so the roster stays unchanged.
         """
         target = self._find_team_entry(form.team)
-        rider = Rider(name=form.name, plate=form.plate)
+        rider = Rider(first_name=form.first_name, last_name=form.last_name, plate=form.plate)
         entry_plate = form.plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
         transient = self.roster.create_team_entry_of_one(
             display_name=form.team, rider=rider, plate=entry_plate
@@ -431,5 +440,7 @@ class RidersPresenter:
     def _show_add_form(self) -> None:
         """Reset the form: next free plate, nothing selected."""
         self._selected = None
-        self.view.show_form(plate=self.roster.next_free_plate(), name="", team=SOLO_TEAM_CHOICE)
+        self.view.show_form(
+            plate=self.roster.next_free_plate(), first_name="", last_name="", team=SOLO_TEAM_CHOICE
+        )
         self.view.set_delete_enabled(enabled=False)

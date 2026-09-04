@@ -85,3 +85,33 @@ def test_resume_reopened_ride_shows_the_reopened_infobar_by_name() -> None:
     assert data["infobar_resolves"] is True, result["context"]
     assert data["infobar_shown"] is True, result["context"]
     assert data["status_label"] == "REOPENED", result["context"]
+
+
+def test_resume_continue_swaps_context_roster_to_the_resumed_rides_roster() -> None:
+    """Continue installs the resumed ride's roster on context.roster.
+
+    Resume-path regression: ``_resume_console_engine`` built the
+    console engine/source from the store-loaded roster but never
+    assigned that roster back to ``context.roster``, so after a
+    resume-Continue the Rider Editor, Teams Editor and CSV import all
+    operated on the empty ``RIDER_POOLED`` bootstrap shell instead of
+    the resumed ride's entries. Continue must therefore leave
+    ``context.roster`` holding the staged ride's roster -- the same
+    install the library-Open path's ``_switch_console_to_ride`` makes.
+    """
+    result = scenario_runner.run_scenario(
+        "resume_continue_installs_the_ride_roster_on_the_context"
+    )
+
+    data = result["data"]
+    assert data["resume_dlg_shown"] is True, result["context"]
+    assert data["status_label"] == "RUNNING", result["context"]
+    assert data["active_ride_id"] is not None, result["context"]
+    # library_roster round-trips to entry plates 12 (solo) + 77 (the
+    # two-rider "Trail Blazers" team's own plate), never the empty
+    # bootstrap shell -- the pre-fix context.roster had zero entries.
+    assert data["context_plates"] == ["12", "77"], result["context"]
+    assert data["context_plates"] == data["staged_plates"], result["context"]
+    assert data["context_team_sizes"] == [1, 2], result["context"]
+    assert data["context_plate_model"] == "rider_pooled", result["context"]
+    assert data["context_entry_mode"] == "mixed", result["context"]

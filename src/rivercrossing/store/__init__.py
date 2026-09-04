@@ -687,7 +687,7 @@ class Store:
             RideNotFoundError: No ``ride`` row has *ride_id*.
         """
         row = self._conn.execute(
-            "SELECT entry_mode, plate_model, max_team_size FROM ride WHERE id = ?",
+            "SELECT entry_mode, plate_model, max_team_size, rng_seed FROM ride WHERE id = ?",
             (ride_id,),
         ).fetchone()
         if row is None:
@@ -696,21 +696,25 @@ class Store:
             entry_mode=EntryMode(row["entry_mode"]),
             plate_model=PlateModel(row["plate_model"]),
             max_team_size=row["max_team_size"],
+            # Phase 4: the ride's own rng_seed seeds new teams' logo
+            # cards, so an added team's logo is deterministic per ride.
+            team_logo_seed=row["rng_seed"],
         )
         entries: list[Entry] = []
         for entry_row in self._conn.execute(
-            "SELECT id, plate, display_name, type, status, notes"
+            "SELECT id, plate, display_name, type, status, notes, logo_card, logo_png"
             " FROM entry WHERE ride_id = ? ORDER BY id",
             (ride_id,),
         ).fetchall():
             riders = [
                 Rider(
-                    name=rider_row["name"],
+                    first_name=rider_row["first_name"],
+                    last_name=rider_row["last_name"],
                     plate=rider_row["plate"],
                     sort_order=rider_row["sort_order"],
                 )
                 for rider_row in self._conn.execute(
-                    "SELECT name, plate, sort_order FROM rider"
+                    "SELECT first_name, last_name, plate, sort_order FROM rider"
                     " WHERE entry_id = ? ORDER BY sort_order, id",
                     (entry_row["id"],),
                 ).fetchall()
@@ -729,6 +733,8 @@ class Store:
                 riders=riders,
                 status=EntryStatus(entry_row["status"]),
                 notes=entry_row["notes"] or "",
+                logo_card=entry_row["logo_card"],
+                logo_png=entry_row["logo_png"],
             )
             entry.has_data = has_data
             entries.append(entry)
@@ -740,15 +746,17 @@ class Store:
 
         E5.4.1's roster persistence into spec §2's entry/rider tables:
         every entry (plate, display_name, type, team_size, status,
-        notes) and every rider (name, plate, sort_order) is written in
-        one transaction, after removing any previously saved rows -- a
-        save is a snapshot of the live roster, never an append (the
-        replace semantics the rider editor's DRAFT edits need).
-        ``has_data`` is deliberately not stored (derived at load time
-        from recorded rows), and ``dnf_at``/``emergency_contact``/
-        ``waiver_signed``/``ccn_reg_id`` stay NULL -- the in-memory
-        Roster model carries no such fields (module docstring's E5.4.1
-        resolutions).
+        notes, plus the Phase 1 logo_card/logo_png columns -- Phase 4
+        writes the real values now, NULL only when the entry carries
+        no logo) and every rider (first_name, last_name, plate,
+        sort_order) is written in one transaction, after removing any
+        previously saved rows -- a save is a snapshot of the live
+        roster, never an append (the replace semantics the rider
+        editor's DRAFT edits need). ``has_data`` is deliberately not
+        stored (derived at load time from recorded rows), and
+        ``dnf_at``/``emergency_contact``/``waiver_signed``/``ccn_reg_id``
+        stay NULL -- the in-memory Roster model carries no such fields
+        (module docstring's E5.4.1 resolutions).
 
         Args:
             ride_id: The ride whose roster to write.
@@ -769,8 +777,9 @@ class Store:
             for entry in roster.entries:
                 cursor = self._conn.execute(
                     "INSERT INTO entry"
-                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes)"
-                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
+                    " logo_card, logo_png)"
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
                     (
                         ride_id,
                         entry.plate,
@@ -779,6 +788,8 @@ class Store:
                         len(entry.riders),
                         entry.status.value,
                         entry.notes,
+                        entry.logo_card,
+                        entry.logo_png,
                     ),
                 )
                 entry_id = cursor.lastrowid
@@ -792,10 +803,16 @@ class Store:
                 for rider in entry.riders:
                     self._conn.execute(
                         "INSERT INTO rider"
-                        " (entry_id, name, plate, sort_order, emergency_contact,"
-                        " waiver_signed, ccn_reg_id)"
-                        " VALUES (?, ?, ?, ?, NULL, NULL, NULL)",
-                        (entry_id, rider.name, rider.plate, rider.sort_order),
+                        " (entry_id, first_name, last_name, plate, sort_order,"
+                        " emergency_contact, waiver_signed, ccn_reg_id)"
+                        " VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)",
+                        (
+                            entry_id,
+                            rider.first_name,
+                            rider.last_name,
+                            rider.plate,
+                            rider.sort_order,
+                        ),
                     )
 
     def create_ride(self, config: RideConfig, *, rng_seed: int | None = None) -> int:
@@ -1171,14 +1188,15 @@ class Store:
                 # create_ride (module docstring's delete-order note).
                 raise RuntimeError("INSERT returned no rowid")
             for source_entry in self._conn.execute(
-                "SELECT id, plate, display_name, type, team_size, status, notes"
-                " FROM entry WHERE ride_id = ? ORDER BY id",
+                "SELECT id, plate, display_name, type, team_size, status, notes,"
+                " logo_card, logo_png FROM entry WHERE ride_id = ? ORDER BY id",
                 (ride_id,),
             ).fetchall():
                 entry_cursor = self._conn.execute(
                     "INSERT INTO entry"
-                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes)"
-                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?)",
+                    " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
+                    " logo_card, logo_png)"
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
                     (
                         new_id,
                         source_entry["plate"],
@@ -1187,6 +1205,8 @@ class Store:
                         source_entry["team_size"],
                         source_entry["status"],
                         source_entry["notes"],
+                        source_entry["logo_card"],
+                        source_entry["logo_png"],
                     ),
                 )
                 new_entry_id = entry_cursor.lastrowid
@@ -1195,15 +1215,21 @@ class Store:
                     # construction (lastrowid narrowing, as above).
                     raise RuntimeError("INSERT returned no rowid")
                 for rider in self._conn.execute(
-                    "SELECT name, plate, sort_order FROM rider"
+                    "SELECT first_name, last_name, plate, sort_order FROM rider"
                     " WHERE entry_id = ? ORDER BY sort_order, id",
                     (source_entry["id"],),
                 ).fetchall():
                     self._conn.execute(
                         "INSERT INTO rider"
-                        " (entry_id, name, plate, sort_order, emergency_contact,"
-                        " waiver_signed, ccn_reg_id)"
-                        " VALUES (?, ?, ?, ?, NULL, NULL, NULL)",
-                        (new_entry_id, rider["name"], rider["plate"], rider["sort_order"]),
+                        " (entry_id, first_name, last_name, plate, sort_order,"
+                        " emergency_contact, waiver_signed, ccn_reg_id)"
+                        " VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)",
+                        (
+                            new_entry_id,
+                            rider["first_name"],
+                            rider["last_name"],
+                            rider["plate"],
+                            rider["sort_order"],
+                        ),
                     )
         return new_id

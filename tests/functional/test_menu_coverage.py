@@ -14,7 +14,7 @@ What only this module can prove:
 1. A real ``wx.CommandEvent(wx.EVT_MENU, ...)`` posted at a real,
    loaded menubar's real id actually reaches ``commands.ROUTE_TABLE``'s
    matching row -- what R-73 means by "reachable and drivable".
-   ``main.xrc``'s own declared shape (45 ``mi_*`` names + 3 stock ids,
+   ``main.xrc``'s own declared shape (46 ``mi_*`` names + 3 stock ids,
    per-menu item counts, accelerators) is already locked down by
    ``test_xrc_structure.py``; this module drives real events at it.
 2. What wx actually does with the macOS stock-item relocation in this

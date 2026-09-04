@@ -122,7 +122,7 @@ class _FakeClock:
 def _build_roster() -> Roster:
     """Build the crash ride's field: one solo entry on ``_PLATE``."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate=_PLATE)
+    roster.create_solo_entry(first_name="Alice", last_name="", plate=_PLATE)
     return roster
 
 

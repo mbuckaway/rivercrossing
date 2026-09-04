@@ -176,7 +176,8 @@ def test_rider_editor_dlg_add_creates_a_solo_entry_and_reprefills_the_plate(
     dialog, _view = _show(xrc_resource, roster)
 
     try:
-        harness.type_text(dialog, ids.NAME_INPUT, "New Rider")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "New")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
         harness.click(dialog, ids.ADD_BTN)
         rows = _rider_list_rows(dialog)
         plate_value = _plate_input_value(dialog)
@@ -196,7 +197,8 @@ def test_rider_editor_dlg_add_duplicate_plate_shows_the_infobar_without_crashing
 
     try:
         harness.type_text(dialog, ids.PLATE_INPUT, "77")
-        harness.type_text(dialog, ids.NAME_INPUT, "Dupe Rider")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Dupe")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
         harness.click(dialog, ids.ADD_BTN)
         infobar_shown = harness.find_control(dialog, ROSTER_INFOBAR).IsShown()
         row_count = harness.find_control(dialog, ids.RIDERS_LIST).GetModel().GetCount()
@@ -216,10 +218,12 @@ def test_rider_editor_dlg_successful_add_dismisses_a_prior_infobar(
 
     try:
         harness.type_text(dialog, ids.PLATE_INPUT, "77")
-        harness.type_text(dialog, ids.NAME_INPUT, "Dupe Rider")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Dupe")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
         harness.click(dialog, ids.ADD_BTN)
         harness.type_text(dialog, ids.PLATE_INPUT, "999")
-        harness.type_text(dialog, ids.NAME_INPUT, "Unique Rider")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Unique")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
         harness.click(dialog, ids.ADD_BTN)
         infobar_shown = harness.find_control(dialog, ROSTER_INFOBAR).IsShown()
     finally:
@@ -240,7 +244,8 @@ def test_rider_editor_dlg_save_updates_the_selected_rows_name(
 
     try:
         harness.select_row(dialog, ids.RIDERS_LIST, 0)
-        harness.type_text(dialog, ids.NAME_INPUT, "Samuel Ellis")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Samuel")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Ellis")
         harness.click(dialog, ids.SAVE_BTN)
         rows = _rider_list_rows(dialog)
     finally:
@@ -297,7 +302,7 @@ def test_rider_editor_dlg_deleting_the_only_entry_empties_the_list_and_choice(
     at the presenter (``test_riders.py``'s own empty-roster proof).
     """
     roster = Roster()
-    roster.create_solo_entry(name="Solo One", plate="1")
+    roster.create_solo_entry(first_name="Solo", last_name="One", plate="1")
     dialog, _view = _show(xrc_resource, roster)
 
     try:
@@ -326,7 +331,7 @@ def test_rider_editor_dlg_stale_row_selection_event_is_a_safe_no_op(
     exactly as the delete left it.
     """
     roster = Roster()
-    roster.create_solo_entry(name="Solo One", plate="1")
+    roster.create_solo_entry(first_name="Solo", last_name="One", plate="1")
     dialog, view = _show(xrc_resource, roster)
 
     try:
@@ -365,7 +370,8 @@ def test_rider_editor_dlg_new_team_flow_creates_the_team_and_shows_it_in_the_row
     monkeypatch.setattr(view, "prompt_new_team_name", lambda: "Dirt Dynamos")
 
     try:
-        harness.type_text(dialog, ids.NAME_INPUT, "J. Park")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "J.")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Park")
         harness.select_choice(dialog, ids.TEAM_CHOICE, NEW_TEAM_CHOICE)
         harness.click(dialog, ids.ADD_BTN)
         team_items = _team_choice_items(dialog)
@@ -387,7 +393,8 @@ def test_rider_editor_dlg_new_team_flow_cancelled_creates_no_entry(
     monkeypatch.setattr(view, "prompt_new_team_name", lambda: None)
 
     try:
-        harness.type_text(dialog, ids.NAME_INPUT, "J. Park")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "J.")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Park")
         harness.select_choice(dialog, ids.TEAM_CHOICE, NEW_TEAM_CHOICE)
         harness.click(dialog, ids.ADD_BTN)
         rows = _rider_list_rows(dialog)
@@ -403,7 +410,7 @@ def test_rider_editor_dlg_new_team_flow_cancelled_creates_no_entry(
 def _solo_only_roster() -> Roster:
     """Return a bare, solo-only roster (E3.4.2's own "solo" case)."""
     roster = Roster()
-    roster.create_solo_entry(name="Solo One", plate="1")
+    roster.create_solo_entry(first_name="Solo", last_name="One", plate="1")
     return roster
 
 

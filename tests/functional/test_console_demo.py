@@ -112,8 +112,8 @@ def empty_console(xrc_resource: object) -> MainFrame:
 
     Wired exactly as the app bootstrap wires it: the production
     :func:`rivercrossing.ui.app._build_console_engine` over an empty
-    mixed roster -- a started engine with zero entries and zero
-    crossings, so the feed is empty and the counters read
+    mixed roster -- an unstarted (DRAFT) engine with zero entries and
+    zero crossings, so the feed is empty and the counters read
     zero/full-shoe.
     """
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
@@ -202,7 +202,7 @@ def test_main_frame_given_a_fresh_engine_shows_zero_counters_and_full_shoe(
 ) -> None:
     """E5.4.2: a fresh ride counts 0 crossings/cards/course; full shoe.
 
-    The bootstrap engine starts an empty real ride (R-32's counters
+    The bootstrap engine is a fresh empty DRAFT ride (R-32's counters
     read from the engine, never a display-data source).
     """
     labels = (
@@ -388,9 +388,10 @@ def test_main_frame_plate_entry_given_no_ride_open_rejects_and_keeps_the_field()
 
     Runs in its own spawned interpreter (module docstring): a real
     app bootstrap and a real ``EVT_TEXT_ENTER`` cannot run against
-    the shared fixtures. E5.4.2 emptied the bootstrap roster (no
-    store-backed ride is open), so plate 123 is unknown: the ERROR
-    notice names it, the field is kept, focus returns, and no
+    the shared fixtures. E5.4.2 leaves the bootstrap console DRAFT --
+    no store-backed ride is open, and a fresh launch starts no ride --
+    so plate 123 is refused because the ride is not running: the
+    notice says so, the field is kept, focus returns, and no
     crossing is recorded -- the console's correct empty state.
     """
     result = scenario_runner.run_scenario("plate_entry_round_trip")
@@ -400,7 +401,7 @@ def test_main_frame_plate_entry_given_no_ride_open_rejects_and_keeps_the_field()
     assert result["data"]["field_value"] == "123", result["context"]
     assert result["data"]["focused"] is True, result["context"]
     assert result["data"]["crossings_label"] == "0", result["context"]
-    assert result["data"]["status_text"] == "Unknown plate 123", result["context"]
+    assert result["data"]["status_text"] == "The ride is not running", result["context"]
 
 
 def test_main_frame_record_btn_given_no_ride_open_rejects_and_keeps_the_field() -> None:
@@ -412,21 +413,23 @@ def test_main_frame_record_btn_given_no_ride_open_rejects_and_keeps_the_field() 
     assert result["data"]["field_value"] == "77", result["context"]
     assert result["data"]["focused"] is True, result["context"]
     assert result["data"]["crossings_label"] == "0", result["context"]
-    assert result["data"]["status_text"] == "Unknown plate 77", result["context"]
+    assert result["data"]["status_text"] == "The ride is not running", result["context"]
 
 
-def test_build_main_window_starts_the_console_in_the_running_state() -> None:
+def test_build_main_window_starts_the_console_in_the_draft_state() -> None:
     """The bootstrap runs ``set_state(data_source.ride_status())`` (A4).
 
     Runs in its own spawned interpreter (module docstring): drives
     the real ``build_main_window`` bootstrap, not a bare ``MainFrame``.
+    A fresh launch starts no ride (E5.4.2, R-31), so the console
+    opens DRAFT with plate entry and Record disabled.
     """
-    result = scenario_runner.run_scenario("console_starts_in_running_state")
+    result = scenario_runner.run_scenario("console_starts_in_draft_state")
 
     assert result["ok"], result["context"]
-    assert result["data"]["plate_enabled"] is True, result["context"]
-    assert result["data"]["record_enabled"] is True, result["context"]
-    assert result["data"]["status_label"] == "RUNNING", result["context"]
+    assert result["data"]["plate_enabled"] is False, result["context"]
+    assert result["data"]["record_enabled"] is False, result["context"]
+    assert result["data"]["status_label"] == "DRAFT", result["context"]
 
 
 # --- negative path: MainFrame._find (T-5) -----------------------------

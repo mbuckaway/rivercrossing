@@ -234,5 +234,8 @@ coverage.json
 # Functional-test screenshot artifacts (CI uploads these on failure)
 tests/functional/_screenshots/
 
+# Race-simulation artifacts (rides.db, exports, analysis reports for review)
+artifacts/
+
 # build-time npm installs (Tailwind CLI, vendored CSS step)
 node_modules/

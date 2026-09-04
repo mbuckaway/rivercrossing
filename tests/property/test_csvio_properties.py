@@ -10,15 +10,18 @@ either plate model, with a random mix of solo entries and teams.
 
 **Name/plate alphabet, and why.** Rider and display names are drawn
 from ``a``-``z`` only, matching test_roster_properties.py's own
-``_NAME`` strategy -- deliberately, not by coincidence. csvio's
-``_field()`` strips every parsed value, so a name with leading or
-trailing whitespace would silently lose it on the way back through
-``preview()``, breaking exact equality without csvio doing anything
-wrong; restricting the alphabet to non-whitespace characters
-sidesteps that (and comma/quote CSV-escaping, which is Python's
-``csv`` module's own well-tested concern, not this one's). Plates are
-unique integers drawn per roster, exactly as many as the roster's
-plate namespace needs (one per relay entry, one per pooled rider).
+``_NAME`` strategy -- deliberately, not by coincidence. The unified
+format's TEAMNAME grouping normalizes a team name to its lowercased,
+whitespace-collapsed form (csvio's ``_normalize_team_name``), and
+csvio's ``_cell()`` strips every parsed value, so a name with leading
+or trailing whitespace, internal runs of spaces, or mixed case would
+silently change on the way back through ``preview()``, breaking exact
+equality without csvio doing anything wrong; restricting the alphabet
+to single lowercase non-whitespace characters sidesteps that (and
+comma/quote CSV-escaping, which is Python's ``csv`` module's own
+well-tested concern, not this one's). Plates are unique integers drawn
+per roster, exactly as many as the roster's plate namespace needs (one
+per relay entry, one per pooled rider).
 """
 
 from __future__ import annotations
@@ -60,10 +63,11 @@ def _random_roster(draw: st.DrawFn) -> Roster:
     max_team_size = draw(_MAX_TEAM_SIZE)
     solo_count = draw(_SOLO_COUNT)
     team_sizes = draw(st.lists(st.integers(min_value=2, max_value=max_team_size), max_size=4))
-    # rider_pooled's own team_name *is* the re-import merge key (S1), so
-    # two teams sharing one name would collapse into one group on the
-    # round trip -- a real CSV-format ambiguity, not a csvio bug. Unique
-    # names sidestep it; harmless for team_relay, which merges by plate.
+    # The unified format merges team rows by normalized TEAMNAME
+    # (``_normalize_team_name``: lower, whitespace-collapsed), so two
+    # teams sharing one name would collapse into one group on the round
+    # trip -- a real CSV-format ambiguity, not a csvio bug. Unique names
+    # sidestep it (the alphabet is already normalization-stable).
     team_names = draw(
         st.lists(_NAME, min_size=len(team_sizes), max_size=len(team_sizes), unique=True)
     )
@@ -90,7 +94,9 @@ def _random_roster(draw: st.DrawFn) -> Roster:
 def _draw_solos(ctx: _DrawCtx, count: int) -> None:
     """Create *count* solo entries, drawing each name and plate."""
     for _ in range(count):
-        ctx.roster.create_solo_entry(name=ctx.draw(_NAME), plate=next(ctx.plates))
+        ctx.roster.create_solo_entry(
+            first_name=ctx.draw(_NAME), last_name="", plate=next(ctx.plates)
+        )
 
 
 def _draw_teams(ctx: _DrawCtx, sizes: list[int], names: list[str]) -> None:
@@ -106,7 +112,7 @@ def _draw_team_riders(ctx: _DrawCtx, size: int) -> list[Rider]:
     riders = []
     for _ in range(size):
         plate = next(ctx.plates) if ctx.roster.plate_model is PlateModel.RIDER_POOLED else None
-        riders.append(Rider(name=ctx.draw(_NAME), plate=plate))
+        riders.append(Rider(first_name=ctx.draw(_NAME), last_name="", plate=plate))
     return riders
 
 
@@ -125,7 +131,7 @@ def _projected_entries(roster: Roster) -> frozenset[tuple[object, ...]]:
             entry.type,
             entry.display_name,
             entry.notes,
-            frozenset((rider.name, rider.plate) for rider in entry.riders),
+            frozenset((rider.full_name, rider.plate) for rider in entry.riders),
         )
         for entry in roster.entries
     )

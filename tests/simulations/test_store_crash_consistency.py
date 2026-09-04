@@ -242,7 +242,7 @@ def _replay_roster() -> Roster:
     it the same one plate the child created.
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate=_PLATE)
+    roster.create_solo_entry(first_name="Alice", last_name="", plate=_PLATE)
     return roster
 
 

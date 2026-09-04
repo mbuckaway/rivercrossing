@@ -82,7 +82,7 @@ def _roster_with_entries(*plates: str) -> Roster:
     """Build a MIXED rider_pooled roster of one solo entry per plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
-        roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
     return roster
 
 
@@ -256,7 +256,10 @@ def test_refresh_renders_the_entry_and_enables_move_for_a_pooled_team() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     engine, _clock = _running_engine(roster=roster)
     view = FakeDetailView()
@@ -580,11 +583,17 @@ def test_on_move_rider_opens_picker_and_calls_the_pooled_move() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="S. Okafor", plate="9"), Rider(name="P. Chen", plate="45")],
+        riders=[
+            Rider(first_name="S.", last_name="Okafor", plate="9"),
+            Rider(first_name="P.", last_name="Chen", plate="45"),
+        ],
     )
     engine, _clock = _running_engine(roster=roster)
     view = FakeDetailView()
@@ -617,11 +626,17 @@ def test_on_move_rider_locked_move_surfaces_as_a_notice() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="S. Okafor", plate="9"), Rider(name="P. Chen", plate="45")],
+        riders=[
+            Rider(first_name="S.", last_name="Okafor", plate="9"),
+            Rider(first_name="P.", last_name="Chen", plate="45"),
+        ],
     )
     engine, _clock = _running_engine(roster=roster)
     engine.finish()
@@ -760,11 +775,17 @@ def test_on_move_rider_unresolved_rider_or_team_notices() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="S. Okafor", plate="9"), Rider(name="P. Chen", plate="45")],
+        riders=[
+            Rider(first_name="S.", last_name="Okafor", plate="9"),
+            Rider(first_name="P.", last_name="Chen", plate="45"),
+        ],
     )
     engine, _clock = _running_engine(roster=roster)
     view = FakeDetailView()
@@ -781,11 +802,17 @@ def test_on_move_rider_unresolved_destination_team_notices() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="S. Okafor", plate="9"), Rider(name="P. Chen", plate="45")],
+        riders=[
+            Rider(first_name="S.", last_name="Okafor", plate="9"),
+            Rider(first_name="P.", last_name="Chen", plate="45"),
+        ],
     )
     engine, _clock = _running_engine(roster=roster)
     view = FakeDetailView()
@@ -802,11 +829,17 @@ def test_on_move_rider_cancel_is_a_silent_noop() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="S. Okafor", plate="9"), Rider(name="P. Chen", plate="45")],
+        riders=[
+            Rider(first_name="S.", last_name="Okafor", plate="9"),
+            Rider(first_name="P.", last_name="Chen", plate="45"),
+        ],
     )
     engine, _clock = _running_engine(roster=roster)
     view = FakeDetailView()

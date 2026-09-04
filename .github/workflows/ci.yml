@@ -213,12 +213,14 @@ jobs:
         run: nox -s dmg
       - name: Smoke the DMG
         run: nox -s dmg_smoke
+      - name: Package the dev bundle (tar preserves the symlinks)
+        run: tar -czf rivercrossing-app.tgz -C dist RiverCrossing.app
       - name: Upload dev bundle
         uses: actions/upload-artifact@v4
         with:
           name: rivercrossing-devbundle-macos
-          path: dist/**
-          if-no-files-found: ignore
+          path: rivercrossing-app.tgz
+          if-no-files-found: error
       # The release job needs just the DMG -- its own artifact spares it
       # a 118 MB devbundle download for one file.
       - name: Upload the DMG
@@ -414,6 +416,9 @@ jobs:
         with:
           name: rivercrossing-devbundle-macos
           path: devbundle
+      - name: Extract the macOS dev bundle
+        if: steps.signing.outputs.signed == '1'
+        run: tar -xzf devbundle/rivercrossing-app.tgz -C devbundle
       # Standard Apple CI keychain recipe: import the Developer ID .p12
       # into a throwaway keychain and let codesign use it without a GUI
       # prompt. RUNNER_TEMP is cleaned with the job.
@@ -432,28 +437,26 @@ jobs:
         if: steps.signing.outputs.signed == '1'
         run: |
           app="devbundle/RiverCrossing.app"
-          if [[ ! -d "${app}" && -d "devbundle/dist/RiverCrossing.app" ]]; then
-            app="devbundle/dist/RiverCrossing.app"
-          fi
-          if [[ ! -d "${app}" ]]; then
-            echo "no RiverCrossing.app in the rivercrossing-devbundle-macos artifact" >&2
-            find devbundle -maxdepth 3 -name 'RiverCrossing.app' 2>/dev/null || ls devbundle >&2
-            exit 1
-          fi
-          codesign --deep --force --options runtime --sign "${APPLE_DEVELOPER_ID}" "${app}"
+          [ -d "${app}" ] || { echo "no RiverCrossing.app after extract" >&2; ls devbundle >&2; exit 1; }
+          fw="${app}/Contents/Frameworks/Python.framework"
+          # The .app travels as a tarball: tar preserves the symlinks
+          # PyInstaller creates, which upload/download-artifact's zip does
+          # not (dereferencing them made codesign report the bundle as
+          # "ambiguous"). Sign inside-out, not with --deep (deprecated).
+          find "${app}/Contents" -type f \( -name '*.dylib' -o -name '*.so' \) -print0 \
+            | xargs -0 -I{} codesign --force --options runtime --timestamp --sign "${APPLE_DEVELOPER_ID}" {}
+          codesign --force --options runtime --timestamp --sign "${APPLE_DEVELOPER_ID}" "${fw}/Versions/Current/Python"
+          codesign --force --options runtime --timestamp --sign "${APPLE_DEVELOPER_ID}" "${fw}"
+          codesign --force --options runtime --timestamp --sign "${APPLE_DEVELOPER_ID}" \
+            --entitlements installers/entitlements.plist "${app}"
+          codesign --verify --deep --strict --verbose=2 "${app}"
       - name: Rebuild the DMG from the signed .app
         if: steps.signing.outputs.signed == '1'
         run: |
           app="devbundle/RiverCrossing.app"
-          if [[ ! -d "${app}" && -d "devbundle/dist/RiverCrossing.app" ]]; then
-            app="devbundle/dist/RiverCrossing.app"
-          fi
-          if [[ ! -d "${app}" ]]; then
-            echo "no RiverCrossing.app in the rivercrossing-devbundle-macos artifact" >&2
-            exit 1
-          fi
+          [ -d "${app}" ] || { echo "no RiverCrossing.app after extract" >&2; exit 1; }
           mkdir -p dist
-          cp -R "${app}" "dist/RiverCrossing.app"
+          ditto "${app}" "dist/RiverCrossing.app"
           nox -s dmg
       - name: Notarize the DMG
         if: steps.signing.outputs.signed == '1'

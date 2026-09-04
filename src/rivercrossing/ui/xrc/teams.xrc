@@ -1,0 +1,225 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Teams editor (spec.md 15b file map, xrc-windows.md section C).
+  Control names are frozen; tests find them with FindWindowByName and
+  tools/gen_ids.py turns them into ui/ids.py (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3 (tools/toolkit_probe.py):
+
+    * wxDataViewListCtrl cannot be authored here: its XRC handler
+      hard-forces the control name to "dataviewCtrl". teams_list and
+      members_list are wxDataViewCtrl, whose name IS honoured;
+      columns and rows are appended in code with a
+      DataViewIndexListModel subclass (canvas code-side item 1).
+    * wxInfoBar cannot be authored here either (the handler yields a
+      generic wx.Control and drops the name), so teams_infobar is
+      built code-side with SetName(), mirroring rider_editor_dlg's
+      roster_infobar pattern.
+    * XRC has no minsize property for windows - only for sizeritem
+      and wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow).
+      The dialog declares none, so the sizer handler Fit()s it and
+      applies SetSizeHints(); code re-applies SetMinSize() with the
+      editor's own MIN_SIZE floor (the same rider_editor_dlg shape).
+
+  Code-side per the canvas footnotes: teams_list/members_list rows and
+  columns; the Plate (relay) row's team_relay-only visibility (hidden
+  on a rider_pooled ride, whose teams derive their plate from their
+  members); logo_preview text; add_btn/remove_btn's DRAFT-only gating
+  (refused via teams_infobar once the ride has started);
+  pick_card_btn/image_btn handlers.
+-->
+<resource>
+
+  <object class="wxDialog" name="team_editor_dlg">
+    <title>Teams Editor</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxHORIZONTAL</orient>
+
+      <!-- Left pane: the teams list + Add/Remove row. -->
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxDataViewCtrl" name="teams_list"/>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxButton" name="add_btn">
+                  <label>Add team</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND</flag>
+                <object class="wxButton" name="remove_btn">
+                  <label>Remove</label>
+                </object>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <!-- Right pane: the team record form + members + Save/Close. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxTOP|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxStaticBoxSizer">
+              <label>Team</label>
+              <orient>wxVERTICAL</orient>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>8</border>
+                <object class="wxFlexGridSizer">
+                  <cols>2</cols>
+                  <vgap>6</vgap>
+                  <hgap>8</hgap>
+                  <growablecols>1</growablecols>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxStaticText">
+                      <label>Name</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxTextCtrl" name="name_input"/>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxStaticText">
+                      <label>Plate (relay)</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxTextCtrl" name="relay_plate_input"/>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxStaticText">
+                      <label>Notes</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxTextCtrl" name="notes_input"/>
+                  </object>
+
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxBoxSizer">
+                  <orient>wxHORIZONTAL</orient>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                    <border>8</border>
+                    <object class="wxStaticText">
+                      <label>Logo</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                    <border>6</border>
+                    <object class="wxStaticText" name="logo_preview">
+                      <label></label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                    <border>6</border>
+                    <object class="wxButton" name="pick_card_btn">
+                      <label>Pick card…</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxButton" name="image_btn">
+                      <label>Image…</label>
+                    </object>
+                  </object>
+                </object>
+              </object>
+
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxStaticBoxSizer">
+              <label>Members (read-only)</label>
+              <orient>wxVERTICAL</orient>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND</flag>
+                <object class="wxDataViewCtrl" name="members_list"/>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <!-- Save is a custom button, so it sits in a sibling
+                   sizer next to the wxStdDialogButtonSizer (the same
+                   library.xrc pattern for stock-adjacent custom
+                   buttons); wxID_CLOSE supplies the platform-correct
+                   Close text and position. -->
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxButton" name="save_btn">
+                  <label>Save</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxStdDialogButtonSizer">
+                  <object class="button">
+                    <object class="wxButton" name="wxID_CLOSE"/>
+                  </object>
+                </object>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

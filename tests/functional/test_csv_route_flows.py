@@ -66,6 +66,15 @@ def test_mi_import_csv_given_a_cancelled_picker_opens_no_window(
 ) -> None:
     """task-briefs.md's own "cancelled picker = no dialog" (E3.4)."""
     monkeypatch.setattr(rider_editor, "_pick_import_path", lambda _parent: None)
+    # The top-level-window count is only meaningful once every earlier
+    # module's Destroy()ed-but-pending window has been reaped: a dying
+    # window still in wxPendingDelete answers GetTopLevelWindows()
+    # until idle processing frees it, and fire_menu_event's own settle
+    # flush below would reap it mid-test -- shrinking the count and
+    # failing the baseline comparison even though the route itself
+    # opened nothing (measured cross-module on the host). Settle first
+    # so both sides of the comparison are idle-stable.
+    harness.flush_deferred_deletions()
     before = len(wx.GetTopLevelWindows())
 
     _fire_menu_event(firing_frame, "mi_import_csv")
@@ -143,4 +152,7 @@ def test_mi_export_csv_given_a_picked_path_writes_the_rosters_own_header(
 
     _fire_menu_event(firing_frame, "mi_export_csv")
 
-    assert export_path.read_text(encoding="utf-8").splitlines()[0] == "plate,name,team_name,notes"
+    assert (
+        export_path.read_text(encoding="utf-8").splitlines()[0]
+        == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
+    )

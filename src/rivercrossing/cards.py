@@ -19,6 +19,7 @@ __all__ = [
     "ShoeClosedError",
     "ShoeEmpty",
     "Suit",
+    "seeded_card_codes",
 ]
 
 
@@ -151,6 +152,37 @@ def _shuffled_sequence(decks: int, jokers_per_deck: int, seed: int) -> list[Card
     cards = [card for _ in range(decks) for card in _fresh_deck(jokers_per_deck)]
     random.Random(seed).shuffle(cards)  # noqa: S311 -- deterministic Fisher-Yates by design, not crypto
     return cards
+
+
+def seeded_card_codes(seed: int, decks: int = 1) -> tuple[str, ...]:
+    """Return *decks* shuffled decks' natural card codes under *seed*.
+
+    Phase 4's team-logo source: the deterministic sequence a roster
+    draws a team's logo card from. Jokers are excluded and duplicate
+    codes across *decks* collapse to one first-occurrence code each,
+    so the result is always the 52 natural codes in a seed-derived
+    order -- "no two auto-assigned logos share" falls straight out of
+    picking successive unused codes from this tuple. Deterministic
+    for a given ``(seed, decks)``, the same Fisher-Yates under
+    :func:`_shuffled_sequence` R-40 rides on.
+
+    Args:
+        seed: The shuffle seed (a ride's stored ``rng_seed``).
+        decks: How many natural decks to shuffle before deduping;
+            the default of one keeps the sequence the same shape for
+            any caller that only needs a full natural deck.
+
+    Returns:
+        Up to 52 unique natural card codes, in shuffle order.
+    """
+    codes: list[str] = []
+    seen: set[str] = set()
+    for card in _shuffled_sequence(decks, jokers_per_deck=0, seed=seed):
+        code = card.code()
+        if code not in seen:
+            seen.add(code)
+            codes.append(code)
+    return tuple(codes)
 
 
 class Shoe:

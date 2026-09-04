@@ -82,7 +82,7 @@ def _roster_with_entries(*plates: str) -> Roster:
     """Build a MIXED rider_pooled roster of one solo entry per plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
-        roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
     return roster
 
 
@@ -566,7 +566,10 @@ def test_mark_dnf_pooled_rider_plate_marks_the_team_entry() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
     )
     engine, _ = _make_engine(roster=roster)
     engine.start()

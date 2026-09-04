@@ -64,21 +64,31 @@ class RecordingResultsView:
     (E7.3.2) -- ``stale_calls`` is the assertion surface for the
     stale-export flag. ``publish_options`` returns whatever the test
     last handed to ``show_publish_options`` -- the fake "checkbox
-    states" the presenter reads.
+    states" the presenter reads. ``show_standings`` records the two
+    Phase 3 sections separately (``shown_teams``/``shown_solo``);
+    ``shown_rows`` is the flattened convenience view the pre-split
+    assertions read.
     """
 
     def __init__(self) -> None:
         """Start every channel empty."""
-        self.shown_rows: list[StandingsRow] = []
+        self.shown_teams: list[StandingsRow] = []
+        self.shown_solo: list[StandingsRow] = []
         self.tiebreak_labels: list[str] = []
         self.notices: list[str] = []
         self.reported_options = ExportOptions()
         self.publish_reads = 0
         self.stale_calls: list[bool] = []
 
-    def show_standings(self, rows: list[StandingsRow]) -> None:
-        """Record the rendered standings rows."""
-        self.shown_rows = list(rows)
+    @property
+    def shown_rows(self) -> list[StandingsRow]:
+        """Return the rendered sections flattened (teams, then solo)."""
+        return [*self.shown_teams, *self.shown_solo]
+
+    def show_standings(self, teams: list[StandingsRow], solo: list[StandingsRow]) -> None:
+        """Record the rendered teams and solo sections."""
+        self.shown_teams = list(teams)
+        self.shown_solo = list(solo)
 
     def set_stale(self, *, stale: bool) -> None:
         """Record one stale-flag update (True shows the banner)."""
@@ -107,25 +117,32 @@ class RecordingResultsSource(EmptyDataSource):
 
     Subclasses ``EmptyDataSource`` (which implements every Protocol
     member) so this is a real ``DataSource``, overriding ``standings``
-    to record its orders and return whatever rows a test pre-loads,
-    and ``results_stale`` (E7.3.2) to record the watermark it is
-    queried with and return a test-configured answer.
+    to record its orders and return whatever sections a test pre-loads
+    (``teams_by_order``/``rows_by_order`` for the solo section --
+    Phase 3's two-list shape), and ``results_stale`` (E7.3.2) to
+    record the watermark it is queried with and return a
+    test-configured answer.
     """
 
     def __init__(self) -> None:
         """Start with no pre-loaded rows and no recorded orders."""
         super().__init__()
         self.standings_orders: list[tuple[TieBreak, ...]] = []
+        self.teams_by_order: dict[tuple[TieBreak, ...], list[StandingsRow]] = {}
         self.rows_by_order: dict[tuple[TieBreak, ...], list[StandingsRow]] = {}
         self.stale_result: bool = False
         self.stale_queries: list[int | None] = []
 
     def standings(
         self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
-    ) -> list[StandingsRow]:
-        """Record *order*, then return the rows pre-loaded for it."""
+    ) -> tuple[list[StandingsRow], list[StandingsRow]]:
+        """Record *order*, then return the sections pre-loaded for it.
+
+        ``rows_by_order`` holds the solo section; ``teams_by_order``
+        the (usually empty) teams section -- Phase 3's two-list shape.
+        """
         self.standings_orders.append(order)
-        return self.rows_by_order.get(order, [])
+        return list(self.teams_by_order.get(order, [])), list(self.rows_by_order.get(order, []))
 
     def results_stale(self, export_watermark: int | None) -> bool:
         """Record the watermark query; return the configured answer."""
@@ -180,7 +197,21 @@ def test_results_presenter_init_renders_the_initial_standings_with_the_stored_or
     ResultsPresenter(view, source, tiebreak_order=("total_time", "laps", "high_card"))
 
     assert source.standings_orders == [converted]
-    assert view.shown_rows == [_row("7")]
+    assert view.shown_teams == []
+    assert view.shown_solo == [_row("7")]
+
+
+def test_results_presenter_renders_the_two_phase_three_sections_separately() -> None:
+    """The data source's (teams, solo) split reaches the view as two."""
+    source = RecordingResultsSource()
+    source.teams_by_order[DEFAULT_TIEBREAK_ORDER] = [_row("77", place=1)]
+    source.rows_by_order[DEFAULT_TIEBREAK_ORDER] = [_row("123", place=1), _row("8", place=2)]
+    view = RecordingResultsView()
+
+    ResultsPresenter(view, source)
+
+    assert [row.plate for row in view.shown_teams] == ["77"]
+    assert [row.place for row in view.shown_solo] == [1, 2]
 
 
 def test_results_presenter_holds_the_view_and_data_source_it_was_given() -> None:
@@ -208,7 +239,7 @@ def test_on_tiebreak_reordered_given_valid_labels_re_ranks_and_shows_rows() -> N
     presenter.on_tiebreak_reordered(["Total time", "Most laps", "High-card draw"])
 
     assert source.standings_orders[-1] == reordered
-    assert view.shown_rows == [_row("34", place=1)]
+    assert view.shown_solo == [_row("34", place=1)]
 
 
 def test_on_tiebreak_reordered_given_an_unknown_label_restores_and_notices() -> None:
@@ -463,7 +494,7 @@ def _engine_source_with_correction() -> tuple[RideEngine, EngineDataSource]:
     own builder carries, recorded in this task's report).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
     config = RideConfig(
         name="GORBA EPIC 2026",
         event_date=date(2026, 9, 20),

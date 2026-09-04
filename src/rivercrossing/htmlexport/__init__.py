@@ -387,6 +387,17 @@ def _template_context(  # noqa: PLR0913 -- the four context inputs the template 
     the footer and the embedded JSON record (D15's freeze seam);
     ``logo_src`` falls back to a 1x1 transparent PNG so the page never
     carries an empty ``src`` (D8).
+
+    Phase 3 (team/solo results split) partitions the single
+    ``results`` record into the ``teams`` and ``solo`` context lists
+    the full-field template renders as two sections. The record stays
+    one flat ``results`` array (the app feeds it Teams-then-Solo with
+    per-kind places); the partition is by the row's entry type, so a
+    section with no rows of that kind is simply absent. The golden
+    samples' own display suffixes (a "TEAM" prefix plus a team-size
+    note) still lead with "TEAM", hence the prefix match; the
+    renderer's own rows are exactly "TEAM"/"SOLO"
+    (``_result_row_from_placed``).
     """
     if generated is not None:
         payload = replace(payload, event=replace(payload.event, generated=generated))
@@ -394,6 +405,8 @@ def _template_context(  # noqa: PLR0913 -- the four context inputs the template 
         "event": payload.event,
         "options": payload.options,
         "results": payload.results,
+        "teams": [row for row in payload.results if row.entry_type.upper().startswith("TEAM")],
+        "solo": [row for row in payload.results if not row.entry_type.upper().startswith("TEAM")],
         "laps_board": payload.laps_board,
         "time_board": payload.time_board,
         "tie_note": payload.tie_note,

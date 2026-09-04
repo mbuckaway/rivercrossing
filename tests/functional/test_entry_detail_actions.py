@@ -87,10 +87,13 @@ def _build_engine(*, roster: Roster) -> tuple[RideEngine, EngineDataSource]:
 def _pooled_team_roster() -> Roster:
     """Build a MIXED rider_pooled roster with one team and one solo."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     return roster
 
@@ -164,8 +167,8 @@ def test_move_rider_button_disabled_for_a_solo_entry(xrc_resource: object) -> No
 def live_context(xrc_resource: object, wx_app: object) -> Iterator[tuple[Any, RideEngine]]:
     """Yield a live app context (seeded engine, real frame)."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
-    roster.create_solo_entry(name="Rider 34", plate="34")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="34", plate="34")
     engine, source = _build_engine(roster=roster)
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)

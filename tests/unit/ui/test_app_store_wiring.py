@@ -34,7 +34,7 @@ class _FakeStore:
 def _engine(plate: str = "12") -> RideEngine:
     """Build a RUNNING-capable engine: one solo entry, fixed clock."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+    roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
     config = RideConfig(
         name="GORBA EPIC 2026",
         event_date=date(2026, 9, 20),
