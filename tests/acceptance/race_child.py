@@ -51,7 +51,6 @@ from typing import TYPE_CHECKING, Any, cast
 import wx
 import wx.xrc
 
-from rivercrossing.roster import Roster
 from rivercrossing.standings import hand_name, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids
@@ -964,13 +963,15 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
     """Resume, import the roster CSV, script every path, finish, quit.
 
     The full-breadth scenario behind ``tests/acceptance/test_race_sim``:
-    the child resumes the staged relay placeholder ride on an injected
-    clock, imports the phase-6 roster CSV (``tests/acceptance/
-    fixtures/race_roster.csv``) through the real ``mi_import_csv``
-    route -- the fixture REPLACES the placeholder on the store ride,
-    the same replace semantics R-74's ``setup_import_and_run`` relies
-    on -- types the deterministic lap schedule (normal laps, two
-    short-lap holds -- one confirmed, one voided), runs every audited
+    the child resumes the staged TEAM_RELAY ride (an empty relay-
+    shaped roster -- resume installs the ride's roster on the shared
+    context) on an injected clock, imports the phase-6 roster CSV
+    (``tests/acceptance/fixtures/race_roster.csv``) through the real
+    ``mi_import_csv`` route -- csvio commits the fixture's 21 relay
+    entries against that roster (match/insert/reshape, never delete-
+    on-import) and the route's store half saves them to the ride --
+    types the deterministic lap schedule (normal laps, two short-lap
+    holds -- one confirmed, one voided), runs every audited
     correction -- manual deal, DNF, add-crossing-at-time,
     void-crossing and void-card -- across the two finish/reopen legs,
     writes the four results exports, and records a ``race-record.json``
@@ -1021,27 +1022,20 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
         store.close()
         raise RuntimeError("no ride to resume or no route context on the shared db")
     context = captured[0]
-    # Phase 6: the riders CSV REPLACES the staged placeholder roster
-    # through the real mi_import_csv route (the R-74 import half:
-    # preview against the in-memory roster, commit, save_roster, then
-    # _switch_console_to_ride rebuilds the console onto the saved
-    # roster). Resume leaves context.roster as the bootstrap
-    # RIDER_POOLED shell (app.py's resume flow never swaps it), and
-    # the route previews against that shell -- a team_relay fixture
-    # would refuse there with duplicate-plate conflicts. Pre-position
-    # the empty shell carrying the ride's own shape (the roster the
-    # app would present if resume replaced the bootstrap shell), so
-    # the fixture previews clean and its 21 entries commit.
+    # Phase 6: the riders CSV is imported through the real
+    # mi_import_csv route against the resumed ride's own roster --
+    # resume now installs store.roster_for(ride_id) on context.roster
+    # (app.py's _resume_console_engine, the same install the library-
+    # Open path's _switch_console_to_ride makes), so the route
+    # previews against the ride's real TEAM_RELAY shape. The staged
+    # ride carries no roster entries, so the fixture's 21 relay
+    # plates all insert (csvio commits match/insert/reshape, never
+    # delete-on-import), and the route's R-74 store half saves the
+    # committed roster to the ride and rebuilds the console onto it.
     csv_path = env.csv_path
     if csv_path is None:
         store.close()
         raise RuntimeError(f"{RACE_CSV_ENV} must name a riders CSV")
-    staged = store.roster_for(ride_id)
-    context.roster = Roster(
-        entry_mode=staged.entry_mode,
-        plate_model=staged.plate_model,
-        max_team_size=staged.max_team_size,
-    )
     _import_csv_via_route(frame, csv_path)
     # The import's route half rebuilt the console presenter onto the
     # saved roster, so everything below reads the post-import engine

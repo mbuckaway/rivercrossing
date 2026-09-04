@@ -1222,6 +1222,68 @@ def _resume_reopened_ride_shows_reopened_infobar() -> dict[str, Any]:
 # --- E9.1.1: the store-backed bootstrap (main() opens rides.db) -----
 
 
+def _resume_continue_installs_the_ride_roster_on_the_context() -> dict[str, Any]:
+    """Continue installs the resumed roster on the shared context.
+
+    Resume-path regression: ``_resume_console_engine`` loaded the
+    continued ride's roster and built the engine/source from it, but
+    until the fix never assigned that roster back to
+    ``context.roster`` -- so after a resume-Continue the Rider Editor,
+    Teams Editor and CSV import kept operating on the empty
+    ``RIDER_POOLED`` bootstrap shell (E5.4.2), and a resumed
+    ``TEAM_RELAY`` ride could not import a relay CSV. Stages a store
+    ride with a NON-empty saved roster (``running_ride_with_roster``
+    -> ``library_roster``: solo plate 12 plus the two-rider
+    "Trail Blazers" team whose own plate is 77), captures the route
+    context through the ``_bind_routes`` seam, clicks Continue, and
+    reads the live ``context.roster`` -- which must now BE the staged
+    roster, mirroring what the library-Open path's
+    :func:`_switch_console_to_ride` already did.
+    """
+    db_path = _resume_db_path("rc-resume-roster-")
+    ride_id = _running_ride_with_roster(db_path)
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+    captured: list[Any] = []
+    original_bind_routes = app_module._bind_routes
+
+    def _capture_and_bind(context: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        captured.append(context)
+        original_bind_routes(context)
+
+    def _click_continue() -> None:
+        dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        found["resume_dlg_shown"] = dialog is not None and dialog.IsShown()
+        if dialog is not None:
+            harness.click(dialog, ids.CONTINUE_BTN)
+
+    app_module._bind_routes = _capture_and_bind
+    frame: Any = None
+    try:
+        wx.CallAfter(_click_continue)
+        frame = _build_app_window(store=store)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        if not captured:
+            raise RuntimeError("no route context captured on the resumed db")
+        context = captured[0]
+        staged = store.roster_for(ride_id)
+        found["status_label"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
+        found["active_ride_id"] = context.active_ride_id
+        found["context_plate_model"] = context.roster.plate_model.value
+        found["context_entry_mode"] = context.roster.entry_mode.value
+        found["context_plates"] = sorted(entry.plate for entry in context.roster.entries)
+        found["context_team_sizes"] = [entry.team_size for entry in context.roster.entries]
+        found["staged_plates"] = sorted(entry.plate for entry in staged.entries)
+        return found
+    finally:
+        app_module._bind_routes = original_bind_routes
+        store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+
+
 def _bootstrap_main_launch_resumes_staged_running_ride() -> dict[str, Any]:
     """main()'s own store-open path: a staged crash shows resume_dlg.
 
@@ -3165,6 +3227,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "resume_continue_loads_ride_with_elapsed": _resume_continue_loads_ride_with_elapsed,
     "resume_library_opens_ride_library": _resume_library_opens_ride_library,
     "resume_reopened_ride_shows_reopened_infobar": _resume_reopened_ride_shows_reopened_infobar,
+    "resume_continue_installs_the_ride_roster_on_the_context": (
+        _resume_continue_installs_the_ride_roster_on_the_context
+    ),
     "bootstrap_main_launch_resumes_staged_running_ride": (
         _bootstrap_main_launch_resumes_staged_running_ride
     ),

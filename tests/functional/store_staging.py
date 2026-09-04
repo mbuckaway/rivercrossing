@@ -38,7 +38,6 @@ __all__ = [
     "library_ride_config",
     "library_roster",
     "race_db_facts",
-    "relay_placeholder_roster",
     "resume_db_path",
     "resume_ride_config",
     "rich_race_roster",
@@ -190,8 +189,8 @@ def rich_race_roster() -> Roster:
     """Build the MIXED rider_pooled rich roster the E9.2.2 sim staged.
 
     The pre-CSV (phase-6) sim staged this six-entry roster; the phase-6
-    sim now stages :func:`relay_placeholder_roster` and imports the
-    CSV fixture instead, but the pooled rich shape is retained as the
+    sim now stages an empty TEAM_RELAY ride and imports the CSV
+    fixture instead, but the pooled rich shape is retained as the
     counterpart staging fixture, pinned by ``tests/unit/
     test_race_child.py``.
 
@@ -296,26 +295,6 @@ def running_ride_with_roster(  # noqa: PLR0913 -- (path, actual_start, rng_seed,
     session.close_session()
     session.close()
     return ride_id
-
-
-def relay_placeholder_roster() -> Roster:
-    """Build the MIXED team_relay placeholder the E9.2.2 race stages.
-
-    One two-rider relay team on plate 1 plus one solo on plate 12 --
-    relay riders carry no plate of their own (S1), so only the entry's
-    plate resolves. The E9.2.2/phase-6 sim stages this ride, then its
-    child imports ``race_roster.csv`` through the real route and the
-    committed roster REPLACES the placeholder on the store ride (the
-    same replace semantics ``test_full_race_r74`` relies on).
-    """
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
-    roster.create_team_entry(
-        display_name="Placeholder Team",
-        plate="1",
-        riders=[Rider(first_name="A.", last_name="One"), Rider(first_name="B.", last_name="Two")],
-    )
-    roster.create_solo_entry(first_name="Placeholder", last_name="Solo", plate="12")
-    return roster
 
 
 def race_db_facts(path: Path) -> dict[str, Any]:

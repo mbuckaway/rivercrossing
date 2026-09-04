@@ -2315,7 +2315,11 @@ def _resume_console_engine(
     - **Continue** marks the open session's running ride
       (:meth:`~rivercrossing.store.Store.set_active_ride`), rebuilds
       the engine from the store (:meth:`~rivercrossing.store.
-      Store.load_engine` with the ride's roster shell), and hands the
+      Store.load_engine` with the ride's roster), installs that
+      roster on the shared context's ``roster`` -- so the Rider
+      Editor, Teams Editor and CSV import operate on the resumed
+      ride's real entries, the same install :func:`_switch_console_
+      to_ride` performs for the library-Open path -- and hands the
       console that engine/source -- elapsed derives from the engine's
       replayed ``actual_start`` and the wall clock (R-30).
     - **Open library** opens ``ride_library_dlg`` (the store-backed
@@ -2390,6 +2394,12 @@ def _resume_console_engine(
             # handlers close over this same object).
             context.active_ride_id = ride_id
             roster = store.roster_for(ride_id)
+            # The resumed ride's roster becomes the UI's roster -- the
+            # same install _switch_console_to_ride performs for the
+            # library-Open path -- so the Rider Editor, Teams Editor
+            # and CSV import preview against the ride's real entries,
+            # never the empty bootstrap shell (E5.4.2).
+            context.roster = roster
             engine = store.load_engine(ride_id, roster, clock=clock)
             # E9.1.3: after replay, every live event the resumed
             # engine records persists to the store.

@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Full-breadth scripted race acceptance: child record vs. oracle.
 
-The E9.2.2 full-breadth race: the parent stages a relay placeholder
-ride (TEAM_RELAY config, two placeholder entries) on a fresh
+The E9.2.2 full-breadth race: the parent stages an empty TEAM_RELAY
+ride (relay config, no roster entries yet) on a fresh
 ``rides.db``, spawns ``race_child.py sim_race`` -- which opens the real
 store-backed app on an injected clock, imports ``fixtures/
 race_roster.csv`` (50 riders, 21 relay plates) through the real
-``mi_import_csv`` route so the fixture REPLACES the placeholder, and
+``mi_import_csv`` route -- resume installs the ride's empty relay
+roster on the shared context, so the import previews against the
+ride's real shape and commits the fixture's 21 entries -- and then
 drives every correction path (short-lap holds, manual deal, DNF,
 add-crossing-at-time, void-crossing, void-card) across two
 finish/reopen legs before exporting the four results files -- and then
@@ -149,14 +151,20 @@ def test_race_sim_full_breadth_race_matches_the_algorithm(
     seed_env = os.environ.get("RIVERCROSSING_ACCEPTANCE_SEED")
     rng_seed = int(seed_env) if seed_env else _SIM_SEED
     # Phase 6: the ride is staged TEAM_RELAY (the EPIC's format, spec
-    # §1) with a two-entry placeholder roster -- the child's CSV import
-    # REPLACES it, so the fixture's 21 relay entries are the roster
-    # every typed lap and correction resolves against.
+    # §1) with an EMPTY relay-shaped roster -- resume now installs the
+    # ride's saved roster on the shared context (the resume-roster
+    # fix), so the child's CSV import previews against the ride's real
+    # TEAM_RELAY shape and commits the fixture's 21 relay entries,
+    # which are the roster every typed lap and correction resolves
+    # against.
     ride_id = store_staging.running_ride_with_roster(
         db_path,
         rng_seed=rng_seed,
         plate_model=store_staging.PlateModel.TEAM_RELAY,
-        roster=store_staging.relay_placeholder_roster(),
+        roster=store_staging.Roster(
+            entry_mode=store_staging.EntryMode.MIXED,
+            plate_model=store_staging.PlateModel.TEAM_RELAY,
+        ),
     )
 
     envelope = _run_sim_race_child(
@@ -193,12 +201,14 @@ def test_race_sim_full_breadth_race_matches_the_algorithm(
         assert actions.count(action) == 1, f"expected exactly one {action}"
     assert len(record["checkpoints"]) >= 12, "too few display checkpoints"
 
-    # Phase 6: the import REPLACED the staged placeholder, so the final
-    # standings carry every fixture entry -- 11 relay teams + 10 solos,
-    # the DNF'd plate 4 listed last in the teams section (rank keeps
-    # the DNF tail). A stub or failed import would leave the
-    # placeholder's two entries instead.
-    assert len(record["final_standings"]) == 21, "imported roster did not replace the placeholder"
+    # Phase 6: the import committed the fixture's 21 entries onto the
+    # staged ride (resume installed the ride's empty TEAM_RELAY roster
+    # on the context, and csvio commits match/insert/reshape), so the
+    # final standings carry every fixture entry -- 11 relay teams + 10
+    # solos, the DNF'd plate 4 listed last in the teams section (rank
+    # keeps the DNF tail). A stub or failed import would leave the
+    # staged ride with no roster at all.
+    assert len(record["final_standings"]) == 21, "imported roster did not commit all 21 entries"
 
     report = race_sim_oracle.compare(facts, record, exports_dir)
 

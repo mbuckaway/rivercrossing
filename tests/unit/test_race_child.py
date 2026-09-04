@@ -376,34 +376,26 @@ def test_running_ride_with_roster_without_roster_keeps_library_roster(
     assert [entry.team_size for entry in loaded.entries] == [1, 2]
 
 
-def test_relay_placeholder_roster_builds_two_mixed_relay_entries(
-    store_staging_module: ModuleType,
-) -> None:
-    """relay_placeholder_roster returns 1 relay team + 1 solo.
-
-    The roster carries the placeholder entries the sim stages before
-    its CSV import replaces them.
-    """
-    roster = store_staging_module.relay_placeholder_roster()
-
-    assert roster.plate_model.value == "team_relay"
-    assert [entry.plate for entry in roster.entries] == ["1", "12"]
-    assert [entry.type.value for entry in roster.entries] == ["team", "solo"]
-    assert [entry.team_size for entry in roster.entries] == [2, 1]
-    # Relay riders carry no plate of their own (S1); the entry's plate
-    # is the only plate a typed crossing resolves.
-    assert all(rider.plate is None for entry in roster.entries for rider in entry.riders)
-
-
 def test_running_ride_with_roster_stages_a_team_relay_ride(
     store_staging_module: ModuleType, tmp_path: Path
 ) -> None:
-    """plate_model=TEAM_RELAY creates a relay ride; its roster fits."""
+    """plate_model=TEAM_RELAY creates a relay ride; an empty shell fits.
+
+    The E9.2.2 sim stages a TEAM_RELAY ride with an empty relay-shaped
+    roster: resume installs that roster on the shared context (the
+    resume-roster fix), so the child's CSV import previews against the
+    ride's real TEAM_RELAY shape and commits the fixture cleanly. The
+    ride row carries the relay config, and the saved empty roster
+    round-trips through ``Store.roster_for`` as zero entries.
+    """
     db_path = tmp_path / "rides.db"
     ride_id = store_staging_module.running_ride_with_roster(
         db_path,
         plate_model=store_staging_module.PlateModel.TEAM_RELAY,
-        roster=store_staging_module.relay_placeholder_roster(),
+        roster=store_staging_module.Roster(
+            entry_mode=store_staging_module.EntryMode.MIXED,
+            plate_model=store_staging_module.PlateModel.TEAM_RELAY,
+        ),
     )
     store = Store.open(db_path)
     try:
@@ -413,5 +405,6 @@ def test_running_ride_with_roster_stages_a_team_relay_ride(
         store.close()
 
     assert config.plate_model.value == "team_relay"
-    assert [entry.plate for entry in loaded.entries] == ["1", "12"]
-    assert [entry.team_size for entry in loaded.entries] == [2, 1]
+    assert loaded.plate_model.value == "team_relay"
+    assert loaded.entry_mode.value == "mixed"
+    assert loaded.entries == ()
