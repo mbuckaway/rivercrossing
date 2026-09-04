@@ -90,8 +90,8 @@ def _build_ride_console(
     Returns ``(window, console, presenter, engine, source)``.
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
-    roster.create_solo_entry(name="Rider 34", plate="34")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="34", plate="34")
     config = RideConfig(
         name="E7.2.2 Reopened Mode",
         event_date=date(2026, 9, 20),
@@ -244,7 +244,7 @@ def test_reopened_mode_corrected_crossing_highlighted_in_feed(
         harness.close_window(window)
 
 
-def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(
+def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa: PLR0915 -- the scenario IS the test: one finish-again script
     xrc_resource: object,
 ) -> None:
     """Finish again: "Finish again" confirm re-locks and re-ranks.
@@ -252,11 +252,13 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(
     Reopened corrections change the snapshot (voiding plate 12's
     winning QD leaves it eight-high); the existing finish route, shown
     with the REOPENED "Finish again" label, re-locks to FINISHED and
-    the standings re-rank through standings.rank -- plate 34 leads.
+    the standings re-rank through standings.rank_by_kind -- plate 34
+    leads the solo section.
     """
     window, console, _presenter, engine, source = _build_ride_console(xrc_resource, reopen=True)
     try:
-        before = source.standings()
+        teams_before, solo_before = source.standings()
+        before = [*teams_before, *solo_before]
         assert before[0].plate == LEADER_PLATE
         engine.void_card(LEADER_PLATE, Card.parse(LEADER_WINNING_CARD), "wrong card off the line")
 
@@ -291,20 +293,24 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(
         assert infobar is not None
         assert infobar.IsShown() is False
 
-        after = source.standings()
+        teams_after, solo_after = source.standings()
+        after = [*teams_after, *solo_after]
         assert [row.plate for row in after] != [row.plate for row in before]
         assert after[0].plate == "34"
 
         # The E6.4.1 results window re-ranks from the live source: a
         # fresh Standings (mi_standings route) reads the corrected
-        # leader at the top -- ranking stays standings.rank's job.
+        # leader at the top -- ranking stays standings.rank_by_kind's
+        # job. Phase 3: the solo-only fixture renders the Solo section
+        # header row above its two entries.
         harness.fire_menu_event(window, ids.MI_STANDINGS)
         results_frame = wx.Window.FindWindowByName(ids.RESULTS_FRAME)
         assert results_frame is not None
         try:
             model = harness.find_control(results_frame, ids.STANDINGS_LIST).GetModel()
-            assert model.GetCount() == 2
-            assert model.GetValueByRow(0, 1) == "34"  # COL_PLATE
+            assert model.GetCount() == 3
+            assert model.GetValueByRow(0, 2) == "Solo"  # COL_ENTRY section header
+            assert model.GetValueByRow(1, 1) == "34"  # COL_PLATE
         finally:
             harness.close_window(results_frame)
     finally:

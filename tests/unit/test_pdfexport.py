@@ -298,6 +298,37 @@ def test_render_full_field_off_omits_full_field_section(tmp_path: Path) -> None:
     assert "Full field" not in text
 
 
+def test_render_full_field_splits_into_teams_then_solo_sections(tmp_path: Path) -> None:
+    """Phase 3: the Full field labels its Teams then Solo sections."""
+    text = _text(_render(tmp_path, build_placed(9), golden_opts()))
+
+    assert "TEAMS" in text
+    assert "SOLO" in text
+    assert text.find("TEAMS") < text.find("SOLO")
+
+
+def test_render_full_field_solo_only_field_omits_the_teams_section(tmp_path: Path) -> None:
+    """A solo-only field renders one section: SOLO, never TEAMS."""
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+    solo_only = _placed_three()[:2]  # two solo entries, no team
+
+    text = _text(_render(tmp_path, solo_only, opts))
+
+    assert "SOLO" in text
+    assert "TEAMS" not in text
+
+
+def test_render_full_field_team_only_field_omits_the_solo_section(tmp_path: Path) -> None:
+    """A team-only field renders one section: TEAMS, never SOLO."""
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+    team_only = _placed_three()[2:]  # the one team entry
+
+    text = _text(_render(tmp_path, team_only, opts))
+
+    assert "TEAMS" in text
+    assert "SOLO" not in text
+
+
 def test_render_all_cards_off_omits_draw_order_rows(tmp_path: Path) -> None:
     """all_cards=False omits the per-entry draw-order sub-rows."""
     opts = ExportOptions(all_cards=False, full_field=True, laps_board=False, time_board=False)

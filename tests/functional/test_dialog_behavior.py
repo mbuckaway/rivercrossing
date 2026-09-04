@@ -739,9 +739,9 @@ def test_run_dialog_returns_result_and_restores_opener_focus(
 _ALL_DIALOG_SPECS = tuple(spec for spec in pages.WINDOWS if not spec.is_frame)
 
 
-def test_all_dialogs_declare_exactly_twenty_four_rows() -> None:
+def test_all_dialogs_declare_exactly_twenty_five_rows() -> None:
     """A dialog disappearing from ``pages.WINDOWS`` must shrink this."""
-    assert len(_ALL_DIALOG_SPECS) == 24
+    assert len(_ALL_DIALOG_SPECS) == 25
 
 
 @pytest.mark.parametrize("spec", _ALL_DIALOG_SPECS, ids=lambda s: s.name)

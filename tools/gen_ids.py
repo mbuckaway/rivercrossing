@@ -65,7 +65,8 @@ SPEC_KNOWN_SUFFIXES: tuple[str, ...] = (
 # main_statusbar, audit_search, about_logo_bmp, gorba_link,
 # selftest_output, main_splitter) but never named in section 15b's
 # own suffix sentence -- extension, not part of the frozen text.
-# Revisit when section 15b is next amended (Phase 7).
+# _preview joined when Phase 4 registered logo_preview (team_editor_dlg)
+# in section 15b.
 CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_menubar",
     "_statusbar",
@@ -74,6 +75,7 @@ CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_link",
     "_output",
     "_splitter",
+    "_preview",
 )
 
 KNOWN_SUFFIXES: tuple[str, ...] = SPEC_KNOWN_SUFFIXES + CANVAS_KNOWN_SUFFIXES

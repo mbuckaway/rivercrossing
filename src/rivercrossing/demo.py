@@ -153,7 +153,11 @@ class UnknownPlateError(LookupError):
 
 # -------------------------------------------------------- standings
 
-_STANDINGS: tuple[StandingsRow, ...] = (
+# Phase 3 (team/solo results split): the fixture's results_frame rows
+# split by kind into a Teams section (Trail Blazers) and a Solo section
+# (Sam Ellis, R. Dubois), each numbered from 1 -- mirroring what
+# ``rank_by_kind`` produces for the canvas's mixed fixture ride.
+_STANDINGS_TEAMS: tuple[StandingsRow, ...] = (
     StandingsRow(
         place=1,
         plate="77",
@@ -163,8 +167,11 @@ _STANDINGS: tuple[StandingsRow, ...] = (
         best5=("KS", "KC", "KD", "JK", "9H"),
         hand="Four of a kind, kings",
     ),
+)
+
+_STANDINGS_SOLO: tuple[StandingsRow, ...] = (
     StandingsRow(
-        place=2,
+        place=1,
         plate="123",
         entry="Sam Ellis",
         laps=8,
@@ -173,7 +180,7 @@ _STANDINGS: tuple[StandingsRow, ...] = (
         hand="Straight flush, queen-high",
     ),
     StandingsRow(
-        place=3,
+        place=2,
         plate="8",
         entry="R. Dubois",
         laps=7,
@@ -248,9 +255,9 @@ class DemoDataSource:
     def standings(
         self,
         order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; fixture data ignores order
-    ) -> list[StandingsRow]:
-        """Return the results standings rows, in placed order."""
-        return list(_STANDINGS)
+    ) -> tuple[list[StandingsRow], list[StandingsRow]]:
+        """Return the results standings as (teams, solo) row lists."""
+        return list(_STANDINGS_TEAMS), list(_STANDINGS_SOLO)
 
     def audit_rows(self) -> list[AuditRow]:
         """Return the audit trail rows, newest first."""

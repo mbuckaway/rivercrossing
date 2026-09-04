@@ -8,7 +8,7 @@ task brief E1.6.1: "a missing asset fails the build, not first
 paint" -- instead of shipping a bundle that dies while a window is
 drawing, or worse, draws a blank cell mid-race.
 
-The expectation is *derived*, never a directory listing: the nine
+The expectation is *derived*, never a directory listing: the ten
 ``.xrc`` files come from spec.md section 15b's file map, the 106
 card bitmaps from ``cards_imagelist``'s own deck keys and scales,
 and the three WAV cues from spec.md section 10. A listing would
@@ -65,8 +65,8 @@ XRC_SUBDIR = "xrc"
 CARDS_SUBDIR = "assets/cards"
 SOUNDS_SUBDIR = "assets/sounds"
 
-# spec.md section 15b, "Files (src/rivercrossing/ui/xrc/)" -- the nine
-# files that hold all 23 windows.
+# spec.md section 15b, "Files (src/rivercrossing/ui/xrc/)" -- the ten
+# files that hold the frozen windows.
 REQUIRED_XRC: tuple[str, ...] = (
     "audit.xrc",
     "detail.xrc",
@@ -77,6 +77,7 @@ REQUIRED_XRC: tuple[str, ...] = (
     "riders.xrc",
     "settings.xrc",
     "setup.xrc",
+    "teams.xrc",
 )
 
 # spec.md section 10's three cues (recorded / held / rejected), named

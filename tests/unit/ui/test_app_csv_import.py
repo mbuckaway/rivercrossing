@@ -63,15 +63,15 @@ def _config() -> RideConfig:
 def _staged_roster() -> Roster:
     """Build the one-entry roster saved before the CSV import."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Sam Ellis", plate="12")
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="12")
     return roster
 
 
 def _imported_roster() -> Roster:
     """Build the roster a committed CSV import leaves in memory."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 01", plate="1")
-    roster.create_solo_entry(name="Rider 02", plate="2")
+    roster.create_solo_entry(first_name="Rider", last_name="01", plate="1")
+    roster.create_solo_entry(first_name="Rider", last_name="02", plate="2")
     return roster
 
 

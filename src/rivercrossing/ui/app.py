@@ -68,7 +68,7 @@ from rivercrossing.ride import (
     UnknownPlateError,
 )
 from rivercrossing.roster import EntryMode, PlateModel, Roster
-from rivercrossing.standings import Placed, rank, tiebreak_order_from_spellings
+from rivercrossing.standings import Placed, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.store import Store, default_db_path
 from rivercrossing.ui import (
     accelerators,
@@ -235,18 +235,18 @@ class _RouteContext:
 
 
 def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]:
-    """Build the started ride the console runs at bootstrap (E4.4.1).
+    """Build the empty DRAFT ride the console runs at bootstrap (R-31).
 
     With no store-backed ride open yet (E5.4.2), the console still
     opens on a real engine: a valid :class:`~rivercrossing.ride.
     RideConfig` matching *roster*'s own settings, an 8-deck seeded
-    shoe, and the real wall clock. The engine is started so the
-    console opens live (RUNNING), and a typed plate records on the
-    very first Enter once the roster holds that entry. The bootstrap
-    roster is empty until the library Open / resume flow loads a
-    store ride, so the fresh console is the correct empty state: zero
-    crossings, zero counters, full shoe, every plate refused as
-    unknown (R-31).
+    shoe, and the real wall clock. The engine is left DRAFT -- no ride
+    is running at a fresh launch -- so File ▸ Quit shows the plain
+    ``exit_confirm_dlg``, not the "stop the running ride" dialog. The
+    bootstrap roster is empty until the library Open / resume flow
+    loads a store ride, so the fresh console is the correct empty
+    state: zero crossings, zero counters, full shoe, plate entry
+    disabled (R-31).
 
     This is the one place a ride is created at bootstrap; E5's
     store-backed create/reopen flow replaces it (``_switch_console_
@@ -277,7 +277,6 @@ def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]
         clock=lambda: datetime.now(UTC),
         roster=roster,
     )
-    engine.start()
     return engine, EngineDataSource(engine, roster)
 
 
@@ -857,7 +856,10 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     shortcuts dialog: ``shortcuts_dlg`` now binds the E8.2.1 viewer
     (renders the accelerator table, Key | Action). E8.2.3 adds the
     About box: ``about_dlg`` now binds the E8.2.3 viewer (package
-    version, ride-logo-or-app-icon). The remaining plain XRC dialogs
+    version, ride-logo-or-app-icon). Phase 4 adds the teams editor:
+    ``team_editor_dlg`` now binds the TeamEditor view over the live
+    roster (team records -- name, relay plate, notes, logo). The
+    remaining plain XRC dialogs
     with no code-side view class (the correction dialogs) need
     nothing further here; they already carry their own canvas
     defaults from their own ``.xrc`` authoring.
@@ -872,6 +874,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
     from rivercrossing.ui.views.settings import SettingsDialog  # noqa: PLC0415
     from rivercrossing.ui.views.shortcuts import ShortcutsDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.team_editor import TeamEditor  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         if context.store is not None:
@@ -899,6 +902,13 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # empty bootstrap roster otherwise -- the rider editor shows a
         # correct empty state until a real ride is opened.
         RiderEditor(window, roster=context.roster)
+    elif route.target == ids.TEAM_EDITOR_DLG:
+        # Phase 4: the same live-roster wiring as the rider editor --
+        # team records (name, relay plate, notes, logo) over the
+        # store's roster when one is open, the empty bootstrap roster
+        # otherwise. The menu's own teams_allowed gate (entry_mode is
+        # MIXED) is what lets this route fire at all.
+        TeamEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
         # E9.1.2/E9.1.4: with a store open, a committed New Ride
         # persists the ride row and the roster the dialog was opened
@@ -1041,6 +1051,10 @@ def _menu_ride_state(context: _RouteContext, status: RideStatus) -> commands.Rid
         audit_rows=len(engine.events),
         entry_has_cards=any(result.cards for result in engine.snapshot()),
         export_exists=context.last_export_path is not None,
+        # Phase 4: teams only exist on a mixed ride, so the Teams
+        # Editor menu row follows the config's entry_mode -- the
+        # same fact the roster itself records (R-11).
+        teams_allowed=engine.config.entry_mode is EntryMode.MIXED,
     )
 
 
@@ -1160,13 +1174,25 @@ def _export_engine(context: _RouteContext) -> RideEngine | None:
     return presenter.engine if presenter is not None else None
 
 
-def _placed_for_export(context: _RouteContext) -> tuple[Placed, ...]:
-    """Rank the snapshot with the ride's stored tie-break order."""
+def _placed_for_export(
+    context: _RouteContext,
+) -> tuple[tuple[Placed, ...], tuple[Placed, ...]]:
+    """Rank the snapshot's teams and solos with the stored tie-break.
+
+    Phase 3 (team/solo results split): returns ``(teams, solo)`` --
+    each kind ranked from 1 with its own DNF tail via
+    ``standings.rank_by_kind``. The export writers receive both groups
+    and merge them Teams-then-Solo for the shared single-``placed``
+    surfaces (htmlexport/pdfexport render the two full-field sections
+    by partitioning on ``result.kind``; the standings CSV carries the
+    ``type`` column). With no ride threaded both groups are empty.
+    """
     engine = _export_engine(context)
     if engine is None:
-        return ()
+        return (), ()
     order = tiebreak_order_from_spellings(engine.config.tiebreak_order)
-    return tuple(rank(engine.snapshot(), order))
+    teams, solo = rank_by_kind(engine.snapshot(), order)
+    return tuple(teams), tuple(solo)
 
 
 def _export_options() -> ExportOptions:
@@ -1186,9 +1212,10 @@ def _export_options() -> ExportOptions:
     return ExportOptions()
 
 
-def _write_export(  # noqa: PLR0913, PLR0917 -- (config, placed, opts, target, path): the pure writer's inputs
+def _write_export(  # noqa: PLR0913, PLR0917 -- (config, teams, solo, opts, target, path): the pure writer's inputs
     config: RideConfig,
-    placed: tuple[Placed, ...],
+    teams: tuple[Placed, ...],
+    solo: tuple[Placed, ...],
     opts: ExportOptions,
     target: str,
     path: Path,
@@ -1197,9 +1224,16 @@ def _write_export(  # noqa: PLR0913, PLR0917 -- (config, placed, opts, target, p
 
     Pure -- no wx, no context: it runs on the off-loop thread, so it
     must never touch wx (measured: a wx call from the worker thread
-    bus-errors the process). The handler captures *config*/*placed*/
-    *opts* on the main thread first.
+    bus-errors the process). The handler captures *config*/*teams*/
+    *solo*/*opts* on the main thread first.
+
+    Phase 3 (team/solo results split): the two groups merge
+    Teams-then-Solo into the single ``placed`` sequence each frozen
+    writer takes -- the HTML/PDF full fields partition it back into the
+    two sections on ``result.kind``, and the standings CSV emits the
+    ``type`` column.
     """
+    placed = (*teams, *solo)
     if target == "export_html":
         html = htmlexport.render(config, placed, opts, logo_path=config.logo_path)
         path.write_text(html, encoding="utf-8")
@@ -1220,7 +1254,8 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
     path: Path,
     *,
     config: RideConfig,
-    placed: tuple[Placed, ...],
+    teams: tuple[Placed, ...],
+    solo: tuple[Placed, ...],
     opts: ExportOptions,
     watermark: int,
 ) -> None:
@@ -1240,7 +1275,7 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
 
     def write() -> None:
         try:
-            _write_export(config, placed, opts, target, path)
+            _write_export(config, teams, solo, opts, target, path)
         except Exception as exc:  # noqa: BLE001 -- a failed export is a notice, not a crash
             wx = require_wx()
             wx.CallAfter(context.frame.SetStatusText, f"Export failed: {exc}")
@@ -1276,8 +1311,8 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     """Run one Results ▸ export row (E6.4.2): pick, write off-loop.
 
     A cancelled picker is a silent no-op like the roster export. The
-    wx-touching reads (engine/config/placed/options) happen here on
-    the main thread; the off-loop thread only renders and writes.
+    wx-touching reads (engine/config/teams/solo/options) happen here
+    on the main thread; the off-loop thread only renders and writes.
     E7.3.2: the export watermark -- the engine event count right now,
     the state the rendered file captures -- is read alongside the
     snapshot and stored on success, so a correction after this instant
@@ -1292,7 +1327,7 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     if path is None:
         return
     config = engine.config
-    placed = _placed_for_export(context)
+    teams, solo = _placed_for_export(context)
     opts = _export_options()
     watermark = len(engine.events)
     _run_export_offloop(
@@ -1300,7 +1335,8 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
         target,
         path,
         config=config,
-        placed=placed,
+        teams=teams,
+        solo=solo,
         opts=opts,
         watermark=watermark,
     )
@@ -2279,7 +2315,11 @@ def _resume_console_engine(
     - **Continue** marks the open session's running ride
       (:meth:`~rivercrossing.store.Store.set_active_ride`), rebuilds
       the engine from the store (:meth:`~rivercrossing.store.
-      Store.load_engine` with the ride's roster shell), and hands the
+      Store.load_engine` with the ride's roster), installs that
+      roster on the shared context's ``roster`` -- so the Rider
+      Editor, Teams Editor and CSV import operate on the resumed
+      ride's real entries, the same install :func:`_switch_console_
+      to_ride` performs for the library-Open path -- and hands the
       console that engine/source -- elapsed derives from the engine's
       replayed ``actual_start`` and the wall clock (R-30).
     - **Open library** opens ``ride_library_dlg`` (the store-backed
@@ -2354,6 +2394,12 @@ def _resume_console_engine(
             # handlers close over this same object).
             context.active_ride_id = ride_id
             roster = store.roster_for(ride_id)
+            # The resumed ride's roster becomes the UI's roster -- the
+            # same install _switch_console_to_ride performs for the
+            # library-Open path -- so the Rider Editor, Teams Editor
+            # and CSV import preview against the ride's real entries,
+            # never the empty bootstrap shell (E5.4.2).
+            context.roster = roster
             engine = store.load_engine(ride_id, roster, clock=clock)
             # E9.1.3: after replay, every live event the resumed
             # engine records persists to the store.
@@ -2552,7 +2598,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     # set_on_ride_changed fires on every ride-state change (the
     # console's own seam) and on every feed re-render, so the §15
     # "Enabled when" cells hold in the app -- the initial call below
-    # applies them to the bootstrap's already-started RUNNING ride.
+    # applies them to the bootstrap's DRAFT ride.
     _console.set_on_ride_changed(lambda status: _apply_menu_state(context, status))
     _apply_menu_state(context, engine.state)
     _run_launch_self_test(context)

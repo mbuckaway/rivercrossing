@@ -121,8 +121,8 @@ def _build_live_context(
     from rivercrossing.ui import app as app_mod  # noqa: PLC0415 -- module already imported
 
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Rider 12", plate="12")
-    roster.create_solo_entry(name="Rider 34", plate="34")
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="34", plate="34")
     config = RideConfig(
         name="GORBA EPIC 2026",
         event_date=date(2026, 9, 20),

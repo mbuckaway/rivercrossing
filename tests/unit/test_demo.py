@@ -257,39 +257,48 @@ def test_demo_entry_detail_raises_for_any_plate_outside_the_fixture(plate: str) 
 # ------------------------------------------------------------ standings
 
 
-def test_demo_standings_returns_the_three_placed_fixture_rows() -> None:
-    """``standings()`` returns ``results_frame``'s three rows."""
+def test_demo_standings_splits_the_fixture_into_teams_and_solo_sections() -> None:
+    """``standings()`` returns (teams, solo) -- Phase 3's two sections.
+
+    The canvas's fixture ride is MIXED: Trail Blazers (a team) ranks
+    against teams; Sam Ellis and R. Dubois rank against solos, each
+    section numbered from 1.
+    """
     standings = DemoDataSource().standings()
 
-    assert standings == [
-        StandingsRow(
-            place=1,
-            plate="77",
-            entry="Trail Blazers",
-            laps=9,
-            total="5:44:02",
-            best5=("KS", "KC", "KD", "JK", "9H"),
-            hand="Four of a kind, kings",
-        ),
-        StandingsRow(
-            place=2,
-            plate="123",
-            entry="Sam Ellis",
-            laps=8,
-            total="5:51:17",
-            best5=("QH", "JH", "TH", "9H", "8H"),
-            hand="Straight flush, queen-high",
-        ),
-        StandingsRow(
-            place=3,
-            plate="8",
-            entry="R. Dubois",
-            laps=7,
-            total="5:38:44",
-            best5=("AC", "AD", "AH", "4D", "4S"),
-            hand="Full house, aces over fours",
-        ),
-    ]
+    assert standings == (
+        [
+            StandingsRow(
+                place=1,
+                plate="77",
+                entry="Trail Blazers",
+                laps=9,
+                total="5:44:02",
+                best5=("KS", "KC", "KD", "JK", "9H"),
+                hand="Four of a kind, kings",
+            )
+        ],
+        [
+            StandingsRow(
+                place=1,
+                plate="123",
+                entry="Sam Ellis",
+                laps=8,
+                total="5:51:17",
+                best5=("QH", "JH", "TH", "9H", "8H"),
+                hand="Straight flush, queen-high",
+            ),
+            StandingsRow(
+                place=2,
+                plate="8",
+                entry="R. Dubois",
+                laps=7,
+                total="5:38:44",
+                best5=("AC", "AD", "AH", "4D", "4S"),
+                hand="Full house, aces over fours",
+            ),
+        ],
+    )
 
 
 def test_demo_standings_accepts_the_tiebreak_order_argument() -> None:

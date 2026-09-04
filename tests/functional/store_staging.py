@@ -40,6 +40,7 @@ __all__ = [
     "race_db_facts",
     "resume_db_path",
     "resume_ride_config",
+    "rich_race_roster",
     "running_ride_with_roster",
 ]
 
@@ -140,8 +141,16 @@ def create_resumed_ride(db_path: Path, spec: ResumeRideSpec) -> int:
     return ride_id
 
 
-def library_ride_config(name: str) -> RideConfig:
-    """Return the store ride config the E5.4.1 scenarios use."""
+def library_ride_config(
+    name: str, *, plate_model: PlateModel = PlateModel.RIDER_POOLED
+) -> RideConfig:
+    """Return the store ride config the E5.4.1 scenarios use.
+
+    ``plate_model`` picks the ride's plate policy: the E5-era default
+    stays ``RIDER_POOLED``; the E9.2.2 relay sim stages
+    ``PlateModel.TEAM_RELAY`` so the ride row's shape (fixed at
+    ``create_ride``) matches the relay roster its CSV import commits.
+    """
     return RideConfig(
         name=name,
         event_date=date(2026, 9, 20),
@@ -153,7 +162,7 @@ def library_ride_config(name: str) -> RideConfig:
         planned_duration_s=21600,
         min_lap_s=1080,
         entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
+        plate_model=plate_model,
     )
 
 
@@ -165,10 +174,48 @@ def library_roster() -> Roster:
     and ``Store.roster_for`` must rebuild identically.
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Alice", plate="12")
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    return roster
+
+
+def rich_race_roster() -> Roster:
+    """Build the MIXED rider_pooled rich roster the E9.2.2 sim staged.
+
+    The pre-CSV (phase-6) sim staged this six-entry roster; the phase-6
+    sim now stages an empty TEAM_RELAY ride and imports the CSV
+    fixture instead, but the pooled rich shape is retained as the
+    counterpart staging fixture, pinned by ``tests/unit/
+    test_race_child.py``.
+
+    Four solo entries plus two teams -- one of two riders, one of
+    three -- all ACTIVE (DNF is marked at runtime, not staged). The
+    six plates round-trip verbatim through ``Store.save_roster`` and
+    ``Store.roster_for``.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    for plate in ("1", "2", "3", "4"):
+        roster.create_solo_entry(first_name=f"Solo {plate}", last_name="", plate=plate)
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[
+            Rider(first_name="Rider", last_name="11", plate="11"),
+            Rider(first_name="Rider", last_name="12", plate="12"),
+        ],
+    )
+    roster.create_team_entry(
+        display_name="Team B",
+        riders=[
+            Rider(first_name="Rider", last_name="21", plate="21"),
+            Rider(first_name="Rider", last_name="22", plate="22"),
+            Rider(first_name="Rider", last_name="23", plate="23"),
+        ],
     )
     return roster
 
@@ -206,8 +253,13 @@ def create_library_ride(path: Path, *, name: str, running: bool) -> int:
     return ride_id
 
 
-def running_ride_with_roster(
-    path: Path, *, actual_start: datetime | None = None, rng_seed: int | None = None
+def running_ride_with_roster(  # noqa: PLR0913 -- (path, actual_start, rng_seed, plate_model) + the E9.2.1 rich-roster seam
+    path: Path,
+    *,
+    actual_start: datetime | None = None,
+    rng_seed: int | None = None,
+    plate_model: PlateModel = PlateModel.RIDER_POOLED,
+    roster: Roster | None = None,
 ) -> int:
     """Create a running store ride and a quit-keep-running session.
 
@@ -221,12 +273,21 @@ def running_ride_with_roster(
     ``rng_seed`` pins the ride's shoe seed (E9.2.2/R-77): the nightly
     acceptance race owns its seed -- it injects it here and files it
     on failure; ``None`` keeps the DB-owned random seed (spec §4).
+    ``plate_model`` picks the ride row's plate policy, fixed at
+    ``create_ride`` (the E9.2.2 relay sim stages ``TEAM_RELAY`` so the
+    roster its CSV import commits reloads in the same shape);
+    ``roster`` replaces the saved roster (E9.2.1 stages its rich six-
+    entry roster here); ``None`` keeps the E5-era
+    :func:`library_roster` default. Callers switching ``plate_model``
+    must also pass a roster of that shape.
     """
     start_iso = actual_start.isoformat() if actual_start is not None else "2026-09-20T10:00:00"
     boot = Store.open(path)
     try:
-        ride_id = boot.create_ride(library_ride_config("GORBA EPIC 2026"), rng_seed=rng_seed)
-        boot.save_roster(ride_id, library_roster())
+        ride_id = boot.create_ride(
+            library_ride_config("GORBA EPIC 2026", plate_model=plate_model), rng_seed=rng_seed
+        )
+        boot.save_roster(ride_id, roster if roster is not None else library_roster())
         boot.append(ride_id, Event(action="start", payload={"actual_start": start_iso}))
     finally:
         boot.close()

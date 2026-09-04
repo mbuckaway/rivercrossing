@@ -27,13 +27,14 @@ from rivercrossing.standings import (
     DEFAULT_TIEBREAK_ORDER,
     TieBreak,
     hand_name,
-    rank,
+    rank_by_kind,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from rivercrossing.ride import Crossing, Event, RideEngine
+    from rivercrossing.standings import Placed
 
 __all__ = [
     "CORRECTION_ACTIONS",
@@ -209,8 +210,15 @@ class DataSource(Protocol):
 
     def standings(
         self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
-    ) -> list[StandingsRow]:
-        """Return the results standings rows, ranked under *order*."""
+    ) -> tuple[list[StandingsRow], list[StandingsRow]]:
+        """Return the results standings as (teams, solo) row lists.
+
+        Phase 3 (team/solo results split): the teams section and the
+        solo section are each ranked under *order* from 1 -- a MIXED
+        ride never interleaves the two kinds' places. A solo-only ride
+        returns an empty teams list; a team-only ride an empty solo
+        list.
+        """
         ...
 
     def audit_rows(self) -> list[AuditRow]:
@@ -545,7 +553,7 @@ class EngineDataSource:
                 rows.extend(
                     RiderRow(
                         plate=rider.plate if rider.plate is not None else entry.plate,
-                        name=rider.name,
+                        name=rider.full_name,
                         team=entry.display_name,
                     )
                     for rider in entry.riders
@@ -588,7 +596,7 @@ class EngineDataSource:
             f"{kind} · {len(entry.riders)} riders · {len(laps)} laps · "
             f"{format_duration(sum(times))}"
         )
-        members = " · ".join(rider.name for rider in entry.riders)
+        members = " · ".join(rider.full_name for rider in entry.riders)
         return EntryDetail(
             header=header,
             members=members,
@@ -598,36 +606,41 @@ class EngineDataSource:
 
     def standings(
         self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
-    ) -> list[StandingsRow]:
-        """Return the results standings rows, ranked under *order*.
+    ) -> tuple[list[StandingsRow], list[StandingsRow]]:
+        """Return the results standings as (teams, solo) row lists.
 
-        ``rank`` runs over the engine's current snapshot with *order*
-        (E6.4.1: the results window re-ranks live by passing the
-        reordered tie-break criteria). ``hand`` is the human prose
+        ``rank_by_kind`` runs over the engine's current snapshot with
+        *order* (E6.4.1: the results window re-ranks live by passing
+        the reordered tie-break criteria), so a MIXED ride's teams and
+        solos each rank from 1 (Phase 3). ``hand`` is the human prose
         name (``standings.hand_name``), with the 0-card guard from the
         class docstring: an entry that never credited a card has no
         rank to name and renders ``""`` instead of crashing.
         """
-        placed = rank(self._engine.snapshot(), order)
-        rows: list[StandingsRow] = []
-        for item in placed:
-            try:
-                hand = hand_name(item.result.hand)
-            except ValueError:
-                hand = ""  # 0-card entry -- no rank to name (P1 contract)
-            rows.append(
-                StandingsRow(
-                    place=item.place,
-                    plate=item.result.plate,
-                    entry=item.result.name,
-                    laps=item.result.laps,
-                    total=format_duration(item.result.total_time),
-                    best5=tuple(card.code() for card in item.result.hand.best5),
-                    hand=hand,
-                    draw_required=item.draw_required,
+        teams, solo = rank_by_kind(self._engine.snapshot(), order)
+
+        def rows(placed: Sequence[Placed]) -> list[StandingsRow]:
+            built: list[StandingsRow] = []
+            for item in placed:
+                try:
+                    hand = hand_name(item.result.hand)
+                except ValueError:
+                    hand = ""  # 0-card entry -- no rank to name (P1 contract)
+                built.append(
+                    StandingsRow(
+                        place=item.place,
+                        plate=item.result.plate,
+                        entry=item.result.name,
+                        laps=item.result.laps,
+                        total=format_duration(item.result.total_time),
+                        best5=tuple(card.code() for card in item.result.hand.best5),
+                        hand=hand,
+                        draw_required=item.draw_required,
+                    )
                 )
-            )
-        return rows
+            return built
+
+        return rows(teams), rows(solo)
 
     def audit_rows(self) -> list[AuditRow]:
         """Return the audit trail rows, newest first."""
@@ -700,9 +713,9 @@ class EmptyDataSource:
     def standings(
         self,
         order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; empty state returns no rows
-    ) -> list[StandingsRow]:
-        """Return no results standings rows."""
-        return []
+    ) -> tuple[list[StandingsRow], list[StandingsRow]]:
+        """Return empty teams and solo standings sections."""
+        return [], []
 
     def audit_rows(self) -> list[AuditRow]:
         """Return no audit trail rows."""

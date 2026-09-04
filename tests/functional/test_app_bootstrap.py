@@ -161,10 +161,11 @@ def test_build_main_window_wires_the_console_to_the_live_engine_feed(
     """Not demo rows: the bootstrap console reads a fresh live engine.
 
     E4.4.1 swapped the console's ``DemoDataSource`` wiring for an
-    ``EngineDataSource`` over a seeded, started ride; a fresh engine
-    has no crossings yet, so the feed is empty at startup (the E4.4.4
-    mini race drives real rows through this same bootstrap). The
-    library/editor/detail windows keep demo data until E5/E6.
+    ``EngineDataSource`` over a fresh DRAFT engine (E5.4.2: a new
+    launch starts no ride); a fresh engine has no crossings yet, so
+    the feed is empty at startup (the E4.4.4 mini race drives real
+    rows through this same bootstrap). The library/editor/detail
+    windows keep demo data until E5/E6.
     """
     crossings_list = harness.find_control(bound_frame, ids.CROSSINGS_LIST)
 
@@ -185,21 +186,22 @@ def test_build_main_window_applies_the_console_canvas_minimum_size(
 # --- record-crossing wiring runs at bootstrap (Phase 8, A4) -------
 
 
-def test_build_main_window_wires_the_console_to_the_running_data_source(
+def test_build_main_window_wires_the_console_to_the_draft_data_source(
     bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
     """``set_state(data_source.ride_status())`` ran during bootstrap.
 
-    The bootstrap's seeded ride is started (RUNNING) so the console
-    opens live, exactly as the demo source reported RUNNING before
-    E4.4.1. Read-only: ``bound_frame`` never mutates after
-    construction, so this shares the fixture with every other
-    assertion in this module (fixture docstring).
+    A fresh launch starts no ride (E5.4.2, R-31): the bootstrap ride
+    is DRAFT -- no ride is running -- so the console opens with plate
+    entry disabled and the status label reading DRAFT. Read-only:
+    ``bound_frame`` never mutates after construction, so this shares
+    the fixture with every other assertion in this module (fixture
+    docstring).
     """
     plate_input = harness.find_control(bound_frame, ids.PLATE_INPUT)
     status_label = harness.find_control(bound_frame, ids.RIDE_STATUS_LBL)
 
-    assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (True, "RUNNING")
+    assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (False, "DRAFT")
 
 
 # --- theme + zoom menu radio defaults (Phase 8, 8.6, P8-D4) -------

@@ -271,15 +271,16 @@ def test_duplicate_ride_route_without_a_store_ride_posts_notice(
 def test_reopen_ride_route_on_non_finished_ride_refuses_and_notices() -> None:
     """Negative: reopening a non-FINISHED ride refuses after confirm.
 
-    The demo console is RUNNING; confirming the (real) reopen dialog
-    must surface the engine's refusal on the status bar, never crash.
-    Runs in a fresh interpreter (scenario) because driving a modal off
-    a shared-worker bootstrap hit the suite's documented native-wx
-    churn (scenario docstring).
+    The bootstrap console is DRAFT (a fresh launch starts no ride,
+    E5.4.2); confirming the (real) reopen dialog must surface the
+    engine's refusal on the status bar, never crash. Runs in a fresh
+    interpreter (scenario) because driving a modal off a shared-worker
+    bootstrap hit the suite's documented native-wx churn (scenario
+    docstring).
     """
     result = scenario_runner.run_scenario("reopen_ride_route_on_non_finished_refuses")
 
     data = result["data"]
     assert data["reopen_dlg_shown"] is True, result["context"]
     assert data["reopen_message"] != "", result["context"]
-    assert data["status_text"] == "Cannot reopen: cannot reopen from running", result["context"]
+    assert data["status_text"] == "Cannot reopen: cannot reopen from draft", result["context"]

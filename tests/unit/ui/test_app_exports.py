@@ -94,14 +94,25 @@ def _placed(results: tuple[EntryResult, ...]) -> tuple[Placed, ...]:
     )
 
 
-def _export_inputs(context: app_module._RouteContext) -> tuple[object, tuple, object]:
-    """Capture (config, placed, opts) the way the handler now does."""
+def _export_inputs(context: app_module._RouteContext) -> tuple[object, object, object]:
+    """Capture (config, placed-groups, opts) as the handler now does.
+
+    ``_placed_for_export`` returns Phase 3's ``(teams, solo)`` pair --
+    each kind ranked from 1 -- which the tests unpack into the two
+    ``_write_export`` arguments.
+    """
     engine = context.presenter.engine
     return (
         engine.config,
         app_module._placed_for_export(context),
         app_module._export_options(),
     )
+
+
+def _unpack_groups(groups: object) -> tuple[object, object]:
+    """Split the (teams, solo) export groups into two arguments."""
+    teams, solo = groups  # type: ignore[misc]
+    return teams, solo
 
 
 def _context(*, engine: _StubEngine | None) -> app_module._RouteContext:
@@ -155,8 +166,9 @@ def test_write_export_html_writes_a_self_contained_page(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "results.html"
 
-    config, placed, opts = _export_inputs(context)
-    app_module._write_export(config, placed, opts, "export_html", out)
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_html", out)
 
     text = out.read_text(encoding="utf-8")
     assert "Test Poker Run" in text
@@ -168,8 +180,9 @@ def test_write_export_pdf_writes_a_readable_pdf(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "results.pdf"
 
-    config, placed, opts = _export_inputs(context)
-    app_module._write_export(config, placed, opts, "export_pdf", out)
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_pdf", out)
 
     assert len(PdfReader(str(out)).pages) >= 1
 
@@ -179,22 +192,24 @@ def test_write_export_poster_writes_one_page(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "podium.pdf"
 
-    config, placed, opts = _export_inputs(context)
-    app_module._write_export(config, placed, opts, "export_poster", out)
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_poster", out)
 
     assert len(PdfReader(str(out)).pages) == 1
 
 
 def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
-    """The standings CSV carries the spec §15 header."""
+    """The standings CSV carries the spec §15 header (with type)."""
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "standings.csv"
 
-    config, placed, opts = _export_inputs(context)
-    app_module._write_export(config, placed, opts, "export_results_csv", out)
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_results_csv", out)
 
     lines = out.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "place,plate,entry,laps,hand"
+    assert lines[0] == "place,plate,entry,type,laps,hand"
     assert len(lines) == 3  # header + two rows
 
 
@@ -203,8 +218,9 @@ def test_write_export_html_writes_an_empty_field_page(tmp_path: Path) -> None:
     context = _context(engine=_StubEngine(()))
     out = tmp_path / "results.html"
 
-    config, placed, opts = _export_inputs(context)
-    app_module._write_export(config, placed, opts, "export_html", out)
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_html", out)
 
     assert "race-data" in out.read_text(encoding="utf-8")
 
@@ -223,11 +239,12 @@ def test_handle_export_command_picks_writes_and_records(
         path: Path,
         *,
         config: object,
-        placed: object,
+        teams: object,
+        solo: object,
         opts: object,
         watermark: int | None = None,
     ) -> None:
-        app_module._write_export(config, placed, opts, target, path)  # type: ignore[arg-type]
+        app_module._write_export(config, teams, solo, opts, target, path)  # type: ignore[arg-type]
         ctx.last_export_path = path  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
 
@@ -264,11 +281,12 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
         _path: Path,
         *,
         config: object,
-        placed: object,
+        teams: object,
+        solo: object,
         opts: object,
         watermark: int | None = None,
     ) -> None:
-        app_module._write_export(config, placed, opts, "export_html", out)  # type: ignore[arg-type]
+        app_module._write_export(config, teams, solo, opts, "export_html", out)  # type: ignore[arg-type]
         ctx.last_export_path = out  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
         captured.append(watermark)

@@ -113,8 +113,8 @@ def finished_ride_view(xrc_resource: object) -> ResultsWindow:
         window.Layout()
         harness.pump()
         roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-        roster.create_solo_entry(name="Sam Ellis", plate="123")
-        roster.create_solo_entry(name="R. Dubois", plate="8")
+        roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+        roster.create_solo_entry(first_name="R.", last_name="Dubois", plate="8")
         config = RideConfig(
             name="GORBA EPIC 2026",
             event_date=date(2026, 9, 20),
@@ -189,8 +189,8 @@ def test_results_window_given_a_different_source_shows_its_rows_not_the_demo(
         def standings(
             self,
             order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature, stub ignores it
-        ) -> list[StandingsRow]:
-            return [
+        ) -> tuple[list[StandingsRow], list[StandingsRow]]:
+            return [], [
                 StandingsRow(
                     place=1,
                     plate="999",
@@ -208,10 +208,12 @@ def test_results_window_given_a_different_source_shows_its_rows_not_the_demo(
         harness.pump()
         view = ResultsWindow(window, data_source=_StubSource())
         model = view.standings_list.GetModel()
-        row = _model_row(model, 0, range(7))
+        header = _model_row(model, 0, range(7))
+        row = _model_row(model, 1, range(7))
     finally:
         harness.close_window(window)
 
+    assert header == ("", "", "Solo", "", "", "", "")
     assert row == ("1", "999", "Stub Entry", "1", "0:00:01", "2♣ 2♦ 2♥ 2♠ 3♣", "Stub hand")
 
 
@@ -288,15 +290,20 @@ def test_results_window_show_standings_repaints_the_list_after_associating_its_m
 def test_results_window_given_a_finished_ride_source_shows_live_rows(
     finished_ride_view: ResultsWindow,
 ) -> None:
-    """E6.4.1: live placed rows replace the empty state (D10/D16)."""
+    """E6.4.1: live placed rows replace the empty state (D10/D16).
+
+    Phase 3: the fixture ride is solo-only, so the list renders a Solo
+    section header row followed by the two placed rows.
+    """
     model = finished_ride_view.standings_list.GetModel()
 
     rows = tuple(_model_row(model, row, range(7)) for row in range(model.GetCount()))
 
-    assert len(rows) == 2
-    assert {row[1] for row in rows} == {"123", "8"}
-    assert rows[0][0] == "1"  # best hand first, competition numbering
-    assert all(row[6].startswith("High Card") for row in rows)  # prose hand, not a class code
+    assert len(rows) == 3
+    assert rows[0] == ("", "", "Solo", "", "", "", "")
+    assert {row[1] for row in rows[1:]} == {"123", "8"}
+    assert rows[1][0] == "1"  # best hand first, competition numbering
+    assert all(row[6].startswith("High Card") for row in rows[1:])  # prose hand, not a class code
 
 
 def test_results_window_tiebreak_list_is_seeded_from_the_rides_stored_order(
@@ -321,7 +328,9 @@ def test_results_window_tie_rows_carry_the_warning_badge(xrc_resource: object) -
     a draw pair -- the same view-capability approach the stub-source
     test uses. E6.4.1 renders the badge as a leading glyph in the
     Place cell (a new eighth column would shift the seven frozen
-    canvas columns; the canvas shows no tie rows to pin one).
+    canvas columns; the canvas shows no tie rows to pin one). Phase 3:
+    the draw pair is passed as the Teams section, so the section
+    header row precedes the two flagged rows.
     """
     window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
@@ -351,14 +360,17 @@ def test_results_window_tie_rows_carry_the_warning_badge(xrc_resource: object) -
                     hand="Royal Flush",
                     draw_required=True,
                 ),
-            ]
+            ],
+            [],
         )
         model = view.standings_list.GetModel()
-        first = _model_row(model, 0, range(7))
-        second = _model_row(model, 1, range(7))
+        header = _model_row(model, 0, range(7))
+        first = _model_row(model, 1, range(7))
+        second = _model_row(model, 2, range(7))
     finally:
         harness.close_window(window)
 
+    assert header == ("", "", "Teams", "", "", "", "")
     assert first[0] == f"{results_win.TIE_BADGE} 1"
     assert second[0] == f"{results_win.TIE_BADGE} 1"
 

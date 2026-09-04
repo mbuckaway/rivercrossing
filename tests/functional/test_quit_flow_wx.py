@@ -31,7 +31,12 @@ pytestmark = pytest.mark.functional
 
 
 def test_quit_menu_confirmed_destroys_the_frame() -> None:
-    """wxID_EXIT + Quit on exit_running_dlg: the frame is destroyed."""
+    """wxID_EXIT + Quit on exit_running_dlg: the frame is destroyed.
+
+    The scenario resumes a staged RUNNING store ride (the bootstrap
+    console itself stays DRAFT, E5.4.2), so the exit flow opens the
+    running variant.
+    """
     result = scenario_runner.run_scenario("quit_menu_confirmed_destroys")
 
     assert result["data"] == {"frame_being_deleted": True}, result["context"]
@@ -45,14 +50,24 @@ def test_quit_menu_cancelled_leaves_the_frame_alive_and_shown() -> None:
 
 
 def test_running_ride_shows_exit_running_dlg_on_exit() -> None:
-    """The demo ride is RUNNING, so wxID_EXIT shows exit_running_dlg."""
+    """wxID_EXIT shows the running-variant dialog over a resumed ride.
+
+    The scenario resumes a staged RUNNING store ride (the bootstrap
+    console itself stays DRAFT, E5.4.2), so the exit flow opens
+    ``exit_running_dlg`` rather than the plain confirm.
+    """
     result = scenario_runner.run_scenario("running_ride_shows_exit_running_dlg")
 
     assert result["data"] == {"exit_running_dlg_shown": True}, result["context"]
 
 
 def test_non_running_status_shows_exit_confirm_dlg_on_exit() -> None:
-    """A DRAFT ride shows exit_confirm_dlg, not the running one."""
+    """A DRAFT ride shows exit_confirm_dlg, not the running one.
+
+    The scenario builds the bare bootstrap console, which a fresh
+    launch leaves DRAFT (E5.4.2, R-31) -- the natural not-running
+    state for this assertion.
+    """
     result = scenario_runner.run_scenario("exit_confirm_dlg_shown_when_not_running")
 
     assert result["data"] == {"exit_confirm_dlg_shown": True}, result["context"]

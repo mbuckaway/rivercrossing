@@ -122,7 +122,7 @@ def _roster_with_entries(*plates: str) -> Roster:
     """Build a MIXED rider_pooled roster of one solo entry per plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
-        roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
     return roster
 
 
@@ -293,7 +293,7 @@ def test_empty_data_source_returns_zero_rows_for_every_screen() -> None:
         source.riders(),
         source.standings(),
         source.audit_rows(),
-    ) == ([], [], [], [], [])
+    ) == ([], [], [], ([], []), [])
 
 
 def test_empty_data_source_counters_and_status_report_no_ride() -> None:
@@ -423,7 +423,11 @@ def test_engine_data_source_ride_status_tracks_the_engine() -> None:
 
 
 def test_engine_data_source_standings_maps_the_ranked_snapshot() -> None:
-    """Standings rows come from standings.rank(engine.snapshot())."""
+    """Standings rows come from rank_by_kind(engine.snapshot()).
+
+    The fixture roster holds only solo entries, so the teams section
+    is empty and every row lands in the solo section (Phase 3).
+    """
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     _record(engine, clock, "34", lap_time_s=100)
@@ -431,8 +435,9 @@ def test_engine_data_source_standings_maps_the_ranked_snapshot() -> None:
     source = EngineDataSource(engine, engine._roster)
     snapshots = {result.plate: result for result in engine.snapshot()}
 
-    standings = source.standings()
+    teams, standings = source.standings()
 
+    assert teams == []
     assert len(standings) == 2
     assert {row.plate for row in standings} == {"12", "34"}
     assert all(row.place in (1, 2) for row in standings)
@@ -440,6 +445,32 @@ def test_engine_data_source_standings_maps_the_ranked_snapshot() -> None:
         plate: hand_name(snapshots[plate].hand) for plate in snapshots
     }
     assert all(isinstance(row, StandingsRow) for row in standings)
+
+
+def test_engine_data_source_standings_splits_teams_from_solo() -> None:
+    """A mixed roster ranks each kind in its own section from 1."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
+    roster.create_solo_entry(first_name="Rider", last_name="34", plate="34")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    engine, clock = _make_engine(roster=roster)
+    engine.start()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    source = EngineDataSource(engine, roster)
+
+    teams, solo = source.standings()
+
+    assert [row.plate for row in teams] == ["77"]
+    assert [row.place for row in teams] == [1]
+    assert {row.plate for row in solo} == {"12", "34"}
+    assert [row.place for row in solo] == [1, 2]
 
 
 def test_engine_data_source_standings_omitted_order_uses_the_default_constant() -> None:
@@ -457,13 +488,14 @@ def test_engine_data_source_standings_reordered_order_changes_row_order() -> Non
     """A reordered tie-break order re-ranks the same snapshot live.
 
     Two entries hold byte-identical hands (the same pair-over-trips
-    five) with different laps/totals; ``rank(snapshot, order)`` under
-    most-laps-first and total-time-first must place them differently.
-    The credited hands are written straight onto the engine's hand
-    table (the same private-access style ``_make_presenter`` already
-    uses for ``engine._roster``): the seeded shoe has no natural
-    hand-tie pair in any reachable crossing pattern (probed), and
-    this pins the forwarding, not the shoe's deal order.
+    five) with different laps/totals; ``rank_by_kind(snapshot, order)``
+    under most-laps-first and total-time-first must place them
+    differently. The credited hands are written straight onto the
+    engine's hand table (the same private-access style
+    ``_make_presenter`` already uses for ``engine._roster``): the
+    seeded shoe has no natural hand-tie pair in any reachable crossing
+    pattern (probed), and this pins the forwarding, not the shoe's
+    deal order.
     """
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
@@ -475,10 +507,10 @@ def test_engine_data_source_standings_reordered_order_changes_row_order() -> Non
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    by_laps = source.standings(
+    _teams_laps, by_laps = source.standings(
         order=tiebreak_order_from_spellings(("laps", "total_time", "high_card"))
     )
-    by_time = source.standings(
+    _teams_time, by_time = source.standings(
         order=tiebreak_order_from_spellings(("total_time", "laps", "high_card"))
     )
 
@@ -498,18 +530,19 @@ def test_engine_data_source_standings_given_a_zero_card_entry_renders_a_blank_ha
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    rows = source.standings()
+    teams, rows = source.standings()
 
     by_plate = {row.plate: row for row in rows}
     assert by_plate["12"].hand != ""  # one credited card has a real prose hand
     assert by_plate["34"].hand == ""
+    assert teams == []
 
 
 def test_empty_data_source_standings_accepts_the_order_argument() -> None:
     """E6.4.1: the empty state still returns no rows for any order."""
     source = EmptyDataSource()
 
-    assert source.standings(order=(TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS)) == []
+    assert source.standings(order=(TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS)) == ([], [])
 
 
 # -------------------------------------------------------- entry detail
@@ -562,10 +595,13 @@ def test_engine_data_source_audit_rows_maps_engine_events_newest_first() -> None
 def test_engine_data_source_riders_maps_roster_entries_and_team_members() -> None:
     """Rider editor rows project solo and pooled team members."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Sam Ellis", plate="123")
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
     roster.create_team_entry(
         display_name="Trail Blazers",
-        riders=[Rider(name="A. Roy", plate="77"), Rider(name="K. Singh", plate="78")],
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
     )
     engine, _clock = _make_engine(roster=roster)
     source = EngineDataSource(engine, roster)
@@ -1278,13 +1314,15 @@ def test_engine_data_source_standings_rerank_after_reopened_correction_and_finis
     engine._hand["12"] = list(tied)
     engine._hand["34"] = list(tied)
     engine.finish()
-    before = [row.plate for row in EngineDataSource(engine, engine._roster).standings()]
+    _teams_before, before_rows = EngineDataSource(engine, engine._roster).standings()
+    before = [row.plate for row in before_rows]
     engine.reopen()
     engine.void_card("12", Card.parse("5D"), "wrong card off the line")
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    after = [row.plate for row in source.standings()]
+    _teams_after, after_rows = source.standings()
+    after = [row.plate for row in after_rows]
 
     assert before[0] == "12"
     assert after != before
@@ -1305,7 +1343,8 @@ def test_standings_given_reopened_zero_card_entry_renders_blank_hand_again() -> 
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
-    by_plate = {row.plate: row for row in source.standings()}
+    _teams, rows = source.standings()
+    by_plate = {row.plate: row for row in rows}
 
     assert by_plate["12"].hand != ""
     assert by_plate["34"].hand == ""

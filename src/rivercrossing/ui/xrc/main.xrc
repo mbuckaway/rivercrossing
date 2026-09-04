@@ -326,8 +326,8 @@
   </object>
 
   <!--
-    Seven menus, 45 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 7 - Riders 4 - Cards 7 - Results 7 -
+    Seven menus, 46 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 8 - Ride 7 - Riders 5 - Cards 7 - Results 7 -
     View 1 row, 11 items - Help 4). File order follows the 15 table
     (Import CSV, Export CSV, Back Up), not 15b's listing order.
 
@@ -397,6 +397,9 @@
       <label>Ri&amp;ders</label>
       <object class="wxMenuItem" name="mi_rider_editor">
         <label>Rider &amp;Editor</label>
+      </object>
+      <object class="wxMenuItem" name="mi_team_editor">
+        <label>&amp;Teams Editor</label>
       </object>
       <object class="wxMenuItem" name="mi_add_entry">
         <label>&amp;Add Rider/Entry…</label>

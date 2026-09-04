@@ -1,2 +1,6 @@
-plate,entry_name,type,rider_1,rider_2,rider_3,rider_4,notes
-121,Big Team,team5,Alex One,Bo Two,Cy Three,Do Four,
+firstname,lastname,type,teamname,number,notes
+Rider1,,team,Big Team,,
+Rider2,,team,Big Team,,
+Rider3,,team,Big Team,,
+Rider4,,team,Big Team,,
+Rider5,,team,Big Team,,

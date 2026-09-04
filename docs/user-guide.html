@@ -109,11 +109,12 @@
 
 <section id="riders-entries">
 <h2>3 · Riders &amp; entries</h2>
-<p><strong>Riders ▸ Rider Editor</strong> manages the roster: plates, names, and teams.</p>
+<p><strong>Riders ▸ Rider Editor</strong> manages the roster: plates, names, and teams. Riders are entered with a first name and an optional last name; a solo rider's entry is listed under that full name.</p>
 <ul>
   <li>Add a solo rider or a team; plates are unique across the ride, and a new entry's plate is prefilled with the next free number.</li>
+  <li><strong>Teams Editor</strong> — <strong>Riders ▸ Teams Editor</strong> (mixed rides only) edits a team's own record: name, notes, the team's plate on relay rides, and a <strong>logo</strong> — pick a playing card or choose an image file (an image wins if both are set). Membership is read-only there; the Rider Editor owns who is on which team.</li>
   <li>Delete is available while the ride is a draft; once an entry has recorded data, it is never removed — entries are marked DNF or their crossings voided instead (R-15).</li>
-  <li><strong>Import / export CSV</strong> — bring a roster in from a file or write one out. The import preview lists every conflict before anything is written, so you can fix the file and re-import freely until the ride starts (see <a href="#appendix-b-csv-reference">Appendix B</a>).</li>
+  <li><strong>Import / export CSV</strong> — bring a roster in from a file or write one out. One header-mapped format works for every ride (see <a href="#appendix-b-csv-reference">Appendix B</a>). The import preview lists every conflict before anything is written, so you can fix the file and re-import freely until the ride starts.</li>
   <li>Teams can be reshaped up to the start; on a pooled ride, moves stay possible while running and every move is audit-logged.</li>
 </ul>
 </section>
@@ -166,16 +167,16 @@
   <li><strong>Ties</strong> — identical best hands are resolved by the ride's tie-break order (most laps, then total time, then high-card draw). The order can be changed on the results screen before export and the standings re-rank instantly.</li>
   <li><strong>Reopen for corrections</strong> — <strong>Ride ▸ Reopen Ride</strong> reopens a finished ride for corrections: entry is locked, edits are highlighted in the feed, and <em>Finish again</em> re-locks and re-ranks. A published export is marked stale after corrections until you regenerate it.</li>
 </ul>
-<p id="results-window">The <strong>Results</strong> window shows the full field with place, plate, entry, laps, best-5 cards, and the hand name, plus the publish options (below).</p>
+<p id="results-window">The <strong>Results</strong> window shows the full field with place, plate, entry, laps, best-5 cards, and the hand name, plus the publish options (below). On a mixed ride the standings split into two sections — teams ranked among teams, solo riders among solo riders — each numbered from 1 with its own DNF tail.</p>
 </section>
 
 <section id="publishing-results">
 <h2>8 · Publishing results</h2>
 <ul>
-  <li><strong>HTML export</strong> — one self-contained file you can post anywhere. Options: show lap &amp; total times (off by default; with times off, no time data is embedded in the file at all), laps leaderboard, fastest-time leaderboard, full field, all cards drawn, and the organizer logo.</li>
+  <li><strong>HTML export</strong> — one self-contained file you can post anywhere. Options: show lap &amp; total times (off by default; with times off, no time data is embedded in the file at all), laps leaderboard, fastest-time leaderboard, full field (on a mixed ride the full field lists Teams and Solo sections), all cards drawn, and the organizer logo.</li>
   <li><strong>PDF report</strong> — the same sections as the HTML export, as a printable document.</li>
   <li><strong>Podium poster</strong> — a single celebratory page with the top three hands, for the prize table.</li>
-  <li><strong>Standings CSV</strong> — place, plate, entry, laps, hand (and times when shown).</li>
+  <li><strong>Standings CSV</strong> — place, plate, entry, type, laps, hand (and times when shown). On a mixed ride the <code>type</code> column labels each row's Teams or Solo section, and the places restart at 1 for each.</li>
   <li><strong>Preview in Browser</strong> — opens the last HTML export in your default browser.</li>
 </ul>
 </section>
@@ -228,23 +229,55 @@
 
 <section id="appendix-b-csv-reference">
 <h2>Appendix B — CSV reference</h2>
-<p>Roster imports and exports use one row per <strong>rider</strong> in a pooled ride, or per <strong>entry</strong> in a solo/relay ride. Import matches on plate; conflicts are listed before anything is written.</p>
-<h3>Solo-only rides</h3>
-<p>Columns: <code>plate</code>, <code>name</code>, <code>notes</code> (optional).</p>
-<h3>Mixed rides (solo + teams)</h3>
-<p>Columns: <code>plate</code>, <code>entry_name</code>, <code>type</code> (<code>solo</code> or <code>teamN</code>, where N is the rider count, up to the ride's max), then one <code>rider_1</code> … <code>rider_N</code> column per seat.</p>
-<h3>Example (mixed)</h3>
-<pre><code>plate,entry_name,type,rider_1,rider_2
-7,Luca Ferrari,solo,Luca Ferrari
-88,Moss Ridge Riders,team2,Dev Patel,Jo Lindqvist
+<p>Every roster import and export — solo-only or mixed, rider-pooled or relay — uses <strong>one header-mapped format</strong>, with <strong>one row per rider</strong>. The app reads the file's header row and maps each column to a field by name, not by position, so you can export from a registration system, add or reorder extra columns, and it still imports.</p>
+
+<h3>The canonical columns</h3>
+<table>
+  <thead><tr><th>Canonical header</th><th>What it holds</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td><code>FIRSTNAME</code></td><td>Rider's first name</td><td>At least one of FIRSTNAME or LASTNAME must appear in the header and in each data row. The import looks for a column whose heading contains "first name" (case-insensitive).</td></tr>
+    <tr><td><code>LASTNAME</code></td><td>Rider's last name</td><td>Optional — a heading containing "last name". A rider with only one name leaves it blank.</td></tr>
+    <tr><td><code>TYPE</code></td><td><code>solo</code> or <code>team</code></td><td>Matched after case folding. A heading containing both words "solo" and "team" (such as "Solo or team?") is recognised as the type column; so is a literal <code>type</code>. Blank means <em>solo</em>, unless the row names a team.</td></tr>
+    <tr><td><code>TEAMNAME</code></td><td>The team's name</td><td>Blank for solo rows. A heading containing "team name". Rows sharing a team name form one team; matching ignores case and extra spaces, so "Full Send" and "full&nbsp;&nbsp;send" are the same team. It does not need to be unique per row — a team has one row per member.</td></tr>
+    <tr><td><code>NUMBER</code></td><td>The rider's or team's plate</td><td>Optional — a heading that is exactly "number", "plate" or "bib". When blank, the app assigns the next free plate automatically (see below).</td></tr>
+    <tr><td><code>NOTES</code></td><td>A note on the rider or team</td><td>Optional. A heading containing "note" or "notes". Team notes from member rows are joined into one team note on import.</td></tr>
+  </tbody>
+</table>
+<p>Any column whose heading matches nothing is ignored — a registration export's extra columns pass through untouched. If two columns match the same field, the first one wins. The app's own <strong>export</strong> always writes the canonical headers above, in that order.</p>
+
+<h3>Rows that are not riders</h3>
+<p>Trailing blank lines and footer rows (neither a first nor a last name) are skipped automatically — unless such a row still names a plate, team or type, in which case it is reported as a missing name rather than silently dropped.</p>
+
+<h3>Example</h3>
+<pre><code>FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES
+Luca,Ferrari,solo,,7,
+Dev,Patel,team,Moss Ridge Riders,,shifts at the hour
+Jo,Lindqvist,team,Moss Ridge Riders,,shifts at the hour
+Casey,Muir,team,Moss Ridge Riders,,
+Sam,Ellis,solo,,,
 </code></pre>
+
+<h3>How plates are assigned</h3>
+<ul>
+  <li><strong>Blank numbers</strong> — rows with no NUMBER are given sequential free plates (skipping every plate already in use in the ride or named elsewhere in the file), in file order.</li>
+  <li><strong>Rider-pooled rides</strong> — each row's NUMBER is that rider's own plate; a team is the riders sharing a TEAMNAME, and the team's entry adopts its lowest-numbered member's plate.</li>
+  <li><strong>Team-relay rides</strong> — a team rides one plate, so all of that team's rows must carry the same NUMBER (or all be blank); solo rows carry their own plates.</li>
+</ul>
+
+<h3>Importing</h3>
+<p>The import preview reports how many riders, teams and conflicts the file contains and lists every problem row before anything is written — nothing changes until you confirm. Match-and-merge works by plate: an existing plate updates that entry in place (including a solo rider's name), a new plate is added. Re-importing freely reshapes teams while the ride is a draft; once a ride has started, only new plates and name fixes are accepted and anything structural is listed as a conflict.</p>
+
 <h3>Conflict messages</h3>
 <ul>
+  <li><strong>Missing or malformed header</strong> — no column could be read as a first or last name.</li>
+  <li><strong>Missing name</strong> — a row with no first or last name that still names a plate, team or type; or a <code>team</code> row with no team name.</li>
   <li><strong>Duplicate plate within the file</strong> — two rows claim the same plate.</li>
-  <li><strong>Missing name</strong> — a row with no name.</li>
-  <li><strong>Structural change while running</strong> — e.g. solo → team on a ride that already started; name fixes only.</li>
+  <li><strong>Unknown entry type</strong> — a TYPE value that is neither <code>solo</code> nor <code>team</code>.</li>
+  <li><strong>Team too small / too large</strong> — fewer than 2 riders, or more than the ride's max riders per team.</li>
+  <li><strong>Structural change while running</strong> — e.g. solo → team on a ride that already started; new plates and name fixes only.</li>
+  <li><strong>Team rows carry different plates</strong> — on a relay ride, a team's rows must name the same plate.</li>
 </ul>
-<p>Nothing is written until you confirm the import, and re-importing freely reshapes teams before the start.</p>
+<p>A finished-ride export adds four columns after NOTES: <code>laps</code>, <code>cards</code>, <code>best_hand</code> and <code>total_time</code>.</p>
 </section>
 
 </main>

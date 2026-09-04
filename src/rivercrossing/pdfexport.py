@@ -1039,10 +1039,27 @@ class _ReportPDF(FPDF):
         self._scalar(_Cell(widths[5], f"avg {avg}", _ROW_STYLE))
         self._row_rule()
 
+    def _kind_label(self, label: str) -> None:
+        """Draw one full-field section label ("Teams"/"Solo").
+
+        Phase 3 (team/solo results split): each non-empty kind in the
+        full field is preceded by this small-caps label row so the two
+        sections read as separate tables under the shared header.
+        """
+        self._maybe_page_break(0.30)
+        self.ln(0.04)
+        self.set_font(_FONT_HEADING, "B", 8.5)
+        self.set_text_color(*_STEEL)
+        self.cell(0, 0.16, text=label.upper())
+        self.ln(0.18)
+        self._rule()
+        self.ln(0.03)
+
     def _full_field(self, placed: Sequence[Placed]) -> None:
-        """Draw the "Full field" table, every placed entry."""
+        """Draw the "Full field" table: Teams then Solo sections."""
         self._section_heading("Full field")
-        note = "Every entry, ordered by hand. ★ = joker, shown as the card it played."
+        note = "Every entry, ordered by hand — teams ranked against teams, "
+        note += "solo riders against solo riders. ★ = joker, shown as the card it played."
         if self._opts.all_cards:
             note += " This export includes every card drawn (organizer option)."
         # DejaVu for the note: it carries the ★ glyph Barlow lacks.
@@ -1056,11 +1073,16 @@ class _ReportPDF(FPDF):
             labels += ["Total time", "Best lap"]
         labels.append("Best hand")
         self._table_header(widths, labels)
-        for entry in placed:
-            self._maybe_page_break(_ROW_HEIGHT + 0.10)
-            self._field_row(widths, entry)
-            if self._opts.all_cards:
-                self._drawn_row(entry.result)
+        for kind, section_label in (("team", "Teams"), ("solo", "Solo")):
+            entries = [entry for entry in placed if entry.result.kind == kind]
+            if not entries:
+                continue  # a ride without this kind renders no section
+            self._kind_label(section_label)
+            for entry in entries:
+                self._maybe_page_break(_ROW_HEIGHT + 0.10)
+                self._field_row(widths, entry)
+                if self._opts.all_cards:
+                    self._drawn_row(entry.result)
 
     def _field_row(self, widths: Sequence[float], entry: Placed) -> None:
         """Draw one full-field row, with the DNF mark after the name."""

@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 38 menu rows reaches ("Opens / does"), and when it is allowed to
+the 39 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 38 :class:`MenuRoute` rows
+once, so both jobs read off the same 39 :class:`MenuRoute` rows
 instead of two tables that could drift apart.
 
 No wx import lands here (R-71 does not require it, since nothing
@@ -80,6 +80,8 @@ class Enablement:
             open" condition.
         requires_ride_stopped: Start Ride's "or stopped RUNNING"
             clause -- only consulted while ``status == RUNNING``.
+        teams_allowed: The ride's entry_mode is mixed, so team
+            records exist to edit (Phase 4's Teams Editor gate).
         min_crossings: The row's "≥1 crossing" condition, as a
             threshold so boundary tests can vary it.
         min_held_cards: Review Held Cards' "held cards > 0".
@@ -92,6 +94,7 @@ class Enablement:
     allowed_states: frozenset[RideStatus] | None = None
     requires_ride_open: bool = False
     requires_ride_stopped: bool = False
+    teams_allowed: bool = False
     min_crossings: int = 0
     min_held_cards: int = 0
     min_audit_rows: int = 0
@@ -276,7 +279,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # spec.md §15: ride open (locks tighten after start)
         enabled_when=Enablement(requires_ride_open=True),
     ),
-    # --- Riders: 4 rows ---
+    # --- Riders: 5 rows ---
     MenuRoute(
         menu="Riders",
         label="Rider Editor",
@@ -284,6 +287,17 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         kind=TargetKind.WINDOW,
         target=ids.RIDER_EDITOR_DLG,
         enabled_when=Enablement(requires_ride_open=True),  # "ride open"
+    ),
+    MenuRoute(
+        menu="Riders",
+        label="Teams Editor",
+        ids=("mi_team_editor",),
+        kind=TargetKind.WINDOW,
+        target=ids.TEAM_EDITOR_DLG,
+        # Phase 4: team records only exist on a mixed ride -- a
+        # solo-only ride has no teams to edit (the menu's own
+        # teams_allowed gate mirrors the roster's entry_mode).
+        enabled_when=Enablement(requires_ride_open=True, teams_allowed=True),
     ),
     MenuRoute(
         menu="Riders",
@@ -534,6 +548,8 @@ class RideState:
         entry_has_cards: Whether the entry Void Card targets holds
             any cards.
         export_exists: Whether a results export has been written.
+        teams_allowed: Whether the open ride's entry_mode is mixed
+            (teams exist to edit).
     """
 
     status: RideStatus
@@ -544,6 +560,7 @@ class RideState:
     audit_rows: int = 0
     entry_has_cards: bool = False
     export_exists: bool = False
+    teams_allowed: bool = False
 
 
 def is_route_enabled(route: MenuRoute, state: RideState) -> bool:
@@ -559,6 +576,7 @@ def is_route_enabled(route: MenuRoute, state: RideState) -> bool:
     return (
         stop_ok
         and (not rule.requires_ride_open or state.ride_open)
+        and (not rule.teams_allowed or state.teams_allowed)
         and (not rule.requires_entry_has_cards or state.entry_has_cards)
         and (not rule.requires_export_exists or state.export_exists)
         and state.crossings >= rule.min_crossings

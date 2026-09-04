@@ -43,7 +43,7 @@ import os
 import sqlite3
 import sys
 import threading
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -51,12 +51,14 @@ from typing import TYPE_CHECKING, Any, cast
 import wx
 import wx.xrc
 
-from rivercrossing.standings import hand_name, rank, tiebreak_order_from_spellings
+from rivercrossing.standings import hand_name, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids
+from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import corrections, dialogs, rider_editor
 
 if TYPE_CHECKING:
+    from rivercrossing.cards import Card
     from rivercrossing.ride import RideEngine
     from rivercrossing.store import Store
 
@@ -75,6 +77,7 @@ RACE_CROSSINGS_ENV = "RIVERCROSSING_RACE_CROSSINGS"
 RACE_CSV_ENV = "RIVERCROSSING_RACE_CSV"
 RACE_PLATES_ENV = "RIVERCROSSING_RACE_PLATES"
 RACE_EXPORTS_DIR_ENV = "RIVERCROSSING_RACE_EXPORTS_DIR"
+RACE_OUTPUT_DIR_ENV = "RIVERCROSSING_RACE_OUTPUT_DIR"
 RACE_BOUND_ENV = "RIVERCROSSING_RACE_BOUND_SECONDS"
 DEFAULT_CROSSINGS = 3
 # The wave pattern's default plate count: R-74 imports a 20-rider CSV
@@ -109,7 +112,7 @@ class RaceEnv:
         crossings: How many crossings the scenario records
             (RIVERCROSSING_RACE_CROSSINGS; default 3).
         csv_path: The riders CSV to import for ``setup_import_and_run``
-            (RIVERCROSSING_RACE_CSV), or None.
+            and ``sim_race`` (RIVERCROSSING_RACE_CSV), or None.
         plates: The wave pattern's plate count
             (RIVERCROSSING_RACE_PLATES; default 20).
         exports_dir: Where ``finish_and_exports`` writes the four
@@ -591,13 +594,17 @@ def _stop_and_continue(frame: Any) -> dict[str, bool]:  # noqa: ANN401 -- wx shi
 def _standings_rows(engine: RideEngine) -> list[dict[str, object]]:
     """Return ranked standings as (place, plate, laps, hand) rows.
 
-    The hand names use ``standings.hand_name``'s prose (the exact
-    strings the HTML/PDF/CSV exports render), blank for a zero-card
-    entry -- the same guard the export writers apply.
+    Phase 3 (team/solo results split): ``rank_by_kind`` ranks each
+    kind from 1 and the rows flatten Teams-then-Solo -- the exact
+    order the results window, the exports' full fields and the
+    standings CSV present. The hand names use ``standings.hand_name``'s
+    prose (the exact strings the HTML/PDF/CSV exports render), blank
+    for a zero-card entry -- the same guard the export writers apply.
     """
     order = tiebreak_order_from_spellings(engine.config.tiebreak_order)
+    teams, solo = rank_by_kind(engine.snapshot(), order)
     rows: list[dict[str, object]] = []
-    for placed in rank(engine.snapshot(), order):
+    for placed in (*teams, *solo):
         result = placed.result
         rows.append(
             {
@@ -609,6 +616,19 @@ def _standings_rows(engine: RideEngine) -> list[dict[str, object]]:
             }
         )
     return rows
+
+
+def _leader_plate(engine: RideEngine) -> str:
+    """Return the first ranked entry's plate that has recorded cards.
+
+    Teams rank ahead of solos in the two-section order, and a surviving
+    staged team may rank first with zero laps and no cards, so the
+    void-card step must target an entry that holds a credited card.
+    """
+    return cast(
+        "str",
+        next(row["plate"] for row in _standings_rows(engine) if int(row["laps"]) > 0),
+    )
 
 
 def _voided_card_code(store: Store, ride_id: int) -> str:
@@ -634,14 +654,19 @@ def _drive_dialog_ok(dialog_name: str) -> None:
     wx.CallAfter(_drive)
 
 
-def _drive_add_crossing() -> None:
-    """Schedule the add-crossing form (plate, time, reason)."""
+def _drive_add_crossing(plate: str = _ADD_CROSSING_PLATE) -> None:
+    """Schedule the add-crossing form (plate, time, reason).
+
+    ``plate`` defaults to :data:`_ADD_CROSSING_PLATE` (the R-74 CSV
+    roster's target); the full-breadth race stages a different roster
+    and passes its own plate.
+    """
 
     def _drive() -> None:
         dialog = wx.Window.FindWindowByName(ids.EDIT_CROSSING_DLG)
         if dialog is None:
             return
-        harness.type_text(dialog, ids.PLATE_INPUT, _ADD_CROSSING_PLATE)
+        harness.type_text(dialog, ids.PLATE_INPUT, plate)
         time_picker = corrections._find(dialog, ids.TIME_PICKER)
         corrections._set_time_picker(time_picker, _ADD_CROSSING_TIME)
         harness.type_text(dialog, ids.REASON_INPUT, _ADD_CROSSING_REASON)
@@ -688,11 +713,12 @@ def _install_sync_exports(exports_dir: Path, paths: dict[str, Path]) -> None:
         path: Path,
         *,
         config: object,
-        placed: object,
+        teams: object,
+        solo: object,
         opts: object,
         watermark: int | None = None,
     ) -> None:
-        app_module._write_export(config, placed, opts, target, path)
+        app_module._write_export(config, teams, solo, opts, target, path)
         ctx.last_export_path = path  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
         paths[target] = path
@@ -890,7 +916,7 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     reopened = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText() == "REOPENED"
     _drive_add_crossing()
     harness.fire_menu_event(frame, ids.MI_ADD_CROSSING_AT)
-    context.detail_plate = cast("str", _standings_rows(engine)[0]["plate"])
+    context.detail_plate = _leader_plate(engine)
     _drive_void_card()
     harness.fire_menu_event(frame, ids.MI_VOID_CARD)
     voided_card = _voided_card_code(store, ride_id)
@@ -946,12 +972,266 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     }
 
 
+def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- the full-breadth race's fixed script
+    """Resume, import the roster CSV, script every path, finish, quit.
+
+    The full-breadth scenario behind ``tests/acceptance/test_race_sim``:
+    the child resumes the staged TEAM_RELAY ride (an empty relay-
+    shaped roster -- resume installs the ride's roster on the shared
+    context) on an injected clock, imports the phase-6 roster CSV
+    (``tests/acceptance/fixtures/race_roster.csv``) through the real
+    ``mi_import_csv`` route -- csvio commits the fixture's 21 relay
+    entries against that roster (match/insert/reshape, never delete-
+    on-import) and the route's store half saves them to the ride --
+    types the deterministic lap schedule (normal laps, two short-lap
+    holds -- one confirmed, one voided), runs every audited
+    correction -- manual deal, DNF, add-crossing-at-time,
+    void-crossing and void-card -- across the two finish/reopen legs,
+    writes the four results exports, and records a ``race-record.json``
+    checkpoint journal the parent's oracle replays against the saved
+    db. The route context is captured through the ``_bind_routes``
+    seam (the ``_race_finish_and_exports`` pattern) so the live
+    presenter/engine, the export watermark and the Void Card route's
+    ``detail_plate`` are observable.
+    """
+    exports_dir = env.exports_dir
+    if exports_dir is None:
+        raise RuntimeError(f"{RACE_EXPORTS_DIR_ENV} must name an exports directory")
+    output_env = os.environ.get(RACE_OUTPUT_DIR_ENV)
+    if not output_env:
+        raise RuntimeError(f"{RACE_OUTPUT_DIR_ENV} must name an output directory")
+    output_dir = Path(output_env)
+
+    found: dict[str, Any] = {"resume_message": ""}
+    # The scripted clock is read from a plain connection BEFORE the app
+    # bootstraps so it can be injected into the engine at launch --
+    # otherwise every typed lap lands milliseconds apart (real wall
+    # time) and flags, holding every card (R-34).
+    with sqlite3.connect(str(env.db_path)) as conn:
+        conn.row_factory = sqlite3.Row
+        ride_id = _latest_active_ride_id(conn)
+        if ride_id is None:
+            raise RuntimeError("no ride to resume on the shared db")
+        clock = _race_clock(conn, ride_id)
+    wx.CallAfter(lambda: _click_continue_resume(found))
+    original_bind_routes = app_module._bind_routes
+    captured: list[Any] = []
+
+    def _capture_and_bind(context: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        captured.append(context)
+        original_bind_routes(context)
+
+    app_module._bind_routes = _capture_and_bind
+    try:
+        frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path, clock=clock)
+    finally:
+        app_module._bind_routes = original_bind_routes
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    previous = store.previous_session()
+    ride_id = previous.ride_id
+    if ride_id is None or not captured:
+        store.close()
+        raise RuntimeError("no ride to resume or no route context on the shared db")
+    context = captured[0]
+    # Phase 6: the riders CSV is imported through the real
+    # mi_import_csv route against the resumed ride's own roster --
+    # resume now installs store.roster_for(ride_id) on context.roster
+    # (app.py's _resume_console_engine, the same install the library-
+    # Open path's _switch_console_to_ride makes), so the route
+    # previews against the ride's real TEAM_RELAY shape. The staged
+    # ride carries no roster entries, so the fixture's 21 relay
+    # plates all insert (csvio commits match/insert/reshape, never
+    # delete-on-import), and the route's R-74 store half saves the
+    # committed roster to the ride and rebuilds the console onto it.
+    csv_path = env.csv_path
+    if csv_path is None:
+        store.close()
+        raise RuntimeError(f"{RACE_CSV_ENV} must name a riders CSV")
+    _import_csv_via_route(frame, csv_path)
+    # The import's route half rebuilt the console presenter onto the
+    # saved roster, so everything below reads the post-import engine
+    # and roster -- the same re-read _race_setup_import_and_run makes.
+    engine = context.presenter.engine
+    roster = store.roster_for(ride_id)
+    source = EngineDataSource(engine, roster)
+    order = tiebreak_order_from_spellings(engine.config.tiebreak_order)
+
+    # Log every dealt card in deal order (one entry per _deal_card call)
+    # by wrapping the engine's deal seam before any crossing records.
+    dealt: list[str] = []
+    original_deal = engine._deal_card
+
+    def _logged_deal() -> Card:
+        card = original_deal()
+        dealt.append(card.code())
+        return card
+
+    engine._deal_card = _logged_deal
+
+    def _snapshot(snap_id: str, *, standings: bool) -> dict[str, Any]:
+        """Return one checkpoint dict; labels refreshed via a tick."""
+        context.presenter.tick()
+        status = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
+        clock_label = harness.find_control(frame, ids.CLOCK_ELAPSED_LBL).GetLabelText()
+        standing_rows = None
+        if standings:
+            # Phase 3: ``standings`` returns the (teams, solo) pair, so
+            # the record flattens Teams-then-Solo -- the same order the
+            # oracle's ``expected_standings`` produces. ``asdict`` keeps
+            # ``best5`` as a tuple; the oracle reads it back as a list,
+            # so the tuple is widened here to match the record schema.
+            teams, solo_rows = source.standings(order=order)
+            standing_rows = [
+                {**asdict(row), "best5": list(row.best5)} for row in (*teams, *solo_rows)
+            ]
+        return {
+            "id": snap_id,
+            "event_count": len(engine.events),
+            "status": status,
+            "elapsed_s": engine.elapsed(),
+            "clock_label": clock_label,
+            "feed_rows": [asdict(row) for row in source.feed_rows()],
+            "counters": asdict(source.counters()),
+            "standings": standing_rows,
+        }
+
+    checkpoints: list[dict[str, Any]] = []
+    checkpoints.append(_snapshot("resumed", standings=False))
+    min_lap_s = _ride_min_lap_s(store._conn, ride_id)
+    # Phase 6: the scripted wave on the imported 21-entry relay roster
+    # (plates 1-11 teams, 12-21 solo). Each plate's laps type
+    # consecutively, one min_lap apart (never short, R-34), with
+    # descending counts so the leaders lap ~10-11 times; the two
+    # short-lap hold pairs and every correction path then land on
+    # plates that already carry laps (1/2 holds and void-crossing,
+    # 3 manual deal, 4 DNF) exactly once each.
+    plates = (
+        ["1"] * 8
+        + ["2"] * 7
+        + ["3"] * 8
+        + ["4"] * 7
+        + ["5"] * 6
+        + ["6"] * 6
+        + ["7"] * 5
+        + ["8"] * 5
+        + ["9"] * 4
+        + ["10"] * 4
+        + ["11"] * 4
+        + ["12"] * 3
+        + ["13"] * 3
+        + ["14"] * 3
+        + ["15"] * 3
+        + ["16"] * 2
+        + ["17"] * 2
+        + ["18"] * 2
+        + ["19"] * 2
+        + ["20"] * 2
+        + ["21"] * 2
+    )
+    _record_crossings_lapped(frame, clock, plates, min_lap_s)
+    checkpoints.append(_snapshot("after_normal", standings=False))
+    # A short-lap hold needs the entry crossed again 30 s after its OWN
+    # previous crossing (lap time is per-entry, not per clock advance),
+    # so each hold types its plate twice: the second is the short lap
+    # whose card is held (R-34).
+    _record_crossings_lapped(frame, clock, ["1", "1"], 30)
+    checkpoints.append(_snapshot("after_hold_1", standings=False))
+    _record_crossings_lapped(frame, clock, ["2", "2"], 30)
+    checkpoints.append(_snapshot("after_hold_2", standings=False))
+    engine.confirm_held(engine.held_crossings()[0].crossing)
+    checkpoints.append(_snapshot("after_confirm", standings=False))
+    engine.void_held(engine.held_crossings()[0].crossing)
+    checkpoints.append(_snapshot("after_void", standings=False))
+    engine.deal_manual("3", "replacement card")
+    checkpoints.append(_snapshot("after_manual_deal", standings=False))
+    engine.mark_dnf("4", "mechanical")
+    checkpoints.append(_snapshot("after_dnf", standings=False))
+    _drive_dialog_ok(ids.FINISH_CONFIRM_DLG)
+    harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
+    checkpoints.append(_snapshot("after_finish_1", standings=True))
+    _drive_dialog_ok(ids.REOPEN_RIDE_DLG)
+    harness.fire_menu_event(frame, ids.MI_REOPEN_RIDE)
+    checkpoints.append(_snapshot("after_reopen", standings=False))
+    _drive_add_crossing("1")
+    harness.fire_menu_event(frame, ids.MI_ADD_CROSSING_AT)
+    checkpoints.append(_snapshot("after_add_crossing", standings=False))
+    engine.void_crossing("2", 1, "mis-key")
+    checkpoints.append(_snapshot("after_void_crossing", standings=False))
+    context.detail_plate = _leader_plate(engine)
+    _drive_void_card()
+    harness.fire_menu_event(frame, ids.MI_VOID_CARD)
+    checkpoints.append(_snapshot("after_void_card", standings=False))
+    _drive_dialog_ok(ids.FINISH_CONFIRM_DLG)
+    harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
+    checkpoints.append(_snapshot("after_finish_2", standings=True))
+
+    # The four Results exports, written synchronously through the
+    # _install_sync_exports seam so the child can report the paths and
+    # watermark without waiting on a background thread.
+    paths: dict[str, Path] = {}
+    original_pick = app_module._pick_export_path
+    original_offloop = app_module._run_export_offloop
+    _install_sync_exports(exports_dir, paths)
+    for item_id in (
+        ids.MI_EXPORT_HTML,
+        ids.MI_EXPORT_PDF,
+        ids.MI_EXPORT_POSTER,
+        ids.MI_EXPORT_RESULTS_CSV,
+    ):
+        harness.fire_menu_event(frame, item_id)
+    app_module._pick_export_path = original_pick
+    app_module._run_export_offloop = original_offloop
+
+    # Build the record the parent's oracle replays against the saved db.
+    rng_seed = int(
+        store._conn.execute("SELECT rng_seed FROM ride WHERE id = ?", (ride_id,)).fetchone()[
+            "rng_seed"
+        ]
+    )
+    facts = _ride_facts(store, ride_id)
+    config = engine.config
+    record: dict[str, Any] = {
+        "schema_version": 1,
+        "ride_id": ride_id,
+        "rng_seed": rng_seed,
+        "config": {
+            "deck_count": config.deck_count,
+            "jokers_per_deck": config.jokers_per_deck,
+            "min_lap_s": config.min_lap_s,
+            "max_cards": config.max_cards,
+            "tiebreak_order": list(config.tiebreak_order),
+            "planned_duration_s": config.planned_duration_s,
+        },
+        "dealt_cards": dealt,
+        "checkpoints": checkpoints,
+        "final_standings": _standings_rows(engine),
+        "export_paths": {target: str(path) for target, path in paths.items()},
+        "export_watermark": context.export_watermark,
+        "audit_actions": facts["audit_actions"],
+    }
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "race-record.json").write_text(
+        json.dumps(record, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # Quit cleanly through the real File ▸ Exit route: the session
+    # row's closed_at is stamped (the parent's final session fact).
+    wx.CallAfter(_click_ok_on_exit_confirm)
+    _fire_exit_route(frame)
+    store.close()
+    return {"scenario": "sim_race", "ride_id": ride_id, "record": record}
+
+
 _SCENARIOS: dict[str, Any] = {
     "record_crash": _race_record_crash,
     "record_quit": _race_record_quit,
     "setup_import_and_run": _race_setup_import_and_run,
     "resume_verify_quit": _race_resume_verify_quit,
     "finish_and_exports": _race_finish_and_exports,
+    "sim_race": _race_sim_race,
 }
 
 

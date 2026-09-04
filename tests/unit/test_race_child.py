@@ -311,3 +311,100 @@ def test_running_ride_with_roster_session_carries_the_ride(
 
     assert facts["sessions"][-1]["closed_at"] is not None
     assert facts["sessions"][-1]["active_ride_id"] == ride_id
+
+
+def test_rich_race_roster_builds_six_active_mixed_entries(
+    store_staging_module: ModuleType,
+) -> None:
+    """rich_race_roster returns 4 solo + 2 team entries, all ACTIVE."""
+    roster = store_staging_module.rich_race_roster()
+
+    assert len(roster.entries) == 6
+    assert [entry.type.value for entry in roster.entries] == [
+        "solo",
+        "solo",
+        "solo",
+        "solo",
+        "team",
+        "team",
+    ]
+    assert [entry.status.value for entry in roster.entries] == ["active"] * 6
+    assert [entry.team_size for entry in roster.entries] == [1, 1, 1, 1, 2, 3]
+    assert [entry.plate for entry in roster.entries] == ["1", "2", "3", "4", "11", "21"]
+
+
+def test_running_ride_with_roster_stages_the_rich_roster(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """The rich roster round-trips through save_roster/roster_for."""
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.running_ride_with_roster(
+        db_path, roster=store_staging_module.rich_race_roster()
+    )
+    store = Store.open(db_path)
+    try:
+        loaded = store.roster_for(ride_id)
+    finally:
+        store.close()
+
+    assert [entry.plate for entry in loaded.entries] == ["1", "2", "3", "4", "11", "21"]
+    assert [entry.team_size for entry in loaded.entries] == [1, 1, 1, 1, 2, 3]
+    assert [entry.type.value for entry in loaded.entries] == [
+        "solo",
+        "solo",
+        "solo",
+        "solo",
+        "team",
+        "team",
+    ]
+    assert [entry.status.value for entry in loaded.entries] == ["active"] * 6
+
+
+def test_running_ride_with_roster_without_roster_keeps_library_roster(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """No roster arg still stages the 2-entry library_roster default."""
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.running_ride_with_roster(db_path)
+    store = Store.open(db_path)
+    try:
+        loaded = store.roster_for(ride_id)
+    finally:
+        store.close()
+
+    assert [entry.plate for entry in loaded.entries] == ["12", "77"]
+    assert [entry.team_size for entry in loaded.entries] == [1, 2]
+
+
+def test_running_ride_with_roster_stages_a_team_relay_ride(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """plate_model=TEAM_RELAY creates a relay ride; an empty shell fits.
+
+    The E9.2.2 sim stages a TEAM_RELAY ride with an empty relay-shaped
+    roster: resume installs that roster on the shared context (the
+    resume-roster fix), so the child's CSV import previews against the
+    ride's real TEAM_RELAY shape and commits the fixture cleanly. The
+    ride row carries the relay config, and the saved empty roster
+    round-trips through ``Store.roster_for`` as zero entries.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.running_ride_with_roster(
+        db_path,
+        plate_model=store_staging_module.PlateModel.TEAM_RELAY,
+        roster=store_staging_module.Roster(
+            entry_mode=store_staging_module.EntryMode.MIXED,
+            plate_model=store_staging_module.PlateModel.TEAM_RELAY,
+        ),
+    )
+    store = Store.open(db_path)
+    try:
+        config = store.load_engine(ride_id).config
+        loaded = store.roster_for(ride_id)
+    finally:
+        store.close()
+
+    assert config.plate_model.value == "team_relay"
+    assert loaded.plate_model.value == "team_relay"
+    assert loaded.entry_mode.value == "mixed"
+    assert loaded.entries == ()

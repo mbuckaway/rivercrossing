@@ -213,10 +213,13 @@ def _build_mini_console(
         max_team_size=4,
     )
     for number in range(1, 19):
-        roster.create_solo_entry(name=f"Rider {number:02d}", plate=str(number))
+        roster.create_solo_entry(first_name=f"Rider {number:02d}", last_name="", plate=str(number))
     roster.create_team_entry(
         display_name="Team Alpha",
-        riders=[Rider(name="Aya Chen", plate="21"), Rider(name="Bo Lin", plate="22")],
+        riders=[
+            Rider(first_name="Aya", last_name="Chen", plate="21"),
+            Rider(first_name="Bo", last_name="Lin", plate="22"),
+        ],
     )
     config = RideConfig(
         name="E4.4.4 Mini Acceptance",

@@ -270,7 +270,7 @@ def _roster_with_entries(*plates: str) -> Roster:
     """Build a MIXED rider_pooled roster of one solo entry per plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
-        roster.create_solo_entry(name=f"Rider {plate}", plate=plate)
+        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
     return roster
 
 
@@ -614,7 +614,9 @@ def test_continue_after_stop_accepts_crossings_with_no_time_lost() -> None:
 def test_start_with_below_floor_team_raises_start_blocked_and_stays_draft() -> None:
     """A below-floor team blocks start; no state change (R-12)."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_team_entry_of_one(display_name="Half Team", rider=Rider(name="Bo", plate="7"))
+    roster.create_team_entry_of_one(
+        display_name="Half Team", rider=Rider(first_name="Bo", last_name="", plate="7")
+    )
     engine, _ = _make_engine(roster=roster)
 
     with pytest.raises(StartBlockedError, match=re.escape("team size must be at least 2")):
@@ -698,7 +700,10 @@ def test_record_crossing_pooled_rider_plate_credits_the_team() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
     )
     engine, _ = _make_engine(roster=roster)
     engine.start()
@@ -873,7 +878,10 @@ def test_record_crossing_pooled_rider_out_lapping_teammates_is_uncapped() -> Non
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
     )
     engine, _ = _make_engine(roster=roster, config=_config(min_lap_s=60))
     engine.start()
@@ -1252,7 +1260,10 @@ def test_snapshot_cap_applies_to_pooled_team_total() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
     )
     config = _config(deck_count=1, jokers_per_deck=0, min_lap_s=1, max_cards=3)
     engine, _ = _make_engine(roster=roster, config=config)
@@ -1311,7 +1322,10 @@ def test_deal_manual_pooled_rider_plate_credits_the_team() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_team_entry(
         display_name="Dirt Dynamos",
-        riders=[Rider(name="Sarah", plate="45"), Rider(name="Priya", plate="9")],
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
     )
     engine, _ = _make_engine(roster=roster)
     engine.start()

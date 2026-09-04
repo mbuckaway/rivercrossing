@@ -81,12 +81,23 @@
                   <object class="sizeritem">
                     <flag>wxALIGN_CENTRE_VERTICAL</flag>
                     <object class="wxStaticText">
-                      <label>Name</label>
+                      <label>First name</label>
                     </object>
                   </object>
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
-                    <object class="wxTextCtrl" name="name_input"/>
+                    <object class="wxTextCtrl" name="first_name_input"/>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxStaticText">
+                      <label>Last name</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxTextCtrl" name="last_name_input"/>
                   </object>
 
                   <object class="sizeritem">

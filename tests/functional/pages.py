@@ -221,7 +221,8 @@ RIDER_EDITOR_DLG = WindowSpec(
     controls=(
         ids.RIDERS_LIST,
         ids.PLATE_INPUT,
-        ids.NAME_INPUT,
+        ids.FIRST_NAME_INPUT,
+        ids.LAST_NAME_INPUT,
         ids.TEAM_CHOICE,
         ids.ADD_BTN,
         ids.SAVE_BTN,
@@ -246,6 +247,36 @@ CSV_PREVIEW_DLG = WindowSpec(
     is_frame=False,
     controls=(ids.SUMMARY_LBL, ids.CONFLICTS_LIST, WX_ID_OK, WX_ID_CANCEL),
     buttons=(WX_ID_OK, WX_ID_CANCEL),
+)
+
+# --- xrc-windows section C: Phase 4 teams editor ---
+
+TEAM_EDITOR_DLG = WindowSpec(
+    name=ids.TEAM_EDITOR_DLG,
+    xrc_file="teams.xrc",
+    is_frame=False,
+    controls=(
+        ids.TEAMS_LIST,
+        ids.NAME_INPUT,
+        ids.RELAY_PLATE_INPUT,
+        ids.NOTES_INPUT,
+        ids.LOGO_PREVIEW,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        ids.MEMBERS_LIST,
+        ids.ADD_BTN,
+        ids.REMOVE_BTN,
+        ids.SAVE_BTN,
+        WX_ID_CLOSE,
+    ),
+    buttons=(
+        ids.ADD_BTN,
+        ids.REMOVE_BTN,
+        ids.SAVE_BTN,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        WX_ID_CLOSE,
+    ),
 )
 
 ENTRY_DETAIL_DLG = WindowSpec(
@@ -413,7 +444,8 @@ SELFTEST_DLG = WindowSpec(
 )
 
 # xrc-windows's own A-E order: 1 console + 10 setup/lifecycle dialogs +
-# 7 rider/card dialogs + 4 results/library/audit + 4 system/help = 26.
+# 8 rider/card dialogs (team_editor_dlg is Phase 4's section-C member)
+# + 4 results/library/audit + 4 system/help = 27.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
@@ -428,6 +460,7 @@ WINDOWS: tuple[WindowSpec, ...] = (
     EXIT_CONFIRM_DLG,
     RIDER_EDITOR_DLG,
     CSV_PREVIEW_DLG,
+    TEAM_EDITOR_DLG,
     ENTRY_DETAIL_DLG,
     EDIT_CROSSING_DLG,
     REASSIGN_DLG,

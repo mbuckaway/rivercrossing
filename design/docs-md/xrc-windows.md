@@ -8,7 +8,7 @@ Native wxWidgets controls only, sizer-based, Windows look shown (identical struc
 
 - **Canvas caveats (HTML approximation):** browser form controls stand in for wx natives; exact spacing/fonts come from sizers + system fonts, not these pixels; sizes below are minimums expressed in dialog units at build time. **Global code-side items (not expressible in XRC):** ① DataView columns + row data + per-row attributes (bold flagged rows, red suits) — appended in code, the attributes through a `DataViewIndexListModel` subclass overriding `GetAttrByRow`, since no setter exists; ② card imagelist population (53 card bitmaps @1x/2x); ③ wxInfoBar **construction** + message text + Show/Hide calls; ④ splitter sash position restore from settings; ⑤ menu enable/disable per ride state (§15); ⑥ theme: `wx.App.SetAppearance` on the 4.3.1 / wxWidgets 3.3.3 baseline — all three appearance radios live on both platforms (measured: macOS applies at runtime to existing windows; `Appearance::System` pins the NSAppearance current at the call instead of restoring follow-the-system, so the app re-applies System on `wx.EVT_SYS_COLOUR_CHANGED`, best-effort; MSW on 3.3.3 returns `CannotChange` once a top-level window exists, so a Windows theme change takes effect at next launch and the status bar says so); ⑦ window minimum sizes via `SetMinSize()` (XRC has no window-level minsize); ⑧ radio menu-item defaults `mi_theme_system` and `mi_zoom_100` (`<checked>` is a no-op on radio items). Everything else drawn here is declared in XRC.
 
-- **Three classes cannot be authored in XRC** (measured on 4.3.1 / wxWidgets 3.3.3 — full detail in Spec §15b): **wxInfoBar** yields a generic `wx.Control` and drops its `name`, so the four info bars are built in code and named with `SetName()` · **wxDataViewListCtrl**'s handler hard-forces the name `dataviewCtrl`, so every list control below is a **wxDataViewCtrl**, whose name is honoured · **wxMenuBar** drops its name too: `main_menubar` loads via `XmlResource.LoadMenuBar()` and never resolves through `FindWindowByName`. Also measured: `wxStdDialogButtonSizer` positions only OK/Yes/Save/Apply/No/Cancel/Close/Help, so `wxID_OPEN`, `wxID_NEW`, `wxID_DELETE` and the custom buttons annotated below live in a sibling `wxBoxSizer`; a bare `&` in a label is a mnemonic and is stripped on macOS — author `&&` and read labels with `GetLabelText()`.
+- **Three classes cannot be authored in XRC** (measured on 4.3.1 / wxWidgets 3.3.3 — full detail in Spec §15b): **wxInfoBar** yields a generic `wx.Control` and drops its `name`, so all eight code-side info bars (`resume_infobar`/`reopened_infobar`/`finished_infobar` in main_frame, `stale_infobar` in results_frame, `setup_infobar` in ride_setup_dlg, `roster_infobar`/`csv_infobar` in the rider editor, `teams_infobar` in the Teams Editor — §15b) are built in code and named with `SetName()` · **wxDataViewListCtrl**'s handler hard-forces the name `dataviewCtrl`, so every list control below is a **wxDataViewCtrl**, whose name is honoured · **wxMenuBar** drops its name too: `main_menubar` loads via `XmlResource.LoadMenuBar()` and never resolves through `FindWindowByName`. Also measured: `wxStdDialogButtonSizer` positions only OK/Yes/Save/Apply/No/Cancel/Close/Help, so `wxID_OPEN`, `wxID_NEW`, `wxID_DELETE` and the custom buttons annotated below live in a sibling `wxBoxSizer`; a bare `&` in a label is a mnemonic and is stripped on macOS — author `&&` and read labels with `GetLabelText()`.
 
 A · Main frame
 
@@ -75,7 +75,7 @@ Shoe cycle 1 · seed 8843
 
 `main_statusbar`
 
-⚠ code-side: feed columns/rows + flagged-row attrs (a DataViewIndexListModel subclass overriding GetAttrByRow — there is no setter); card column bitmaps from imagelist; InfoBar construction + text + show/hide; sash position (main_splitter); state variants — DRAFT: clock 0:00:00, start_btn enabled, plate_input disabled with "start the ride to record" hint (record_btn tracks plate_input's enablement in every state) · FINISHED: entry row hidden, result banner InfoBar (finished_infobar) with Reopen/Results buttons · REOPENED: corrections banner, entry disabled, edited rows highlighted. Hide-times setting removes Lap time/Total columns + times in last_crossing_lbl; clock stays. Min frame 1100×700, fits 1366×768 — declared as <size> and re-applied with SetMinSize(); Spec §13 now states the same figure.
+⚠ code-side: feed columns/rows + flagged-row attrs (a DataViewIndexListModel subclass overriding GetAttrByRow — there is no setter); card column bitmaps from imagelist; InfoBar construction + text + show/hide; sash position (main_splitter); state variants — DRAFT: clock 0:00:00, start_btn enabled, plate_input disabled with "start the ride to record" hint (record_btn tracks plate_input's enablement in every state) · FINISHED: entry row hidden, result banner InfoBar (finished_infobar) with Reopen/Results buttons · REOPENED: corrections banner, entry disabled, edited rows highlighted. Hide-times setting removes Lap time/Total columns + times in last_crossing_lbl; clock stays; clock_elapsed_lbl/clock_remaining_lbl reserve a fixed minimum width and re-layout on update so long elapsed/remaining text never overlaps the Start/Stop controls (R-55). Min frame 1100×700, fits 1366×768 — declared as <size> and re-applied with SetMinSize(); Spec §13 now states the same figure.
 
 B · Ride setup & lifecycle dialogs
 
@@ -214,19 +214,20 @@ Rider Editor`rider_editor_dlg`✕
 Rider
 
 Plate
-Name
+First name
+Last name
 Team— solo —Trail BlazersNew team…
 
 AddSaveDelete
 
-`plate_input (next free) · name_input · team_choice · add_btn · save_btn · delete_btn`
+`plate_input (next free) · first_name_input · last_name_input · team_choice · add_btn · save_btn · delete_btn`
 
 Import CSV…Export CSV…
 
 `import_btn · export_btn · wxID_CLOSE`
 Close
 
-⚠ code-side: list rows; team_choice content ("— solo —" · teams · "New team…", which prompts for a name with the native text-entry dialog); plate_input prefills the highest numeric plate + 1 (empty roster → 1); delete disabled once entry has data (post-start = DNF/void only, R-15); refused edits show on roster_infobar (wxInfoBar, code-side SetName, §15b); import_btn/export_btn run the same picker → preview/write flows as File ▸ Import/Export Riders CSV. Teams editable until start (relay) / during ride (pooled).
+⚠ code-side: list rows — the riders_list Name column renders the rider's full name (first + last, R-23); a solo entry's display name mirrors its rider's full name; team_choice content ("— solo —" · teams · "New team…", which prompts for a name with the native text-entry dialog); plate_input prefills the highest numeric plate + 1 (empty roster → 1); delete disabled once entry has data (post-start = DNF/void only, R-15); refused edits show on roster_infobar (wxInfoBar, code-side SetName, §15b); import_btn/export_btn run the same picker → preview/write flows as File ▸ Import/Export Riders CSV. Teams editable until start (relay) / during ride (pooled).
 
 Import Riders — Preview`csv_preview_dlg`✕
 
@@ -246,6 +247,46 @@ ImportCancel
 `wxID_OK "Import" (disabled while conflicts > 0) · wxID_CANCEL`
 
 ⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). Opened from File ▸ Import Riders CSV… or the editor's import_btn, after the OS-native picker.
+
+Teams Editor`team_editor_dlg`✕
+
+| Team | Logo |
+|---|---|
+| Trail Blazers | A♠ |
+| Moss Ridge Riders | K♥ |
+
+`teams_list (wxDataViewCtrl)`
+
+Add teamRemove
+
+`add_btn · remove_btn`
+
+Team
+
+Name
+Plate (relay)
+Notes
+
+`name_input · relay_plate_input (row hidden on a rider_pooled ride) · notes_input`
+
+Logo
+
+A♠ Pick card…Image…
+
+`logo_preview (wxStaticText) · pick_card_btn · image_btn`
+
+Members (read-only)
+
+| A. Roy |
+| K. Singh |
+
+`members_list (wxDataViewCtrl · read-only — membership is managed in the Rider Editor)`
+
+SaveClose
+
+`save_btn (default, §15b dialogs.py decisions) · wxID_CLOSE`
+
+⚠ code-side (Phase 4): rows for both lists; the Plate (relay) row's team_relay-only visibility — a rider_pooled team's plate is derived from its members (S1), never settable here; logo_preview text — the card code with its suit glyph (rank-first, e.g. A♠ — results display convention), or "Image" when a PNG is set (image wins over a card; picking a card clears an image and vice-versa); a team's logo card auto-assigns from the ride's seeded shoe seed (rng_seed → team_logo_seed) at creation — no two auto-assigned teams share — and Pick card cycles the seeded sequence; add_btn/remove_btn are DRAFT-only (refused via teams_infobar, an wxInfoBar built code-side with SetName like roster_infobar, once the ride has started); refused saves show there too; the native text-entry prompt behind Add team. Teams here are *records*: Add team creates the roster's transient size-1 team (spec S2's floor is start-time), anchored by one rider named from the team's own name — rename/move that rider in the Rider Editor, which owns membership. Opened from Riders ▸ Teams Editor (mi_team_editor), a route enabled only for mixed rides (teams_allowed, R-11); the window lives in teams.xrc (§15b).
 
 Entry Detail — 77 Trail Blazers`entry_detail_dlg`✕
 
@@ -337,11 +378,14 @@ Tie-break: ① Most laps ② Total time ③ High-card draw ▲▼`tiebreak_list 
 
 | Place | Plate | Entry | Laps | Total | Best 5 | Hand |
 |---|---|---|---|---|---|---|
+| | | **Teams** | | | | |
 | 1 | 77 | Trail Blazers | 9 | 5:44:02 | K♠ K♣ K♦ JK★ 9♥ | Four of a Kind — Kings |
-| 2 | 123 | Sam Ellis | 8 | 5:51:17 | Q♥ J♥ T♥ 9♥ 8♥ | Straight Flush — Queen high |
-| 3 | 8 | R. Dubois | 7 | 5:38:44 | A♣ A♦ A♥ 4♦ 4♠ | Full House — Aces over Fours |
+| 2 | 56 | Fat Tire Four | 9 | 5:12:44 | Q♥ Q♣ Q♠ 9♦ 9♠ | Full House — Queens over Nines |
+| | | **Solo** | | | | |
+| 1 | 123 | Sam Ellis | 8 | 5:51:17 | Q♥ J♥ T♥ 9♥ 8♥ | Straight Flush — Queen high |
+| 2 | 8 | R. Dubois | 7 | 5:38:44 | A♣ A♦ A♥ 4♦ 4♠ | Full House — Aces over Fours |
 
-`standings_list (wxDataViewCtrl · full field; DNF block last; card bitmaps via imagelist)`
+`standings_list (wxDataViewCtrl · full field; mixed rides render a Teams section then a Solo section, each numbered from 1 with its own DNF tail — a kind absent from the ride has no section; card bitmaps via imagelist)`
 Publish options
 
  Show lap & total times
@@ -356,7 +400,7 @@ Export HTML…Export PDF…Podium poster…Export CSV…
 
 `export_html_btn · export_pdf_btn · poster_btn · export_csv_btn`
 
-⚠ code-side: standings rows; "draw required" tie rows highlighted with a ⚠ badge column (in the Place cell — the canvas pins seven columns); stale-export flag banner (wxInfoBar stale_infobar — built in code, named with SetName()) after reopened corrections; tie-break reorder re-ranks live through the control's own ▲▼ arrows (seeded from the ride's stored order as plain labels, same as ride_setup; a New/Delete-edited row set falls back to the known-good order with a status notice — E6.4.1); show_times_chk hides the Total column here too (R-63 UI proof).
+⚠ code-side: standings rows — on a mixed ride the presenter feeds (teams, solo) and a non-empty kind renders as a section header row ("Teams"/"Solo" in the Entry column, other cells blank) followed by its rows, each section numbered from 1 with its own DNF tail; a solo-only ride shows only the Solo section (Phase 3, R-65); "draw required" tie rows highlighted with a ⚠ badge column (in the Place cell — the canvas pins seven columns); stale-export flag banner (wxInfoBar stale_infobar — built in code, named with SetName()) after reopened corrections; tie-break reorder re-ranks live through the control's own ▲▼ arrows (seeded from the ride's stored order as plain labels, same as ride_setup; a New/Delete-edited row set falls back to the known-good order with a status notice — E6.4.1); show_times_chk hides the Total column here too (R-63 UI proof).
 
 Ride Library`ride_library_dlg`✕
 

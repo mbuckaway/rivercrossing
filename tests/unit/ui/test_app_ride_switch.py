@@ -99,7 +99,7 @@ def _config() -> RideConfig:
 def _roster() -> Roster:
     """Build the one-entry roster the switch must rebuild."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(name="Sam Ellis", plate="12")
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="12")
     return roster
 
 

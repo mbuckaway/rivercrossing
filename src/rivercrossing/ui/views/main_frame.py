@@ -276,6 +276,13 @@ class MainFrame:
         self.undo_btn = self._find(ids.UNDO_BTN, wx.Button)
         self.clock_elapsed_lbl = self._find(ids.CLOCK_ELAPSED_LBL, wx.StaticText)
         self.clock_remaining_lbl = self._find(ids.CLOCK_REMAINING_LBL, wx.StaticText)
+        # Reserve a fixed width for a full "H:MM:SS" timestamp so a
+        # growing elapsed/remaining label can never overflow its slot
+        # into the Start/Stop buttons beside it (XRC has no window
+        # minsize; measured overlap on macOS at default size).
+        clock_width = self.clock_elapsed_lbl.GetTextExtent("23:59:59").width
+        self.clock_elapsed_lbl.SetMinSize(wx.Size(clock_width, -1))
+        self.clock_remaining_lbl.SetMinSize(wx.Size(clock_width, -1))
         # R-35: Stop is gated on arm_stop_chk -- disabled at rest even
         # if the XRC ever leaves it enabled (test_menu_state pins the
         # commands-side rule; this pins the actual control).
@@ -620,6 +627,7 @@ class MainFrame:
         """
         self.clock_elapsed_lbl.SetLabel(elapsed)
         self.clock_remaining_lbl.SetLabel(remaining)
+        self.frame.Layout()
 
     def set_entry_locked(self, *, locked: bool) -> None:
         """Lock or unlock the plate entry row (ConsoleView, R-35).
