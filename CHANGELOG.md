@@ -4,6 +4,25 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.8] - 2026-09-04
+
+### Added
+
+- **Teams Editor** — Riders ▸ Teams Editor (`team_editor_dlg`) creates, renames and removes teams, edits a team's relay plate, notes and logo (a seeded card by default, or an uploaded image), and shows its members read-only. Enabled for solo+teams rides.
+- **Team-mode results split into two sets** — a mixed ride ranks Teams and Solo riders separately (each numbered from 1 with its own DNF tail) in the Results window and the HTML/PDF exports, and the standings CSV gains a `type` column.
+
+### Changed
+
+- **Rider names are first/last** — a rider now has separate first and last names; the Rider Editor collects them in two fields and every roster surface uses the joined name.
+- **Unified header-mapped roster CSV** — import and export use one format for every ride (`FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER[,NOTES]`): import resolves columns by header, ignores unsupported columns and non-data rows, auto-assigns race plates when blank, and groups teams by name.
+- **Cards credit the team, not the rider** — a team rider's lap deals into the team's hand; a relay team keeps one rider on course at a time.
+- **A fresh launch starts DRAFT** — no ride is auto-started, so File ▸ Quit shows the plain confirm rather than "stop the running ride".
+- **Resume loads the ride's roster** — continuing a ride installs its entries on the shared context, so the Rider/Teams editors and CSV import act on the real ride.
+
+### Fixed
+
+- **Clock/button overlap** — the elapsed/remaining clock labels reserve a fixed width and re-layout each tick, so they no longer overlap the Start/Stop buttons at the default window size.
+
 ## [1.0.7] - 2026-09-02
 
 ### Fixed — functional-suite flakiness (macOS settings/zoom)
