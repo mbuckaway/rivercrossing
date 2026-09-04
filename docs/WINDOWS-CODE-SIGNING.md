@@ -1,27 +1,31 @@
 # Windows Authenticode Code Signing — research & implementation spec
 
-**Status:** research / spec (not implemented). Handoff to the Windows agent.
+**Status:** implemented — code + CI wired; SignPath onboarding pending
+(`WINDOWS-CODE-SIGNING-HANDOFF.md`).
 **Scope:** adding Authenticode code signing to the RiverCrossing Windows build so
 Windows SmartScreen and antivirus do not flag or destroy the installer/app.
-**Companion to:** `WINDOWS-AGENT-HANDOFF.md`, `WINDOWS-DEBUG-SESSION-SUMMARY.md`.
+**Companion to:** `WINDOWS-CODE-SIGNING-HANDOFF.md` (handoff),
+`CODE-SIGNING-POLICY.md` (the page SignPath requires).
 **Supersedes:** the "Windows is unsigned by decision" note in `R-01` and
-`E9.1.2` once the implementation below lands.
+`E9.1.2`.
 
 ---
 
 ## 1 · Purpose & status
 
-RiverCrossing currently ships an **unsigned** per-user NSIS installer
-(`installers/windows.nsi`) plus an unsigned PyInstaller onedir payload. The
-design contract records this as a deliberate v1 decision:
+RiverCrossing's Windows build now carries Authenticode signing wiring: the NSIS
+installer and the PyInstaller bootloader are signed via SignPath when the
+`SIGNPATH_*` config is present, with an unsigned fallback until it lands. This
+supersedes the deliberate v1 decision:
 
-- `R-01` (requirements.md): *"unsigned NSIS .exe (no Windows cert — SmartScreen
-  step documented in the guide …)"*.
-- `E9.1.2` (task-briefs.md): *"What remains here: Authenticode signing only."*
+- `R-01` (requirements.md): *"unsigned NSIS .exe (no Windows cert …)"* — now the
+  advisory-gated SignPath plan.
+- `E9.1.2` (task-briefs.md): *"What remains here: Authenticode signing only."* —
+  now wired; only the SignPath onboarding remains (see the handoff doc).
 
-This document specifies **how to add Authenticode signing** so the Windows build
-can be published signed. It is research only: **no code, CI, or test changes are
-made here** — the Windows agent implements them.
+This document records the research and the implementation that landed. The
+code, CI, and tests are in place; the manual SignPath onboarding and the first
+signed release are covered by `WINDOWS-CODE-SIGNING-HANDOFF.md`.
 
 **Recommendation in one line:** use **SignPath's free code-signing program for
 open-source projects** (primary), and document Azure Artifact Signing and a
@@ -173,9 +177,9 @@ Sources: [overview](https://learn.microsoft.com/en-us/azure/trusted-signing/over
 
 ### 5.3 Traditional OV / IV certificate
 
-Buy a code-signing cert from a CA (SSL.com IV/OV ~$129/yr + eSigner, Sectigo,
-Certum — Certum explicitly issues OV to individuals; DigiCert/GlobalSign are
-org-oriented).
+Buy a code-signing cert from a CA (SSL.com IV/OV ≈$129/yr — approximate,
+unverified — plus eSigner; Sectigo, Certum — Certum explicitly issues OV to
+individuals; DigiCert/GlobalSign are org-oriented).
 
 - Since **June 2023** the CA/Browser Forum requires OV private keys on a
   **HSM or hardware token** (cloud-HSM services like SSL.com eSigner qualify);
@@ -206,7 +210,7 @@ license without commercial dual-licensing for all components."*
 
 - **`GPL-3.0-only` appears literally** in SignPath's accepted-license data file,
   and is the **single most-represented** license among the ~332 accepted
-  projects (119 of 332).
+  projects (128 GPL-3.0-only, 160 GPL-family, of 332).
 - **Copyleft is not a disqualifier** — the disqualifier is *dual-licensing*
   (e.g. GPL + a paid commercial license). SignPath even cites GPL v3 §1 to
   define "System Libraries", so GPL projects are explicitly contemplated.
@@ -262,55 +266,70 @@ Sources: [signpath.org/terms](https://signpath.org/terms), [docs.signpath.io/pro
 
 - **Trusted-build-system verification** and **origin verification** are
   **"Required for Open Source Code Signing"** — these are the hard gates.
-- **Manual approval of each signing request is opt-in** (per signing policy:
-  *"Select **Use approval process** if you want to require manual approval for
-  each signing request. This is recommended for release-signing."*).
+- **Manual approval of each signing request is also required for Open Source
+  Code Signing** (per [docs.signpath.io/editions-explained](https://docs.signpath.io/editions-explained)),
+  not the opt-in "Use approval process" option the product otherwise offers.
 - The draft CoC's *"Don't fight the system … every release needs manual approval
-  for signing"* phrasing is broader than the current product; **treat the two as
-  a tension to resolve at application time**, not as a settled fact.
+  for signing"* phrasing therefore matches the Open Source edition — the
+  earlier "tension" reading is resolved.
 - The GitHub connector also requires, for OSS projects, that **all jobs of the
   workflow leading up to the signing request ran on GitHub-hosted agents** —
   satisfied by both `windows-latest` and `windows-11-arm`.
 
-Sources: [docs.signpath.io/projects](https://docs.signpath.io/projects), [docs.signpath.io/trusted-build-systems/github](https://docs.signpath.io/trusted-build-systems/github), [signpath.org/terms](https://signpath.org/terms).
+Sources: [docs.signpath.io/projects](https://docs.signpath.io/projects), [docs.signpath.io/trusted-build-systems/github](https://docs.signpath.io/trusted-build-systems/github), [docs.signpath.io/editions-explained](https://docs.signpath.io/editions-explained), [signpath.org/terms](https://signpath.org/terms).
 
 ### 6.5 CI integration (the exact mechanism)
 
 Signing happens **server-side on SignPath's HSM**; the GitHub runner only
 uploads the artifact and submits a request. The Action is
-`signpath/github-action-submit-signing-request@v2`, talking to a hosted connector
-at `https://githubactions.connectors.signpath.io`.
+`signpath/github-action-submit-signing-request` (latest release **2.3.0**),
+talking to a hosted connector at `https://githubactions.connectors.signpath.io`
+(the default `connector-url`).
 
 ```yaml
 steps:
   - name: Upload unsigned artifact
     id: upload-unsigned-artifact
-    uses: actions/upload-artifact@v4
+    uses: actions/upload-artifact@v7
     with:
       path: dist/                 # the built onedir + setup.exe, zipped
 
   - name: Submit signing request
-    uses: signpath/github-action-submit-signing-request@v2
+    uses: signpath/github-action-submit-signing-request@v2.3.0
     with:
       api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
       organization-id: '<SignPath org id>'
       project-slug: '<project slug>'
       signing-policy-slug: '<policy slug>'
+      artifact-configuration-slug: '<artifact config slug>'
       github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
       wait-for-completion: true
       output-artifact-directory: './signed'
       parameters: |
-        version: '${{ github.ref_name }}'
+        Version: "${{ github.ref_name }}"
 ```
 
 Notes that matter for a PyInstaller + NSIS build:
 
 - The artifact **must first be uploaded** with `actions/upload-artifact` and
-  referenced by `github-artifact-id`.
+  referenced by `github-artifact-id` (the SignPath docs example uses
+  `upload-artifact@v7`).
 - `upload-artifact` **zips by default**, so the SignPath artifact-configuration
   **root element must be `<zip-file>`**.
-- Timestamping is **automatic** on this file-based path (RFC 3161) — no manual
-  TSA step.
+- `parameters` is a block-scalar **multiline string**, not a YAML map: one
+  `name: "<JSON value>"` per line (e.g. `Version: "1.0.0"`).
+- Timestamping is **automatic** (SignPath documents that "timestamps are managed
+  automatically") — no manual TSA step.
+- `wait-for-completion` **defaults to `true`** with a 600 s timeout that
+  **fails the job** on timeout — it does not fall back to an unsigned artifact.
+  `wait-for-completion-timeout-in-seconds` overrides that timeout. Other inputs:
+  `connector-url`, `github-token`,
+  `service-unavailable-timeout-in-seconds`,
+  `download-signed-artifact-timeout-in-seconds`, and `skip-decompress`.
+- There is **no standalone SignPath CLI**; the programmatic interfaces are the
+  GitHub Action, the PowerShell module `SignPath` (`Install-Module -Name
+  SignPath`, then `Submit-SigningRequest` / `Get-SignedArtifact`), and the REST
+  API. Certificate/project/policy administration is portal-only.
 - Workflow needs `permissions: { actions: read, contents: read }` for the
   connector to read the artifact (a private-repo consideration).
 
@@ -318,19 +337,38 @@ Sources: [GitHub integration](https://docs.signpath.io/trusted-build-systems/git
 
 ### 6.6 Artifact configuration (what to sign)
 
-SignPath's `<pe-file>` element covers `.exe .dll .acm .ax .cpl .drv .efi .mui
-.ocx .scr .sys .tsp` — **`.pyd` is absent** (flagged in §11). A PyInstaller
-onedir tree is signed by zipping it and using recursive wildcards:
+**Signed scope: the NSIS `setup.exe` and the PyInstaller bootloader
+`rivercrossing.exe` only.** SignPath's terms require you to *"sign your own
+binaries only"* and permit bundling *"unsigned binaries of upstream OSS
+projects"*, so the bundled CPython/wxWidgets/Microsoft DLLs and the `.pyd`
+extension modules **stay unsigned** inside the installer — and `<pe-file>`
+does not support `.pyd` anyway.
+
+The committed reference config (`installers/signpath/artifact-config.xml`) signs
+every `.exe` in the submitted ZIP and enforces the required `product-name`
+metadata:
 
 ```xml
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
-    <pe-file path="**/*.exe" max-matches="unbounded"><authenticode-sign/></pe-file>
-    <pe-file path="**/*.dll" max-matches="unbounded"><authenticode-sign/></pe-file>
-    <!-- .pyd is NOT in the documented extension list — see §11 -->
+    <pe-file path="*.exe" max-matches="unbounded" product-name="RiverCrossing">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="**/*.exe" max-matches="unbounded" product-name="RiverCrossing">
+      <authenticode-sign />
+    </pe-file>
   </zip-file>
 </artifact-configuration>
 ```
+
+Wildcard semantics to get right:
+
+- A wildcard **defaults to `max-matches="1"`** — it must match exactly one file,
+  or the configuration is invalid. Set `max-matches="unbounded"` for any
+  wildcard that can match more than one file.
+- Recursive `**/*.exe` matches `.exe` files in subdirectories but **not** the
+  zip root, so the config lists both `*.exe` (the zip root) and `**/*.exe`
+  (subdirectories).
 
 The NSIS `setup.exe` is a plain PE, so it is signed the same way as any `.exe`
 (no NSIS-specific element). MSI supports "deep signing"; NSIS does not need it.
@@ -339,10 +377,23 @@ Sources: [artifact configuration reference](https://docs.signpath.io/artifact-co
 
 ### 6.7 Onboarding
 
-Application is a **HubSpot form** at `https://signpath.org/apply`. The concrete
-post-application steps (review timeline, verification procedure, key
-provisioning) are **not publicly documented** — they come from the application
-itself or `support@signpath.io`.
+Application is a **HubSpot form** at `https://signpath.org/apply`. The review
+timeline and verification procedure are **not publicly documented** — they come
+from the application itself or `support@signpath.io`. The steps that *are*
+known:
+
+- There is **no "generate a cert" step.** On approval, SignPath provisions the
+  project with the free "Open Source Code Signing" subscription, already holding
+  the **SignPath Foundation certificate** — issued to **"SignPath Foundation"**,
+  with the private key on their HSM. The user never imports or generates a key.
+- The project then **selects that certificate in the signing-policy Certificate
+  dropdown** (and enables trusted-build-system verification, origin
+  verification, and manual approval).
+- **Version metadata:** the installer and the app exe originally carried no
+  VERSIONINFO; both now declare `ProductName`/`FileVersion`/`ProductVersion`
+  (`installers/windows.nsi` `VIProductVersion` + `VIAddVersionKey`,
+  `installers/rivercrossing.spec` `VSVersionInfo`), which SignPath's OSS terms
+  require on signed binaries.
 
 ---
 
@@ -366,43 +417,51 @@ signtool sign /f MyCert.pfx /p MyPassword /fd SHA256 /tr http://timestamp.digice
 ```
 
 Key flags: `/f` (pfx), `/p` (password), `/fd SHA256` (file digest — **required**
-in modern SDK builds), `/tr` (RFC 3161 timestamp URL) + `/td SHA256`, `/a`
+in modern SDK builds), `/tr` (timestamp URL) + `/td SHA256`, `/a`
 (auto-select cert from store), `/as` (append signature — dual-signing), `/d`
 `/du` (description / URL). Sources: [signtool](https://learn.microsoft.com/en-us/windows/win32/seccrypto/signtool), [sign a file](https://learn.microsoft.com/en-us/windows/win32/seccrypto/using-signtool-to-sign-a-file).
 
-### 7.2 SHA-256 only; RFC 3161 timestamping mandatory
+### 7.2 SHA-256 only; timestamping mandatory
 
 - **SHA-1 code signing is retired** (Microsoft Lifecycle, 2020–2021). Sign with
   SHA-256 only; dual-signing (SHA-1 + SHA-256) is only for Windows Vista and
   earlier — **not needed** for a Windows 10/11 app.
 - **Always timestamp.** Without a timestamp the signature becomes invalid when
-  the cert expires, and Windows treats the binary as unsigned. RFC 3161
-  (`/tr` + `/td SHA256`) is the recommended protocol. Public TSAs:
-  `http://timestamp.digicert.com`, `http://time.certum.pl/`, and Azure's
-  `http://timestamp.acs.microsoft.com` (mandatory with Azure's 3-day certs).
+  the cert expires, and Windows treats the binary as unsigned. SignPath
+  documents that **timestamps are managed automatically**; for the manual
+  signtool/PFX path, RFC 3161 (`/tr` + `/td SHA256`) is the recommended
+  protocol. Public TSAs: `http://timestamp.digicert.com`,
+  `http://time.certum.pl/`, and Azure's `http://timestamp.acs.microsoft.com`
+  (mandatory with Azure's 3-day certs).
 
 Sources: [SHA-1 retired](https://learn.microsoft.com/en-us/lifecycle/announcements/sha-1-signed-content-retired), [time stamping](https://learn.microsoft.com/en-us/windows/win32/seccrypto/time-stamping-authenticode-signatures).
 
-### 7.3 What to sign (PyInstaller onedir + NSIS)
+### 7.3 What to sign (NSIS setup.exe + PyInstaller bootloader)
 
 - PyInstaller has **no** Windows signing — `--codesign-identity` is **macOS-only**
-  (`installers/rivercrossing.spec:168` already sets `codesign_identity=None`).
+  (`installers/rivercrossing.spec:206` already sets `codesign_identity=None`).
   Signing is always a **post-build** step.
-- Sign **every PE** in the onedir tree: the top-level `.exe`, every `.dll`
-  (python, wxWidgets, VC++ runtime), and every `.pyd` (a PE DLL). This is for
-  per-file AV/Smart-App-Control flags, not runtime integrity.
-- Sign the NSIS **`setup.exe`** separately (it is its own PE).
-- The **uninstaller** is generated at install time by `WriteUninstaller`
-  (`installers/windows.nsi:59`) and does **not** inherit the installer's
-  signature. NSIS ≥ 3.08 added **`!uninstfinalize`** to sign it during the
-  build; the repo's NSIS is 3.12 (x64) / 3.10 (ARM64), so it is available. If
-  only the installer is signed, expect an "unknown publisher" prompt on
-  uninstall.
-- AV false positives: PyInstaller's own guidance is that windowed mode has a
-  *higher* detection rate, code-signing "should make them less common" (not a
-  guarantee), and the real fix for a specific false positive is submitting to
-  the vendor (WDSI). **Do not use UPX** (pass `--noupx`; the repo already sets
-  `upx=False` in the spec).
+- Sign only **two files**: the NSIS **`setup.exe`** and the PyInstaller
+  bootloader **`rivercrossing.exe`**. The bundled upstream DLLs and `.pyd`
+  extension modules **stay unsigned** inside the installer (SignPath forbids
+  signing upstream binaries, and `<pe-file>` does not support `.pyd`).
+- **Version metadata is now present:** neither the installer nor the app exe
+  originally carried VERSIONINFO; both now declare it (`installers/windows.nsi`
+  `VIProductVersion`/`VIAddVersionKey`, `installers/rivercrossing.spec`
+  `VSVersionInfo` on win32), satisfying SignPath's product-name/version metadata
+  requirement.
+- The **uninstaller** is *compiled* at build time but *written* to disk at
+  install time by `WriteUninstaller` (`installers/windows.nsi:68`), and it does
+  **not** inherit the installer's signature. NSIS ≥ 3.08 added
+  **`!uninstfinalize`** — the *uninstaller* directive — to sign it during the
+  build; `!finalize` is the equivalent *installer* directive. The repo's NSIS
+  is 3.12 (x64) / 3.10 (ARM64), so it is available. If only the installer is
+  signed, expect an "unknown publisher" prompt on uninstall.
+- AV false positives: community advice (not PyInstaller docs) is that windowed
+  mode has a *higher* detection rate; PyInstaller's own guidance is that
+  code-signing "should make them less common" (not a guarantee), and the real
+  fix for a specific false positive is submitting to the vendor (WDSI). **Do not
+  use UPX** (pass `--noupx`; the repo already sets `upx=False` in the spec).
 
 Sources: [PyInstaller usage](https://pyinstaller.org/en/stable/usage.html), [PyInstaller AV template](https://github.com/pyinstaller/pyinstaller/blob/develop/.github/ISSUE_TEMPLATE/antivirus.md), [NSIS signing an uninstaller](https://nsis.sourceforge.io/Signing_an_Uninstaller), [NSIS !finalize reference](https://nsis.sourceforge.io/Reference/!finalize).
 
@@ -435,19 +494,20 @@ Where signing hooks into the repo (all paths relative to repo root).
 - `nox -s winsetup` (`noxfile.py:331`) → `makensis -DAPPVERSION=… -DPAYLOAD_DIR=…
   -DOUTFILE=dist/RiverCrossing-<version>-windows-<arch>-setup.exe` via
   `_find_makensis()` (`noxfile.py:295`) and `_windows_arch()` (`noxfile.py:320`).
-- `nox -s winsetup_smoke` (`noxfile.py:372`) → `pytest
+- `nox -s winsetup_smoke` (`noxfile.py:376`) → `pytest
   tests/functional/test_winsetup_smoke.py`.
 - Artifacts to sign: `dist/RiverCrossing-<version>-windows-{x64,arm64}-setup.exe`
-  (the installer), plus the onedir payload `dist/rivercrossing/**` (every PE).
+  (the installer) and the bootloader `dist/rivercrossing/rivercrossing.exe`.
 
 ### 8.2 CI insertion points (`ci.yml`)
 
-- `build-windows-x64` (ci.yml:240, `windows-latest`) and `build-windows-arm64`
-  (ci.yml:290, `windows-11-arm`) each do: bundle → smoke → `nox -s winsetup` →
+- `build-windows-x64` (ci.yml:242, `windows-latest`) and `build-windows-arm64`
+  (ci.yml:379, `windows-11-arm`) each do: bundle → smoke → `nox -s winsetup` →
   `winsetup_smoke` → upload.
-- **Signing belongs after `nox -s winsetup` and before the upload step**, in both
-  jobs (or a dedicated signing job that downloads both artifacts).
-- The `release` job runs on **`macos-latest`** (ci.yml:360) and cannot run
+- **Signing is two-pass:** submit the bootloader `rivercrossing.exe` before
+  `nox -s winsetup`, then the `setup.exe` after it — both gated on the advisory
+  `signed == '1'` output.
+- The `release` job runs on **`macos-latest`** (ci.yml:536) and cannot run
   Windows signing tooling — the Windows jobs must sign, or a dedicated Windows
   job does.
 
@@ -491,7 +551,7 @@ secrets).
 
 For the **PFX path** (if OV/IV is chosen): base64-encoded `.pfx` +
 `WIN_CERT_PASSWORD` secrets, imported with `Import-PfxCertificate` (do **not**
-use `certutil`, which Microsoft deprecates for production).
+use `certutil`, which Microsoft does not recommend for production code).
 
 ---
 
@@ -545,12 +605,13 @@ non-zero — the exit-code analogue of the `spctl` assert.
 4. **Enable MFA** on the org and define Author/Reviewer/Approver roles.
 5. **Install the SignPath GitHub App** for origin verification, and create the
    SignPath project + signing policy + artifact configuration (`<zip-file>` with
-   `**/*.exe` / `**/*.dll` — plus `.pyd` if SignPath confirms it).
+   `*.exe` / `**/*.exe` signing the `setup.exe` and the `rivercrossing.exe`
+   bootloader).
 6. **Add the `SIGNPATH_API_TOKEN` secret** and wire the
-   `signpath/github-action-submit-signing-request@v2` step into
-   `build-windows-x64` and `build-windows-arm64` after `nox -s winsetup`
-   (mirror the §8.4 advisory gate so the unsigned path stays green until the
-   token lands).
+   `signpath/github-action-submit-signing-request` steps into
+   `build-windows-x64` and `build-windows-arm64` — the bootloader before
+   `nox -s winsetup`, the `setup.exe` after it (mirror the §8.4 advisory gate
+   so the unsigned path stays green until the token lands).
 7. **Add `tests/functional/test_winsetup_signing.py`** (§9) and the
    `signtool verify /pa` gate in the signed branch.
 8. **Set expectations in the user guide** — the signed-but-new app still shows
@@ -562,8 +623,8 @@ non-zero — the exit-code analogue of the `spctl` assert.
 
 1. Buy an OV/IV cert with an HSM/token or cloud-signing option (SSL.com/Certum).
 2. Export a `.pfx`, base64 it into a GitHub secret, add `WIN_CERT_PASSWORD`.
-3. In each Windows job: `Import-PfxCertificate`, sign the onedir tree
-   (`*.exe/*.dll/*.pyd`) then the `setup.exe` with
+3. In each Windows job: `Import-PfxCertificate`, sign the bootloader
+   `rivercrossing.exe` and the `setup.exe` with
    `signtool sign /fd SHA256 /tr … /td SHA256`, verify with
    `signtool verify /pa /v`.
 4. Add `!uninstfinalize` (NSIS ≥ 3.08) to sign the uninstaller, or accept the
@@ -645,13 +706,13 @@ non-zero — the exit-code analogue of the `spctl` assert.
 - https://textslashplain.com/2024/11/15/best-practices-for-smartscreen-apprep/ (Eric Lawrence)
 
 ### Local (this repo)
-- `design/docs-md/requirements.md` — R-01 (line 14), R-75 (line 95)
+- `design/docs-md/requirements.md` — R-01 (line 14), R-75 (line 101)
 - `design/docs-md/task-briefs.md` — E9.1.2 (line 205), E9.1.3 (line 207)
 - `noxfile.py` — `bundle` (214), `_find_makensis` (295), `_windows_arch` (320),
-  `winsetup` (331), `winsetup_smoke` (372)
-- `installers/windows.nsi` — `WriteUninstaller` (59)
-- `installers/rivercrossing.spec` — `codesign_identity=None` (168)
-- `.github/workflows/ci.yml` — build jobs (240, 290), release job (360),
-  advisory gate (393–409)
-- `tests/functional/test_release_signing.py` — skip-when-unsigned idiom (66–137)
+  `winsetup` (331), `winsetup_smoke` (376)
+- `installers/windows.nsi` — `WriteUninstaller` (68)
+- `installers/rivercrossing.spec` — `codesign_identity=None` (206)
+- `.github/workflows/ci.yml` — `build-windows-x64` (242), `build-windows-arm64`
+  (379), `release` (536, macos-latest), SignPath advisory gates (263, 400)
+- `tests/functional/test_release_signing.py` — skip-when-unsigned idiom (66–138)
 - `tests/functional/test_winsetup_smoke.py` — `SETUP_PATH`, win32 gate

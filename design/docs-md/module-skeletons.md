@@ -28,7 +28,7 @@ rivercrossing/
 │   └── ci.yml                  # §14 six-stage matrix: windows-latest + macos-latest (Developer ID signing + notarization for the macOS DMG live in its tag release job, E9.1.3)
 ├── installers/
 │   ├── rivercrossing.spec           # PyInstaller (both OSes, one spec; branded icons since Phase 8)
-│   ├── windows.nsi             # NSIS, per-user, unsigned (exists — Phase 9; NSIS replaces Inno Setup, R-01); Windows stays unsigned by decision (R-01, no Authenticode certificate)
+│   ├── windows.nsi             # NSIS, per-user (exists — Phase 9; NSIS replaces Inno Setup, R-01); installer + bootloader Authenticode-signed via SignPath when `SIGNPATH_*` config is present, unsigned fallback until then
 │   ├── dmg_settings.py         # dmgbuild config (exists — Phase 8, unsigned); codesign + notarize happen in ci.yml's release job (E9.1.3)
 │   └── branding/               # icon + DMG-background SVG sources and their COMMITTED generated
 │                               #   artifacts (.icns/.ico/dual-res .tiff — no PNG in git);

@@ -68,7 +68,7 @@
 
 <h3>Installing</h3>
 <ul>
-  <li><strong>Windows:</strong> run the installer and follow the prompts. Windows may show a SmartScreen "More info → Run anyway" step on the unsigned build — the guide documents that step so volunteers can get past it safely.</li>
+  <li><strong>Windows:</strong> run the installer and follow the prompts. The installer is Authenticode-signed via SignPath once the <code>SIGNPATH_*</code> config lands; a new-but-signed app still shows the SmartScreen "unrecognized app" warning until reputation accrues, so Windows may show a "More info → Run anyway" step on early releases.</li>
   <li><strong>macOS:</strong> drag the app into Applications (or open the DMG and copy it), then launch. Gatekeeper may ask you to confirm opening an unsigned app once.</li>
 </ul>
 

@@ -4,6 +4,12 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Windows Authenticode signing (SignPath).** The NSIS installer and the PyInstaller bootloader now declare `ProductName`/version metadata (`VIProductVersion` + `VIAddVersionKey` in `installers/windows.nsi`; `VSVersionInfo` in `installers/rivercrossing.spec`). CI adds an advisory-gated two-pass SignPath flow — sign the bootloader `rivercrossing.exe`, then the `setup.exe` — that Authenticode-signs both when the `SIGNPATH_*` secret/variables are present and falls back to unsigned until they land. A signing smoke test (`tests/functional/test_winsetup_signing.py`) skips until a signed installer exists, and `docs/WINDOWS-CODE-SIGNING.md` records the research.
+
 ## [1.0.8] - 2026-09-04
 
 ### Added
