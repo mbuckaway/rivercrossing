@@ -31,60 +31,51 @@ maintainer (and the Windows agent, for the win32-only verification).
 
 ## 2 · Manual onboarding (maintainer, not automatable)
 
-Ordered:
+Two phases: (A) apply for the free certificate, then (B) configure signing in
+the SignPath.io web app.
 
-1. **Apply** at `https://signpath.org/apply` (a HubSpot form). Provide the repo,
-   the GPL-3.0-only license, and evidence it is maintained, released, and
-   documented.
-2. **Await review.** The SignPath Foundation does a one-time reputation/control
-   check; the timeline is not published. Ask `support@signpath.io` if it stalls.
-3. **Certificate.** SignPath's free OSS program offers two certificate options —
-   pick one when you create the `release-signing` policy:
+### A. Apply for the free Foundation certificate
 
-   - **SignPath Foundation certificate (free):** issued to "SignPath Foundation"
-     (the publisher users see); the key lives on SignPath's HSM. Select it in the
-     signing policy's Certificate dropdown — no CSR, no key of your own.
-   - **Bring your own certificate (free subscription, paid cert):** create an
-     X.509 CSR in SignPath (the private key is generated on SignPath's HSM), buy
-     a certificate from a CA issued to *your* legal entity, then upload it back.
-     The publisher shows *you*, not "SignPath Foundation".
+1. Fill in the form at `https://signpath.org/apply` (a HubSpot form). Provide
+   the repository URL, the GPL-3.0-only license, and the download/docs page
+   showing the app is released and documented.
+2. The SignPath Foundation runs a one-time reputation/control review. The
+   timeline is not published — ask `support@signpath.io` if it stalls.
+3. On approval, SignPath provisions your organization: the free **Open Source
+   Code Signing** subscription plus the **SignPath Foundation** certificate
+   (issued to "SignPath Foundation"; the private key lives on SignPath's HSM).
+   You never create, import, or generate a certificate — it simply appears in
+   your account.
 
-   **CSR X.509 subject fields** (bring-your-own path only). CA/B Forum code-signing
-   rules require Organization (O) and Country (C); Common Name (CN) is standard:
+### B. Configure signing in the SignPath.io web app
 
-   | Field | Required | Enter |
-   |---|---|---|
-   | Common Name (CN) | yes | your legal/org name — what users see as publisher |
-   | Organization (O) | yes | the verified legal entity name |
-   | Country (C) | yes | 2-letter ISO 3166 code (e.g. `AT`, `US`, `CA`) |
-   | Organizational Unit (OU) | no | optional division/department |
-   | Locality (L) | no | city |
-   | State/Province (ST) | no | state/province |
-
-   If you choose the free SignPath Foundation certificate, the subject is fixed to
-   "SignPath Foundation" and you do not fill these in — confirm with
-   `support@signpath.io` if the portal still asks for a subject on that path.
-4. **Team + MFA.** Invite the team, define Author/Reviewer/Approver roles, and
-   enable MFA on both SignPath and the GitHub org (required for OSS).
-5. **Project.** Create the project: name, slug, and the repository URL (needed
-   for origin verification).
-6. **Signing policy.** Create `release-signing` and select the SignPath
-   Foundation certificate in its Certificate dropdown. Enable
-   trusted-build-system verification, origin verification, and manual approval
-   (all three are required for OSS).
-7. **Artifact configuration.** Create it from `installers/signpath/artifact-config.xml`
-   (a `<zip-file>` signing `*.exe` + `**/*.exe` with `product-name="RiverCrossing"`).
-   Note its slug.
-8. **Trusted build system.** Add the predefined `GitHub.com` connector to the
-   organization and link it to the project; install the SignPath GitHub App and
-   grant access to this repo.
-9. **API token.** Create a dedicated CI user (or a token under "My profile →
-   Generate token") with submitter permissions. Set it as the repo secret
+4. Invite the team and enable MFA on SignPath and on the GitHub org. Assign the
+   Author / Reviewer / Approver roles (required for OSS).
+5. Create the **Project**: name, slug, and the repository URL (the repository
+   URL is required for origin verification).
+6. Create the `release-signing` **signing policy** and set:
+   - **Certificate** → select **SignPath Foundation** (the provisioned cert).
+   - Enable **trusted build system verification**, **origin verification**, and
+     the **approval process** (all three are required for OSS).
+7. Create the **artifact configuration** from
+   `installers/signpath/artifact-config.xml` (a `<zip-file>` signing `*.exe` +
+   `**/*.exe` with `product-name="RiverCrossing"`). Note its slug.
+8. Add the predefined **GitHub.com** trusted build system to the organization,
+   link it to the project, and install the **SignPath GitHub App** on this repo.
+9. Create a **CI user** (or a personal token under "My profile → Generate
+   token") with submitter permissions. Store it as the GitHub secret
    `SIGNPATH_API_TOKEN`.
-10. **Repo variables.** Set `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`,
+10. Set the repo variables: `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`,
     `SIGNPATH_SIGNING_POLICY_SLUG`, `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG`.
-11. **Policy page.** Publish `docs/CODE-SIGNING-POLICY.md` and wire its public
-    URL into the SignPath config (a README link alone is not enough).
+11. Publish `docs/CODE-SIGNING-POLICY.md` at a public URL and wire that URL into
+    the SignPath config.
+
+> **Bring your own certificate is a different, paid path.** If you want your own
+> name as publisher instead of "SignPath Foundation", you create an X.509 CSR in
+> SignPath (key on the HSM), buy a cert from a CA issued to your legal entity,
+> and upload it back. Not needed for the free Foundation certificate. CSR subject
+> fields: Organization (O) and Country (C) are required; Common Name (CN) is
+> standard; Organizational Unit / Locality / State are optional.
 
 ## 3 · Open unknowns to confirm with SignPath
 
