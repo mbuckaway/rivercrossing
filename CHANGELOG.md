@@ -4,6 +4,18 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.9] - 2026-09-05
+
+### Added
+
+- **Check for Rider Issues…** — Riders ▸ Check for Rider Issues… (`rider_issues_dlg`) lists a ride's rider issues — teams of one, missing names/numbers, duplicate names/numbers — with Convert to Solo for a pooled DRAFT team-of-one and Open Editor… jumping to the teams/rider editor.
+- **CSV import tolerates a team of one while the ride is DRAFT** — a size-1 team imports with a warning instead of blocking the whole sheet, so a registration export whose members register separately can be loaded and completed before start.
+- **Teams Editor one-rider filter** — "Only show one-rider teams" narrows the team list to teams still below the size floor.
+
+### Changed
+
+- **Case-insensitive import checks** — CSV import warns (without merging) on duplicate rider names that differ only by case or whitespace and on near-duplicate team names (`BNBA1` vs `BNBA 1`); duplicate plates and other hard conflicts still block.
+
 ## [1.0.8] - 2026-09-04
 
 ### Added
