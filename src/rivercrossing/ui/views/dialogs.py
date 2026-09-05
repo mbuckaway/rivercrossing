@@ -52,9 +52,11 @@ them directly against a raw XRC-loaded dialog; neither copies the
 other's table.
 """
 
+import gc
 from typing import Any
 
 from rivercrossing.ui import ids, require_wx
+from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS
 
 wx = require_wx()
 
@@ -140,8 +142,8 @@ class MissingDialogControlError(LookupError):
     """A frozen control name did not resolve inside a dialog."""
 
 
-def _control(dialog: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Return the control named *name* inside *dialog*.
+def _control(dialog: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
+    """Return the *expected_type* control named *name* in *dialog*.
 
     Mirrors ``tests/functional/harness.find_control``'s shape: the
     lookup always passes *dialog* as the explicit ``parent`` argument
@@ -149,12 +151,32 @@ def _control(dialog: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stub
     the latter silently searches every top-level window in the
     process instead (measured, harness.py's own module docstring).
 
+    The ``isinstance`` check is not decoration: under the address-
+    reuse hazard ``_support.find_control`` documents, a freshly
+    allocated control can transiently answer ``FindWindowByName``
+    with a different, already-destroyed control's Python class --
+    only the wrapper's Python *type* gives that away, and generic
+    methods (``GetName()`` among them) still dispatch correctly even
+    then. Retrying with ``del``/``gc.collect()`` reference hygiene
+    between attempts resolves it, exactly as ``find_control`` does.
+
     Raises:
-        MissingDialogControlError: If *name* does not resolve inside
-            *dialog*.
+        MissingDialogControlError: If *name* does not resolve to an
+            *expected_type* instance inside *dialog*, even after
+            settling.
     """
     control = wx.Window.FindWindowByName(name, dialog)
-    if control is None:
+    attempts = 0
+    while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
+        wx.SafeYield()
+        # Drop the stale wrapper so its SIP pointer->wrapper entry is
+        # evicted on dealloc BEFORE re-querying (holding it across the
+        # query keeps the poison entry alive -- find_control's remedy).
+        del control
+        gc.collect()
+        control = wx.Window.FindWindowByName(name, dialog)
+        attempts += 1
+    if not isinstance(control, expected_type):
         raise MissingDialogControlError(
             f"dialog {dialog.GetName()!r} has no control named {name!r}"
         )
@@ -212,8 +234,13 @@ def set_default_button(dialog: Any, control_name: str) -> None:  # noqa: ANN401
     rider editor defaults to Save because Enter after typing into
     Plate/Name/Team should commit the edit, not create a duplicate
     entry (Add) or silently discard it (Close).
+
+    Resolves through :func:`_control` with ``wx.Button`` as the
+    expected type, so the address-reuse hazard (a stale wrapper
+    answering for the freshly loaded button) settles instead of
+    crashing on a wrong-typed ``SetDefault()``.
     """
-    _control(dialog, control_name).SetDefault()
+    _control(dialog, control_name, wx.Button).SetDefault()
 
 
 def set_initial_focus(dialog: Any, control_name: str) -> None:  # noqa: ANN401
