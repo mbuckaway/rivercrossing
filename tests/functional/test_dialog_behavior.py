@@ -549,6 +549,29 @@ def test_set_default_button_given_unknown_control_raises(xrc_resource: object) -
         harness.close_window(dialog)
 
 
+def test_set_default_button_given_a_non_button_control_raises(xrc_resource: object) -> None:
+    """A wrong-typed lookup raises cleanly, never crashing.
+
+    ``set_default_button`` resolves through a type-checked lookup
+    (``wx.Button`` expected): under the address-reuse hazard a freshly
+    allocated control can answer ``FindWindowByName`` with a stale
+    wrapper of the wrong Python class, and calling ``SetDefault()`` on
+    that would raise ``AttributeError``. A non-button control name is
+    the deterministic stand-in for that stale wrapper -- the same
+    ``MissingDialogControlError`` the genuinely-missing case raises.
+    """
+    dialog = _show(xrc_resource, ids.RIDER_ISSUES_DLG)
+
+    try:
+        with pytest.raises(
+            dialogs.MissingDialogControlError,
+            match=re.escape("has no control named 'issues_summary_lbl'"),
+        ):
+            dialogs.set_default_button(dialog, "issues_summary_lbl")
+    finally:
+        harness.close_window(dialog)
+
+
 # --------------------------------------- destructive confirms -> Cancel
 
 # finish_confirm_dlg joined this set on the coordinator's explicit
