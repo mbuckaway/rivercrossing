@@ -286,7 +286,17 @@ SaveClose
 
 `save_btn (default, §15b dialogs.py decisions) · wxID_CLOSE`
 
-⚠ code-side (Phase 4): rows for both lists; the Plate (relay) row's team_relay-only visibility — a rider_pooled team's plate is derived from its members (S1), never settable here; logo_preview text — the card code with its suit glyph (rank-first, e.g. A♠ — results display convention), or "Image" when a PNG is set (image wins over a card; picking a card clears an image and vice-versa); a team's logo card auto-assigns from the ride's seeded shoe seed (rng_seed → team_logo_seed) at creation — no two auto-assigned teams share — and Pick card cycles the seeded sequence; add_btn/remove_btn are DRAFT-only (refused via teams_infobar, an wxInfoBar built code-side with SetName like roster_infobar, once the ride has started); refused saves show there too; the native text-entry prompt behind Add team. Teams here are *records*: Add team creates the roster's transient size-1 team (spec S2's floor is start-time), anchored by one rider named from the team's own name — rename/move that rider in the Rider Editor, which owns membership. Opened from Riders ▸ Teams Editor (mi_team_editor), a route enabled only for mixed rides (teams_allowed, R-11); the window lives in teams.xrc (§15b).
+⚠ code-side (Phase 4): rows for both lists; the Plate (relay) row's team_relay-only visibility — a rider_pooled team's plate is derived from its members (S1), never settable here; logo_preview text — the card code with its suit glyph (rank-first, e.g. A♠ — results display convention), or "Image" when a PNG is set (image wins over a card; picking a card clears an image and vice-versa); a team's logo card auto-assigns from the ride's seeded shoe seed (rng_seed → team_logo_seed) at creation — no two auto-assigned teams share — and Pick card cycles the seeded sequence; add_btn/remove_btn are DRAFT-only (refused via teams_infobar, an wxInfoBar built code-side with SetName like roster_infobar, once the ride has started); refused saves show there too; the native text-entry prompt behind Add team. Teams here are *records*: Add team creates the roster's transient size-1 team (spec S2's floor is start-time), anchored by one rider named from the team's own name — rename/move that rider in the Rider Editor, which owns membership. Opened from Riders ▸ Teams Editor (mi_team_editor), a route enabled only for mixed rides (teams_allowed, R-11); the window lives in teams.xrc (§15b). The `single_member_only_chk` checkbox (R-78) filters `teams_list` to the one-rider teams.
+
+Check for Rider Issues — `rider_issues_dlg`✕
+
+- **Rider issues** — `issues_summary_lbl` (count line) · `issues_list (wxDataViewCtrl · Plate | Name | Issue)` — the read-only report `rivercrossing.rider_issues.rider_issues` finds.
+
+Open Editor… Convert to Solo Close
+
+`open_editor_btn · convert_solo_btn · wxID_CLOSE (default, §15b dialogs.py decisions)`
+
+⚠ code-side (R-78): issues_list columns/rows; convert_solo_btn enabled only for a pooled DRAFT team-of-one — "Convert to Solo" extracts its lone rider to their own solo entry (extract_rider_to_solo); "Open Editor…" opens the teams editor for a team-of-one, the rider editor otherwise, then re-lists; a refused conversion shows on issues_infobar (an wxInfoBar built code-side with SetName). Opened from Riders ▸ Check for Rider Issues… (mi_check_rider_issues), a ride-open route; the window lives in riders.xrc (§15b).
 
 Entry Detail — 77 Trail Blazers`entry_detail_dlg`✕
 
