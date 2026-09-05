@@ -85,6 +85,7 @@ __all__ = [
     "can_edit_structure",
     "can_fix_name",
     "can_move_rider",
+    "rider_name_key",
 ]
 
 MIN_TEAM_SIZE = 2
@@ -322,6 +323,16 @@ def can_fix_name() -> bool:
     Spec S3's "name fixes" stay open regardless of ride status.
     """
     return True
+
+
+def rider_name_key(first_name: str, last_name: str = "") -> str:
+    """Return *first_name*/*last_name*'s case-folded, whitespace-collapsed key.
+
+    The one identity CSV import and the rider-issues check use to compare
+    rider names case-insensitively: "Mary Anne  Knibbe", "  mary   anne
+    knibbe " and "MARY ANNE KNIBBE" share the key "mary anne knibbe".
+    """
+    return " ".join(f"{first_name} {last_name}".casefold().split())
 
 
 class Roster:
