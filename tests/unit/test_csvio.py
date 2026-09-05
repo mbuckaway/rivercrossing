@@ -355,21 +355,202 @@ def test_preview_team_over_max_fixture_reports_exactly_one_conflict_at_row_2() -
     )
 
 
-def test_preview_team_under_min_pooled_fixture_reports_exactly_one_conflict_at_row_5() -> None:
-    """The lone "Solo Team" rider is the only conflict found here."""
+def test_preview_team_under_min_pooled_fixture_reports_exactly_one_warning_at_row_5() -> None:
+    """The lone "Solo Team" rider is the only warning found here."""
     roster = _pooled_roster()
 
     result = preview(FIXTURES / "team_under_min_pooled.csv", roster)
 
-    assert (result.rider_count, result.team_count, result.conflicts) == (
+    assert (result.rider_count, result.team_count, result.conflicts, result.warnings) == (
         4,
         2,
+        (),
         (
             ImportConflict(
                 row=5, problem="team of 1 rider is below the minimum of 2 (team-under-min)"
             ),
         ),
     )
+
+
+# =================================================== status-aware sizes
+
+
+def test_preview_one_rider_team_on_draft_pooled_roster_warns_not_conflicts(
+    tmp_path: Path,
+) -> None:
+    """A lone team rider warns, not blocks, while DRAFT."""
+    path = _unified_file(
+        tmp_path,
+        [_Row(first="Alex", last="Ellis", type_="team", team="Solo Team", number="4")],
+    )
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == ()
+    assert result.warnings == (
+        ImportConflict(
+            row=2, problem="team of 1 rider is below the minimum of 2 (team-under-min)"
+        ),
+    )
+
+
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED, RideStatus.FINISHED])
+def test_preview_one_rider_team_after_draft_conflicts_not_warns(
+    tmp_path: Path, *, status: RideStatus
+) -> None:
+    """A lone team rider is a blocking conflict once started."""
+    path = _unified_file(
+        tmp_path,
+        [_Row(first="Alex", last="Ellis", type_="team", team="Solo Team", number="4")],
+    )
+    roster = _pooled_roster()
+    roster.status = status
+
+    result = preview(path, roster)
+
+    assert result.conflicts == (
+        ImportConflict(
+            row=2, problem="team of 1 rider is below the minimum of 2 (team-under-min)"
+        ),
+    )
+    assert result.warnings == ()
+
+
+def test_commit_pooled_one_rider_team_uses_create_team_entry_of_one(tmp_path: Path) -> None:
+    """A DRAFT lone pooled team commits via create_team_entry_of_one."""
+    path = _unified_file(
+        tmp_path,
+        [_Row(first="Alex", last="Ellis", type_="team", team="Solo Team", number="4")],
+    )
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+    report = commit(result)
+
+    team = roster.entries[0]
+    assert (team.type, team.team_size, team.display_name, team.plate) == (
+        EntryType.TEAM,
+        1,
+        "solo team",
+        "4",
+    )
+    assert [event.action for event in report.audit_events] == ["create_team_entry_of_one"]
+
+
+def test_commit_relay_one_rider_team_uses_create_team_entry_of_one(tmp_path: Path) -> None:
+    """A DRAFT lone relay team commits via create_team_entry_of_one."""
+    path = _unified_file(
+        tmp_path,
+        [_Row(first="Alex", last="Ellis", type_="team", team="Solo Team", number="4")],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+    report = commit(result)
+
+    team = roster.entries[0]
+    assert (team.type, team.team_size, team.display_name, team.plate) == (
+        EntryType.TEAM,
+        1,
+        "solo team",
+        "4",
+    )
+    assert [rider.plate for rider in team.riders] == [None]
+    assert [event.action for event in report.audit_events] == ["create_team_entry_of_one"]
+
+
+# =============================================== duplicate rider names
+
+
+def test_preview_duplicate_rider_names_case_insensitive_warns(tmp_path: Path) -> None:
+    """Two spellings of one rider name warn as a duplicate."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Sam", last="Ellis", type_="solo", number="1"),
+            _Row(first="sam  ellis", type_="team", team="Wolves", number="2"),
+            _Row(first="Bo", last="Lee", type_="team", team="Wolves", number="2"),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == ()
+    assert result.warnings == (ImportConflict(row=3, problem="duplicate rider name Sam Ellis"),)
+
+
+def test_preview_distinct_rider_names_produce_no_duplicate_warning(tmp_path: Path) -> None:
+    """Two genuinely different names are not a duplicate warning."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Sam", last="Ellis", type_="solo", number="1"),
+            _Row(first="Sam", last="Elliot", type_="solo", number="2"),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.warnings == ()
+
+
+# =========================================== near-duplicate team names
+
+
+def test_preview_near_duplicate_team_names_warn(tmp_path: Path) -> None:
+    """Two team names sharing a fuzzy key warn, naming both."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Lars", last="Pastrik", type_="team", team="BNBA1", number="1"),
+            _Row(first="Matt", last="Plaumann", type_="team", team="BNBA1", number="1"),
+            _Row(first="Pedro", last="Faria", type_="team", team="BNBA 1", number="3"),
+            _Row(first="Pamela", last="Santos", type_="team", team="BNBA 1", number="3"),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == ()
+    assert result.warnings == (
+        ImportConflict(row=4, problem='possible duplicate team name: "bnba1" and "bnba 1"'),
+    )
+
+
+def test_preview_distinct_team_names_produce_no_near_duplicate_warning(
+    tmp_path: Path,
+) -> None:
+    """Two genuinely distinct team names produce no warning."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Lars", last="Pastrik", type_="team", team="BNBA1", number="1"),
+            _Row(first="Matt", last="Plaumann", type_="team", team="BNBA1", number="1"),
+            _Row(first="Carla", last="Schmitt", type_="team", team="BNBA2", number="3"),
+            _Row(first="Joe", last="Martin", type_="team", team="BNBA2", number="3"),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == ()
+    assert result.warnings == ()
+
+
+@given(name=st.text(max_size=100))
+@settings(max_examples=200, deadline=None)
+def test_fuzzy_team_key_is_idempotent_and_alphanumeric(name: str) -> None:
+    """The fuzzy key is an alphanumeric fixed point (T-7)."""
+    key = csvio._fuzzy_team_key(name)
+
+    assert csvio._fuzzy_team_key(key) == key
+    assert all(char.isalnum() and char == char.lower() for char in key)
 
 
 # ==================================================== header conflicts
@@ -703,19 +884,19 @@ def test_preview_whitespace_collapse_keeps_distinct_words_separate(tmp_path: Pat
 
 
 @pytest.mark.parametrize(
-    ("member_count", "expect_conflict"),
+    ("member_count", "outcome"),
     [
-        (1, True),  # min - 1
-        (2, False),  # min
-        (3, False),  # min + 1 == max - 1 (max=4)
-        (4, False),  # max
-        (5, True),  # max + 1
+        (1, "warning"),  # min - 1: under-min is a warning in DRAFT
+        (2, "none"),  # min
+        (3, "none"),  # min + 1 == max - 1 (max=4)
+        (4, "none"),  # max
+        (5, "conflict"),  # max + 1: over-max stays a conflict
     ],
 )
 def test_preview_team_size_boundary_flags_outside_2_to_max(
-    tmp_path: Path, *, member_count: int, expect_conflict: bool
+    tmp_path: Path, *, member_count: int, outcome: str
 ) -> None:
-    """Team groups outside 2..max_team_size(4) are the only ones."""
+    """Team groups outside 2..max_team_size(4) warn or conflict."""
     rows = [
         _Row(first=f"Rider{i}", type_="team", team="Big Team") for i in range(1, member_count + 1)
     ]
@@ -724,7 +905,8 @@ def test_preview_team_size_boundary_flags_outside_2_to_max(
 
     result = preview(path, roster)
 
-    assert len(result.conflicts) == (1 if expect_conflict else 0)
+    assert len(result.conflicts) == (1 if outcome == "conflict" else 0)
+    assert len(result.warnings) == (1 if outcome == "warning" else 0)
 
 
 # ==================================================== duplicate plates
@@ -2256,14 +2438,26 @@ def test_preview_gorba_fixture_imports_as_is_against_a_relay_roster() -> None:
     result = preview(FIXTURES / "gorba_epic.csv", roster)
 
     # Eight riders registered as Team but are the only row of their team
-    # (teammates registered separately or later) -- team-under-min
-    # conflict at each lone team's first row.
-    assert result.conflicts == tuple(
+    # (teammates registered separately or later) -- a team-under-min
+    # WARNING (the DRAFT roster allows a transient size-1 team) at each
+    # lone team's first row, plus four near-duplicate-team warnings.
+    assert result.conflicts == ()
+    assert tuple(w for w in result.warnings if "team-under-min" in w.problem) == tuple(
         ImportConflict(
             row=row, problem="team of 1 rider is below the minimum of 2 (team-under-min)"
         )
         for row in (17, 36, 41, 45, 59, 84, 85, 86)
     )
+    assert tuple(w for w in result.warnings if w.problem.startswith("possible duplicate")) == (
+        ImportConflict(row=13, problem='possible duplicate team name: "bnba1" and "bnba 1"'),
+        ImportConflict(row=20, problem='possible duplicate team name: "bnba2" and "bnba 2"'),
+        ImportConflict(
+            row=37,
+            problem='possible duplicate team name: "win win more win" and "win win and more win"',
+        ),
+        ImportConflict(row=85, problem='possible duplicate team name: "good 2 go" and "good 2go"'),
+    )
+    assert len(result.warnings) == 12
     assert result.rider_count == 101
     assert result.team_count == 31
     assert len(result.entries) == 71
