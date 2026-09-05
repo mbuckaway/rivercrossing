@@ -79,7 +79,7 @@ def test_roster_bare_construction_defaults_to_solo_only() -> None:
 
 
 def test_rider_name_key_folds_case_and_collapses_whitespace() -> None:
-    """rider_name_key normalizes a name for case-insensitive duplicate checks."""
+    """rider_name_key normalizes a name for case-insensitive checks."""
     assert rider_name_key("Mary Anne", "Knibbe") == "mary anne knibbe"
     assert rider_name_key("  mary   anne ", " KNIBBE ") == "mary anne knibbe"
     assert rider_name_key("John", "") == "john"

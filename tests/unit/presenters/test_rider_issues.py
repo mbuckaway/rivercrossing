@@ -121,7 +121,7 @@ def test_presenter_did_change_starts_false() -> None:
 
 
 def test_refresh_rerenders_issues_from_the_current_roster() -> None:
-    """refresh() re-reads the roster after a change this presenter didn't make."""
+    """refresh() re-reads the roster after an external change."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     view = RecordingRiderIssuesView()
     presenter = RiderIssuesPresenter(view, roster)
@@ -133,10 +133,10 @@ def test_refresh_rerenders_issues_from_the_current_roster() -> None:
     )
     presenter.refresh()
 
-    assert (
-        "show_issues",
-        ([RiderIssueRow(plate="7", name="Lone Wolf", message="team size must be at least 2, got 1")],),
-    ) in view.calls
+    lone_row = RiderIssueRow(
+        plate="7", name="Lone Wolf", message="team size must be at least 2, got 1"
+    )
+    assert ("show_issues", ([lone_row],)) in view.calls
     assert ("show_summary", ("1 rider issue(s)",)) in view.calls
 
 

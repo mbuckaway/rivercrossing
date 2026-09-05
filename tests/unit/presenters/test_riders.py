@@ -1040,8 +1040,7 @@ def test_on_pick_csv_import_given_a_draft_under_min_team_warns_and_enables_impor
         (
             CsvPreview(
                 summary=(
-                    "team_under_min_pooled.csv → 4 riders · 2 teams · "
-                    "0 conflicts · 1 warnings"
+                    "team_under_min_pooled.csv → 4 riders · 2 teams · 0 conflicts · 1 warnings"
                 ),
                 conflicts=(),
                 warnings=(

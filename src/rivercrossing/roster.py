@@ -326,11 +326,11 @@ def can_fix_name() -> bool:
 
 
 def rider_name_key(first_name: str, last_name: str = "") -> str:
-    """Return *first_name*/*last_name*'s case-folded, whitespace-collapsed key.
+    """Return a case-folded, whitespace-collapsed rider-name key.
 
-    The one identity CSV import and the rider-issues check use to compare
-    rider names case-insensitively: "Mary Anne  Knibbe", "  mary   anne
-    knibbe " and "MARY ANNE KNIBBE" share the key "mary anne knibbe".
+    CSV import and the rider-issues check use this to compare names
+    case-insensitively: "Mary Anne  Knibbe" and "mary   anne knibbe"
+    share the key "mary anne knibbe".
     """
     return " ".join(f"{first_name} {last_name}".casefold().split())
 
