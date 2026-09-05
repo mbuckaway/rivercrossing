@@ -2061,6 +2061,49 @@ def _csv_import_commit_reads_editor() -> dict[str, Any]:
             _close_without_prompt(frame)
 
 
+def _rider_issues_import_and_check() -> dict[str, Any]:
+    """Import gorba_fake.csv, then open Check for Rider Issues (R-78).
+
+    The R-78 E2E proof: the fake GORBA-style sheet imports -- its
+    size-1 teams land as warnings, not blocking conflicts -- and the
+    Riders menu's "Check for Rider Issues…" item then opens the issues
+    dialog over that same imported roster. Runs in this fresh
+    interpreter for the same SIP-wrapper-cache reason
+    ``_csv_import_commit_reads_editor`` documents.
+    """
+    fixture = (
+        Path(__file__).resolve().parent.parent / "unit" / "fixtures" / "csv" / "gorba_fake.csv"
+    )
+    original_pick = rider_editor._pick_import_path
+    original_run_dialog = dialogs.run_dialog
+    frame: Any = None
+    try:
+        rider_editor._pick_import_path = lambda _parent: fixture
+
+        def _click_import(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+            harness.click(dialog, "wxID_OK")
+            return wx.ID_OK
+
+        dialogs.run_dialog = _click_import
+        frame = _build_app_window()
+        _fire_menu_event(frame, "mi_import_csv")
+
+        opened: dict[str, str | None] = {"name": None}
+
+        def _capture_issues_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+            opened["name"] = dialog.GetName()
+            return wx.ID_CLOSE
+
+        dialogs.run_dialog = _capture_issues_dialog
+        _fire_menu_event(frame, "mi_check_rider_issues")
+        return {"issues_dialog_name": opened["name"]}
+    finally:
+        rider_editor._pick_import_path = original_pick
+        dialogs.run_dialog = original_run_dialog
+        if frame is not None:
+            _close_without_prompt(frame)
+
+
 # --- Phase 8, task 8.6: live dark mode + menu radio defaults -------
 
 
@@ -3262,6 +3305,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "windows_close_cancelled_stays": _windows_close_cancelled_stays,
     "windows_close_confirmed_destroys": _windows_close_confirmed_destroys,
     "csv_import_commit_reads_editor": _csv_import_commit_reads_editor,
+    "rider_issues_import_and_check": _rider_issues_import_and_check,
     "theme_dark_applies_at_runtime": _theme_dark_applies_at_runtime,
     "theme_light_round_trip": _theme_light_round_trip,
     "theme_system_reapplies_on_sys_colour_changed": (
