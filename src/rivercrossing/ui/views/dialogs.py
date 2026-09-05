@@ -87,17 +87,20 @@ __all__ = [
 WX_ID_OK = "wxID_OK"
 WX_ID_CLOSE = "wxID_CLOSE"
 
-# E1.5.3's product decision: the four already-authored dialogs with no
-# XRC <default> each get one (module docstring). rider_editor_dlg's
-# own choice -- Save, not Close or Add -- is explained in
+# E1.5.3's product decision: the already-authored dialogs with no XRC
+# <default> each get one (module docstring). rider_editor_dlg's own
+# choice -- Save, not Close or Add -- is explained in
 # set_default_button's docstring; Phase 4's team_editor_dlg carries
-# the same shape (Save, not Close or Add/Remove) and joins the list.
+# the same shape (Save, not Close or Add/Remove) and joins the list;
+# rider_issues_dlg is a report dialog whose only button is Close, so
+# Enter closes it (R-76).
 DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
     (ids.RIDE_SETUP_DLG, WX_ID_OK),
     (ids.CSV_PREVIEW_DLG, WX_ID_OK),
     (ids.ENTRY_DETAIL_DLG, WX_ID_CLOSE),
     (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
     (ids.TEAM_EDITOR_DLG, ids.SAVE_BTN),
+    (ids.RIDER_ISSUES_DLG, WX_ID_CLOSE),
 )
 
 # spec.md §13's initial-focus decision for every form dialog: the

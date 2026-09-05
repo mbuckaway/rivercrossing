@@ -1124,6 +1124,25 @@ def _handle_export_csv(context: _RouteContext) -> None:
         context.frame.SetStatusText(f"Exported {path.name}")
 
 
+def _handle_check_rider_issues(context: _RouteContext) -> None:
+    """Riders ▸ Check for Rider Issues…: open the issues dialog (R-78).
+
+    A conversion made inside the dialog mutates the shared in-memory
+    roster; persist + rebuild after the modal ends, exactly like a CSV
+    import (persist first, then ``_switch_console_to_ride`` with the
+    live clock), so a converted team-of-one survives a relaunch.
+    """
+    from rivercrossing.ui.views import rider_issues  # noqa: PLC0415
+
+    changed = rider_issues.run_rider_issues_flow(context.frame, context.roster)
+    store = context.store
+    if changed and store is not None and context.active_ride_id is not None:
+        store.save_roster(context.active_ride_id, context.roster)
+        presenter = context.presenter
+        clock = presenter.engine.clock if presenter is not None else None
+        _switch_console_to_ride(context, context.active_ride_id, clock=clock)
+
+
 _EXPORT_SUGGESTED_NAMES = {
     "export_html": "{slug}-results.html",
     "export_pdf": "{slug}-results.pdf",
@@ -2158,6 +2177,7 @@ _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
 _TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
 _TARGET_ACTIONS["focus_tiebreak_control"] = _handle_focus_tiebreak
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
+_TARGET_ACTIONS[ids.RIDER_ISSUES_DLG] = _handle_check_rider_issues
 _TARGET_ACTIONS["open_user_guide"] = _handle_open_user_guide
 
 

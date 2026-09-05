@@ -95,6 +95,17 @@ class RiderIssuesPresenter:
         self._selected = self._issues[index]
         self.view.set_convert_solo_enabled(enabled=self._is_convertible(self._selected))
 
+    def refresh(self) -> None:
+        """Re-render the report from the roster's current issues.
+
+        The public counterpart to :meth:`_load`: the one entry point a
+        caller outside this presenter uses to catch this dialog up
+        with a roster change it never itself made -- the view re-lists
+        after a nested team/rider editor closes, since that editor
+        edits the same in-memory roster.
+        """
+        self._load()
+
     def on_open_editor(self) -> str:
         """Return which editor the selection opens, "" if none."""
         if self._selected is None:
