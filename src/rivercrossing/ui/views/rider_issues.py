@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""``RiderIssuesView``/``run_rider_issues_flow``: Riders ▸ Check for Rider Issues… (R-78).
+"""``RiderIssuesView`` + ``run_rider_issues_flow`` (R-78).
 
 The "Check for Rider Issues…" dialog renders the read-only defect
 report :func:`~rivercrossing.rider_issues.rider_issues` still finds on
@@ -203,7 +203,7 @@ class RiderIssuesView:
         self.presenter.refresh()
 
     def _open_nested_editor(self, target: str) -> None:
-        """Open the selected issue's own editor modally over this dialog."""
+        """Open the selected issue's editor modally over this dialog."""
         from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415
         from rivercrossing.ui.views.team_editor import TeamEditor  # noqa: PLC0415
 
@@ -232,11 +232,11 @@ class RiderIssuesView:
         self.issues_summary_lbl.SetLabel(text)
 
     def set_convert_solo_enabled(self, *, enabled: bool) -> None:
-        """Gate ``convert_solo_btn`` on *enabled* (``RiderIssuesView``)."""
+        """Gate ``convert_solo_btn`` on *enabled*."""
         self.convert_solo_btn.Enable(enabled)
 
     def show_validation(self, message: str) -> None:
-        """Show *message* on :data:`ISSUES_INFOBAR` (``RiderIssuesView``)."""
+        """Show *message* on :data:`ISSUES_INFOBAR`."""
         self.issues_infobar.ShowMessage(message, wx.ICON_WARNING)
         self.dialog.Layout()
 

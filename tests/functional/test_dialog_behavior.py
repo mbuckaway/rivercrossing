@@ -229,6 +229,7 @@ def test_escape_ends_modal_with_cancel_for_dialogs_with_native_cancel(
 # CLOSE).
 _CLOSE_ONLY = (
     ids.RIDER_EDITOR_DLG,
+    ids.RIDER_ISSUES_DLG,
     ids.ENTRY_DETAIL_DLG,
     ids.RIDE_LIBRARY_DLG,
     ids.AUDIT_DLG,
@@ -739,9 +740,9 @@ def test_run_dialog_returns_result_and_restores_opener_focus(
 _ALL_DIALOG_SPECS = tuple(spec for spec in pages.WINDOWS if not spec.is_frame)
 
 
-def test_all_dialogs_declare_exactly_twenty_five_rows() -> None:
+def test_all_dialogs_declare_exactly_twenty_six_rows() -> None:
     """A dialog disappearing from ``pages.WINDOWS`` must shrink this."""
-    assert len(_ALL_DIALOG_SPECS) == 25
+    assert len(_ALL_DIALOG_SPECS) == 26
 
 
 @pytest.mark.parametrize("spec", _ALL_DIALOG_SPECS, ids=lambda s: s.name)
