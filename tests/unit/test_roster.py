@@ -62,6 +62,7 @@ from rivercrossing.roster import (
     can_edit_structure,
     can_fix_name,
     can_move_rider,
+    rider_name_key,
 )
 
 if TYPE_CHECKING:
@@ -75,6 +76,14 @@ def test_roster_bare_construction_defaults_to_solo_only() -> None:
     roster = Roster()
 
     assert roster.entry_mode == EntryMode.SOLO
+
+
+def test_rider_name_key_folds_case_and_collapses_whitespace() -> None:
+    """rider_name_key normalizes a name for case-insensitive checks."""
+    assert rider_name_key("Mary Anne", "Knibbe") == "mary anne knibbe"
+    assert rider_name_key("  mary   anne ", " KNIBBE ") == "mary anne knibbe"
+    assert rider_name_key("John", "") == "john"
+    assert rider_name_key("JoHN", "") == rider_name_key("john", "")
 
 
 def test_roster_bare_construction_defaults_max_team_size_to_four() -> None:

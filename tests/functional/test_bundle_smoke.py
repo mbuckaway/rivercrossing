@@ -69,6 +69,7 @@ import scenario_runner
 import wx.xrc
 
 from rivercrossing.store import Store
+from rivercrossing.ui import ids
 
 pytestmark = pytest.mark.functional
 
@@ -706,6 +707,21 @@ def test_bundle_launch_opens_a_ride_records_a_crossing_and_exports_html() -> Non
     # The crossed plate is in the exported race-data standings JSON
     # (json.dumps(indent=2) spells the integer plate with a space).
     assert '"plate": 12' in data["html_text"], result["context"]
+
+
+def test_rider_issues_import_and_check_scenario() -> None:
+    """R-78: import the fake sheet, then open Check for Rider Issues.
+
+    The source-tree subprocess scenario (the same harness
+    ``bundle_launch_open_crossing_exports_html`` uses) imports
+    ``gorba_fake.csv`` through the real menu route, then fires
+    ``mi_check_rider_issues`` -- proving the Riders menu opens the
+    issues dialog over the imported roster.
+    """
+    result = scenario_runner.run_scenario("rider_issues_import_and_check")
+
+    assert result["ok"] is True, result["context"]
+    assert result["data"]["issues_dialog_name"] == ids.RIDER_ISSUES_DLG, result["context"]
 
 
 def test_built_app_resources_carry_the_branded_icns(bundle_app_path: Path) -> None:

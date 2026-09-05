@@ -89,6 +89,7 @@ class CsvPreview:
 
     summary: str
     conflicts: tuple[CsvConflict, ...]
+    warnings: tuple[CsvConflict, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -307,11 +308,19 @@ class RidersPresenter:
             CsvConflict(row=conflict.row, problem=conflict.problem)
             for conflict in self._csv_preview.conflicts
         )
+        warnings = tuple(
+            CsvConflict(row=warning.row, problem=warning.problem)
+            for warning in self._csv_preview.warnings
+        )
         summary = (
             f"{path.name} → {self._csv_preview.rider_count} riders · "
             f"{self._csv_preview.team_count} teams · {len(conflicts)} conflicts"
         )
-        self.view.show_csv_preview(CsvPreview(summary=summary, conflicts=conflicts))
+        if warnings:
+            summary += f" · {len(warnings)} warnings"
+        self.view.show_csv_preview(
+            CsvPreview(summary=summary, conflicts=conflicts, warnings=warnings)
+        )
         self.view.set_import_enabled(enabled=len(conflicts) == 0)
 
     def on_confirm_csv_import(self) -> bool:

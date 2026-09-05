@@ -137,13 +137,23 @@ class TeamsPresenter:
         self.view = view
         self.roster = roster
         self._selected: Entry | None = None
+        self._single_member_only: bool = False
         self._load()
 
     def on_row_selected(self, index: int) -> None:
         """Fill the form from ``teams_list`` row *index*."""
-        entry = self._teams()[index]
+        entry = self._visible_teams()[index]
         self._selected = entry
         self._show_entry(entry)
+
+    def on_toggle_single_member(self, *, enabled: bool) -> None:
+        """Handle the one-rider-teams filter, then re-render the list.
+
+        *enabled* is the checkbox's new state: checked shows only TEAM
+        entries with a single rider; unchecked shows every TEAM entry.
+        """
+        self._single_member_only = enabled
+        self._refresh_rows()
 
     def on_add(self) -> None:
         """Handle add_btn: prompt a team name, then create the team.
@@ -255,6 +265,17 @@ class TeamsPresenter:
         """Return every TEAM entry, in ``teams_list``'s row order."""
         return tuple(entry for entry in self.roster.entries if entry.type is EntryType.TEAM)
 
+    def _visible_teams(self) -> tuple[Entry, ...]:
+        """Return the TEAM entries the list should currently show.
+
+        The one-rider filter hides every team that has more than one
+        rider; unchecked, the full TEAM tuple is returned unchanged.
+        """
+        teams = self._teams()
+        if not self._single_member_only:
+            return teams
+        return tuple(entry for entry in teams if entry.team_size == 1)
+
     def _refresh_rows(self) -> None:
         """Re-render ``teams_list`` from the roster."""
         self.view.show_teams(
@@ -264,7 +285,7 @@ class TeamsPresenter:
                     logo_card=entry.logo_card,
                     has_image=entry.logo_png is not None,
                 )
-                for entry in self._teams()
+                for entry in self._visible_teams()
             ]
         )
 

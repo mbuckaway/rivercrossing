@@ -130,6 +130,7 @@ from rivercrossing.roster import (
     Roster,
     can_edit_structure,
     can_move_rider,
+    rider_name_key,
 )
 from rivercrossing.standings import Placed, hand_name
 
@@ -299,20 +300,23 @@ class ImportPreview:
 
     ``entries`` carries every structurally valid row -- including one
     flagged in ``conflicts`` for a content problem such as a
-    duplicate plate or an over/under-sized team -- ready for
+    duplicate plate or an over-sized team -- ready for
     :func:`commit` to apply without re-reading ``source_path``. A row
     that fails shape validation (an unknown ``type``, a missing rider
     name, a relay team straddling two plates, or a header naming no
     first/last column) contributes to ``conflicts`` only, never to
-    ``entries``. ``rider_count`` and ``team_count`` are derived from
-    ``entries`` rather than stored, so they can never drift out of
-    sync with it.
+    ``entries``. ``warnings`` carries non-blocking notices -- a DRAFT
+    team below the two-rider floor, a duplicate rider name, or a
+    near-duplicate team name -- that do not stop :func:`commit`.
+    ``rider_count`` and ``team_count`` are derived from ``entries``
+    rather than stored, so they can never drift out of sync with it.
     """
 
     source_path: Path
     ride: Roster
     entries: tuple[ParsedEntry, ...]
     conflicts: tuple[ImportConflict, ...]
+    warnings: tuple[ImportConflict, ...] = ()
 
     @property
     def rider_count(self) -> int:
@@ -383,13 +387,18 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
             conflict = ImportConflict(row=1, problem=_HEADER_PROBLEM)
             return ImportPreview(source_path=path, ride=ride, entries=(), conflicts=(conflict,))
         rows, row_conflicts = _read_data_rows(reader, mapping)
-    entries, entry_conflicts = _assemble(rows, ride)
+    entries, entry_conflicts, entry_warnings = _assemble(rows, ride)
     conflicts = sorted((*row_conflicts, *entry_conflicts), key=lambda conflict: conflict.row)
+    warnings = sorted(
+        (*entry_warnings, *_duplicate_rider_warnings(rows), *_near_duplicate_team_warnings(rows)),
+        key=lambda warning: warning.row,
+    )
     return ImportPreview(
         source_path=path,
         ride=ride,
         entries=tuple(entries),
         conflicts=tuple(conflicts),
+        warnings=tuple(warnings),
     )
 
 
@@ -614,8 +623,8 @@ def _classify_row(type_field: str, team_name: str) -> str:
 
 def _assemble(
     rows: Sequence[_DataRow], ride: Roster
-) -> tuple[list[ParsedEntry], list[ImportConflict]]:
-    """Turn parsed rows into entries and per-entry conflicts (S7)."""
+) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
+    """Turn parsed rows into entries, conflicts and warnings (S7)."""
     if ride.plate_model is PlateModel.TEAM_RELAY:
         return _assemble_relay(rows, ride)
     return _assemble_pooled(rows, ride)
@@ -672,6 +681,76 @@ def _team_size_problem(size: int, max_team_size: int) -> str | None:
     if size > max_team_size:
         return f"team of {size} riders exceeds the maximum of {max_team_size} (team-over-max)"
     return None
+
+
+_FUZZY_QUOTE_TRANSLATION = str.maketrans("", "", "'\"\u2018\u2019\u201c\u201d")
+
+
+def _fuzzy_team_key(name: str) -> str:
+    """Return *name*'s fuzzy key for near-duplicate team detection.
+
+    Fold case, drop apostrophes/quotes, tokenize on whitespace and drop
+    the standalone ``and``/``&`` tokens, then strip every remaining
+    non-alphanumeric character and join -- so "BNBA 1" and "BNBA1" key
+    to "bnba1", "Good 2 Go" and "Good 2Go" to "good2go", and "Win Win
+    More Win" and "Win Win and more Win" to "winwinmorewin".
+    """
+    folded = name.casefold().translate(_FUZZY_QUOTE_TRANSLATION)
+    tokens = [token for token in folded.split() if token not in ("and", "&")]
+    return "".join(char for token in tokens for char in token if char.isalnum())
+
+
+def _duplicate_rider_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:
+    """Return one warning per rider name that repeats (case-folded).
+
+    Riders are matched by :func:`~rivercrossing.roster.rider_name_key`
+    across solo and team rows alike; a key seen twice produces exactly
+    one warning naming the first occurrence's trimmed full name, at the
+    second occurrence's row. A third occurrence adds nothing.
+    """
+    first: dict[str, tuple[int, str]] = {}
+    warned: set[str] = set()
+    warnings: list[ImportConflict] = []
+    for row in rows:
+        key = rider_name_key(row.first_name, row.last_name)
+        if key in warned:
+            continue
+        if key in first:
+            _, full_name = first[key]
+            warnings.append(
+                ImportConflict(row=row.row, problem=f"duplicate rider name {full_name}")
+            )
+            warned.add(key)
+        else:
+            full_name = f"{row.first_name} {row.last_name}".strip()
+            first[key] = (row.row, full_name)
+    return warnings
+
+
+def _near_duplicate_team_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:
+    """Return one warning per pair of near-duplicate team names.
+
+    Two distinct normalized team names that share a fuzzy key
+    (:func:`_fuzzy_team_key`) are near-duplicates; the warning names
+    both, first-seen first, at the second name's first row.
+    """
+    first_row: dict[str, int] = {}
+    order: list[str] = []
+    for row in rows:
+        if row.is_team and row.team_name not in first_row:
+            first_row[row.team_name] = row.row
+            order.append(row.team_name)
+    fuzzy_groups: dict[str, list[str]] = {}
+    for name in order:
+        fuzzy_groups.setdefault(_fuzzy_team_key(name), []).append(name)
+    return [
+        ImportConflict(
+            row=first_row[second],
+            problem=f'possible duplicate team name: "{names[0]}" and "{second}"',
+        )
+        for names in fuzzy_groups.values()
+        for second in names[1:]
+    ]
 
 
 def _group_team_rows(rows: Sequence[_DataRow]) -> dict[str, list[_DataRow]]:
@@ -735,7 +814,7 @@ def _plate_disagreement_problem(numbers: set[str]) -> str:
 
 def _assemble_relay(
     rows: Sequence[_DataRow], ride: Roster
-) -> tuple[list[ParsedEntry], list[ImportConflict]]:
+) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
     """Build relay entries: solo rows plus normalized-name team groups.
 
     A team's member rows share the team's single plate: the rows must
@@ -754,25 +833,28 @@ def _assemble_relay(
             plan.append((row.row, groups[row.team_name]))
     entries: list[ParsedEntry] = []
     conflicts: list[ImportConflict] = []
+    warnings: list[ImportConflict] = []
     seen_plates: set[str] = set()
     for anchor_row, payload in plan:
         if isinstance(payload, list):
-            parsed, problem = _relay_team_entry(payload, allocator, ride)
+            parsed, team_conflicts, team_warnings = _relay_team_entry(payload, allocator, ride)
         else:
             parsed, problem = _relay_solo_entry(payload, allocator, ride)
+            team_conflicts = [problem] if problem is not None else []
+            team_warnings = []
         if parsed is None:
             # parsed is None exactly when the team's rows named several
-            # plates, and that producer always sets *problem*.
-            conflicts.append(ImportConflict(anchor_row, cast("str", problem)))
+            # plates, and that producer always sets *team_conflicts*.
+            conflicts.append(ImportConflict(anchor_row, team_conflicts[0]))
             continue
         if parsed.plate in seen_plates:
             conflicts.append(ImportConflict(anchor_row, _duplicate_plate_problem(parsed.plate)))
         else:
             seen_plates.add(parsed.plate)
         entries.append(parsed)
-        if problem is not None:
-            conflicts.append(ImportConflict(anchor_row, problem))
-    return entries, conflicts
+        conflicts.extend(ImportConflict(anchor_row, problem) for problem in team_conflicts)
+        warnings.extend(ImportConflict(anchor_row, problem) for problem in team_warnings)
+    return entries, conflicts, warnings
 
 
 def _relay_solo_entry(
@@ -795,11 +877,18 @@ def _relay_solo_entry(
 
 def _relay_team_entry(
     group_rows: list[_DataRow], allocator: _PlateAllocator, ride: Roster
-) -> tuple[ParsedEntry | None, str | None]:
-    """Build one relay team ParsedEntry from *group_rows* (S7)."""
+) -> tuple[ParsedEntry | None, list[str], list[str]]:
+    """Build one relay team ParsedEntry from *group_rows* (S7).
+
+    Returns the parsed entry plus two problem lists: the team's
+    blocking conflicts (a plate disagreement, an over-max size, a
+    non-DRAFT under-min size, or a structural reshape the ride's lock
+    matrix forbids) and its non-blocking warnings (a DRAFT under-min
+    size). The under-min case never skips the structural check.
+    """
     numbers = {row.number for row in group_rows if row.number}
     if len(numbers) > 1:
-        return None, _plate_disagreement_problem(numbers)
+        return None, [_plate_disagreement_problem(numbers)], []
     plate = next(iter(numbers), "")
     if not plate:
         plate = allocator.allocate()
@@ -814,11 +903,20 @@ def _relay_team_entry(
         riders=riders,
         notes=notes,
     )
-    problem = _team_size_problem(len(riders), ride.max_team_size)
-    if problem is None:
+    conflicts: list[str] = []
+    warnings: list[str] = []
+    size_problem = _team_size_problem(len(riders), ride.max_team_size)
+    if size_problem is not None:
+        if len(riders) < MIN_TEAM_SIZE and ride.status is RideStatus.DRAFT:
+            warnings.append(size_problem)
+        else:
+            conflicts.append(size_problem)
+    if len(riders) <= ride.max_team_size:
         existing = _find_entry_by_plate(ride, plate)
-        problem = _relay_structural_problem(existing, parsed, ride.status)
-    return parsed, problem
+        structural = _relay_structural_problem(existing, parsed, ride.status)
+        if structural is not None:
+            conflicts.append(structural)
+    return parsed, conflicts, warnings
 
 
 def _pooled_owner_index(ride: Roster) -> dict[str, tuple[Entry, Rider]]:
@@ -852,7 +950,7 @@ def _pooled_solo_problem(
 
 def _assemble_pooled(
     rows: Sequence[_DataRow], ride: Roster
-) -> tuple[list[ParsedEntry], list[ImportConflict]]:
+) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
     """Build pooled entries: every row keeps its own plate (S1)."""
     existing_index = _pooled_owner_index(ride)
     allocator = _PlateAllocator(ride, (row.number for row in rows))
@@ -881,9 +979,9 @@ def _assemble_pooled(
                 notes=row.notes,
             )
         )
-    team_entries, team_conflicts = _assemble_pooled_teams(groups, ride)
+    team_entries, team_conflicts, team_warnings = _assemble_pooled_teams(groups, ride)
     conflicts.extend(team_conflicts)
-    return [*solo_entries, *team_entries], conflicts
+    return [*solo_entries, *team_entries], conflicts, team_warnings
 
 
 def _pooled_team_target(
@@ -904,18 +1002,22 @@ def _pooled_team_target(
 
 def _assemble_pooled_teams(
     groups: Mapping[str, Sequence[tuple[int, ParsedRider, str]]], ride: Roster
-) -> tuple[list[ParsedEntry], list[ImportConflict]]:
+) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
     """Build one team ParsedEntry per team_name group (spec S7, R-12).
 
     A group of exactly one rider still becomes a team entry -- the
-    2026-08-09 follow-on decision defers rider_pooled's own 2-rider
-    floor to this preview-time "team-under-min" conflict rather than
-    refusing the row outright. ``notes`` joins every non-empty
-    member's own row notes with "; " (2026-08-09, module docstring).
+    2026-08-09 follow-on decision defers the 2-rider floor to this
+    preview-time check rather than refusing the row outright. While
+    the ride is DRAFT that check is a non-blocking "team-under-min"
+    warning; once started it is a blocking conflict. The under-min
+    case never skips the team's structural-conflict checks. ``notes``
+    joins every non-empty member's own row notes with "; "
+    (2026-08-09, module docstring).
     """
     existing_index = _pooled_owner_index(ride)
     entries: list[ParsedEntry] = []
     conflicts: list[ImportConflict] = []
+    warnings: list[ImportConflict] = []
     for team_name, rows in groups.items():
         riders = tuple(rider for _, rider, _ in rows)
         notes = "; ".join(note for _, _, note in rows if note)
@@ -929,12 +1031,15 @@ def _assemble_pooled_teams(
                 notes=notes,
             )
         )
-        problem = _team_size_problem(len(riders), ride.max_team_size)
-        if problem is not None:
-            conflicts.append(ImportConflict(row=rows[0][0], problem=problem))
-            continue
-        conflicts.extend(_pooled_team_structural_conflicts(rows, existing_index, ride.status))
-    return entries, conflicts
+        size_problem = _team_size_problem(len(riders), ride.max_team_size)
+        if size_problem is not None:
+            if len(riders) < MIN_TEAM_SIZE and ride.status is RideStatus.DRAFT:
+                warnings.append(ImportConflict(row=rows[0][0], problem=size_problem))
+            else:
+                conflicts.append(ImportConflict(row=rows[0][0], problem=size_problem))
+        if len(riders) <= ride.max_team_size:
+            conflicts.extend(_pooled_team_structural_conflicts(rows, existing_index, ride.status))
+    return entries, conflicts, warnings
 
 
 def _lowest_rider_plate(riders: Sequence[ParsedRider]) -> str:
@@ -1081,7 +1186,12 @@ def _form_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
             old_entry, old_rider = owner
             ctx.ride.delete_entry(old_entry)
             riders.append(old_rider)
-    entry = ctx.ride.create_team_entry(display_name=parsed.display_name, riders=riders)
+    if len(riders) == 1:
+        entry = ctx.ride.create_team_entry_of_one(
+            display_name=parsed.display_name, rider=riders[0], plate=None
+        )
+    else:
+        entry = ctx.ride.create_team_entry(display_name=parsed.display_name, riders=riders)
     if parsed.notes:
         ctx.ride.update_entry(entry, notes=parsed.notes)
     for rider in entry.riders:
@@ -1154,6 +1264,13 @@ def _insert_relay_entry(ride: Roster, parsed: ParsedEntry) -> None:
         entry = ride.create_solo_entry(
             first_name=parsed_rider.first_name,
             last_name=parsed_rider.last_name,
+            plate=parsed.plate,
+        )
+    elif len(parsed.riders) == 1:
+        parsed_rider = parsed.riders[0]
+        entry = ride.create_team_entry_of_one(
+            display_name=parsed.display_name,
+            rider=Rider(first_name=parsed_rider.first_name, last_name=parsed_rider.last_name),
             plate=parsed.plate,
         )
     else:

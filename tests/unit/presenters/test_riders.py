@@ -31,7 +31,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
+from rivercrossing.roster import EntryMode, EntryType, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.presenters.riders import (
     NEW_TEAM_CHOICE,
@@ -1028,6 +1028,46 @@ def test_on_pick_csv_import_given_a_header_only_file_shows_zero_of_everything(
     ) in view.calls
 
 
+def test_on_pick_csv_import_given_a_draft_under_min_team_warns_and_enables_import() -> None:
+    """A DRAFT size-1 team is one warning, zero conflicts (R-21)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    presenter.on_pick_csv_import(_FIXTURES / "team_under_min_pooled.csv")
+
+    assert (
+        "show_csv_preview",
+        (
+            CsvPreview(
+                summary=(
+                    "team_under_min_pooled.csv → 4 riders · 2 teams · 0 conflicts · 1 warnings"
+                ),
+                conflicts=(),
+                warnings=(
+                    CsvConflict(
+                        row=5,
+                        problem="team of 1 rider is below the minimum of 2 (team-under-min)",
+                    ),
+                ),
+            ),
+        ),
+    ) in view.calls
+    assert ("set_import_enabled", (True,)) in view.calls
+
+
+def test_on_pick_csv_import_given_a_clean_file_carries_no_warnings() -> None:
+    """A zero-warning file keeps the old summary and an empty tuple."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    presenter.on_pick_csv_import(_FIXTURES / "clean_pooled.csv")
+
+    preview = view.calls[0][1][0]
+    assert preview.summary == "clean_pooled.csv → 9 riders · 2 teams · 0 conflicts"
+    assert preview.conflicts == ()
+    assert preview.warnings == ()
+
+
 # -------------------------------------------- confirming a csv import
 
 
@@ -1054,6 +1094,22 @@ def test_on_confirm_csv_import_given_a_clean_preview_applies_it_to_the_roster(
 
     assert result is True
     assert [entry.display_name for entry in roster.entries] == ["Alex Ferreira", "Bo Lindqvist"]
+
+
+def test_on_confirm_csv_import_given_warnings_only_commits_and_keeps_the_small_team() -> None:
+    """A warnings-only preview commits; the size-1 team stays (R-21)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    presenter = RidersPresenter(RecordingRidersView(), roster, load=False)
+    presenter.on_pick_csv_import(_FIXTURES / "team_under_min_pooled.csv")
+
+    result = presenter.on_confirm_csv_import()
+
+    assert result is True
+    teams = [entry for entry in roster.entries if entry.type is EntryType.TEAM]
+    assert [(entry.display_name, len(entry.riders)) for entry in teams] == [
+        ("wolves", 2),
+        ("solo team", 1),
+    ]
 
 
 def test_on_confirm_csv_import_given_a_clean_preview_makes_no_further_view_call(

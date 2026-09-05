@@ -45,7 +45,7 @@ from rivercrossing.ui import commands, ids
 ROUTE_COUNTS_BY_MENU = (
     ("File", 8),
     ("Ride", 7),
-    ("Riders", 5),
+    ("Riders", 6),
     ("Cards", 7),
     ("Results", 7),
     ("View", 1),
@@ -78,6 +78,7 @@ ROUTE_TARGETS = (
     (commands.TargetKind.WINDOW, ids.RIDE_SETUP_DLG),  # Ride Setup...
     (commands.TargetKind.WINDOW, ids.RIDER_EDITOR_DLG),  # Rider Editor
     (commands.TargetKind.WINDOW, ids.TEAM_EDITOR_DLG),  # Teams Editor (Phase 4: mixed rides)
+    (commands.TargetKind.WINDOW, ids.RIDER_ISSUES_DLG),  # Check for Rider Issues...
     (commands.TargetKind.WINDOW, ids.RIDER_EDITOR_DLG),  # Add Rider/Entry...
     (commands.TargetKind.DIALOG, ids.DNF_CONFIRM_DLG),  # Mark DNF...
     (commands.TargetKind.WINDOW, ids.ENTRY_DETAIL_DLG),  # Entry Detail...
@@ -112,25 +113,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_forty_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 39
+    assert len(commands.ROUTE_TABLE) == 40
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 7, Riders 5, Cards 7, Results 7, View 1, Help 4."""
+    """File 8, Ride 7, Riders 6, Cards 7, Results 7, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_nine_real_menu_item_ids_once_each() -> None:
-    """46 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_fifty_real_menu_item_ids_once_each() -> None:
+    """47 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 49
-    assert len(set(flat_ids)) == 49
+    assert len(flat_ids) == 50
+    assert len(set(flat_ids)) == 50
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -197,6 +198,7 @@ ALLOWED_STATES = (
     None,  # Riders > Rider Editor: "ride open"
     None,  # Riders > Teams Editor: "ride open, mixed (teams allowed)" -- teams_allowed is a
     # condition-only gate, never a RideStatus membership rule
+    None,  # Riders > Check for Rider Issues...: "ride open"
     None,  # Riders > Add Rider/Entry...: "ride open (new plates any time)"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Riders > Mark DNF...
     None,  # Riders > Entry Detail...: "ride open"

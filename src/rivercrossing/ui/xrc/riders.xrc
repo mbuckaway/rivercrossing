@@ -238,4 +238,65 @@
     </object>
   </object>
 
+  <object class="wxDialog" name="rider_issues_dlg">
+    <title>Check for Rider Issues</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="issues_summary_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="issues_list"/>
+      </object>
+
+      <!-- The two custom buttons sit in a sibling sizer next to the
+           stock button sizer (teams.xrc's save_btn pattern), so they
+           keep a real position instead of the (-1,-1) a
+           wxStdDialogButtonSizer leaves custom buttons at. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="open_editor_btn">
+              <label>Open Editor…</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="convert_solo_btn">
+              <label>Convert to Solo</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_CLOSE"/>
+              </object>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
 </resource>

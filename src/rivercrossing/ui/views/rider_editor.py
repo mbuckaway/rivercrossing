@@ -53,7 +53,7 @@ import wx.xrc
 
 from rivercrossing import csvio
 from rivercrossing.ui import ids
-from rivercrossing.ui.presenters.riders import RiderFormValues, RidersPresenter
+from rivercrossing.ui.presenters.riders import CsvConflict, RiderFormValues, RidersPresenter
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import associate_model, find_control
 
@@ -62,7 +62,7 @@ if TYPE_CHECKING:
 
     from rivercrossing.roster import Roster
     from rivercrossing.ui.presenters.data_source import RiderRow
-    from rivercrossing.ui.presenters.riders import CsvConflict, CsvPreview
+    from rivercrossing.ui.presenters.riders import CsvPreview
 
 __all__ = [
     "COLUMN_LABELS",
@@ -569,10 +569,20 @@ class CsvPreviewDialog:
             self.dialog.EndModal(wx.ID_OK)
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
-        """Render *preview*'s summary and conflicts (``RidersView``)."""
+        """Render *preview*'s summary, conflicts and warnings (R-21).
+
+        ``conflicts`` block an import; ``warnings`` do not. Both are
+        rendered in the one ``conflicts_list`` so the operator sees the
+        whole pre-flight report, warnings prefixed to keep them apart
+        from the blocking rows.
+        """
         self.csv_infobar.Dismiss()
         self.summary_lbl.SetLabel(preview.summary)
-        self._model = CsvConflictsListModel(preview.conflicts)
+        combined = [*preview.conflicts]
+        combined.extend(
+            CsvConflict(row=w.row, problem=f"⚠ warning: {w.problem}") for w in preview.warnings
+        )
+        self._model = CsvConflictsListModel(combined)
         associate_model(self.conflicts_list, self._model)
 
     def set_import_enabled(self, *, enabled: bool) -> None:

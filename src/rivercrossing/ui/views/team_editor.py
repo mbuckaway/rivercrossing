@@ -176,6 +176,7 @@ class TeamEditor:
         self.dialog = dialog
 
         self.teams_list = self._find(ids.TEAMS_LIST, wx.dataview.DataViewCtrl)
+        self.single_member_only_chk = self._find(ids.SINGLE_MEMBER_ONLY_CHK, wx.CheckBox)
         self._build_team_columns()
         # Replaced by the presenter's own show_teams() call below,
         # before any event can fire -- typed non-optional so
@@ -260,6 +261,9 @@ class TeamEditor:
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.teams_list
         )
+        self.dialog.Bind(
+            wx.EVT_CHECKBOX, self._on_toggle_single_member, self.single_member_only_chk
+        )
 
     def _form_values(self) -> TeamFormValues:
         """Return the form's current fields, read verbatim (R-20)."""
@@ -315,6 +319,11 @@ class TeamEditor:
             return
         row = self._teams_model.GetRow(item)
         self.presenter.on_row_selected(row)
+
+    def _on_toggle_single_member(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle the one-rider-teams filter checkbox."""
+        event.Skip()
+        self.presenter.on_toggle_single_member(enabled=self.single_member_only_chk.GetValue())
 
     def show_teams(self, rows: list[TeamRow]) -> None:
         """Render ``teams_list`` (``TeamsView``).
