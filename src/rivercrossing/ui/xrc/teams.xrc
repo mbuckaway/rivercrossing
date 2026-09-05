@@ -46,6 +46,14 @@
           <orient>wxVERTICAL</orient>
 
           <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxCheckBox" name="single_member_only_chk">
+              <label>Only show one-rider teams</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
             <option>1</option>
             <flag>wxEXPAND|wxBOTTOM</flag>
             <border>8</border>

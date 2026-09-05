@@ -401,6 +401,9 @@
       <object class="wxMenuItem" name="mi_team_editor">
         <label>&amp;Teams Editor</label>
       </object>
+      <object class="wxMenuItem" name="mi_check_rider_issues">
+        <label>Check for Rider &amp;Issues…</label>
+      </object>
       <object class="wxMenuItem" name="mi_add_entry">
         <label>&amp;Add Rider/Entry…</label>
       </object>

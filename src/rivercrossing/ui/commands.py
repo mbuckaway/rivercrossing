@@ -279,7 +279,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # spec.md §15: ride open (locks tighten after start)
         enabled_when=Enablement(requires_ride_open=True),
     ),
-    # --- Riders: 5 rows ---
+    # --- Riders: 6 rows ---
     MenuRoute(
         menu="Riders",
         label="Rider Editor",
@@ -298,6 +298,14 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # solo-only ride has no teams to edit (the menu's own
         # teams_allowed gate mirrors the roster's entry_mode).
         enabled_when=Enablement(requires_ride_open=True, teams_allowed=True),
+    ),
+    MenuRoute(
+        menu="Riders",
+        label="Check for Rider Issues…",
+        ids=("mi_check_rider_issues",),
+        kind=TargetKind.WINDOW,
+        target=ids.RIDER_ISSUES_DLG,
+        enabled_when=Enablement(requires_ride_open=True),  # "ride open"
     ),
     MenuRoute(
         menu="Riders",
