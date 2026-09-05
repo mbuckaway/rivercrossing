@@ -115,6 +115,28 @@ def _draft_relay_roster() -> Roster:
     return roster
 
 
+def _draft_pooled_roster_with_size_one_team() -> Roster:
+    """Return a MIXED pooled DRAFT roster with 1- and 2-rider teams."""
+    roster = Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        team_logo_seed=_SEED,
+    )
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_team_entry_of_one(
+        display_name="Lone Wolf",
+        rider=Rider(first_name="W.", last_name="Reed", plate="77"),
+    )
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="78"),
+            Rider(first_name="K.", last_name="Singh", plate="79"),
+        ],
+    )
+    return roster
+
+
 def _teams(roster: Roster) -> tuple[object, ...]:
     """Return every TEAM entry of *roster*, in list order."""
     return tuple(entry for entry in roster.entries if entry.type is EntryType.TEAM)
@@ -176,6 +198,62 @@ def test_teams_presenter_row_selection_shows_the_relay_plate_of_a_relay_team() -
 
     assert view.form["name"] == "Moss Ridge"
     assert view.form["relay_plate"] == "88"
+
+
+# ---------------------------------------- single-member filter
+
+
+def test_teams_presenter_renders_all_teams_by_default() -> None:
+    """The filter starts off, so every TEAM row renders."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster_with_size_one_team()
+
+    TeamsPresenter(view, roster)
+
+    assert [row.name for row in view.teams] == ["Lone Wolf", "Trail Blazers"]
+
+
+def test_teams_presenter_toggle_single_member_on_renders_only_size_one_teams() -> None:
+    """With the filter on, only the size-1 team survives the list."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster_with_size_one_team())
+
+    presenter.on_toggle_single_member(enabled=True)
+
+    assert [row.name for row in view.teams] == ["Lone Wolf"]
+
+
+def test_teams_presenter_toggle_single_member_off_renders_all_teams_again() -> None:
+    """Turning the filter back off restores every TEAM row."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster_with_size_one_team())
+
+    presenter.on_toggle_single_member(enabled=True)
+    presenter.on_toggle_single_member(enabled=False)
+
+    assert [row.name for row in view.teams] == ["Lone Wolf", "Trail Blazers"]
+
+
+def test_teams_presenter_row_selection_indexes_the_filtered_list() -> None:
+    """Selection resolves against the filtered list, not the roster."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster_with_size_one_team())
+    presenter.on_toggle_single_member(enabled=True)
+
+    presenter.on_row_selected(0)
+
+    assert view.form["name"] == "Lone Wolf"
+    assert view.members == ["W. Reed"]
+
+
+def test_teams_presenter_toggle_single_member_on_with_no_size_one_teams_renders_empty() -> None:
+    """No one-rider teams means the filtered list is empty."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
+
+    presenter.on_toggle_single_member(enabled=True)
+
+    assert view.teams == []
 
 
 # ----------------------------------------------------------------- save
