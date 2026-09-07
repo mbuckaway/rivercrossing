@@ -90,6 +90,7 @@ case.
 """
 
 import faulthandler
+import gc
 import json
 import os
 import sqlite3
@@ -522,7 +523,7 @@ def _fire_exit_route(frame: Any) -> None:  # noqa: ANN401
     frame.GetEventHandler().ProcessEvent(event)
 
 
-def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401
+def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
     """Destroy *frame* at scenario cleanup, never through a dialog.
 
     Measured on windows-latest CI (module docstring): a plain,
@@ -537,9 +538,28 @@ def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401
     relies on. Every scenario that builds ``main_frame`` through
     :func:`~rivercrossing.ui.app.build_main_window` uses this in its
     cleanup ``finally``, never before the behaviour under test runs.
+
+    Ends by breaking the two app-level Python references
+    ``build_main_window``'s wiring leaves behind once *frame*'s C++
+    object is gone: the ``app.main_frame`` attribute and the
+    ``wxEVT_QUERY_END_SESSION`` handler whose closure holds the route
+    context (and through it *frame* and its console). Both would
+    otherwise pin frame #1's wrappers -- and their SIP pointer->
+    wrapper map entries -- for the rest of the process, and a caller
+    that builds a second ``main_frame`` in the same process (the
+    E8.1 settings/zoom/hide-times relaunch scenarios) would find a
+    frame #2 control that lands on a recycled C++ address resolving
+    to frame #1's stale wrapper instead: the address-reuse poison
+    ``ui/views/_support.py``'s ``find_control`` documents. The
+    caller's own ``gc.collect()`` after this returns then deallocs
+    the released graph.
     """
-    wx.GetApp().really_quitting = True
+    app = wx.GetApp()
+    app.really_quitting = True
     harness.close_window(frame)
+    if app.main_frame is frame:
+        app.main_frame = None
+    app.Unbind(wx.EVT_QUERY_END_SESSION)
 
 
 def _click_no_ride_button(button_name: str) -> None:
@@ -2636,50 +2656,75 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
         )
         save_settings(target, settings_path)
 
-        # First run: the bootstrap loads the saved file and applies it.
-        frame = _build_app_window(settings_path=settings_path)
-        frame.Show()
-        frame.Layout()
-        harness.pump()
-        try:
-            console = frame.console
-            splitter = harness.find_control(frame, ids.MAIN_SPLITTER)
-            crossings_list = harness.find_control(frame, ids.CROSSINGS_LIST)
-            applied = {
-                "applied_dark_radio": _menu_item_checked(frame, ids.MI_THEME_DARK),
-                "applied_sound_muted": sound._default_player._muted,
-                "applied_hide_times_columns": _visible_column_titles(crossings_list),
-                "applied_sash": splitter.GetSashPosition(),
-                "applied_geometry": _frame_geometry(frame),
-            }
+        def _run_once() -> dict[str, Any]:
+            """First run: apply the saved set, mutate, save, close.
 
-            # Equivalence: applying the saved values directly to the
-            # frame must give the same geometry the file-driven restore
-            # produced. The exact size is platform-dependent (wxMSW
-            # pins the frame to its sizer minimum -- measured: a saved
-            # 1200x800 restores as 1100x788 on the Windows runner --
-            # while macOS honours SetSize fully), so the test compares
-            # the two application paths instead of hardcoding a size.
-            frame.SetPosition((40, 60))
-            frame.SetSize((1200, 800))
+            Builds and owns one ``main_frame``, closes it in a
+            ``finally``, and returns only plain data -- never wx
+            objects -- so no frame #1 wrapper survives into the second
+            build below (the SIP pointer->wrapper address-reuse hazard
+            ``ui/views/_support.py``'s ``find_control`` documents).
+            """
+            # First run: the bootstrap loads the file and applies it.
+            frame = _build_app_window(settings_path=settings_path)
+            frame.Show()
+            frame.Layout()
             harness.pump()
-            direct_applied_geometry = _frame_geometry(frame)
+            try:
+                console = frame.console
+                splitter = harness.find_control(frame, ids.MAIN_SPLITTER)
+                crossings_list = harness.find_control(frame, ids.CROSSINGS_LIST)
+                applied = {
+                    "applied_dark_radio": _menu_item_checked(frame, ids.MI_THEME_DARK),
+                    "applied_sound_muted": sound._default_player._muted,
+                    "applied_hide_times_columns": _visible_column_titles(crossings_list),
+                    "applied_sash": splitter.GetSashPosition(),
+                    "applied_geometry": _frame_geometry(frame),
+                }
 
-            splitter.SetSashPosition(420)
-            frame.Move((90, 110))
-            frame.SetSize((1250, 860))
-            harness.pump()
-            direct_saved_geometry = _frame_geometry(frame)
-            console.persist_layout()
-            saved_after_run1 = load_settings(settings_path)
-            saved_sash = saved_after_run1.splitter_sash
-            saved_geometry = (
-                list(saved_after_run1.window_geometry)
-                if saved_after_run1.window_geometry is not None
-                else None
-            )
-        finally:
-            _close_without_prompt(frame)
+                # Equivalence: applying the saved values directly to
+                # the frame must give the same geometry the file-driven
+                # restore produced. The exact size is platform-dependent
+                # (wxMSW pins the frame to its sizer minimum; measured:
+                # a saved 1200x800 restores as 1100x788 on the Windows
+                # runner -- while macOS honours SetSize fully), so the
+                # test compares the two application paths instead of
+                # hardcoding a size.
+                frame.SetPosition((40, 60))
+                frame.SetSize((1200, 800))
+                harness.pump()
+                direct_applied_geometry = _frame_geometry(frame)
+
+                splitter.SetSashPosition(420)
+                frame.Move((90, 110))
+                frame.SetSize((1250, 860))
+                harness.pump()
+                direct_saved_geometry = _frame_geometry(frame)
+                console.persist_layout()
+                saved_after_run1 = load_settings(settings_path)
+                saved_sash = saved_after_run1.splitter_sash
+                saved_geometry = (
+                    list(saved_after_run1.window_geometry)
+                    if saved_after_run1.window_geometry is not None
+                    else None
+                )
+                return {
+                    **applied,
+                    "direct_applied_geometry": direct_applied_geometry,
+                    "saved_sash_after_run1": saved_sash,
+                    "saved_geometry_after_run1": saved_geometry,
+                    "direct_saved_geometry": direct_saved_geometry,
+                }
+            finally:
+                _close_without_prompt(frame)
+
+        first_run = _run_once()
+        # The helper's locals are gone, but reference cycles (frame ->
+        # console -> route lambdas -> frame) still pin frame #1's
+        # wrappers. Collect before frame #2 reuses their C++ addresses,
+        # or its fresh controls can resolve to stale SIP pointer->
+        # wrapper entries (the poison _support.find_control settles).
+        gc.collect()
 
         # Relaunch: a fresh build reads the file the first run saved.
         frame2 = _build_app_window(settings_path=settings_path)
@@ -2695,14 +2740,7 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
         finally:
             _close_without_prompt(frame2)
 
-        return {
-            **applied,
-            "direct_applied_geometry": direct_applied_geometry,
-            "saved_sash_after_run1": saved_sash,
-            "saved_geometry_after_run1": saved_geometry,
-            "direct_saved_geometry": direct_saved_geometry,
-            **relaunched,
-        }
+        return {**first_run, **relaunched}
 
 
 def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
@@ -2761,7 +2799,7 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
         return found
 
 
-def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:
+def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: PLR0915 -- scripted modal-driving flow: nested probes + store facts, the scenario pattern this file owns
     """Toggle Dark in Settings, OK: applied, persisted, relaunched.
 
     E8.1.2's appearance-mirror proof. Pre-saves a LIGHT set so the
@@ -2786,37 +2824,56 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = _build_app_window(settings_path=settings_path)
-        frame.Show()
-        frame.Layout()
-        harness.pump()
-        found: dict[str, Any] = {}
 
-        def _drive_ok(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-            found["dlg_shown"] = dialog is not None
-            harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-            harness.find_control(dialog, ids.APPEARANCE_LIGHT_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-            harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
-            harness.find_control(dialog, ids.SOUND_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-            harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
-            harness.click(dialog, pages.WX_ID_OK)
+        def _run_once() -> dict[str, Any]:
+            """First run: drive Settings to Dark + OK, then close.
 
-        try:
-            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _drive_ok)
-            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            Builds and owns one ``main_frame``, closes it in a
+            ``finally``, and returns only plain data -- never wx
+            objects -- so no frame #1 wrapper survives into the second
+            build below (the SIP pointer->wrapper address-reuse hazard
+            ``ui/views/_support.py``'s ``find_control`` documents).
+            """
+            frame = _build_app_window(settings_path=settings_path)
+            frame.Show()
+            frame.Layout()
             harness.pump()
-            found["is_dark_after"] = wx.SystemSettings.GetAppearance().IsDark()
-            found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
-            found["sound_muted_after"] = sound._default_player._muted
-            found["hide_times_columns"] = _visible_column_titles(
-                harness.find_control(frame, ids.CROSSINGS_LIST)
-            )
-            saved = load_settings(settings_path)
-            found["saved_appearance"] = saved.appearance
-            found["saved_sound_on"] = saved.sound_on
-            found["saved_hide_times"] = saved.hide_times
-        finally:
-            _close_without_prompt(frame)
+            found: dict[str, Any] = {}
+
+            def _drive_ok(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+                found["dlg_shown"] = dialog is not None
+                harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+                harness.find_control(dialog, ids.APPEARANCE_LIGHT_RADIO).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+                harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+                harness.find_control(dialog, ids.SOUND_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+                harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+                harness.click(dialog, pages.WX_ID_OK)
+
+            try:
+                wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _drive_ok)
+                harness.fire_menu_event(frame, "wxID_PREFERENCES")
+                harness.pump()
+                found["is_dark_after"] = wx.SystemSettings.GetAppearance().IsDark()
+                found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
+                found["sound_muted_after"] = sound._default_player._muted
+                found["hide_times_columns"] = _visible_column_titles(
+                    harness.find_control(frame, ids.CROSSINGS_LIST)
+                )
+                saved = load_settings(settings_path)
+                found["saved_appearance"] = saved.appearance
+                found["saved_sound_on"] = saved.sound_on
+                found["saved_hide_times"] = saved.hide_times
+            finally:
+                _close_without_prompt(frame)
+            return found
+
+        first_run = _run_once()
+        # The helper's locals are gone, but reference cycles (frame ->
+        # console -> route lambdas -> frame) still pin frame #1's
+        # wrappers. Collect before frame #2 reuses their C++ addresses,
+        # or its fresh controls can resolve to stale SIP pointer->
+        # wrapper entries (the poison _support.find_control settles).
+        gc.collect()
 
         # Relaunch: the persisted appearance renders in a fresh dialog.
         frame2 = _build_app_window(settings_path=settings_path)
@@ -2825,8 +2882,8 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:
         harness.pump()
 
         def _read_relaunch(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-            found["relaunch_dlg_shown"] = dialog is not None
-            found["relaunch_dark"] = harness.find_control(
+            first_run["relaunch_dlg_shown"] = dialog is not None
+            first_run["relaunch_dark"] = harness.find_control(
                 dialog, ids.APPEARANCE_DARK_RADIO
             ).GetValue()
             harness.click(dialog, pages.WX_ID_CANCEL)
@@ -2840,11 +2897,11 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:
             for _attempt in range(_RELAUNCH_ROUTE_ATTEMPTS):
                 harness.fire_menu_event(frame2, "wxID_PREFERENCES")
                 harness.pump()
-                if "relaunch_dlg_shown" in found:
+                if "relaunch_dlg_shown" in first_run:
                     break
         finally:
             _close_without_prompt(frame2)
-        return found
+        return first_run
 
 
 def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
@@ -2920,50 +2977,69 @@ def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = _build_app_window(settings_path=settings_path)
-        frame.Show()
-        frame.Layout()
-        harness.pump()
-        found: dict[str, Any] = {}
-        try:
-            crossings = harness.find_control(frame, ids.CROSSINGS_LIST)
-            found["before_columns"] = _visible_column_titles(crossings)
-            found["clock_shown_before"] = harness.find_control(
-                frame, ids.CLOCK_ELAPSED_LBL
-            ).IsShown()
-            found["menu_checked_before"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
 
-            # Toggle ON via the View menu: hide live, clock stays, tick.
-            harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
-            found["after_on_columns"] = _visible_column_titles(crossings)
-            found["clock_shown_after_on"] = harness.find_control(
-                frame, ids.CLOCK_ELAPSED_LBL
-            ).IsShown()
-            found["menu_checked_after_on"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
-            found["saved_hide_times_after_on"] = load_settings(settings_path).hide_times
+        def _run_once() -> dict[str, Any]:
+            """First run: View-menu/Settings mirror, ON -> OFF -> ON.
 
-            # The mirror from the Settings dialog: checkbox checked, and
-            # unchecking it + OK reverts the console and the menu.
-            def _uncheck_in_settings(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-                found["settings_dlg_shown"] = dialog is not None
-                found["settings_checkbox_after_on"] = harness.find_control(
-                    dialog, ids.HIDE_TIMES_CHK
-                ).GetValue()
-                harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-                harness.click(dialog, pages.WX_ID_OK)
-
-            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _uncheck_in_settings)
-            harness.fire_menu_event(frame, "wxID_PREFERENCES")
+            Builds and owns one ``main_frame``, closes it in a
+            ``finally``, and returns only plain data -- never wx
+            objects -- so no frame #1 wrapper survives into the second
+            build below (the SIP pointer->wrapper address-reuse hazard
+            ``ui/views/_support.py``'s ``find_control`` documents).
+            """
+            frame = _build_app_window(settings_path=settings_path)
+            frame.Show()
+            frame.Layout()
             harness.pump()
-            found["after_settings_off_columns"] = _visible_column_titles(crossings)
-            found["menu_checked_after_off"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
-            found["saved_hide_times_after_off"] = load_settings(settings_path).hide_times
+            found: dict[str, Any] = {}
+            try:
+                crossings = harness.find_control(frame, ids.CROSSINGS_LIST)
+                found["before_columns"] = _visible_column_titles(crossings)
+                found["clock_shown_before"] = harness.find_control(
+                    frame, ids.CLOCK_ELAPSED_LBL
+                ).IsShown()
+                found["menu_checked_before"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
 
-            # Toggle ON again so the relaunch check reads hidden.
-            harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
-            found["saved_hide_times_before_relaunch"] = load_settings(settings_path).hide_times
-        finally:
-            _close_without_prompt(frame)
+                # View-menu toggle ON: hide live, clock stays, tick.
+                harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
+                found["after_on_columns"] = _visible_column_titles(crossings)
+                found["clock_shown_after_on"] = harness.find_control(
+                    frame, ids.CLOCK_ELAPSED_LBL
+                ).IsShown()
+                found["menu_checked_after_on"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+                found["saved_hide_times_after_on"] = load_settings(settings_path).hide_times
+
+                # Mirror from the Settings dialog: checkbox checked, and
+                # unchecking it + OK reverts the console and the menu.
+                def _uncheck_in_settings(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+                    found["settings_dlg_shown"] = dialog is not None
+                    found["settings_checkbox_after_on"] = harness.find_control(
+                        dialog, ids.HIDE_TIMES_CHK
+                    ).GetValue()
+                    harness.find_control(dialog, ids.HIDE_TIMES_CHK).SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+                    harness.click(dialog, pages.WX_ID_OK)
+
+                wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _uncheck_in_settings)
+                harness.fire_menu_event(frame, "wxID_PREFERENCES")
+                harness.pump()
+                found["after_settings_off_columns"] = _visible_column_titles(crossings)
+                found["menu_checked_after_off"] = _menu_item_checked(frame, ids.MI_HIDE_TIMES)
+                found["saved_hide_times_after_off"] = load_settings(settings_path).hide_times
+
+                # Toggle ON again so the relaunch check reads hidden.
+                harness.fire_menu_event(frame, ids.MI_HIDE_TIMES)
+                found["saved_hide_times_before_relaunch"] = load_settings(settings_path).hide_times
+            finally:
+                _close_without_prompt(frame)
+            return found
+
+        first_run = _run_once()
+        # The helper's locals are gone, but reference cycles (frame ->
+        # console -> route lambdas -> frame) still pin frame #1's
+        # wrappers. Collect before frame #2 reuses their C++ addresses,
+        # or its fresh controls can resolve to stale SIP pointer->
+        # wrapper entries (the poison _support.find_control settles).
+        gc.collect()
 
         frame2 = _build_app_window(settings_path=settings_path)
         frame2.Show()
@@ -2971,11 +3047,13 @@ def _hide_times_view_menu_mirror_round_trip() -> dict[str, Any]:
         harness.pump()
         try:
             crossings2 = harness.find_control(frame2, ids.CROSSINGS_LIST)
-            found["relaunch_columns"] = _visible_column_titles(crossings2)
-            found["relaunch_menu_checked"] = _menu_item_checked(frame2, ids.MI_HIDE_TIMES)
+            return {
+                **first_run,
+                "relaunch_columns": _visible_column_titles(crossings2),
+                "relaunch_menu_checked": _menu_item_checked(frame2, ids.MI_HIDE_TIMES),
+            }
         finally:
             _close_without_prompt(frame2)
-        return found
 
 
 def _zoom_view_menu_applies_live_and_boundaries() -> dict[str, Any]:
@@ -3105,18 +3183,38 @@ def _zoom_survives_relaunch() -> dict[str, Any]:
             ),
             settings_path,
         )
-        frame = _build_app_window(settings_path=settings_path)
-        frame.Show()
-        frame.Layout()
-        harness.pump()
-        found: dict[str, Any] = {}
-        try:
-            status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
-            found["base_pt"] = status_lbl.GetFont().GetPointSize()
-            harness.fire_menu_event(frame, ids.MI_ZOOM_140)
-            found["saved_zoom_before_relaunch"] = load_settings(settings_path).zoom_percent
-        finally:
-            _close_without_prompt(frame)
+
+        def _run_once() -> dict[str, Any]:
+            """First run: zoom to 140 via the View menu, save, close.
+
+            Builds and owns one ``main_frame``, closes it in a
+            ``finally``, and returns only plain data -- never wx
+            objects -- so no frame #1 wrapper survives into the second
+            build below (the SIP pointer->wrapper address-reuse hazard
+            ``ui/views/_support.py``'s ``find_control`` documents).
+            """
+            frame = _build_app_window(settings_path=settings_path)
+            frame.Show()
+            frame.Layout()
+            harness.pump()
+            try:
+                status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
+                base_pt = status_lbl.GetFont().GetPointSize()
+                harness.fire_menu_event(frame, ids.MI_ZOOM_140)
+                return {
+                    "base_pt": base_pt,
+                    "saved_zoom_before_relaunch": load_settings(settings_path).zoom_percent,
+                }
+            finally:
+                _close_without_prompt(frame)
+
+        first_run = _run_once()
+        # The helper's locals are gone, but reference cycles (frame ->
+        # console -> route lambdas -> frame) still pin frame #1's
+        # wrappers. Collect before frame #2 reuses their C++ addresses,
+        # or its fresh controls can resolve to stale SIP pointer->
+        # wrapper entries (the poison _support.find_control settles).
+        gc.collect()
 
         frame2 = _build_app_window(settings_path=settings_path)
         frame2.Show()
@@ -3124,11 +3222,13 @@ def _zoom_survives_relaunch() -> dict[str, Any]:
         harness.pump()
         try:
             status_lbl2 = harness.find_control(frame2, ids.RIDE_STATUS_LBL)
-            found["relaunch_pt"] = status_lbl2.GetFont().GetPointSize()
-            found["relaunch_radio_140_checked"] = _menu_item_checked(frame2, ids.MI_ZOOM_140)
+            return {
+                **first_run,
+                "relaunch_pt": status_lbl2.GetFont().GetPointSize(),
+                "relaunch_radio_140_checked": _menu_item_checked(frame2, ids.MI_ZOOM_140),
+            }
         finally:
             _close_without_prompt(frame2)
-        return found
 
 
 def _send_escape(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
