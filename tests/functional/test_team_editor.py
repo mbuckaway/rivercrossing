@@ -540,12 +540,10 @@ def test_team_editor_dlg_action_buttons_sit_below_their_own_panes(
         save = harness.find_control(dialog, ids.SAVE_BTN)
         remove = harness.find_control(dialog, ids.REMOVE_BTN)
         close = harness.find_control(dialog, "wxID_CLOSE")
-        # Screen coordinates throughout: GetPosition() is parent-relative,
-        # and members_list lives inside the Members wxStaticBoxSizer's
-        # box window while the buttons are direct dialog children -- the
-        # two spaces are not comparable (measured). Every value is also
-        # captured while the dialog is alive: calling Get* on a control
-        # after close_window() segfaults (measured on CI).
+        # Screen coords: the controls have different parents, so
+        # parent-relative positions are not comparable (measured).
+        # Every value is captured before close_window(): Get* on a
+        # destroyed control segfaults (measured on CI).
         left_x = teams.GetScreenPosition().x
         right_x = members.GetScreenPosition().x
         teams_bottom = teams.GetScreenPosition().y + teams.GetSize().height
