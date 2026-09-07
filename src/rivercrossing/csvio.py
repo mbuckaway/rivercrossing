@@ -691,13 +691,17 @@ def _fuzzy_team_key(name: str) -> str:
 
     Fold case, drop apostrophes/quotes, tokenize on whitespace and drop
     the standalone ``and``/``&`` tokens, then strip every remaining
-    non-alphanumeric character and join -- so "BNBA 1" and "BNBA1" key
-    to "bnba1", "Good 2 Go" and "Good 2Go" to "good2go", and "Win Win
-    More Win" and "Win Win and more Win" to "winwinmorewin".
+    non-alphanumeric character, lowercase what is left and join -- so
+    "BNBA 1" and "BNBA1" key to "bnba1", "Good 2 Go" and "Good 2Go" to
+    "good2go", and "Win Win More Win" and "Win Win and more Win" to
+    "winwinmorewin". The final ``lower()`` closes the gap ``casefold``
+    leaves on this build for late-added case pairs (Cherokee: its
+    fold maps both cases onto the capital, whose own ``lower()`` still
+    differs), which would break the key's lowercase invariant.
     """
     folded = name.casefold().translate(_FUZZY_QUOTE_TRANSLATION)
     tokens = [token for token in folded.split() if token not in ("and", "&")]
-    return "".join(char for token in tokens for char in token if char.isalnum())
+    return "".join(char for token in tokens for char in token if char.isalnum()).lower()
 
 
 def _duplicate_rider_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:

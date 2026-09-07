@@ -48,7 +48,20 @@
         <size>0,0</size>
       </object>
 
-      <!-- Ride identity, clock and the start/stop group. -->
+      <!--
+        Ride identity, the two gauge-clock columns (WS-D) and the
+        start/stop group. elapsed_clock_panel / remaining_clock_panel /
+        ride_status_panel are code-side slots: XRC cannot author a
+        wx.Control subclass, so RaceClock / StopLight (views/gauges.py)
+        are built into these panels and named with SetName() in code
+        (the same code-side rule as the InfoBars). The dials' numeric
+        labels stay declared here under their frozen names
+        (clock_elapsed_lbl / clock_remaining_lbl), and start_btn /
+        stop_btn are wxBitmapButton shells whose SVG glyphs are set in
+        code. XRC embeds no SVG and, measured, its bitmap-button
+        handler ignores label text, so main_frame.py re-applies the
+        labels there too.
+      -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxALL</flag>
         <border>8</border>
@@ -66,8 +79,15 @@
                 </object>
               </object>
               <object class="sizeritem">
-                <object class="wxStaticText" name="ride_status_lbl">
-                  <label></label>
+                <object class="wxPanel" name="ride_status_panel">
+                  <object class="wxBoxSizer">
+                    <orient>wxVERTICAL</orient>
+                    <object class="sizeritem">
+                      <object class="wxStaticText" name="ride_status_lbl">
+                        <label></label>
+                      </object>
+                    </object>
+                  </object>
                 </object>
               </object>
             </object>
@@ -77,19 +97,51 @@
             <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT|wxRIGHT</flag>
             <border>12</border>
             <object class="wxBoxSizer">
-              <orient>wxVERTICAL</orient>
+              <orient>wxHORIZONTAL</orient>
+
               <object class="sizeritem">
-                <flag>wxALIGN_RIGHT</flag>
-                <object class="wxStaticText" name="clock_elapsed_lbl">
-                  <label>0:00:00</label>
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>8</border>
+                <object class="wxPanel" name="elapsed_clock_panel">
+                  <object class="wxBoxSizer">
+                    <orient>wxVERTICAL</orient>
+                    <object class="sizeritem">
+                      <flag>wxALIGN_CENTER_HORIZONTAL</flag>
+                      <object class="wxStaticText">
+                        <label>Elapsed</label>
+                      </object>
+                    </object>
+                    <object class="sizeritem">
+                      <flag>wxALIGN_CENTER_HORIZONTAL</flag>
+                      <object class="wxStaticText" name="clock_elapsed_lbl">
+                        <label>0:00:00</label>
+                      </object>
+                    </object>
+                  </object>
                 </object>
               </object>
+
               <object class="sizeritem">
-                <flag>wxALIGN_RIGHT</flag>
-                <object class="wxStaticText" name="clock_remaining_lbl">
-                  <label></label>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxPanel" name="remaining_clock_panel">
+                  <object class="wxBoxSizer">
+                    <orient>wxVERTICAL</orient>
+                    <object class="sizeritem">
+                      <flag>wxALIGN_CENTER_HORIZONTAL</flag>
+                      <object class="wxStaticText">
+                        <label>Remaining</label>
+                      </object>
+                    </object>
+                    <object class="sizeritem">
+                      <flag>wxALIGN_CENTER_HORIZONTAL</flag>
+                      <object class="wxStaticText" name="clock_remaining_lbl">
+                        <label></label>
+                      </object>
+                    </object>
+                  </object>
                 </object>
               </object>
+
             </object>
           </object>
 
@@ -100,7 +152,7 @@
               <object class="sizeritem">
                 <flag>wxALIGN_RIGHT|wxBOTTOM</flag>
                 <border>4</border>
-                <object class="wxButton" name="start_btn">
+                <object class="wxBitmapButton" name="start_btn">
                   <label>Start ride</label>
                 </object>
               </object>
@@ -116,7 +168,7 @@
                     </object>
                   </object>
                   <object class="sizeritem">
-                    <object class="wxButton" name="stop_btn">
+                    <object class="wxBitmapButton" name="stop_btn">
                       <label>Stop ride…</label>
                     </object>
                   </object>
@@ -288,23 +340,54 @@
                 </object>
               </object>
 
+              <!--
+                Review notebook (WS-H): the flagged crossings on page 1
+                ("Needs Review", the default page, index 0), the
+                roster on page 2 ("Riders"). wxNotebook IS authorable
+                here (measured on wxPython 4.3.1 / wxWidgets 3.3.3);
+                the notebookpage node's own name attribute is dropped by
+                the handler, so names live on the page children (the
+                wxPanels) and the controls inside them. That is why
+                flagged_list / review_btn / console_riders_list are
+                declared where they are. Columns, rows and the
+                double-click seam are code-side (main_frame.py).
+              -->
               <object class="sizeritem">
                 <option>1</option>
                 <flag>wxEXPAND|wxLEFT|wxBOTTOM</flag>
                 <border>8</border>
-                <object class="wxStaticBoxSizer">
-                  <label>Needs review</label>
-                  <orient>wxVERTICAL</orient>
-                  <object class="sizeritem">
-                    <option>1</option>
-                    <flag>wxEXPAND|wxBOTTOM</flag>
-                    <border>6</border>
-                    <object class="wxDataViewCtrl" name="flagged_list"/>
+                <object class="wxNotebook" name="review_notebook">
+                  <object class="notebookpage">
+                    <label>Needs Review</label>
+                    <object class="wxPanel">
+                      <object class="wxBoxSizer">
+                        <orient>wxVERTICAL</orient>
+                        <object class="sizeritem">
+                          <option>1</option>
+                          <flag>wxEXPAND|wxBOTTOM</flag>
+                          <border>6</border>
+                          <object class="wxDataViewCtrl" name="flagged_list"/>
+                        </object>
+                        <object class="sizeritem">
+                          <flag>wxALIGN_RIGHT</flag>
+                          <object class="wxButton" name="review_btn">
+                            <label>Review…</label>
+                          </object>
+                        </object>
+                      </object>
+                    </object>
                   </object>
-                  <object class="sizeritem">
-                    <flag>wxALIGN_RIGHT</flag>
-                    <object class="wxButton" name="review_btn">
-                      <label>Review…</label>
+                  <object class="notebookpage">
+                    <label>Riders</label>
+                    <object class="wxPanel">
+                      <object class="wxBoxSizer">
+                        <orient>wxVERTICAL</orient>
+                        <object class="sizeritem">
+                          <option>1</option>
+                          <flag>wxEXPAND</flag>
+                          <object class="wxDataViewCtrl" name="console_riders_list"/>
+                        </object>
+                      </object>
                     </object>
                   </object>
                 </object>

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""``TeamEditor``: team_editor_dlg (Phase 4), on a real Roster.
+"""``TeamEditor``: team_editor_dlg (Phase 4 rework), on a real Roster.
 
 Phase 4 wires ``team_editor_dlg`` to a real, in-memory
 :class:`~rivercrossing.roster.Roster` that
@@ -11,17 +11,28 @@ presenter-inside-the-view wiring), binding
 Add team/Remove/Save/Pick card/Image/row selection to it. The two
 lists' rows and columns live here (``teams.xrc``'s own header
 explains why -- ``wxDataViewListCtrl`` would overwrite the frozen
-name), the read-only members_list renders rider names only:
-membership is managed in the Rider Editor, never here.
+name). The rework widens ``teams_list`` to three columns
+(``Team | Riders | Logo`` -- :data:`COLUMN_LABELS`), where the Logo
+cell carries the logo's *kind* (:data:`CARD_TEXT`/:data:`IMAGE_TEXT`,
+:func:`format_logo`) rather than the card code, and turns the logo
+preview into a real bitmap: ``logo_bmp`` (a ``wxStaticBitmap`` the
+XRC declares above ``members_list``) renders the team's card bitmap
+(from :func:`default_card_images`, keyed via
+:func:`~rivercrossing.ui.feed_model.card_asset_key_or_none` -- the
+same seam ``main_frame``'s crossings feed uses) or the picked
+image's decoded PNG bytes. The read-only ``members_list`` renders
+rider names only: membership is managed in the Rider Editor, never
+here.
 
 A refused operation (add/remove after start, a relay plate change
-once locked, ...) renders as a code-side ``wxInfoBar``
-(:data:`TEAMS_INFOBAR`) -- the same measured pattern
-``rider_editor.py``'s ``RiderEditor`` uses, slide effects disabled
-for the same reason. ``_find`` is shared via
+once locked, a blank or duplicate team name, ...) renders as a
+code-side ``wxInfoBar`` (:data:`TEAMS_INFOBAR`) -- the same measured
+pattern ``rider_editor.py``'s ``RiderEditor`` uses, slide effects
+disabled for the same reason. ``_find`` is shared via
 ``ui.views._support.find_control``.
 """
 
+import io
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -29,9 +40,9 @@ import wx
 import wx.dataview
 
 from rivercrossing.ui import ids
+from rivercrossing.ui.feed_model import card_asset_key_or_none
 from rivercrossing.ui.presenters.teams import TeamFormValues, TeamRow, TeamsPresenter
-from rivercrossing.ui.views._support import associate_model, find_control
-from rivercrossing.ui.views.results_win import format_card
+from rivercrossing.ui.views._support import associate_model, default_card_images, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -39,13 +50,17 @@ if TYPE_CHECKING:
     from rivercrossing.roster import Roster
 
 __all__ = [
+    "CARD_TEXT",
     "COLUMN_LABELS",
     "COL_LOGO",
     "COL_MEMBER",
     "COL_NAME",
+    "COL_RIDERS",
     "IMAGE_TEXT",
     "MEMBERS_COLUMN_LABELS",
+    "MEMBERS_MIN_HEIGHT",
     "MIN_SIZE",
+    "NOTES_MIN_LINES",
     "TEAMS_INFOBAR",
     "MembersListModel",
     "TeamEditor",
@@ -55,16 +70,19 @@ __all__ = [
 ]
 
 COL_NAME = 0
-COL_LOGO = 1
+COL_RIDERS = 1
+COL_LOGO = 2
 
-# xrc-windows.md C (Teams Editor): "Team | Logo".
-COLUMN_LABELS: tuple[str, ...] = ("Team", "Logo")
+# xrc-windows.md C (Teams Editor), reworked: "Team | Riders | Logo".
+COLUMN_LABELS: tuple[str, ...] = ("Team", "Riders", "Logo")
 
 COL_MEMBER = 0
 MEMBERS_COLUMN_LABELS: tuple[str, ...] = ("Member",)
 
-# The logo cell text when a PNG is set (image wins over a card --
-# the presenter clears the card when an image lands).
+# The Logo cell's kind texts: a natural card code renders as "Card",
+# a set PNG as "Image" (image wins over a card -- the presenter keeps
+# the two mutually exclusive), and no logo as an empty cell.
+CARD_TEXT = "Card"
 IMAGE_TEXT = "Image"
 
 # ui/ids.py is generated from the .xrc files (R-05); teams_infobar
@@ -72,30 +90,43 @@ IMAGE_TEXT = "Image"
 # (teams.xrc's own header, rider_editor.py's precedent).
 TEAMS_INFOBAR = "teams_infobar"
 
+# The Notes box's code-side floor (teams.xrc declares the style):
+# wxTE_MULTILINE plus a minimum tall enough for three text lines, so
+# a fresh team's notes read as a text area, not a one-line field.
+NOTES_MIN_LINES = 3
+_TEXT_CTRL_VERTICAL_PADDING = 8
+
+# members_list's bounded floor (px): the Members box does not grow
+# with the dialog -- teams_list takes the extra height and a long
+# member list scrolls inside its own box (teams.xrc's own header).
+MEMBERS_MIN_HEIGHT = 120
+
 # teams.xrc notes the XRC no-window-minsize rule; this is the
 # editor's own code-side floor (SetMinSize + Fit, the RiderEditor
-# shape) -- wide enough for the two-pane Team | Logo + record form
-# layout to stay usable on a 1366x768 field laptop (UX-DESKTOP §6).
-MIN_SIZE = (760, 380)
+# shape) -- wide enough for the reworked two ~50%-wide panes (three
+# list columns + the record form) to stay usable on a 1366x768 field
+# laptop (UX-DESKTOP §6).
+MIN_SIZE = (940, 560)
 
 
 def format_logo(logo_card: str | None, *, has_image: bool) -> str:
-    """Return a team's ``Logo`` cell / preview text.
+    """Return a team's ``Logo`` cell text: the logo's kind.
 
     An image wins: ``"Image"`` while ``logo_png`` is set, whatever
-    the card column holds; otherwise the card code with its suit
-    glyph (``format_card``'s own ``"AS"`` -> ``"A♠"``), or an empty
-    cell when the team carries no logo.
+    the card column holds; a set card renders ``"Card"`` -- never
+    the code itself, which the bitmap preview now shows -- and a
+    team carrying no logo renders an empty cell.
     """
     if has_image:
         return IMAGE_TEXT
     if logo_card is None:
         return ""
-    return format_card(logo_card)
+    return CARD_TEXT
 
 
 _TEXT_ACCESSORS: tuple[Callable[[TeamRow], str], ...] = (
     lambda row: row.name,
+    lambda row: str(row.rider_count),
     lambda row: format_logo(row.logo_card, has_image=row.has_image),
 )
 
@@ -114,7 +145,7 @@ class TeamsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
         self._rows = tuple(rows)
 
     def GetColumnCount(self) -> int:
-        """Return the editor's fixed two columns."""
+        """Return the editor's fixed three columns."""
         return len(COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
@@ -152,8 +183,25 @@ class MembersListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
         return self._names[row]
 
 
+def _bitmap_from_png(image_bytes: bytes) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Decode PNG *image_bytes* to a ``wx.Bitmap``; None if undecodable.
+
+    A failed decode is otherwise reported by wxWidgets through its
+    logging system, which can pop a dialog once a main loop is
+    running; ``wx.LogNull`` keeps that out, the same guard
+    ``cards_imagelist._load_bitmap`` uses. The Image… picker only
+    offers image files, so an undecodable payload is a stored-bytes
+    oddity the preview blanks rather than crashes on.
+    """
+    with wx.LogNull():
+        image = wx.Image(io.BytesIO(image_bytes), wx.BITMAP_TYPE_PNG)
+    if not image.IsOk():
+        return None
+    return wx.Bitmap(image)
+
+
 class TeamEditor:
-    """Code-side behaviour for ``team_editor_dlg`` (Phase 4).
+    """Code-side behaviour for ``team_editor_dlg`` (Phase 4 rework).
 
     Implements :class:`~rivercrossing.ui.presenters.teams.TeamsView`
     (``ui.presenters.teams``) and constructs its own
@@ -186,11 +234,15 @@ class TeamEditor:
         self.name_input = self._find(ids.NAME_INPUT, wx.TextCtrl)
         self.relay_plate_input = self._find(ids.RELAY_PLATE_INPUT, wx.TextCtrl)
         self.notes_input = self._find(ids.NOTES_INPUT, wx.TextCtrl)
-        self.logo_preview = self._find(ids.LOGO_PREVIEW, wx.StaticText)
+        self._apply_notes_min_height()
         self.pick_card_btn = self._find(ids.PICK_CARD_BTN, wx.Button)
         self.image_btn = self._find(ids.IMAGE_BTN, wx.Button)
+        # The rework's preview bitmap, resolved through the generated
+        # ui/ids.py registry (logo_bmp is XRC-authored in teams.xrc).
+        self.logo_bmp = self._find(ids.LOGO_BMP, wx.StaticBitmap)
         self.members_list = self._find(ids.MEMBERS_LIST, wx.dataview.DataViewCtrl)
         self._build_member_columns()
+        self.members_list.SetMinSize(wx.Size(-1, MEMBERS_MIN_HEIGHT))
         # Replaced by the presenter's own show_members() call below.
         self._members_model: MembersListModel = MembersListModel([])
 
@@ -218,8 +270,21 @@ class TeamEditor:
         """
         return find_control(self.dialog, name, expected_type)
 
+    def _apply_notes_min_height(self) -> None:
+        """Floor the Notes box at :data:`NOTES_MIN_LINES` text lines.
+
+        ``teams.xrc`` declares ``wxTE_MULTILINE``; the style alone
+        leaves the control one line tall inside its flex-grid row, so
+        the row's minimum is computed from the control's own font
+        metrics (measured-safe across the 90-150% text zoom) plus a
+        native bezel allowance.
+        """
+        line_height = self.notes_input.GetCharHeight()
+        minimum = line_height * NOTES_MIN_LINES + _TEXT_CTRL_VERTICAL_PADDING
+        self.notes_input.SetMinSize(wx.Size(-1, minimum))
+
     def _build_team_columns(self) -> None:
-        """Append ``teams_list``'s two columns in canvas order."""
+        """Append ``teams_list``'s three columns in canvas order."""
         for col, label in enumerate(COLUMN_LABELS):
             self.teams_list.AppendTextColumn(label, col)
 
@@ -274,9 +339,9 @@ class TeamEditor:
         )
 
     def _on_add(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``add_btn``: forward to the presenter."""
+        """Handle ``add_btn``: forward the form to the presenter."""
         event.Skip()
-        self.presenter.on_add()
+        self.presenter.on_add(self._form_values())
 
     def _on_remove(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``remove_btn``: forward to the presenter."""
@@ -339,20 +404,40 @@ class TeamEditor:
         self._teams_model = TeamsListModel(rows)
         associate_model(self.teams_list, self._teams_model)
 
-    def show_form(  # noqa: PLR0913 -- the passive view fills the five form slots verbatim
-        self,
-        *,
-        name: str,
-        relay_plate: str,
-        notes: str,
-        logo_card: str | None,
-        has_image: bool,
-    ) -> None:
-        """Fill the record form (``TeamsView``, R-20)."""
+    def show_form(self, *, name: str, relay_plate: str, notes: str) -> None:
+        """Fill the record form's three text fields (``TeamsView``)."""
         self.name_input.SetValue(name)
         self.relay_plate_input.SetValue(relay_plate)
         self.notes_input.SetValue(notes)
-        self.logo_preview.SetLabel(format_logo(logo_card, has_image=has_image))
+
+    def show_logo(self, *, card: str | None, image: bytes | None) -> None:
+        """Render the ``logo_bmp`` preview bitmap (``TeamsView``).
+
+        A natural card code draws its packaged card bitmap; *image*
+        bytes decode to their PNG bitmap and win over a card. A blank
+        state (nothing picked, no logo) sets ``wx.NullBitmap`` so the
+        preview is visibly empty. Re-layout follows so the sizer
+        reflows around a changed bitmap size before the dialog shows.
+        """
+        self.logo_bmp.SetBitmap(self._logo_bitmap(card=card, image=image))
+        self.dialog.Layout()
+
+    def _logo_bitmap(self, *, card: str | None, image: bytes | None) -> Any:  # noqa: ANN401
+        """Return the bitmap *card*/*image* render (or NullBitmap).
+
+        The image wins when set (the roster never carries both); the
+        card's asset key resolves the same way ``main_frame``'s
+        crossings feed resolves one -- unknown codes render blank.
+        """
+        if image is not None:
+            bitmap = _bitmap_from_png(image)
+            if bitmap is not None:
+                return bitmap
+        if card is not None:
+            key = card_asset_key_or_none(card)
+            if key is not None:
+                return default_card_images().bitmap(key)
+        return wx.NullBitmap
 
     def set_relay_plate_visible(self, *, visible: bool) -> None:
         """Show/hide the Plate (relay) row (team_relay rides only).
@@ -388,20 +473,6 @@ class TeamEditor:
         """
         self.teams_infobar.ShowMessage(message, wx.ICON_WARNING)
         self.dialog.Layout()
-
-    def prompt_team_name(self) -> str | None:
-        """Ask for a new team's name via a native prompt (R-20).
-
-        ``wx.TextEntryDialog``, the same seam ``RiderEditor.
-        prompt_new_team_name`` uses -- ``teams.xrc`` authors no such
-        dialog of its own. Returns ``None`` if the operator cancels,
-        exactly the seam functional tests monkeypatch rather than
-        drive.
-        """
-        with wx.TextEntryDialog(self.dialog, "Team name:", "Add team") as prompt:
-            if prompt.ShowModal() != wx.ID_OK:
-                return None
-            return str(prompt.GetValue())
 
     def _apply_min_size(self) -> None:
         """Force this editor's own width floor, then Fit() the rest.

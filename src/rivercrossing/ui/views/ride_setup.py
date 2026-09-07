@@ -13,7 +13,11 @@ Code-side per xrc-windows.md's own footnote: field values are loaded
 from the ride record (setup.xrc's own header repeats this); the
 entry-mode and plate-model groups lock after start for relay rides
 and stay editable for pooled ones (R-17); ``tiebreak_list``'s rows
-and their reorder are persisted. ``tiebreak_list`` (a
+and their reorder are persisted. A submit whose built config fails
+the minimum-setup rule (blank name/venue/organizer/scorer or a non-
+positive lap length) is refused like any other -- the dialog stays
+open on :data:`SETUP_INFOBAR`, and ``on_submitted`` never fires
+(``SetupPresenter.on_submit``'s own docstring). ``tiebreak_list`` (a
 ``wx.adv.EditableListBox``) carries no XRC rows at all -- this module
 seeds it with R-14's own three named criteria, in the mock's default
 order, as **plain** labels ("Most laps", not "① Most laps"): a

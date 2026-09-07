@@ -3,12 +3,14 @@
 
 ``ConsoleView``/``ConsolePresenter`` are module-skeletons.md's
 verbatim contract (ui.presenters section) -- names and signatures
-below are binding, not derived -- grown by the four members the live
+below are binding, not derived -- grown by the members the live
 presenter actually calls: ``set_stop_enabled`` (R-35's arm gate),
 ``set_hide_times`` (R-37), ``show_clock`` (the tick's elapsed
-display) and ``set_entry_locked`` (R-35's "only confirming locks the
-entry field"), the same "add the member once the presenter calls it"
-precedent ``main_frame.py``'s own docstring records.
+display), ``set_entry_locked`` (R-35's "only confirming locks the
+entry field"), and -- WS-D/WS-H -- ``set_clock_fractions`` (the
+gauge-clock dials), ``show_flagged`` and ``show_riders`` (the review
+notebook's two tabs), the same "add the member once the presenter
+calls it" precedent ``main_frame.py``'s own docstring records.
 
 Pure Python -- no ``wx`` import may ever land here (R-71). The
 ``Cue`` enum it re-exports lives in ``rivercrossing.ui.sound``
@@ -48,9 +50,16 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rivercrossing.ride import RideEngine
-    from rivercrossing.ui.presenters.data_source import Counters, DataSource, FeedRow
+    from rivercrossing.ui.presenters.data_source import Counters, DataSource, FeedRow, RiderRow
 
-__all__ = ["ARM_TIMEOUT_S", "FINISH_GATE", "ConsolePresenter", "ConsoleView", "Cue"]
+__all__ = [
+    "ARM_TIMEOUT_S",
+    "FINISH_GATE",
+    "ConsolePresenter",
+    "ConsoleView",
+    "Cue",
+    "stop_light_mode",
+]
 
 # R-35: "Arm auto-clears after use or 10 s." The presenter's tick()
 # disarms once this many seconds have passed since arming.
@@ -69,6 +78,38 @@ def _finish_gate_clear() -> bool:
 # E6.4.3 wires the real evaluator self-test report here; until then a
 # stub returns True so the finish flow is green (task-briefs E4.4.2).
 FINISH_GATE: Callable[[], bool] = _finish_gate_clear
+
+
+def stop_light_mode(status: RideStatus) -> str:
+    """Return the ride-status light's mode for *status* (WS-D).
+
+    The console's code-side ``StopLight`` (``views/gauges.py``) lights
+    one of three circles; this is the RideStatus -> mode mapping the
+    view applies in ``set_state``. Pure (like ``_rejection_notice``),
+    so the mapping is testable without wx. REOPENED shares DRAFT's
+    amber: the corrections banner and the status label carry the
+    distinction -- the light never carries meaning by colour alone.
+
+    Returns:
+        ``"green"`` RUNNING, ``"yellow"`` DRAFT/REOPENED, ``"red"``
+        FINISHED.
+    """
+    if status is RideStatus.RUNNING:
+        return "green"
+    if status is RideStatus.FINISHED:
+        return "red"
+    return "yellow"
+
+
+def _clock_fraction(seconds: float, total: float) -> float:
+    """Return *seconds* as a 0.0..1.0 dial fraction of *total* (WS-D).
+
+    Clamps at both ends: a ride past its planned duration shows a full
+    elapsed dial and an empty remaining dial rather than overflowing.
+    *total* is ``RideConfig.planned_duration_s``, which
+    ``__post_init__`` validates positive -- no zero guard needed.
+    """
+    return min(1.0, max(0.0, seconds / total))
 
 
 @runtime_checkable
@@ -117,6 +158,23 @@ class ConsoleView(Protocol):
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Render the ride clock's elapsed/remaining labels (R-30)."""
+        ...
+
+    def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
+        """Drive the two gauge-clock dials (WS-D, R-30).
+
+        Each fraction is the 0.0..1.0 hand position the view's
+        ``RaceClock`` draws -- elapsed fills toward 1.0 as the ride
+        runs, remaining drains toward 0.0.
+        """
+        ...
+
+    def show_flagged(self, rows: list[FeedRow]) -> None:
+        """Render the review notebook's flagged-crossing rows (WS-H)."""
+        ...
+
+    def show_riders(self, rows: list[RiderRow]) -> None:
+        """Render the review notebook's riders rows (WS-H)."""
         ...
 
     def set_entry_locked(self, *, locked: bool) -> None:
@@ -299,41 +357,79 @@ class ConsolePresenter:
     def tick(self) -> None:
         """Handle a periodic clock/feed refresh tick.
 
-        Refreshes the feed, counters and clock from the source/engine
-        (R-32/R-30), then expires the arm if its 10 s window lapsed
-        (R-35) -- the presenter's own clock seam, no bare sleeps.
+        Refreshes the feed, review tabs, counters and clock from the
+        source/engine (R-32/R-30, WS-D/WS-H), then expires the arm if
+        its 10 s window lapsed (R-35) -- the presenter's own clock
+        seam, no bare sleeps.
         """
         self._refresh_feed()
+        self._refresh_riders()
         self._refresh_counters()
         self._refresh_clock()
         self._expire_arm()
 
     def _refresh_feed(self) -> None:
-        """Re-render the crossings feed from the source."""
-        self.view.show_feed(self.source.feed_rows())
+        """Re-render the crossings feed and its flagged subset.
+
+        The flagged subset is the review notebook's "Needs Review" tab
+        (WS-H): exactly the feed's R-34 flag rows, so a record/undo
+        that changes the feed re-renders the flagged list in the same
+        synchronous call.
+        """
+        rows = self.source.feed_rows()
+        self.view.show_feed(rows)
+        self.view.show_flagged([row for row in rows if row.flagged])
+
+    def _refresh_riders(self) -> None:
+        """Re-render the review notebook's riders tab from the source.
+
+        The roster only changes when the app switches the console onto
+        a store ride (E5.4.1), which routes through the presenter's
+        source -- so refreshing here, on the periodic tick, keeps the
+        tab current within one second of any such switch.
+        """
+        self.view.show_riders(self.source.riders())
 
     def _refresh_counters(self) -> None:
         """Re-render the four counter chips from the source."""
         self.view.show_counters(self.source.counters())
 
     def _refresh_clock(self) -> None:
-        """Render the elapsed/remaining clock, or zeros before start.
+        """Render the clock labels and gauge dials, or zeros pre-start.
 
         DRAFT has no ``actual_start`` yet: spec §13 says its clock
         shows the planned start, which the presenter cannot read
-        before E5's store -- a zeroed clock is this task's doc-silence
-        (E5/E6 refine the DRAFT display).
+        before E5's store -- a zeroed clock (labels ``0:00:00`` and
+        both dials at fraction 0.0) is this task's doc-silence
+        (E5/E6 refine the DRAFT display). Once started, each dial's
+        fraction is its seconds over ``planned_duration_s`` (WS-D), so
+        the elapsed dial fills as the ride runs and the remaining dial
+        drains -- the same clamp ``_clock_fraction`` applies at both
+        ends keeps a ride past its planned duration on-scale.
         """
         if self.engine.state is RideStatus.DRAFT:
             self.view.show_clock("0:00:00", "0:00:00")
+            self.view.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
             return
         try:
             elapsed = self.engine.elapsed()
             remaining = self.engine.remaining()
         except IllegalStateError:
+            # logic-coverage-exempt: T-3 -- the engine state machine
+            # makes this arm unreachable: a started ride always has an
+            # actual_start, and DRAFT (the only state without one) is
+            # returned above. Kept as the pre-existing defensive twin
+            # of the DRAFT branch.
             self.view.show_clock("0:00:00", "0:00:00")
+            self.view.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
             return
-        self.view.show_clock(format_duration(elapsed), format_duration(max(0.0, remaining)))
+        total = float(self.engine.config.planned_duration_s)
+        remaining = max(0.0, remaining)
+        self.view.show_clock(format_duration(elapsed), format_duration(remaining))
+        self.view.set_clock_fractions(
+            elapsed_frac=_clock_fraction(elapsed, total),
+            remaining_frac=_clock_fraction(remaining, total),
+        )
 
     def _expire_arm(self) -> None:
         """Disarm the stop arm once its 10 s window lapsed (R-35)."""

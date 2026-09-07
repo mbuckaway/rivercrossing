@@ -63,7 +63,6 @@ ANCHOR_BY_WINDOW: dict[str, str] = {
     ids.VOID_CARD_CONFIRM_DLG: "fixing-mistakes",
     # The lifecycle dialogs land on Stopping, quitting & recovery.
     ids.STOP_CONFIRM_DLG: "stopping-quitting-recovery",
-    ids.CONTINUE_OR_NEW_DLG: "stopping-quitting-recovery",
     ids.RESUME_DLG: "stopping-quitting-recovery",
     ids.EXIT_RUNNING_DLG: "stopping-quitting-recovery",
     ids.EXIT_CONFIRM_DLG: "stopping-quitting-recovery",

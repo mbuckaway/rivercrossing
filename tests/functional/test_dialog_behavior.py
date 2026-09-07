@@ -192,7 +192,6 @@ _HAS_NATIVE_CANCEL = (
     ids.FINISH_CONFIRM_DLG,
     ids.DUPLICATE_RIDE_DLG,
     ids.REOPEN_RIDE_DLG,
-    ids.CONTINUE_OR_NEW_DLG,
     ids.EXIT_RUNNING_DLG,
     ids.EXIT_CONFIRM_DLG,
     ids.CSV_PREVIEW_DLG,
@@ -378,9 +377,9 @@ class _DefaultClickCase:
 # Every dialog whose default button is bound to actually end the
 # modal once wire_close_button() has been applied (a no-op for the
 # ten that already carry a stock wxID_OK/CANCEL). Excludes
-# continue_or_new_dlg, resume_dlg (continue_btn has no bound
-# EndModal yet) and ride_library_dlg (wxID_OPEN is not bound
-# either) -- see the E1.5.3 report.
+# resume_dlg (continue_btn has no bound EndModal yet) and
+# ride_library_dlg (wxID_OPEN is not bound either) -- see the
+# E1.5.3 report.
 _DEFAULT_CLICK_CASES = (
     _DefaultClickCase(ids.SET_START_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.STOP_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
@@ -429,7 +428,6 @@ def test_click_default_button_ends_modal_with_expected_result(
 
 
 _STATIC_DEFAULT_ONLY = (
-    (ids.CONTINUE_OR_NEW_DLG, ids.CONTINUE_BTN),
     (ids.RESUME_DLG, ids.CONTINUE_BTN),
     (ids.RIDE_LIBRARY_DLG, pages.WX_ID_OPEN),
 )

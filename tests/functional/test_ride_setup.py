@@ -62,6 +62,23 @@ def _mixed_relay_running_roster() -> Roster:
     return roster
 
 
+def _fill_setup_minimums(dialog: Any, view: RideSetup) -> None:  # noqa: ANN401
+    """Fill every field the minimum-setup submit gate requires (R-20).
+
+    ``view.lap_km_spin`` takes a float via ``SetValue`` -- a bare XRC
+    load leaves a fresh ``wxSpinCtrlDouble`` at 0.0, which the gate
+    refuses ("lap length must be positive"), so the OK-path tests
+    must set it explicitly; the text controls take ``type_text``.
+    """
+    harness.type_text(dialog, ids.NAME_INPUT, "GORBA EPIC 2026")
+    harness.type_text(dialog, ids.VENUE_INPUT, "Sea to Sky Gondola")
+    harness.type_text(dialog, ids.ORGANIZER_INPUT, "GORBA")
+    harness.type_text(dialog, ids.SCORER_INPUT, "K. Singh")
+    harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
+    harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+    view.lap_km_spin.SetValue(8.0)
+
+
 # ------------------------------------------------------------- opening
 
 
@@ -221,6 +238,44 @@ def test_ride_setup_dlg_cap_chk_starts_unticked_with_cap_spin_disabled(
     assert cap_spin_enabled is False
 
 
+# --------------------------------- radio labels & the teams default
+
+
+def test_ride_setup_dlg_radio_labels_declare_teams_as_the_entry_default(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """solo_radio drops '(default)'; mixed_radio carries it (R-11)."""
+    dialog, _view = _show(xrc_resource, _mixed_pooled_roster())
+
+    try:
+        solo_label = harness.find_control(dialog, ids.SOLO_RADIO).GetLabel()
+        mixed_label = harness.find_control(dialog, ids.MIXED_RADIO).GetLabel()
+    finally:
+        harness.close_window(dialog)
+
+    assert (solo_label, mixed_label) == ("Solo riders only", "Solo + teams (default)")
+
+
+def test_ride_setup_dlg_bare_xrc_load_checks_mixed_radio_as_the_entry_default(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A bare XRC load honours mixed_radio's <value>1</value> (R-11).
+
+    Loaded without ``RideSetup`` so no roster-driven
+    ``show_entry_settings`` push can mask what setup.xrc itself
+    declares -- solo_radio carries no <value> any more.
+    """
+    dialog = harness.load_window_verified(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
+
+    try:
+        solo_checked = harness.find_control(dialog, ids.SOLO_RADIO).GetValue()
+        mixed_checked = harness.find_control(dialog, ids.MIXED_RADIO).GetValue()
+    finally:
+        harness.close_window(dialog)
+
+    assert (solo_checked, mixed_checked) == (False, True)
+
+
 # ---------------------------------------------------------------- OK
 
 
@@ -229,13 +284,7 @@ def test_ride_setup_dlg_ok_with_valid_values_yields_the_built_config(
 ) -> None:
     """wxID_OK with a fully valid form builds the exact RideConfig."""
     dialog, view = _show(xrc_resource, _mixed_pooled_roster())
-
-    harness.type_text(dialog, ids.NAME_INPUT, "GORBA EPIC 2026")
-    harness.type_text(dialog, ids.VENUE_INPUT, "Sea to Sky Gondola")
-    harness.type_text(dialog, ids.ORGANIZER_INPUT, "GORBA")
-    harness.type_text(dialog, ids.SCORER_INPUT, "K. Singh")
-    harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
-    harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+    _fill_setup_minimums(dialog, view)
     picked_date = wx.DateTime()
     picked_date.Set(20, 8, 2026)  # day, month (0-based: 8 == Sep), year
     view.date_picker.SetValue(picked_date)
@@ -256,6 +305,7 @@ def test_ride_setup_dlg_ok_with_valid_values_yields_the_built_config(
         config.venue,
         config.organizer,
         config.scorer,
+        config.lap_km,
         config.planned_duration_s,
         config.min_lap_s,
         config.entry_mode,
@@ -267,6 +317,7 @@ def test_ride_setup_dlg_ok_with_valid_values_yields_the_built_config(
         "Sea to Sky Gondola",
         "GORBA",
         "K. Singh",
+        8.0,
         21600,
         1080,
         EntryMode.MIXED,
@@ -325,6 +376,33 @@ def test_ride_setup_dlg_ok_given_a_zero_duration_leaves_the_dialog_open(
     assert config_after is None
 
 
+def test_ride_setup_dlg_ok_given_a_missing_minimum_setup_field_leaves_the_dialog_open(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A minimum-setup refusal (R-20) shows the infobar, never closes.
+
+    Parsing succeeds ("6:00"/"18:00") so the refusal is the minimum-
+    setup gate itself: every blank field (and the fresh 0.0 lap_km)
+    is reported on :data:`SETUP_INFOBAR` and the dialog stays open --
+    the same shape as the parse/bound refusals above.
+    """
+    dialog, view = _show(xrc_resource, _mixed_pooled_roster())
+    harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
+    harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+
+    try:
+        harness.click(dialog, "wxID_OK")
+        shown_after = dialog.IsShown()
+        infobar_shown = harness.find_control(dialog, SETUP_INFOBAR).IsShown()
+        config_after = view.config
+    finally:
+        harness.close_window(dialog)
+
+    assert shown_after is True
+    assert infobar_shown is True
+    assert config_after is None
+
+
 # ------------------------------------------------------ tie-break list
 
 
@@ -347,8 +425,7 @@ def test_ride_setup_dlg_ok_reads_tiebreak_lists_current_order(
 ) -> None:
     """A reordered tiebreak_list submits in its own current order."""
     dialog, view = _show(xrc_resource, _mixed_pooled_roster())
-    harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
-    harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+    _fill_setup_minimums(dialog, view)
     view.tiebreak_list.SetStrings(["Total time", "Most laps", "High-card draw"])
 
     try:
@@ -388,12 +465,10 @@ def test_ride_setup_dlg_ok_invokes_on_submitted_with_the_built_config(
     dialog = harness.load_window_verified(xrc_resource, ids.RIDE_SETUP_DLG, frame=False)
     submitted: list[RideConfig] = []
     try:
-        RideSetup(dialog, roster=_mixed_pooled_roster(), on_submitted=submitted.append)
+        view = RideSetup(dialog, roster=_mixed_pooled_roster(), on_submitted=submitted.append)
         dialog.Show()
         harness.pump()
-        harness.type_text(dialog, ids.NAME_INPUT, "GORBA EPIC 2026")
-        harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
-        harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+        _fill_setup_minimums(dialog, view)
 
         harness.click(dialog, "wxID_OK")
     finally:

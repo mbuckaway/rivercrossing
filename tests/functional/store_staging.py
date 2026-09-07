@@ -88,10 +88,15 @@ class ResumeRideSpec:
 def append_ride_events(store: Store, ride_id: int, spec: ResumeRideSpec) -> None:
     """Append start (and finish+reopen) events for the replay state.
 
-    The events are produced by a real engine over an empty roster with
-    the ride's own shape, exactly as ``store.roster_for`` will rebuild
-    it at launch -- the store persists only the events, and
+    The events are produced by a real engine over a one-rider roster
+    with the ride's own shape, exactly as ``store.roster_for`` will
+    rebuild it at launch -- the store persists only the events, and
     ``load_engine`` reproduces the state by replaying them (E5.1.2).
+    The staged roster carries one rider (the solo ``12`` of
+    :func:`library_roster`'s shape) because the R-79 start gate
+    refuses a riderless ``engine.start``; the roster itself is never
+    saved, so a resumed ride still reads the store's own (empty)
+    roster until the library Open replaces it.
     """
     if spec.start_at is None:
         return
@@ -101,6 +106,9 @@ def append_ride_events(store: Store, ride_id: int, spec: ResumeRideSpec) -> None
         plate_model=config.plate_model,
         max_team_size=config.max_team_size,
     )
+    # R-79: the start gate refuses a riderless roster, so the staging
+    # engine carries one solo entry (the library_roster "12" shape).
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12")
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     engine = RideEngine(config=config, shoe=shoe, clock=lambda: spec.start_at, roster=roster)
     store.append(ride_id, engine.start(at=spec.start_at))

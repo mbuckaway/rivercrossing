@@ -184,7 +184,10 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="File",
         label="Back Up Database…",
         ids=("mi_backup_now",),
-        kind=TargetKind.COMMAND,  # OS-native save dialog -- no app window
+        # R-54 manual backup: writes one timestamped copy into the
+        # <db>.backups/ sibling directory and posts the path -- no
+        # OS-native save dialog, no app window.
+        kind=TargetKind.COMMAND,
         target="backup_database",
         enabled_when=ALWAYS,  # "always"
     ),
@@ -217,8 +220,10 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="Ride",
         label="Start Ride",
         ids=("mi_start_ride",),
-        # Branches on existing data (-> continue_or_new_dlg) rather than
-        # reaching one fixed target; the common case starts directly.
+        # ux-polish: the app.py route handler fires the live
+        # presenter's on_start; the engine's own start gate refuses an
+        # empty roster / incomplete setup (StartBlockedError). The
+        # former continue_or_new_dlg branch retired with that dialog.
         kind=TargetKind.COMMAND,
         target="start_ride",
         enabled_when=Enablement(

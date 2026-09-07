@@ -15,6 +15,17 @@ that boundary (and everything ``theme.apply``/``ThemeController``
 touch beyond it) is proven only by the real, spawned-subprocess
 scenarios in ``tests/functional/test_theme.py`` instead (mirrors
 ``test_cards_imagelist.py``'s own split for ``CardImageList``).
+
+ux-polish: :func:`theme.apply_light_mode_panel_bg` follows the same
+split. Its Light decision keys off ``wx.SystemSettings.
+GetAppearance()``, which needs a live ``wx.App`` (measured -- calling
+it headless raises ``PyNoAppError``), so the unit tests below drive
+the decision through a monkeypatched ``theme.require_wx`` returning a
+fake wx module and a plain-object fake dialog, exactly as
+:func:`theme.apply`'s own capability-guard tests patch ``wx.PyApp``.
+The real-wx proof -- ``ride_setup_dlg`` carries the panel tone in a
+Light appearance -- lives in the spawned-subprocess scenarios in
+``tests/functional/test_theme.py``.
 """
 
 import re
@@ -179,3 +190,95 @@ def test_apply_returns_none_when_wx_pyapp_appearance_is_absent(
     result = theme.apply(_FakeThemeApp(), theme.ThemeMode.DARK)
 
     assert result is None
+
+
+# --- apply_light_mode_panel_bg: the light-only panel tint (ux-polish)
+#
+# The Light decision is ``not wx.SystemSettings.GetAppearance().
+# IsDark()``: measured at the pinned wxPython 4.3.1, GetAppearance()
+# returns a wx.SystemAppearance that exposes IsDark()/IsSystemDark()/
+# IsUsingDarkBackground()/GetName()/AreAppsDark but NO IsLight()
+# (theme.py's own helper docstring records the measurement). The
+# functional suite's scenarios already read live theme results with
+# the identical probe -- ``GetAppearance().IsDark()`` -- so these
+# tests pin the helper's branch decision through a fake wx module,
+# never a real wx.App (module docstring).
+
+
+class _FakePanelDialog:
+    """A wx.Dialog double recording every SetBackgroundColour call."""
+
+    def __init__(self) -> None:
+        self.backgrounds: list[object] = []
+
+    def SetBackgroundColour(self, colour: object) -> None:  # noqa: N802 -- wx.Window's own API name, what the helper calls
+        self.backgrounds.append(colour)
+
+
+class _FakeAppearance:
+    """A wx.SystemAppearance double with one fixed dark/light state."""
+
+    def __init__(self, *, dark: bool) -> None:
+        self._dark = dark
+
+    def IsDark(self) -> bool:  # noqa: N802 -- wx.SystemAppearance's own API name, what the helper calls
+        return self._dark
+
+
+class _FakeSystemSettings:
+    """A wx.SystemSettings double returning one fixed appearance."""
+
+    def __init__(self, *, dark: bool) -> None:
+        self._appearance = _FakeAppearance(dark=dark)
+
+    def GetAppearance(self) -> _FakeAppearance:  # noqa: N802 -- wx.SystemSettings's own API name, what the helper calls
+        return self._appearance
+
+
+class _FakeWx:
+    """A minimal wx double: an appearance probe plus a Colour factory.
+
+    ``Colour`` echoes its RGB arguments unchanged, so the recorded
+    dialog background equals the exact RGB the helper asked for.
+    """
+
+    def __init__(self, *, dark: bool) -> None:
+        self.SystemSettings = _FakeSystemSettings(dark=dark)
+        self.colour_rgb: list[tuple[int, int, int]] = []
+
+    def Colour(self, red: int, green: int, blue: int) -> tuple[int, int, int]:  # noqa: N802 -- wx.Colour's own API name, what the helper calls
+        self.colour_rgb.append((red, green, blue))
+        return (red, green, blue)
+
+
+def test_apply_light_mode_panel_bg_given_light_appearance_sets_the_panel_tone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Light appearance (Light radio, or System on a light OS): tint."""
+    dialog = _FakePanelDialog()
+    fake_wx = _FakeWx(dark=False)
+    monkeypatch.setattr(theme, "require_wx", lambda: fake_wx)
+
+    theme.apply_light_mode_panel_bg(dialog)
+
+    assert dialog.backgrounds == [tuple(theme._LIGHT_PANEL_BG)]
+    assert fake_wx.colour_rgb == [tuple(theme._LIGHT_PANEL_BG)]
+
+
+def test_apply_light_mode_panel_bg_given_dark_appearance_leaves_background_native(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dark appearance (Dark radio, or System on a dark OS): no-op."""
+    dialog = _FakePanelDialog()
+    fake_wx = _FakeWx(dark=True)
+    monkeypatch.setattr(theme, "require_wx", lambda: fake_wx)
+
+    theme.apply_light_mode_panel_bg(dialog)
+
+    assert dialog.backgrounds == []
+    assert fake_wx.colour_rgb == []
+
+
+def test_light_panel_bg_constant_is_the_neutral_light_grey_tone() -> None:
+    """The panel tone is a single neutral light grey, not white."""
+    assert theme._LIGHT_PANEL_BG == (230, 230, 230)

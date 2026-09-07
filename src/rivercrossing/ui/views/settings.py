@@ -6,9 +6,11 @@ renders the current :class:`AppSettings` into the appearance radios,
 the sound/hide-times checkboxes and the zoom choice, and OK collects a
 fresh :class:`AppSettings` for the app's ``on_save`` callback (which
 persists + applies it -- the appearance mirror to the View-menu
-radios). ``backup_now_btn`` stays inert: File ▸ Back Up Database… is a
-later epic's task, and wiring a button to nothing would fake a feature
-(settings.xrc's own comment).
+radios). ux-polish wires ``backup_now_btn``: the app hands this view
+an ``on_backup_now`` callback that runs the real R-54 manual backup
+(File ▸ Back Up Database…'s own action) and surfaces the written path
+or failure, so the button is no longer an inert fake (settings.xrc's
+own comment predates the wiring).
 """
 
 from typing import TYPE_CHECKING, Any
@@ -31,17 +33,21 @@ class SettingsDialog:
 
     Implements ``SettingsView`` (module-skeletons.md's presenter
     contract) directly on the dialog's own controls: ``show_settings``
-    renders the current :class:`AppSettings`, and OK collects a fresh
-    one (carrying over the two layout fields, which have no control)
-    and hands it to ``on_save``.
+    renders the current :class:`AppSettings`, OK collects a fresh one
+    (carrying over the two layout fields, which have no control) and
+    hands it to ``on_save``, and ``backup_now_btn`` fires the app's
+    ``on_backup_now`` seam (ux-polish: the R-54 manual backup File ▸
+    Back Up Database… runs; the dialog stays open so the operator can
+    keep editing).
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (dialog, settings, on_save, on_backup_now): the view's four construction seams
         self,
         dialog: wx.Dialog,
         *,
         settings: AppSettings,
         on_save: Callable[[AppSettings], None],
+        on_backup_now: Callable[[], None],
     ) -> None:
         """Decorate an already-loaded ``settings_dlg`` window.
 
@@ -53,9 +59,13 @@ class SettingsDialog:
                 whatever OK collects.
             on_save: Called with the collected settings when OK is
                 clicked; the app bootstrap wires it to persist + apply.
+            on_backup_now: Called when ``backup_now_btn`` is clicked;
+                the app bootstrap wires it to run the manual database
+                backup and surface the written path (or failure).
         """
         self.dialog = dialog
         self.on_save = on_save
+        self.on_backup_now = on_backup_now
 
         self.system_radio = self._find(ids.APPEARANCE_SYSTEM_RADIO, wx.RadioButton)
         self.light_radio = self._find(ids.APPEARANCE_LIGHT_RADIO, wx.RadioButton)
@@ -63,9 +73,11 @@ class SettingsDialog:
         self.sound_chk = self._find(ids.SOUND_CHK, wx.CheckBox)
         self.hide_times_chk = self._find(ids.HIDE_TIMES_CHK, wx.CheckBox)
         self.zoom_choice = self._find(ids.ZOOM_CHOICE, wx.Choice)
+        self.backup_now_btn = self._find(ids.BACKUP_NOW_BTN, wx.Button)
 
         self.show_settings(settings)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_backup_now, self.backup_now_btn)
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -109,6 +121,16 @@ class SettingsDialog:
             splitter_sash=self._settings.splitter_sash,
             window_geometry=self._settings.window_geometry,
         )
+
+    def _on_backup_now(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx handler signature
+        """Run the app's manual-backup seam (ux-polish, R-54).
+
+        The dialog stays open after the backup, exactly as a real
+        settings panel behaves: the app's callback writes the backup
+        and surfaces the path (or failure) on the main frame's status
+        bar, and the operator keeps or closes the dialog as usual.
+        """
+        self.on_backup_now()
 
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx handler signature; EndModal is explicit, no Skip needed
         """Collect the controls, fire ``on_save``, then end the modal.

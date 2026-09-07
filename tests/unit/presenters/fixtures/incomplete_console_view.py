@@ -17,11 +17,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from rivercrossing.ride import RideStatus
     from rivercrossing.ui.presenters.console import ConsoleView
-    from rivercrossing.ui.presenters.data_source import Counters, FeedRow
+    from rivercrossing.ui.presenters.data_source import Counters, FeedRow, RiderRow
 
 
 class IncompleteConsoleView:
-    """Every ``ConsoleView`` member except ``play``."""
+    """Every ``ConsoleView`` member except ``play``.
+
+    WS-D/WS-H members (``set_clock_fractions``, ``show_flagged``,
+    ``show_riders``) are included so the mypy failure names ``play``
+    alone.
+    """
 
     def show_feed(self, rows: list[FeedRow]) -> None:
         """No-op fixture stub."""
@@ -54,6 +59,15 @@ class IncompleteConsoleView:
         """No-op fixture stub."""
 
     def set_entry_locked(self, *, locked: bool) -> None:
+        """No-op fixture stub."""
+
+    def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
+        """No-op fixture stub."""
+
+    def show_flagged(self, rows: list[FeedRow]) -> None:
+        """No-op fixture stub."""
+
+    def show_riders(self, rows: list[RiderRow]) -> None:
         """No-op fixture stub."""
 
 

@@ -76,8 +76,15 @@ MAIN_FRAME = WindowSpec(
     controls=(
         ids.RIDE_NAME_LBL,
         ids.RIDE_STATUS_LBL,
+        # WS-D/WS-H: the code-side gauge slots and the review notebook
+        # (elapsed_clock_panel/remaining_clock_panel/ride_status_panel
+        # are XRC placeholder panels for RaceClock/StopLight, and the
+        # notebook hosts flagged_list/review_btn/console_riders_list).
+        ids.RIDE_STATUS_PANEL,
         ids.CLOCK_ELAPSED_LBL,
         ids.CLOCK_REMAINING_LBL,
+        ids.ELAPSED_CLOCK_PANEL,
+        ids.REMAINING_CLOCK_PANEL,
         ids.START_BTN,
         ids.ARM_STOP_CHK,
         ids.STOP_BTN,
@@ -91,8 +98,10 @@ MAIN_FRAME = WindowSpec(
         ids.CARDS_COUNT_LBL,
         ids.ON_COURSE_LBL,
         ids.SHOE_LBL,
+        ids.REVIEW_NOTEBOOK,
         ids.FLAGGED_LIST,
         ids.REVIEW_BTN,
+        ids.CONSOLE_RIDERS_LIST,
         ids.MAIN_STATUSBAR,
     ),
     buttons=(ids.START_BTN, ids.STOP_BTN, ids.RECORD_BTN, ids.UNDO_BTN, ids.REVIEW_BTN),
@@ -177,14 +186,6 @@ REOPEN_RIDE_DLG = WindowSpec(
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
-CONTINUE_OR_NEW_DLG = WindowSpec(
-    name=ids.CONTINUE_OR_NEW_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(ids.MESSAGE_LBL, WX_ID_CANCEL, ids.ARCHIVE_NEW_BTN, ids.CONTINUE_BTN),
-    buttons=(WX_ID_CANCEL, ids.ARCHIVE_NEW_BTN, ids.CONTINUE_BTN),
-)
-
 RESUME_DLG = WindowSpec(
     name=ids.RESUME_DLG,
     xrc_file="dialogs.xrc",
@@ -210,6 +211,19 @@ EXIT_CONFIRM_DLG = WindowSpec(
     is_frame=False,
     controls=(WX_ID_OK, WX_ID_CANCEL),
     buttons=(WX_ID_OK, WX_ID_CANCEL),
+)
+
+# ux-polish: the no-ride prompt that replaced continue_or_new_dlg at
+# the store-backed bootstrap. Like resume_dlg it has two custom
+# buttons and no std sizer: open_library_btn is the secondary (and
+# Escape's target, via dialogs.wire_escape_to) and create_ride_btn
+# the primary; the app bootstrap wires both.
+NO_RIDE_DLG = WindowSpec(
+    name=ids.NO_RIDE_DLG,
+    xrc_file="dialogs.xrc",
+    is_frame=False,
+    controls=(ids.MESSAGE_LBL, ids.OPEN_LIBRARY_BTN, ids.CREATE_RIDE_BTN),
+    buttons=(ids.OPEN_LIBRARY_BTN, ids.CREATE_RIDE_BTN),
 )
 
 # --- xrc-windows section C: riders, corrections & cards ---------------
@@ -265,6 +279,11 @@ RIDER_ISSUES_DLG = WindowSpec(
 
 # --- xrc-windows section C: Phase 4 teams editor ---
 
+# The reworked three-pane editor: Team | Riders | Logo columns, with
+# add_btn anchoring the right pane's bottom and the save_btn /
+# remove_btn / wxID_CLOSE row on the left pane's (teams.xrc). The
+# logo preview is the real-bitmap logo_bmp (the Phase 4 logo_preview
+# control was replaced by it in the rework).
 TEAM_EDITOR_DLG = WindowSpec(
     name=ids.TEAM_EDITOR_DLG,
     xrc_file="teams.xrc",
@@ -275,19 +294,19 @@ TEAM_EDITOR_DLG = WindowSpec(
         ids.NAME_INPUT,
         ids.RELAY_PLATE_INPUT,
         ids.NOTES_INPUT,
-        ids.LOGO_PREVIEW,
+        ids.LOGO_BMP,
         ids.PICK_CARD_BTN,
         ids.IMAGE_BTN,
         ids.MEMBERS_LIST,
-        ids.ADD_BTN,
-        ids.REMOVE_BTN,
         ids.SAVE_BTN,
+        ids.REMOVE_BTN,
+        ids.ADD_BTN,
         WX_ID_CLOSE,
     ),
     buttons=(
-        ids.ADD_BTN,
-        ids.REMOVE_BTN,
         ids.SAVE_BTN,
+        ids.REMOVE_BTN,
+        ids.ADD_BTN,
         ids.PICK_CARD_BTN,
         ids.IMAGE_BTN,
         WX_ID_CLOSE,
@@ -469,10 +488,10 @@ WINDOWS: tuple[WindowSpec, ...] = (
     FINISH_CONFIRM_DLG,
     DUPLICATE_RIDE_DLG,
     REOPEN_RIDE_DLG,
-    CONTINUE_OR_NEW_DLG,
     RESUME_DLG,
     EXIT_RUNNING_DLG,
     EXIT_CONFIRM_DLG,
+    NO_RIDE_DLG,
     RIDER_EDITOR_DLG,
     CSV_PREVIEW_DLG,
     RIDER_ISSUES_DLG,

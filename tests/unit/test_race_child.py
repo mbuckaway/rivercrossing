@@ -408,3 +408,83 @@ def test_running_ride_with_roster_stages_a_team_relay_ride(
     assert loaded.plate_model.value == "team_relay"
     assert loaded.entry_mode.value == "mixed"
     assert loaded.entries == ()
+
+
+# --- append_ride_events' staging arms clear the R-79 start gate -----
+
+
+def test_append_ride_events_start_arm_stages_a_start_over_a_rostered_engine(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """Start staging runs a real ``engine.start`` that R-79 must allow.
+
+    ``append_ride_events`` produces the start event with a real
+    ``RideEngine.start()`` call, so the staged roster has to clear the
+    start gate (one rider) -- the resume/quit/exit scenarios all stage
+    this way, and the gate now refuses a riderless roster.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.create_resumed_ride(
+        db_path,
+        store_staging_module.ResumeRideSpec(
+            quit_cleanly=True,
+            start_at=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- local, staged actual_start
+        ),
+    )
+    with sqlite3.connect(str(db_path)) as conn:
+        actions = [
+            row[0]
+            for row in conn.execute(
+                "SELECT action FROM audit WHERE ride_id = ? ORDER BY id", (ride_id,)
+            )
+        ]
+
+    assert actions == ["start"]
+
+
+def test_append_ride_events_finish_and_reopen_arm_stages_all_three_events(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """The finish+reopen arm stages all three events the same way.
+
+    The engine must clear the R-79 start gate for the start, then
+    finish and reopen over the same staged roster.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.create_resumed_ride(
+        db_path,
+        store_staging_module.ResumeRideSpec(
+            quit_cleanly=True,
+            start_at=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- local, staged actual_start
+            finish_and_reopen=True,
+        ),
+    )
+    with sqlite3.connect(str(db_path)) as conn:
+        actions = [
+            row[0]
+            for row in conn.execute(
+                "SELECT action FROM audit WHERE ride_id = ? ORDER BY id", (ride_id,)
+            )
+        ]
+
+    assert actions == ["start", "finish", "reopen"]
+
+
+def test_append_ride_events_without_start_at_appends_no_ride_events(
+    store_staging_module: ModuleType, tmp_path: Path
+) -> None:
+    """No ``start_at``: the helper returns before any engine starts.
+
+    The resume-dialog wording scenarios stage this way; nothing may
+    hit the engine (R-79 cannot refuse what never starts).
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = store_staging_module.create_resumed_ride(
+        db_path, store_staging_module.ResumeRideSpec(quit_cleanly=True)
+    )
+    with sqlite3.connect(str(db_path)) as conn:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM audit WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+
+    assert count == 0

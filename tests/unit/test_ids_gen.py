@@ -132,6 +132,7 @@ def test_scan_xrc_directory_unknown_suffix_warns_and_known_suffixes_do_not() -> 
         "gorba_link",
         "selftest_output",
         "main_splitter",
+        "review_notebook",
     ],
 )
 def test_suffix_warnings_canvas_only_suffix_produces_no_warning(name: str) -> None:

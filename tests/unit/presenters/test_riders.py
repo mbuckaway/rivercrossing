@@ -11,15 +11,16 @@ every call, in order, with its exact arguments -- no
 ``unittest.mock`` is needed since this presenter touches no I/O
 boundary (T-10).
 
-The 2026-08-09 follow-on decision lets Add/Save build teams one
-rider at a time: "New team..." and joining an existing team both
-compose ``Roster.create_team_entry_of_one`` -- not
-``create_solo_entry`` + ``move_rider`` as first proposed, since
-``move_rider`` rejects a solo entry on either side unconditionally
-(see ``tests/unit/test_roster.py``'s
+Joining an existing team composes ``Roster.create_team_entry_of_one``
+-- not ``create_solo_entry`` + ``move_rider`` as first proposed,
+since ``move_rider`` rejects a solo entry on either side
+unconditionally (see ``tests/unit/test_roster.py``'s
 ``test_move_rider_into_a_solo_entry_raises_invalid_move_error`` and
-its two siblings) -- with ``Roster.move_rider`` to fold into an
-existing team, rolling the transient team back on a refused move.
+its two siblings) -- with ``Roster.move_rider`` to fold into the
+target team, rolling the transient team back on a refused move. The
+"New team..." sentinel is retired on topic/ux-polish: team_choice
+lists solo then every team, never a new-team entry, and this suite
+pins that sentinel-less shape (``_team_choices`` below).
 """
 
 from __future__ import annotations
@@ -34,7 +35,6 @@ from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, EntryType, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.presenters.riders import (
-    NEW_TEAM_CHOICE,
     SOLO_TEAM_CHOICE,
     CsvConflict,
     CsvPreview,
@@ -53,17 +53,11 @@ _FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "csv"
 
 
 class RecordingRidersView:
-    """A complete ``RidersView`` spy recording each call, in order.
-
-    ``new_team_name`` is the canned return for ``prompt_new_team_name``
-    -- ``None`` reproduces the operator cancelling the native prompt the
-    view builds next session (R-20's "New team..." flow).
-    """
+    """A complete ``RidersView`` spy recording each call, in order."""
 
     def __init__(self) -> None:
-        """Start with an empty call log and a cancelled team prompt."""
+        """Start with an empty call log."""
         self.calls: list[tuple[str, tuple[object, ...]]] = []
-        self.new_team_name: str | None = None
 
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the rendered riders_list rows."""
@@ -98,11 +92,6 @@ class RecordingRidersView:
     def show_validation(self, message: str) -> None:
         """Record a refused-operation message."""
         self.calls.append(("show_validation", (message,)))
-
-    def prompt_new_team_name(self) -> str | None:
-        """Record the prompt and return the canned ``new_team_name``."""
-        self.calls.append(("prompt_new_team_name", ()))
-        return self.new_team_name
 
 
 def _draft_solo_roster() -> Roster:
@@ -181,7 +170,7 @@ def test_riders_presenter_init_given_mixed_roster_calls_view_in_order() -> None:
                 ],
             ),
         ),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers", NEW_TEAM_CHOICE],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers"],)),
         ("set_team_ui_visible", (True,)),
         ("show_form", ("79", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
@@ -311,7 +300,7 @@ def test_on_add_given_a_solo_form_refreshes_rows_and_prefills_the_next_plate() -
 
     assert view.calls == [
         ("show_riders", ([RiderRow(plate="1", name="Sam Ellis", team=None)],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
         ("show_form", ("2", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
     ]
@@ -340,85 +329,6 @@ def test_on_add_given_a_duplicate_plate_leaves_the_roster_unchanged() -> None:
     )
 
     assert [entry.display_name for entry in roster.entries] == ["Sam Ellis"]
-
-
-def test_on_add_given_new_team_choice_cancelled_is_a_no_op() -> None:
-    """Cancelling "New team..." performs no mutation (R-20)."""
-    view = RecordingRidersView()
-    view.new_team_name = None
-    presenter = RidersPresenter(view, Roster(entry_mode=EntryMode.MIXED))
-    view.calls.clear()
-
-    presenter.on_add(
-        RiderFormValues(plate="1", first_name="A.", last_name="Roy", team=NEW_TEAM_CHOICE)
-    )
-
-    assert view.calls == [("prompt_new_team_name", ())]
-
-
-def test_on_add_given_new_team_choice_cancelled_creates_no_entry() -> None:
-    """A cancelled "New team..." prompt leaves the roster empty."""
-    view = RecordingRidersView()
-    view.new_team_name = None
-    roster = Roster(entry_mode=EntryMode.MIXED)
-    presenter = RidersPresenter(view, roster)
-
-    presenter.on_add(
-        RiderFormValues(plate="1", first_name="A.", last_name="Roy", team=NEW_TEAM_CHOICE)
-    )
-
-    assert roster.entries == ()
-
-
-def test_on_add_given_new_team_choice_with_a_name_creates_a_size_one_team() -> None:
-    """A new team may start at size one now (E3.2, R-12 deferred)."""
-    view = RecordingRidersView()
-    view.new_team_name = "Wolf Pack"
-    roster = Roster(entry_mode=EntryMode.MIXED)
-    presenter = RidersPresenter(view, roster)
-
-    presenter.on_add(
-        RiderFormValues(plate="1", first_name="A.", last_name="Roy", team=NEW_TEAM_CHOICE)
-    )
-
-    entry = roster.entries[0]
-    assert (entry.display_name, [r.full_name for r in entry.riders]) == ("Wolf Pack", ["A. Roy"])
-
-
-def test_on_add_given_new_team_choice_in_relay_uses_the_form_plate_as_entry_plate() -> None:
-    """A new team_relay team's plate is the form's plate (E3.2)."""
-    view = RecordingRidersView()
-    view.new_team_name = "Wolf Pack"
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
-    presenter = RidersPresenter(view, roster)
-
-    presenter.on_add(
-        RiderFormValues(plate="5", first_name="A.", last_name="Roy", team=NEW_TEAM_CHOICE)
-    )
-
-    entry = roster.entries[0]
-    assert (entry.plate, entry.riders[0].plate) == ("5", None)
-
-
-def test_on_add_given_new_team_choice_with_a_name_refreshes_and_prefills() -> None:
-    """A successful new-team add re-renders rows and resets the form."""
-    view = RecordingRidersView()
-    view.new_team_name = "Wolf Pack"
-    roster = Roster(entry_mode=EntryMode.MIXED)
-    presenter = RidersPresenter(view, roster)
-    view.calls.clear()
-
-    presenter.on_add(
-        RiderFormValues(plate="1", first_name="A.", last_name="Roy", team=NEW_TEAM_CHOICE)
-    )
-
-    assert view.calls == [
-        ("prompt_new_team_name", ()),
-        ("show_riders", ([RiderRow(plate="1", name="A. Roy", team="Wolf Pack")],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Wolf Pack", NEW_TEAM_CHOICE],)),
-        ("show_form", ("2", "", "", SOLO_TEAM_CHOICE)),
-        ("set_delete_enabled", (False,)),
-    ]
 
 
 def test_on_add_given_an_existing_pooled_team_name_joins_the_team() -> None:
@@ -750,7 +660,7 @@ def test_on_save_given_the_same_relay_plate_stays_a_silent_no_op() -> None:
                 ],
             ),
         ),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers", NEW_TEAM_CHOICE],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers"],)),
     ]
 
 
@@ -767,7 +677,7 @@ def test_on_save_refreshes_the_rows_after_renaming() -> None:
 
     assert view.calls == [
         ("show_riders", ([RiderRow(plate="123", name="Samuel Ellis", team=None)],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
     ]
 
 
@@ -867,10 +777,10 @@ def test_on_delete_prefills_the_next_free_plate_after_deleting() -> None:
         unique=True,
     )
 )
-def test_team_choices_given_n_teams_always_wraps_them_in_the_two_sentinels(
+def test_team_choices_given_n_teams_is_solo_then_every_team_in_order(
     team_names: list[str],
 ) -> None:
-    """_team_choices always wraps solo/new-team, for any N (T-7)."""
+    """_team_choices is exactly [solo, *teams] -- no sentinel (T-7)."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     # logic-coverage-exempt: T-8 -- this loop is pure Arrange (building
     # a Hypothesis-sized roster fixture), not decision logic; the one
@@ -886,7 +796,7 @@ def test_team_choices_given_n_teams_always_wraps_them_in_the_two_sentinels(
 
     choices = _team_choices(roster)
 
-    assert (choices[0], choices[-1]) == (SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE)
+    assert choices == [SOLO_TEAM_CHOICE, *team_names]
 
 
 @given(
@@ -1209,5 +1119,5 @@ def test_riders_presenter_refresh_re_renders_rows_and_team_choices() -> None:
 
     assert view.calls == [
         ("show_riders", ([RiderRow(plate="1", name="Alex Ferreira", team=None)],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
     ]

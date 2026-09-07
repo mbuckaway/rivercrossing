@@ -126,6 +126,19 @@ class FakeConsoleView:
     def set_entry_locked(self, *, locked: bool) -> None:
         """Record the entry-lock request (unused here)."""
 
+    # WS-D/WS-H: the Protocol grew the gauge-clock and review-tab
+    # members the live presenter drives (see the "add the member once
+    # the presenter calls it" precedent above). Behavioral coverage
+    # lives in tests/unit/presenters/test_console.py; these stay no-ops.
+    def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
+        """Record the dial fractions (unused here)."""
+
+    def show_flagged(self, rows: list[FeedRow]) -> None:
+        """Record the flagged review rows (unused here)."""
+
+    def show_riders(self, rows: list[RiderRow]) -> None:
+        """Record the riders review rows (unused here)."""
+
 
 class FakeSetupView:
     """A complete ``SetupView`` implementation for headless tests."""
@@ -174,10 +187,6 @@ class FakeRidersView:
 
     def show_validation(self, message: str) -> None:
         """No-op fake."""
-
-    def prompt_new_team_name(self) -> str | None:
-        """No-op fake."""
-        return None
 
 
 class FakeResultsView:

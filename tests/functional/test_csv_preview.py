@@ -263,7 +263,6 @@ _RIDER_EDITOR_ONLY_CALLS: tuple[tuple[str, tuple[Any, ...], dict[str, Any]], ...
     ("set_delete_enabled", (), {"enabled": True}),
     ("show_form", (), {"plate": "1", "first_name": "A", "last_name": "B", "team": "— solo —"}),
     ("set_team_ui_visible", (), {"visible": True}),
-    ("prompt_new_team_name", (), {}),
 )
 
 
@@ -274,7 +273,7 @@ def test_csv_preview_dlg_rider_editor_only_members_raise_not_implemented(
 ) -> None:
     """T-5: csv_preview_dlg has none of RiderEditor's own controls.
 
-    Each of RidersView's six rider-editor-only members is genuinely
+    Each of RidersView's five rider-editor-only members is genuinely
     unreachable here (module docstring's mirror-image split) -- never
     called by this dialog's own wxID_OK handler, which only ever
     calls the CSV trio.

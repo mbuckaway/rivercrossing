@@ -18,11 +18,13 @@ build's own address-reuse hazard), while every state-mutating scenario
 runs in its own spawned interpreter via ``scenario_runner``.
 """
 
+import re
 from typing import Any
 
 import harness
 import pytest
 import scenario_runner
+import wx
 
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import RideConfig, RideEngine
@@ -31,13 +33,14 @@ from rivercrossing.ui import feed_model, ids
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import MainFrame
+from rivercrossing.ui.views.gauges import RaceClock, StopLight
 
 pytestmark = pytest.mark.functional
 
 
 def _build_live_console(
     xrc_resource: object,
-) -> tuple[MainFrame, RideEngine]:
+) -> tuple[Any, MainFrame, RideEngine, ConsolePresenter]:
     """Build a RUNNING live console over a real engine, fully wired."""
     from datetime import date, datetime  # noqa: PLC0415 -- local helper import
 
@@ -71,30 +74,40 @@ def _build_live_console(
     engine.start()
     source = EngineDataSource(engine, roster)
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    console = MainFrame(window, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    return window, console, engine
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+    except Exception:
+        # Fault A: a construct-phase raise (a degraded load, a wiring
+        # failure) must not leak the window the caller's fixture never
+        # yields -- this builder raised before returning it.
+        harness.close_window(window)
+        raise
+    return window, console, engine, presenter
 
 
 @pytest.fixture(scope="module")
-def shared_live_console(xrc_resource: object) -> tuple[Any, RideEngine]:
+def shared_live_console(xrc_resource: object) -> tuple[Any, RideEngine, ConsolePresenter]:
     """One live ``MainFrame`` for every read-only assertion below.
 
     Nothing in the read-only tests below records a crossing, arms Stop
     or mutates the feed, so one instance safely serves them all (see
-    the module docstring for why sharing matters here).
+    the module docstring for why sharing matters here). The presenter
+    is yielded too: the clock renders on its 1 s tick, and the gauge
+    test drives one tick synchronously instead of waiting on a
+    ``wx.Timer`` that never fires under a bare pump.
     """
-    window, console, engine = _build_live_console(xrc_resource)
+    window, console, engine, presenter = _build_live_console(xrc_resource)
     try:
-        yield window, engine
+        yield window, engine, presenter
     finally:
-        del console
+        del console, presenter
         harness.close_window(window)
 
 
@@ -108,19 +121,19 @@ def _feed_plates(window: Any) -> tuple[str, ...]:  # noqa: ANN401 -- wx ships no
 
 
 def test_live_console_given_a_fresh_engine_shows_an_empty_feed(
-    shared_live_console: tuple[Any, RideEngine],
+    shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
 ) -> None:
     """R-32: the feed reads from the engine, empty at startup."""
-    window, _engine = shared_live_console
+    window, _engine, _presenter = shared_live_console
 
     assert _feed_plates(window) == ()
 
 
 def test_live_console_shows_zero_counters_at_startup(
-    shared_live_console: tuple[Any, RideEngine],
+    shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
 ) -> None:
     """A fresh ride counts 0 crossings, cards, on course; full shoe."""
-    window, _engine = shared_live_console
+    window, _engine, _presenter = shared_live_console
     labels = (
         harness.find_control(window, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
         harness.find_control(window, ids.CARDS_COUNT_LBL).GetLabelText(),
@@ -132,10 +145,10 @@ def test_live_console_shows_zero_counters_at_startup(
 
 
 def test_live_console_starts_running_with_entry_enabled_and_stop_disabled(
-    shared_live_console: tuple[Any, RideEngine],
+    shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
 ) -> None:
     """R-35 gate: Stop stays disabled until Arm; entry is live."""
-    window, _engine = shared_live_console
+    window, _engine, _presenter = shared_live_console
 
     assert (
         harness.find_control(window, ids.PLATE_INPUT).IsEnabled(),
@@ -147,13 +160,81 @@ def test_live_console_starts_running_with_entry_enabled_and_stop_disabled(
 
 
 def test_live_console_clock_resolves_with_zero_elapsed_at_startup(
-    shared_live_console: tuple[Any, RideEngine],
+    shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
 ) -> None:
     """The tick labels exist and start at the XRC zeros (R-30)."""
-    window, _engine = shared_live_console
+    window, _engine, _presenter = shared_live_console
 
     assert harness.find_control(window, ids.CLOCK_ELAPSED_LBL).GetLabelText() == "0:00:00"
     assert harness.find_control(window, ids.CLOCK_REMAINING_LBL).GetLabelText() == ""
+
+
+# --- WS-D: the header gauges and the bitmap start/stop buttons --------
+
+
+def test_live_console_header_gauges_resolve_under_their_frozen_names(
+    shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
+) -> None:
+    """WS-D: the two dials and the status lamp are live custom controls.
+
+    The clock renders on the presenter's 1 s tick (a ``wx.Timer``
+    never fires under a bare pump, measured), so the Act drives one
+    ``presenter.tick()``: the RUNNING ride's real fractions must land
+    on the dials -- elapsed just started (~0.0) and remaining still
+    full (>= 0.99). The elapsed dial is not asserted at exactly 0.0:
+    it reads the real wall clock, whose fraction is genuinely
+    non-zero the instant a tick has rendered. The frozen names are
+    code-side ``SetName()`` calls -- gauges.py classes XRC cannot
+    author -- so they are found by literal here, never through
+    ``ui.ids.py``.
+    """
+    window, _engine, presenter = shared_live_console
+    elapsed = harness.find_control(window, "elapsed_clock")
+    remaining = harness.find_control(window, "remaining_clock")
+    light = harness.find_control(window, "ride_status_light")
+
+    presenter.tick()
+
+    assert isinstance(elapsed, RaceClock)
+    assert isinstance(remaining, RaceClock)
+    assert isinstance(light, StopLight)
+    # 0.01 tolerates any elapsed under 3.6 min of wall clock between
+    # the engine's start and this tick; the ride just started.
+    assert elapsed.fraction == pytest.approx(0.0, abs=0.01)
+    assert remaining.fraction >= 0.99  # ~full remaining: the ride just started
+    assert light.mode == "green"
+
+
+def test_live_console_start_stop_buttons_carry_the_go_stop_glyphs_and_labels(
+    shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
+) -> None:
+    """WS-D: start/stop are wxBitmapButton with the SVG glyphs set.
+
+    The XRC bitmap-button handler ignores label text (measured), so
+    the code re-applies the labels -- without them the buttons would
+    be icon-only and unnamed to assistive tech.
+    """
+    window, _engine, _presenter = shared_live_console
+    start = harness.find_control(window, ids.START_BTN)
+    stop = harness.find_control(window, ids.STOP_BTN)
+
+    assert isinstance(start, wx.BitmapButton)
+    assert isinstance(stop, wx.BitmapButton)
+    assert start.GetBitmap().IsOk()
+    assert stop.GetBitmap().IsOk()
+    assert start.GetLabelText() == "Start ride"
+    assert stop.GetLabelText() == "Stop ride…"
+
+
+def test_stop_light_rejects_an_unknown_mode(wx_app: object) -> None:  # noqa: ARG001 -- fixture requested for ordering
+    """WS-D: an unmapped mode fails loudly, never dims silently."""
+    parent = wx.Frame(None)
+    try:
+        light = StopLight(parent)
+        with pytest.raises(ValueError, match=re.escape("unknown stop-light mode 'purple'")):
+            light.set_mode("purple")
+    finally:
+        harness.close_window(parent)
 
 
 # --- state-mutating: subprocess scenarios (test_console_demo) ----

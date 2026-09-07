@@ -904,6 +904,39 @@ class Store:
             for row in rows
         ]
 
+    # ------------------------------------- E5.3.1 manual backup
+
+    def backup_now(self) -> Path:
+        """Write a manual backup of the open database now (R-54).
+
+        The File ▸ Back Up Database… command and the settings dialog's
+        ``backup_now_btn`` surface this: a plain ``backup.run`` call on
+        the store's own backing path -- the same write
+        :meth:`delete_ride` performs before a delete (R-18's
+        backup-first), so the manual and the automatic paths share one
+        implementation. Returns the new backup's path for the caller
+        to surface.
+
+        Returns:
+            The backup file just written.
+
+        Raises:
+            StoreError: If the store has no backing path (constructed
+                directly, not via :meth:`Store.open`), or the WAL
+                checkpoint cannot complete (a busy database --
+                ``backup.run``'s own contract).
+            FileNotFoundError: If the backing file is missing (an open
+                store's file always exists).
+        """
+        if self._path is None:
+            # logic-coverage-exempt: T-3 -- unreachable through any live
+            # construction. Every Store is built by Store.open, which
+            # always sets _path; reaching this guard requires calling
+            # __init__ directly, which this task's test contract does
+            # not do. The guard narrows _path to a real Path for mypy.
+            raise StoreError("store has no backing path; construct via Store.open")
+        return _backup_run(self._path)
+
     # -------------------------------- E5.3.2 delete guard
 
     def delete_ride(self, ride_id: int, typed_name: str) -> None:

@@ -8,19 +8,20 @@ the editor reads and writes the roster itself rather than a
 display-only projection of it. This replaces the earlier no-op
 ``(view, data_source)`` shape (E1.2.3) for this presenter only.
 
-The 2026-08-09 follow-on decision lets Add/Save build teams one
-rider at a time: "New team..." calls
+Add folds a new rider onto an existing team via
 :meth:`~rivercrossing.roster.Roster.create_team_entry_of_one` (a
 transient size-1 team, DRAFT-only, R-12's floor deferred to start
-time). Joining an *existing* team composes the same primitive with
-:meth:`~rivercrossing.roster.Roster.move_rider` -- not
-``create_solo_entry`` + ``move_rider`` as first proposed:
+time) followed by :meth:`~rivercrossing.roster.Roster.move_rider` --
+not ``create_solo_entry`` + ``move_rider`` as first proposed:
 ``move_rider`` rejects a solo entry on either side unconditionally
 (``tests/unit/test_roster.py``'s
 ``test_move_rider_into_a_solo_entry_raises_invalid_move_error`` and
 its two siblings), so the transient must itself be type TEAM. A
 refused join rolls the transient team back with ``delete_entry`` so
-the roster stays truly unchanged.
+the roster stays truly unchanged. The 2026-09-06 ux-polish follow-on
+retired the "New team…" sentinel from this editor entirely:
+``team_choice`` now offers solo or an existing team, and naming a
+brand-new team happens in the Teams editor, never here.
 
 E3.4 extends the same class with csv_preview_dlg's own three entry
 points (``on_pick_csv_import``/``on_confirm_csv_import``/
@@ -59,7 +60,6 @@ if TYPE_CHECKING:
     from rivercrossing.roster import Entry, Roster
 
 __all__ = [
-    "NEW_TEAM_CHOICE",
     "SOLO_TEAM_CHOICE",
     "CsvConflict",
     "CsvPreview",
@@ -68,11 +68,10 @@ __all__ = [
     "RidersView",
 ]
 
-# team_choice's two frozen sentinel entries (xrc-windows.md's Rider
-# Editor mock: "-- solo --" first, team display names, "New team..."
-# last).
+# team_choice's frozen first entry (xrc-windows.md's Rider Editor
+# mock: "-- solo --" first, then team display names -- the retired
+# "New team…" sentinel is gone, ux-polish).
 SOLO_TEAM_CHOICE = "— solo —"
-NEW_TEAM_CHOICE = "New team…"
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,10 +96,9 @@ class RiderFormValues:
     """The rider editor's form fields, forwarded by the view (R-20).
 
     ``team`` is always one of team_choice's literal current
-    contents: :data:`SOLO_TEAM_CHOICE`, an existing team's display
-    name, or :data:`NEW_TEAM_CHOICE` -- the view forwards whatever
-    the control currently holds verbatim, never translating it
-    (passive view).
+    contents: :data:`SOLO_TEAM_CHOICE` or an existing team's
+    display name -- the view forwards whatever the control
+    currently holds verbatim, never translating it (passive view).
     """
 
     plate: str
@@ -147,10 +145,6 @@ class RidersView(Protocol):
         """Show a refused-operation message (roster_infobar, later)."""
         ...
 
-    def prompt_new_team_name(self) -> str | None:
-        """Ask for a new team's name; None if the operator cancels."""
-        ...
-
 
 def _rider_pairs(roster: Roster) -> list[tuple[Entry, Rider]]:
     """Return every (entry, rider) pair, in riders_list's row order."""
@@ -181,9 +175,9 @@ def _rider_rows(roster: Roster) -> list[RiderRow]:
 
 
 def _team_choices(roster: Roster) -> list[str]:
-    """Return team_choice's content: solo, every team, then new-team."""
+    """Return team_choice's content: solo, then every team in order."""
     names = [entry.display_name for entry in roster.entries if entry.type is EntryType.TEAM]
-    return [SOLO_TEAM_CHOICE, *names, NEW_TEAM_CHOICE]
+    return [SOLO_TEAM_CHOICE, *names]
 
 
 class RidersPresenter:
@@ -239,15 +233,12 @@ class RidersPresenter:
 
         A refusal (duplicate plate, a team already at max size, ...)
         shows via :meth:`RidersView.show_validation` and leaves the
-        roster unchanged, never raising past this handler. A
-        cancelled "New team..." prompt is a no-op: nothing created.
+        roster unchanged, never raising past this handler.
         """
         try:
-            created = self._create_entry(form)
+            self._create_entry(form)
         except RosterError as exc:
             self.view.show_validation(str(exc))
-            return
-        if not created:
             return
         self._refresh_rows()
         self._show_add_form()
@@ -372,29 +363,14 @@ class RidersPresenter:
         """
         self._refresh_rows()
 
-    def _create_entry(self, form: RiderFormValues) -> bool:
-        """Create *form*'s entry; False if new-team prompt cancels."""
+    def _create_entry(self, form: RiderFormValues) -> None:
+        """Create *form*'s entry: solo, or folded onto a team."""
         if form.team == SOLO_TEAM_CHOICE:
             self.roster.create_solo_entry(
                 first_name=form.first_name, last_name=form.last_name, plate=form.plate
             )
-            return True
-        if form.team == NEW_TEAM_CHOICE:
-            new_name = self.view.prompt_new_team_name()
-            if new_name is None:
-                return False
-            self._create_new_team(form, new_name)
-            return True
+            return
         self._join_existing_team(form)
-        return True
-
-    def _create_new_team(self, form: RiderFormValues, team_name: str) -> None:
-        """Create a transient size-1 team named *team_name* (R-12)."""
-        rider = Rider(first_name=form.first_name, last_name=form.last_name, plate=form.plate)
-        entry_plate = form.plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
-        self.roster.create_team_entry_of_one(
-            display_name=team_name, rider=rider, plate=entry_plate
-        )
 
     def _join_existing_team(self, form: RiderFormValues) -> None:
         """Fold a new rider onto the existing team named *form.team*.

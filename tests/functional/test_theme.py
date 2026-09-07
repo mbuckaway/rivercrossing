@@ -54,6 +54,12 @@ def test_wx_pyapp_appearance_enums_exist_at_the_pinned_wx() -> None:
     behaviour test; if any of these read differently on a future
     wxWidgets pin, ``theme.py``'s design adjusts before anything else
     depends on it.
+
+    ux-polish: the last three rows pin the Light-detection probe
+    ``apply_light_mode_panel_bg`` depends on -- ``wx.SystemSettings.
+    GetAppearance()`` exists and returns a ``wx.SystemAppearance``
+    that exposes ``IsDark()`` but **no** ``IsLight()``, so Light is
+    measured as ``not IsDark()`` (theme.py's own helper docstring).
     """
     checks = (
         hasattr(wx.PyApp.Appearance, "System"),
@@ -64,9 +70,12 @@ def test_wx_pyapp_appearance_enums_exist_at_the_pinned_wx() -> None:
         hasattr(wx.PyApp.AppearanceResult, "Failure"),
         hasattr(wx.App, "Appearance"),
         hasattr(wx, "Appearance"),
+        hasattr(wx.SystemSettings, "GetAppearance"),
+        hasattr(wx.SystemAppearance, "IsDark"),
+        hasattr(wx.SystemAppearance, "IsLight"),
     )
 
-    assert checks == (True, True, True, True, True, True, True, False)
+    assert checks == (True, True, True, True, True, True, True, False, True, True, False)
 
 
 # --- live runtime switching (subprocess: appearance is global) -----
@@ -230,3 +239,62 @@ def test_theme_posts_next_launch_notice_while_zoom_applies_on_windows() -> None:
     assert data["zoom_notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
     assert data["zoom_radio_checked"] is True, result["context"]
     assert data["zoom_percent_after"] == 110, result["context"]
+
+
+# --- ux-polish: the light-mode panel background ----------------------
+#
+# The same spawned-subprocess isolation as every live-appearance
+# scenario above: the dialog tint is decided from
+# ``wx.SystemSettings.GetAppearance()``, process-global state, so the
+# probe runs in its own fresh interpreter. The scenario
+# (``ride_setup_dlg_light_panel_background``) fires the Light radio,
+# opens the real ``mi_new_ride`` route, and records the shown dialog's
+# background colour plus the live appearance.
+
+_PANEL_BG_SCENARIO = "ride_setup_dlg_light_panel_background"
+_PANEL_BG_RGBA = [*theme._LIGHT_PANEL_BG, 255]
+
+
+@_DARWIN_ONLY
+def test_ride_setup_dlg_carries_the_light_panel_background_in_light_mode_on_mac() -> None:
+    """Ride Setup opened in a Light appearance shows the panel tone.
+
+    macOS applies ``mi_theme_light`` live, so forcing it guarantees
+    ``IsDark()`` reads False while the dialog is shown, and the
+    dialog's background must then be exactly
+    ``theme._LIGHT_PANEL_BG`` (+ opaque alpha) -- the non-default
+    panel tone that keeps the native white entry boxes distinct. The
+    route also destroys the dialog after Cancel, so no stale window
+    leaks into later assertions.
+    """
+    result = scenario_runner.run_scenario(_PANEL_BG_SCENARIO)
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    assert data["dlg_shown"] is True, result["context"]
+    assert data["is_dark_at_open"] is False, result["context"]
+    assert data["panel_bg"] == _PANEL_BG_RGBA, result["context"]
+    assert data["dialog_destroyed"] is True, result["context"]
+
+
+@_WIN32_ONLY
+def test_ride_setup_dlg_background_follows_the_unchangeable_appearance_on_windows() -> None:
+    """The tint tracks the rendered appearance; a dark OS never tints.
+
+    Never asserts ``is_dark_at_open``'s absolute value -- that Windows
+    CI runner's own current OS theme is not knowable in advance, and
+    the CannotChange contract means the Light radio click cannot alter
+    it. The invariant holds on both outcomes: the dialog carries the
+    panel tone exactly when the live appearance reads Light (a Light
+    OS tints -- its entry boxes are white; a Dark OS stays fully
+    native -- dark mode is unchanged by design).
+    """
+    result = scenario_runner.run_scenario(_PANEL_BG_SCENARIO)
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    assert data["dlg_shown"] is True, result["context"]
+    assert (data["panel_bg"] == _PANEL_BG_RGBA) is (data["is_dark_at_open"] is False), result[
+        "context"
+    ]
+    assert data["dialog_destroyed"] is True, result["context"]

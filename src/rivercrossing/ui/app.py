@@ -183,6 +183,12 @@ class _RouteContext:
             the console (E5.4.1). ``None`` until a store-backed ride
             is opened -- by the resume flow (E5.2.2's Continue) or the
             library's Open -- and what File ▸ Duplicate Ride… reads.
+        library_deferred: ux-polish: set when the launch flow already
+            routed to the ride library through ``wx.CallAfter``
+            (``_resume_console_engine``'s Open-library outcome), so
+            :func:`build_main_window`'s own no-ride prompt stays
+            silent -- a resume-to-library launch must not double-prompt
+            the same Create/Open-library choice it just answered.
         settings: The live :class:`AppSettings` this launch loaded
             (E8.1.1); the layout-save callback updates it as the
             sash/geometry persist.
@@ -207,6 +213,10 @@ class _RouteContext:
     # MainFrame construction) and the currently open store ride's id.
     console_view: Any = None
     active_ride_id: int | None = None
+    # ux-polish: True once the launch flow deferred an Open library
+    # (resume_dlg's Open-library outcome); suppresses the bootstrap's
+    # no_ride_dlg, which would otherwise double-prompt the choice.
+    library_deferred: bool = False
     # E6.4.2: the most recent results export, backing Preview in
     # Browser (commands.RideState.export_exists derives from it).
     last_export_path: Path | None = None
@@ -952,7 +962,11 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # roster always matches the engine -- the resume path never
         # updates context.roster) and seed the tie-break list from
         # the ride's stored order. The E5.4.2 empty state stays for
-        # the no-presenter path (route-level tests).
+        # the no-presenter path (route-level tests). ux-polish: the
+        # results frame's reopen_btn is wired to the same
+        # _handle_reopen_ride_route flow mi_reopen_ride runs; a
+        # results window with no live ride (the empty path) gets no
+        # callback and its button stays inert.
         presenter = context.presenter
         if presenter is not None:
             ResultsWindow(
@@ -960,6 +974,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
                 data_source=presenter.source,
                 tiebreak_order=presenter.engine.config.tiebreak_order,
                 export_watermark=context.export_watermark,
+                on_reopen=lambda: _handle_reopen_ride_route(context),
             )
         else:
             ResultsWindow(window, data_source=_EMPTY_SOURCE)
@@ -968,12 +983,16 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     elif route.target == ids.SETTINGS_DLG:
         # E8.1.2: Settings renders the context's current settings and,
         # on OK, persists + applies them through the live seams (the
-        # appearance mirror to the View-menu radios). backup_now_btn
-        # stays inert -- File ▸ Back Up Database… is a later epic.
+        # appearance mirror to the View-menu radios). ux-polish wires
+        # backup_now_btn: the dialog's on_backup_now seam runs the
+        # same _handle_backup_database action File ▸ Back Up
+        # Database… fires (R-54), surfacing the written path (or
+        # failure) on the status bar.
         SettingsDialog(
             window,
             settings=context.settings,
             on_save=lambda new_settings: _apply_settings_live(context, new_settings),
+            on_backup_now=lambda: _handle_backup_database(context),
         )
     elif route.target == ids.SHORTCUTS_DLG:
         # E8.2.1: Help ▸ Keyboard Shortcuts renders the accelerator
@@ -1443,6 +1462,31 @@ def _handle_focus_tiebreak(context: _RouteContext) -> None:
         control.SetFocus()
 
 
+def _handle_backup_database(context: _RouteContext) -> None:
+    """File ▸ Back Up Database… / Settings' ``backup_now_btn``: R-54.
+
+    ux-polish's manual-backup command: with a live store open, writes
+    one timestamped backup through :meth:`Store.backup_now` and posts
+    the written path on the status bar; a failure posts the error
+    instead of crashing. The settings dialog's own button runs this
+    same handler through the ``on_backup_now`` seam ``_decorate``
+    wires. With no store open there is no database to back up -- the
+    E5.4.2 in-memory constructions get the same no-store guard notice
+    the duplicate route uses.
+    """
+    store = context.store
+    if store is None:
+        label = commands.route_for_id("mi_backup_now").label
+        context.frame.SetStatusText(f"{label} — no store is open")
+        return
+    try:
+        path = store.backup_now()
+    except Exception as exc:  # noqa: BLE001 -- a failed backup is a status notice, not a crash
+        context.frame.SetStatusText(f"Backup failed: {exc}")
+        return
+    context.frame.SetStatusText(f"Backed up database to {path}")
+
+
 def _handle_finish_route(context: _RouteContext) -> None:
     """Ride ▸ Finish Ride…: confirm, then run the finish flow (E4.4.4).
 
@@ -1611,6 +1655,102 @@ def _handle_reopen_ride_route(context: _RouteContext) -> None:
         context.frame.SetStatusText(f"{label} — not yet implemented")
         return
     presenter.on_reopen()
+
+
+# ============================ ux-polish: the last two dead Ride rows
+#
+# Ride ▸ Stop Ride… and Ride ▸ Set Start Time… were the final
+# dead-control audit's two remaining dead menu items: their DIALOG
+# targets opened through _open_target's generic path, so the dialog
+# appeared and a confirmed OK did nothing. Each now has a real
+# handler, dispatched by its dialog target in _make_route_handler via
+# _LIVE_FLOW_HANDLERS (the same target-keyed shape the E5.4.1 ride
+# confirms use): stop runs the identical confirm -> on_stop_confirmed
+# flow the console Stop button runs (R-35), set-start runs the
+# set_start_dlg form through views.corrections and applies
+# engine.set_start_time (spec §3 3d's gun-missed correction).
+
+
+def _handle_stop_ride_route(context: _RouteContext) -> None:
+    """Ride ▸ Stop Ride…: confirm, then the presenter stops (R-35).
+
+    ux-polish wires the dead row: the route opens ``stop_confirm_dlg``
+    and, on a confirmed ``wx.ID_OK``, fires the live presenter's
+    ``on_stop_confirmed`` -- the identical flow the console Stop
+    button runs through :meth:`~rivercrossing.ui.views.main_frame.
+    MainFrame._on_stop_clicked`, so the menu row and the button cannot
+    drift. The menu row carries no Arm requirement of its own (§15:
+    "Stop confirm dialog (console button additionally requires the
+    Arm checkbox)"). With no live presenter (route-level tests) a
+    notice stands in after a confirmed dialog, mirroring the reopen
+    route's presenter-less stub.
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
+
+    wx = require_wx()
+    # logic-coverage-exempt: T-3 -- the two defensive arms (a resource
+    # without the dialog; a route context without a live presenter)
+    # are unreachable in every live construction, mirroring the
+    # stop-confirm guards in main_frame.py. The cancel arm below IS
+    # driven functionally (test_menu_coverage's stop-cancel case).
+    dialog = context.resource.LoadDialog(None, ids.STOP_CONFIRM_DLG)
+    if dialog is None:
+        label = commands.route_for_id("mi_stop_ride").label
+        context.frame.SetStatusText(f"{label} — no dialog authored yet")
+        return
+    try:
+        result = dialogs.run_dialog(dialog, opener=context.frame)
+    finally:
+        if not dialog.IsBeingDeleted():
+            dialog.Destroy()
+    if result != wx.ID_OK:
+        return
+    presenter = context.presenter
+    if presenter is None:
+        label = commands.route_for_id("mi_stop_ride").label
+        context.frame.SetStatusText(f"{label} — not yet implemented")
+        return
+    presenter.on_stop_confirmed()
+
+
+def _handle_set_start_time_route(context: _RouteContext) -> None:
+    """Ride ▸ Set Start Time…: back-date the start (spec §3, 3d).
+
+    ux-polish wires the dead row: the route opens ``set_start_dlg``
+    through :func:`~rivercrossing.ui.views.corrections.
+    run_set_start_time` -- prefilled with the ride's planned start,
+    the value the operator is correcting -- and on a confirmed OK
+    applies ``engine.set_start_time(at)`` through :func:`_apply_
+    correction`'s shape: ``actual_start`` moves and lap-1 times
+    recompute; an engine refusal (any state but RUNNING -- a REOPENED
+    ride the §15 enablement still lights, say) posts
+    "Correction refused: …"; a success refreshes the console
+    (``presenter.tick``) and posts a notice. With no live engine
+    (route-level tests) the same "no ride open" notice the correction
+    routes use stands in.
+    """
+    engine = _correction_engine(context)
+    if engine is None:
+        # logic-coverage-exempt: T-3 -- no live engine is unreachable
+        # in every live construction (the menu enablement only lights
+        # the row when a console ride is threaded), mirroring the
+        # correction routes' own engine-less guards.
+        context.frame.SetStatusText("Set Start Time… — no ride open")
+        return
+    from rivercrossing.ui.views import corrections  # noqa: PLC0415 -- deferred, see app.py
+
+    at = corrections.run_set_start_time(
+        context.resource,
+        frame=context.frame,
+        prefill=engine.config.planned_start,
+    )
+    if at is None:
+        return
+    _apply_correction(
+        context,
+        lambda: engine.set_start_time(at),
+        "Start time set",
+    )
 
 
 # ========================================== E7.2.1 correction routes
@@ -1968,6 +2108,16 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
             window.Destroy()
         raise
     if is_frame:
+        # ux-polish: apply the light-mode panel tint to the results
+        # frame at open. The frame is modeless, so -- unlike the modal
+        # dialogs run_dialog tints -- it can stay open across a live
+        # macOS theme switch; re-applying (or clearing) the tint when
+        # the theme changes while it is open is deliberately out of
+        # scope (theme.apply_light_mode_panel_bg's docstring): closing
+        # and reopening re-tints. results.xrc carries its top sizer
+        # directly on the frame, so the frame background is the only
+        # surface.
+        theme.apply_light_mode_panel_bg(window)
         window.Show()
         window.Raise()
         return
@@ -1979,6 +2129,52 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     finally:
         if not window.IsBeingDeleted():
             window.Destroy()
+
+
+def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
+    """Open ``rider_editor_dlg`` over the shared roster at *plate*.
+
+    ux-polish's console Riders-tab activation flow: wired as
+    :meth:`MainFrame.set_on_open_rider`'s callback
+    (:func:`_wire_rider_open_seam`), so a double-click (or Enter) on
+    a rider row opens the editor on the live roster -- the same
+    decoration :func:`_decorate` performs for the Rider Editor route
+    -- and selects the rider's row, landing the operator on that
+    rider's form instead of the add form
+    (:meth:`RiderEditor.select_rider_by_plate`). The dialog path
+    mirrors :func:`_open_target`'s own: zoom applied before
+    decoration, shown through ``dialogs.run_dialog``, destroyed in a
+    ``finally`` (Fault A: a decoration raise must not leak it).
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+    from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415 -- deferred
+
+    window = context.resource.LoadDialog(None, ids.RIDER_EDITOR_DLG)
+    if window is None:
+        context.frame.SetStatusText("Rider Editor — no window authored yet")
+        return
+    try:
+        zoom.apply_to(window)
+        view = RiderEditor(window, roster=context.roster)
+        view.select_rider_by_plate(plate)
+        dialogs.run_dialog(window, opener=context.frame)
+    finally:
+        if not window.IsBeingDeleted():
+            window.Destroy()
+
+
+def _wire_rider_open_seam(context: _RouteContext) -> None:
+    """Wire the console Riders tab's activation to the rider editor.
+
+    ux-polish: :meth:`MainFrame.set_on_open_rider` is the view's pure
+    seam (it only fires ``callback(plate)``); this is the app's half
+    that opens the editor preselected at the activated rider's plate.
+    A console-less route-level context has nothing to wire.
+    """
+    console_view = context.console_view
+    if console_view is None:
+        return
+    console_view.set_on_open_rider(lambda plate: _open_rider_editor_for(context, plate))
 
 
 def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
@@ -2163,6 +2359,17 @@ _RIDE_CONFIRM_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
     ids.REOPEN_RIDE_DLG: _handle_reopen_ride_route,
 }
 
+# ux-polish: the two Ride ▸ rows the final dead-control audit found
+# (their DIALOG targets opened generically and a confirmed OK did
+# nothing) now dispatch by target the same way the E5.4.1 confirms
+# above do: mi_stop_ride -> the confirm -> on_stop_confirmed flow the
+# console Stop button runs (R-35), mi_set_start_time -> the
+# set_start_dlg form + engine back-date (spec §3, 3d).
+_LIVE_FLOW_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
+    ids.STOP_CONFIRM_DLG: _handle_stop_ride_route,
+    ids.SET_START_DLG: _handle_set_start_time_route,
+}
+
 
 def _export_action(target: str) -> Callable[[_RouteContext], None]:
     """Return the handler for one export target (E6.4.2 dispatch)."""
@@ -2176,6 +2383,7 @@ _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
 }
 _TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
 _TARGET_ACTIONS["focus_tiebreak_control"] = _handle_focus_tiebreak
+_TARGET_ACTIONS["backup_database"] = _handle_backup_database
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
 _TARGET_ACTIONS[ids.RIDER_ISSUES_DLG] = _handle_check_rider_issues
 _TARGET_ACTIONS["open_user_guide"] = _handle_open_user_guide
@@ -2197,7 +2405,7 @@ def _correction_route_handler(
     return None
 
 
-def _make_route_handler(  # noqa: PLR0911, C901 -- one early-return per route special case; each is a real action
+def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per route special case; each is a real action
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
     """Return the ``EVT_MENU`` handler *route* fires.
@@ -2213,17 +2421,33 @@ def _make_route_handler(  # noqa: PLR0911, C901 -- one early-return per route sp
     the live console presenter's ``on_undo`` (covering both the Cards
     ▸ Undo menu item and its Ctrl+Z accelerator); when no live
     presenter is threaded (route-level tests), it falls back to the
-    generic stub. ``finish_confirm_dlg`` (E4.4.4) opens its confirm
+    generic stub. ``start_ride`` (ux-polish) fires the live
+    presenter's ``on_start`` the same way -- the engine's own start
+    gate (empty roster, incomplete setup) refuses through
+    ``StartBlockedError`` and the presenter surfaces the notice; with
+    no presenter the fallback posts "Start Ride — no ride open".
+    ``focus_review_panel`` (ux-polish) focuses the console's
+    review-panel "Needs Review" tab through the wired console view,
+    with the generic stub standing in for a console-less route-level
+    context. ``finish_confirm_dlg`` (E4.4.4) opens its confirm
     through :func:`_handle_finish_route`, which runs
     ``presenter.on_finish`` on a confirmed OK -- the same
     presenter-first shape ``undo_last_crossing`` uses -- instead of
-    :func:`_open_target`'s generic open-and-return. ``csv_preview_dlg``
+    :func:`_open_target`'s generic open-and-return. ``stop_confirm_dlg``
+    and ``set_start_dlg`` (ux-polish) dispatch through
+    :data:`_LIVE_FLOW_HANDLERS` the same target-keyed way: Stop Ride…
+    runs the confirm -> ``presenter.on_stop_confirmed`` flow
+    (:func:`_handle_stop_ride_route`), Set Start Time… runs the
+    ``set_start_dlg`` picker form and applies ``engine.set_start_time``
+    (:func:`_handle_set_start_time_route`). ``csv_preview_dlg``
     (E3.4) is the one
     ``DIALOG`` target that needs a picker run before it opens, ahead
     of :func:`_open_target`'s generic path. ``open_user_guide``
     (E8.2.2) opens the bundled guide deep-linked to the active
     window's anchor (:func:`_handle_open_user_guide`), registered in
-    :data:`_TARGET_ACTIONS` with the export targets. Every other
+    :data:`_TARGET_ACTIONS` with the export targets and
+    ``backup_database`` (ux-polish, :func:`_handle_backup_database`).
+    Every other
     ``COMMAND`` row has no window to open and no ride engine yet to
     run its real action (EPIC 4+); it posts a status-bar notice
     instead of silently doing nothing. Every other ``WINDOW``/
@@ -2242,6 +2466,20 @@ def _make_route_handler(  # noqa: PLR0911, C901 -- one early-return per route sp
         if presenter is not None:
             return lambda _event: presenter.on_undo()
         return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
+    if route.target == "start_ride":
+        # A distinct local (not ``presenter``): the undo branch above
+        # narrows its own binding into a lambda, and a later
+        # reassignment of the same name would void that narrowing for
+        # mypy (closures capture the variable, not the value).
+        start_presenter = context.presenter
+        if start_presenter is not None:
+            return lambda _event: start_presenter.on_start()
+        return lambda _event: context.frame.SetStatusText("Start Ride — no ride open")
+    if route.target == "focus_review_panel":
+        console_view = context.console_view
+        if console_view is not None:
+            return lambda _event: console_view.focus_review_panel()
+        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     if route.target == ids.FINISH_CONFIRM_DLG:
         return lambda _event: _handle_finish_route(context)
     # E5.4.1's two mock-first confirms both need a real handler ahead
@@ -2250,6 +2488,13 @@ def _make_route_handler(  # noqa: PLR0911, C901 -- one early-return per route sp
     ride_confirm_handler = _RIDE_CONFIRM_HANDLERS.get(route.target)
     if ride_confirm_handler is not None:
         return lambda _event: ride_confirm_handler(context)
+    # ux-polish: the last two dead Ride ▸ rows (Stop Ride…, Set Start
+    # Time…) dispatch by target through the same table shape -- their
+    # DIALOG targets opened generically before, and a confirmed OK did
+    # nothing.
+    live_flow_handler = _LIVE_FLOW_HANDLERS.get(route.target)
+    if live_flow_handler is not None:
+        return lambda _event: live_flow_handler(context)
     # E7.2.1: the six correction rows dispatch by their own item id,
     # not by target -- mi_add_crossing_at and mi_edit_crossing share
     # one target (EDIT_CROSSING_DLG) with different modes.
@@ -2436,8 +2681,74 @@ def _resume_console_engine(
     # the functional harness's CallAfter pattern (measured; the child
     # hit its bound in a hung ride_library_dlg). The CallAfter fires on
     # the running event loop (main()'s MainLoop), right at startup.
+    #
+    # ux-polish: mark the deferred open on the context so
+    # build_main_window's own no-ride prompt does not fire on top of it
+    # -- a resume-to-library launch already answered the Create/Open-
+    # library question this launch asks.
+    context.library_deferred = True
     wx.CallAfter(lambda: _open_target(context, commands.route_for_id("mi_open_library")))
     return None
+
+
+def _show_no_ride_prompt(context: _RouteContext) -> None:
+    """Offer Create new ride / Open library at a ride-less store launch.
+
+    ux-polish: a store-backed bootstrap that resumed no ride has an
+    empty console and nothing open. ``no_ride_dlg`` asks the operator
+    how to proceed instead of leaving that state unexplained. Mirrors
+    :func:`_resume_console_engine`'s ``resume_dlg`` wiring exactly:
+    the two custom buttons end the modal with their own ids
+    (``create_ride_btn`` is the primary -- ``SetAffirmativeId``, so
+    Enter creates; ``open_library_btn`` is the secondary and Escape's
+    target, via ``dialogs.wire_escape_to``, the resume dialog's own
+    non-committal mapping), the dialog runs through
+    :func:`~rivercrossing.ui.views.dialogs.run_dialog`, and the chosen
+    target opens through ``wx.CallAfter`` -- the same modal-chaining
+    rule the resume flow's library branch uses.
+    """
+    wx = require_wx()
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    dialog = context.resource.LoadDialog(None, ids.NO_RIDE_DLG)
+    if dialog is None:
+        context.frame.SetStatusText("No Ride Open — no prompt dialog authored yet")
+        return
+    try:
+        create_id: int | None = None
+        create_ride_btn = wx.Window.FindWindowByName(ids.CREATE_RIDE_BTN, dialog)
+        if create_ride_btn is not None:
+            create_id = create_ride_btn.GetId()
+            # dialogs.xrc's own documented contract: the custom-named
+            # create_ride_btn keeps its name and the affirmative
+            # behaviour is wired in code with SetAffirmativeId so Enter
+            # returns its own id.
+            dialog.SetAffirmativeId(create_id)
+            dialog.Bind(
+                wx.EVT_BUTTON,
+                lambda event: dialog.EndModal(event.GetId()),
+                create_ride_btn,
+            )
+        if wx.Window.FindWindowByName(ids.OPEN_LIBRARY_BTN, dialog) is not None:
+            # The resume dialog's non-committal mapping: Escape routes
+            # to the secondary button (nothing to cancel on launch --
+            # dialogs.wire_escape_to's own contract), and the click is
+            # bound by the same call.
+            dialogs.wire_escape_to(dialog, ids.OPEN_LIBRARY_BTN)
+
+        result = dialogs.run_dialog(dialog, opener=context.frame)
+    finally:
+        if not dialog.IsBeingDeleted():
+            dialog.Destroy()
+
+    if create_id is not None and result == create_id:
+        wx.CallAfter(lambda: _open_target(context, commands.route_for_id("mi_ride_setup")))
+        return
+    # Open library: its click and Escape both end the modal with the
+    # button's own id (wire_escape_to binds both), so any non-Create
+    # result is the same non-committal choice, exactly as
+    # _resume_console_engine maps a non-Continue result.
+    wx.CallAfter(lambda: _open_target(context, commands.route_for_id("mi_open_library")))
 
 
 def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): the four bootstrap seams
@@ -2477,6 +2788,17 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     and current :class:`AppSettings` are kept on
     :class:`_RouteContext`, and the layout save callback persists
     sash/geometry changes back to the file.
+
+    ux-polish adds two post-wiring steps: the console Riders tab's
+    double-click seam is wired to the rider editor
+    (:func:`_wire_rider_open_seam`), and a store-backed launch that
+    resumed no ride and deferred no other window -- ``_resume_console_
+    engine`` returned ``None``, nothing set ``context.active_ride_id``,
+    and the resume flow did not already defer an Open library
+    (``context.library_deferred``) -- shows ``no_ride_dlg``
+    (:func:`_show_no_ride_prompt`), the Create/Open-library choice
+    that replaces the unexplained empty console. Store-less
+    (in-memory) constructions keep the current empty-console behavior.
 
     Split out of :func:`main` so a test can drive the whole
     construction path without ever entering ``MainLoop``, which
@@ -2612,6 +2934,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
         console_view=_console,
     )
     _bind_routes(context)
+    _wire_rider_open_seam(context)
     _bind_process_quit_paths(context)
     _bind_theme(context)
     # E7.2.1: the live menu-enablement binder (E1.4.2's missing half).
@@ -2622,6 +2945,21 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     _console.set_on_ride_changed(lambda status: _apply_menu_state(context, status))
     _apply_menu_state(context, engine.state)
     _run_launch_self_test(context)
+
+    # ux-polish: a store-backed launch with no ride resumed/activated
+    # (a fresh database, or a clean previous exit with nothing
+    # running) shows the no-ride prompt -- Create new ride / Open
+    # library -- after the console and routes exist. A resume-to-
+    # library outcome already deferred that same Open library, so it
+    # must not prompt on top of itself. Store-less (in-memory)
+    # constructions keep the empty-console behavior.
+    if (
+        store is not None
+        and resumed is None
+        and context.active_ride_id is None
+        and not context.library_deferred
+    ):
+        _show_no_ride_prompt(context)
 
     return frame
 

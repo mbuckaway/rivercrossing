@@ -363,6 +363,76 @@ def test_on_submit_given_an_out_of_range_team_size_shows_validation_not_crash() 
     )
 
 
+# ----------------------- minimum-setup gate (R-20, on-submit refusal)
+# A complete form must clear setup_minimum_violations -- the same
+# minimum-setup floor ride.start() enforces (blank name/venue/
+# organizer/scorer or a non-positive lap length refuses the submit).
+
+
+@pytest.mark.parametrize(
+    ("field", "reason"),
+    [
+        ("name", "name is required"),
+        ("venue", "venue is required"),
+        ("organizer", "organizer is required"),
+        ("scorer", "scorer is required"),
+    ],
+    ids=["name", "venue", "organizer", "scorer"],
+)
+def test_on_submit_given_a_blank_required_field_shows_validation_and_refuses(
+    field: str, reason: str
+) -> None:
+    """Whitespace-only counts as blank; the reason shows (R-20)."""
+    view = RecordingSetupView()
+    presenter = SetupPresenter(view, Roster())
+
+    result = presenter.on_submit(_form(**{field: "   "}))  # type: ignore[arg-type]
+
+    assert result is None
+    assert view.calls[-1] == ("show_validation", (reason,))
+
+
+@pytest.mark.parametrize("lap_km", [0.0, -1.0], ids=["zero", "negative"])
+def test_on_submit_given_a_non_positive_lap_km_shows_validation_and_refuses(
+    lap_km: float,
+) -> None:
+    """A zero/negative lap length refuses with its reason (R-20)."""
+    view = RecordingSetupView()
+    presenter = SetupPresenter(view, Roster())
+
+    result = presenter.on_submit(_form(lap_km=lap_km))
+
+    assert result is None
+    assert view.calls[-1] == ("show_validation", ("lap length must be positive",))
+
+
+def test_on_submit_given_multiple_missing_fields_joins_every_reason() -> None:
+    """Every violation shows joined, ride.start()'s own shape."""
+    view = RecordingSetupView()
+    presenter = SetupPresenter(view, Roster())
+
+    result = presenter.on_submit(_form(name="", venue=" ", lap_km=0.0))
+
+    assert result is None
+    assert view.calls[-1] == (
+        "show_validation",
+        ("name is required; venue is required; lap length must be positive",),
+    )
+
+
+def test_on_submit_given_a_complete_form_passes_the_minimum_setup_gate() -> None:
+    """A complete form clears the gate with no show_validation call."""
+    view = RecordingSetupView()
+    presenter = SetupPresenter(view, Roster())
+    view.calls.clear()
+
+    config = presenter.on_submit(_form())
+
+    assert config is not None
+    assert config.name == "GORBA EPIC 2026"
+    assert view.calls == []
+
+
 # ----------------------------------------- parsing: duration/min_lap
 
 

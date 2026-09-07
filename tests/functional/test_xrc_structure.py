@@ -32,8 +32,11 @@ XRC_FILES = ("main.xrc", "setup.xrc")
 MAIN_FRAME_CONTROLS = (
     "ride_name_lbl",
     "ride_status_lbl",
+    "ride_status_panel",
     "clock_elapsed_lbl",
     "clock_remaining_lbl",
+    "elapsed_clock_panel",
+    "remaining_clock_panel",
     "start_btn",
     "arm_stop_chk",
     "stop_btn",
@@ -47,8 +50,10 @@ MAIN_FRAME_CONTROLS = (
     "cards_count_lbl",
     "on_course_lbl",
     "shoe_lbl",
+    "review_notebook",
     "flagged_list",
     "review_btn",
+    "console_riders_list",
     "main_statusbar",
 )
 
@@ -191,7 +196,7 @@ RADIO_MENU_ITEMS = (*THEME_MENU_ITEMS, *ZOOM_MENU_ITEMS)
 
 # Canvas defaults, and the first member of each of the dialog's three
 # radio groups (entry mode, plate model, jokers per deck).
-SELECTED_RADIOS = ("solo_radio", "pooled_radio", "jokers_2_radio")
+SELECTED_RADIOS = ("mixed_radio", "pooled_radio", "jokers_2_radio")
 GROUP_OPENING_RADIOS = ("solo_radio", "pooled_radio", "jokers_0_radio")
 GROUP_FOLLOWING_RADIOS = ("mixed_radio", "relay_radio", "jokers_2_radio", "jokers_4_radio")
 
