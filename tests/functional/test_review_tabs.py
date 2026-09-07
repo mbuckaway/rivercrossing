@@ -112,15 +112,22 @@ def _build_review_console(xrc_resource: object) -> MainFrame:
     engine.record_crossing("34")  # clean lap, newer than the flag
     source = EngineDataSource(engine, roster)
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    console = MainFrame(window, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    presenter.tick()  # drive the review lists through the presenter path
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        presenter.tick()  # drive the review lists through the presenter path
+    except Exception:
+        # Fault A: a construct-phase raise (a degraded load, a wiring
+        # failure) must not leak the window the module fixture never
+        # yields -- this builder raised before returning it.
+        harness.close_window(window)
+        raise
     return console
 
 

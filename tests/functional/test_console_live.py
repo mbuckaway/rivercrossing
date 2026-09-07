@@ -74,14 +74,21 @@ def _build_live_console(
     engine.start()
     source = EngineDataSource(engine, roster)
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    console = MainFrame(window, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+    except Exception:
+        # Fault A: a construct-phase raise (a degraded load, a wiring
+        # failure) must not leak the window the caller's fixture never
+        # yields -- this builder raised before returning it.
+        harness.close_window(window)
+        raise
     return window, console, engine, presenter
 
 

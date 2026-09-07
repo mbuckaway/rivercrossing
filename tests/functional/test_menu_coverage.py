@@ -87,12 +87,14 @@ XRC_ACCELERATOR_CASES = tuple(
 def frame_with_menubar(xrc_resource: object):
     """Load main_frame with its real menubar attached, then close it."""
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-    frame.SetMenuBar(menubar)
-    harness.pump()
     try:
+        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+        frame.SetMenuBar(menubar)
+        harness.pump()
         yield frame, menubar
     finally:
+        # Fault A: the load+construct phase sits inside this finally
+        # (a menubar load or attach failure must not leak the frame).
         harness.close_window(frame)
 
 
@@ -335,28 +337,35 @@ def _build_live_console(  # noqa: PLR0913 -- (xrc_resource, wx_app, store, venue
         engine.reopen()
     source = EngineDataSource(engine, roster)
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-    frame.SetMenuBar(menubar)
-    frame.Show()
-    frame.Layout()
-    harness.pump()
-    console = MainFrame(frame, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    context = app_module._RouteContext(
-        frame=frame,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx_app,
-        theme_controller=theme.ThemeController(wx_app),
-        presenter=presenter,
-        console_view=console,
-        store=store,
-    )
-    app_module._bind_routes(context)
-    app_module._apply_menu_state(context, engine.state)
+    try:
+        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+        frame.SetMenuBar(menubar)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        context = app_module._RouteContext(
+            frame=frame,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx_app,
+            theme_controller=theme.ThemeController(wx_app),
+            presenter=presenter,
+            console_view=console,
+            store=store,
+        )
+        app_module._bind_routes(context)
+        app_module._apply_menu_state(context, engine.state)
+    except Exception:
+        # Fault A: a construct-phase raise (a degraded load, a wiring
+        # failure) must not leak the frame the caller's finally never
+        # sees -- this builder raised before returning it.
+        harness.close_window(frame)
+        raise
     return context, engine
 
 
@@ -555,7 +564,11 @@ def test_mi_set_start_time_reopened_posts_the_engine_refusal_notice(
         assert opened == [ids.SET_START_DLG]
         assert engine.state is RideStatus.REOPENED
         assert len(engine.events) == events_before
-        assert status_text == "Correction refused: cannot set start time from REOPENED"
+        # The engine words its own refusal with the lowercase state
+        # (ride.py's "cannot set start time from reopened" -- the same
+        # spelling test_ride_library_live pins for the reopen refusal);
+        # the status bar posts that message verbatim.
+        assert status_text == "Correction refused: cannot set start time from reopened"
     finally:
         harness.close_window(context.frame)
 

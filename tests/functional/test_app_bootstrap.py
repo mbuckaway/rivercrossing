@@ -86,15 +86,68 @@ NO_RIDE_OPEN_LIBRARY_BTN = ids.OPEN_LIBRARY_BTN
 # still makes actually returns -- console_subprocess_scenarios.py's
 # own technique, inlined here since this task's file batch has no
 # room for a shared sibling script.
+#
+# ux-polish: main() is a store-backed launch, and a store that
+# resumes nothing shows the no-ride prompt (no_ride_dlg) as a modal
+# *inside* build_main_window -- before the patched MainLoop is ever
+# reached -- so the probe stages a fresh temp db (nothing to resume)
+# and arms the prompt's dismissal before main() builds the window:
+# the app instance is created first and build_app is patched to hand
+# main() that same instance, the console_subprocess_scenarios launch
+# pattern (an app must exist before wx.CallAfter can be scheduled,
+# and a second wx.App must never be constructed). Answering the
+# prompt's Open library… routes to ride_library_dlg on the running
+# MainLoop (the prompt's own wx.CallAfter), so a second probe closes
+# that window before the frame close ends the loop.
 _MAINLOOP_PROBE_SCRIPT = """
 import json
+import tempfile
+from pathlib import Path
+
 import wx
 
+from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids
 
 _captured = {}
 _original_mainloop = wx.App.MainLoop
+_real_build_app = app_module.build_app
+
+# Mirrors test_app_bootstrap's own _choose_no_ride_button cadence: the
+# no-ride prompt is shown modally inside build_main_window, and its
+# ShowModal loop is what runs these CallAfter/CallLater probes.
+_NO_RIDE_WAIT_MS = 50
+_NO_RIDE_ATTEMPTS = 100
+_WINDOW_WAIT_MS = 50
+_WINDOW_ATTEMPTS = 100
+
+
+def _click_button(dialog, name):
+    button = wx.Window.FindWindowByName(name, dialog)
+    event = wx.CommandEvent(wx.EVT_BUTTON.typeId, button.GetId())
+    event.SetEventObject(button)
+    button.GetEventHandler().ProcessEvent(event)
+
+
+def _dismiss_no_ride_prompt(attempts_left):
+    dialog = wx.Window.FindWindowByName(ids.NO_RIDE_DLG)
+    if dialog is not None and dialog.IsShown():
+        _captured["no_ride_prompt_shown"] = True
+        _click_button(dialog, ids.OPEN_LIBRARY_BTN)
+        return
+    if attempts_left > 0:
+        wx.CallLater(_NO_RIDE_WAIT_MS, _dismiss_no_ride_prompt, attempts_left - 1)
+
+
+def _dismiss_ride_library(attempts_left):
+    library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+    if library is not None and library.IsShown():
+        _captured["library_opened"] = True
+        _click_button(library, "wxID_CLOSE")
+        return
+    if attempts_left > 0:
+        wx.CallLater(_WINDOW_WAIT_MS, _dismiss_ride_library, attempts_left - 1)
 
 
 def _mainloop_then_close(self):
@@ -103,13 +156,27 @@ def _mainloop_then_close(self):
     # force=True: Phase 8's EVT_CLOSE handler vetoes and hides a plain
     # Close() on macOS (P8-D2) instead of destroying the frame, which
     # would leave nothing to end this probe's MainLoop before its own
-    # timeout.
+    # timeout. The 200 ms delay lets the armed ride-library dismissal
+    # run first, so no top-level window outlives the frame close.
     wx.CallLater(200, frame.Close, force=True)
     return _original_mainloop(self)
 
 
+def _build_app_then_arm():
+    app = _real_build_app()
+    wx.CallAfter(_dismiss_no_ride_prompt, _NO_RIDE_ATTEMPTS)
+    wx.CallAfter(_dismiss_ride_library, _WINDOW_ATTEMPTS)
+    return app
+
+
 wx.App.MainLoop = _mainloop_then_close
-_captured["exit_code"] = app_module.main()
+app_module.build_app = _build_app_then_arm
+# A fresh db resumes no ride, so the ux-polish launch shows
+# no_ride_dlg; the armed probe answers it.
+db_path = Path(tempfile.mkdtemp(prefix="rc-main-probe-")) / "rides.db"
+store = Store.open(db_path)
+store.close()
+_captured["exit_code"] = app_module.main(db_path)
 print(json.dumps(_captured))
 """
 
@@ -509,7 +576,13 @@ def _decode_probe_output(completed: subprocess.CompletedProcess[str]) -> dict[st
         f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
     )
     if not lines:
-        return {"frame_shown_before_loop": False, "exit_code": None, "context": context}
+        return {
+            "frame_shown_before_loop": False,
+            "exit_code": None,
+            "no_ride_prompt_shown": False,
+            "library_opened": False,
+            "context": context,
+        }
     result = json.loads(lines[-1])
     result["context"] = context
     return result
@@ -518,11 +591,17 @@ def _decode_probe_output(completed: subprocess.CompletedProcess[str]) -> dict[st
 def test_main_shows_the_frame_before_entering_the_event_loop() -> None:
     """Negative for the D1 bug: main() must not return before Show().
 
-    Runs in a fresh, spawned interpreter -- never in-process: main()
-    builds its own ``wx.App``, and this session's ``wx_app`` fixture
-    already has one (console_subprocess_scenarios.py's own reasoning
-    for why a second, unbound App must not be built in a shared
-    session applies here too).
+    ux-polish: the probe launches main() over a temp store-backed db
+    (a fresh database resumes no ride), so ``build_main_window``
+    shows ``no_ride_dlg`` before the patched MainLoop is reached; the
+    probe answers the prompt's Open library… (the armed dismissal the
+    script header documents) and then proves the frame was already
+    shown when MainLoop ran. Runs in a fresh, spawned interpreter --
+    never in-process: main() builds its own ``wx.App``, and this
+    session's ``wx_app`` fixture already has one
+    (console_subprocess_scenarios.py's own reasoning for why a
+    second, unbound App must not be built in a shared session applies
+    here too).
     """
     completed = scenario_runner._run_bounded(
         [sys.executable, "-c", _MAINLOOP_PROBE_SCRIPT],
@@ -531,6 +610,11 @@ def test_main_shows_the_frame_before_entering_the_event_loop() -> None:
     result = _decode_probe_output(completed)
 
     assert (result["frame_shown_before_loop"], result["exit_code"]) == (True, 0), result["context"]
+    # The store-backed launch really did show the no-ride prompt and
+    # the armed probe really did drive it -- a probe whose dismissal
+    # silently no-oped would "pass" only by never blocking.
+    assert result["no_ride_prompt_shown"] is True, result["context"]
+    assert result["library_opened"] is True, result["context"]
 
 
 def test_tick_timer_stops_when_the_frame_is_destroyed(xrc_resource: object) -> None:

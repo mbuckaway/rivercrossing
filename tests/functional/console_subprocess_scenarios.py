@@ -1906,18 +1906,27 @@ def _library_live_duplicate_appears_as_new_draft() -> dict[str, Any]:  # noqa: P
     return found
 
 
-def _duplicate_ride_menu_route_opens_confirm_and_duplicates() -> dict[str, Any]:
+def _duplicate_ride_menu_route_opens_confirm_and_duplicates() -> dict[str, Any]:  # noqa: PLR0915 -- scripted modal-driving flow: nested probes + store facts, the scenario pattern this file owns
     """File ▸ Duplicate Ride… opens the confirm and duplicates (E5.4.1).
 
     The resume flow (E5.2.2's Continue) sets the context's
     ``active_ride_id``, then firing the duplicate route -- which used
     to hit the E1.4.1 sentinel -- opens ``duplicate_ride_dlg`` naming
     the ride; OK creates the copy.
+
+    ux-polish: the launch probe answers whichever prompt the staged db
+    warrants. A db whose previous session reads no running ride shows
+    the no-ride prompt instead of ``resume_dlg``; answering its Open
+    library… opens the library through the prompt's own deferred
+    route, and this flow then Opens the RUNNING store ride from it --
+    the same ``active_ride_id`` the resume flow would have set -- so
+    the duplicate route acts on a real ride in both launch worlds.
     """
     db_path = _resume_db_path("rc-dup-route-")
     source_id = _running_ride_with_roster(db_path)
     store = Store.open(db_path)
     found: dict[str, Any] = {}
+    launch: dict[str, bool] = {}
     frame: Any = None
 
     def _drive_duplicate_dialog() -> None:
@@ -1930,18 +1939,48 @@ def _duplicate_ride_menu_route_opens_confirm_and_duplicates() -> dict[str, Any]:
         found["duplicate_default"] = default_item.GetName() if default_item is not None else None
         harness.click(dialog, pages.WX_ID_OK)
 
-    def _resume_then_fire_duplicate() -> None:
-        resume = wx.Window.FindWindowByName(ids.RESUME_DLG)
-        if resume is None:
+    def _open_running_ride() -> None:
+        library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+        if library is None:
             return
-        harness.click(resume, ids.CONTINUE_BTN)
+        harness.select_row(library, ids.RIDES_LIST, 0)
+        harness.click(library, pages.WX_ID_OPEN)
+
+    def _answer_launch_prompt() -> None:
+        """Click the one launch prompt the staged db warrants.
+
+        The no-ride prompt's Open library… (whose deferred route opens
+        ``ride_library_dlg``) or the resume dialog's Continue -- never
+        both. Existence, not ``IsShown``: the one-shot CallAfter can be
+        dispatched mid-decoration, before ``ShowModal`` shows the
+        dialog (``_click_no_ride_button``'s own measured seam). Records
+        which prompt was answered so the caller opens the library
+        exactly once, through the route that actually deferred it.
+        """
+        no_ride = wx.Window.FindWindowByName(ids.NO_RIDE_DLG)
+        if no_ride is not None:
+            launch["no_ride"] = True
+            harness.click(no_ride, ids.OPEN_LIBRARY_BTN)
+            return
+        resume = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if resume is not None:
+            launch["resumed"] = True
+            harness.click(resume, ids.CONTINUE_BTN)
 
     try:
-        wx.CallAfter(_resume_then_fire_duplicate)
+        wx.CallAfter(_answer_launch_prompt)
         frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
-        harness.pump()
+        if launch.get("resumed"):
+            harness.pump()  # the Continue click's resume already ran in the build
+        else:
+            # No-ride prompt answered with Open library: its deferred
+            # route opens the library -- open the RUNNING source ride
+            # so the duplicate route has an active_ride_id.
+            wx.CallAfter(_open_running_ride)
+            harness.pump()
+            harness.pump()  # the Open handler's deferred console switch
         wx.CallAfter(_drive_duplicate_dialog)
         harness.fire_menu_event(frame, "mi_duplicate_ride")
         harness.pump()
@@ -1962,13 +2001,24 @@ def _duplicate_ride_menu_route_opens_confirm_and_duplicates() -> dict[str, Any]:
     return found
 
 
-def _reopen_ride_menu_route_opens_confirm_and_reopens() -> dict[str, Any]:
+def _reopen_ride_menu_route_opens_confirm_and_reopens() -> dict[str, Any]:  # noqa: PLR0915 -- scripted modal-driving flow: nested probes + store facts, the scenario pattern this file owns
     """Ride ▸ Reopen Ride opens the confirm and reopens (E5.4.1).
 
     Resume continues a RUNNING ride, the library Open loads a FINISHED
     ride ("Club poker night"), and the reopen route -- previously the
     E1.4.1 sentinel -- opens ``reopen_ride_dlg`` naming it; OK moves
     the console to REOPENED (spec §3).
+
+    ux-polish: the launch reads the staged db's previous session as a
+    crash with no ride (the boot Store this scenario opens to stage
+    the FINISHED ride leaves its session row unclosed), so no
+    ``resume_dlg`` appears -- ``build_main_window`` shows the no-ride
+    prompt instead, and the library is opened by that prompt's own
+    deferred Open-library route. The launch probe answers whichever
+    prompt the db warrants (never both): the no-ride prompt's Open
+    library… button, or the resume dialog's Continue -- and the
+    library is driven exactly once, through the route that actually
+    opened it.
     """
     db_path = _resume_db_path("rc-reopen-route-")
     _running_ride_with_roster(db_path)
@@ -1986,6 +2036,7 @@ def _reopen_ride_menu_route_opens_confirm_and_reopens() -> dict[str, Any]:
 
     store = Store.open(db_path)
     found: dict[str, Any] = {}
+    launch: dict[str, bool] = {}
     frame: Any = None
 
     def _drive_reopen_dialog() -> None:
@@ -2003,21 +2054,42 @@ def _reopen_ride_menu_route_opens_confirm_and_reopens() -> dict[str, Any]:
         harness.select_row(library, ids.RIDES_LIST, 1)
         harness.click(library, pages.WX_ID_OPEN)
 
-    def _resume_then_open_finished() -> None:
-        resume = wx.Window.FindWindowByName(ids.RESUME_DLG)
-        if resume is None:
+    def _answer_launch_prompt() -> None:
+        """Click the one launch prompt the staged db warrants.
+
+        The no-ride prompt's Open library… (whose deferred route opens
+        ``ride_library_dlg``) or the resume dialog's Continue -- never
+        both. Existence, not ``IsShown``: the one-shot CallAfter can be
+        dispatched mid-decoration, before ``ShowModal`` shows the
+        dialog (``_click_no_ride_button``'s own measured seam). Records
+        which prompt was answered so the caller opens the library
+        exactly once, through the route that actually deferred it.
+        """
+        no_ride = wx.Window.FindWindowByName(ids.NO_RIDE_DLG)
+        if no_ride is not None:
+            launch["no_ride"] = True
+            harness.click(no_ride, ids.OPEN_LIBRARY_BTN)
             return
-        harness.click(resume, ids.CONTINUE_BTN)
+        resume = wx.Window.FindWindowByName(ids.RESUME_DLG)
+        if resume is not None:
+            launch["resumed"] = True
+            harness.click(resume, ids.CONTINUE_BTN)
 
     try:
-        wx.CallAfter(_resume_then_open_finished)
+        wx.CallAfter(_answer_launch_prompt)
         frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
-        harness.pump()
+        # The library opens once. On the no-ride path the prompt's own
+        # deferred Open-library route is already queued -- pump so it
+        # runs, with the ride driver queued behind it; on the resume
+        # path nothing was deferred, so fire the route ourselves.
         wx.CallAfter(_open_finished_ride)
-        harness.fire_menu_event(frame, "mi_open_library")
-        harness.pump()
+        if launch.get("resumed"):
+            harness.fire_menu_event(frame, "mi_open_library")
+        else:
+            harness.pump()
+        harness.pump()  # the Open handler's deferred console switch
         wx.CallAfter(_drive_reopen_dialog)
         harness.fire_menu_event(frame, "mi_reopen_ride")
         harness.pump()
