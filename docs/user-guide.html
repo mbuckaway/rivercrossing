@@ -64,7 +64,7 @@
 <p>RiverCrossing is a keyboard-first desktop app for Windows and macOS. The operator types a rider's plate number and presses <kbd>Enter</kbd> at each lap crossing; the app records the lap, deals a card from a seeded virtual shoe, and at the finish scores every entry's best 5-card poker hand.</p>
 
 <h3 id="about">About RiverCrossing</h3>
-<p>Version and credits live in <strong>Help ▸ About RiverCrossing</strong>. The version shown there comes from the installed package, so it always matches the build you are running.</p>
+<p>Version and credits live in <strong>Help ▸ About RiverCrossing</strong>: the product name and installed version, the author line, © 2026 Mark Buckaway, and the GPL-3.0-only licence. The version comes from the installed package, so it always matches the build you are running.</p>
 
 <h3>Installing</h3>
 <ul>
@@ -73,7 +73,7 @@
 </ul>
 
 <h3>First launch &amp; the ride library</h3>
-<p>The app opens on the timing console. <strong>File ▸ Ride Library</strong> lists every ride in the database — one database, every event. From the library you can open an existing ride, create a new one, duplicate one (copies setup + riders, no timing data), or delete one (you must type the ride's name to confirm, and a backup is written first). A running ride is never deletable.</p>
+<p>The app opens on the timing console. When no ride is open — a fresh database, for example — a prompt offers <strong>Create new ride…</strong> or <strong>Open library…</strong> right away. <strong>File ▸ Ride Library</strong> lists every ride in the database — one database, every event. From the library you can open an existing ride, create a new one, duplicate one (copies setup + riders, no timing data), or delete one (you must type the ride's name to confirm, and a backup is written first). A running ride is never deletable.</p>
 
 <h3 id="settings">Settings</h3>
 <p><strong>File ▸ Settings</strong> (or the app menu on macOS) controls the operator-comfort layer:</p>
@@ -98,12 +98,13 @@
   <li><strong>Name, date, venue, organizer, scorer, logo</strong> — the identity shown on the console and in published results. The logo file is embedded in exports.</li>
   <li><strong>Planned start &amp; duration</strong> — the riding window; the console counts down the time to close.</li>
   <li><strong>Lap length &amp; minimum lap time</strong> — a crossing faster than the minimum is flagged and its card held for review (a mistyped plate or a double entry usually explains it).</li>
-  <li><strong>Entries</strong> — solo only, or solo + teams with a max riders-per-team (2–10, default 4).</li>
+  <li><strong>Entries</strong> — solo only, or solo + teams (the default) with a max riders-per-team (2–10, default 4).</li>
   <li><strong>Plate model</strong> — <em>rider-pooled</em> (default): every rider has their own plate and draws one card per lap, uncapped; the team's hand scores from the pooled cards. <em>Team-relay</em>: one plate per team, one rider on course at a time.</li>
   <li><strong>The shoe</strong> — decks (default 8) and jokers per deck (0, 2, or 4; default 2). All decks are shuffled together and dealt in order; the shoe reshuffles automatically if it empties.</li>
   <li><strong>Card cap</strong> — optional cap on cards per entry; laps still count past the cap.</li>
   <li><strong>Tie-break order</strong> — how identical best hands are resolved: ① most laps, ② shortest total time, ③ high-card draw at the venue. The order can be changed on the results screen before export.</li>
 </ul>
+<p>The ride needs a <strong>name, venue, organizer, scorer</strong> and a <strong>lap length</strong> before the dialog accepts the setup — it lists exactly what is missing if you try to save without them — and the ride cannot start until those are set and the roster has at least one rider. Duration and minimum lap time must be valid H:MM and M:SS values; the planned start and date always carry a value, and the logo is optional.</p>
 <p>Setup locks tighten once the ride starts: structural changes (entry mode, plate model, team size) are frozen, while name-only fixes stay possible in a running ride.</p>
 </section>
 
@@ -111,8 +112,8 @@
 <h2>3 · Riders &amp; entries</h2>
 <p><strong>Riders ▸ Rider Editor</strong> manages the roster: plates, names, and teams. Riders are entered with a first name and an optional last name; a solo rider's entry is listed under that full name.</p>
 <ul>
-  <li>Add a solo rider or a team; plates are unique across the ride, and a new entry's plate is prefilled with the next free number.</li>
-  <li><strong>Teams Editor</strong> — <strong>Riders ▸ Teams Editor</strong> (mixed rides only) edits a team's own record: name, notes, the team's plate on relay rides, and a <strong>logo</strong> — pick a playing card or choose an image file (an image wins if both are set). Membership is read-only there; the Rider Editor owns who is on which team.</li>
+  <li>Add a solo rider, or add a rider onto an existing team by picking the team from the Team list — new teams are created in the Teams Editor, not here. Plates are unique across the ride, and a new entry's plate is prefilled with the next free number.</li>
+  <li><strong>Teams Editor</strong> — <strong>Riders ▸ Teams Editor</strong> (mixed rides only) edits a team's own record: name, notes, the team's plate on relay rides, and a <strong>logo</strong> — pick a playing card or choose an image file (an image wins if both are set). It also creates teams: with nothing selected the form becomes the Add form, and <strong>Add team</strong> builds the team from it — a blank or duplicate name is refused (duplicates are compared case-insensitively, and the same check applies when you rename on Save). Membership is read-only here; the Rider Editor owns who is on which team.</li>
   <li>Delete is available while the ride is a draft; once an entry has recorded data, it is never removed — entries are marked DNF or their crossings voided instead (R-15).</li>
   <li><strong>Import / export CSV</strong> — bring a roster in from a file or write one out. One header-mapped format works for every ride (see <a href="#appendix-b-csv-reference">Appendix B</a>). The import preview lists every conflict before anything is written, so you can fix the file and re-import freely until the ride starts.</li>
   <li>Teams can be reshaped up to the start; on a pooled ride, moves stay possible while running and every move is audit-logged.</li>
@@ -121,13 +122,13 @@
 
 <section id="running-the-ride">
 <h2>4 · Running the ride</h2>
-<p>The console is keyboard-first: the operator types a plate and presses <kbd>Enter</kbd>.</p>
+<p>The console is keyboard-first: the operator types a plate and presses <kbd>Enter</kbd>. The header shows the ride's name and state: a stop light above the status word (green running · amber draft or corrections · red finished), the elapsed and remaining time as analog dials with numeric readouts, and the round GO / STOP buttons at the right.</p>
 <ul>
-  <li><strong>Start</strong> — press Start Ride. Missed the gun? <strong>Ride ▸ Set Start Time…</strong> back-dates the start and recomputes lap-1 times.</li>
+  <li><strong>Start</strong> — press the green GO button (or Ride ▸ Start Ride). A ride with no riders, or a setup missing a required field, cannot start — the app says what is missing. A stopped ride resumes with the same button and keeps all data. Missed the gun? <strong>Ride ▸ Set Start Time…</strong> back-dates the start and recomputes lap-1 times.</li>
   <li><strong>Record a crossing</strong> — type the plate, press <kbd>Enter</kbd> (or click Record). The crossing commits instantly, a card is dealt from the shoe, and the feed updates.</li>
   <li><strong>The sounds</strong> — a click on every recorded crossing, a two-tone alert when a short lap holds its card, and a buzz for an unknown plate or an empty entry. Toggle them in Settings.</li>
   <li><strong>Undo</strong> — <kbd>Ctrl+Z</kbd> (or the Undo button) removes the last crossing and returns its card.</li>
-  <li><strong>Short-lap review</strong> — a lap under the minimum is flagged; its card is held until you confirm or void it in the review panel.</li>
+  <li><strong>Short-lap review</strong> — a lap under the minimum is flagged and its card held until you confirm or void it. The sidebar's <strong>Needs Review</strong> tab lists every flagged crossing; the <strong>Riders</strong> tab lists the whole roster — double-click a rider there (or select one and press Enter) to open the Rider Editor on that rider.</li>
   <li><strong>Relay teams</strong> — one rider per team is on course at a time; the crossing credits the team.</li>
   <li><strong>Hide times</strong> — Settings (or the View menu) can hide lap/total times mid-ride; times are still recorded underneath and the ride clock stays visible.</li>
 </ul>
