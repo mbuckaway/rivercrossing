@@ -544,10 +544,13 @@ def test_team_editor_dlg_action_buttons_sit_below_their_own_panes(
         right_x = members.GetPosition().x
         teams_bottom = teams.GetPosition().y + teams.GetSize().height
         members_bottom = members.GetPosition().y + members.GetSize().height
-        save_y = save.GetPosition().y
-        add_y = add.GetPosition().y
-        add_x = add.GetPosition().x
-        close_x = close.GetPosition().x
+        # Every position is captured while the dialog is alive: calling
+        # GetPosition on a control after close_window() segfaults
+        # (measured on CI -- the destroyed peer's C++ side is gone).
+        save_x, save_y = save.GetPosition().x, save.GetPosition().y
+        remove_x, remove_y = remove.GetPosition().x, remove.GetPosition().y
+        close_x, close_y = close.GetPosition().x, close.GetPosition().y
+        add_x, add_y = add.GetPosition().x, add.GetPosition().y
     finally:
         harness.close_window(dialog)
 
@@ -555,13 +558,13 @@ def test_team_editor_dlg_action_buttons_sit_below_their_own_panes(
     # that row (its stock sizer may inset it a few px, so the claim is
     # "left pane", not "flush at left_x"). Add team anchors the right
     # pane's bottom row.
-    assert save.GetPosition().x < right_x
-    assert remove.GetPosition().x < right_x
+    assert save_x < right_x
+    assert remove_x < right_x
     assert left_x <= close_x < right_x
     assert add_x > right_x
     assert save_y > teams_bottom
-    assert remove.GetPosition().y > teams_bottom
-    assert close.GetPosition().y > teams_bottom
+    assert remove_y > teams_bottom
+    assert close_y > teams_bottom
     assert add_y > members_bottom
 
 
