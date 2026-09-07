@@ -540,17 +540,20 @@ def test_team_editor_dlg_action_buttons_sit_below_their_own_panes(
         save = harness.find_control(dialog, ids.SAVE_BTN)
         remove = harness.find_control(dialog, ids.REMOVE_BTN)
         close = harness.find_control(dialog, "wxID_CLOSE")
-        left_x = teams.GetPosition().x
-        right_x = members.GetPosition().x
-        teams_bottom = teams.GetPosition().y + teams.GetSize().height
-        members_bottom = members.GetPosition().y + members.GetSize().height
-        # Every position is captured while the dialog is alive: calling
-        # GetPosition on a control after close_window() segfaults
-        # (measured on CI -- the destroyed peer's C++ side is gone).
-        save_x, save_y = save.GetPosition().x, save.GetPosition().y
-        remove_x, remove_y = remove.GetPosition().x, remove.GetPosition().y
-        close_x, close_y = close.GetPosition().x, close.GetPosition().y
-        add_x, add_y = add.GetPosition().x, add.GetPosition().y
+        # Screen coordinates throughout: GetPosition() is parent-relative,
+        # and members_list lives inside the Members wxStaticBoxSizer's
+        # box window while the buttons are direct dialog children -- the
+        # two spaces are not comparable (measured). Every value is also
+        # captured while the dialog is alive: calling Get* on a control
+        # after close_window() segfaults (measured on CI).
+        left_x = teams.GetScreenPosition().x
+        right_x = members.GetScreenPosition().x
+        teams_bottom = teams.GetScreenPosition().y + teams.GetSize().height
+        members_bottom = members.GetScreenPosition().y + members.GetSize().height
+        save_x, save_y = save.GetScreenPosition().x, save.GetScreenPosition().y
+        remove_x, remove_y = remove.GetScreenPosition().x, remove.GetScreenPosition().y
+        close_x, close_y = close.GetScreenPosition().x, close.GetScreenPosition().y
+        add_x, add_y = add.GetScreenPosition().x, add.GetScreenPosition().y
     finally:
         harness.close_window(dialog)
 
