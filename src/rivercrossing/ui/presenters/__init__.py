@@ -58,7 +58,6 @@ from rivercrossing.ui.presenters.detail import (
 from rivercrossing.ui.presenters.library import LibraryView
 from rivercrossing.ui.presenters.results import ResultsPresenter, ResultsView
 from rivercrossing.ui.presenters.riders import (
-    NEW_TEAM_CHOICE,
     SOLO_TEAM_CHOICE,
     CsvConflict,
     CsvPreview,
@@ -71,7 +70,6 @@ from rivercrossing.ui.presenters.settings import AppSettings, SettingsView
 from rivercrossing.ui.presenters.setup import SetupFormValues, SetupPresenter, SetupView
 
 __all__ = [
-    "NEW_TEAM_CHOICE",
     "SOLO_TEAM_CHOICE",
     "AppSettings",
     "AuditPresenter",

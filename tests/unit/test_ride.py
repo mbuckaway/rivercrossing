@@ -57,6 +57,7 @@ from rivercrossing.ride import (
     StartBlockedError,
     UnknownEventActionError,
     UnknownPlateError,
+    setup_minimum_violations,
 )
 from rivercrossing.roster import EntryMode, EntryStatus, PlateModel, Rider, Roster
 
@@ -240,6 +241,65 @@ def test_ride_config_min_lap_positive_is_accepted(min_lap_s: int) -> None:
     config = _config(min_lap_s=min_lap_s)
 
     assert config.min_lap_s == min_lap_s
+
+
+# ----------------------------------------- minimum-setup rule
+
+
+def test_setup_minimum_violations_complete_config_returns_empty_list() -> None:
+    """A fully populated config clears the minimum-setup rule."""
+    config = _config()
+
+    assert setup_minimum_violations(config) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("name", "", "name is required"),
+        ("name", "   ", "name is required"),
+        ("venue", "", "venue is required"),
+        ("venue", "\t", "venue is required"),
+        ("organizer", "", "organizer is required"),
+        ("organizer", " \t ", "organizer is required"),
+        ("scorer", "", "scorer is required"),
+        ("scorer", "  ", "scorer is required"),
+        ("lap_km", 0.0, "lap length must be positive"),
+        ("lap_km", -0.5, "lap length must be positive"),
+    ],
+    ids=[
+        "name_blank",
+        "name_whitespace",
+        "venue_blank",
+        "venue_whitespace",
+        "organizer_blank",
+        "organizer_whitespace",
+        "scorer_blank",
+        "scorer_whitespace",
+        "lap_km_zero",
+        "lap_km_negative",
+    ],
+)
+def test_setup_minimum_violations_blank_or_nonpositive_field_reports_its_reason(
+    field: str, value: object, reason: str
+) -> None:
+    """One reason per missing/blank field, whitespace stripped (T-3)."""
+    config = _config(**{field: value})
+
+    assert setup_minimum_violations(config) == [reason]
+
+
+def test_setup_minimum_violations_fully_blank_config_reports_every_reason_in_order() -> None:
+    """Each missing field and the lap bound earns exactly one reason."""
+    config = _config(name="", venue=" ", organizer="", scorer="  ", lap_km=0.0)
+
+    assert setup_minimum_violations(config) == [
+        "name is required",
+        "venue is required",
+        "organizer is required",
+        "scorer is required",
+        "lap length must be positive",
+    ]
 
 
 # ==================================================== E4.1 engine
@@ -620,6 +680,46 @@ def test_start_with_below_floor_team_raises_start_blocked_and_stays_draft() -> N
     engine, _ = _make_engine(roster=roster)
 
     with pytest.raises(StartBlockedError, match=re.escape("team size must be at least 2")):
+        engine.start()
+
+    assert engine.state is RideStatus.DRAFT
+    assert engine.events == ()
+
+
+def test_start_with_empty_roster_raises_start_blocked_and_stays_draft() -> None:
+    """An empty roster blocks start; the ride stays DRAFT."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    engine, _ = _make_engine(roster=roster)
+
+    with pytest.raises(StartBlockedError, match=re.escape("roster has no riders")):
+        engine.start()
+
+    assert engine.state is RideStatus.DRAFT
+    assert engine.events == ()
+
+
+def test_start_with_missing_setup_field_raises_start_blocked_and_stays_draft() -> None:
+    """A blank venue blocks start; no state change (setup rule)."""
+    engine, _ = _make_engine(config=_config(venue=""))
+
+    with pytest.raises(
+        StartBlockedError,
+        match=re.escape("ride setup is incomplete: venue is required"),
+    ):
+        engine.start()
+
+    assert engine.state is RideStatus.DRAFT
+    assert engine.events == ()
+
+
+def test_start_with_multiple_missing_setup_fields_joins_every_reason() -> None:
+    """start() joins every missing-field reason into the refusal."""
+    engine, _ = _make_engine(config=_config(name="", venue="", lap_km=0.0))
+
+    with pytest.raises(
+        StartBlockedError,
+        match=re.escape("name is required; venue is required; lap length must be positive"),
+    ):
         engine.start()
 
     assert engine.state is RideStatus.DRAFT
@@ -1542,6 +1642,24 @@ def test_engine_config_property_returns_the_frozen_setup_config() -> None:
 def test_apply_start_event_transitions_to_running_and_records_event() -> None:
     """apply("start") rebuilds RUNNING from the payload actual_start."""
     engine, _ = _make_engine()
+    event = Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.RUNNING
+    assert engine.events == (event,)
+
+
+def test_apply_start_event_on_empty_roster_replays_running_state() -> None:
+    """Replay restores a persisted start without re-judging live gates.
+
+    A running ride whose start predates the empty-roster start gate
+    (the E9.2.2 sim's deliberately empty TEAM_RELAY shell) must still
+    resume: replay reproduces what was persisted -- that start already
+    cleared the readiness gates when it ran live.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    engine, _ = _make_engine(roster=roster)
     event = Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
 
     engine.apply(event)

@@ -66,7 +66,8 @@ SPEC_KNOWN_SUFFIXES: tuple[str, ...] = (
 # selftest_output, main_splitter) but never named in section 15b's
 # own suffix sentence -- extension, not part of the frozen text.
 # _preview joined when Phase 4 registered logo_preview (team_editor_dlg)
-# in section 15b.
+# in section 15b; _notebook joined when the ux-polish review notebook
+# registered review_notebook (main.xrc).
 CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_menubar",
     "_statusbar",
@@ -76,6 +77,7 @@ CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_output",
     "_splitter",
     "_preview",
+    "_notebook",
 )
 
 KNOWN_SUFFIXES: tuple[str, ...] = SPEC_KNOWN_SUFFIXES + CANVAS_KNOWN_SUFFIXES

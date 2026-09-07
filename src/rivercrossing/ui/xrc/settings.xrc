@@ -38,8 +38,10 @@
 
   Code-side per the canvas: loading and storing every value; applying
   the appearance choice through wxApp.SetAppearance; hide_times_chk
-  reaching the console mid-ride; backup_now_btn opening the OS-native
-  save dialog.
+  reaching the console mid-ride; backup_now_btn running the same R-54
+  manual backup File ▸ Back Up Database… fires — writes one
+  timestamped copy into the <db>.backups/ sibling directory and posts
+  the path, no OS-native save dialog.
 -->
 <resource>
 

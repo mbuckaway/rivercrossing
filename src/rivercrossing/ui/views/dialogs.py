@@ -55,7 +55,7 @@ other's table.
 import gc
 from typing import Any
 
-from rivercrossing.ui import ids, require_wx
+from rivercrossing.ui import ids, require_wx, theme
 from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS
 
 wx = require_wx()
@@ -375,10 +375,12 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
     """Show *dialog* modally, always returning focus to *opener* after.
 
     The one entry point every other view wires a dialog's display
-    through: it applies :func:`wire_close_button` first, then shows
-    *dialog* and restores focus to *opener* in a ``finally`` block so
-    it happens whichever way the dialog ends (spec.md §13's last
-    dialog rule).
+    through: it applies :func:`wire_close_button` first, then the
+    ux-polish light-mode panel background (:func:`theme.
+    apply_light_mode_panel_bg` -- a no-op outside a Light appearance),
+    then shows *dialog* and restores focus to *opener* in a
+    ``finally`` block so it happens whichever way the dialog ends
+    (spec.md §13's last dialog rule).
 
     Args:
         dialog: A loaded, not-yet-shown ``wx.Dialog``.
@@ -389,6 +391,12 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
         ``ShowModal``'s return value.
     """
     wire_close_button(dialog)
+    # ux-polish: dialogs are modal and short-lived, so applying the
+    # light-mode panel tint at open time is sufficient -- the theme
+    # radio is unreachable while a modal is up, so no live re-apply
+    # can ever be needed mid-show (theme.apply_light_mode_panel_bg's
+    # own docstring records the modeless-frame exception).
+    theme.apply_light_mode_panel_bg(dialog)
     try:
         return int(dialog.ShowModal())
     finally:

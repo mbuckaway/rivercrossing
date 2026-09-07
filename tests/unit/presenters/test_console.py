@@ -10,7 +10,11 @@ handlers against a real ``RideEngine``/``Roster``/``Shoe`` (never wx),
 asserting the cue fired (spec §10), the feed/counters refreshed, the
 field cleared or kept (R-31), the arm/stop flow (R-35) with a fake
 monotonic tick, hide-times forwarding (R-37), tick refresh, and the
-E6.4.3 finish-gate hook consulted before finishing.
+E6.4.3 finish-gate hook consulted before finishing. WS-D/WS-H grow
+the console with the gauge-clock channel (dial fractions from
+``planned_duration_s``, the stop-light mode mapping) and the review
+tabs (the flagged feed subset and the riders rows, both refreshed in
+``tick``).
 
 ``EngineDataSource`` is the first real ``DataSource`` implementation
 over ``(engine, roster)``; its mapping tests pin the feed shape (R-32:
@@ -179,6 +183,9 @@ class FakeConsoleView:
         self.last_state: RideStatus | None = None
         self.last_notice: str | None = None
         self.last_clock: tuple[str, str] | None = None
+        self.last_clock_fractions: tuple[float, float] | None = None
+        self.last_flagged: list[FeedRow] = []
+        self.last_riders: list[RiderRow] = []
         self.last_hide: bool | None = None
         self.stop_enabled: bool | None = None
         self.entry_locked: bool | None = None
@@ -232,6 +239,20 @@ class FakeConsoleView:
     def set_entry_locked(self, *, locked: bool) -> None:
         """Record the entry-field lock request (R-35)."""
         self.entry_locked = locked
+
+    # WS-D/WS-H: the gauge clock and review-tab members the live
+    # presenter now drives (see the Protocol's own additions).
+    def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
+        """Record the dial fractions (WS-D)."""
+        self.last_clock_fractions = (elapsed_frac, remaining_frac)
+
+    def show_flagged(self, rows: list[FeedRow]) -> None:
+        """Record the flagged review rows (WS-H)."""
+        self.last_flagged = list(rows)
+
+    def show_riders(self, rows: list[RiderRow]) -> None:
+        """Record the riders review rows (WS-H)."""
+        self.last_riders = list(rows)
 
 
 def _make_presenter(
@@ -925,6 +946,9 @@ def test_on_tick_refreshes_feed_counters_and_clock() -> None:
     assert view.last_counters is not None
     assert view.last_counters.crossings == 1
     assert view.last_clock == ("0:01:40", "5:58:20")  # 100 s elapsed of 6 h planned
+    assert view.last_clock_fractions == pytest.approx((100 / 21600, 21500 / 21600))
+    assert view.last_flagged == []
+    assert [row.plate for row in view.last_riders] == ["12", "34"]
 
 
 def test_on_tick_given_draft_ride_shows_a_zeroed_clock() -> None:
@@ -936,6 +960,92 @@ def test_on_tick_given_draft_ride_shows_a_zeroed_clock() -> None:
     presenter.tick()
 
     assert view.last_clock == ("0:00:00", "0:00:00")
+    assert view.last_clock_fractions == (0.0, 0.0)
+
+
+# ------------------------------------------- WS-D/WS-H gauge + review
+
+
+def test_on_plate_entered_given_flagged_crossing_lists_it_in_the_flagged_rows() -> None:
+    """WS-H: a short-lap crossing lands in the flagged review list."""
+    engine, clock = _running_engine(min_lap_s=60)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(5)  # 5 s < 60 s min lap
+
+    presenter.on_plate_entered("12")
+
+    assert [row.plate for row in view.last_flagged] == ["12"]
+    assert view.last_flagged[0].card == "held"
+
+
+def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> None:
+    """WS-H: undoing a clean lap keeps the still-flagged row listed."""
+    engine, clock = _running_engine(min_lap_s=60)
+    _record(engine, clock, "12", lap_time_s=5)  # flagged short lap
+    _record(engine, clock, "34", lap_time_s=100)  # clean lap, newer
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert [row.plate for row in view.last_flagged] == ["12"]
+
+
+def test_on_tick_given_flagged_crossing_refreshes_the_review_lists() -> None:
+    """WS-H: the tick refreshes flagged rows and riders too."""
+    engine, clock = _running_engine(min_lap_s=60)
+    _record(engine, clock, "12", lap_time_s=5)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+
+    assert [row.plate for row in view.last_flagged] == ["12"]
+    assert [row.plate for row in view.last_riders] == ["12", "34"]
+
+
+@pytest.mark.parametrize(
+    ("status", "mode"),
+    [
+        (RideStatus.RUNNING, "green"),
+        (RideStatus.DRAFT, "yellow"),
+        (RideStatus.FINISHED, "red"),
+        (RideStatus.REOPENED, "yellow"),
+    ],
+    ids=["running_green", "draft_yellow", "finished_red", "reopened_yellow"],
+)
+def test_stop_light_mode_given_ride_status_returns_the_semantic_colour(
+    status: RideStatus, mode: str
+) -> None:
+    """WS-D: the console's status light follows the ride lifecycle."""
+    assert console_module.stop_light_mode(status) == mode
+
+
+@pytest.mark.parametrize(
+    ("seconds", "total", "expected"),
+    [
+        (-100.0, 21600.0, 0.0),
+        (0.0, 21600.0, 0.0),
+        (10800.0, 21600.0, 0.5),
+        (21599.0, 21600.0, 21599.0 / 21600.0),
+        (21600.0, 21600.0, 1.0),
+        (43200.0, 21600.0, 1.0),
+    ],
+    ids=[
+        "negative_clamps_to_zero",
+        "zero",
+        "halfway",
+        "one_second_before_planned_end",
+        "at_planned_end",
+        "past_planned_end_clamps_to_one",
+    ],
+)
+def test_clock_fraction_given_seconds_of_a_planned_duration_clamps_to_the_dial_range(
+    seconds: float, total: float, expected: float
+) -> None:
+    """WS-D: dial fractions clamp to 0.0..1.0 for overtime/negatives."""
+    assert console_module._clock_fraction(seconds, total) == pytest.approx(expected)
 
 
 # ------------------------------------------------------------- finish

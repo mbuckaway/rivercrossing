@@ -15,6 +15,10 @@ every dialog in this codebase shows through -- and return the
 confirmed submission as a wx-free request dataclass (or ``None`` on
 cancel). The caller (the presenter or the app handler) performs the
 engine command, so this module never touches a ``RideEngine``.
+ux-polish's Ride ▸ Set Start Time… row runs through the same runner
+shape here (:func:`run_set_start_time`, section B's ``set_start_dlg``
+-- a form dialog whose route handler applies the confirmed instant to
+the engine afterwards, exactly like the six section-C rows).
 
 Every form/confirm requires a non-empty ``reason``: the OK handler
 keeps the dialog open and refocuses ``reason_input`` when it is blank
@@ -64,6 +68,7 @@ __all__ = [
     "run_manual_deal",
     "run_move_rider",
     "run_reassign",
+    "run_set_start_time",
     "run_void_card",
 ]
 
@@ -93,6 +98,8 @@ _CONTROL_EXPECTED_TYPES: dict[str, type] = {
     ids.CARD_LBL: wx.StaticText,
     ids.ENTRY_LBL: wx.StaticText,
     ids.CROSSING_LBL: wx.StaticText,
+    ids.START_DATE_PICKER: _wx_adv.DatePickerCtrl,
+    ids.START_TIME_PICKER: _wx_adv.TimePickerCtrl,
 }
 
 
@@ -395,6 +402,65 @@ def run_reassign(
         _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
         result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
+    finally:
+        if not dialog.IsBeingDeleted():
+            dialog.Destroy()
+
+
+def _wx_datetime_for_date(value: date) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return a ``wx.DateTime`` for *value* (wx months are 0-based)."""
+    stamp = wx.DateTime()
+    stamp.Set(value.day, value.month - 1, value.year)
+    return stamp
+
+
+def _wx_datetime_for_time(value: time) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return a ``wx.DateTime`` carrying *value*'s time-of-day."""
+    stamp = wx.DateTime()
+    stamp.SetHMS(value.hour, value.minute, value.second)
+    return stamp
+
+
+def run_set_start_time(
+    resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    *,
+    frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    prefill: datetime,
+) -> datetime | None:
+    """Open ``set_start_dlg``; return the confirmed instant, or None.
+
+    ux-polish's Ride ▸ Set Start Time… runner -- section B's sibling
+    of the six section-C runners above: loads ``set_start_dlg``,
+    prefills ``start_date_picker``/``start_time_picker`` from
+    *prefill* (the app passes the ride's planned start, the value the
+    operator is correcting; the pickers' bare defaults would show
+    today's date and now, wrong for a back-dated event), shows it
+    through the one dialog seam with the recorded E1.5.3 defaults
+    applied, and on a confirmed ``wx.ID_OK`` combines the two pickers
+    into the naive local ``datetime`` the engine stores -- the same
+    reading ``views/ride_setup.py`` performs for ``planned_start``.
+    No reason field, so no reason gate binds (unlike the six
+    section-C runners): the stock ``wxID_OK`` ends the modal itself.
+
+    Returns:
+        The confirmed start instant, or ``None`` on cancel.
+    """
+    dialog = resource.LoadDialog(None, ids.SET_START_DLG)
+    if dialog is None:
+        return None
+    try:
+        date_picker = _find(dialog, ids.START_DATE_PICKER)
+        time_picker = _find(dialog, ids.START_TIME_PICKER)
+        date_picker.SetValue(_wx_datetime_for_date(prefill.date()))
+        time_picker.SetValue(_wx_datetime_for_time(prefill.time()))
+        if _run_dialog(dialog, frame) != wx.ID_OK:
+            return None
+        picked_date = date_picker.GetValue()
+        picked_time = time_picker.GetValue()
+        return datetime.combine(
+            date(picked_date.GetYear(), picked_date.GetMonth() + 1, picked_date.GetDay()),
+            time(picked_time.GetHour(), picked_time.GetMinute(), picked_time.GetSecond()),
+        )
     finally:
         if not dialog.IsBeingDeleted():
             dialog.Destroy()

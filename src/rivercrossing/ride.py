@@ -72,6 +72,7 @@ __all__ = [
     "StartBlockedError",
     "UnknownEventActionError",
     "UnknownPlateError",
+    "setup_minimum_violations",
 ]
 
 
@@ -223,6 +224,41 @@ class RideConfig:
             raise RideConfigError(msg)
 
 
+# -------------------------------------------- minimum-setup rule
+
+
+def setup_minimum_violations(config: RideConfig) -> list[str]:
+    """Return why *config* fails the minimum ride-setup rule.
+
+    The setup readiness floor a DRAFT ride's start refuses to skip:
+    ``name``, ``venue``, ``organizer`` and ``scorer`` must each be
+    non-blank once whitespace is stripped, and ``lap_km`` must be
+    positive. ``planned_duration_s``/``min_lap_s`` are deliberately
+    not re-checked -- :meth:`RideConfig.__post_init__` already
+    enforces their positivity at construction, so neither field can
+    reach this function invalid.
+
+    Args:
+        config: The ride-setup settings to audit.
+
+    Returns:
+        One human-readable reason per missing or invalid field, in
+        the order above; ``[]`` when *config* is complete.
+    """
+    violations: list[str] = []
+    if not config.name.strip():
+        violations.append("name is required")
+    if not config.venue.strip():
+        violations.append("venue is required")
+    if not config.organizer.strip():
+        violations.append("organizer is required")
+    if not config.scorer.strip():
+        violations.append("scorer is required")
+    if config.lap_km <= 0:
+        violations.append("lap length must be positive")
+    return violations
+
+
 # ==================================================== E4.1 engine
 
 
@@ -240,10 +276,13 @@ class IllegalStateError(RideEngineError):
 
 
 class StartBlockedError(RideEngineError):
-    """``start()`` refused because the roster is not ready to start.
+    """``start()`` refused because the ride is not ready to start.
 
-    The engine consults ``Roster.validate_for_start()`` (R-12's team
-    floor) as the start gate; any violation blocks the transition.
+    DRAFT's start gate refuses an empty roster ("roster has no
+    riders"), a setup missing a minimum field
+    (:func:`setup_minimum_violations`), and every
+    ``Roster.validate_for_start()`` violation (R-12's team floor);
+    any of these blocks the transition.
     """
 
 
@@ -689,8 +728,10 @@ class RideEngine:
     def start(self, at: datetime | None = None) -> Event:
         """Start the ride, or continue a stopped one (spec §3, R-30).
 
-        From DRAFT: the roster's start gate
-        (:meth:`Roster.validate_for_start`) must be clear, then
+        From DRAFT: the roster must hold at least one entry and the
+        config must clear the minimum-setup rule
+        (:func:`setup_minimum_violations`); then the team-size gate
+        (:meth:`Roster.validate_for_start`) must be clear; then
         ``actual_start`` is *at* or ``clock()`` and the state becomes
         RUNNING. From RUNNING: continue -- unlock plate entry, keep
         ``actual_start`` unchanged ("Continue ride?"). From FINISHED
@@ -703,7 +744,9 @@ class RideEngine:
             The appended ``start``/``continue`` event.
 
         Raises:
-            StartBlockedError: DRAFT and the roster is not ready.
+            StartBlockedError: DRAFT and the ride is not ready --
+                the roster has no entries, the setup misses a minimum
+                field, or a team sits below the size floor.
             IllegalStateError: the state is FINISHED or REOPENED.
         """
         if self._state is RideStatus.RUNNING:
@@ -714,13 +757,40 @@ class RideEngine:
             )
         if self._state is not RideStatus.DRAFT:
             raise IllegalStateError(f"cannot start from {self._state}")
+        if not self._roster.entries:
+            raise StartBlockedError("roster has no riders")
+        setup_violations = setup_minimum_violations(self._config)
+        if setup_violations:
+            reasons = "; ".join(setup_violations)
+            raise StartBlockedError(f"ride setup is incomplete: {reasons}")
         violations = self._roster.validate_for_start()
         if violations:
             reasons = "; ".join(
                 f"{violation.entry.plate}: {violation.reason}" for violation in violations
             )
             raise StartBlockedError(f"roster is not ready to start: {reasons}")
-        started_at = at if at is not None else self._clock()
+        return self._begin_start(at if at is not None else self._clock())
+
+    def _begin_start(self, started_at: datetime) -> Event:
+        """Record the DRAFT -> RUNNING start transition.
+
+        Shared by :meth:`start` -- which calls it only after its
+        readiness gates clear -- and the replay seam
+        (:meth:`apply`, E5.1.2): ``actual_start`` is fixed, the ride
+        and its roster move to RUNNING, plate entry unlocks and the
+        ``start`` audit row appends. Replay calls it directly, never
+        through :meth:`start`'s gates: a persisted ``start`` row
+        already cleared them when it ran live, so re-judging them on
+        a rebuilt DRAFT engine would refuse rides whose stored state
+        predates a gate -- e.g. the E9.2.2 sim's deliberately empty
+        TEAM_RELAY shell, or a running ride resumed after an upgrade.
+
+        Args:
+            started_at: The recorded start instant.
+
+        Returns:
+            The appended ``start`` audit event.
+        """
         self._actual_start = started_at
         self._state = RideStatus.RUNNING
         self._roster.status = RideStatus.RUNNING
@@ -1638,12 +1708,17 @@ class RideEngine:
         payload's own values, so the re-appended event equals the
         original for every action that takes an explicit timestamp
         (``start``/``set_start_time``/``record_crossing`` and the
-        identity-based holds); ``stop``/``finish``/``reopen`` re-stamp
-        their payload timestamp from the engine's clock, so their
-        audit bytes differ by design on replay (class docstring's
-        E5.1.2 resolutions). The shoe's open/closed state is part of
-        the reproduced state: ``finish`` closes the fresh shoe and a
-        replayed ``reopen`` opens it again, exactly as live.
+        identity-based holds); a ``start`` row is re-applied through
+        :meth:`_begin_start` directly -- never through :meth:`start`'s
+        readiness gates, which a live start already cleared -- so a
+        persisted running ride rebuilds even when its stored state
+        would not pass today's gates (an empty roster, say).
+        ``stop``/``finish``/``reopen`` re-stamp their payload
+        timestamp from the engine's clock, so their audit bytes differ
+        by design on replay (class docstring's E5.1.2 resolutions).
+        The shoe's open/closed state is part of the reproduced state:
+        ``finish`` closes the fresh shoe and a replayed ``reopen``
+        opens it again, exactly as live.
 
         Args:
             event: The event to re-apply, exactly as persisted.
@@ -1657,7 +1732,7 @@ class RideEngine:
         """
         action = event.action
         if action == "start":
-            self.start(at=_payload_dt(event, "actual_start"))
+            self._begin_start(_payload_dt(event, "actual_start"))
         elif action == "continue":
             self.start()
         elif action == "set_start_time":

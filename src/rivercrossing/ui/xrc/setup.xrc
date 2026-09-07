@@ -5,10 +5,10 @@
   row in a wxStdDialogButtonSizer so button order is right on both platforms.
 
   Radio defaults are drawn on the canvas and required by spec.md 13 ("radio
-  groups always have a default"): solo_radio, pooled_radio and jokers_2_radio
-  start selected. wxRB_GROUP opens each of the three groups - entry mode,
-  plate model and jokers-per-deck - and <value>1</value> is honoured by XRC
-  (measured: tools/toolkit_probe.py check_xrc_names).
+  groups always have a default"): mixed_radio (teams), pooled_radio and
+  jokers_2_radio start selected. wxRB_GROUP opens each of the three groups -
+  entry mode, plate model and jokers-per-deck - and <value>1</value> is
+  honoured by XRC (measured: tools/toolkit_probe.py check_xrc_names).
 
   Code-side per the canvas footnote: field values are loaded from the ride
   record (this file declares structure and ranges only); the entry-mode and
@@ -185,16 +185,16 @@
             <flag>wxBOTTOM</flag>
             <border>4</border>
             <object class="wxRadioButton" name="solo_radio">
-              <label>Solo riders only (default)</label>
+              <label>Solo riders only</label>
               <style>wxRB_GROUP</style>
-              <value>1</value>
             </object>
           </object>
           <object class="sizeritem">
             <flag>wxBOTTOM</flag>
             <border>4</border>
             <object class="wxRadioButton" name="mixed_radio">
-              <label>Solo + teams</label>
+              <label>Solo + teams (default)</label>
+              <value>1</value>
             </object>
           </object>
 

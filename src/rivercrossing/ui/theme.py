@@ -30,11 +30,11 @@ pin (spec.md / xrc-windows.md footnote (6)):
 :func:`mode_for_menu_id` is fully wx-free, so it stays importable
 even when wx is broken -- this module's own import line touches no
 wx name at all, mirroring ``app.py``'s convention. Everything past
-that point -- :func:`notice_for_result`, :func:`apply`, and
-:class:`ThemeController` -- reasons about a real
-``wx.PyApp.AppearanceResult`` / ``Appearance`` and calls
-:func:`~rivercrossing.ui.require_wx` at the point wx is first needed,
-never at import time.
+that point -- :func:`notice_for_result`, :func:`apply`,
+:func:`apply_light_mode_panel_bg`, and :class:`ThemeController` --
+reasons about a real ``wx.PyApp.AppearanceResult`` / ``Appearance`` /
+``SystemAppearance`` and calls :func:`~rivercrossing.ui.require_wx`
+at the point wx is first needed, never at import time.
 """
 
 from enum import Enum
@@ -48,6 +48,7 @@ __all__ = [
     "ThemeMode",
     "UnknownThemeMenuItemError",
     "apply",
+    "apply_light_mode_panel_bg",
     "menu_item_id_for",
     "mode_for_menu_id",
     "notice_for_result",
@@ -81,6 +82,14 @@ _MENU_ID_BY_MODE: dict[ThemeMode, str] = {
 THEME_MENU_ITEM_IDS: tuple[str, ...] = tuple(_MODE_BY_MENU_ID)
 
 _NEXT_LAUNCH_NOTICE = "Theme change takes effect at next launch"
+
+# ux-polish: the light-mode panel background for dialogs -- a subtle,
+# single-tone neutral light grey, applied only in a Light appearance so
+# the native white text-entry boxes stay visually distinct. Kept as a
+# wx-free RGB tuple (this module never touches a wx name at import
+# time; see the module docstring); the wx.Colour is built at call time
+# in apply_light_mode_panel_bg.
+_LIGHT_PANEL_BG: tuple[int, int, int] = (230, 230, 230)
 
 
 def mode_for_menu_id(item_id: str) -> ThemeMode:
@@ -138,6 +147,54 @@ def notice_for_result(result: Any) -> str | None:  # noqa: ANN401 -- wx ships no
     if result == wx.PyApp.AppearanceResult.CannotChange:
         return _NEXT_LAUNCH_NOTICE
     return None
+
+
+def apply_light_mode_panel_bg(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Give *dialog* the light-mode panel background; no-op otherwise.
+
+    ux-polish: in a Light appearance, dialogs get a subtle single-tone
+    neutral grey (:data:`_LIGHT_PANEL_BG`) so the native white text
+    entry boxes read as distinct fields on a slightly darker panel.
+    Only the window background is touched -- every standard control
+    keeps its own native colours (UX-DESKTOP §1), and measured against
+    the actual XRC, no dialog in this codebase carries a direct-child
+    content panel: dialogs.xrc/setup.xrc/riders.xrc/settings.xrc/
+    teams.xrc/audit.xrc/results.xrc declare zero ``wxPanel`` objects,
+    so each top sizer sits directly on its dialog/frame and that
+    window background is the only surface needing the colour. A future
+    dialog that wraps its content in a panel would extend this helper,
+    not each call site.
+
+    Light is detected as ``not wx.SystemSettings.GetAppearance().
+    IsDark()`` -- measured, not guessed: at the pinned wxPython 4.3.1 /
+    wxWidgets 3.3.3, ``GetAppearance()`` returns a
+    ``wx.SystemAppearance`` exposing ``IsDark()``/``IsSystemDark()``/
+    ``IsUsingDarkBackground()``/``GetName()``/``AreAppsDark`` and no
+    ``IsLight()`` at all, and the functional theme scenarios already
+    read live theme results with this identical probe
+    (``GetAppearance().IsDark()``). ``ThemeController.mode`` was
+    deliberately not used: it records the *selected* radio, while the
+    *rendered* appearance is what decides whether native entry boxes
+    are white -- System mode on a light OS must tint, and on MSW a
+    Light selection the OS cannot apply at runtime (``CannotChange``)
+    must not. ``IsDark()`` reports exactly that rendered state.
+
+    Apply-at-open is sufficient for the modal dialogs that call this:
+    a theme change cannot reach them while they are shown. A live
+    re-apply across modeless windows when the theme changes mid-show
+    is out of scope (no event plumbing is added for it); the results
+    frame's own open path notes that trade-off at its call site.
+
+    Args:
+        dialog: The ``wx.Dialog`` (or results ``wx.Frame``) to tint.
+
+    Returns:
+        ``None`` -- no-op unless the active appearance is Light.
+    """
+    wx = require_wx()
+    if wx.SystemSettings.GetAppearance().IsDark():
+        return
+    dialog.SetBackgroundColour(wx.Colour(*_LIGHT_PANEL_BG))
 
 
 def apply(app: Any, mode: ThemeMode) -> Any:  # noqa: ANN401 -- wx ships no stubs

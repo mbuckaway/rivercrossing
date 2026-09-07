@@ -30,7 +30,12 @@ buttons (``GetUpButton()``/``GetDownButton()`` -- no custom buttons
 are added) notify the presenter to re-read ``GetStrings()`` and
 re-rank live. The window's one presenter (``self.presenter``, built
 here like ``RideSetup`` builds its own) owns that label map and the
-``ExportOptions`` the export handlers (E6.4.2) read.
+``ExportOptions`` the export handlers (E6.4.2) read. ux-polish wires
+``reopen_btn``: the app threads an ``on_reopen`` callback (its own
+``_handle_reopen_ride_route`` flow, the same one ``mi_reopen_ride``
+fires) into the results frame, so the button and the menu row share
+one handler implementation -- the same one-surface-per-action pattern
+the export buttons' menu-event forwarding serves.
 
 ``_find`` is now shared via ``ui.views._support.find_control`` --
 see that module's docstring for why it used to be duplicated here.
@@ -226,16 +231,19 @@ class ResultsWindow:
     ``publish_options`` (the five publish checkboxes), and the
     tie-break seed/restore channel (``set_tiebreak_labels``) plus a
     status notice. The one live presenter is built here, the same
-    ``RideSetup`` precedent.
+    ``RideSetup`` precedent. ux-polish: ``reopen_btn`` fires the
+    app-supplied ``on_reopen`` callback -- the reopen flow the
+    ``mi_reopen_ride`` menu row runs -- when the app wired one.
     """
 
-    def __init__(  # noqa: PLR0913 -- (frame, data_source) + the tie-break order and export-watermark seams
+    def __init__(  # noqa: PLR0913 -- (frame, data_source) + the tie-break order, export-watermark and reopen seams
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
         tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER,
         export_watermark: int | None = None,
+        on_reopen: Callable[[], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``results_frame`` window.
 
@@ -253,9 +261,14 @@ class ResultsWindow:
                 export (E7.3.2); the presenter evaluates the stale
                 banner against it on the first render. ``None`` when
                 nothing was exported.
+            on_reopen: The app's reopen flow (ux-polish) -- the same
+                ``_handle_reopen_ride_route`` ``mi_reopen_ride``
+                fires. ``reopen_btn`` runs it; ``None`` (a results
+                window with no live ride) leaves the button inert.
         """
         self.frame = frame
         self.data_source = data_source
+        self.on_reopen = on_reopen
 
         self.standings_list = self._find(ids.STANDINGS_LIST, wx.dataview.DataViewCtrl)
         self.show_times_chk = self._find(ids.SHOW_TIMES_CHK, wx.CheckBox)
@@ -289,6 +302,7 @@ class ResultsWindow:
 
         self._bind_events()
         self._bind_export_buttons()
+        self._bind_reopen_button()
         self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
@@ -322,6 +336,22 @@ class ResultsWindow:
                     wx.CommandEvent(wx.EVT_MENU.typeId, wx.xrc.XRCID(mid))
                 ),
             )
+
+    def _bind_reopen_button(self) -> None:
+        """Wire ``reopen_btn`` to the app's reopen flow (ux-polish).
+
+        ``on_reopen`` is the app's own ``_handle_reopen_ride_route``
+        (the flow ``mi_reopen_ride`` runs), threaded at decoration
+        time -- the same callback seam the results window uses for
+        nothing else, and the way the export buttons serve one action
+        per surface. A results window with no live ride (``None``)
+        leaves the button inert: there is nothing a reopen could act
+        on, mirroring the app's no-ride route guards.
+        """
+        if self.on_reopen is None:
+            return
+        button = self._find(ids.REOPEN_BTN, wx.Button)
+        button.Bind(wx.EVT_BUTTON, lambda _event: self.on_reopen())
 
     def _build_columns(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Append ``standings_list``'s seven columns in canvas order.

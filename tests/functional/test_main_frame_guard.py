@@ -28,7 +28,7 @@ pytestmark = pytest.mark.functional
 
 
 def test_required_controls_lists_exactly_the_init_find_controls() -> None:
-    """The verify tuple is the single source for __init__'s 17 finds.
+    """The verify tuple is the single source for __init__'s 24 finds.
 
     Pins the contract so the guard can never silently drift from
     ``MainFrame.__init__``: if a control is added/removed there without
@@ -50,8 +50,17 @@ def test_required_controls_lists_exactly_the_init_find_controls() -> None:
         ids.ARM_STOP_CHK,
         ids.STOP_BTN,
         ids.UNDO_BTN,
+        # WS-D/WS-H (ux-polish): the code-side gauge slots, the
+        # notebook shell and its Riders page join the init finds.
+        ids.ELAPSED_CLOCK_PANEL,
+        ids.REMAINING_CLOCK_PANEL,
+        ids.RIDE_STATUS_PANEL,
         ids.CLOCK_ELAPSED_LBL,
         ids.CLOCK_REMAINING_LBL,
+        ids.REVIEW_NOTEBOOK,
+        ids.FLAGGED_LIST,
+        ids.REVIEW_BTN,
+        ids.CONSOLE_RIDERS_LIST,
     )
 
 

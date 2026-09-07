@@ -31,9 +31,9 @@ import wx.dataview
 from _lists_common import demo_seeded_roster
 
 from rivercrossing import csvio
-from rivercrossing.roster import Roster
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import ids
-from rivercrossing.ui.presenters.riders import NEW_TEAM_CHOICE, SOLO_TEAM_CHOICE, CsvPreview
+from rivercrossing.ui.presenters.riders import SOLO_TEAM_CHOICE, CsvPreview
 from rivercrossing.ui.views import dialogs, rider_editor
 from rivercrossing.ui.views.rider_editor import COL_TEAM, ROSTER_INFOBAR, RiderEditor
 
@@ -150,10 +150,10 @@ def test_rider_editor_dlg_opens_prefilling_the_next_free_plate(
     assert plate_value == "213"
 
 
-def test_rider_editor_dlg_opens_populating_team_choice_with_solo_and_new_team(
+def test_rider_editor_dlg_opens_populating_team_choice_with_solo_then_teams(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """team_choice: solo sentinel, every team, new-team sentinel."""
+    """team_choice: solo sentinel, then teams (no new-team item)."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
@@ -162,7 +162,7 @@ def test_rider_editor_dlg_opens_populating_team_choice_with_solo_and_new_team(
     finally:
         harness.close_window(dialog)
 
-    assert team_items == [SOLO_TEAM_CHOICE, "Trail Blazers", NEW_TEAM_CHOICE]
+    assert team_items == [SOLO_TEAM_CHOICE, "Trail Blazers"]
 
 
 # ------------------------------------------------------------------ add
@@ -294,7 +294,7 @@ def test_rider_editor_dlg_delete_btn_disabled_once_the_entry_has_data(
 def test_rider_editor_dlg_deleting_the_only_entry_empties_the_list_and_choice(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """T-4: show_riders([]) and the bare two-sentinel team_choice.
+    """T-4: show_riders([]) and the bare solo-sentinel team_choice.
 
     A single-entry roster's own delete drives ``show_riders`` to an
     empty ``riders_list`` and ``show_team_choices`` to its smallest
@@ -314,7 +314,7 @@ def test_rider_editor_dlg_deleting_the_only_entry_empties_the_list_and_choice(
         harness.close_window(dialog)
 
     assert rows == ()
-    assert team_items == [SOLO_TEAM_CHOICE, NEW_TEAM_CHOICE]
+    assert team_items == [SOLO_TEAM_CHOICE]
 
 
 def test_rider_editor_dlg_stale_row_selection_event_is_a_safe_no_op(
@@ -351,57 +351,88 @@ def test_rider_editor_dlg_stale_row_selection_event_is_a_safe_no_op(
     assert rows == ()
 
 
-# ------------------------------------------------------------- new team
+# --------------------------------------------------- preselect seam
+# (topic/ux-polish: the console Riders tab's bootstrap calls
+# ``RiderEditor.select_rider_by_plate`` after opening the editor so
+# the operator lands on an existing rider's form, not the add form.)
 
 
-def test_rider_editor_dlg_new_team_flow_creates_the_team_and_shows_it_in_the_row(
+def _split_name_mixed_roster() -> Roster:
+    """Return a mixed, pooled roster with split first/last names."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    return roster
+
+
+def test_rider_editor_dlg_select_rider_by_plate_selects_the_row_and_fills_the_form(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The New team sentinel, then Add, creates a team (R-20).
+    """A matching plate selects its riders_list row and fills the form.
 
-    The native ``wx.TextEntryDialog`` prompt is never driven: the
-    view's own seam method is monkeypatched instead, following
-    ``test_selftest_dialog.py``'s precedent for a monkeypatched-seam
-    proof over a native modal.
+    The console Riders tab preselect seam: the bootstrap calls this
+    after opening the editor so the operator lands on an existing
+    rider. The form fills through the presenter's own
+    ``on_row_selected`` -- never by relying on the programmatic
+    ``Select`` event alone (``harness.select_row``'s measured note:
+    MSW's native DataViewCtrl fires no selection event for it).
     """
-    roster = demo_seeded_roster()
+    roster = _split_name_mixed_roster()
     dialog, view = _show(xrc_resource, roster)
-    monkeypatch.setattr(view, "prompt_new_team_name", lambda: "Dirt Dynamos")
 
     try:
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "J.")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Park")
-        harness.select_choice(dialog, ids.TEAM_CHOICE, NEW_TEAM_CHOICE)
-        harness.click(dialog, ids.ADD_BTN)
-        team_items = _team_choice_items(dialog)
-        rows = _rider_list_rows(dialog)
+        view.select_rider_by_plate("77")
+        harness.pump()
+        model = view.riders_list.GetModel()
+        selected_row = model.GetRow(view.riders_list.GetSelection())
+        plate = _plate_input_value(dialog)
+        first = harness.find_control(dialog, ids.FIRST_NAME_INPUT).GetValue()
+        last = harness.find_control(dialog, ids.LAST_NAME_INPUT).GetValue()
+        team = harness.find_control(dialog, ids.TEAM_CHOICE).GetStringSelection()
     finally:
         harness.close_window(dialog)
 
-    assert "Dirt Dynamos" in team_items
-    assert rows[-1] == ("213", "J. Park", "Dirt Dynamos")
+    assert (selected_row, plate, first, last, team) == (
+        1,
+        "77",
+        "A.",
+        "Roy",
+        "Trail Blazers",
+    )
 
 
-def test_rider_editor_dlg_new_team_flow_cancelled_creates_no_entry(
+def test_rider_editor_dlg_select_rider_by_plate_given_an_unknown_plate_is_a_no_op(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Cancelling the native prompt (None) is a no-op (R-20)."""
-    roster = demo_seeded_roster()
+    """A plate with no riders_list row leaves everything untouched."""
+    roster = _split_name_mixed_roster()
     dialog, view = _show(xrc_resource, roster)
-    monkeypatch.setattr(view, "prompt_new_team_name", lambda: None)
 
     try:
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "J.")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Park")
-        harness.select_choice(dialog, ids.TEAM_CHOICE, NEW_TEAM_CHOICE)
-        harness.click(dialog, ids.ADD_BTN)
-        rows = _rider_list_rows(dialog)
+        before = (
+            _plate_input_value(dialog),
+            harness.find_control(dialog, ids.FIRST_NAME_INPUT).GetValue(),
+            harness.find_control(dialog, ids.LAST_NAME_INPUT).GetValue(),
+        )
+        view.select_rider_by_plate("999")
+        harness.pump()
+        selection_ok = view.riders_list.GetSelection().IsOk()
+        after = (
+            _plate_input_value(dialog),
+            harness.find_control(dialog, ids.FIRST_NAME_INPUT).GetValue(),
+            harness.find_control(dialog, ids.LAST_NAME_INPUT).GetValue(),
+        )
     finally:
         harness.close_window(dialog)
 
-    assert rows == _SEEDED_ROWS
+    assert selection_ok is False
+    assert after == before
 
 
 # -------------------------------------------------- solo/mixed variant
@@ -433,9 +464,9 @@ def test_rider_editor_dlg_team_ui_visibility_matches_entry_mode(
 
     E3.4.2's own "both states" harness assertion: solo-only hides
     both; mixed shows both -- the editor's other flows (add/save/
-    delete/new-team) already run against the mixed roster throughout
-    this file's earlier tests, so "still work in mixed" is proven
-    there, not repeated here.
+    delete) already run against the mixed roster throughout this
+    file's earlier tests, so "still work in mixed" is proven there,
+    not repeated here.
     """
     dialog, view = _show(xrc_resource, roster_factory())
 

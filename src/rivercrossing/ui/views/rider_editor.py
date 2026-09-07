@@ -341,6 +341,28 @@ class RiderEditor:
         row = self._model.GetRow(item)
         self.presenter.on_row_selected(row)
 
+    def select_rider_by_plate(self, plate: str) -> None:
+        """Select the riders_list row whose Plate column equals *plate*.
+
+        The console Riders tab's preselect seam (ux-polish): the app
+        bootstrap calls this after opening the editor so the operator
+        lands on an existing rider's form instead of the add form. A
+        no-op when no row's Plate column matches -- a stale plate from
+        an earlier ride state, say.
+
+        The form fills through the presenter's own ``on_row_selected``
+        directly, never by relying on the selection event alone: a
+        programmatic ``Select`` fires ``EVT_DATAVIEW_SELECTION_CHANGED``
+        on macOS's generic control but not on MSW's native one
+        (``harness.select_row``'s own measured note). Where macOS does
+        fire the event, it re-runs the same idempotent handler.
+        """
+        for row in range(self._model.GetCount()):
+            if self._model.GetValueByRow(row, COL_PLATE) == plate:
+                self.riders_list.Select(self._model.GetItem(row))
+                self.presenter.on_row_selected(row)
+                return
+
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Render ``riders_list`` (``RidersView``).
 
@@ -424,19 +446,6 @@ class RiderEditor:
         """
         self.roster_infobar.ShowMessage(message, wx.ICON_WARNING)
         self.dialog.Layout()
-
-    def prompt_new_team_name(self) -> str | None:
-        """Ask for a new team's name via a native prompt (R-20).
-
-        ``wx.TextEntryDialog``, per the approved E3.2 decision --
-        ``riders.xrc`` authors no such dialog of its own. Returns
-        ``None`` if the operator cancels, exactly the seam functional
-        tests monkeypatch rather than drive.
-        """
-        with wx.TextEntryDialog(self.dialog, "Team name:", "New team…") as prompt:
-            if prompt.ShowModal() != wx.ID_OK:
-                return None
-            return str(prompt.GetValue())
 
     def _apply_min_size(self) -> None:
         """Force the canvas's 640px floor, then Fit() the rest (D16).
@@ -639,15 +648,6 @@ class CsvPreviewDialog:
         Raises:
             NotImplementedError: Always -- ``csv_preview_dlg`` has
                 neither.
-        """
-        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
-
-    def prompt_new_team_name(self) -> str | None:
-        """Ask for a new team's name; that dialog's own job.
-
-        Raises:
-            NotImplementedError: Always -- only ``on_add`` (never
-                called on this pairing) would ever need it.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 

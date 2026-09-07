@@ -18,11 +18,13 @@ build's own address-reuse hazard), while every state-mutating scenario
 runs in its own spawned interpreter via ``scenario_runner``.
 """
 
+import re
 from typing import Any
 
 import harness
 import pytest
 import scenario_runner
+import wx
 
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import RideConfig, RideEngine
@@ -31,6 +33,7 @@ from rivercrossing.ui import feed_model, ids
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import MainFrame
+from rivercrossing.ui.views.gauges import RaceClock, StopLight
 
 pytestmark = pytest.mark.functional
 
@@ -154,6 +157,66 @@ def test_live_console_clock_resolves_with_zero_elapsed_at_startup(
 
     assert harness.find_control(window, ids.CLOCK_ELAPSED_LBL).GetLabelText() == "0:00:00"
     assert harness.find_control(window, ids.CLOCK_REMAINING_LBL).GetLabelText() == ""
+
+
+# --- WS-D: the header gauges and the bitmap start/stop buttons --------
+
+
+def test_live_console_header_gauges_resolve_under_their_frozen_names(
+    shared_live_console: tuple[Any, RideEngine],
+) -> None:
+    """WS-D: the two dials and the status lamp are live custom controls.
+
+    The dials sit fraction 0.0 until the presenter's own tick drives
+    them (the shared fixture never ticks); the lamp already shows
+    RUNNING's green because ``set_state`` ran at construction. The
+    frozen names are code-side ``SetName()`` calls -- gauges.py
+    classes XRC cannot author -- so they are found by literal here,
+    never through ``ui.ids.py``.
+    """
+    window, _engine = shared_live_console
+    elapsed = harness.find_control(window, "elapsed_clock")
+    remaining = harness.find_control(window, "remaining_clock")
+    light = harness.find_control(window, "ride_status_light")
+
+    assert isinstance(elapsed, RaceClock)
+    assert isinstance(remaining, RaceClock)
+    assert isinstance(light, StopLight)
+    assert elapsed.fraction == 0.0
+    assert remaining.fraction >= 0.99  # a tick may have fired: ~0 elapsed
+    assert light.mode == "green"
+
+
+def test_live_console_start_stop_buttons_carry_the_go_stop_glyphs_and_labels(
+    shared_live_console: tuple[Any, RideEngine],
+) -> None:
+    """WS-D: start/stop are wxBitmapButton with the SVG glyphs set.
+
+    The XRC bitmap-button handler ignores label text (measured), so
+    the code re-applies the labels -- without them the buttons would
+    be icon-only and unnamed to assistive tech.
+    """
+    window, _engine = shared_live_console
+    start = harness.find_control(window, ids.START_BTN)
+    stop = harness.find_control(window, ids.STOP_BTN)
+
+    assert isinstance(start, wx.BitmapButton)
+    assert isinstance(stop, wx.BitmapButton)
+    assert start.GetBitmap().IsOk()
+    assert stop.GetBitmap().IsOk()
+    assert start.GetLabelText() == "Start ride"
+    assert stop.GetLabelText() == "Stop ride…"
+
+
+def test_stop_light_rejects_an_unknown_mode(wx_app: object) -> None:  # noqa: ARG001 -- fixture requested for ordering
+    """WS-D: an unmapped mode fails loudly, never dims silently."""
+    parent = wx.Frame(None)
+    try:
+        light = StopLight(parent)
+        with pytest.raises(ValueError, match=re.escape("unknown stop-light mode 'purple'")):
+            light.set_mode("purple")
+    finally:
+        harness.close_window(parent)
 
 
 # --- state-mutating: subprocess scenarios (test_console_demo) ----

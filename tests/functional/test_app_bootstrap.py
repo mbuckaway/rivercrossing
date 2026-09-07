@@ -18,6 +18,15 @@ moved to ``test_app_open_target.py`` with their own module-scoped
 per-worker window churn across ``--dist loadfile`` workers (the
 wrapper-cache corruption remedy).
 
+ux-polish: a *store-backed* bootstrap whose previous session resumed
+no ride now shows ``no_ride_dlg`` (the "No Ride Open" create-or-open
+prompt, dialogs.xrc) instead of an unexplained empty console, so the
+store-backed no-ride tests below build their own window over a fresh
+Store and drive the prompt's two buttons through the modal -- the
+resume-dialog driving pattern ``console_subprocess_scenarios.py``
+uses, in-process. Store-less constructions keep the empty-console
+behavior, which is what the shared fixtures below pin.
+
 Two module-scoped fixtures, mirroring ``test_console_demo.py``'s own
 ``shared_console`` precedent for why sharing matters here: building
 ``main_frame`` decodes the 53-card imagelist and constructs every
@@ -27,24 +36,26 @@ hazard grows with how many windows one session builds and tears down
 read-only assertion below -- including the Unbind-based route-binding
 proof, which removes bindings but touches nothing else that the other
 read-only assertions care about. ``firing_frame`` is a second,
-independent instance for the two tests that post a real
-``EVT_MENU`` event (the one remaining status-notice route, Back Up
-Database…, and the Exit confirm flow), kept separate so firing an
-event there can never race the binding-removal proof over which
-bindings are still present.
+independent instance for the tests that post a real ``EVT_MENU``
+event (the store-less Back Up Database… notice and the Exit confirm
+flow), kept separate so firing an event there can never race the
+binding-removal proof over which bindings are still present.
 """
 
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import harness
+import pages
 import pytest
 import scenario_runner
 import wx
 import wx.xrc
 
+from rivercrossing.store import Store
 from rivercrossing.ui import accelerators, commands, ids
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui.views import dialogs
@@ -62,6 +73,12 @@ MENU_BOUND_ACCELERATORS = tuple(
 )
 
 _PROBE_TIMEOUT_SECONDS = 20
+
+# ux-polish no-ride prompt names, resolved through the generated
+# ui/ids.py registry (dialogs.xrc's no_ride_dlg row).
+NO_RIDE_DLG = ids.NO_RIDE_DLG
+NO_RIDE_CREATE_BTN = ids.CREATE_RIDE_BTN
+NO_RIDE_OPEN_LIBRARY_BTN = ids.OPEN_LIBRARY_BTN
 
 # Runs main() in a fresh interpreter with wx.App.MainLoop patched to
 # record whether main_frame was already shown before it can possibly
@@ -295,22 +312,137 @@ def test_accelerator_entries_entry_matches_its_own_table_row(
 # --- a route says something rather than doing nothing silently ---
 
 
-def test_command_route_posts_a_not_yet_implemented_status_notice(
+def test_backup_route_without_a_store_posts_the_no_store_notice(
     firing_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """A COMMAND row with no engine yet still tells the operator so.
+    """Back Up Database… with no store open posts the guard notice.
 
-    ``mi_backup_now``, not ``mi_export_csv``: E3.4 gave the latter a
-    real handler (``_handle_export_csv``), so it no longer exercises
-    this generic fallback path at all -- its own dedicated tests live
-    alongside the import-CSV ones below.
+    ux-polish wired ``mi_backup_now`` to the real R-54 manual-backup
+    action, so it no longer exercises the generic COMMAND stub. This
+    store-less ``firing_frame`` is exactly the construction with
+    nothing to back up, and the route must say so -- mirroring the
+    duplicate route's own no-store guard -- rather than falling
+    through to the "not yet implemented" stub.
     """
     route = commands.route_for_id("mi_backup_now")
     _fire_menu_event(firing_frame, "mi_backup_now")
 
     status_text = firing_frame.GetStatusBar().GetStatusText()
 
-    assert status_text == f"{route.label} — not yet implemented"
+    assert status_text == f"{route.label} — no store is open"
+
+
+# --- ux-polish: the store-backed no-ride prompt --------------------
+
+
+_NO_RIDE_DRIVE_WAIT_MS = 50
+_NO_RIDE_DRIVE_ATTEMPTS = 100
+
+
+def _choose_no_ride_button(
+    button_name: str, observed: dict[str, object], attempts_left: int = _NO_RIDE_DRIVE_ATTEMPTS
+) -> None:
+    """Probe ``no_ride_dlg`` and click *button_name* once it is shown.
+
+    Scheduled (via ``wx.CallAfter``) *before* ``build_main_window``
+    runs, the console_subprocess_scenarios pattern: the prompt's own
+    ``ShowModal`` event loop runs the probe, so the modal never blocks
+    the build. Re-arms itself on a timer while the prompt is not yet a
+    shown modal -- a mid-build ``SafeYield`` (find_control's settle
+    loop under load) can otherwise dispatch the probe one drain too
+    early -- and records ``prompt_shown`` either way so the caller's
+    assertion fails loudly instead of hanging.
+    """
+    dialog = wx.Window.FindWindowByName(NO_RIDE_DLG)
+    if dialog is not None and dialog.IsShown():
+        observed["prompt_shown"] = True
+        observed["prompt_title"] = dialog.GetTitle()
+        harness.click(dialog, button_name)
+        return
+    if attempts_left <= 0:
+        observed["prompt_shown"] = False
+        return
+    wx.CallLater(
+        _NO_RIDE_DRIVE_WAIT_MS,
+        _choose_no_ride_button,
+        button_name,
+        observed,
+        attempts_left - 1,
+    )
+
+
+def test_store_backed_bootstrap_with_no_ride_shows_the_no_ride_prompt_and_open_library_routes(
+    wx_app: object,
+    tmp_path: object,
+) -> None:
+    """ux-polish: fresh store -> no_ride_dlg; Open library… opens it.
+
+    A store-backed bootstrap with nothing to resume (a fresh database
+    has no previous ride) now asks the operator how to proceed. The
+    prompt's Open library… button must dispatch the real
+    ``mi_open_library`` route through ``wx.CallAfter`` -- the library
+    window opens after the build returns, and this test dismisses it.
+    """
+    store = Store.open(Path(str(tmp_path)) / "rides.db")
+    frame = None
+    observed: dict[str, object] = {}
+    try:
+
+        def _dismiss_library() -> None:
+            library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+            if library is not None and library.IsShown():
+                observed["library_shown"] = True
+                harness.click(library, pages.WX_ID_CLOSE)
+
+        wx.CallAfter(_choose_no_ride_button, NO_RIDE_OPEN_LIBRARY_BTN, observed)
+        frame = app_module.build_main_window(wx_app, store=store)
+        wx.CallAfter(_dismiss_library)
+        harness.pump()
+        assert observed == {
+            "prompt_shown": True,
+            "prompt_title": "No Ride Open",
+            "library_shown": True,
+        }
+    finally:
+        store.close()
+        if frame is not None:
+            harness.close_window(frame)
+
+
+def test_store_backed_bootstrap_no_ride_prompt_create_button_routes_to_ride_setup(
+    wx_app: object,
+    tmp_path: object,
+) -> None:
+    """ux-polish: no_ride_dlg's Create new ride… opens the setup dialog.
+
+    The prompt's primary button must dispatch the real ``mi_ride_setup``
+    route through ``wx.CallAfter``; the ride-setup dialog opens after
+    the build returns and is cancelled here.
+    """
+    store = Store.open(Path(str(tmp_path)) / "rides.db")
+    frame = None
+    observed: dict[str, object] = {}
+    try:
+
+        def _dismiss_setup() -> None:
+            setup = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
+            if setup is not None and setup.IsShown():
+                observed["setup_shown"] = True
+                harness.click(setup, pages.WX_ID_CANCEL)
+
+        wx.CallAfter(_choose_no_ride_button, NO_RIDE_CREATE_BTN, observed)
+        frame = app_module.build_main_window(wx_app, store=store)
+        wx.CallAfter(_dismiss_setup)
+        harness.pump()
+        assert observed == {
+            "prompt_shown": True,
+            "prompt_title": "No Ride Open",
+            "setup_shown": True,
+        }
+    finally:
+        store.close()
+        if frame is not None:
+            harness.close_window(frame)
 
 
 def test_void_card_route_targets_the_authored_dialog_not_the_sentinel() -> None:

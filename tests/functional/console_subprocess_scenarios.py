@@ -542,6 +542,23 @@ def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401
     harness.close_window(frame)
 
 
+def _click_no_ride_button(button_name: str) -> None:
+    """Click *button_name* on the launch ``no_ride_dlg`` once it shows.
+
+    ux-polish: a store-backed bootstrap with no ride to resume shows
+    the no-ride prompt synchronously inside ``build_main_window``
+    (app.py's ``_show_no_ride_prompt``). Scheduled via ``wx.CallAfter``
+    before the build -- the resume-dialog driving pattern above -- the
+    prompt's own ``ShowModal`` event loop runs the probe, so the modal
+    never blocks the build. A db whose previous session warrants
+    ``resume_dlg`` instead never shows the prompt, and the probe
+    no-ops.
+    """
+    dialog = wx.Window.FindWindowByName(ids.NO_RIDE_DLG)
+    if dialog is not None:
+        harness.click(dialog, button_name)
+
+
 # The E5.2.2/E5.2.3 quit-close scenarios below need the live console
 # engine RUNNING -- the state that makes File ▸ Exit open
 # ``exit_running_dlg`` -- but the bootstrap console now stays DRAFT
@@ -1334,19 +1351,19 @@ def _bootstrap_main_launch_resumes_staged_running_ride() -> dict[str, Any]:
 def _new_ride_writes_a_ride_row() -> dict[str, Any]:
     """Persist a ride row when New Ride submits over an open store.
 
-    Drives the real ``mi_new_ride`` route on a store-backed app: the
-    setup dialog opens (modal), the scenario fills the required fields
-    and clicks OK, and the app's on-submitted wiring calls
+    Drives the real ux-polish launch on a store-backed app: a fresh
+    database resumes nothing, so ``build_main_window`` shows the
+    no-ride prompt and the scenario clicks its primary Create new
+    ride… button, which opens the setup dialog (deferred through the
+    prompt's own ``wx.CallAfter``). The scenario fills the required
+    fields and clicks OK, and the app's on-submitted wiring calls
     ``Store.create_ride`` + ``Store.save_roster``. The library summary
     then lists exactly the new ride -- the write path no production
     code had before.
     """
     db_path = _resume_db_path("rc-new-ride-")
     store = Store.open(db_path)
-    frame = _build_app_window(store=store)
-    frame.Show()
-    frame.Layout()
-    harness.pump()
+    frame: Any = None
     found: dict[str, Any] = {}
 
     def _fill_and_submit(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -1356,11 +1373,21 @@ def _new_ride_writes_a_ride_row() -> dict[str, Any]:
         harness.type_text(dialog, ids.SCORER_INPUT, "K. Singh")
         harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
         harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+        # R-20's minimum-setup gate refuses a 0.0 lap length; the
+        # fresh wxSpinCtrlDouble opens at 0.0 (test_ride_setup.py's
+        # own documented finding), so the submit must set it.
+        harness.find_control(dialog, ids.LAP_KM_SPIN).SetValue(8.0)
         harness.click(dialog, "wxID_OK")
 
     try:
+        wx.CallAfter(_click_no_ride_button, ids.CREATE_RIDE_BTN)
+        frame = _build_app_window(store=store)
+        frame.Show()
+        frame.Layout()
+        # The prompt's Create choice opens ride_setup_dlg on the
+        # deferred mi_ride_setup route; drive that form, never a
+        # second mi_new_ride fire (which would stack a second modal).
         wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _fill_and_submit)
-        harness.fire_menu_event(frame, "mi_new_ride")
         harness.pump()
         rides = store.rides()
         found["ride_count"] = len(rides)
@@ -1368,7 +1395,8 @@ def _new_ride_writes_a_ride_row() -> dict[str, Any]:
         found["ride_statuses"] = [ride.status.value for ride in rides]
     finally:
         store.close()
-        _close_without_prompt(frame)
+        if frame is not None:
+            _close_without_prompt(frame)
     return found
 
 
@@ -1430,13 +1458,19 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
     disabled), and after Start a typed crossing lands on the new ride
     -- a feed row appears and an ``audit`` row is written for the new
     ride's id.
+
+    ux-polish: the launch over the fresh database shows the no-ride
+    prompt first, and its Create new ride… button opens the setup form
+    on the deferred ``mi_ride_setup`` route. The scenario cancels that
+    first form -- creating the ride now would freeze the empty
+    bootstrap roster into it, but E9.1.4's ordering needs the rider
+    added to the roster BEFORE the ride is created (the submit
+    persists ``context.roster``) -- then runs the rider editor and the
+    ``mi_new_ride`` submit as before.
     """
     db_path = _resume_db_path("rc-new-ride-switch-")
     store = Store.open(db_path)
-    frame = _build_app_window(store=store)
-    frame.Show()
-    frame.Layout()
-    harness.pump()
+    frame: Any = None
     found: dict[str, Any] = {}
     ride_name = "Fresh Ride 2026"
 
@@ -1447,6 +1481,9 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
         harness.click(dialog, ids.ADD_BTN)
         harness.click(dialog, pages.WX_ID_CLOSE)
 
+    def _cancel_setup(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        harness.click(dialog, pages.WX_ID_CANCEL)
+
     def _fill_and_submit(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         harness.type_text(dialog, ids.NAME_INPUT, ride_name)
         harness.type_text(dialog, ids.VENUE_INPUT, "Guelph Lake")
@@ -1454,9 +1491,20 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
         harness.type_text(dialog, ids.SCORER_INPUT, "K. Singh")
         harness.type_text(dialog, ids.DURATION_INPUT, "6:00")
         harness.type_text(dialog, ids.MIN_LAP_INPUT, "18:00")
+        # R-20's minimum-setup gate refuses a 0.0 lap length; the
+        # fresh wxSpinCtrlDouble opens at 0.0 (test_ride_setup.py's
+        # own documented finding), so the submit must set it.
+        harness.find_control(dialog, ids.LAP_KM_SPIN).SetValue(8.0)
         harness.click(dialog, "wxID_OK")
 
     try:
+        wx.CallAfter(_click_no_ride_button, ids.CREATE_RIDE_BTN)
+        frame = _build_app_window(store=store)
+        frame.Show()
+        frame.Layout()
+        wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _cancel_setup)
+        harness.pump()
+
         wx.CallAfter(_drive_when_shown, ids.RIDER_EDITOR_DLG, _add_rider_and_close)
         harness.fire_menu_event(frame, "mi_rider_editor")
         harness.pump()
@@ -1493,7 +1541,8 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
         found["has_record_crossing"] = any(row["action"] == "record_crossing" for row in rows)
     finally:
         store.close()
-        _close_without_prompt(frame)
+        if frame is not None:
+            _close_without_prompt(frame)
     return found
 
 
@@ -1707,10 +1756,14 @@ def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
 def _library_live_open_switches_console_context() -> dict[str, Any]:
     """Library Open loads the store ride and swaps the console onto it.
 
-    Launch keeps the demo console (no running ride at the previous
-    exit), then the library's Open on the RUNNING store ride must
-    switch the console to that ride: status RUNNING and the feed shows
-    the persisted crossing -- neither of which the demo console had.
+    The store library holds a RUNNING ride but no previous session
+    warrants resume, so the ux-polish launch shows the no-ride prompt;
+    the scenario clicks its Open library… button, whose deferred route
+    opens ``ride_library_dlg`` right after the build (the prompt's own
+    ``wx.CallAfter``). The library's Open on the RUNNING store ride
+    must switch the console to that ride: status RUNNING and the feed
+    shows the persisted crossing -- neither of which the bootstrap
+    console had.
     """
     db_path = _resume_db_path("rc-lib-open-")
     _create_library_ride(db_path, name="GORBA EPIC 2026", running=True)
@@ -1726,12 +1779,13 @@ def _library_live_open_switches_console_context() -> dict[str, Any]:
         harness.click(library, pages.WX_ID_OPEN)
 
     try:
+        wx.CallAfter(_click_no_ride_button, ids.OPEN_LIBRARY_BTN)
         frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
-        harness.pump()
+        # FIFO behind the prompt's deferred open-library route; the
+        # probe runs inside the library's own modal loop.
         wx.CallAfter(_open_the_ride)
-        harness.fire_menu_event(frame, "mi_open_library")
         harness.pump()
         model = harness.find_control(frame, ids.CROSSINGS_LIST).GetModel()
         found["status_label"] = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
@@ -1760,6 +1814,13 @@ def _library_live_duplicate_appears_as_new_draft() -> dict[str, Any]:  # noqa: P
     RUNNING source ride's row reads DRAFT too -- the console, by
     contrast, derives status from the replayed engine (the Open
     scenario asserts RUNNING there).
+
+    ux-polish: the store library has no previous session to resume, so
+    the launch shows the no-ride prompt; the scenario clicks its Open
+    library… button, whose deferred route opens ``ride_library_dlg``
+    right after the build (the prompt's own ``wx.CallAfter``) --
+    ``_drive_library`` runs inside that modal, FIFO behind the
+    deferred open.
     """
     db_path = _resume_db_path("rc-lib-dup-")
     source_id = _create_library_ride(db_path, name="GORBA EPIC 2026", running=True)
@@ -1799,12 +1860,13 @@ def _library_live_duplicate_appears_as_new_draft() -> dict[str, Any]:  # noqa: P
         wx.CallAfter(_record_rows_and_close, library)
 
     try:
+        wx.CallAfter(_click_no_ride_button, ids.OPEN_LIBRARY_BTN)
         frame = _build_app_window(store=store)
         frame.Show()
         frame.Layout()
-        harness.pump()
+        # FIFO behind the prompt's deferred open-library route; the
+        # probe runs inside the library's own modal loop.
         wx.CallAfter(_drive_library)
-        harness.fire_menu_event(frame, "mi_open_library")
         harness.pump()
 
         reopened = Store.open(db_path)
@@ -2259,6 +2321,44 @@ def _theme_ids_do_not_post_the_stub_notice_and_zoom_applies() -> dict[str, Any]:
         }
     finally:
         _close_without_prompt(frame)
+
+
+def _ride_setup_dlg_light_panel_background() -> dict[str, Any]:
+    """Light: ``ride_setup_dlg`` carries the panel tone at open.
+
+    ux-polish: fires the Light radio, then opens the real
+    ``mi_new_ride`` route (Ride Setup is the store-less form here --
+    no store threaded, so nothing is submitted), and records the
+    dialog's background colour together with the appearance that was
+    live while it was shown. Cancel, never OK: the probe must not
+    submit the form. The scenario only gathers facts -- each
+    platform's test asserts its own contract (darwin forces Light live
+    and pins the tone; win32 asserts the tint follows the OS
+    appearance, since ``SetAppearance`` returns ``CannotChange`` there
+    and never alters it).
+    """
+    frame = _build_app_window()
+    frame.Show()
+    frame.Layout()
+    harness.pump()
+    found: dict[str, Any] = {}
+
+    def _probe_and_cancel(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        found["dlg_shown"] = dialog is not None
+        found["is_dark_at_open"] = wx.SystemSettings.GetAppearance().IsDark()
+        colour = dialog.GetBackgroundColour()
+        found["panel_bg"] = list(colour.Get()) if colour.IsOk() else []
+        harness.click(dialog, pages.WX_ID_CANCEL)
+
+    try:
+        _fire_menu_event(frame, ids.MI_THEME_LIGHT)
+        wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _probe_and_cancel)
+        harness.fire_menu_event(frame, ids.MI_NEW_RIDE)
+        harness.pump()
+        found["dialog_destroyed"] = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG) is None
+    finally:
+        _close_without_prompt(frame)
+    return found
 
 
 # --- E4.4.1/E4.4.2: the live console on a real engine -----------------
@@ -3314,6 +3414,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "theme_ids_do_not_post_the_stub_notice_and_zoom_applies": (
         _theme_ids_do_not_post_the_stub_notice_and_zoom_applies
     ),
+    "ride_setup_dlg_light_panel_background": _ride_setup_dlg_light_panel_background,
     "live_typed_plate_appears_in_feed": _live_typed_plate_appears_in_feed,
     "live_flagged_crossing_row_is_bold": _live_flagged_crossing_row_is_bold,
     "live_arm_stop_confirm_flow": _live_arm_stop_confirm_flow,

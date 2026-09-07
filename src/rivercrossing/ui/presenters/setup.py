@@ -15,10 +15,21 @@ is the eventual consumer, module-skeletons.md:158).
 DEFAULT_DECK_COUNT` (8, spec §4's own binding decision, 2026-08-08)
 is what :meth:`SetupPresenter._load` pushes to it. ``entry_mode``/
 ``max_team_size``/``plate_model`` are the mirror image -- XRC *does*
-declare defaults for their controls (solo/pooled/4), but opening
-setup on a live roster must show that roster's own values instead
+declare defaults for their controls (mixed/pooled/4 -- the entry-mode
+default now sits on ``mixed_radio``, teams-first, per setup.xrc's own
+header comment), but opening setup on a live roster must show that
+roster's own values instead
 (xrc-windows.md's own "field values are loaded from the ride record"
 footnote); :meth:`SetupPresenter._load` overrides XRC there too.
+
+:meth:`SetupPresenter.on_submit` refuses a form whose built config
+fails the minimum-setup rule -- blank name/venue/organizer/scorer or
+a non-positive lap length, :func:`rivercrossing.ride.
+setup_minimum_violations`, the same floor a DRAFT ride's start
+enforces -- by joining every reason into one
+:meth:`SetupView.show_validation` message and returning ``None``;
+the config is still built first so :class:`~rivercrossing.ride.
+RideConfig`'s own bound errors keep their refusal path unchanged.
 
 The entry/plate-model lock (R-17) is a static fact about the roster
 setup opened on -- a ride's status never changes while this dialog is
@@ -34,7 +45,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from rivercrossing.ride import DEFAULT_DECK_COUNT, RideConfig, RideConfigError
+from rivercrossing.ride import (
+    DEFAULT_DECK_COUNT,
+    RideConfig,
+    RideConfigError,
+    setup_minimum_violations,
+)
 from rivercrossing.roster import EntryMode, PlateModel, can_edit_structure
 
 if TYPE_CHECKING:
@@ -117,7 +133,7 @@ class SetupView(Protocol):
         ...
 
     def show_validation(self, message: str) -> None:
-        """Show a refused-submit message (setup_infobar, later)."""
+        """Show a refused-submit message on the view's setup infobar."""
         ...
 
 
@@ -207,12 +223,17 @@ class SetupPresenter:
     def on_submit(self, form: SetupFormValues) -> RideConfig | None:
         """Build a validated RideConfig from *form* (wxID_OK, R-20).
 
-        A refusal (an unparsable duration/min-lap, or a RideConfig-
-        level bound violation such as an out-of-range max_team_size)
-        shows via :meth:`SetupView.show_validation` and returns
-        ``None``, never raising past this handler -- the same
-        refusal shape :class:`~rivercrossing.ui.presenters.riders.
-        RidersPresenter`'s own handlers use.
+        A refusal (an unparsable duration/min-lap, a RideConfig-level
+        bound violation such as an out-of-range max_team_size, or a
+        minimum-setup violation -- blank name/venue/organizer/scorer
+        or a non-positive lap length, the start gate's own rule via
+        :func:`~rivercrossing.ride.setup_minimum_violations`, whose
+        reasons are joined into one message) shows via
+        :meth:`SetupView.show_validation` and returns ``None``,
+        never raising past this handler -- the same refusal shape
+        :class:`~rivercrossing.ui.presenters.riders.RidersPresenter`'s
+        own handlers use. The config is built first so the minimum-
+        setup check runs on the real object (module docstring).
 
         Returns:
             The built :class:`RideConfig`, or ``None`` on a refused
@@ -243,5 +264,9 @@ class SetupPresenter:
             )
         except (RideConfigError, ValueError) as exc:
             self.view.show_validation(str(exc))
+            return None
+        violations = setup_minimum_violations(config)
+        if violations:
+            self.view.show_validation("; ".join(violations))
             return None
         return config
