@@ -219,10 +219,11 @@ main() {
   rm -f "${sentinel}"
 
   # shellcheck disable=SC2029
-  # The RIVERCROSSING_FUNCTIONAL_JOBS expansion is intentionally
-  # client-side: the local value selects the guest's xdist parallelism.
+  # The RIVERCROSSING_FUNCTIONAL_JOBS / _PASS_TIMEOUT_S expansions are
+  # intentionally client-side: the local values select the guest's
+  # xdist parallelism and per-pass budget.
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
-    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && .venv/bin/python tools/functional_rerun.py pytest ${RIVERCROSSING_VM_TEST_PATHS:-tests/functional} -v --no-cov -n '${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2" &
+    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S='${RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S:-600}' .venv/bin/python tools/functional_rerun.py pytest ${RIVERCROSSING_VM_TEST_PATHS:-tests/functional} -v --no-cov -n '${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2" &
   local run_pid=$!
 
   run_watchdog "${VM_TIMEOUT}" "${run_pid}" "${sentinel}" &
