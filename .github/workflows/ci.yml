@@ -142,6 +142,12 @@ jobs:
       # the command runs through tools/functional_rerun.py, which re-runs
       # failed files in freshly spawned pytest processes.
       - name: pytest functional (real wx windows)
+        env:
+          # The ux-polish suite grew past the 600 s default per-pass
+          # bound (functional_rerun.py kills a pass at 600 s, marking
+          # whatever was in flight as failed); 1200 s lets a full pass
+          # complete so reruns converge deterministically.
+          RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S: 1200
         run: python tools/functional_rerun.py pytest tests/functional -v --no-cov -n auto --dist loadfile --reruns 2
       - name: Upload failure screenshots
         if: failure()
@@ -179,6 +185,9 @@ jobs:
       - name: Install
         run: uv pip install --system -e ".[dev]"
       - name: pytest acceptance (full R-74 race, real wx windows)
+        env:
+          # Same grown-suite rationale as the stage-3 functional step.
+          RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S: 1200
         run: python tools/functional_rerun.py pytest tests/acceptance -v --no-cov -n auto --dist loadfile --reruns 2
       - name: Upload failure screenshots
         if: failure()
