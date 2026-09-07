@@ -140,14 +140,14 @@ class RaceClock(wx.Control):  # type: ignore[misc]
         angle = self.fraction * 2.0 * math.pi - math.pi / 2.0
         dc.SetPen(wx.Pen(self._ink_colour(), 2))
         hand_length = radius * (1.0 - _HAND_INSET)
-        dc.DrawLine(
-            centre_x,
-            centre_y,
-            centre_x + math.cos(angle) * hand_length,
-            centre_y + math.sin(angle) * hand_length,
-        )
+        hand_x = centre_x + math.cos(angle) * hand_length
+        hand_y = centre_y + math.sin(angle) * hand_length
+        # Measured (macOS CI): wx.DC.DrawLine/DrawCircle overloads take
+        # integers only -- float args raise TypeError on the Cocoa
+        # backend (MSW coerces), so every coordinate is rounded here.
+        dc.DrawLine(round(centre_x), round(centre_y), round(hand_x), round(hand_y))
         dc.SetBrush(wx.Brush(self._ink_colour()))
-        dc.DrawCircle(centre_x, centre_y, 2)
+        dc.DrawCircle(round(centre_x), round(centre_y), 2)
 
     def _face_bitmap(self, width: int, height: int) -> wx.Bitmap:
         """Return the cached face, rebuilt when the size changes."""
@@ -173,15 +173,15 @@ class RaceClock(wx.Control):  # type: ignore[misc]
         ink = self._ink_colour()
         dc.SetPen(wx.Pen(ink, 1))
         dc.SetBrush(wx.Brush(background))
-        dc.DrawCircle(centre_x, centre_y, radius)
+        dc.DrawCircle(round(centre_x), round(centre_y), round(radius))
         for tick in range(_DIAL_TICK_COUNT):
             angle = tick * 2.0 * math.pi / _DIAL_TICK_COUNT - math.pi / 2.0
-            dc.DrawLine(
-                centre_x + math.cos(angle) * radius * 0.74,
-                centre_y + math.sin(angle) * radius * 0.74,
-                centre_x + math.cos(angle) * radius * 0.92,
-                centre_y + math.sin(angle) * radius * 0.92,
-            )
+            inner_x = centre_x + math.cos(angle) * radius * 0.74
+            inner_y = centre_y + math.sin(angle) * radius * 0.74
+            outer_x = centre_x + math.cos(angle) * radius * 0.92
+            outer_y = centre_y + math.sin(angle) * radius * 0.92
+            # Integer overloads only -- float args raise on macOS CI.
+            dc.DrawLine(round(inner_x), round(inner_y), round(outer_x), round(outer_y))
 
     def _ink_colour(self) -> wx.Colour:
         """Return the theme-aware ink (text colour of the platform)."""
@@ -242,7 +242,8 @@ class StopLight(wx.Control):  # type: ignore[misc]
             else:
                 dc.SetBrush(wx.TRANSPARENT_BRUSH)
                 dc.SetPen(wx.Pen(self._outline_colour(), 1))
-            dc.DrawCircle(centre_x, centre_y, _DOT_RADIUS)
+            # Integer overloads only -- float args raise on macOS CI.
+            dc.DrawCircle(round(centre_x), centre_y, _DOT_RADIUS)
 
     def _outline_colour(self) -> wx.Colour:
         """Return the unlit circles' outline (theme-aware grey)."""
