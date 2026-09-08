@@ -288,13 +288,24 @@ class RidersPresenter:
         """Preview *path* against this roster; render it (E3.4, R-21).
 
         Nothing is written -- :func:`~rivercrossing.csvio.preview`'s
-        own contract. An unreadable *path* propagates as ``OSError``
-        (csvio's own module docstring); the view's own picker seam
-        (a real ``wx.FD_FILE_MUST_EXIST`` file dialog) already
-        guards against that in practice, so this handler does not
-        catch it.
+        own contract. A file that cannot be read raises ``OSError``
+        (csvio's own module docstring) -- a permission failure or a
+        path that vanished after the picker's must-exist check, say.
+        Content problems, including a non-UTF-8 file, preview as
+        conflicts rather than raises; a decode or parse ``ValueError``
+        that still escapes preview is caught too. Both surface through
+        :meth:`RidersView.show_validation` with Import disabled, and
+        never raise past this handler: wx swallows an exception that
+        escapes the presenter's caller, which would leave the dialog
+        open with nothing happening (the measured note
+        ``docs/EPIC3-SESSION-SUMMARY.md`` records).
         """
-        self._csv_preview = csvio.preview(path, self.roster)
+        try:
+            self._csv_preview = csvio.preview(path, self.roster)
+        except (OSError, ValueError) as exc:
+            self.view.show_validation(f"Could not read {path.name}: {exc}")
+            self.view.set_import_enabled(enabled=False)
+            return
         conflicts = tuple(
             CsvConflict(row=conflict.row, problem=conflict.problem)
             for conflict in self._csv_preview.conflicts

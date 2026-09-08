@@ -37,10 +37,10 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   caller-supplied *opener*, whichever way the dialog ends.
 
 ``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``,
-``entry_detail_dlg`` and Phase 4's ``team_editor_dlg`` carry no
-``<default>`` button at all in their
+``entry_detail_dlg``, Phase 4's ``team_editor_dlg`` and R-76's
+``rider_issues_dlg`` carry no ``<default>`` button at all in their
 already-authored XRC, so "Enter activates the marked default button"
-has nothing to activate for these five --
+has nothing to activate for these six --
 :data:`DEFAULT_BUTTON_DECISIONS` is the per-dialog product call
 (E1.5.3) that fills the gap, and :data:`FORM_FIRST_FIELDS` is
 spec.md §13's matching initial-focus decision for every form dialog,
@@ -227,13 +227,14 @@ def wire_escape_to(dialog: Any, control_name: str) -> None:  # noqa: ANN401
 def set_default_button(dialog: Any, control_name: str) -> None:  # noqa: ANN401
     """Mark the named button as *dialog*'s default, for Enter.
 
-    Four already-authored dialogs declare no ``<default>`` in XRC, so
-    Enter did nothing in them -- measured via ``GetDefaultItem()``,
-    and a breach of R-76's "Enter = default". Set here rather than in
-    the .xrc files so the choice sits next to the reasoning: the
-    rider editor defaults to Save because Enter after typing into
-    Plate/Name/Team should commit the edit, not create a duplicate
-    entry (Add) or silently discard it (Close).
+    Six dialogs declare no ``<default>`` in XRC -- the six of
+    :data:`DEFAULT_BUTTON_DECISIONS` -- so Enter did nothing in them,
+    measured via ``GetDefaultItem()``, a breach of R-76's "Enter =
+    default". Set here rather than in the .xrc files so the choice
+    sits next to the reasoning: the rider editor defaults to Save
+    because Enter after typing into Plate/Name/Team should commit the
+    edit, not create a duplicate entry (Add) or silently discard it
+    (Close).
 
     Resolves through :func:`_control` with ``wx.Button`` as the
     expected type, so the address-reuse hazard (a stale wrapper

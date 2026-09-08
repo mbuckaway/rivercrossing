@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 39 menu rows reaches ("Opens / does"), and when it is allowed to
+the 40 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 39 :class:`MenuRoute` rows
+once, so both jobs read off the same 40 :class:`MenuRoute` rows
 instead of two tables that could drift apart.
 
 No wx import lands here (R-71 does not require it, since nothing
