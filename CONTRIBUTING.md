@@ -23,7 +23,7 @@ Virtual environments are always named `.venv` and are never committed.
 green CI run. `scripts/*.sh` are thin convenience wrappers around them.
 
 ```bash
-nox -s lint typecheck importlint ids_drift   # stage 1 · static
+nox -s lint typecheck importlint ids_drift css_drift  # stage 1 · static
 nox -s unit                                   # stage 2 · unit + coverage gate
 nox -s functional                             # stage 3 · real wx windows
 nox -s bundle smoke                           # stage 5 · build, then smoke the binary
@@ -184,7 +184,7 @@ These cost real debugging time; they are not theoretical.
   - `wxDataViewListCtrl` — its handler hard-forces the name to `dataviewCtrl`. Use `wxDataViewCtrl`
     instead, whose `name` is honoured, with a `DataViewIndexListModel` subclass. Per-row attributes
     (bold short-lap rows) require overriding `GetAttrByRow`; there is no setter.
-- Use event-driven waits, never bare `sleep`. Stage 3 allows one auto-retry and uploads a screenshot on
+- Use event-driven waits, never bare `sleep`. Stage 3 allows two auto-retries (`--reruns 2`) and uploads a screenshot on
   failure.
 
 ## Regenerating the branding artifacts

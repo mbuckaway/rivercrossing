@@ -4,6 +4,23 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Functional-suite determinism** — modal hang in the reopened-finish flow, dead collection of `test_review_tabs.py`, reference-leak hygiene for in-process window builds, rerun attribution for mid-pass hangs, and measured pass budgets.
+- **CI functional budgets** — per-pass budget raised to 2400 s with `-n 2` workers (`RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S`), the local VM runner propagates it into the guest.
+
+## [1.0.10] - 2026-09-07
+
+### Added
+
+- **Start gate (R-79)** — the ride refuses to start with no riders staged.
+- **Console gauges & review tabs** — race clock/stop-light gauges on the live console; the results/review console grows review tabs.
+- **Editor reworks** — teams editor and rider editor polish across the board.
+- **About dialog & no-ride startup prompt** — about window with logo/version; the app prompts before opening the console with no ride staged.
+- **Dead-control wiring** — dormant controls wired or removed across the 23 frozen windows.
+
 ## [1.0.9] - 2026-09-05
 
 ### Added
