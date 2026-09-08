@@ -195,7 +195,7 @@ def live_context(xrc_resource: object, wx_app: object) -> Iterator[tuple[Any, Ri
     try:
         yield context, engine
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 def _menu_item_enabled(frame: Any, item_id: str) -> bool:  # noqa: ANN401 -- wx ships no stubs

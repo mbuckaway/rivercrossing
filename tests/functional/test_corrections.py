@@ -205,7 +205,7 @@ def live_context(
     try:
         yield context, engine, roster
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 # ------------------- §15b names resolve per correction dialog

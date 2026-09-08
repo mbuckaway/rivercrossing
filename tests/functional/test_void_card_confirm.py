@@ -351,4 +351,4 @@ def live_context(
     try:
         yield context, engine
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)

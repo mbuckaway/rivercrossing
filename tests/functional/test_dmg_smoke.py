@@ -21,9 +21,9 @@ where this suite actually gates.
 
 import subprocess
 import sys
-import time
 from pathlib import Path
 
+import _installer_tools
 import pytest
 
 import rivercrossing
@@ -76,15 +76,13 @@ def _run_hdiutil(
 
 def _detach(mount_point: Path) -> None:
     """Detach *mount_point*, retrying and forcing as a last resort."""
-    for attempt in range(DETACH_MAX_ATTEMPTS):
-        is_last_attempt = attempt == DETACH_MAX_ATTEMPTS - 1
-        cmd = [HDIUTIL, "detach", str(mount_point)]
-        if is_last_attempt:
-            cmd.append("-force")
-        result = _run_hdiutil(cmd, timeout=DETACH_TIMEOUT_SECONDS)
-        if result.returncode == 0:
-            return
-        time.sleep(DETACH_RETRY_SECONDS)
+    _installer_tools.detach_with_retries(
+        _run_hdiutil,
+        mount_point,
+        attempts=DETACH_MAX_ATTEMPTS,
+        retry_seconds=DETACH_RETRY_SECONDS,
+        timeout_seconds=DETACH_TIMEOUT_SECONDS,
+    )
 
 
 @pytest.fixture

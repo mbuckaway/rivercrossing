@@ -197,7 +197,7 @@ def bound_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see do
     try:
         yield frame
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 @pytest.fixture(scope="module")
@@ -212,7 +212,7 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
     try:
         yield frame
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -429,10 +429,25 @@ def _choose_no_ride_button(
     if dialog is not None and dialog.IsShown():
         observed["prompt_shown"] = True
         observed["prompt_title"] = dialog.GetTitle()
-        harness.click(dialog, button_name)
-        return
+        try:
+            harness.click(dialog, button_name)
+        except Exception:  # noqa: BLE001, S110 -- any probe failure must re-arm
+            # The click's own find can trip the address-reuse poison
+            # (a stale wrapper raising LookupError, or a dead C++
+            # object raising RuntimeError). Fall through to the timer
+            # re-arm; the modal loop dispatches timers.
+            pass
+        else:
+            return
     if attempts_left <= 0:
+        # Never leave the prompt open: a leaked modal hangs the
+        # caller's close path past the pass budget (measured --
+        # faulthandler dump, 2026-09-07). End it directly; the
+        # caller's assertion fails loudly on the missing dispatch.
         observed["prompt_shown"] = False
+        fresh = wx.Window.FindWindowByName(NO_RIDE_DLG)
+        if fresh is not None and fresh.IsShown():
+            fresh.EndModal(fresh.GetAffirmativeId())
         return
     wx.CallLater(
         _NO_RIDE_DRIVE_WAIT_MS,
@@ -460,11 +475,24 @@ def test_store_backed_bootstrap_with_no_ride_shows_the_no_ride_prompt_and_open_l
     observed: dict[str, object] = {}
     try:
 
-        def _dismiss_library() -> None:
+        def _dismiss_library(attempts_left: int = _NO_RIDE_DRIVE_ATTEMPTS) -> None:
             library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
             if library is not None and library.IsShown():
                 observed["library_shown"] = True
-                harness.click(library, pages.WX_ID_CLOSE)
+                try:
+                    harness.click(library, pages.WX_ID_CLOSE)
+                except Exception:  # noqa: BLE001, S110 -- probe failures re-arm
+                    pass  # poison (LookupError) or dead object (RuntimeError)
+                else:
+                    return
+            if attempts_left <= 0:
+                # Never leave the modal open: a leaked dialog hangs
+                # the close path past the pass budget (measured).
+                fresh = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+                if fresh is not None and fresh.IsShown():
+                    fresh.EndModal(wx.ID_CANCEL)
+                return
+            wx.CallLater(_NO_RIDE_DRIVE_WAIT_MS, _dismiss_library, attempts_left - 1)
 
         wx.CallAfter(_choose_no_ride_button, NO_RIDE_OPEN_LIBRARY_BTN, observed)
         frame = app_module.build_main_window(wx_app, store=store)
@@ -478,7 +506,7 @@ def test_store_backed_bootstrap_with_no_ride_shows_the_no_ride_prompt_and_open_l
     finally:
         store.close()
         if frame is not None:
-            harness.close_window(frame)
+            harness.release_main_window(wx_app, frame)
 
 
 def test_store_backed_bootstrap_no_ride_prompt_create_button_routes_to_ride_setup(
@@ -496,11 +524,24 @@ def test_store_backed_bootstrap_no_ride_prompt_create_button_routes_to_ride_setu
     observed: dict[str, object] = {}
     try:
 
-        def _dismiss_setup() -> None:
+        def _dismiss_setup(attempts_left: int = _NO_RIDE_DRIVE_ATTEMPTS) -> None:
             setup = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
             if setup is not None and setup.IsShown():
                 observed["setup_shown"] = True
-                harness.click(setup, pages.WX_ID_CANCEL)
+                try:
+                    harness.click(setup, pages.WX_ID_CANCEL)
+                except Exception:  # noqa: BLE001, S110 -- probe failures re-arm
+                    pass  # poison (LookupError) or dead object (RuntimeError)
+                else:
+                    return
+            if attempts_left <= 0:
+                # Never leave the modal open: a leaked dialog hangs
+                # the close path past the pass budget (measured).
+                fresh = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
+                if fresh is not None and fresh.IsShown():
+                    fresh.EndModal(wx.ID_CANCEL)
+                return
+            wx.CallLater(_NO_RIDE_DRIVE_WAIT_MS, _dismiss_setup, attempts_left - 1)
 
         wx.CallAfter(_choose_no_ride_button, NO_RIDE_CREATE_BTN, observed)
         frame = app_module.build_main_window(wx_app, store=store)
@@ -514,7 +555,7 @@ def test_store_backed_bootstrap_no_ride_prompt_create_button_routes_to_ride_setu
     finally:
         store.close()
         if frame is not None:
-            harness.close_window(frame)
+            harness.release_main_window(wx_app, frame)
 
 
 def test_void_card_route_targets_the_authored_dialog_not_the_sentinel() -> None:

@@ -47,7 +47,7 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
     try:
         yield frame
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx ships no stubs

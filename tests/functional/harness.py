@@ -52,6 +52,7 @@ reproduced with throwaway scripts before being encoded here:
 from __future__ import annotations
 
 import gc
+import os
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -69,6 +70,7 @@ __all__ = [
     "ControlNotFoundError",
     "ScreenshotError",
     "WindowLoadError",
+    "WindowStillResolvingError",
     "click",
     "close_window",
     "find_control",
@@ -79,6 +81,7 @@ __all__ = [
     "load_xrc_resources",
     "pump",
     "recent_wx_log",
+    "release_main_window",
     "run_modal",
     "screenshot",
     "select_choice",
@@ -95,6 +98,16 @@ class WindowLoadError(LookupError):
 
 class ControlNotFoundError(LookupError):
     """A frozen control name did not resolve in its window."""
+
+
+class WindowStillResolvingError(LookupError):
+    """``close_window(strict=True)`` could not prove the window gone.
+
+    Raised when the closed window's name still resolves after the
+    close settle loop: either the same window unreaped past the
+    attempt bound, or a different, leaked window now answering the
+    name. The message names which case and the native handles.
+    """
 
 
 class ScreenshotError(OSError):
@@ -443,17 +456,37 @@ def _expected_controls_for(name: str) -> tuple[str, ...]:
 
 
 def _expected_controls_resolve(window: Any, name: str) -> bool:  # noqa: ANN401 -- wx ships no stubs
-    """Return whether every spec'd control of *name* resolves in it."""
+    """Return whether every spec'd control of *name* resolves in it.
+
+    The check is the same ``isinstance(control, wx.Window)`` type
+    check :func:`find_control`'s settle uses, not a bare name
+    lookup: under the wx/SIP wrapper-cache corruption
+    ``ui.views._support.find_control``'s docstring documents,
+    ``FindWindowByName`` can answer a stale wrapper whose Python
+    class is not ``wx.Window`` for a name that otherwise resolves --
+    the SIP address-reuse signature, where the wrapper's own class is
+    wrong while name-based queries still report the name. A name-only
+    check green-lights such a degraded load, the false-fast pass this
+    gate exists to refuse; the ``isinstance`` check fails it and
+    sends :func:`load_window_verified` down the fresh-rebuild path.
+    """
     return all(
-        wx.Window.FindWindowByName(control_name, window) is not None
+        isinstance(wx.Window.FindWindowByName(control_name, window), wx.Window)
         for control_name in _expected_controls_for(name)
     )
 
 
 def _first_missing_control(window: Any, name: str) -> str:  # noqa: ANN401 -- wx ships no stubs
-    """Return *name*'s first spec'd control missing from *window*."""
+    """Return *name*'s first spec'd control missing from *window*.
+
+    "Missing" applies the same ``isinstance`` test
+    :func:`_expected_controls_resolve` uses, so a stale non-
+    ``wx.Window`` wrapper is reported as the missing control -- the
+    name the error message needs -- rather than falling through to
+    the empty string when every name resolves but one is stale.
+    """
     for control_name in _expected_controls_for(name):
-        if wx.Window.FindWindowByName(control_name, window) is None:
+        if not isinstance(wx.Window.FindWindowByName(control_name, window), wx.Window):
             return control_name
     return ""
 
@@ -541,15 +574,31 @@ def _clear_last_exception() -> None:
     sys.last_exc = None
 
 
-def click(window: Any, name: str) -> None:  # noqa: ANN401
+def click(window: Any, name: str, *, require_shown: bool = False) -> None:  # noqa: ANN401
     """Click the button named *name* in *window*.
 
     Direct event injection (see the module docstring): posts the
     ``wx.CommandEvent`` a real click would generate, rather than
     relying on ``wx.UIActionSimulator``, which does not deliver
     input in this harness's session.
+
+    *require_shown* is an opt-in visibility guard, default ``False``.
+    The harness injects via ``ProcessEvent`` synchronously, so a
+    drive can silently succeed against a hidden control -- the event
+    is delivered straight to the handler with no hit-testing to
+    fail. With *require_shown* set, the target's ``IsShown()`` is
+    checked before injection and a hidden target raises instead,
+    turning that false-fast pass into a failure.
+
+    Raises:
+        ControlNotFoundError: If *name* does not resolve inside
+            *window*.
+        AssertionError: If *require_shown* is set and the target
+            control is not shown; names the control and its window.
     """
     button = find_control(window, name)
+    if require_shown and not button.IsShown():
+        raise AssertionError(f"click target {name!r} in window {window.GetName()!r} is hidden")
     event = wx.CommandEvent(wx.EVT_BUTTON.typeId, button.GetId())
     event.SetEventObject(button)
     try:
@@ -559,13 +608,34 @@ def click(window: Any, name: str) -> None:  # noqa: ANN401
         _clear_last_exception()
 
 
-def type_text(window: Any, name: str, text: str) -> None:  # noqa: ANN401
+def type_text(  # noqa: PLR0913 -- require_shown is click()'s F5 visibility guard
+    window: Any,  # noqa: ANN401 -- wx ships no stubs
+    name: str,
+    text: str,
+    *,
+    require_shown: bool = False,
+) -> None:
     """Type *text* into the text control named *name* in *window*.
 
     ``SetValue`` fires ``wx.EVT_TEXT`` the same way real typing
     does (measured), which is what a bound presenter listens for.
+
+    *require_shown* is an opt-in visibility guard, default ``False``;
+    see :func:`click` for the rationale. The harness injects via
+    ``ProcessEvent`` synchronously, so a drive can silently succeed
+    against a hidden control. With *require_shown* set, the target's
+    ``IsShown()`` is checked before injection and a hidden target
+    raises instead, turning that false-fast pass into a failure.
+
+    Raises:
+        ControlNotFoundError: If *name* does not resolve inside
+            *window*.
+        AssertionError: If *require_shown* is set and the target
+            control is not shown; names the control and its window.
     """
     control = find_control(window, name)
+    if require_shown and not control.IsShown():
+        raise AssertionError(f"type_text target {name!r} in window {window.GetName()!r} is hidden")
     try:
         control.SetValue(text)
         pump()
@@ -709,10 +779,13 @@ def screenshot(window: Any, destination: Path) -> Path:  # noqa: ANN401
     return destination
 
 
-_CLOSE_SETTLE_ATTEMPTS = 25  # mirrors ui.views._support.FIND_SETTLE_ATTEMPTS
+# 25 attempts was measured enough for -n 2 in-process; per-file
+# isolation runs two fresh wx processes at once and measured deferred
+# deletions that outlast 25 drains, leaking frames into the sweep.
+_CLOSE_SETTLE_ATTEMPTS = 100
 
 
-def close_window(window: Any) -> bool:  # noqa: ANN401
+def close_window(window: Any, *, strict: bool = False) -> bool:  # noqa: ANN401
     """Close and destroy *window*, then wait for it to actually reap.
 
     A dialog's default ``Close()`` only ``Hide()``s it -- unlike a
@@ -750,9 +823,12 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
     sleep, until *found* is ``None`` or its handle no longer matches
     *handle* (both captured before ``Close``/``Destroy``). If *handle*
     itself came back falsy before destruction, the handle comparison
-    is skipped and only ``found is None`` decides the exit. It always
-    returns rather than hang, even if still unreaped when the bound is
-    exhausted.
+    is skipped and only ``found is None`` decides the exit. By
+    default it always returns rather than hang, even if still
+    unreaped when the bound is exhausted; with *strict* set, the two
+    unresolved exits below raise :class:`WindowStillResolvingError`
+    instead (see Raises), so a caller that must KNOW the name is free
+    again gets a failure, not a silent return.
 
     The caller must not touch *window* again after this returns: once
     its deletion completes, the underlying C++ object is gone, and any
@@ -784,6 +860,15 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
     (``Close()`` returning ``False``) skips the collection: the close
     was refused, so the destruction -- and this call's cleanup -- did
     not happen through the window's own close path.
+
+    Raises:
+        WindowStillResolvingError: Only when *strict* is set. Raised
+            in either unresolved exit, after the settle loop: the
+            closed window's name still resolves to itself past
+            :data:`_CLOSE_SETTLE_ATTEMPTS` (the deletion never
+            reaped), or it resolves to a different window (a leaked
+            same-named window answers the name). The message names
+            the case and both native handles.
     """
     name = window.GetName()
     handle = window.GetHandle()
@@ -798,10 +883,111 @@ def close_window(window: Any) -> bool:  # noqa: ANN401
         flush_deferred_deletions()
         found = wx.Window.FindWindowByName(name)
         attempts += 1
+    if os.environ.get("RIVERCROSSING_CLOSE_DEBUG") and found is not None:
+        print(  # noqa: T201 -- env-gated diagnostic, off by default
+            f"CLOSE-DEBUG: {name!r} still resolves after {attempts} attempts "
+            f"(closed={closed}, was_deleting={window.IsBeingDeleted()}, "
+            f"handle={handle!r}, found_handle={found.GetHandle()!r})",
+            file=sys.stderr,
+            flush=True,
+        )
+    if strict and found is not None:
+        # Decided here, before pump(): *found* is a fresh post-flush
+        # wrapper and still safe to query; after pump() its deletion
+        # may have completed and any further method call segfaults.
+        if handle and found.GetHandle() != handle:
+            raise WindowStillResolvingError(
+                f"close_window(strict=True): {name!r} now resolves to a "
+                f"different window (closed handle {handle!r}, found handle "
+                f"{found.GetHandle()!r}) -- a leaked same-named window "
+                f"answers the name"
+            )
+        raise WindowStillResolvingError(
+            f"close_window(strict=True): {name!r} still resolves after "
+            f"{_CLOSE_SETTLE_ATTEMPTS} settle attempts -- the closed "
+            f"window's deletion never reaped (handle {handle!r})"
+        )
     pump()
     if closed:
         gc.collect()
     return closed
+
+
+def release_main_window(app: Any, frame: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Tear down a built ``main_frame`` at scenario cleanup.
+
+    The single home of the cleanup sequence
+    ``console_subprocess_scenarios._close_without_prompt`` encodes
+    today; it is the contract every module that builds the window
+    through :func:`~rivercrossing.ui.app.build_main_window` calls
+    when the scenario is done with it. Sequence, in order:
+
+    1. Sets ``app.really_quitting = True`` BEFORE :func:`close_window`
+       runs: a plain, vetoable ``Close()`` -- what ``close_window``
+       always does -- runs the very same ``_confirm_quit`` flow
+       File ▸ Exit does on every platform but macOS, and nothing
+       in a test session dismisses that modal (measured on
+       windows-latest CI, run 31015653629: the child hung, empty
+       stdout). The flag makes ``_on_main_frame_close``'s own
+       ``not event.CanVeto() or context.app.really_quitting`` guard
+       destroy *frame* immediately instead -- the same forced-close
+       mechanism :func:`_handle_exit_route` relies on.
+    2. Calls :func:`close_window` to destroy *frame* and wait for its
+       name to stop resolving.
+    3. If ``app.main_frame is frame``, clears it to ``None``.
+       ``app.py``'s ``_bind_process_quit_paths`` hands the app the
+       frame reference ``RiverCrossingApp.MacReopenApp`` restores;
+       a stale reference would keep frame #1's wrappers alive across
+       a same-process frame #2 build.
+    4. ``app.Unbind(wx.EVT_QUERY_END_SESSION)`` -- drops the handler
+       whose closure holds the route context, and through it *frame*
+       and its console.
+
+    Steps 3-4 are reference hygiene (F3): those two app-level Python
+    references would otherwise outlive *frame*'s C++ object, pinning
+    its wrapper -- and its SIP pointer->wrapper map entry -- for the
+    rest of the process. A caller that builds a second ``main_frame``
+    in the same process then finds a frame #2 control that lands on a
+    recycled C++ address resolving to frame #1's stale wrapper: the
+    address-reuse poison ``ui.views._support.find_control``'s
+    docstring documents. Dropping the references lets
+    :func:`close_window`'s final ``gc.collect()`` dealloc the
+    released graph and evict the entry.
+
+    The caller must not touch *frame* again after this returns
+    (:func:`close_window`'s own warning). *app* is expected to be the
+    live ``wx.App`` carrying the ``really_quitting`` flag and the
+    ``main_frame`` attribute the build wiring set.
+
+    Args:
+        app: The live ``wx.App`` instance the frame was built under.
+        frame: The ``main_frame`` instance to close and release.
+
+    Restores ``really_quitting`` to its previous value after the close:
+    the suite's session-scoped ``wx_app`` outlives every frame, and a
+    leaked ``True`` would make every later in-process close skip its
+    confirm dialog (the subprocess exemplar is safe only because its
+    app dies with the process).
+    """
+    previous = getattr(app, "really_quitting", False)
+    app.really_quitting = True
+    for top in wx.GetTopLevelWindows():
+        # A modal dialog that never ended pins its parent frame alive:
+        # Close()/Destroy() on the frame then never completes its
+        # deletion (measured -- finish_again leaked a main_frame past
+        # both the close settle and the session-end sweep). End any
+        # survivor before the frame close; the modal loop unwinds and
+        # the frame reaps.
+        if top is not frame and isinstance(top, wx.Dialog) and top.IsModal():
+            top.EndModal(wx.ID_CANCEL)
+    close_window(frame)
+    if getattr(app, "main_frame", None) is frame:
+        # getattr, not attribute access: the live-context mirror
+        # builders never hand the app a frame reference, and a bare
+        # session wx.App may not carry the attribute at all.
+        app.main_frame = None
+    app.Unbind(wx.EVT_QUERY_END_SESSION)
+    app.really_quitting = previous
 
 
 _MENU_EVENT_SETTLE_ATTEMPTS = 10

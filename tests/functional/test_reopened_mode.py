@@ -52,6 +52,9 @@ from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 
 pytestmark = pytest.mark.functional
 
+# Bound for the modal dismissers' event-driven re-arm (see _drive).
+_DISMISS_ATTEMPTS = 100
+
 # The seeded shoe this scenario is deterministic on: crossing #1 deals
 # 8C (plate 12), #2 deals TH (plate 34), #3 deals QD (plate 12) -- the
 # mini-acceptance provenance (test_mini_acceptance.py's module
@@ -200,7 +203,7 @@ def test_reopened_mode_entry_disabled_and_corrections_enabled(
             assert _menu_item_enabled(window, item_id) is False, item_id
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_reopened_mode_reopened_infobar_visible_after_reopen(
@@ -219,7 +222,7 @@ def test_reopened_mode_reopened_infobar_visible_after_reopen(
         assert harness.find_control(window, ids.RIDE_STATUS_LBL).GetLabelText() == "FINISHED"
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_reopened_mode_corrected_crossing_highlighted_in_feed(
@@ -241,7 +244,7 @@ def test_reopened_mode_corrected_crossing_highlighted_in_feed(
         assert by_lap[("34", 1)] is False
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa: PLR0915 -- the scenario IS the test: one finish-again script
@@ -270,11 +273,29 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
             consulted.append(True)
             return original_gate()
 
-        def _drive(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        def _drive(attempts_left: int = _DISMISS_ATTEMPTS) -> None:
+            dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
+            if dialog is None or not dialog.IsShown():
+                if attempts_left <= 0:
+                    # Never leave the modal open: a leaked dialog hangs
+                    # the close path past the pass budget (measured).
+                    fresh = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
+                    if fresh is not None and fresh.IsShown():
+                        fresh.EndModal(wx.ID_OK)
+                    return
+                # Narrow race: the callback can outrun the dialog's
+                # first show inside the modal loop; retry event-driven.
+                wx.CallLater(25, _drive, attempts_left - 1)
+                return
             captured["title"] = dialog.GetTitle()
             ok_button = wx.Window.FindWindowById(wx.ID_OK, dialog)
             captured["ok_label"] = ok_button.GetLabel() if ok_button is not None else None
-            harness.click(dialog, "wxID_OK")
+            try:
+                harness.click(dialog, "wxID_OK")
+            except Exception:  # noqa: BLE001 -- probe failures re-arm
+                # Address-reuse poison (LookupError) or a dead C++
+                # object (RuntimeError) on the click's own find.
+                wx.CallLater(25, _drive, attempts_left - 1)
 
         console_module.FINISH_GATE = _recording_gate
         try:
@@ -315,4 +336,4 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
             harness.close_window(results_frame)
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)

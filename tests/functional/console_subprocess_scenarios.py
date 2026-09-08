@@ -540,36 +540,20 @@ def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401 -- wx ships no st
     vetoable ``Close()`` at cleanup time -- what
     ``harness.close_window`` always does -- runs the very same
     ``_confirm_quit`` flow File ▸ Exit does on any platform but
-    macOS, and nothing in this child dismisses that dialog. Setting
-    ``really_quitting`` first makes ``_on_main_frame_close``'s own
+    macOS, and nothing in this child dismisses that dialog. The
+    prompt-free sequence that prevents it now lives once, as
+    :func:`harness.release_main_window`'s contract: ``really_quitting``
+    is set first so ``_on_main_frame_close``'s own
     ``not event.CanVeto() or context.app.really_quitting`` guard
-    destroy *frame* immediately instead, on every platform -- the
-    same guard :func:`_handle_exit_route`'s own forced close already
-    relies on. Every scenario that builds ``main_frame`` through
+    destroys *frame* immediately on every platform, then the two
+    app-level references the build wiring left behind (``main_frame``,
+    the ``wxEVT_QUERY_END_SESSION`` handler) are dropped -- the
+    SIP wrapper-cache rationale is that function's docstring. Every
+    scenario that builds ``main_frame`` through
     :func:`~rivercrossing.ui.app.build_main_window` uses this in its
     cleanup ``finally``, never before the behaviour under test runs.
-
-    Ends by breaking the two app-level Python references
-    ``build_main_window``'s wiring leaves behind once *frame*'s C++
-    object is gone: the ``app.main_frame`` attribute and the
-    ``wxEVT_QUERY_END_SESSION`` handler whose closure holds the route
-    context (and through it *frame* and its console). Both would
-    otherwise pin frame #1's wrappers -- and their SIP pointer->
-    wrapper map entries -- for the rest of the process, and a caller
-    that builds a second ``main_frame`` in the same process (the
-    E8.1 settings/zoom/hide-times relaunch scenarios) would find a
-    frame #2 control that lands on a recycled C++ address resolving
-    to frame #1's stale wrapper instead: the address-reuse poison
-    ``ui/views/_support.py``'s ``find_control`` documents. The
-    caller's own ``gc.collect()`` after this returns then deallocs
-    the released graph.
     """
-    app = wx.GetApp()
-    app.really_quitting = True
-    harness.close_window(frame)
-    if app.main_frame is frame:
-        app.main_frame = None
-    app.Unbind(wx.EVT_QUERY_END_SESSION)
+    harness.release_main_window(wx.GetApp(), frame)
 
 
 def _click_no_ride_button(button_name: str) -> None:

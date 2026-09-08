@@ -14,11 +14,13 @@ retires that risk.
 
 E5.4.2 retired the demo seam from the app path: the app's console is
 the live ``EngineDataSource`` over a fresh engine (empty feed, zero
-counters), so the ``empty_console`` fixture below pins that real empty
-state through the production ``app._build_console_engine``. The demo
-``shared_console`` fixture stays for the view-capability assertions
-(bold mapping, card bitmap, held-no-chip) -- ``rivercrossing.demo``
-remains importable from tests.
+counters). The empty-state facts are pinned through the production
+``app._build_console_engine`` twice: the ``empty_console`` fixture
+below (zero counters, full shoe) and the fresh-engine drive inside
+``test_main_frame_given_a_fresh_engine_shows_an_empty_feed`` (empty
+feed at rest). The demo ``shared_console`` fixture stays for the
+view-capability assertions (bold mapping, card bitmap, held-no-chip)
+-- ``rivercrossing.demo`` remains importable from tests.
 
 Everything here needs a live ``wx.App`` and the packaged card
 bitmaps, so it lives in ``tests/functional/`` rather than
@@ -44,6 +46,18 @@ that hazard still shows up at a real per-*spawn* rate for one of the
 three original scenarios, so :func:`scenario_runner.run_scenario` also
 retries the spawn itself, not only relying on the child's own
 in-process retry.
+
+One deliberate exception: the single-window drive inside
+``test_main_frame_given_a_fresh_engine_shows_an_empty_feed`` below
+runs in this process. It builds exactly one wired ``MainFrame`` --
+the ``test_mini_acceptance.py`` precedent, whose own docstring
+records the measured distinction: the address-reuse hazard the
+subprocess scenarios isolate scales with *many* in-process
+constructions, and a lone build adds one window to the same tally
+every other module's per-test loads already contribute. Mutating the
+shared, read-only fixtures instead would make later tests in this
+module order-dependent, which is the flake class this whole branch
+exists to remove.
 """
 
 import re
@@ -58,6 +72,7 @@ from rivercrossing.demo import DemoDataSource
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import feed_model, ids
+from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.views import MainFrame, _support
 from rivercrossing.ui.views.main_frame import (
     FINISHED_INFOBAR,
@@ -155,21 +170,74 @@ def _expected_bold_flags(rows: list[FeedRow]) -> dict[str, bool]:
 
 
 def test_main_frame_given_a_fresh_engine_shows_an_empty_feed(
-    empty_console: MainFrame,
+    xrc_resource: object,
 ) -> None:
-    """E5.4.2: the real bootstrap console opens with zero crossings.
+    """E5.4.2 empty state, then Start + a typed plate render (R-31/32).
 
     The app's console reads a fresh live engine (no store-backed ride
     open), so its feed is empty -- the demo rows are gone from the app
     path. ``test_app_bootstrap``'s ``wires_the_console_to_the_live_
     engine_feed`` pin is the same fact through ``build_main_window``;
     this one drives the production ``_build_console_engine`` wiring.
+
+    The read-only assertion would still pass if the console's start
+    and entry bindings were dead: ``wire_entry``/``wire_console``
+    install them, never the constructor. So the same fresh
+    construction is driven through the real controls: Start Ride
+    flips the state label DRAFT -> RUNNING, then a plate typed into
+    ``plate_input`` and submitted with Record lands in the crossings
+    model and the crossings counter, and the field clears. Runs on
+    its own window, never the module-scoped fixtures (module
+    docstring): mutating those would make the read-only tests
+    order-dependent.
     """
-    model = empty_console.crossings_list.GetModel()
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Rider", last_name="12", plate="12")
+    engine, source = app_module._build_console_engine(roster)
+    window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
+    console = None
+    presenter = None
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        status_lbl = harness.find_control(window, ids.RIDE_STATUS_LBL)
 
-    plates = _feed_plates(model)
+        # E5.4.2: an unstarted fresh engine renders an empty feed and
+        # the DRAFT state label.
+        plates = _feed_plates(console.crossings_list.GetModel())
 
-    assert plates == ()
+        assert plates == ()
+        assert status_lbl.GetLabelText() == "DRAFT"
+
+        # Drive 1 -- Start Ride through the wired start_btn: the state
+        # label renders RUNNING and the status bar carries the notice.
+        harness.click(window, ids.START_BTN, require_shown=True)
+
+        assert status_lbl.GetLabelText() == "RUNNING"
+        assert window.GetStatusBar().GetStatusText(0) == "Ride started"
+
+        # Drive 2 -- type a plate and submit with Record: the
+        # crossing lands in the feed model (R-32), the crossings
+        # counter reads 1, the field clears for the next plate.
+        harness.type_text(window, ids.PLATE_INPUT, "12", require_shown=True)
+        harness.click(window, ids.RECORD_BTN, require_shown=True)
+
+        assert _feed_plates(console.crossings_list.GetModel()) == ("12",)
+        assert harness.find_control(window, ids.CROSSINGS_COUNT_LBL).GetLabelText() == "1"
+        assert harness.find_control(window, ids.PLATE_INPUT).GetValue() == ""
+        assert status_lbl.GetLabelText() == "RUNNING"
+    finally:
+        # Phase-2 reference hygiene (the shared-fixture precedent):
+        # drop the view and presenter before the window dies so
+        # close_window's final gc.collect() can evict their wrappers.
+        del console, presenter
+        harness.close_window(window)
 
 
 # --- the riskiest widget: the bold flagged row (project-plan.md §7) --

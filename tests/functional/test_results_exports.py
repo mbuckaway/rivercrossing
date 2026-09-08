@@ -64,8 +64,7 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
     try:
         yield frame
     finally:
-        wx.GetApp().really_quitting = True
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s inputs
@@ -218,7 +217,7 @@ def live_context(
     try:
         yield context, engine, roster
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def _schedule_drive(dialog_name: str, drive: Any) -> None:  # noqa: ANN401 -- wx ships no stubs

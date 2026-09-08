@@ -73,6 +73,10 @@ from rivercrossing.ui.views import MainFrame
 
 pytestmark = pytest.mark.functional
 
+# Bound for the modal dismissers' event-driven re-arm (see
+# _click_finish_cancel).
+_DISMISS_ATTEMPTS = 100
+
 # The shoe seed the whole race (and its standings) is deterministic on.
 MINI_ACCEPTANCE_SEED = 20260920
 
@@ -445,9 +449,22 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
         console_module.FINISH_GATE = _recording_gate
         try:
 
-            def _click_finish_ok() -> None:
+            def _click_finish_ok(attempts_left: int = _DISMISS_ATTEMPTS) -> None:
                 dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                harness.click(dialog, "wxID_OK")
+                if dialog is None or not dialog.IsShown():
+                    if attempts_left <= 0:
+                        fresh = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
+                        if fresh is not None and fresh.IsShown():
+                            fresh.EndModal(wx.ID_OK)
+                        return
+                    wx.CallLater(25, _click_finish_ok, attempts_left - 1)
+                    return
+                try:
+                    harness.click(dialog, "wxID_OK")
+                except Exception:  # noqa: BLE001 -- probe failures re-arm
+                    # Address-reuse poison (LookupError) or a dead C++
+                    # object (RuntimeError) on the click's own find.
+                    wx.CallLater(25, _click_finish_ok, attempts_left - 1)
 
             wx.CallAfter(_click_finish_ok)
             harness.fire_menu_event(window, "mi_finish_ride")
@@ -474,7 +491,7 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
         assert actual == EXPECTED_STANDINGS
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource: object) -> None:
@@ -497,9 +514,28 @@ def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource:
         console_module.FINISH_GATE = _recording_gate
         try:
 
-            def _click_finish_cancel() -> None:
+            def _click_finish_cancel(attempts_left: int = _DISMISS_ATTEMPTS) -> None:
                 dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                harness.click(dialog, "wxID_CANCEL")
+                if dialog is None or not dialog.IsShown():
+                    if attempts_left <= 0:
+                        # Never leave the modal open: a leaked dialog
+                        # hangs the close path past the pass budget.
+                        fresh = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
+                        if fresh is not None and fresh.IsShown():
+                            fresh.EndModal(wx.ID_CANCEL)
+                        return
+                    # Narrow race: the callback can outrun the dialog's
+                    # first show inside the modal loop; retry instead
+                    # of raising inside CallAfter (wx swallows it and
+                    # the modal would hang past the pass budget).
+                    wx.CallLater(25, _click_finish_cancel, attempts_left - 1)
+                    return
+                try:
+                    harness.click(dialog, "wxID_CANCEL")
+                except Exception:  # noqa: BLE001 -- probe failures re-arm
+                    # Address-reuse poison (LookupError) or a dead C++
+                    # object (RuntimeError) on the click's own find.
+                    wx.CallLater(25, _click_finish_cancel, attempts_left - 1)
 
             wx.CallAfter(_click_finish_cancel)
             harness.fire_menu_event(window, "mi_finish_ride")
@@ -512,4 +548,4 @@ def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource:
         assert harness.find_control(window, ids.PLATE_INPUT).IsEnabled() is True
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)

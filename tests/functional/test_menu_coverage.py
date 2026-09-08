@@ -70,6 +70,10 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.functional
 
+# How many full builds _build_live_console attempts before surfacing
+# a degraded XRC load (see the builder's comment).
+_LIVE_CONSOLE_BUILD_ATTEMPTS = 2
+
 COVERAGE_CASES = tuple((route, item_id) for route in commands.ROUTE_TABLE for item_id in route.ids)
 COVERAGE_CASE_IDS = [f"{route.menu}:{item_id}" for route, item_id in COVERAGE_CASES]
 
@@ -129,6 +133,36 @@ def test_menu_route_is_reachable_and_resolves_its_declared_kind(
     resolved = commands.route_for_id(item_id)
     assert delivered_ids == [real_id]
     assert resolved is route
+
+
+def test_mi_shortcuts_route_opens_the_real_dialog_and_closes_cleanly(
+    app_frame: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """The walk proves delivery; this row proves it opens its dialog.
+
+    The reachability walk above only shows each §15 id delivers
+    ``EVT_MENU`` on a real menubar. This drives ``mi_shortcuts`` at
+    the fully bound ``build_main_window`` frame and asserts the
+    authored ``shortcuts_dlg`` genuinely opens as a modal and is
+    destroyed again by ``_open_target`` when the scheduled
+    ``wxID_CLOSE`` click ends it (``wire_close_button``'s binding) --
+    E8.2.1's route half, driven in-process instead of the spawned
+    interpreter ``test_shortcuts_dialog.py`` uses.
+    """
+    observed: dict[str, bool] = {}
+
+    def _read_and_close() -> None:
+        dialog = wx.Window.FindWindowByName(ids.SHORTCUTS_DLG)
+        observed["opened"] = dialog is not None
+        if dialog is not None:
+            harness.click(dialog, "wxID_CLOSE")
+
+    wx.CallAfter(_read_and_close)
+    harness.fire_menu_event(app_frame, ids.MI_SHORTCUTS)
+    harness.pump()
+
+    assert observed["opened"] is True
+    assert wx.Window.FindWindowByName(ids.SHORTCUTS_DLG) is None
 
 
 @pytest.mark.parametrize(("stock_id", "authored_menu_title"), STOCK_RELOCATION_CASES)
@@ -205,7 +239,7 @@ def app_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see docs
     try:
         yield frame
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 def test_mi_start_ride_runs_the_presenter_start_gate_not_the_stub(
@@ -262,7 +296,7 @@ def test_mi_backup_now_with_a_store_writes_a_backup_and_posts_its_path(
         assert status_text == f"Backed up database to {backups[-1]}"
     finally:
         store.close()
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def test_mi_review_held_returns_the_review_notebook_to_the_needs_review_tab(
@@ -339,36 +373,54 @@ def _build_live_console(  # noqa: PLR0913 -- (xrc_resource, wx_app, store, venue
     if reopened:
         engine.reopen()
     source = EngineDataSource(engine, roster)
-    frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    try:
-        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-        frame.SetMenuBar(menubar)
-        frame.Show()
-        frame.Layout()
-        harness.pump()
-        console = MainFrame(frame, data_source=source, resource=xrc_resource)
-        presenter = ConsolePresenter(console, engine=engine, source=source)
-        console.wire_entry(presenter.on_plate_entered)
-        console.wire_console(presenter)
-        console.set_state(source.ride_status())
-        context = app_module._RouteContext(
-            frame=frame,
-            resource=xrc_resource,
-            roster=roster,
-            app=wx_app,
-            theme_controller=theme.ThemeController(wx_app),
-            presenter=presenter,
-            console_view=console,
-            store=store,
-        )
-        app_module._bind_routes(context)
-        app_module._apply_menu_state(context, engine.state)
-    except Exception:
-        # Fault A: a construct-phase raise (a degraded load, a wiring
-        # failure) must not leak the frame the caller's finally never
-        # sees -- this builder raised before returning it.
-        harness.close_window(frame)
-        raise
+    # The documented XmlResource degradation: under load a fresh load
+    # can drop one subtree (a different control each time -- measured
+    # on CI), which the view constructor's typed lookups trip on after
+    # load_window_verified's own name/type verify passed. The remedy
+    # is the one load_window_verified applies to ITS verify failures:
+    # close the degraded frame and rebuild from a fresh resource.
+    # Two builds bound the pathological case; each rebuild uses a
+    # fresh XmlResource instance (harness._fresh_resource).
+    last_lookup_error: LookupError | None = None
+    for _attempt in range(_LIVE_CONSOLE_BUILD_ATTEMPTS):
+        frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
+        try:
+            menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+            frame.SetMenuBar(menubar)
+            frame.Show()
+            frame.Layout()
+            harness.pump()
+            console = MainFrame(frame, data_source=source, resource=xrc_resource)
+            presenter = ConsolePresenter(console, engine=engine, source=source)
+            console.wire_entry(presenter.on_plate_entered)
+            console.wire_console(presenter)
+            console.set_state(source.ride_status())
+            context = app_module._RouteContext(
+                frame=frame,
+                resource=xrc_resource,
+                roster=roster,
+                app=wx_app,
+                theme_controller=theme.ThemeController(wx_app),
+                presenter=presenter,
+                console_view=console,
+                store=store,
+            )
+            app_module._bind_routes(context)
+            app_module._apply_menu_state(context, engine.state)
+            break
+        except LookupError as exc:
+            # Degraded load (see the comment above): rebuild once more.
+            last_lookup_error = exc
+            harness.close_window(frame)
+        except Exception:
+            # Fault A: a construct-phase raise (a degraded load, a
+            # wiring failure) must not leak the frame the caller's
+            # finally never sees -- this builder raised before
+            # returning it.
+            harness.close_window(frame)
+            raise
+    else:
+        raise last_lookup_error  # type: ignore[misc] -- the loop bound guarantees a set value
     return context, engine
 
 
@@ -408,7 +460,7 @@ def test_results_reopen_btn_runs_the_same_reopen_flow_as_the_menu(
     finally:
         if results_frame is not None:
             harness.close_window(results_frame)
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 # --- ux-polish: the last two dead Ride ▸ rows ----------------------
@@ -455,7 +507,7 @@ def test_mi_stop_ride_confirmed_runs_the_presenter_stop_flow(
         assert status_text == "Ride stopped — continue to resume"
         assert status_label.GetLabelText() == "RUNNING"
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def test_mi_stop_ride_cancelled_leaves_the_ride_running(
@@ -479,7 +531,7 @@ def test_mi_stop_ride_cancelled_leaves_the_ride_running(
         assert engine.stopped is False
         assert engine.state is RideStatus.RUNNING
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def test_mi_set_start_time_confirmed_backdates_the_ride_start(
@@ -536,7 +588,7 @@ def test_mi_set_start_time_confirmed_backdates_the_ride_start(
         assert engine.events[-1].payload["actual_start"] == "2026-09-21T09:55:00"
         assert engine.events[-1].payload["previous_start"] == "2026-09-20T10:00:00"
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def test_mi_set_start_time_reopened_posts_the_engine_refusal_notice(
@@ -573,7 +625,7 @@ def test_mi_set_start_time_reopened_posts_the_engine_refusal_notice(
         # the status bar posts that message verbatim.
         assert status_text == "Correction refused: cannot set start time from reopened"
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def test_mi_start_ride_incomplete_setup_posts_the_gate_and_stays_draft(
@@ -600,7 +652,7 @@ def test_mi_start_ride_incomplete_setup_posts_the_gate_and_stays_draft(
         assert status_label.GetLabelText() == "DRAFT"
         assert not any(event.action == "start" for event in engine.events)
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def test_settings_backup_now_btn_writes_a_backup_and_posts_its_path(  # noqa: PLR0913, PLR0917 -- (xrc_resource, wx_app, tmp_path, monkeypatch): the four fixture seams
@@ -642,4 +694,4 @@ def test_settings_backup_now_btn_writes_a_backup_and_posts_its_path(  # noqa: PL
         assert status_text == f"Backed up database to {backups[-1]}"
     finally:
         store.close()
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)

@@ -108,7 +108,7 @@ def shared_live_console(xrc_resource: object) -> tuple[Any, RideEngine, ConsoleP
         yield window, engine, presenter
     finally:
         del console, presenter
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def _feed_plates(window: Any) -> tuple[str, ...]:  # noqa: ANN401 -- wx ships no stubs
@@ -167,6 +167,30 @@ def test_live_console_clock_resolves_with_zero_elapsed_at_startup(
 
     assert harness.find_control(window, ids.CLOCK_ELAPSED_LBL).GetLabelText() == "0:00:00"
     assert harness.find_control(window, ids.CLOCK_REMAINING_LBL).GetLabelText() == ""
+
+
+def test_live_console_typed_plate_lands_in_the_live_feed(
+    shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
+) -> None:
+    """R-31 in-process: a typed plate + Enter records into the feed.
+
+    The subprocess scenario proves the same flow in a fresh
+    interpreter; this drives it once on the shared module console so a
+    wiring regression fails the module fast. Deliberately the last
+    startup-state test to run: the drive mutates the shared engine,
+    and every earlier assertion pins the empty/zero startup state (the
+    later gauge and glyph tests read no crossing or counter state).
+    """
+    window, _engine, _presenter = shared_live_console
+    plate_input = harness.find_control(window, ids.PLATE_INPUT)
+
+    harness.type_text(window, ids.PLATE_INPUT, "12")
+    submit = wx.CommandEvent(wx.EVT_TEXT_ENTER.typeId, plate_input.GetId())
+    submit.SetEventObject(plate_input)
+    plate_input.GetEventHandler().ProcessEvent(submit)
+    harness.pump()
+
+    assert _feed_plates(window) == ("12",)
 
 
 # --- WS-D: the header gauges and the bitmap start/stop buttons --------
