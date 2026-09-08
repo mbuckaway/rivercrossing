@@ -134,24 +134,38 @@ jobs:
           path: ci-gui-probe.png
           if-no-files-found: warn
 
-      # Per-file worker processes plus §4's auto-retry (bumped to two,
-      # PR #8's CI run 31344728049). Both are load-bearing: see
-      # noxfile.py's functional session for the measurements. --reruns 2
-      # cannot absorb the residual wx/SIP wrapper-cache corruption
-      # (process-granular, docs/EPIC3-SESSION-SUMMARY.md Addendum 2), so
-      # the command runs through tools/functional_rerun.py, which re-runs
-      # failed files in freshly spawned pytest processes.
+      # Collection-completeness guard: a file that raises at import is
+      # reported by a COMPLETED xdist run, but a pass killed by the
+      # budget never prints its session summary, and the wrapper's
+      # stream-only attribution then misses the dead file entirely
+      # (PR #42's false green -- 9 tests silently uncollected). Plain
+      # collect-only fails loudly (exit 2) on any collection error and
+      # pins the expected item count, so a dead file is a red step
+      # instead of a wrong-colour run.
+      - name: Collection-completeness guard (no xdist)
+        run: |
+          python -m pytest tests/functional --collect-only -q --no-cov > _collect.log
+          grep -q "928 tests collected" _collect.log
+      # Per-file fresh processes are load-bearing: see noxfile.py's
+      # functional session for the measurements. Whole-suite xdist
+      # runs at -n 2 accumulate wx/SIP wrapper-cache degradation until
+      # late files fail with _support.py:106 LookupError, while every
+      # file run alone in a fresh pytest process passes
+      # (docs/FUNCTIONAL-SUITE-INSTABILITY.md section 2.1), so
+      # tools/functional_perfile.py runs every file in its own fresh
+      # process, 2 at a time, with one fresh-process retry round for
+      # any failed file (--reruns 2 alone cannot absorb the
+      # process-granular corruption -- a rerun re-runs inside the same
+      # poisoned worker).
       - name: pytest functional (real wx windows)
         env:
-          # The ux-polish suite grew past the 600 s default per-pass
-          # bound (functional_rerun.py kills a pass at 600 s, marking
-          # whatever was in flight as failed). Two changes make the
-          # stage deterministic: a 2400 s budget so even a slow runner
-          # completes a full pass, and -n 2 instead of -n auto -- the
-          # repo's own VM runner measures auto (8+ concurrent wx
-          # windows) as crash-prone while 2 workers converges cleanly.
-          RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S: 2400
-        run: python tools/functional_rerun.py pytest tests/functional -v --no-cov -n 2 --dist loadfile --reruns 2
+          # Per-file bound for functional_perfile.py's fresh-process
+          # runs. Healthy files clear in minutes; 900 s still lets a
+          # slow file finish while bounding a hung modal or an
+          # import-time stall (measured) to one retry round, never a
+          # whole pass.
+          RIVERCROSSING_FUNCTIONAL_PERFILE_TIMEOUT_S: 900
+        run: python tools/functional_perfile.py tests/functional
       - name: Upload failure screenshots
         if: failure()
         uses: actions/upload-artifact@v4

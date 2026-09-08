@@ -123,10 +123,14 @@ def functional(session):
     --reruns 2 cannot absorb the residual wx/SIP wrapper-cache
     corruption, which is process-granular: a rerun re-runs inside the
     same poisoned worker (docs/EPIC3-SESSION-SUMMARY.md Addendum 2).
-    tools/functional_rerun.py therefore re-runs failed *files* in
-    freshly spawned pytest processes (same flags), up to its
-    ``_MAX_RERUNS`` budget, so a fresh process gets a fresh wrapper
-    map.
+    tools/functional_perfile.py therefore runs one fresh pytest
+    process per file up front -- measured this session
+    (docs/FUNCTIONAL-SUITE-INSTABILITY.md section 2.1): whole-suite
+    xdist passes at -n 2 accumulate the degradation until late files
+    fail with _support.py:106 LookupError, while every file run alone
+    in a fresh process passes -- and a failed file gets exactly one
+    fresh-process retry round inside the tool. tools/functional_rerun.
+    py remains the whole-suite/acceptance backstop, untouched.
 
     --forked would be the wrong tool on macOS: forking a process that
     has already initialised NSApplication is not safe.
@@ -139,21 +143,24 @@ def functional(session):
         session.error(message)
 
     session.install(DEV)
-    jobs = os.environ.get("RIVERCROSSING_FUNCTIONAL_JOBS", "auto")
+    # tools/functional_perfile.py runs one fresh pytest process per
+    # file, 2 at a time (measured: more concurrent wx processes crash;
+    # -n 2 is the convergent count). The legacy RIVERCROSSING_
+    # FUNCTIONAL_JOBS knob (the old xdist -n value) maps onto the
+    # per-file concurrency env; "auto" is not a perfile value and
+    # falls back to the 2-worker default. Pytest posargs are not
+    # forwarded: perfile's argv is exactly one directory (exit 2
+    # otherwise), so a `-k` filter must go through the file's own
+    # pytest run instead.
+    perfile_jobs = os.environ.get("RIVERCROSSING_FUNCTIONAL_JOBS")
+    run_env: dict[str, str] = {}
+    if perfile_jobs is not None and perfile_jobs.isdigit():
+        run_env["RIVERCROSSING_FUNCTIONAL_PERFILE_JOBS"] = perfile_jobs
     session.run(
         "python",
-        str(ROOT / "tools" / "functional_rerun.py"),
-        "pytest",
+        str(ROOT / "tools" / "functional_perfile.py"),
         "tests/functional",
-        "-v",
-        "--no-cov",
-        "-n",
-        jobs,
-        "--dist",
-        "loadfile",
-        "--reruns",
-        "2",
-        *session.posargs,
+        env=run_env,
     )
 
 

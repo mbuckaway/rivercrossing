@@ -4,11 +4,12 @@
 # a disposable Tart macOS VM cloned from the rivercrossing-func-template
 # built by scripts/setup_functional_vm.sh. Each run clones the template
 # (APFS copy-on-write -- seconds, not minutes), pushes the current
-# worktree, runs pytest in the guest through the fresh-process rerun
-# wrapper (tools/functional_rerun.py), pulls screenshots back, then
-# deletes the clone. The clone's own WindowServer means a crashed run
-# cannot foul the host desktop. Isolation contains crashes, it does not
-# cure them. Local-dev only -- CI is unaffected.
+# worktree, runs every test file in the guest through the
+# fresh-process-per-file runner (tools/functional_perfile.py), pulls
+# screenshots back, then deletes the clone. The clone's own
+# WindowServer means a crashed run cannot foul the host desktop.
+# Isolation contains crashes, it does not cure them. Local-dev only --
+# CI is unaffected.
 #
 # Exit code contract:
 #   2   - tart is not installed
@@ -18,14 +19,17 @@
 #         seconds) and was killed by the watchdog
 #   *   - otherwise, the guest's pytest exit code is propagated as-is
 #
-# Parallelism: RIVERCROSSING_FUNCTIONAL_JOBS (default "auto") sets the
-# xdist -n value. The E6-size suite saturates the 4-CPU clone at -n
-# auto (measured 2026-08-29: 4-6 wx-churn segfaults per run), so local
-# runs may set it to 2 for a deterministic pass.
+# Parallelism: RIVERCROSSING_FUNCTIONAL_JOBS maps to the per-file
+# runner's RIVERCROSSING_FUNCTIONAL_PERFILE_JOBS concurrency. "auto"
+# is not a perfile value -- the E6-size suite saturates the 4-CPU
+# clone at -n auto (measured 2026-08-29: 4-6 wx-churn segfaults per
+# run) -- and 2 concurrent wx processes measured delayed frame
+# reaping that leaked windows into the session-end sweep (2026-09-08),
+# so the perfile default is ONE file at a time.
 #
 # Test paths: RIVERCROSSING_VM_TEST_PATHS (default "tests/functional")
-# overrides what pytest runs in the guest -- the E9.2.1 acceptance
-# suite (tests/acceptance) is run the same way:
+# overrides the directory the runner scans in the guest -- the E9.2.1
+# acceptance suite (tests/acceptance) is run the same way:
 #     RIVERCROSSING_VM_TEST_PATHS="tests/acceptance" scripts/run_functional_tests_vm.sh
 #
 # Usage: scripts/run_functional_tests_vm.sh
@@ -35,7 +39,7 @@ set -uo pipefail
 readonly TEMPLATE_NAME="rivercrossing-func-template"
 readonly CLONE_NAME="rivercrossing-func-$$"
 readonly VM_SSH_KEY="${HOME}/.ssh/rivercrossing_vm_ed25519"
-readonly VM_TIMEOUT="${RIVERCROSSING_VM_TIMEOUT:-1800}"
+readonly VM_TIMEOUT="${RIVERCROSSING_VM_TIMEOUT:-5400}"
 
 # Every clone is a fresh VM with a brand-new host key and no known-hosts
 # entry worth keeping once the clone is deleted at the end of the run.
@@ -219,11 +223,11 @@ main() {
   rm -f "${sentinel}"
 
   # shellcheck disable=SC2029
-  # The RIVERCROSSING_FUNCTIONAL_JOBS / _PASS_TIMEOUT_S expansions are
-  # intentionally client-side: the local values select the guest's
-  # xdist parallelism and per-pass budget.
+  # The RIVERCROSSING_FUNCTIONAL_JOBS / _PERFILE_TIMEOUT_S expansions
+  # are intentionally client-side: the local values select the
+  # guest's per-file concurrency and per-file timeout.
   ssh "${SSH_OPTS[@]}" "admin@${vm_ip}" \
-    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S='${RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S:-600}' .venv/bin/python tools/functional_rerun.py pytest ${RIVERCROSSING_VM_TEST_PATHS:-tests/functional} -v --no-cov -n '${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2" &
+    "cd rivercrossing && .venv/bin/python -m pip install -e '.[dev]' --quiet && RIVERCROSSING_FUNCTIONAL_PERFILE_TIMEOUT_S='${RIVERCROSSING_FUNCTIONAL_PERFILE_TIMEOUT_S:-900}' RIVERCROSSING_FUNCTIONAL_PERFILE_JOBS='${RIVERCROSSING_FUNCTIONAL_JOBS:-1}' RIVERCROSSING_CLOSE_DEBUG='${RIVERCROSSING_CLOSE_DEBUG:-}' .venv/bin/python tools/functional_perfile.py ${RIVERCROSSING_VM_TEST_PATHS:-tests/functional}" &
   local run_pid=$!
 
   run_watchdog "${VM_TIMEOUT}" "${run_pid}" "${sentinel}" &

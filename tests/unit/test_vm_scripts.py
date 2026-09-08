@@ -83,10 +83,11 @@ _RUN_VM_SUBSTRINGS = (
     "--no-graphics",
     "tart stop",
     "tart delete",
-    "tools/functional_rerun.py pytest ${RIVERCROSSING_VM_TEST_PATHS:-tests/functional}",
-    "${RIVERCROSSING_FUNCTIONAL_JOBS:-auto}' --dist loadfile --reruns 2",
+    "tools/functional_perfile.py ${RIVERCROSSING_VM_TEST_PATHS:-tests/functional}",
+    "RIVERCROSSING_FUNCTIONAL_PERFILE_TIMEOUT_S",
+    "RIVERCROSSING_FUNCTIONAL_PERFILE_JOBS",
     "RIVERCROSSING_VM_TIMEOUT",
-    "1800",
+    "5400",
     "RIVERCROSSING_FUNCTIONAL_JOBS",
     "RIVERCROSSING_VM_TEST_PATHS",
     "exit 124",
@@ -308,7 +309,7 @@ exit 0
 # exactly the way a real ssh binary would.
 _SSH_HANG_ON_PYTEST_STUB = """\
 #!/bin/bash
-if [[ "$*" == *pytest* ]]; then
+if [[ "$*" == *functional_perfile* || "$*" == *pytest* ]]; then
   exec sleep 20
 fi
 exit 0

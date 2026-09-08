@@ -24,8 +24,6 @@ import wx
 from rivercrossing.ui import app, ids
 from rivercrossing.ui.views.main_frame import REQUIRED_CONTROLS
 
-pytestmark = pytest.mark.functional
-
 
 def test_required_controls_lists_exactly_the_init_find_controls() -> None:
     """The verify tuple is the single source for __init__'s 24 finds.
