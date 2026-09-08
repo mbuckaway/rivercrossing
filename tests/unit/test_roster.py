@@ -2413,3 +2413,75 @@ def test_roster_set_team_logo_card_unknown_entry_raises_naming_it() -> None:
 
     with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
         roster.set_team_logo_card(stranger, code="AS")
+
+
+# ------------- review fix: pooled plates must be whole numbers
+
+
+def test_create_team_entry_pooled_non_numeric_rider_plate_raises_plate_shape_error() -> None:
+    """rider_pooled: a team member's plate must be a whole number."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '77A' must be a whole number")):
+        roster.create_team_entry(
+            display_name="Team A",
+            riders=[
+                Rider(first_name="Alex", last_name="", plate="5"),
+                Rider(first_name="Bo", last_name="", plate="77A"),
+            ],
+        )
+
+    assert roster.entries == ()
+
+
+def test_create_solo_entry_pooled_non_numeric_plate_raises_plate_shape_error() -> None:
+    """rider_pooled: even a solo plate must be a whole number."""
+    roster = Roster()
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '77A' must be a whole number")):
+        roster.create_solo_entry(first_name="Alex", last_name="", plate="77A")
+
+    assert roster.entries == ()
+
+
+def test_change_pooled_rider_plate_non_numeric_plate_raises_and_changes_nothing() -> None:
+    """A pooled member cannot take a non-numeric plate; state stays."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="3")
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[alex, Rider(first_name="Bo", last_name="", plate="9")]
+    )
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '77A' must be a whole number")):
+        roster.change_pooled_rider_plate(alex, plate="77A")
+
+    assert (alex.plate, entry.plate) == ("3", "3")
+
+
+def test_change_solo_plate_pooled_non_numeric_plate_raises_and_changes_nothing() -> None:
+    """rider_pooled: change_solo_plate refuses a non-numeric plate."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '77A' must be a whole number")):
+        roster.change_solo_plate(entry, plate="77A")
+
+    assert (entry.plate, entry.riders[0].plate) == ("1", "1")
+
+
+def test_add_rider_to_team_pooled_non_numeric_plate_raises_and_keeps_the_team() -> None:
+    """add_rider_to_team refuses a non-numeric pooled plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    entry = roster.create_team_entry(
+        display_name="Team A",
+        riders=[
+            Rider(first_name="Alex", last_name="", plate="1"),
+            Rider(first_name="Bo", last_name="", plate="2"),
+        ],
+    )
+    stranger = Rider(first_name="Cy", last_name="", plate="77A")
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '77A' must be a whole number")):
+        roster.add_rider_to_team(stranger, to_entry=entry)
+
+    assert [rider.plate for rider in entry.riders] == ["1", "2"]

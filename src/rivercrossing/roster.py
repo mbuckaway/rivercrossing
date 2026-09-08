@@ -9,7 +9,10 @@ none; ``rider_pooled`` (the default) gives every rider a unique
 plate, with the entry's own plate derived -- the rider's own plate
 for a solo entry, the lowest-numbered rider's plate for a team.
 Every entry's and pooled rider's plate shares one namespace per
-ride (R-20).
+ride (R-20). A ``rider_pooled`` plate is always a whole-number
+string -- the CSV NUMBER column's domain, and what "lowest-numbered"
+needs to compare -- while a ``team_relay`` plate may be any string
+(``next_free_plate`` ignores non-numeric plates either way).
 
 This module is a store-less, in-memory model of that shape: EPIC 5's
 Store is the persistence layer these dataclasses feed once it lands
@@ -270,6 +273,22 @@ class StartViolation:
 def _lowest_plate(plates: Iterable[str]) -> str:
     """Return the numerically lowest of *plates* (S1's "adopts...")."""
     return min(plates, key=int)
+
+
+def _require_whole_plate(plate: str) -> None:
+    """Raise PlateShapeError unless *plate* is a whole-number string.
+
+    Pooled plates are the NUMBER column's domain (spec S7): they feed
+    ``_lowest_plate``'s "lowest-numbered" derivation, which needs
+    comparable integers. A team_relay plate may be any non-empty
+    string, so relay callers never invoke this.
+
+    Raises:
+        PlateShapeError: *plate* contains a non-digit character.
+    """
+    if not plate.isdigit():
+        msg = f"plate {plate!r} must be a whole number"
+        raise PlateShapeError(msg)
 
 
 def can_edit_structure(status: RideStatus) -> bool:
@@ -701,7 +720,8 @@ class Roster:
             EntryNotFoundError: *entry* is not a member of this
                 roster.
             LockedError: the ride has left DRAFT.
-            PlateShapeError: *entry* is not type SOLO.
+            PlateShapeError: *entry* is not type SOLO, or this is a
+                rider_pooled ride and *plate* is not a whole number.
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
@@ -712,6 +732,8 @@ class Roster:
         if entry.type is not EntryType.SOLO:
             msg = "change_solo_plate requires a solo entry"
             raise PlateShapeError(msg)
+        if self._plate_model is PlateModel.RIDER_POOLED:
+            _require_whole_plate(plate)
         old_plate = entry.plate
         self._require_plate_free_for_change(plate, exclude=old_plate)
         entry.plate = plate
@@ -734,7 +756,8 @@ class Roster:
             RiderNotFoundError: *rider* is not on any entry here.
             LockedError: the ride has left DRAFT.
             PlateShapeError: this ride's plate_model is not
-                rider_pooled, or *rider* is not on a team member.
+                rider_pooled, *rider* is not on a team member, or
+                *plate* is not a whole number.
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
@@ -748,6 +771,7 @@ class Roster:
         if self._plate_model is not PlateModel.RIDER_POOLED or entry.type is not EntryType.TEAM:
             msg = "change_pooled_rider_plate requires a rider_pooled team member"
             raise PlateShapeError(msg)
+        _require_whole_plate(plate)
         old_plate = cast("str", rider.plate)
         self._require_plate_free_for_change(plate, exclude=old_plate)
         rider.plate = plate
@@ -904,7 +928,7 @@ class Roster:
                 ride's current state and plate model.
             TeamSizeError: the add would exceed max_team_size.
             PlateShapeError: rider_pooled and *rider* carries no
-                plate.
+                plate, or carries one that is not a whole number.
             DuplicatePlateError: *rider*'s plate collides with an
                 existing entry's or rider's plate.
         """
@@ -927,6 +951,7 @@ class Roster:
             if rider.plate is None:
                 msg = "rider_pooled riders must each carry a plate"
                 raise PlateShapeError(msg)
+            _require_whole_plate(rider.plate)
             self._require_plates_free([rider.plate])
         else:
             rider.plate = None
@@ -1016,6 +1041,8 @@ class Roster:
             msg = "rider_pooled riders must each carry a plate"
             raise PlateShapeError(msg)
         rider_plates = [cast("str", rider.plate) for rider in riders]
+        for rider_plate in rider_plates:
+            _require_whole_plate(rider_plate)
         self._require_plates_free(rider_plates)
         return _lowest_plate(rider_plates)
 
@@ -1037,15 +1064,10 @@ class Roster:
         in_use = self._plates_in_use()
         seen: set[str] = set()
         for plate in plates:
-            # logic-coverage-exempt: T-13 -- the (plate in in_use AND
-            # plate in seen) row is unreachable by construction.
-            # in_use is fixed before this loop starts, so any plate
-            # value that satisfies "in in_use" always raises on its
-            # own first occurrence, before that same value could ever
-            # have been added to "seen" for a later occurrence of it
-            # to observe. The two conditions cannot both be True for
-            # one evaluation of this line.
-            if plate in in_use or plate in seen:
+            if plate in in_use:
+                msg = f"plate {plate!r} is already in use"
+                raise DuplicatePlateError(msg)
+            if plate in seen:
                 msg = f"plate {plate!r} is already in use"
                 raise DuplicatePlateError(msg)
             seen.add(plate)

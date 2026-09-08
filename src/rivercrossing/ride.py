@@ -1625,14 +1625,16 @@ class RideEngine:
         """Swap *old* for *new* in place, carrying its card and hold.
 
         Used by the corrections that re-key a crossing's identity
-        (``edit_crossing`` re-times it, ``void_crossing``/
-        ``reassign_crossing`` renumber later laps): the crossing's
-        dealt card -- and its hold, when held -- travel to the
-        replacement so the deal accounting never drifts. The per-entry
-        index follows: a same-entry replacement takes *old*'s slot
-        (stable re-sort only when the time changed, so tied instants
-        keep record order); a cross-entry move re-indexes under the
-        new entry.
+        (``edit_crossing`` re-times it, ``_renumber_later`` renumbers
+        the laps a void left behind): the crossing's dealt card -- and
+        its hold, when held -- travel to the replacement so the deal
+        accounting never drifts. The replacement is always same-entry:
+        every caller swaps within *old*'s own entry, and the per-entry
+        index takes the new crossing in *old*'s slot (stable re-sort
+        only when the time changed, so tied instants keep record
+        order). ``reassign_crossing`` moves a crossing to another
+        entry through ``_remove_crossing`` + ``_insert_crossing``
+        instead, never this method.
         """
         index = self._crossings.index(old)
         self._crossings[index] = new
@@ -1642,19 +1644,10 @@ class RideEngine:
         if held is not None:
             self._held[new] = held
         laps = self._laps[old.entry_id]
-        if old.entry_id == new.entry_id:
-            position = laps.index(old)
-            laps[position] = new
-            if new.crossed_at != old.crossed_at:
-                laps.sort(key=lambda c: c.crossed_at)
-        else:
-            # logic-coverage-exempt: T-3 -- defensive for a cross-entry
-            # caller; today edit_crossing/_renumber_later are always
-            # same-entry, so this arm is unreachable.
-            laps.remove(old)
-            if not laps:
-                del self._laps[old.entry_id]
-            self._insert_crossing(new)
+        position = laps.index(old)
+        laps[position] = new
+        if new.crossed_at != old.crossed_at:
+            laps.sort(key=lambda c: c.crossed_at)
 
     def _renumber_later(self, entry_id: str, after_seq: int) -> None:
         """Decrement every later live crossing's seq by one (E7.1.2).

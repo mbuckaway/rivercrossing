@@ -90,6 +90,9 @@ _STRUCTURAL_PROBLEM = "only new plates or name fixes are allowed"
 _MOVE_NOT_ALLOWED_PROBLEM = "team change requires DRAFT, RUNNING or REOPENED"
 _TEAM_TO_SOLO_LOCKED_PROBLEM = "converting a team member to a solo entry requires DRAFT"
 _SOLO_TO_TEAM_LOCKED_PROBLEM = "converting a solo rider into a team member requires DRAFT"
+_NON_DIGIT_PLATE_PROBLEM = "plate '77A' must be a whole number"
+_NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
+_CSV_MALFORMED_PREFIX = "malformed CSV data:"
 
 _UNIFIED_HEADER = "firstname,lastname,type,teamname,number,notes"
 _CANONICAL_HEADER = "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
@@ -2677,3 +2680,89 @@ def test_commit_relay_matched_team_with_no_changes_reports_zero_updates(
     report = commit(result)
 
     assert (report.inserted_count, report.updated_count, report.audit_events) == (0, 0, ())
+
+
+# ============ review fixes: non-digit plates, BOM, undecodable files
+
+
+def test_preview_pooled_team_non_digit_plate_cell_conflicts_and_excludes_the_row(
+    tmp_path: Path,
+) -> None:
+    """A "77A" NUMBER cell is one per-row conflict (R-21)."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Bo", type_="team", team="Wolves", number="5"),
+            _Row(first="Cy", type_="team", team="Wolves", number="77A"),
+        ],
+    )
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == (ImportConflict(row=3, problem=_NON_DIGIT_PLATE_PROBLEM),)
+    assert result.entries == (
+        ParsedEntry(
+            plate="5",
+            display_name="wolves",
+            type=EntryType.TEAM,
+            riders=(ParsedRider(first_name="Bo", last_name="", plate="5"),),
+        ),
+    )
+
+
+def test_preview_pooled_solo_non_digit_plate_cell_is_a_conflict(tmp_path: Path) -> None:
+    """A solo row's non-digit NUMBER cell conflicts too."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", last="Doe", type_="solo", number="77A")])
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == (ImportConflict(row=2, problem=_NON_DIGIT_PLATE_PROBLEM),)
+    assert result.entries == ()
+
+
+def test_preview_utf8_bom_before_the_number_header_keeps_the_plate_column(
+    tmp_path: Path,
+) -> None:
+    """A UTF-8 BOM must not silently disable the first NUMBER column."""
+    path = tmp_path / "bom_roster.csv"
+    path.write_bytes(
+        "\ufeffNUMBER,FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NOTES\n7,Alex,Doe,solo,,\n".encode("utf-8")
+    )
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == ()
+    assert [(entry.plate, entry.display_name) for entry in result.entries] == [("7", "Alex Doe")]
+
+
+def test_preview_non_utf8_file_reports_a_row_one_file_conflict(tmp_path: Path) -> None:
+    """A cp1252 file is a file-level conflict, never a crash."""
+    path = tmp_path / "cp1252_roster.csv"
+    path.write_bytes("firstname,lastname,type,number\nAlex,Müller,solo,7\n".encode("cp1252"))
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == (ImportConflict(row=1, problem=_NOT_UTF8_PROBLEM),)
+    assert result.entries == ()
+
+
+def test_preview_csv_error_mid_file_reports_a_row_one_file_conflict(tmp_path: Path) -> None:
+    """A csv.Error while reading data rows is a file-level conflict."""
+    huge_cell = "x" * 150_000
+    path = tmp_path / "huge_cell_roster.csv"
+    path.write_text(
+        f"firstname,lastname,type,number\nAlex,Doe,solo,1\nBo,{huge_cell},solo,2\n",
+        encoding="utf-8",
+    )
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert len(result.conflicts) == 1
+    assert result.conflicts[0].row == 1
+    assert result.conflicts[0].problem.startswith(_CSV_MALFORMED_PREFIX)
+    assert result.entries == ()
