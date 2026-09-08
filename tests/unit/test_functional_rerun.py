@@ -1,22 +1,20 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Unit tests for tools/functional_rerun.py (fresh-process rerun).
 
-RED phase for Phase 4's process-level functional-suite rerun:
-``tools/functional_rerun.py`` does not exist yet. The wrapper re-runs
-the FAILED/ERROR *files* from a pytest ``-ra`` summary in freshly
-spawned pytest processes, because the wx/SIP wrapper-cache corruption
-the functional suite hits is process-granular and pytest's own
-``--reruns`` re-runs inside the same poisoned worker
-(docs/EPIC3-SESSION-SUMMARY.md, Addendum 2).
+The wrapper re-runs the FAILED/ERROR *files* from a pytest ``-ra``
+summary in freshly spawned pytest processes, because the wx/SIP
+wrapper-cache corruption the functional suite hits is process-granular
+and pytest's own ``--reruns`` re-runs inside the same poisoned worker
+(docs/EPIC3-SESSION-SUMMARY.md, Addendum 2). A timed-out pass (124)
+never prints that summary. Its file set comes from the streamed
+progress lines plus every started-but-unfinished test
+(``stalled_files``).
 
 ``tools/`` carries no ``__init__.py`` (module-skeletons.md: it is dev
 tooling), so it is only importable as an implicit PEP 420 namespace
-package once the repo root is on ``sys.path`` -- the same insertion
-test_functional_gate.py makes, and for the same reason the import is
-deferred into a fixture: with the import at module level, a missing
-tools/functional_rerun.py would abort *collection* for the whole
-tests/unit session. Deferring it confines this module's RED state to
-its own tests.
+package once the repo root is on ``sys.path``. The import is deferred
+into a fixture so a broken import stays confined to the tests that
+use the module instead of aborting collection for the whole suite.
 
 Orchestration is unit-tested through a seam: ``rerun_failed_files``
 takes a ``runner`` callable that returns a ``CompletedProcess``, so
@@ -304,21 +302,40 @@ def test_parse_summary_property_maps_node_ids_to_file_prefixes(
     assert result == set(node_ids)
 
 
-def test_stalled_file_returns_none_when_every_started_test_finished(
+# ------------------------------------------------ stalled_files
+
+
+def test_stalled_files_when_no_test_started_returns_empty_set(
+    rerun_module: ModuleType,
+) -> None:
+    """A pass that only prints a session line stalled nothing."""
+    text = "[gw0] [100%] 800 passed in 812.34s\n"
+
+    assert rerun_module.stalled_files(text) == set()
+
+
+def test_stalled_files_when_text_empty_returns_empty_set(
+    rerun_module: ModuleType,
+) -> None:
+    """A pass that captured no lines at all stalled nothing."""
+    assert rerun_module.stalled_files("") == set()
+
+
+def test_stalled_files_when_every_started_test_finished_returns_empty_set(
     rerun_module: ModuleType,
 ) -> None:
     """Every bare start line has a matching result line: no stall."""
     text = (
         "tests/functional/test_ride_setup.py::test_a\n"
         "[gw0] [ 50%] PASSED tests/functional/test_ride_setup.py::test_a\n"
-        "tests/functional/test_csvio.py::test_b\n"
-        "[gw0] [ 50%] FAILED tests/functional/test_csvio.py::test_b - boom\n"
+        "tests/functional/test_csv_route_flows.py::test_b\n"
+        "[gw0] [ 50%] FAILED tests/functional/test_csv_route_flows.py::test_b - boom\n"
     )
 
-    assert rerun_module.stalled_file(text) is None
+    assert rerun_module.stalled_files(text) == set()
 
 
-def test_stalled_file_returns_the_last_unfinished_test_file(
+def test_stalled_files_when_last_test_hangs_returns_that_file(
     rerun_module: ModuleType,
 ) -> None:
     """A bare start line with no result names the stalled file.
@@ -334,7 +351,107 @@ def test_stalled_file_returns_the_last_unfinished_test_file(
         "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
     )
 
-    assert rerun_module.stalled_file(text) == "tests/functional/test_csv_route_flows.py"
+    assert rerun_module.stalled_files(text) == {"tests/functional/test_csv_route_flows.py"}
+
+
+def test_stalled_files_when_later_test_completes_after_hang_returns_hung_file(
+    rerun_module: ModuleType,
+) -> None:
+    """A completed test started after the hang does not hide it.
+
+    The old last-start-wins rule returned None once the later start
+    produced a result, dropping the hung file to the expensive
+    whole-suite fallback. Every started-but-unfinished test is tracked,
+    so the hung file survives the interleaved completion.
+    """
+    text = (
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+        "tests/functional/test_ride_setup.py::test_deck_count\n"
+        "[gw0] [ 55%] PASSED tests/functional/test_ride_setup.py::test_deck_count\n"
+    )
+
+    assert rerun_module.stalled_files(text) == {"tests/functional/test_csv_route_flows.py"}
+
+
+def test_stalled_files_when_two_tests_hang_returns_both_files(
+    rerun_module: ModuleType,
+) -> None:
+    """Two hung tests keep both files, never just the later start.
+
+    The old rule kept only the last bare start line, so an earlier hang
+    was silently dropped from the fresh-process rerun and poisoned the
+    next pass again.
+    """
+    text = (
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+        "tests/functional/test_ride_setup.py::test_deck_count\n"
+        "[gw0] [ 55%] PASSED tests/functional/test_ride_setup.py::test_deck_count\n"
+        "tests/functional/test_xrc_structure.py::test_panels\n"
+    )
+
+    assert rerun_module.stalled_files(text) == {
+        "tests/functional/test_csv_route_flows.py",
+        "tests/functional/test_xrc_structure.py",
+    }
+
+
+def test_stalled_files_when_later_result_line_truncated_returns_hung_and_lost_file(
+    rerun_module: ModuleType,
+) -> None:
+    """A truncated result line keeps the hung file.
+
+    The kill can truncate a later test's result line before the
+    wrapper reads it, so that test looks unfinished. Re-running it is a
+    harmless false positive. The real hung file is never dropped
+    (stalled_files' docstring documents this residual edge).
+    """
+    text = (
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+        "tests/functional/test_ride_setup.py::test_deck_count\n"
+        "[gw0] [ 60%] PAS"
+    )
+
+    assert rerun_module.stalled_files(text) == {
+        "tests/functional/test_csv_route_flows.py",
+        "tests/functional/test_ride_setup.py",
+    }
+
+
+@given(
+    st.lists(
+        st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789-._", min_size=1),
+        min_size=1,
+        max_size=8,
+        unique_by=str,
+    )
+)
+def test_stalled_files_property_bare_starts_map_to_their_files(
+    rerun_module: ModuleType, node_names: list[str]
+) -> None:
+    """Bare start lines always map back to their own files."""
+    nodes = [f"tests/functional/{name}.py::test_{name}" for name in node_names]
+    text = "".join(f"{node}\n" for node in nodes)
+
+    assert rerun_module.stalled_files(text) == {node.partition("::")[0] for node in nodes}
+
+
+@given(
+    st.lists(
+        st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789-._", min_size=1),
+        min_size=1,
+        max_size=8,
+        unique_by=str,
+    )
+)
+def test_stalled_files_property_when_all_starts_result_set_empties(
+    rerun_module: ModuleType, node_names: list[str]
+) -> None:
+    """A result line for every started test empties the stalled set."""
+    nodes = [f"tests/functional/{name}.py::test_{name}" for name in node_names]
+    text = "".join(f"{node}\n" for node in nodes)
+    text += "".join(f"[gw0] [ 50%] PASSED {node}\n" for node in nodes)
+
+    assert rerun_module.stalled_files(text) == set()
 
 
 # ------------------------------------------------ orchestration seam
@@ -573,10 +690,10 @@ def test_rerun_failed_files_when_initial_pass_times_out_reruns_failed_and_stalle
     """A 124 pass targets failed + stalled files, not the whole suite.
 
     The streamed progress lines name the failed files even though the
-    ``-ra`` summary never prints, and the last bare start line names
-    the stalled file. Fresh-process re-runs of just those files are the
-    documented remedy for the process-granular wx/SIP corruption; a
-    whole-suite re-run inherits the same stall.
+    ``-ra`` summary never prints, and every bare start line without a
+    result line names a stalled file. Fresh-process re-runs of just
+    those files are the documented remedy for the process-granular
+    wx/SIP corruption; a whole-suite re-run inherits the same stall.
     """
     output = (
         "[gw2] [ 82%] FAILED tests/functional/test_ride_setup.py::test_deck_count\n"
@@ -593,6 +710,37 @@ def test_rerun_failed_files_when_initial_pass_times_out_reruns_failed_and_stalle
             *_PYTEST,
             "tests/functional/test_csv_route_flows.py",
             "tests/functional/test_ride_setup.py",
+            *_FLAGS,
+        ],
+    ]
+
+
+def test_rerun_failed_files_when_two_tests_stall_reruns_both_files(
+    rerun_module: ModuleType,
+) -> None:
+    """A 124 pass targets every stalled file, not only the last start.
+
+    Two workers hang while a third completes; only the streamed start
+    lines record the hangs. The rerun must cover both hung files plus
+    the failed one, or the first hang poisons the next pass again.
+    """
+    output = (
+        "[gw2] [ 82%] FAILED tests/functional/test_ride_setup.py::test_deck_count\n"
+        "tests/functional/test_csv_route_flows.py::test_cancelled_picker\n"
+        "tests/functional/test_void_card_confirm.py::test_void_button\n"
+    )
+    runner, calls = _recording_runner([_completed(124, output), _completed(0, "800 passed\n")])
+
+    result = rerun_module.rerun_failed_files(_CMD, runner)
+
+    assert result == 0
+    assert calls == [
+        _PASS1,
+        [
+            *_PYTEST,
+            "tests/functional/test_csv_route_flows.py",
+            "tests/functional/test_ride_setup.py",
+            "tests/functional/test_void_card_confirm.py",
             *_FLAGS,
         ],
     ]
