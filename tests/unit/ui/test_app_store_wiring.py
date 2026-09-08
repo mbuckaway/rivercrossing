@@ -8,9 +8,14 @@ row per event, not just plate entry. This module proves the seam
 headless with a fake store and a real engine: the exact ``(ride_id,
 event)`` calls land on the fake, in order, and events recorded before
 the wiring was attached never land at all (the load_engine replay tail
-is not re-persisted).
+is not re-persisted). A failed append (a locked or unwritable
+database) is caught inside the sink and surfaced through its
+``notify`` seam -- never an unguarded raise into the engine mutation,
+which a wx handler would swallow -- while the mutation itself stays
+complete in memory.
 """
 
+import sqlite3
 from datetime import date, datetime
 
 from rivercrossing.cards import Shoe
@@ -29,6 +34,14 @@ class _FakeStore:
     def append(self, ride_id: int, event: Event) -> None:
         """Record one (ride_id, event) append call."""
         self.appends.append((ride_id, event))
+
+
+class _FailingAppendStore:
+    """Raise a DB error on every append call (the disk/DB failure)."""
+
+    def append(self, _ride_id: int, _event: Event) -> None:
+        """Refuse the write like a locked database."""
+        raise sqlite3.OperationalError("database is locked")
 
 
 def _engine(plate: str = "12") -> RideEngine:
@@ -58,8 +71,9 @@ def test_wire_store_append_persists_the_crossing_to_the_fake_store() -> None:
     store = _FakeStore()
     engine = _engine()
     engine.start()
+    notices: list[str] = []
 
-    app_module._wire_store_append(engine, store, ride_id=7)
+    app_module._wire_store_append(engine, store, ride_id=7, notify=notices.append)
     engine.record_crossing("12")
 
     assert store.appends == [
@@ -76,6 +90,7 @@ def test_wire_store_append_persists_the_crossing_to_the_fake_store() -> None:
             ),
         )
     ]
+    assert notices == []
 
 
 def test_wire_store_append_never_reappends_the_replay_tail() -> None:
@@ -84,9 +99,31 @@ def test_wire_store_append_never_reappends_the_replay_tail() -> None:
     engine = _engine()
     engine.start()
     engine.record_crossing("12")
+    notices: list[str] = []
 
-    app_module._wire_store_append(engine, store, ride_id=7)
+    app_module._wire_store_append(engine, store, ride_id=7, notify=notices.append)
     engine.undo_last()
 
     assert [event.action for _, event in store.appends] == ["undo"]
     assert store.appends[0][0] == 7
+    assert notices == []
+
+
+def test_wire_store_append_given_a_failing_store_posts_a_notice_and_keeps_the_crossing() -> None:
+    """A refused append surfaces; the in-memory mutation stays complete.
+
+    The sink runs inside the engine's mutation (``ride._append``), so
+    an unguarded store error would abort ``record_crossing`` mid-way
+    -- the crossing exists in memory but the presenter's caller never
+    finishes, and the wx handler swallows the raise with zero signal
+    (EPIC3-SESSION-SUMMARY.md's measured note).
+    """
+    engine = _engine()
+    engine.start()
+    notices: list[str] = []
+
+    app_module._wire_store_append(engine, _FailingAppendStore(), ride_id=7, notify=notices.append)
+    engine.record_crossing("12")
+
+    assert len(engine.crossings) == 1
+    assert notices == ["Could not save event: database is locked"]

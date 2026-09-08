@@ -323,9 +323,20 @@ class RiderEditor:
             self.presenter.refresh()
 
     def _on_export_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``export_btn``: the same flow as mi_export_csv."""
+        """Handle ``export_btn``: the same flow as mi_export_csv.
+
+        A failed write surfaces on this dialog's own ``roster_infobar``
+        through :meth:`show_validation` (the flow's ``on_error`` seam)
+        instead of an unguarded raise into this wx handler, which wx
+        swallows (the measured ``docs/EPIC3-SESSION-SUMMARY.md`` note)
+        -- the operator would otherwise believe the export succeeded.
+        """
         event.Skip()
-        run_csv_export_flow(self.dialog, self.presenter.roster)
+        run_csv_export_flow(
+            self.dialog,
+            self.presenter.roster,
+            on_error=self.show_validation,
+        )
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``riders_list`` selection: forward its row index.
@@ -753,17 +764,40 @@ def run_csv_import_flow(parent: wx.Window, roster: Roster) -> bool:
     return result == ok_id
 
 
-def run_csv_export_flow(parent: wx.Window, roster: Roster) -> Path | None:
+def run_csv_export_flow(
+    parent: wx.Window,
+    roster: Roster,
+    *,
+    on_error: Callable[[str], None],
+) -> Path | None:
     """Pick a save path, then write *roster* there as CSV (E3.4).
 
     The save-mode sibling of :func:`run_csv_import_flow`. A cancelled
-    picker is a silent no-op.
+    picker is a silent no-op. A failed write -- ``csvio.export``
+    raising ``OSError`` on an unwritable target -- is caught here and
+    reported through *on_error* as ``Export failed: {exc}``, never an
+    unguarded raise into a wx handler that swallows it (the measured
+    note ``docs/EPIC3-SESSION-SUMMARY.md`` records), which would leave
+    the operator believing the export succeeded.
+
+    Args:
+        parent: The window to parent the native save picker on.
+        roster: The roster to write.
+        on_error: Where a failed write's ``Export failed: {exc}``
+            notice goes -- the caller's own surface (the main frame's
+            status bar from ``ui.app``; the roster editor's infobar
+            from its own ``export_btn``).
 
     Returns:
-        The path written, or ``None`` if the picker was cancelled.
+        The path written, or ``None`` when the picker was cancelled
+        or the write failed (reported through *on_error*).
     """
     path = _pick_export_path(parent)
     if path is None:
         return None
-    csvio.export(roster, path)
+    try:
+        csvio.export(roster, path)
+    except OSError as exc:
+        on_error(f"Export failed: {exc}")
+        return None
     return path
