@@ -971,33 +971,6 @@ def release_main_window(app: Any, frame: Any) -> None:  # noqa: ANN401 -- wx shi
     """
     previous = getattr(app, "really_quitting", False)
     app.really_quitting = True
-    if os.environ.get("RIVERCROSSING_CLOSE_DEBUG"):
-        # Survivor inventory at release time: names every top-level
-        # window (frame or dialog, shown or modal) so a frame that
-        # will not die can be traced to whatever pins it.
-        wx = require_wx()
-        print(  # noqa: T201 -- env-gated diagnostic, off by default
-            "RELEASE-DEBUG: releasing "
-            f"{getattr(frame, 'GetName', lambda: '?')()!r} (handle "
-            f"{frame.GetHandle()!r}); top-levels: "
-            + ", ".join(
-                f"{top.GetName()!r}:{type(top).__name__}(shown={top.IsShown()},"
-                f"modal={top.IsModal() if isinstance(top, wx.Dialog) else False},"
-                f"handle={top.GetHandle()!r})"
-                for top in wx.GetTopLevelWindows()
-            ),
-            file=sys.stderr,
-            flush=True,
-        )
-    for top in wx.GetTopLevelWindows():
-        # A modal dialog that never ended pins its parent frame alive:
-        # Close()/Destroy() on the frame then never completes its
-        # deletion (measured -- finish_again leaked a main_frame past
-        # both the close settle and the session-end sweep). End any
-        # survivor before the frame close; the modal loop unwinds and
-        # the frame reaps.
-        if top is not frame and isinstance(top, wx.Dialog) and top.IsModal():
-            top.EndModal(wx.ID_CANCEL)
     close_window(frame)
     if getattr(app, "main_frame", None) is frame:
         # getattr, not attribute access: the live-context mirror
