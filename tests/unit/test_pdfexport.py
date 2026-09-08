@@ -27,6 +27,7 @@ plates and the per-page footer.
 import base64
 import os
 import re
+import zlib
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -614,6 +615,44 @@ def test_podium_poster_stores_no_flatedecode_streams(tmp_path: Path) -> None:
     out = _poster(tmp_path, build_placed())
 
     assert b"/FlateDecode" not in out.read_bytes()
+
+
+def test_store_streams_raw_no_flatedecode_streams_returns_input_unchanged() -> None:
+    """A raw document with no FlateDecode streams passes through (T-3).
+
+    Every render()/podium_poster() output is already raw (R-62/D14),
+    so re-running the stream pass over such a document must return the
+    bytes untouched: the classic xref rebuild must not run on a
+    document that has no streams to replace.
+    """
+    raw = GOLDEN_PDF.read_bytes()
+
+    assert pdfexport._store_streams_raw(raw) == raw
+
+
+def test_raw_stream_span_body_without_line_ending_still_replaces() -> None:
+    """A stream body ending in neither CRLF nor LF still converts (T-3).
+
+    fpdf2 always ends its stream bodies with a line ending, but the
+    span logic trims the trailing newline only when one is present. A
+    body whose final byte is not a newline must still deflate and be
+    replaced raw, with the /Filter entry dropped and /Length updated.
+    """
+    content = b"BT (uncompressed text) Tj ET"
+    body = zlib.compress(content) + b"\x00"  # final byte is not a newline
+    pdf = (
+        b"1 0 obj\n"
+        b"<<\n/Filter /FlateDecode\n/Length 0\n"
+        b">>\nstream\n" + body + b"endstream\nendobj\n"
+    )
+    match = re.search(rb"stream\r?\n", pdf)
+
+    span = pdfexport._raw_stream_span(pdf, match)
+
+    assert span is not None
+    replacement = span[3]
+    length_entry = b"<<\n/Length " + str(len(content)).encode("ascii") + b"\n>>\nstream\n"
+    assert replacement == length_entry + content + b"\nendstream"
 
 
 @pytest.mark.parametrize(

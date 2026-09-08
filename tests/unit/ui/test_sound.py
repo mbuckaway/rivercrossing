@@ -12,15 +12,12 @@ incomplete and the console must not crash on the way to the next
 crossing).
 """
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from rivercrossing.ui import sound
 from rivercrossing.ui.sound import Cue, SoundPlayer
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class FakeBackend:
@@ -114,3 +111,56 @@ def test_sound_module_level_set_muted_silences_the_default_player(
     sound.play(Cue.RECORDED)
 
     assert fake.played == []
+
+
+class _FakeWxAdvSound:
+    """A ``wx.adv.Sound`` double with one fixed decode outcome.
+
+    The real ``wx.adv.Sound`` is the audio-hardware boundary (spec
+    §10: "no audio hardware in CI"); these two tests pin the real
+    backend's glue at that boundary -- decode attempted, async play
+    exactly when ``IsOk()`` -- without opening an audio device.
+    """
+
+    def __init__(self, path: str, *, ok: bool) -> None:
+        """Record the decode path; *ok* fixes the ``IsOk()`` outcome."""
+        self.path = path
+        self._ok = ok
+        self.play_modes: list[object] = []
+
+    def IsOk(self) -> bool:  # noqa: N802 -- wx.Sound's own API name, what the glue calls
+        """Return this double's fixed decode outcome."""
+        return self._ok
+
+    def Play(self, mode: object) -> None:  # noqa: N802 -- wx.Sound's own API name
+        """Record the playback mode the glue asked for."""
+        self.play_modes.append(mode)
+
+
+def test_sound_real_backend_given_a_decodable_wav_plays_it_async(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wx.adv glue plays a decoded WAV in async mode (spec §10)."""
+    import wx.adv  # noqa: PLC0415 -- only this glue test needs the real submodule
+
+    fake = _FakeWxAdvSound("/cue/recorded.wav", ok=True)
+    monkeypatch.setattr(wx.adv, "Sound", lambda _path: fake)
+
+    sound._WxSoundBackend().play(Path("/cue/recorded.wav"))
+
+    assert fake.path == "/cue/recorded.wav"
+    assert fake.play_modes == [wx.adv.SOUND_ASYNC]
+
+
+def test_sound_real_backend_given_an_undecodable_wav_plays_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A WAV wx cannot decode is SILENT, never a crash (spec §10)."""
+    import wx.adv  # noqa: PLC0415 -- only this glue test needs the real submodule
+
+    fake = _FakeWxAdvSound("/cue/broken.wav", ok=False)
+    monkeypatch.setattr(wx.adv, "Sound", lambda _path: fake)
+
+    sound._WxSoundBackend().play(Path("/cue/broken.wav"))
+
+    assert fake.play_modes == []

@@ -481,6 +481,30 @@ def test_reassign_crossing_held_card_travels_while_still_held() -> None:
     assert moved[0].card == held.card
 
 
+def test_reassign_crossing_voided_card_is_not_recredited_to_the_new_entry() -> None:
+    """Ruling C's card-travel stops at a voided card (E7.1.1).
+
+    A crossing whose card ``void_card`` already retired (removed from
+    the source hand, added to ``_voided_cards``) reassigns like any
+    other crossing -- the lap still moves plates -- but the voided
+    card is never re-credited into the destination entry's hand: it
+    stays retired, so the destination's credited cards stay empty.
+    """
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+    first = engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 32))
+    voided = engine.card_for(engine.crossings[1])
+    engine.void_card("12", voided, reason="wrong card dealt")
+
+    engine.reassign_crossing(2, "34", reason="mis-keyed plate")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["34"].laps == 1  # the crossing itself moved plates
+    assert results["34"].cards == ()  # but its voided card never re-credits
+    assert results["12"].cards == (first.card,)  # only the live card stays
+
+
 def test_reassign_crossing_empty_reason_is_refused() -> None:
     """A reassign with no reason is refused outright (R-33)."""
     engine, _ = _make_engine()
@@ -866,6 +890,33 @@ def test_apply_void_card_event_removes_the_card_from_the_hand() -> None:
 
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].cards == ()
+    assert engine.events[-1] == event
+
+
+def test_apply_confirm_held_event_finds_the_target_beyond_the_first_crossing() -> None:
+    """_crossing_from scans past an earlier non-matching crossing.
+
+    A held crossing is identified by entry_id + seq, not by record
+    position: when the first crossing in record order is not the
+    event's target (entry matches, seq does not), the lookup must
+    continue to the later matching crossing rather than confirm --
+    or crash on -- the wrong one.
+    """
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    first = engine.record_crossing("12", at=_dt(10, 30))  # normal, credited
+    engine.record_crossing("12", at=_dt(10, 32))  # 120 s < min lap -> held, seq 2
+    held = engine.held_crossings()[0]
+    event = Event(
+        action="confirm_held",
+        payload={"entry_id": "12", "seq": 2, "card": held.card.code()},
+    )
+
+    engine.apply(event)
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert engine.held_crossings() == ()
+    assert results["12"].cards == (first.card, held.card)
     assert engine.events[-1] == event
 
 

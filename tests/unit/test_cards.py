@@ -449,3 +449,36 @@ def test_seeded_card_codes_different_seeds_shuffle_differently() -> None:
 
     assert set(a) == set(b)
     assert a != b
+
+
+# -------------------------------------------------------- Card.parse
+# (The round-trip invariant that pins both parse() arms: whatever
+# code() emits -- natural or joker -- parse() rebuilds the same card.)
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["AS", "2C", "TD", "9H", "KS", "4D"],
+    ids=[
+        "ace_of_spades",
+        "two_of_clubs",
+        "ten_of_diamonds",
+        "nine_of_hearts",
+        "king_of_spades",
+        "four_of_diamonds",
+    ],
+)
+def test_card_parse_round_trips_a_natural_code(code: str) -> None:
+    """parse(natural) rebuilds the card whose code() emitted it."""
+    parsed = Card.parse(code)
+
+    assert parsed.joker is False
+    assert parsed.code() == code
+
+
+def test_card_parse_round_trips_the_joker_code() -> None:
+    """parse("JK") rebuilds the joker -- rankless, suitless, joker."""
+    parsed = Card.parse("JK")
+
+    assert parsed == Card(rank=None, suit=None, joker=True)
+    assert parsed.code() == "JK"

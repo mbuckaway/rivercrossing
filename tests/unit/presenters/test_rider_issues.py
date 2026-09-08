@@ -17,7 +17,15 @@ boundary (T-10).
 from __future__ import annotations
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.roster import EntryMode, EntryType, PlateModel, Rider, Roster
+from rivercrossing.roster import (
+    Entry,
+    EntryMode,
+    EntryType,
+    PlateModel,
+    Rider,
+    Roster,
+    RosterError,
+)
 from rivercrossing.ui.presenters.rider_issues import (
     RiderIssueRow,
     RiderIssuesPresenter,
@@ -71,6 +79,22 @@ def _team_of_one_and_duplicate_roster() -> Roster:
     return roster
 
 
+class _ExtractRefusingRoster(Roster):
+    """A real roster whose one solo-extraction write always refuses.
+
+    Every real-roster state that passes the presenter's convert gate
+    reaches :meth:`Roster.extract_rider_to_solo` without raising, so
+    the presenter's ``except RosterError`` arm is only reachable when
+    the write itself fails defensively. This subclass stands in for
+    that write failure -- reads (entries/plate_model/status) stay the
+    real base roster's -- so the arm's refusal shape can be pinned.
+    """
+
+    def extract_rider_to_solo(self, rider: Rider) -> Entry:  # noqa: ARG002 -- override signature; the refusal never reads the rider
+        """Refuse the extraction write: raise a RosterError instead."""
+        raise RosterError("extract refused")
+
+
 # ---------------------------------------------------- construction
 
 
@@ -111,6 +135,41 @@ def test_presenter_init_given_team_of_one_and_duplicate_renders_canonical_rows()
         ),
     ) in view.calls
     assert ("show_summary", ("2 rider issue(s)",)) in view.calls
+
+
+def test_presenter_init_given_empty_team_display_name_renders_rider_name_fallback() -> None:
+    """A rider-scoped issue on an unnamed entry shows the rider's name.
+
+    ``_row_name`` falls back to ``issue.rider.full_name`` when the
+    entry's ``display_name`` is falsy: a team created with a blank
+    display name whose own riders carry the duplicate-name defect
+    renders each row under the rider's full name, never blank.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_team_entry(
+        display_name="",
+        riders=[
+            Rider(first_name="Sam", last_name="Ellis", plate="1"),
+            Rider(first_name="Sam", last_name="Ellis", plate="2"),
+        ],
+    )
+    view = RecordingRiderIssuesView()
+
+    RiderIssuesPresenter(view, roster)
+
+    assert (
+        "show_issues",
+        (
+            [
+                RiderIssueRow(
+                    plate="1",
+                    name="Sam Ellis",
+                    message="duplicate rider name Sam Ellis",
+                )
+            ],
+        ),
+    ) in view.calls
+    assert ("show_summary", ("1 rider issue(s)",)) in view.calls
 
 
 def test_presenter_did_change_starts_false() -> None:
@@ -319,6 +378,25 @@ def test_on_convert_solo_given_relay_team_of_one_returns_false_and_validates() -
 
     assert converted is False
     assert view.calls == [("show_validation", ("convert to solo requires a rider-pooled ride",))]
+
+
+def test_on_convert_solo_given_roster_error_returns_false_and_validates() -> None:
+    """A RosterError from the write surfaces via show_validation."""
+    roster = _ExtractRefusingRoster(entry_mode=EntryMode.MIXED)
+    roster.create_team_entry_of_one(
+        display_name="Lone Wolf",
+        rider=Rider(first_name="Sam", last_name="Ellis", plate="7"),
+    )
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    converted = presenter.on_convert_solo()
+
+    assert converted is False
+    assert presenter.did_change is False
+    assert view.calls == [("show_validation", ("extract refused",))]
 
 
 # ------------------------------------------------------- protocol
