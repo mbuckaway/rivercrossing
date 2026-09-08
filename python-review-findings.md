@@ -117,8 +117,8 @@ Full-codebase review across 218 Python files (~78K lines). The codebase is excep
 
 ## Deferrals (deliberate, per the approved plan)
 
-- `test_corrections.py:109` live-context builder extraction → Phase 3 F3 (shared builder + `harness.release_main_window` together; these are the reference-leak sites).
-- `tools/functional_rerun.py` `stalled_file` logic + noxfile.py:127 comment → Phase 3 F4.
+- `test_corrections.py:109` live-context builder extraction → **teardown hygiene DONE via `harness.release_main_window`** (Phase 3 F3: every in-process `build_main_window` teardown now releases the app-level `QUERY_END_SESSION` bind and `app.main_frame`); the 8-module **shared-builder extraction itself remains a follow-up** — it is a drift-prevention refactor, not a determinism fix, and is intentionally deferred until after the local N=3 gate so it lands on a proven-green suite (SIMPLECODE: no churn before the gate).
+- `tools/functional_rerun.py` `stalled_file` logic + noxfile.py:127 comment → **DONE in Phase 3 F4** (`stalled_files` returns the set of all started-but-unfinished files; noxfile comment names `_MAX_RERUNS`).
 - `docs/FUNCTIONAL-SUITE-INSTABILITY.md` stale claims (:56, :121, :126) → Phase 5 doc pass.
 
 ## Fixes Applied (Stage 2)
