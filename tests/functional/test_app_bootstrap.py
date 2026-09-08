@@ -100,7 +100,9 @@ NO_RIDE_OPEN_LIBRARY_BTN = ids.OPEN_LIBRARY_BTN
 # MainLoop (the prompt's own wx.CallAfter), so a second probe closes
 # that window before the frame close ends the loop.
 _MAINLOOP_PROBE_SCRIPT = """
+import atexit
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -172,8 +174,11 @@ def _build_app_then_arm():
 wx.App.MainLoop = _mainloop_then_close
 app_module.build_app = _build_app_then_arm
 # A fresh db resumes no ride, so the ux-polish launch shows
-# no_ride_dlg; the armed probe answers it.
-db_path = Path(tempfile.mkdtemp(prefix="rc-main-probe-")) / "rides.db"
+# no_ride_dlg; the armed probe answers it. The scratch dir is
+# removed when this probe interpreter exits.
+_scratch_dir = Path(tempfile.mkdtemp(prefix="rc-main-probe-"))
+atexit.register(shutil.rmtree, _scratch_dir, ignore_errors=True)
+db_path = _scratch_dir / "rides.db"
 store = Store.open(db_path)
 store.close()
 _captured["exit_code"] = app_module.main(db_path)

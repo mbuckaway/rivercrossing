@@ -25,13 +25,14 @@ for E5/E6 to replace.
 """
 
 import re
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from conftest import gorba_config
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import (
     Crossing,
@@ -65,8 +66,6 @@ from rivercrossing.ui.presenters.data_source import (
 
 # -------------------------------------------------------------- helpers
 
-_EVENT_DAY = date(2026, 9, 20)
-
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed event day."""
@@ -74,20 +73,8 @@ def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
 
 
 def _config(*, min_lap_s: int = 1) -> RideConfig:
-    """Build a valid, always-valid config with a tunable min-lap."""
-    return RideConfig(
-        name="GORBA EPIC 2026",
-        event_date=_EVENT_DAY,
-        venue="Sea to Sky Gondola",
-        lap_km=8.0,
-        organizer="GORBA",
-        scorer="K. Singh",
-        planned_start=_dt(10, 0),
-        planned_duration_s=21600,
-        min_lap_s=min_lap_s,
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-    )
+    """Build the canonical GORBA config with a tunable min-lap."""
+    return gorba_config(min_lap_s=min_lap_s)
 
 
 class _FakeDatetimeClock:
@@ -372,6 +359,9 @@ def test_engine_data_source_feed_rows_given_crossings_returns_newest_first() -> 
 def test_engine_data_source_feed_rows_caps_at_thirty_rows(recorded: int, shown: int) -> None:
     """R-32's 20-30 cap: rows stay at 30 past the cap, newest first."""
     engine, clock = _running_engine()
+    # logic-coverage-exempt: T-8 -- this loop is pure Arrange (recording
+    # *recorded* fixture crossings before the one Act); every assertion
+    # runs once, after the loop completes.
     for _index in range(recorded):
         _record(engine, clock, "12", lap_time_s=10)
     source = EngineDataSource(engine, engine._roster)

@@ -182,12 +182,16 @@ def test_vm_script_never_uses_set_dash_e(script_path: Path) -> None:
 @pytest.mark.parametrize("script_path", _VM_SCRIPT_PATHS, ids=lambda path: path.name)
 def test_vm_script_passes_shellcheck(shellcheck_path: str, script_path: Path) -> None:
     """Both scripts lint clean under shellcheck when it is present."""
-    result = subprocess.run(  # noqa: S603 -- absolute shellcheck path, fixed argv
-        [shellcheck_path, str(script_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603 -- absolute shellcheck path, fixed argv
+            [shellcheck_path, str(script_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"shellcheck on {script_path.name} timed out after {exc.timeout}s")
 
     assert result.returncode == 0, result.stdout + result.stderr
 

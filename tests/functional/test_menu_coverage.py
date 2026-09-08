@@ -47,7 +47,7 @@ fixture guarantees that before any test here runs.
 
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import harness
 import pytest
@@ -64,6 +64,9 @@ from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import MainFrame, dialogs
 from rivercrossing.ui.views.main_frame import REVIEW_NOTEBOOK
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 pytestmark = pytest.mark.functional
 
@@ -84,7 +87,7 @@ XRC_ACCELERATOR_CASES = tuple(
 
 
 @pytest.fixture
-def frame_with_menubar(xrc_resource: object):
+def frame_with_menubar(xrc_resource: object) -> Iterator[tuple[Any, Any]]:
     """Load main_frame with its real menubar attached, then close it."""
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     try:

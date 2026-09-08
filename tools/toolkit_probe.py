@@ -395,13 +395,20 @@ def drive() -> int:
     width = max(len(name) for name in CHECKS)
     failed = 0
     for name in CHECKS:
-        proc = subprocess.run(  # noqa: S603
-            [sys.executable, __file__, name],
-            capture_output=True,
-            text=True,
-            timeout=120,
-            check=False,
-        )
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [sys.executable, __file__, name],
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            # One hung check must not abort the matrix: report the bound
+            # and continue, the isolation the per-check process buys.
+            print(f"CRASH {name:<{width}}  timed out after 120s")
+            failed += 1
+            continue
         line = next((one for one in proc.stdout.splitlines() if "|" in one), None)
         if line is None:
             tail = (proc.stderr.strip().splitlines() or ["no output"])[-1]

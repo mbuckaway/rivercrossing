@@ -13,7 +13,8 @@ worker, so it cannot absorb the corruption.
 
 This wrapper therefore re-runs the *files* that failed, each set in
 its own freshly spawned pytest process (same ``--no-cov -n auto
---dist loadfile`` flags), at most twice after the initial run.
+--dist loadfile`` flags), up to ``_MAX_RERUNS`` times after the
+initial run.
 Usage::
 
     python tools/functional_rerun.py pytest tests/functional \\

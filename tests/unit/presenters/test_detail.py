@@ -20,10 +20,11 @@ refusal surfaces as a notice, never a crash (the same
 ``ConsolePresenter`` discipline).
 """
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
+from conftest import gorba_config
 from rivercrossing.cards import Shoe
-from rivercrossing.ride import RideConfig, RideEngine
+from rivercrossing.ride import RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters.data_source import EntryDetail, EntryLapRow
 from rivercrossing.ui.presenters.detail import (
@@ -36,8 +37,6 @@ from rivercrossing.ui.presenters.detail import (
 )
 
 # -------------------------------------------------------------- helpers
-
-_EVENT_DAY = date(2026, 9, 20)
 
 
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
@@ -61,23 +60,6 @@ class _FakeClock:
         self._now = self._now + timedelta(seconds=seconds)
 
 
-def _config(*, min_lap_s: int = 1) -> RideConfig:
-    """Build a valid, always-valid config with a tunable min-lap."""
-    return RideConfig(
-        name="GORBA EPIC 2026",
-        event_date=_EVENT_DAY,
-        venue="Sea to Sky Gondola",
-        lap_km=8.0,
-        organizer="GORBA",
-        scorer="K. Singh",
-        planned_start=_dt(10, 0),
-        planned_duration_s=21600,
-        min_lap_s=min_lap_s,
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-    )
-
-
 def _roster_with_entries(*plates: str) -> Roster:
     """Build a MIXED rider_pooled roster of one solo entry per plate."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
@@ -89,7 +71,7 @@ def _roster_with_entries(*plates: str) -> Roster:
 def _running_engine(*, roster: Roster | None = None) -> tuple[RideEngine, _FakeClock]:
     """Build a started engine over a valid config, shoe and roster."""
     roster = roster if roster is not None else _roster_with_entries("12", "34")
-    config = _config()
+    config = gorba_config(min_lap_s=1)
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     clock = _FakeClock(config.planned_start)
     engine = RideEngine(config=config, shoe=shoe, clock=clock, roster=roster)
@@ -447,6 +429,22 @@ def test_on_deal_card_cancel_is_a_silent_noop() -> None:
 
     assert len(engine.events) == before
     assert view.notices == []
+
+
+def test_on_deal_card_engine_refusal_surfaces_as_a_notice() -> None:
+    """An unknown deal plate raises; the presenter notices, no crash."""
+    engine, _clock = _running_engine()
+    view = FakeDetailView()
+    view.manual_result = ManualDeal(plate="999", reason="flag confirmed")
+    presenter = _make_presenter(engine, view, engine._roster)
+    before = len(engine.events)
+
+    presenter.on_deal_card_clicked()
+
+    # The notice names the refused plate (999), proving the refusal came
+    # from deal_manual's resolve, not from a guard before the call.
+    assert view.notices == ["Cannot deal card: unknown plate: 999"]
+    assert len(engine.events) == before  # nothing dealt, nothing audited
 
 
 # ------------------------------------------------------- void card

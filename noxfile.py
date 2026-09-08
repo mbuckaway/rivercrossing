@@ -124,8 +124,9 @@ def functional(session):
     corruption, which is process-granular: a rerun re-runs inside the
     same poisoned worker (docs/EPIC3-SESSION-SUMMARY.md Addendum 2).
     tools/functional_rerun.py therefore re-runs failed *files* in
-    freshly spawned pytest processes (same flags), up to twice, so a
-    fresh process gets a fresh wrapper map.
+    freshly spawned pytest processes (same flags), up to its
+    ``_MAX_RERUNS`` budget, so a fresh process gets a fresh wrapper
+    map.
 
     --forked would be the wrong tool on macOS: forking a process that
     has already initialised NSApplication is not safe.

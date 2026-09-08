@@ -89,10 +89,12 @@ code to diagnose -- the same empty-pipe failure mode
 case.
 """
 
+import atexit
 import faulthandler
 import gc
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -170,6 +172,14 @@ _library_roster = library_roster
 _create_library_ride = create_library_ride
 _running_ride_with_roster = running_ride_with_roster
 
+
+def _temp_dir(prefix: str) -> Path:
+    """Create a temp dir removed when the interpreter exits."""
+    path = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
 # E8.1.1 hermeticity: every scenario builds the app through
 # _build_app_window, which injects a per-process tmp settings file.
 # Each scenario runs in its OWN spawned interpreter, so a module-level
@@ -179,7 +189,7 @@ _running_ride_with_roster = running_ride_with_roster
 # VM clone, flipping appearance_unchanged on rerun). Scenarios that
 # need a specific file pass settings_path= explicitly and the helper
 # leaves it untouched.
-_SCENARIO_SETTINGS_PATH = Path(tempfile.mkdtemp(prefix="rc-scenario-settings-")) / "settings.json"
+_SCENARIO_SETTINGS_PATH = _temp_dir("rc-scenario-settings-") / "settings.json"
 
 
 def _build_app_window(**kwargs: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
@@ -1587,9 +1597,7 @@ def _bundle_launch_open_crossing_exports_html() -> dict[str, Any]:
     found: dict[str, Any] = {}
     frame: Any = None
     store: Any = None
-    export_path = (
-        Path(tempfile.mkdtemp(prefix="rc-bundle-export-")) / "gorba-epic-2026-results.html"
-    )
+    export_path = _temp_dir("rc-bundle-export-") / "gorba-epic-2026-results.html"
     original_pick = app_module._pick_export_path
     original_offloop = app_module._run_export_offloop
     clock = _ScenarioClock(datetime(2026, 9, 20, 11, 0))  # noqa: DTZ001 -- fixed fake launch clock
@@ -1698,7 +1706,7 @@ def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
     whether that backup reopens with the ride and a clean integrity
     check, and whether the ride row is gone.
     """
-    db_path = Path(tempfile.mkdtemp(prefix="rc-delete-")) / "rides.db"
+    db_path = _temp_dir("rc-delete-") / "rides.db"
     boot = Store.open(db_path)
     try:
         config = RideConfig(

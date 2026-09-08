@@ -18,6 +18,8 @@ This module is wx-free: everything here is plain Store/sqlite logic,
 unit-testable headless (``tests/unit/test_race_child.py``).
 """
 
+import atexit
+import shutil
 import sqlite3
 import tempfile
 from dataclasses import dataclass
@@ -45,9 +47,16 @@ __all__ = [
 ]
 
 
+def _temp_dir(prefix: str) -> Path:
+    """Create a temp dir removed when the interpreter exits."""
+    path = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
 def resume_db_path(prefix: str) -> Path:
     """Return a fresh db file path under a temp dir named *prefix*."""
-    return Path(tempfile.mkdtemp(prefix=prefix)) / "rides.db"
+    return _temp_dir(prefix) / "rides.db"
 
 
 def resume_ride_config() -> RideConfig:
