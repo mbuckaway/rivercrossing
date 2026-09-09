@@ -50,6 +50,7 @@ from rivercrossing.roster import (
     PlateModel,
     Rider,
     RosterError,
+    TeamSizeError,
     can_delete_entry,
 )
 from rivercrossing.ui.presenters.data_source import RiderRow
@@ -121,6 +122,10 @@ class RidersView(Protocol):
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Disable delete_btn once the entry has data (R-15)."""
+        ...
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Gate save_btn: enabled only when the form is dirty (W7)."""
         ...
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
@@ -214,27 +219,38 @@ class RidersPresenter:
             self._load()
 
     def on_row_selected(self, index: int) -> None:
-        """Fill the form from riders_list row *index* (R-20)."""
+        """Fill the form from riders_list row *index* (R-20, W7).
+
+        The fresh record's own values are clean by definition, so the
+        row lands with save_btn disabled until the form differs
+        (:meth:`on_form_changed`).
+        """
         entry, rider = _rider_pairs(self.roster)[index]
-        self._selected = (entry, rider)
-        team = entry.display_name if entry.type is EntryType.TEAM else SOLO_TEAM_CHOICE
-        self.view.show_form(
-            plate=_rider_plate(self.roster, entry, rider),
-            first_name=rider.first_name,
-            last_name=rider.last_name,
-            team=team,
-        )
-        self.view.set_delete_enabled(
-            enabled=can_delete_entry(self.roster.status, has_data=entry.has_data)
-        )
+        self._show_record(entry, rider)
+
+    def on_form_changed(self, form: RiderFormValues) -> None:
+        """Re-gate save_btn from the form's own current values (W7).
+
+        The view forwards every plate/name/team edit here; the button
+        is enabled exactly while *form* differs from the selected
+        record -- a clean form (or no selection at all) disables it,
+        so Enter over a clean form is a no-op and Save can never
+        rewrite a record the operator did not mean to change.
+        """
+        self.view.set_save_enabled(enabled=self._is_dirty(form))
 
     def on_add(self, form: RiderFormValues) -> None:
         """Handle add_btn: create an entry from the form's values.
 
-        A refusal (duplicate plate, a team already at max size, ...)
-        shows via :meth:`RidersView.show_validation` and leaves the
-        roster unchanged, never raising past this handler.
+        W7 refuses a blank first or last name up front (both are
+        required) before any plate or team rule runs. A later refusal
+        (duplicate plate, a team already at max size, ...) shows via
+        :meth:`RidersView.show_validation` and leaves the roster
+        unchanged, never raising past this handler.
         """
+        if not form.first_name.strip() or not form.last_name.strip():
+            self.view.show_validation("First name and last name are required")
+            return
         try:
             self._create_entry(form)
         except RosterError as exc:
@@ -244,18 +260,41 @@ class RidersPresenter:
         self._show_add_form()
 
     def on_save(self, form: RiderFormValues) -> None:
-        """Handle save_btn: rename and/or replate the selected rider.
+        """Handle save_btn: rename, replate and/or re-team the selection.
 
-        A refusal (duplicate plate, the ride has left DRAFT, ...)
-        shows via :meth:`RidersView.show_validation` and leaves the
-        roster unchanged, never raising past this handler. A no-op
-        if nothing is selected.
+        W7 adds the form's Team field to the save. The chosen team is
+        applied through the roster's shipped primitives, each
+        direction refusing with its own ``RosterError`` message when
+        the ride state or plate model forbids it: a solo rider joins
+        a team via ``delete_entry`` + ``add_rider_to_team`` (the csvio
+        reshape precedent, capacity pre-checked so a refused join
+        never strands the rider), a team member moves between teams
+        via ``move_rider``, and leaving for solo extracts via
+        ``extract_rider_to_solo`` -- which exists only for
+        ``rider_pooled``, so a relay member's "leave" is a refusal,
+        not a silent no-op. On a relay ride a team change freezes the
+        form's plate value: the plate belongs to the entry, so
+        carrying it over would rewrite the *destination* team's plate.
+
+        A successful save refreshes the rows and then re-shows the
+        record's own form (:meth:`_show_record`), so team_choice's
+        selection survives its own content reset in
+        ``_refresh_rows()`` (the W7 #8 fix) and save_btn lands back
+        disabled on the now-clean form. A refusal
+        (duplicate plate, the ride has left DRAFT, ...) shows via
+        :meth:`RidersView.show_validation` and leaves the roster
+        unchanged, never raising past this handler. A no-op if
+        nothing is selected.
         """
         if self._selected is None:
             return
         entry, rider = self._selected
         try:
-            self._apply_plate_change(entry, rider, form.plate)
+            team_changed = self._team_value(entry) != form.team
+            if team_changed:
+                entry = self._apply_team_change(entry, rider, form.team)
+            if not (team_changed and self.roster.plate_model is PlateModel.TEAM_RELAY):
+                self._apply_plate_change(entry, rider, form.plate)
             rider.first_name = form.first_name
             rider.last_name = form.last_name
             if entry.type is EntryType.SOLO:
@@ -264,6 +303,7 @@ class RidersPresenter:
             self.view.show_validation(str(exc))
             return
         self._refresh_rows()
+        self._show_record(entry, rider)
 
     def on_delete(self) -> None:
         """Handle delete_btn: remove the selected entry (R-15).
@@ -412,7 +452,14 @@ class RidersPresenter:
         )
 
     def _apply_plate_change(self, entry: Entry, rider: Rider, plate: str) -> None:
-        """Change *entry*/*rider*'s plate to *plate*, if it differs."""
+        """Change *entry*/*rider*'s plate to *plate*, if it differs.
+
+        A blank or whitespace-only *plate* reaches the roster's own
+        non-empty guard (``change_*_plate``), which raises
+        ``PlateShapeError`` with the "must not be empty" message --
+        W7's central fix for the relay-blank hole, so no blank plate
+        is ever stored through this editor.
+        """
         if entry.type is EntryType.SOLO:
             if plate != entry.plate:
                 self.roster.change_solo_plate(entry, plate=plate)
@@ -440,3 +487,77 @@ class RidersPresenter:
             plate=self.roster.next_free_plate(), first_name="", last_name="", team=SOLO_TEAM_CHOICE
         )
         self.view.set_delete_enabled(enabled=False)
+        self.view.set_save_enabled(enabled=False)
+
+    def _team_value(self, entry: Entry) -> str:
+        """Return the form's Team text for a row on *entry* (R-20)."""
+        if entry.type is EntryType.TEAM:
+            return entry.display_name
+        return SOLO_TEAM_CHOICE
+
+    def _is_dirty(self, form: RiderFormValues) -> bool:
+        """Return whether *form* differs from the selected record (W7)."""
+        if self._selected is None:
+            return False
+        entry, rider = self._selected
+        record = RiderFormValues(
+            plate=_rider_plate(self.roster, entry, rider),
+            first_name=rider.first_name,
+            last_name=rider.last_name,
+            team=self._team_value(entry),
+        )
+        return form != record
+
+    def _show_record(self, entry: Entry, rider: Rider) -> None:
+        """Fill the form from the record itself; save disabled (W7).
+
+        The one place a selection -- a row click, or the re-show that
+        ends a successful save -- fills the form: the record's own
+        values are clean by definition, so save_btn lands disabled
+        and delete_btn follows the record's own deletability.
+        """
+        self._selected = (entry, rider)
+        self.view.show_form(
+            plate=_rider_plate(self.roster, entry, rider),
+            first_name=rider.first_name,
+            last_name=rider.last_name,
+            team=self._team_value(entry),
+        )
+        self.view.set_delete_enabled(
+            enabled=can_delete_entry(self.roster.status, has_data=entry.has_data)
+        )
+        self.view.set_save_enabled(enabled=False)
+
+    def _apply_team_change(self, entry: Entry, rider: Rider, chosen: str) -> Entry:
+        """Apply the form's chosen team to the selected rider (W7).
+
+        Composes the roster's shipped primitives per direction --
+        solo joins delete their own entry first, then attach via
+        ``add_rider_to_team`` (the csvio reshape precedent) with the
+        destination's capacity pre-checked so a refused join can
+        never strand the rider after its solo entry is gone; team
+        members use ``move_rider`` and leave-for-solo uses
+        ``extract_rider_to_solo``, whose own refusal messages name
+        the state/model that forbids the direction.
+
+        Returns:
+            The entry the rider belongs to after the change.
+        """
+        if chosen == SOLO_TEAM_CHOICE:
+            if entry.type is EntryType.SOLO:
+                return entry
+            return self.roster.extract_rider_to_solo(rider)
+        target = self._find_team_entry(chosen)
+        if entry.type is EntryType.TEAM:
+            if entry is not target:
+                self.roster.move_rider(rider, to_entry=target)
+            return target
+        if len(target.riders) + 1 > self.roster.max_team_size:
+            msg = (
+                f"team size must be at most {self.roster.max_team_size}, "
+                f"got {len(target.riders) + 1}"
+            )
+            raise TeamSizeError(msg)
+        self.roster.delete_entry(entry)
+        self.roster.add_rider_to_team(rider, to_entry=target)
+        return target

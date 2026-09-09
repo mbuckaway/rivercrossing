@@ -11,8 +11,9 @@ for a solo entry, the lowest-numbered rider's plate for a team.
 Every entry's and pooled rider's plate shares one namespace per
 ride (R-20). A ``rider_pooled`` plate is always a whole-number
 string -- the CSV NUMBER column's domain, and what "lowest-numbered"
-needs to compare -- while a ``team_relay`` plate may be any string
-(``next_free_plate`` ignores non-numeric plates either way).
+needs to compare -- while a ``team_relay`` plate may be any
+non-empty string (W7: blank plates are refused everywhere;
+``next_free_plate`` ignores non-numeric plates either way).
 
 This module is a store-less, in-memory model of that shape: EPIC 5's
 Store is the persistence layer these dataclasses feed once it lands
@@ -288,6 +289,25 @@ def _require_whole_plate(plate: str) -> None:
     """
     if not plate.isdigit():
         msg = f"plate {plate!r} must be a whole number"
+        raise PlateShapeError(msg)
+
+
+def _require_plate_nonempty(plate: str) -> None:
+    """Raise PlateShapeError unless *plate* is a non-blank string.
+
+    W7 closes the relay-blank hole: a blank or whitespace-only plate
+    is refused by every plate entry point -- create paths reach it
+    through ``_shape_and_validate``, edit paths through the three
+    ``change_*_plate`` methods. This resolves the csvio-vs-roster
+    docstring contradiction in favour of NON-EMPTY (csvio's own
+    module docstring now records the same resolution): a relay plate
+    is "any non-empty string", never a blank one.
+
+    Raises:
+        PlateShapeError: *plate* is empty or whitespace-only.
+    """
+    if not plate.strip():
+        msg = f"plate {plate!r} must not be empty"
         raise PlateShapeError(msg)
 
 
@@ -732,6 +752,7 @@ class Roster:
         if entry.type is not EntryType.SOLO:
             msg = "change_solo_plate requires a solo entry"
             raise PlateShapeError(msg)
+        _require_plate_nonempty(plate)
         if self._plate_model is PlateModel.RIDER_POOLED:
             _require_whole_plate(plate)
         old_plate = entry.plate
@@ -771,6 +792,7 @@ class Roster:
         if self._plate_model is not PlateModel.RIDER_POOLED or entry.type is not EntryType.TEAM:
             msg = "change_pooled_rider_plate requires a rider_pooled team member"
             raise PlateShapeError(msg)
+        _require_plate_nonempty(plate)
         _require_whole_plate(plate)
         old_plate = cast("str", rider.plate)
         self._require_plate_free_for_change(plate, exclude=old_plate)
@@ -811,6 +833,7 @@ class Roster:
                 "use change_pooled_rider_plate instead"
             )
             raise PlateShapeError(msg)
+        _require_plate_nonempty(plate)
         old_plate = entry.plate
         self._require_plate_free_for_change(plate, exclude=old_plate)
         entry.plate = plate
@@ -1032,6 +1055,7 @@ class Roster:
             if plate is None:
                 msg = "team_relay entries require an explicit plate"
                 raise PlateShapeError(msg)
+            _require_plate_nonempty(plate)
             for rider in riders:
                 rider.plate = None
             self._require_plates_free([plate])
@@ -1042,6 +1066,7 @@ class Roster:
             raise PlateShapeError(msg)
         rider_plates = [cast("str", rider.plate) for rider in riders]
         for rider_plate in rider_plates:
+            _require_plate_nonempty(rider_plate)
             _require_whole_plate(rider_plate)
         self._require_plates_free(rider_plates)
         return _lowest_plate(rider_plates)

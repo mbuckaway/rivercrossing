@@ -23,8 +23,12 @@ from :meth:`Roster.next_free_plate` when blank; under
 ``team_relay`` a team's member rows share the team's single plate
 (solo rows get their own). An explicit ``rider_pooled`` NUMBER cell
 must be a whole number -- a non-digit "77A"-style cell is a per-row
-conflict, never a crash (a ``team_relay`` plate stays any string;
-the roster only derives from numbers under ``rider_pooled``).
+conflict, never a crash (a ``team_relay`` plate stays any non-empty
+string -- W7's resolution of the csvio-vs-roster docstring
+contradiction, recorded here and in roster.py: blank plates are
+refused by the roster, and this module auto-assigns a blank NUMBER
+cell before the roster ever sees it; the roster only derives from
+numbers under ``rider_pooled``).
 
 :func:`preview` reads the file and reports every conflict found without
 raising for content problems and without writing anything -- to the

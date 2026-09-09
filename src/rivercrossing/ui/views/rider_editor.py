@@ -269,10 +269,23 @@ class RiderEditor:
         return bar
 
     def _bind_events(self) -> None:
-        """Forward every control event straight to the presenter."""
+        """Forward every control event straight to the presenter.
+
+        W7 adds the form-edit events: every keystroke into the three
+        text fields and every team_choice selection re-runs the dirty
+        check (:meth:`RidersPresenter.on_form_changed`) that gates
+        save_btn. The presenter's own ``show_form`` calls re-fire
+        these events (``SetValue``/``SetStringSelection``), which is
+        harmless: each event re-reads the whole form, so the state
+        after the last field lands is the state of the full form.
+        """
         self.dialog.Bind(wx.EVT_BUTTON, self._on_add, self.add_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_save, self.save_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_delete, self.delete_btn)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.plate_input)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.first_name_input)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.last_name_input)
+        self.dialog.Bind(wx.EVT_CHOICE, self._on_form_changed, self.team_choice)
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.riders_list
         )
@@ -305,6 +318,11 @@ class RiderEditor:
         """Handle ``delete_btn``: forward to the presenter."""
         event.Skip()
         self.presenter.on_delete()
+
+    def _on_form_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle a form edit: re-run the presenter's dirty gating."""
+        event.Skip()
+        self.presenter.on_form_changed(self._form_values())
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``riders_list`` selection: forward its row index.
@@ -363,6 +381,10 @@ class RiderEditor:
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Toggle ``delete_btn``'s enabled state (R-15)."""
         self.delete_btn.Enable(enabled)
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``save_btn`` on the form's dirty state (W7)."""
+        self.save_btn.Enable(enabled)
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """Render ``csv_preview_dlg``; that dialog's own job.
@@ -610,6 +632,15 @@ class CsvPreviewDialog:
         Raises:
             NotImplementedError: Always -- ``csv_preview_dlg`` has no
                 ``delete_btn`` of its own.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``save_btn``; that dialog's own job.
+
+        Raises:
+            NotImplementedError: Always -- ``csv_preview_dlg`` has no
+                ``save_btn`` of its own.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
