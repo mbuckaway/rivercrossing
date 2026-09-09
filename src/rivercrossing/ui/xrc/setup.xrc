@@ -5,10 +5,12 @@
   row in a wxStdDialogButtonSizer so button order is right on both platforms.
 
   Radio defaults are drawn on the canvas and required by spec.md 13 ("radio
-  groups always have a default"): mixed_radio (teams), pooled_radio and
-  jokers_2_radio start selected. wxRB_GROUP opens each of the three groups -
-  entry mode, plate model and jokers-per-deck - and <value>1</value> is
-  honoured by XRC (measured: tools/toolkit_probe.py check_xrc_names).
+  groups always have a default"): always_deal_radio (short-lap policy,
+  W4), mixed_radio (teams), pooled_radio and jokers_2_radio start
+  selected. wxRB_GROUP opens each of the four groups - short-lap card
+  policy, entry mode, plate model and jokers-per-deck - and
+  <value>1</value> is honoured by XRC (measured:
+  tools/toolkit_probe.py check_xrc_names).
 
   Code-side per the canvas footnote: field values are loaded from the ride
   record (this file declares structure and ranges only); the entry-mode and
@@ -130,7 +132,7 @@
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText">
-              <label>Duration h:m</label>
+              <label>Duration (H:MM)</label>
             </object>
           </object>
           <object class="sizeritem">
@@ -140,7 +142,7 @@
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText">
-              <label>Min lap m:s</label>
+              <label>Min lap (M:SS)</label>
             </object>
           </object>
           <object class="sizeritem">
@@ -148,6 +150,37 @@
             <object class="wxTextCtrl" name="min_lap_input"/>
           </object>
 
+        </object>
+      </object>
+
+      <!-- W4 short-lap card policy: a fourth radio pair beside the lap
+           fields. always_deal_radio is the declared default (a fresh
+           dialog always deals short-lap cards; holding them for review
+           is the operator's explicit choice, ride_config.hold_short_laps).
+           wxRB_GROUP on hold_short_radio opens the pair's own group so
+           the radios created later (solo/mixed, pooled/relay,
+           jokers_0/2/4) never join it. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxRadioButton" name="hold_short_radio">
+              <label>Hold short-lap cards for review</label>
+              <style>wxRB_GROUP</style>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
+            <border>8</border>
+            <object class="wxRadioButton" name="always_deal_radio">
+              <label>Always deal cards</label>
+              <value>1</value>
+            </object>
+          </object>
         </object>
       </object>
 

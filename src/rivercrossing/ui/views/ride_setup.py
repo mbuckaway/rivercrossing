@@ -114,6 +114,8 @@ class RideSetup:
         self.scorer_input = self._find(ids.SCORER_INPUT, wx.TextCtrl)
         self.duration_input = self._find(ids.DURATION_INPUT, wx.TextCtrl)
         self.min_lap_input = self._find(ids.MIN_LAP_INPUT, wx.TextCtrl)
+        self.hold_short_radio = self._find(ids.HOLD_SHORT_RADIO, wx.RadioButton)
+        self.always_deal_radio = self._find(ids.ALWAYS_DEAL_RADIO, wx.RadioButton)
         self.logo_picker = self._find(ids.LOGO_PICKER, wx.FilePickerCtrl)
         self.solo_radio = self._find(ids.SOLO_RADIO, wx.RadioButton)
         self.mixed_radio = self._find(ids.MIXED_RADIO, wx.RadioButton)
@@ -219,11 +221,14 @@ class RideSetup:
     def _form_values(self) -> SetupFormValues:
         """Return this dialog's current fields, read verbatim (R-20).
 
-        ``entry_mode``/``plate_model``/``jokers_per_deck`` are the one
-        exception each: wx has no "enum radio group" control, so
-        translating which radio is checked into a domain value is
-        this method's own mechanical job (module docstring, mirroring
-        ``RiderEditor._form_values``'s own note about ``team_choice``).
+        ``entry_mode``/``plate_model``/``jokers_per_deck`` and the W4
+        radio pair are the exception each: wx has no "enum radio
+        group" control, so translating which radio is checked into a
+        domain value is this method's own mechanical job (module
+        docstring, mirroring ``RiderEditor._form_values``'s own note
+        about ``team_choice``) -- ``hold_short_laps`` reads the
+        pair's first member, whose checked state means the operator
+        opted into R-34's hold path.
         """
         picked_date = self.date_picker.GetValue()
         picked_time = self.start_time_picker.GetValue()
@@ -240,6 +245,7 @@ class RideSetup:
             start_time=start_time,
             duration_text=self.duration_input.GetValue(),
             min_lap_text=self.min_lap_input.GetValue(),
+            hold_short_laps=self.hold_short_radio.GetValue(),
             entry_mode=EntryMode.MIXED if self.mixed_radio.GetValue() else EntryMode.SOLO,
             max_team_size=self.team_size_spin.GetValue(),
             plate_model=(
@@ -305,6 +311,15 @@ class RideSetup:
     def show_deck_count(self, count: int) -> None:
         """Render decks_spin (``SetupView``); XRC leaves it unset."""
         self.decks_spin.SetValue(count)
+
+    def show_lap_km(self, lap_km: float) -> None:
+        """Render lap_km_spin (``SetupView``); XRC leaves it unset.
+
+        W4's mirror of :meth:`show_deck_count`: the presenter pushes
+        :data:`~rivercrossing.ride.DEFAULT_LAP_KM` so a fresh dialog
+        never submits a 0.0 lap length.
+        """
+        self.lap_km_spin.SetValue(lap_km)
 
     def show_entry_settings(
         self, *, entry_mode: EntryMode, max_team_size: int, plate_model: PlateModel

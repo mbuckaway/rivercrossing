@@ -14,7 +14,8 @@ database is a no-op, which is what makes re-open idempotent.
 
 The ledger table itself is bootstrapped here (``CREATE TABLE IF NOT
 EXISTS``) before the version read, so a v0 database -- empty, no
-ledger -- reads as version 0 and upgrades to v1 on first open.
+ledger -- reads as version 0 and upgrades to the latest version
+(v1, then v2 as of the W4 short-lap policy) on first open.
 
 The store's error types live here, not in the package root, to keep
 this module free of a circular import: ``rivercrossing.store`` imports
@@ -67,10 +68,27 @@ def _migrate_v0_to_v1(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Add the W4 short-lap policy column to the ride table.
+
+    ``hold_short_laps`` is the ride setup dialog's short-lap card
+    policy (``RideConfig.hold_short_laps``, default False = always
+    deal). The v1 baseline DDL in ``schema.py`` stays untouched --
+    this additive ALTER is what brings a shipped v1 database (or a
+    fresh file, chained after v0->v1) to v2. ``NOT NULL DEFAULT 0``
+    back-fills every existing ride with the always-deal default, so a
+    migrated file's replay never fabricates holds it did not record.
+    """
+    conn.execute("ALTER TABLE ride ADD COLUMN hold_short_laps INTEGER NOT NULL DEFAULT 0")
+
+
 # Migration timeline, oldest first. Append the next migration here and
 # LATEST_SCHEMA_VERSION advances by one; never renumber or edit an
 # applied migration -- the ledger records what ran.
-MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (_migrate_v0_to_v1,)
+MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
+    _migrate_v0_to_v1,
+    _migrate_v1_to_v2,
+)
 
 LATEST_SCHEMA_VERSION: int = len(MIGRATIONS)
 
