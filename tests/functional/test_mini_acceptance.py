@@ -397,6 +397,9 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
 
         # Counters track the engine: 60 typed - 1 undo = 59 crossings,
         # no held cards, every entry on an odd lap, 373/432 in the shoe.
+        # W12: the registration chips read the mini roster -- 20
+        # registered riders (18 solo + the 2-rider Team Alpha) and 1
+        # team entry.
         counters = source.counters()
         assert (
             counters.crossings,
@@ -404,14 +407,18 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
             counters.on_course,
             counters.shoe_remaining,
             counters.shoe_total,
-        ) == (59, 59, 19, 373, 432)
+            counters.riders,
+            counters.teams,
+        ) == (59, 59, 19, 373, 432, 20, 1)
         labels = (
             harness.find_control(window, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
             harness.find_control(window, ids.CARDS_COUNT_LBL).GetLabelText(),
             harness.find_control(window, ids.ON_COURSE_LBL).GetLabelText(),
             harness.find_control(window, ids.SHOE_LBL).GetLabelText(),
+            harness.find_control(window, ids.RIDERS_COUNT_LBL).GetLabelText(),
+            harness.find_control(window, ids.TEAMS_COUNT_LBL).GetLabelText(),
         )
-        assert labels == ("59", "59", "19", "373/432")
+        assert labels == ("59", "59", "19", "373/432", "20", "1")
 
         # --- 4. stop / continue (R-35, spec section 3)
         elapsed_before_stop = engine.elapsed()

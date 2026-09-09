@@ -91,6 +91,9 @@ class FakeConsoleView:
     def show_counters(self, c: Counters) -> None:
         """Record the counters (unused here)."""
 
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the teams-chip visibility verdict (unused here)."""
+
     def flash_crossing(self, r: FeedRow) -> None:
         """Record the flashed crossing (unused here)."""
 
@@ -361,7 +364,13 @@ class FakeDataSource:
     def counters(self) -> Counters:
         """Return one fixed counter set."""
         return Counters(
-            crossings=1124, cards_dealt=1092, on_course=42, shoe_remaining=41, shoe_total=108
+            crossings=1124,
+            cards_dealt=1092,
+            on_course=42,
+            shoe_remaining=41,
+            shoe_total=108,
+            riders=262,
+            teams=82,
         )
 
     def rides(self) -> list[RideSummary]:

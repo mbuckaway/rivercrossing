@@ -139,9 +139,11 @@ def test_live_console_shows_zero_counters_at_startup(
         harness.find_control(window, ids.CARDS_COUNT_LBL).GetLabelText(),
         harness.find_control(window, ids.ON_COURSE_LBL).GetLabelText(),
         harness.find_control(window, ids.SHOE_LBL).GetLabelText(),
+        harness.find_control(window, ids.RIDERS_COUNT_LBL).GetLabelText(),
+        harness.find_control(window, ids.TEAMS_COUNT_LBL).GetLabelText(),
     )
 
-    assert labels == ("0", "0", "0", "432/432")
+    assert labels == ("0", "0", "0", "432/432", "0", "0")
 
 
 def test_live_console_starts_running_with_entry_enabled_and_stop_disabled(

@@ -48,6 +48,8 @@ MAIN_FRAME_CONTROLS = (
     "cards_count_lbl",
     "on_course_lbl",
     "shoe_lbl",
+    "riders_count_lbl",
+    "teams_count_lbl",
     "review_notebook",
     "flagged_list",
     "review_btn",

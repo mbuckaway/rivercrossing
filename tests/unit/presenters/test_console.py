@@ -149,6 +149,22 @@ def _running_engine(
     return engine, clock
 
 
+def _solo_only_engine() -> tuple[RideEngine, _FakeDatetimeClock]:
+    """Build a DRAFT engine over one solo entry, entry mode SOLO (R-11).
+
+    The W12 teams-chip visibility test needs an engine whose own
+    config says SOLO -- the console presenter reads the mode from the
+    engine (``config.entry_mode``), the same source commands.py's
+    ``teams_allowed`` gate uses.
+    """
+    roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Rider 12", last_name="", plate="12")
+    engine, clock = _make_engine(
+        roster=roster, config=dataclasses.replace(_config(), entry_mode=EntryMode.SOLO)
+    )
+    return engine, clock
+
+
 def _record(  # noqa: PLR0913 -- seeded crossing helper: (engine, clock, plate) + lap_time_s
     engine: RideEngine,
     clock: _FakeDatetimeClock,
@@ -185,6 +201,9 @@ class FakeConsoleView:
         self.last_flagged: list[FeedRow] = []
         self.last_riders: list[RiderRow] = []
         self.last_hide: bool | None = None
+        # W12: the teams-chip visibility verdict the presenter pushes
+        # at construction (R-11: solo-only rides hide the Teams chip).
+        self.team_visible: bool | None = None
         self.stop_enabled: bool | None = None
         self.entry_locked: bool | None = None
         # W5 channels: the start/undo button gates, the native warning
@@ -207,6 +226,10 @@ class FakeConsoleView:
     def show_counters(self, c: Counters) -> None:
         """Record the counters."""
         self.last_counters = c
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the teams-chip visibility verdict (R-11, W12)."""
+        self.team_visible = visible
 
     def flash_crossing(self, r: FeedRow) -> None:
         """Record the flashed crossing."""
@@ -370,7 +393,13 @@ def test_empty_data_source_counters_and_status_report_no_ride() -> None:
     source = EmptyDataSource()
 
     assert source.counters() == Counters(
-        crossings=0, cards_dealt=0, on_course=0, shoe_remaining=0, shoe_total=0
+        crossings=0,
+        cards_dealt=0,
+        on_course=0,
+        shoe_remaining=0,
+        shoe_total=0,
+        riders=0,
+        teams=0,
     )
     assert source.ride_status() is RideStatus.DRAFT
 
@@ -451,7 +480,11 @@ def test_engine_data_source_feed_rows_given_flagged_crossing_reports_the_held_ca
 
 
 def test_engine_data_source_counters_reflect_engine_state() -> None:
-    """R-32: crossings/cards/on-course/shoe read from the engine."""
+    """R-32: crossings/cards/on-course/shoe read from the engine.
+
+    W12: the riders/teams chips read from the source's roster -- two
+    solo entries here, so 2 registered riders and no teams.
+    """
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     _record(engine, clock, "12", lap_time_s=100)
@@ -465,6 +498,8 @@ def test_engine_data_source_counters_reflect_engine_state() -> None:
         on_course=0,  # plate 12 has 2 (even) laps
         shoe_remaining=430,  # 8x54 shoe, 2 dealt
         shoe_total=432,
+        riders=2,  # one registered rider per solo entry
+        teams=0,  # no team entries in this roster
     )
 
 
@@ -477,6 +512,32 @@ def test_engine_data_source_counters_exclude_held_cards_from_cards_dealt() -> No
     counters = source.counters()
 
     assert (counters.crossings, counters.cards_dealt) == (1, 0)
+
+
+def test_engine_data_source_counters_count_registered_riders_and_teams() -> None:
+    """W12: the riders/teams chips total the roster, csvio's idiom.
+
+    ``riders`` is the sum of every entry's rider count (a solo entry
+    counts 1, a team counts its members); ``teams`` is the number of
+    TEAM-type entries. The fixture roster holds one solo entry and
+    one two-rider team, so 3 riders and 1 team regardless of how many
+    laps have been recorded.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="12")
+    roster.create_team_entry(
+        display_name="Team Alpha",
+        riders=[
+            Rider(first_name="Aya", last_name="Chen", plate="21"),
+            Rider(first_name="Bo", last_name="Lin", plate="22"),
+        ],
+    )
+    engine, _clock = _make_engine(roster=roster)
+    source = EngineDataSource(engine, roster)
+
+    counters = source.counters()
+
+    assert (counters.riders, counters.teams) == (3, 1)
 
 
 # ------------------------------------------------------------ status
@@ -720,6 +781,32 @@ def test_console_presenter_holds_the_view_engine_and_source_it_was_given() -> No
     assert presenter.view is view
     assert presenter.engine is engine
     assert presenter.source is source
+
+
+def test_console_presenter_given_a_mixed_ride_shows_the_teams_chip() -> None:
+    """R-11/W12: a mixed ride's console keeps the Teams chip visible."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+
+    _make_presenter(engine, view)
+
+    assert view.team_visible is True
+
+
+def test_console_presenter_given_a_solo_only_ride_hides_the_teams_chip() -> None:
+    """R-11/W12: a solo-only ride hides the Teams chip entirely.
+
+    The console reads the ride's mode from the engine's own config
+    (``engine.config.entry_mode``) -- the same source commands.py's
+    ``teams_allowed`` gate reads -- so a presenter born onto a
+    solo-only engine tells the view to hide the Teams chip at once.
+    """
+    engine, _clock = _solo_only_engine()
+    view = FakeConsoleView()
+
+    _make_presenter(engine, view)
+
+    assert view.team_visible is False
 
 
 # ------------------------------------------------------- plate entered

@@ -278,16 +278,20 @@ def test_main_frame_given_a_fresh_engine_shows_zero_counters_and_full_shoe(
     """E5.4.2: a fresh ride counts 0 crossings/cards/course; full shoe.
 
     The bootstrap engine is a fresh empty DRAFT ride (R-32's counters
-    read from the engine, never a display-data source).
+    read from the engine, never a display-data source). W12: the two
+    registration chips (riders/teams) also read 0 -- the roster is
+    empty.
     """
     labels = (
         empty_console.crossings_count_lbl.GetLabelText(),
         empty_console.cards_count_lbl.GetLabelText(),
         empty_console.on_course_lbl.GetLabelText(),
         empty_console.shoe_lbl.GetLabelText(),
+        empty_console.riders_count_lbl.GetLabelText(),
+        empty_console.teams_count_lbl.GetLabelText(),
     )
 
-    assert labels == ("0", "0", "0", "432/432")
+    assert labels == ("0", "0", "0", "432/432", "0", "0")
 
 
 # --- InfoBars (R-73) ---------------------------------------------

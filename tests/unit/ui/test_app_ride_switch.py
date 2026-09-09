@@ -62,6 +62,10 @@ class _FakeConsoleView:
         """Record the rendered counters."""
         self.calls.append(("show_counters", counters))
 
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the teams-chip visibility verdict (R-11, W12)."""
+        self.calls.append(("set_team_ui_visible", visible))
+
     def focus_entry(self) -> None:
         """Record the focus request."""
         self.calls.append(("focus_entry", None))
@@ -151,6 +155,7 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
         assert context.active_ride_id == ride_id
         assert [entry.plate for entry in context.roster.entries] == ["12"]
         assert [name for name, _arg in view.calls] == [
+            "set_team_ui_visible",
             "set_presenter",
             "show_ride_name",
             "set_state",
@@ -163,6 +168,9 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
         assert swapped.engine.state is RideStatus.DRAFT
         assert ("show_ride_name", "GORBA EPIC 2026") in view.calls
         assert ("set_state", RideStatus.DRAFT) in view.calls
+        # W12/R-11: the presenter pushes the teams-chip verdict on
+        # birth -- this mixed roster keeps the Teams chip visible.
+        assert ("set_team_ui_visible", True) in view.calls
         # The engine's event sink is wired to the store for this ride.
         swapped.engine.on_event(
             Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})

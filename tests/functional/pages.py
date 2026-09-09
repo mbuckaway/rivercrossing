@@ -79,6 +79,10 @@ MAIN_FRAME = WindowSpec(
         ids.CARDS_COUNT_LBL,
         ids.ON_COURSE_LBL,
         ids.SHOE_LBL,
+        # W12: the two registration chips (riders_count_lbl /
+        # teams_count_lbl) sit beside the four live-timing chips.
+        ids.RIDERS_COUNT_LBL,
+        ids.TEAMS_COUNT_LBL,
         ids.REVIEW_NOTEBOOK,
         ids.FLAGGED_LIST,
         ids.REVIEW_BTN,

@@ -34,6 +34,9 @@ class IncompleteConsoleView:
     def show_counters(self, c: Counters) -> None:
         """No-op fixture stub."""
 
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """No-op fixture stub."""
+
     def flash_crossing(self, r: FeedRow) -> None:
         """No-op fixture stub."""
 

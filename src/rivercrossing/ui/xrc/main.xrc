@@ -340,6 +340,50 @@
                     </object>
                   </object>
 
+                  <!--
+                    W12: the two registration chips (riders_count_lbl /
+                    teams_count_lbl) appended after the four live-timing
+                    chips. The roster counts are static per ride, so the
+                    timing readouts stay topmost. The teams chip (its
+                    caption and value) is hidden code-side in solo-only
+                    rides (R-11); the caption carries no frozen name,
+                    like every other chip caption, and is found
+                    structurally by main_frame.set_team_ui_visible.
+                  -->
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>Riders</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="riders_count_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>Teams</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="teams_count_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
                 </object>
               </object>
 
