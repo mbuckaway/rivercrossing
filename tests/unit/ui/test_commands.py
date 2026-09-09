@@ -96,7 +96,7 @@ ROUTE_TARGETS = (
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Preview in Browser: external browser
     (commands.TargetKind.COMMAND, None),  # Tie-break Order...: focuses an existing control
-    (commands.TargetKind.COMMAND, None),  # Hide Times / Zoom: direct commands (W13: theme left the View menu)
+    (commands.TargetKind.COMMAND, None),  # Hide Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
     (commands.TargetKind.DIALOG, ids.SHORTCUTS_DLG),  # Keyboard Shortcuts
     (commands.TargetKind.DIALOG, ids.SELFTEST_DLG),  # Run Evaluator Self-test

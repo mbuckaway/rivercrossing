@@ -466,7 +466,7 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
     class _FakeThemeController:
         """A theme controller reporting no notice."""
 
-        def apply_mode(self, _mode: object) -> None:  # noqa: ANN401 -- fake controller, mode is opaque here
+        def apply_mode(self, _mode: object) -> None:
             """Report no notice."""
 
     context = app_module._RouteContext(

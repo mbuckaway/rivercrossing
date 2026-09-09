@@ -138,7 +138,7 @@ APPLY_MODE_CASES = (
 def test_theme_controller_apply_mode_applies_the_mode_and_returns_its_notice(
     case: tuple[theme.ThemeMode, object, object, str | None],
 ) -> None:
-    """Applying a mode (Settings OK, W13) applies it and words the result."""
+    """Apply a mode (Settings OK, W13) and return its notice text."""
     mode, result, expected_appearance, expected_notice = case
     fake = _RecordingThemeApp(result)
     controller = theme.ThemeController(fake)  # System construction: silent
