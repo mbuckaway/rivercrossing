@@ -28,6 +28,9 @@ from rivercrossing.htmlexport import (
 )
 
 
+_SAMPLE_LOGO = "data:image/png;base64,"
+
+
 def _sample_event() -> EventInfo:
     return EventInfo(
         kicker="Official results · poker run",
@@ -55,6 +58,7 @@ def _sample_results() -> tuple[ResultRow, ...]:
             best_lap="27:59",
             cards=(("9", "s"), ("9", "d"), ("9", "c"), ("JK", "j"), ("K", "h")),
             drawn=(("9", "s"), ("9", "d")),
+            logo=_SAMPLE_LOGO,
         ),
         ResultRow(
             place=3,
@@ -68,6 +72,7 @@ def _sample_results() -> tuple[ResultRow, ...]:
             tie=True,
             cards=(("Q", "s"), ("Q", "d"), ("JK", "j"), ("9", "h"), ("9", "c")),
             drawn=(("Q", "s"),),
+            logo=_SAMPLE_LOGO,
         ),
         ResultRow(
             place=14,

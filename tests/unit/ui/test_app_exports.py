@@ -8,6 +8,8 @@ browser seams are monkeypatched, and the no-engine and cancel paths
 post notices instead of failing.
 """
 
+import base64
+from base64 import b64encode
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -19,6 +21,7 @@ if TYPE_CHECKING:
 
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
+from rivercrossing.roster import EntryMode, Roster
 from rivercrossing.standings import EntryResult, Placed
 from rivercrossing.ui import app as app_module
 
@@ -243,8 +246,11 @@ def test_handle_export_command_picks_writes_and_records(
         solo: object,
         opts: object,
         watermark: int | None = None,
+        team_logos: object = None,
     ) -> None:
-        app_module._write_export(config, teams, solo, opts, target, path)  # type: ignore[arg-type]
+        app_module._write_export(  # type: ignore[arg-type]
+            config, teams, solo, opts, target, path, team_logos=team_logos
+        )
         ctx.last_export_path = path  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
 
@@ -285,8 +291,11 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
         solo: object,
         opts: object,
         watermark: int | None = None,
+        team_logos: object = None,
     ) -> None:
-        app_module._write_export(config, teams, solo, opts, "export_html", out)  # type: ignore[arg-type]
+        app_module._write_export(  # type: ignore[arg-type]
+            config, teams, solo, opts, "export_html", out, team_logos=team_logos
+        )
         ctx.last_export_path = out  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
         captured.append(watermark)
@@ -346,3 +355,82 @@ def test_handle_preview_browser_without_export_notices() -> None:
     app_module._handle_preview_browser(context)
 
     assert context.frame.notices == ["No export yet — generate one first"]
+
+
+# ============================================================ W8
+# Team logos in HTML exports: _write_export forwards the plate -> logo
+# data-URI map into htmlexport.render, and _team_logo_srcs builds that
+# map from the roster's TEAM entries (card assets or stored PNGs).
+
+
+def _team_logo_uri() -> str:
+    """A tiny deterministic data URI for the export pins."""
+    return "data:image/png;base64,TEAMLOGO"
+
+
+def test_write_export_html_embeds_team_logos_when_supplied(tmp_path: Path) -> None:
+    """W8: the html writer passes team_logos into the renderer."""
+    out = tmp_path / "results.html"
+    config = _StubConfig()
+    (entry, _) = _snapshot()
+    team_result = EntryResult(
+        entry_id="88",
+        plate="88",
+        name="Moss Ridge Riders",
+        kind="team",
+        laps=entry.laps,
+        total_time=entry.total_time,
+        best_lap=entry.best_lap,
+        cards=entry.cards,
+        hand=entry.hand,
+        dnf=False,
+    )
+    placed = _placed((team_result,))
+    opts = app_module.ExportOptions()
+
+    app_module._write_export(  # noqa: SLF001 -- the dispatch seam under test
+        config,
+        placed,
+        (),
+        opts,
+        "export_html",
+        out,
+        team_logos={"88": _team_logo_uri()},
+    )
+
+    html = out.read_text(encoding="utf-8")
+    assert html.count('class="team-logo"') == 2
+    assert html.count('<img src="data:image/png;base64,TEAMLOGO"') == 2
+
+
+def test_write_export_html_without_team_logos_renders_no_logo_images(tmp_path: Path) -> None:
+    """W8: no map, no row images -- the plain page."""
+    out = tmp_path / "results.html"
+    config = _StubConfig()
+    app_module._write_export(config, (), (), app_module.ExportOptions(), "export_html", out)
+
+    assert 'class="team-logo"' not in out.read_text(encoding="utf-8")
+
+
+def test_team_logo_srcs_maps_card_and_image_teams_to_data_uris(tmp_path: Path) -> None:
+    """W8: a card-code team and a PNG team both resolve to data URIs."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    card_team = roster.create_empty_team(display_name="Card Team", logo_card="AS")
+    png_team = roster.create_empty_team(display_name="Png Team", logo_png=b"fake-png-bytes")
+
+    srcs = app_module._team_logo_srcs(roster)  # noqa: SLF001 -- the pure seam under test
+
+    assert srcs[card_team.plate].startswith("data:image/png;base64,")
+    assert srcs[png_team.plate] == "data:image/png;base64," + b64encode(b"fake-png-bytes").decode()
+
+
+def test_team_logo_srcs_omits_logo_less_and_solo_entries() -> None:
+    """W8: rows without a logo, and non-team entries, never map."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_empty_team(display_name="Plain Team")
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="2")
+    (team,) = [e for e in roster.entries if e.display_name == "Plain Team"]
+
+    srcs = app_module._team_logo_srcs(roster)  # noqa: SLF001 -- the pure seam under test
+
+    assert srcs == {}
