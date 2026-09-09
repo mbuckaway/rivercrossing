@@ -137,6 +137,8 @@ RIDE_SETUP_CONTROLS = (
     "scorer_input",
     "duration_input",
     "min_lap_input",
+    "hold_short_radio",
+    "always_deal_radio",
     "logo_picker",
     "solo_radio",
     "mixed_radio",
@@ -192,11 +194,18 @@ ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
 RADIO_MENU_ITEMS = (*THEME_MENU_ITEMS, *ZOOM_MENU_ITEMS)
 
-# Canvas defaults, and the first member of each of the dialog's three
-# radio groups (entry mode, plate model, jokers per deck).
-SELECTED_RADIOS = ("mixed_radio", "pooled_radio", "jokers_2_radio")
-GROUP_OPENING_RADIOS = ("solo_radio", "pooled_radio", "jokers_0_radio")
-GROUP_FOLLOWING_RADIOS = ("mixed_radio", "relay_radio", "jokers_2_radio", "jokers_4_radio")
+# Canvas defaults, and the first member of each of the dialog's four
+# radio groups (short-lap policy, entry mode, plate model, jokers per
+# deck).
+SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio", "jokers_2_radio")
+GROUP_OPENING_RADIOS = ("hold_short_radio", "solo_radio", "pooled_radio", "jokers_0_radio")
+GROUP_FOLLOWING_RADIOS = (
+    "always_deal_radio",
+    "mixed_radio",
+    "relay_radio",
+    "jokers_2_radio",
+    "jokers_4_radio",
+)
 
 FEED_LIST_NAMES = ("crossings_list", "flagged_list")
 
@@ -434,7 +443,7 @@ def test_view_menu_hide_times_item_declares_the_check_kind() -> None:
 
 @pytest.mark.parametrize("radio_name", SELECTED_RADIOS)
 def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
-    """solo, pooled and jokers-2 start selected, exactly as drawn."""
+    """always-deal/mixed/pooled/jokers-2 start selected, as drawn."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert _param(radio, "value") == "1"
@@ -442,7 +451,7 @@ def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
 
 @pytest.mark.parametrize("radio_name", GROUP_OPENING_RADIOS)
 def test_radio_group_first_member_declares_rb_group(radio_name: str) -> None:
-    """Each of the dialog's three groups is opened by wxRB_GROUP."""
+    """Each of the dialog's four groups is opened by wxRB_GROUP."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert "wxRB_GROUP" in _param(radio, "style")
@@ -463,6 +472,35 @@ def test_team_size_spin_declares_the_spec_documented_range() -> None:
     bounds = (_param(spin, "min"), _param(spin, "max"), _param(spin, "value"))
 
     assert bounds == ("2", "10", "4")
+
+
+# ------------------------------------------------- W4 lap fields
+# (labels declare the entry format, and the short-lap card policy pair
+# sits next to them with always-deal as the declared XRC default.)
+
+
+def test_lap_field_static_labels_declare_the_entry_formats() -> None:
+    """The lap labels name their H:MM/M:SS entry shapes."""
+    labels = [
+        _param(obj, "label")
+        for obj in _window("ride_setup_dlg").iter("object")
+        if obj.attrib["class"] == "wxStaticText"
+    ]
+
+    assert "Duration (H:MM)" in labels
+    assert "Min lap (M:SS)" in labels
+
+
+def test_short_lap_policy_radios_declare_the_two_policy_labels() -> None:
+    """hold_short_radio/always_deal_radio carry the W4 policy copy."""
+    window = _window("ride_setup_dlg")
+    hold = _objects_by_name(window)["hold_short_radio"]
+    deal = _objects_by_name(window)["always_deal_radio"]
+
+    assert (_param(hold, "label"), _param(deal, "label")) == (
+        "Hold short-lap cards for review",
+        "Always deal cards",
+    )
 
 
 # --------------------------------------------------------------------

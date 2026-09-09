@@ -152,6 +152,9 @@ class FakeSetupView:
     def show_deck_count(self, count: int) -> None:
         """No-op fake."""
 
+    def show_lap_km(self, lap_km: float) -> None:
+        """No-op fake."""
+
     def show_entry_settings(
         self, *, entry_mode: EntryMode, max_team_size: int, plate_model: PlateModel
     ) -> None:

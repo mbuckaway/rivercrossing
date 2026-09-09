@@ -95,6 +95,7 @@ def _build_review_console(xrc_resource: object) -> MainFrame:
         planned_start=_START,
         planned_duration_s=21600,
         min_lap_s=60,
+        hold_short_laps=True,  # this fixture pins R-34's hold-for-review path
         entry_mode=EntryMode.MIXED,
         plate_model=PlateModel.RIDER_POOLED,
     )
@@ -112,7 +113,7 @@ def _build_review_console(xrc_resource: object) -> MainFrame:
     engine = RideEngine(config=config, shoe=shoe, clock=_clock, roster=roster)
     engine.start()
     _advance(5)
-    engine.record_crossing("12")  # flagged: 5 s < 60 s min lap
+    engine.record_crossing("12")  # flagged: 5 s < 60 s min lap, card held
     _advance(100)
     engine.record_crossing("34")  # clean lap, newer than the flag
     source = EngineDataSource(engine, roster)

@@ -231,6 +231,7 @@ def _build_mini_console(
         planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- scenario clock is naive
         planned_duration_s=21600,
         min_lap_s=60,  # lowered so the 30 s simulated laps flag (R-34)
+        hold_short_laps=True,  # the acceptance race pins R-34's hold path
         entry_mode=roster.entry_mode,
         plate_model=roster.plate_model,
         max_team_size=roster.max_team_size,

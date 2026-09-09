@@ -72,9 +72,9 @@ def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig.planned_start
 
 
-def _config(*, min_lap_s: int = 1) -> RideConfig:
+def _config(*, min_lap_s: int = 1, hold_short_laps: bool = False) -> RideConfig:
     """Build the canonical GORBA config with a tunable min-lap."""
-    return gorba_config(min_lap_s=min_lap_s)
+    return gorba_config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
 
 
 class _FakeDatetimeClock:
@@ -121,9 +121,10 @@ def _make_engine(
     *,
     roster: Roster | None = None,
     min_lap_s: int = 1,
+    hold_short_laps: bool = False,
 ) -> tuple[RideEngine, _FakeDatetimeClock]:
     """Build a DRAFT engine over a valid config, shoe and roster."""
-    config = _config(min_lap_s=min_lap_s)
+    config = _config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     clock = _FakeDatetimeClock(config.planned_start)
     roster = roster if roster is not None else _roster_with_entries("12", "34")
@@ -131,9 +132,11 @@ def _make_engine(
     return engine, clock
 
 
-def _running_engine(*, min_lap_s: int = 1) -> tuple[RideEngine, _FakeDatetimeClock]:
+def _running_engine(
+    *, min_lap_s: int = 1, hold_short_laps: bool = False
+) -> tuple[RideEngine, _FakeDatetimeClock]:
     """Build an engine already started, ready to record crossings."""
-    engine, clock = _make_engine(min_lap_s=min_lap_s)
+    engine, clock = _make_engine(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
     engine.start()
     return engine, clock
 
@@ -374,7 +377,7 @@ def test_engine_data_source_feed_rows_caps_at_thirty_rows(recorded: int, shown: 
 
 def test_engine_data_source_feed_rows_given_flagged_crossing_reports_held_card() -> None:
     """R-34: a short lap's row is flagged and shows 'held', no card."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)  # 5 s < 60 s min lap
     source = EngineDataSource(engine, engine._roster)
 
@@ -407,7 +410,7 @@ def test_engine_data_source_counters_reflect_engine_state() -> None:
 
 def test_engine_data_source_counters_exclude_held_cards_from_cards_dealt() -> None:
     """A held card is dealt but not credited (R-34) -- 1124-32."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)
     source = EngineDataSource(engine, engine._roster)
 
@@ -684,7 +687,7 @@ def test_on_plate_entered_given_accepted_plate_refreshes_feed_flashes_and_plays_
 
 def test_on_plate_entered_given_flagged_crossing_plays_flagged_cue() -> None:
     """R-34: a short-lap crossing's cue is FLAGGED, not RECORDED."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
     clock.advance(5)  # 5 s < 60 s min lap
@@ -958,7 +961,7 @@ def test_on_tick_given_draft_ride_shows_a_zeroed_clock() -> None:
 
 def test_on_plate_entered_given_flagged_crossing_lists_it_in_the_flagged_rows() -> None:
     """WS-H: a short-lap crossing lands in the flagged review list."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
     clock.advance(5)  # 5 s < 60 s min lap
@@ -971,7 +974,7 @@ def test_on_plate_entered_given_flagged_crossing_lists_it_in_the_flagged_rows() 
 
 def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> None:
     """WS-H: undoing a clean lap keeps the still-flagged row listed."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)  # flagged short lap
     _record(engine, clock, "34", lap_time_s=100)  # clean lap, newer
     view = FakeConsoleView()
@@ -984,7 +987,7 @@ def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> 
 
 def test_on_tick_given_flagged_crossing_refreshes_the_review_lists() -> None:
     """WS-H: the tick refreshes flagged rows and riders too."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)

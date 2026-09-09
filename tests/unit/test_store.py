@@ -42,6 +42,7 @@ from rivercrossing.store import (
     backup,
 )
 from rivercrossing.store.migrations import LATEST_SCHEMA_VERSION
+from rivercrossing.store.schema import SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL
 from rivercrossing.ui.presenters.data_source import AuditRow
 
 # The same always-valid kwarg set test_ride.py builds from, so a
@@ -204,8 +205,8 @@ def test_store_open_idempotent_reopen_runs_no_duplicate_migrations(
         )
 
 
-def test_store_open_migrates_v0_empty_database_to_v1(tmp_path: Path) -> None:
-    """A v0 database (no schema, no ledger) upgrades to v1 on open."""
+def test_store_open_migrates_v0_empty_database_to_latest_schema(tmp_path: Path) -> None:
+    """A v0 database (no schema, no ledger) upgrades to the latest."""
     db_path = tmp_path / "v0.db"
     conn = sqlite3.connect(str(db_path))
     conn.close()
@@ -221,7 +222,74 @@ def test_store_open_migrates_v0_empty_database_to_v1(tmp_path: Path) -> None:
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
         assert {"ride", "entry", "rider", "crossing", "card", "app_session", "audit"} <= names
-        assert conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0] == 1
+        assert (
+            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
+            == LATEST_SCHEMA_VERSION
+        )
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(ride)")}
+        assert "hold_short_laps" in columns
+
+
+def test_store_open_upgrades_a_v1_database_adding_hold_short_laps_defaulted_to_zero(
+    tmp_path: Path,
+) -> None:
+    """A genuine v1 file migrates in place; existing rows read 0 (W4).
+
+    The fresh-DB chain (v0 -> v1 -> v2) and the shipped-v1 upgrade
+    path meet here: the staged file carries the v1 schema -- the
+    pre-W4 ``ride`` CREATE without ``hold_short_laps``, stamped at
+    version 1 -- and opening it with today's code must add the column
+    (NOT NULL, DEFAULT 0), back-fill 0 onto the existing row, and
+    stamp the ledger at the latest version.
+    """
+    db_path = tmp_path / "v1.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
+            conn.execute(statement)
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 1)")
+        conn.execute(
+            """
+            INSERT INTO ride (
+                name, event_date, venue, course_name, lap_km, organizer, scorer,
+                logo_png, planned_start, planned_duration_s, actual_start,
+                finished_at, status, entry_mode, max_team_size, plate_model,
+                min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
+                rng_seed, created_at, updated_at
+            ) VALUES (
+                'GORBA EPIC 2026', '2026-09-20', 'Sea to Sky Gondola',
+                'Sea to Sky Gondola', 8.0, 'GORBA', 'K. Singh', NULL,
+                1789898400, 21600, NULL, NULL, 'draft', 'mixed', 4,
+                'rider_pooled', 1080, 8, 2, NULL, '["laps","total_time","high_card"]',
+                20260920, 1789898400, 1789898400
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = Store.open(db_path)
+    try:
+        assert [ride.name for ride in store.rides()] == ["GORBA EPIC 2026"]
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        assert (
+            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
+            == LATEST_SCHEMA_VERSION
+        )
+        assert (
+            conn.execute(
+                "SELECT hold_short_laps FROM ride WHERE name = 'GORBA EPIC 2026'"
+            ).fetchone()[0]
+            == 0
+        )
+        row = conn.execute("PRAGMA table_info(ride)").fetchall()
+        column = next(one for one in row if one[1] == "hold_short_laps")
+        assert column[3] == 1  # NOT NULL
+        assert column[4] == "0"  # DEFAULT 0, so later inserts may omit it
 
 
 def test_store_open_future_schema_version_refuses_with_version_named(
@@ -382,6 +450,75 @@ def test_store_create_ride_honours_an_explicit_rng_seed(tmp_path: Path) -> None:
 
     row = _fetch_ride_row(db_path, ride_id)
     assert row["rng_seed"] == 20260920
+
+
+def test_store_create_ride_hold_short_laps_column_round_trips(tmp_path: Path) -> None:
+    """The W4 policy column stores 1/0 and rebuilds the config field."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        hold_id = store.create_ride(_config(name="Hold Policy", hold_short_laps=True))
+        deal_id = store.create_ride(_config(name="Always Deal", hold_short_laps=False))
+    finally:
+        store.close()
+
+    hold_row = _fetch_ride_row(db_path, hold_id)
+    deal_row = _fetch_ride_row(db_path, deal_id)
+    assert hold_row["hold_short_laps"] == 1
+    assert deal_row["hold_short_laps"] == 0
+
+    reopened = Store.open(db_path)
+    try:
+        hold_engine = reopened.load_engine(hold_id)
+        deal_engine = reopened.load_engine(deal_id)
+    finally:
+        reopened.close()
+    assert hold_engine.config.hold_short_laps is True
+    assert deal_engine.config.hold_short_laps is False
+
+
+def test_store_load_engine_after_v1_migration_rebuilds_policy_false(
+    tmp_path: Path,
+) -> None:
+    """A migrated ride replays under W4's default: never holds.
+
+    The v1 file upgrades with ``hold_short_laps=0``, so the rebuilt
+    config carries the always-deal default.
+    """
+    db_path = tmp_path / "migrated.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
+            conn.execute(statement)
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 1)")
+        conn.execute(
+            """
+            INSERT INTO ride (
+                name, event_date, venue, course_name, lap_km, organizer, scorer,
+                logo_png, planned_start, planned_duration_s, actual_start,
+                finished_at, status, entry_mode, max_team_size, plate_model,
+                min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
+                rng_seed, created_at, updated_at
+            ) VALUES (
+                'Club night', '2026-09-20', 'Gondola', 'Gondola', 8.0,
+                'GORBA', 'K. Singh', NULL, 1789898400, 21600, NULL, NULL,
+                'draft', 'mixed', 4, 'rider_pooled', 1080, 8, 2, NULL,
+                '["laps","total_time","high_card"]', 20260920, 1789898400, 1789898400
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = Store.open(db_path)
+    try:
+        ride_id = store.rides()[0].id
+        engine = store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert engine.config.hold_short_laps is False
 
 
 def test_store_create_ride_stores_logo_blob_round_trip(tmp_path: Path) -> None:
@@ -1846,7 +1983,59 @@ def test_store_load_engine_builds_roster_from_db_and_replays_events(
     assert engine.lap_times("12") == (120.0,)
 
 
-# ------------------------------ E5.4.1 duplicate_ride (R-15)
+def test_store_load_engine_replays_short_lap_holds_when_policy_is_stored_true(
+    tmp_path: Path,
+) -> None:
+    """The stored policy column drives replay of held/confirmed cards.
+
+    W4's round-trip: a ride created with ``hold_short_laps=True`` whose
+    log holds and then confirms a short-lap card must rebuild to the
+    same credited state -- the replayed ``record_crossing`` holds only
+    because the reconstructed config carries the stored 1.
+    """
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        _pooled_roster(),
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        hold_short_laps=True,
+    )
+    store = Store.open(db_path)
+    try:
+        store.append(
+            ride_id,
+            Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+        )
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:00:30",
+                },
+            ),
+        )
+        card = store.load_engine(ride_id).held_crossings()[0].card
+        store.append(
+            ride_id,
+            Event(
+                action="confirm_held",
+                payload={"entry_id": "12", "seq": 1, "card": card.code()},
+            ),
+        )
+
+        engine = store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert engine.config.hold_short_laps is True
+    assert engine.held_crossings() == ()
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].cards == (card,)
 
 
 def _source_ride_with_timing_data(path: Path, roster: Roster) -> int:
@@ -1976,6 +2165,25 @@ def test_store_duplicate_ride_keeps_the_source_untouched(tmp_path: Path) -> None
 
     assert source.state is RideStatus.RUNNING
     assert [crossing.entry_id for crossing in source.crossings] == ["12"]
+
+
+def test_store_duplicate_ride_copies_the_hold_short_laps_policy(tmp_path: Path) -> None:
+    """R-15 copies setup: the W4 policy column travels with the row."""
+    db_path = tmp_path / "rides.db"
+    source_id = _save_roster_ride(
+        db_path,
+        _solo_roster(),
+        name="Hold Policy",
+        hold_short_laps=True,
+    )
+    store = Store.open(db_path)
+    try:
+        copy_id = store.duplicate_ride(source_id)
+    finally:
+        store.close()
+
+    copy_row = _fetch_ride_row(db_path, copy_id)
+    assert copy_row["hold_short_laps"] == 1
 
 
 def test_store_duplicate_ride_copies_first_and_last_name_columns(tmp_path: Path) -> None:

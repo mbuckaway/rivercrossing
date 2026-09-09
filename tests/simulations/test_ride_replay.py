@@ -42,6 +42,7 @@ _VALID_KWARGS: dict[str, object] = {
     "planned_start": _START,
     "planned_duration_s": 21600,
     "min_lap_s": 60,
+    "hold_short_laps": True,  # the 30 s short laps below must hold (R-34)
     "entry_mode": EntryMode.MIXED,
     "plate_model": PlateModel.RIDER_POOLED,
 }

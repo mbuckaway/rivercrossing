@@ -2469,10 +2469,11 @@ class _ScenarioClock:
         self._now = self._now + timedelta(seconds=seconds)  # type: ignore[operator]
 
 
-def _live_console_parts(
+def _live_console_parts(  # noqa: PLR0913 -- scenario inputs: resource + policy knobs
     resource: object,
     *,
     min_lap_s: int = 1,
+    hold_short_laps: bool = False,
     plates: tuple[str, ...] = ("12", "34"),
 ) -> tuple[Any, MainFrame, RideEngine, _ScenarioClock]:
     """Build a RUNNING live console: real engine + MainFrame, wired.
@@ -2480,7 +2481,9 @@ def _live_console_parts(
     Returns ``(window, console, engine, clock)``. The console is wired
     exactly as the app bootstrap wires it (``wire_entry`` +
     ``wire_console`` + ``set_state``), so the scenarios below drive the
-    real bindings, not the presenter in isolation.
+    real bindings, not the presenter in isolation. ``hold_short_laps``
+    opts a scenario into R-34's hold-for-review path (W4's always-deal
+    default is False).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
@@ -2495,6 +2498,7 @@ def _live_console_parts(
         planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001
         planned_duration_s=21600,
         min_lap_s=min_lap_s,
+        hold_short_laps=hold_short_laps,
         entry_mode=EntryMode.MIXED,
         plate_model=PlateModel.RIDER_POOLED,
     )
@@ -2563,7 +2567,9 @@ def _live_typed_plate_appears_in_feed() -> dict[str, Any]:
 def _live_flagged_crossing_row_is_bold() -> dict[str, Any]:
     """Record a short lap; its feed row must read bold (R-34)."""
     resource = harness.load_xrc_resources()
-    window, console, engine, _clock = _live_console_parts(resource, min_lap_s=60)
+    window, console, engine, _clock = _live_console_parts(
+        resource, min_lap_s=60, hold_short_laps=True
+    )
     try:
         plate_input = harness.find_control(window, ids.PLATE_INPUT)
         plate_input.SetValue("12")
