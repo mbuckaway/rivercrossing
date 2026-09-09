@@ -219,7 +219,7 @@ class RideLibrary:
         dialog: wx.Dialog,
         *,
         data_source: RidesSource,
-        on_delete: Callable[[str], None] | None = None,
+        on_delete: Callable[[RideSummary], None] | None = None,
         on_open: Callable[[RideSummary], None] | None = None,
         on_new: Callable[[], None] | None = None,
         on_duplicate: Callable[[RideSummary], None] | None = None,
@@ -233,11 +233,14 @@ class RideLibrary:
                 ``rides()`` (the :class:`RidesSource` Protocol), so
                 the store-backed source ``app.py`` wires in and the
                 E5.4.2 ``EmptyDataSource`` both apply.
-            on_delete: Called with the selected ride's name when
-                ``delete_ride_dlg`` confirms a Delete; ``None`` leaves
-                the dialog's confirm a no-op (the app threads a
-                store-backed callback when a store is open, E5.3.2's
-                module-docstring resolution).
+            on_delete: Called with the selected ride row when
+                ``delete_ride_dlg`` confirms a Delete -- the row the
+                app side deletes by its ``ride_id``, never by name
+                (W10); ``None`` leaves the dialog's confirm a no-op
+                (the app threads a store-backed callback when a store
+                is open, E5.3.2's module-docstring resolution). The
+                view refreshes its rows after the callback returns so
+                a successful delete disappears immediately.
             on_open: Called with the selected ride when Open is
                 clicked; ``None`` leaves the button a no-op (the empty
                 library, which has no store ride to load).
@@ -474,9 +477,12 @@ class RideLibrary:
         §4 -- a blank label is a failed assertion), arms the
         type-to-confirm gate, and on a confirmed ``wxID_DELETE``
         invokes the injected ``on_delete`` callback -- the seam E5.4
-        wires to ``Store.delete_ride``, which writes its backup first.
-        A RUNNING selection (or none) cannot reach here: the button is
-        disabled, and this guard re-checks anyway.
+        wires to ``Store.delete_ride``, which writes its backup first
+        -- with the selected ride row, then refreshes the list so the
+        deleted row disappears immediately (W10, mirroring the
+        duplicate flow's own post-action refresh). A RUNNING selection
+        (or none) cannot reach here: the button is disabled, and this
+        guard re-checks anyway.
         """
         selected = self._selected
         event.Skip()
@@ -515,7 +521,8 @@ class RideLibrary:
             # cover the negative control-lookup path.
             result = dialogs.run_dialog(dialog, opener=self.dialog)
             if result == wx.ID_DELETE and self._on_delete is not None:
-                self._on_delete(selected.name)
+                self._on_delete(selected)
+                self.refresh()
         finally:
             if not dialog.IsBeingDeleted():
                 dialog.Destroy()

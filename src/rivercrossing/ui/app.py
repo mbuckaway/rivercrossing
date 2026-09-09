@@ -679,35 +679,46 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
     context.frame.SetStatusText(f"{route.label} — not yet implemented")
 
 
-def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | None:
+def _library_delete_callback(
+    context: _RouteContext,
+    window: Any,  # noqa: ANN401, ARG001 -- wx ships no stubs; parent for the W10 refusal dialog (slice C)
+) -> Callable[[RideSummary], None] | None:
     """Return the library's store-backed delete callback, if any.
 
     E5.3.2's R-18 seam: a confirmed Delete on ``delete_ride_dlg``
-    calls this with the ride's name, and the store deletes it (writing
-    its backup first). With no store open there is nothing to delete,
-    and the callback resolves no match and is a silent no-op -- the
-    store module docstring's E5.3.2/E5.4.1 boundary resolution. The
-    no-store library's rows are the E5.4.2 empty state (zero rows), so
-    there is no ride name to match either way.
+    calls this with the selected ride row, and the store deletes it
+    (writing its backup first). W10: the delete addresses the row by
+    its ``ride_id`` -- the row the operator selected -- so duplicate
+    ride names can never delete the wrong (first) match, and no
+    ``rides()`` name-resolution scan runs inside the callback at all.
+    With no store open there is nothing to delete, and the callback
+    resolves to ``None`` -- the no-store library's rows are the
+    E5.4.2 empty state (zero rows), so there is no ride to delete
+    either way.
 
     A refused delete (a locked database, an unwritable backup target)
     surfaces as a status notice: the callback runs from the library's
     delete-confirm handler, and an unguarded raise there is swallowed
     by wx with zero signal (the measured note
     ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+
+    ``window`` is the live ``ride_library_dlg`` the delete was
+    confirmed on; the refusal surfacing parents to it.
     """
     store = context.store
     if store is None:
         return None
 
-    def _delete(ride_name: str) -> None:
-        for ride in store.rides():
-            if ride.name == ride_name:
-                try:
-                    store.delete_ride(ride.id, ride_name)
-                except (OSError, sqlite3.Error) as exc:
-                    context.frame.SetStatusText(f"Could not delete ride: {exc}")
-                return
+    def _delete(selected: RideSummary) -> None:
+        if selected.ride_id is None:
+            # logic-coverage-exempt: T-3 -- demo-era rows carry no
+            # store id, and the library's own rows always do when a
+            # store is open; the guard keeps the typed seam total.
+            return
+        try:
+            store.delete_ride(selected.ride_id, selected.name)
+        except (OSError, sqlite3.Error) as exc:
+            context.frame.SetStatusText(f"Could not delete ride: {exc}")
 
     return _delete
 
@@ -1058,7 +1069,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
             RideLibrary(
                 window,
                 data_source=_StoreLibrarySource(context.store),
-                on_delete=_library_delete_callback(context),
+                on_delete=_library_delete_callback(context, window),
                 on_open=on_open,
                 on_new=on_new,
                 on_duplicate=on_duplicate,
@@ -1070,7 +1081,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
             RideLibrary(
                 window,
                 data_source=_EMPTY_SOURCE,
-                on_delete=_library_delete_callback(context),
+                on_delete=_library_delete_callback(context, window),
             )
     elif route.target == ids.RIDER_EDITOR_DLG:
         # E5.4.2: the roster is the store's when a store-backed ride is
