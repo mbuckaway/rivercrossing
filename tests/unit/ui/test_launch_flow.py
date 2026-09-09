@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless tests for the W3 launch flow (post-Show prompts, R-52/ux-polish).
+"""Headless tests for the W3 launch flow.
+
+Post-Show launch prompts (R-52 / ux-polish),
 
 The launch-flow workstream moves every launch modal out of
 ``build_main_window`` (a modal that cannot present before
@@ -180,8 +182,7 @@ def _stage_resumed_ride(db_path: Path, *, corrupt_replay: bool = False) -> int:
         if corrupt_replay:
             with store._conn:
                 store._conn.execute(
-                    "INSERT INTO audit (ride_id, at, action, payload_json)"
-                    " VALUES (?, ?, ?, ?)",
+                    "INSERT INTO audit (ride_id, at, action, payload_json) VALUES (?, ?, ?, ?)",
                     (ride_id, 0, "confirm_held", '{"entry_id": "12", "seq": 1}'),
                 )
         store.close_session()  # quit-keep-running
@@ -216,8 +217,11 @@ def _stage_resumed_ride(db_path: Path, *, corrupt_replay: bool = False) -> int:
         "clean_quit_with_ride_open_does_nothing",
     ),
 )
-def test_launch_choice_returns_the_dialog_for_the_session_state(
-    state: SessionState, ride_id: int | None, ride_open: bool, expected: str
+def test_launch_choice_returns_the_dialog_for_the_session_state(  # noqa: PLR0913, PLR0917 -- (state, ride_id, ride_open, expected): the T-13 decision table's four columns; FBT001: ride_open is a table column, never a call-site flag
+    state: SessionState,
+    ride_id: int | None,
+    ride_open: bool,  # noqa: FBT001 -- decision-table column, not a call-site flag
+    expected: str,
 ) -> None:
     """T-13: the resume/no-ride/none decision over every state pair."""
     session = PreviousSession(state=state, ride_id=ride_id, ended_at=None)
@@ -283,10 +287,8 @@ def test_run_launch_flow_given_no_candidate_with_a_ride_open_shows_nothing(
     assert shown == []
 
 
-def test_run_launch_flow_given_a_resume_warranted_record_without_a_ride_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """RUNNING_AT_EXIT without a ride is a caller bug, never a prompt."""
+def test_run_launch_flow_given_a_resume_warranted_record_without_a_ride_raises() -> None:
+    """A resume warrant with no ride is a caller bug, never a prompt."""
     session = PreviousSession(
         state=SessionState.RUNNING_AT_EXIT,
         ride_id=None,
@@ -306,13 +308,16 @@ def test_run_launch_flow_given_a_resume_warranted_record_without_a_ride_raises(
 def test_run_launch_flow_continue_resumes_the_ride_and_keeps_the_active_marker(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Continue reloads the ride through the switch; session stays marked."""
+    """Continue reloads the ride; the session marker stays set.
+
+    The switch runs; the R-52 marker on the open session is kept.
+    """
     db_path = tmp_path / "rides.db"
     ride_id = _stage_resumed_ride(db_path)
     store = Store.open(db_path)
     view = _FakeConsoleView()
     context = _context(store=store, view=view)
-    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p, _ck: "continue")
+    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p: "continue")
     try:
         app_module._run_launch_flow(context, store)
     finally:
@@ -327,10 +332,10 @@ def test_run_launch_flow_continue_resumes_the_ride_and_keeps_the_active_marker(
     assert swapped.engine.state is RideStatus.RUNNING
 
 
-def test_run_launch_flow_continue_replay_failure_clears_marker_and_shows_error_and_keeps_placeholder(
+def test_run_launch_flow_replay_failure_clears_marker_shows_error_and_keeps_placeholder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A drifted-roster replay names the ride, clears the marker, stays up.
+    """A drifted-roster replay names the ride and keeps the app up.
 
     The regression behind the workstream: replay of an audit stream
     that no longer matches the ride raises ``RideEngineError`` out of
@@ -343,12 +348,11 @@ def test_run_launch_flow_continue_replay_failure_clears_marker_and_shows_error_a
     view = _FakeConsoleView()
     frame = _FakeFrame()
     context = _context(store=store, view=view, frame=frame)
-    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p, _ck: "continue")
+    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p: "continue")
     shown: list[tuple[object, ...]] = []
     monkeypatch.setattr(std_dialogs, "show_error", lambda *args: shown.append(args))
     expected = (
-        'cannot resume ride "GORBA EPIC 2026":'
-        " no crossing with entry_id 12 seq 1 for confirm_held"
+        "cannot resume ride GORBA EPIC 2026: no crossing with entry_id 12 seq 1 for confirm_held"
     )
     try:
         app_module._run_launch_flow(context, store)
@@ -368,20 +372,21 @@ def test_run_launch_flow_continue_replay_failure_clears_marker_and_shows_error_a
 def test_run_launch_flow_library_defers_open_library_and_never_prompts_no_ride(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Open library defers ride_library_dlg; no no-ride alert follows."""
+    """Open library defers ride_library_dlg; no no-ride alert.
+
+    The launch already answered its question.
+    """
     db_path = tmp_path / "rides.db"
     _stage_resumed_ride(db_path)
     store = Store.open(db_path)
     context = _context(store=store)
     fake_wx = _FakeWx()
     monkeypatch.setattr(app_module, "require_wx", lambda: fake_wx)
-    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p, _ck: "library")
+    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p: "library")
     shown: list[tuple[object, ...]] = []
     monkeypatch.setattr(std_dialogs, "show_info", lambda *args: shown.append(args))
     opened: list[tuple[object, object]] = []
-    monkeypatch.setattr(
-        app_module, "_open_target", lambda ctx, route: opened.append((ctx, route))
-    )
+    monkeypatch.setattr(app_module, "_open_target", lambda ctx, route: opened.append((ctx, route)))
     try:
         app_module._run_launch_flow(context, store)
 
@@ -403,7 +408,7 @@ def test_run_launch_flow_given_a_resume_warrant_and_no_loadable_dialog_does_noth
     _stage_resumed_ride(db_path)
     store = Store.open(db_path)
     context = _context(store=store)
-    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p, _ck: None)
+    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p: None)
     shown: list[tuple[object, ...]] = []
     monkeypatch.setattr(std_dialogs, "show_info", lambda *args: shown.append(args))
     try:

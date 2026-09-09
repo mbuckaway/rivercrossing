@@ -68,12 +68,18 @@ from rivercrossing.ride import (
     IllegalStateError,
     RideConfig,
     RideEngine,
+    RideEngineError,
     RideStatus,
     UnknownPlateError,
 )
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import Placed, rank_by_kind, tiebreak_order_from_spellings
-from rivercrossing.store import Store, default_db_path
+from rivercrossing.store import (
+    PreviousSession,
+    Store,
+    StoreError,
+    default_db_path,
+)
 from rivercrossing.ui import (
     accelerators,
     commands,
@@ -192,14 +198,8 @@ class _RouteContext:
             presenter through :meth:`MainFrame.set_presenter`.
         active_ride_id: The id of the store ride currently open in
             the console (E5.4.1). ``None`` until a store-backed ride
-            is opened -- by the resume flow (E5.2.2's Continue) or the
+            is opened -- by the launch flow's Continue (E5.2.2) or the
             library's Open -- and what File ▸ Duplicate Ride… reads.
-        library_deferred: ux-polish: set when the launch flow already
-            routed to the ride library through ``wx.CallAfter``
-            (``_resume_console_engine``'s Open-library outcome), so
-            :func:`build_main_window`'s own no-ride prompt stays
-            silent -- a resume-to-library launch must not double-prompt
-            the same Create/Open-library choice it just answered.
         settings: The live :class:`AppSettings` this launch loaded
             (E8.1.1); the layout-save callback updates it as the
             sash/geometry persist.
@@ -224,10 +224,6 @@ class _RouteContext:
     # MainFrame construction) and the currently open store ride's id.
     console_view: Any = None
     active_ride_id: int | None = None
-    # ux-polish: True once the launch flow deferred an Open library
-    # (resume_dlg's Open-library outcome); suppresses the bootstrap's
-    # no_ride_dlg, which would otherwise double-prompt the choice.
-    library_deferred: bool = False
     # E6.4.2: the most recent results export, backing Preview in
     # Browser (commands.RideState.export_exists derives from it).
     last_export_path: Path | None = None
@@ -271,7 +267,8 @@ def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]
 
     This is the one place a ride is created at bootstrap; E5's
     store-backed create/reopen flow replaces it (``_switch_console_
-    to_ride``/``_resume_console_engine``).
+    to_ride``, called by the launch flow's Continue and the library's
+    Open).
 
     Returns:
         ``(engine, engine_source)`` -- the write side and the read-only
@@ -2777,47 +2774,67 @@ def _run_launch_self_test(context: _RouteContext) -> None:
             window.Destroy()
 
 
-def _resume_console_engine(
-    context: _RouteContext, clock: Callable[[], datetime] | None
-) -> tuple[RideEngine, EngineDataSource] | None:
-    """Show ``resume_dlg`` when the previous session warrants it.
+def _launch_choice(session: PreviousSession, *, ride_open: bool) -> str:
+    """Return the launch prompt a store-backed start needs (W3).
 
-    R-52: on launch with a running ride, ``resume_dlg`` always
-    appears. Reads the store's previous-session record; when the
-    resume decision (:func:`~rivercrossing.ui.resume_flow.
-    resume_dialog_for`) says a ride was running at the previous exit,
-    loads ``resume_dlg``, writes the quit-vs-crash copy
+    The pure decision behind :func:`_run_launch_flow`, kept out of the
+    wx shell so the flow's choice is unit-testable headless. The
+    session-row semantics are unchanged: :func:`resume_flow.
+    resume_dialog_for` still owns which previous sessions warrant
+    ``resume_dlg`` (R-52) -- including a REOPENED ride's continue --
+    and this only adds the No Ride Open choice for a start that
+    resumes nothing.
+
+    Args:
+        session: The previous session's resume record.
+        ride_open: Whether a store ride is already open in the
+            console.
+
+    Returns:
+        ``"resume"`` when *session* warrants ``resume_dlg``;
+        ``"no_ride"`` when nothing is open and nothing resumes (show
+        the No Ride Open alert); ``"none"`` otherwise -- a ride is
+        already open, so the console already answers the launch.
+    """
+    if resume_flow.resume_dialog_for(session) is not None:
+        return "resume"
+    return "none" if ride_open else "no_ride"
+
+
+def _run_resume_dialog(
+    context: _RouteContext, store: Store, previous: PreviousSession
+) -> str | None:
+    """Show ``resume_dlg`` over the visible frame; return the choice.
+
+    The R-52 dialog machinery that used to run inside
+    ``build_main_window`` -- before the frame was shown, where a modal
+    that cannot be presented blocks the launch invisibly (the "app
+    never starts again" regression) -- now runs from
+    :func:`_run_launch_flow`, with the frame already visible. Loads
+    ``resume_dlg``, writes the quit-vs-crash copy
     (:func:`~rivercrossing.ui.resume_flow.resume_message`) into its
     ``message_lbl`` -- a blank label is a failed assertion, never a
     cosmetic one -- binds ``continue_btn``/``library_btn`` to end the
     modal (spec §15b's code-side ``SetAffirmativeId`` contract, and
-    E1.5.3's Escape->library decision), and maps the outcome:
+    E1.5.3's Escape->library decision), and maps the outcome.
 
-    - **Continue** marks the open session's running ride
-      (:meth:`~rivercrossing.store.Store.set_active_ride`), rebuilds
-      the engine from the store (:meth:`~rivercrossing.store.
-      Store.load_engine` with the ride's roster), installs that
-      roster on the shared context's ``roster`` -- so the Rider
-      Editor, Teams Editor and CSV import operate on the resumed
-      ride's real entries, the same install :func:`_switch_console_
-      to_ride` performs for the library-Open path -- and hands the
-      console that engine/source -- elapsed derives from the engine's
-      replayed ``actual_start`` and the wall clock (R-30).
-    - **Open library** opens ``ride_library_dlg`` (the store-backed
-      library, E5.4.1) and falls through to the bootstrap console.
-    - **No store, or nothing to resume** returns ``None`` -- the
-      bootstrap console path stays (E5.4.2: an empty real engine).
+    Args:
+        context: The route context whose frame/resource host the
+            dialog.
+        store: The live Store the ride name is read from.
+        previous: The previous session record the copy words
+            ``resume_dlg`` from (its ``ride_id``/``ended_at`` are
+            guaranteed by :func:`_run_launch_flow`'s guard).
 
     Returns:
-        ``(engine, source)`` for the console when the ride was
-        resumed; ``None`` when no store-backed resume happened.
+        ``"continue"`` when the operator chose Continue, ``"library"``
+        for the non-committal choice (``library_btn``'s click or
+        Escape), ``None`` when the dialog could not be loaded (a
+        status notice was posted instead).
     """
-    store = context.store
-    if store is None:
-        return None
-    previous = store.previous_session()
-    if resume_flow.resume_dialog_for(previous) is None:
-        return None
+    wx = require_wx()
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
     ride_id = previous.ride_id
     ended_at = previous.ended_at
     if ride_id is None or ended_at is None:
@@ -2827,9 +2844,6 @@ def _resume_console_engine(
         # for a quit, heartbeat/opened_at for a crash); this guard
         # only narrows types for mypy.
         raise RuntimeError("resume dialog warranted without a ride or end time")
-
-    wx = require_wx()
-    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
     dialog = context.resource.LoadDialog(None, ids.RESUME_DLG)
     if dialog is None:
@@ -2867,111 +2881,156 @@ def _resume_console_engine(
             dialogs.wire_escape_to(dialog, ids.LIBRARY_BTN)
 
         result = dialogs.run_dialog(dialog, opener=context.frame)
-
-        if continue_id is not None and result == continue_id:
-            store.set_active_ride(ride_id)
-            # E5.4.1: record the continued ride on the shared context
-            # so File ▸ Duplicate Ride… knows what is open (the route
-            # handlers close over this same object).
-            context.active_ride_id = ride_id
-            roster = store.roster_for(ride_id)
-            # The resumed ride's roster becomes the UI's roster -- the
-            # same install _switch_console_to_ride performs for the
-            # library-Open path -- so the Rider Editor, Teams Editor
-            # and CSV import preview against the ride's real entries,
-            # never the empty bootstrap shell (E5.4.2).
-            context.roster = roster
-            engine = store.load_engine(ride_id, roster, clock=clock)
-            # E9.1.3: after replay, every live event the resumed
-            # engine records persists to the store.
-            _wire_store_append(engine, store, ride_id, notify=_status_notice(context))
-            return engine, EngineDataSource(engine, roster)
     finally:
         if not dialog.IsBeingDeleted():
             dialog.Destroy()
 
-    # Open library instead of resuming (also Escape's target). Deferred
-    # through wx.CallAfter rather than opened here: a modal chained
-    # synchronously inside this bootstrap call -- while the resume
-    # modal's own unwind is still on the stack -- is not dismissible by
-    # the functional harness's CallAfter pattern (measured; the child
-    # hit its bound in a hung ride_library_dlg). The CallAfter fires on
-    # the running event loop (main()'s MainLoop), right at startup.
-    #
-    # ux-polish: mark the deferred open on the context so
-    # build_main_window's own no-ride prompt does not fire on top of it
-    # -- a resume-to-library launch already answered the Create/Open-
-    # library question this launch asks.
-    context.library_deferred = True
-    wx.CallAfter(lambda: _open_target(context, commands.route_for_id("mi_open_library")))
-    return None
+    if continue_id is not None and result == continue_id:
+        return "continue"
+    # Open library instead of resuming (also Escape's target): any
+    # non-Continue result is the same non-committal choice.
+    return "library"
 
 
-def _show_no_ride_prompt(context: _RouteContext) -> None:
-    """Offer Create new ride / Open library at a ride-less store launch.
+def _defer_open_library(context: _RouteContext) -> None:
+    """Open the ride library through ``wx.CallAfter`` (E1.5.3).
 
-    ux-polish: a store-backed bootstrap that resumed no ride has an
-    empty console and nothing open. ``no_ride_dlg`` asks the operator
-    how to proceed instead of leaving that state unexplained. Mirrors
-    :func:`_resume_console_engine`'s ``resume_dlg`` wiring exactly:
-    the two custom buttons end the modal with their own ids
-    (``create_ride_btn`` is the primary -- ``SetAffirmativeId``, so
-    Enter creates; ``open_library_btn`` is the secondary and Escape's
-    target, via ``dialogs.wire_escape_to``, the resume dialog's own
-    non-committal mapping), the dialog runs through
-    :func:`~rivercrossing.ui.views.dialogs.run_dialog`, and the chosen
-    target opens through ``wx.CallAfter`` -- the same modal-chaining
-    rule the resume flow's library branch uses.
+    ``resume_dlg``'s non-committal outcome (``library_btn``'s click or
+    Escape) opens ``ride_library_dlg`` on the running event loop: a
+    modal opened synchronously right after the resume modal's own
+    unwind -- still inside the launch flow -- is not dismissible by
+    the functional harness (measured; the child hit its bound in a
+    hung ride_library_dlg). The ``CallAfter`` fires on the running
+    event loop (``main()``'s ``MainLoop``), right at startup. The
+    console underneath stays the visible placeholder; the library's
+    Open replaces it.
     """
     wx = require_wx()
-    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
-
-    dialog = context.resource.LoadDialog(None, ids.NO_RIDE_DLG)
-    if dialog is None:
-        context.frame.SetStatusText("No Ride Open — no prompt dialog authored yet")
-        return
-    try:
-        create_id: int | None = None
-        create_ride_btn = wx.Window.FindWindowByName(ids.CREATE_RIDE_BTN, dialog)
-        if create_ride_btn is not None:
-            create_id = create_ride_btn.GetId()
-            # dialogs.xrc's own documented contract: the custom-named
-            # create_ride_btn keeps its name and the affirmative
-            # behaviour is wired in code with SetAffirmativeId so Enter
-            # returns its own id.
-            dialog.SetAffirmativeId(create_id)
-            dialog.Bind(
-                wx.EVT_BUTTON,
-                lambda event: dialog.EndModal(event.GetId()),
-                create_ride_btn,
-            )
-        if wx.Window.FindWindowByName(ids.OPEN_LIBRARY_BTN, dialog) is not None:
-            # The resume dialog's non-committal mapping: Escape routes
-            # to the secondary button (nothing to cancel on launch --
-            # dialogs.wire_escape_to's own contract), and the click is
-            # bound by the same call.
-            dialogs.wire_escape_to(dialog, ids.OPEN_LIBRARY_BTN)
-
-        result = dialogs.run_dialog(dialog, opener=context.frame)
-    finally:
-        if not dialog.IsBeingDeleted():
-            dialog.Destroy()
-
-    if create_id is not None and result == create_id:
-        wx.CallAfter(lambda: _open_target(context, commands.route_for_id("mi_ride_setup")))
-        return
-    # Open library: its click and Escape both end the modal with the
-    # button's own id (wire_escape_to binds both), so any non-Create
-    # result is the same non-committal choice, exactly as
-    # _resume_console_engine maps a non-Continue result.
     wx.CallAfter(lambda: _open_target(context, commands.route_for_id("mi_open_library")))
 
 
-def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): the four bootstrap seams
+def _resume_continue(  # noqa: PLR0913, PLR0917 -- (context, store, ride_id, clock): the resume-continue action needs the host, the store, the ride and the clock seam
+    context: _RouteContext,
+    store: Store,
+    ride_id: int,
+    clock: Callable[[], datetime] | None,
+) -> None:
+    """Continue on ``resume_dlg``: mark the ride active, switch to it.
+
+    Continue keeps the E5.2.2 contract -- :meth:`Store.set_active_ride`
+    first, so a later clean quit stamps ``closed_at`` on a session that
+    names the ride (R-52) -- then reuses the library-Open console
+    switch (:func:`_switch_console_to_ride`, with the launch clock
+    threaded into ``Store.load_engine``), the same store-load applied
+    at launch instead of mid-session.
+
+    A replay failure -- :meth:`Store.load_engine` raising a
+    :class:`~rivercrossing.ride.RideEngineError` when the audit stream
+    no longer matches the ride's stored roster (e.g. the "no crossing
+    with entry_id ... for ..." raise), or a
+    :class:`~rivercrossing.store.StoreError` -- must not take the
+    launch down: the message is wrapped so it names the ride as well
+    as the offending event, the status bar and an error alert surface
+    it, the session marker is cleared (so the next launch does not
+    offer a ride this store cannot load), and the visible placeholder
+    console stays up.
+    """
+    store.set_active_ride(ride_id)
+    try:
+        _switch_console_to_ride(context, ride_id, clock=clock)
+    except (RideEngineError, StoreError) as exc:
+        # W3 replay-error clarity: wrap at this catch site, never
+        # inside Store.load_engine, so the message names the ride and
+        # the plate/event the replay error already names.
+        ride_name = next(
+            (ride.name for ride in store.rides() if ride.id == ride_id),
+            "The ride",
+        )
+        wrapped = RideEngineError(f"cannot resume ride {ride_name}: {exc}")
+        context.frame.SetStatusText(f"Could not resume ride: {wrapped}")
+        from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+        std_dialogs.show_error(context.frame, "Cannot Resume Ride", str(wrapped))
+        store.clear_active_ride()
+
+
+_NO_RIDE_TITLE = "No Ride Open"
+_NO_RIDE_MESSAGE = "No ride is loaded. Create a new one or load an existing one."
+
+
+def _show_no_ride_info(parent: Any) -> None:  # noqa: ANN401 -- wx Window; wx ships no stubs
+    """Show the launch's No Ride Open alert over *parent* (W3).
+
+    Replaces the retired ``no_ride_dlg`` window (its Create/Open-
+    library choice is the File menus' own job): a store-backed launch
+    that resumes no ride and opens no ride gets this one information
+    alert instead of an unexplained empty console, then nothing -- the
+    console is visible and the operator uses the menus. ``no_ride_dlg``
+    stays authored in dialogs.xrc until W15 removes the window itself;
+    this is the code that no longer loads it.
+    """
+    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    std_dialogs.show_info(parent, _NO_RIDE_TITLE, _NO_RIDE_MESSAGE)
+
+
+def _run_launch_flow(
+    context: _RouteContext, store: Store | None, clock: Callable[[], datetime] | None = None
+) -> None:
+    """Run the post-launch flow on a store-backed start (W3).
+
+    Called by :func:`main` (and the functional suite's own
+    main-equivalent helpers) once the frame is visible;
+    ``build_main_window`` itself shows no modal. The flow decides from
+    the store's previous-session record (E5.2.2's reading; no
+    audit-based decisions):
+
+    - a session that left a ride running shows ``resume_dlg`` (R-52)
+      -- Continue reuses the library-Open console switch, Open
+      library defers ``ride_library_dlg``;
+    - otherwise, with no ride open, it shows the No Ride Open alert
+      (the console stays up; the operator uses the menus);
+    - otherwise it does nothing -- a ride is already open.
+
+    A store-less build returns immediately: there is no session row to
+    read and no launch prompt (E5.4.2's in-memory behavior).
+
+    Args:
+        context: The assembled route context (``build_main_window``
+            hands it to the app as ``launch_context``).
+        store: The live Store, or ``None`` for a store-less build.
+        clock: Wall-clock source for a resumed engine, threaded to
+            :func:`_switch_console_to_ride`; ``None`` uses the
+            engine's own default (``datetime.now``).
+    """
+    if store is None:
+        return
+    previous = store.previous_session()
+    choice = _launch_choice(previous, ride_open=context.active_ride_id is not None)
+    if choice == "no_ride":
+        _show_no_ride_info(context.frame)
+        return
+    if choice != "resume":
+        return
+    ride_id = previous.ride_id
+    if ride_id is None or previous.ended_at is None:
+        # logic-coverage-exempt: T-3 -- resume_flow.resume_dialog_for
+        # only warrants a dialog for a session that carried a running
+        # ride, and such a session always has an end instant (closed_at
+        # for a quit, heartbeat/opened_at for a crash); this guard only
+        # narrows types for mypy.
+        raise RuntimeError("resume dialog warranted without a ride or end time")
+    outcome = _run_resume_dialog(context, store, previous)
+    if outcome == "continue":
+        _resume_continue(context, store, ride_id, clock)
+    elif outcome == "library":
+        _defer_open_library(context)
+
+
+def build_main_window(
     app: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
     store: Store | None = None,
-    clock: Callable[[], datetime] | None = None,
     settings_path: Path | None = None,
 ) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Build and wire ``main_frame``, complete but not yet shown.
@@ -3005,16 +3064,17 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     :class:`_RouteContext`, and the layout save callback persists
     sash/geometry changes back to the file.
 
-    ux-polish adds two post-wiring steps: the console Riders tab's
+    ux-polish adds one post-wiring step: the console Riders tab's
     double-click seam is wired to the rider editor
-    (:func:`_wire_rider_open_seam`), and a store-backed launch that
-    resumed no ride and deferred no other window -- ``_resume_console_
-    engine`` returned ``None``, nothing set ``context.active_ride_id``,
-    and the resume flow did not already defer an Open library
-    (``context.library_deferred``) -- shows ``no_ride_dlg``
-    (:func:`_show_no_ride_prompt`), the Create/Open-library choice
-    that replaces the unexplained empty console. Store-less
-    (in-memory) constructions keep the current empty-console behavior.
+    (:func:`_wire_rider_open_seam`). W3 retired every launch modal
+    from this function -- ``resume_dlg``, the no-ride prompt and the
+    R-44 self-test all ran here, before the frame was shown, where a
+    modal that cannot be presented blocks the launch invisibly (the
+    "app never starts again" regression). The console always opens on
+    the empty bootstrap engine, and the post-Show launch flow
+    (:func:`_run_launch_flow`, called by :func:`main`) shows the
+    resume dialog or the No Ride Open alert over the visible frame;
+    Continue swaps the console through :func:`_switch_console_to_ride`.
 
     Split out of :func:`main` so a test can drive the whole
     construction path without ever entering ``MainLoop``, which
@@ -3024,20 +3084,18 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
         app: The live app :func:`main`/:func:`build_app` already
             constructed. An App must exist before any wx object is
             built; this function also hands it *frame*, for
-            ``RiverCrossingApp.MacReopenApp`` to restore later, and
-            binds its ``wxEVT_QUERY_END_SESSION``.
+            ``RiverCrossingApp.MacReopenApp`` to restore later, binds
+            its ``wxEVT_QUERY_END_SESSION``, and keeps the assembled
+            :class:`_RouteContext` as ``launch_context`` -- the handle
+            :func:`main`'s post-Show launch flow and the functional
+            helpers use.
         store: The live :class:`~rivercrossing.store.Store`, when the
             caller opened one (E5.2.1). Threaded through
             :class:`_RouteContext` so a confirmed quit stamps the
             open session's ``closed_at`` (:func:`_confirm_quit`), and
-            read by :func:`_resume_console_engine` so a running ride
-            at the previous exit opens ``resume_dlg`` (E5.2.2, R-52);
+            read by :func:`_run_launch_flow` so a running ride at the
+            previous exit opens ``resume_dlg`` (E5.2.2, R-52);
             ``None`` until the store-backed bootstrap (E5.4.1).
-        clock: Wall-clock source for a store-loaded resume engine
-            (:meth:`~rivercrossing.store.Store.load_engine`), injected
-            by the functional suite to pin the elapsed reading at a
-            fixed instant; ``None`` uses the engine's own default
-            (``datetime.now``).
         settings_path: The per-user settings file to load at startup
             and write layout saves back to; ``None`` uses
             :func:`~rivercrossing.ui.presenters.settings.default_path`.
@@ -3103,15 +3161,13 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
         # need the pieces already set here.
     )
 
-    # E5.2.2: a store-backed launch with a running ride at the
-    # previous exit shows resume_dlg (R-52) and hands the console the
-    # store-loaded engine; anything else keeps the bootstrap console
-    # path (an empty real engine, E5.4.2).
-    resumed = _resume_console_engine(context, clock)
-    if resumed is None:
-        engine, engine_source = _build_console_engine(roster)
-    else:
-        engine, engine_source = resumed
+    # W3: no launch modal runs here. The console always opens on the
+    # empty DRAFT engine (E5.4.2); the post-Show launch flow
+    # (main()'s _run_launch_flow) shows resume_dlg / the No Ride Open
+    # alert over the visible frame, and Continue -- or the library's
+    # Open -- swaps the console onto the store ride afterwards, so a
+    # replay against a drifted roster can never take the build down.
+    engine, engine_source = _build_console_engine(roster)
 
     def _save_layout(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
         """Persist the console's layout and keep the context current."""
@@ -3146,8 +3202,8 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     # theme_controller is kept alive by _RouteContext, threaded through
     # every route handler. console_view is threaded the same way so
     # E5.4.1's library Open can swap the console's presenter;
-    # active_ride_id records the store ride the resume flow continued,
-    # if any (File ▸ Duplicate Ride… reads it).
+    # active_ride_id records the store ride the launch flow's Continue
+    # opened, if any (File ▸ Duplicate Ride… reads it).
     context = replace(
         context,
         presenter=_presenter,
@@ -3164,23 +3220,11 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     # applies them to the bootstrap's DRAFT ride.
     _console.set_on_ride_changed(lambda status: _apply_menu_state(context, status))
     _apply_menu_state(context, engine.state)
-    _run_launch_self_test(context)
 
-    # ux-polish: a store-backed launch with no ride resumed/activated
-    # (a fresh database, or a clean previous exit with nothing
-    # running) shows the no-ride prompt -- Create new ride / Open
-    # library -- after the console and routes exist. A resume-to-
-    # library outcome already deferred that same Open library, so it
-    # must not prompt on top of itself. Store-less (in-memory)
-    # constructions keep the empty-console behavior.
-    if (
-        store is not None
-        and resumed is None
-        and context.active_ride_id is None
-        and not context.library_deferred
-    ):
-        _show_no_ride_prompt(context)
-
+    # W3: the post-Show launch flow needs the assembled context, and
+    # the app object is the one handle main() and the functional
+    # helpers share (the same reason main_frame lives on it).
+    app.launch_context = context
     return frame
 
 
@@ -3324,31 +3368,37 @@ def build_app() -> Any:  # noqa: ANN401 -- wx ships no stubs
     return _build_app_class()()
 
 
-def _bootstrap_window(  # noqa: PLR0913 -- (app, db_path, clock, settings_path): the four bootstrap seams, mirroring build_main_window
+def _bootstrap_window(  # noqa: PLR0913 -- (app, db_path, store, settings_path): the bootstrap seams, mirroring build_main_window
     app: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
     db_path: Path | None = None,
-    clock: Callable[[], datetime] | None = None,
+    store: Store | None = None,
     settings_path: Path | None = None,
 ) -> tuple[Any, Store]:
     """Open the store and build the main window, the way main() does.
 
-    E9.1.1: :func:`main`'s own store-backed bootstrap, split out so a
-    test can drive the whole open-store-and-build path without ever
-    entering ``MainLoop``, which blocks (the same reason
-    :func:`build_main_window` exists). Resolves the db path
-    (:func:`~rivercrossing.store.default_db_path` with the optional
-    override), opens the :class:`~rivercrossing.store.Store` there,
-    and threads it into the window -- so ``_resume_console_engine``
-    fires resume-on-launch (R-52) and the quit flow stamps
-    ``closed_at`` on a confirmed exit.
+    E9.1.1: the store-backed bootstrap, split out so a test can drive
+    the whole open-store-and-build path without ever entering
+    ``MainLoop``, which blocks (the same reason
+    :func:`build_main_window` exists). W3: :func:`main` opens the
+    Store itself -- its ``finally`` must own the close even when the
+    build raises -- and passes it in as ``store=``; callers that want
+    the one-call open-and-build seam (the functional/acceptance
+    helpers that mirror main() minus the loop) pass ``db_path=`` and
+    receive the opened Store back. Whichever way it is opened, the
+    store threads into the window so the launch flow reads the
+    previous session (R-52) and the quit flow stamps ``closed_at`` on
+    a confirmed exit. No launch modal runs here: the resume dialog
+    and the No Ride Open alert belong to :func:`main`'s post-Show
+    :func:`_run_launch_flow`.
 
     Args:
         app: The live app :func:`main`/:func:`build_app` constructed.
-        db_path: The rides database to open; ``None`` uses
+        db_path: The rides database to open when *store* is not
+            supplied; ``None`` uses
             :func:`~rivercrossing.store.default_db_path`.
-        clock: Wall-clock source for a store-loaded resume engine,
-            threaded to :func:`build_main_window`.
+        store: An already-open Store to build over (main()'s W3
+            ownership); ``None`` opens one from *db_path*.
         settings_path: The per-user settings file, threaded to
             :func:`build_main_window`.
 
@@ -3356,8 +3406,9 @@ def _bootstrap_window(  # noqa: PLR0913 -- (app, db_path, clock, settings_path):
         ``(frame, store)`` -- the loaded main frame and the Store it
         was built over, which the caller owns until the app quits.
     """
-    store = Store.open(default_db_path(db_path))
-    frame = build_main_window(app, store=store, clock=clock, settings_path=settings_path)
+    if store is None:
+        store = Store.open(default_db_path(db_path))
+    frame = build_main_window(app, store=store, settings_path=settings_path)
     return frame, store
 
 
@@ -3388,9 +3439,19 @@ def main(db_path: Path | None = None) -> int:
 
     Builds and shows ``main_frame`` with its menubar, accelerators and
     every §15 route bound (:func:`build_main_window`), then runs the
-    event loop until the last top-level window closes. E9.1.1 opens
-    the rides database first (:func:`_bootstrap_window`) so the
-    console, resume dialog and quit flow all act on the real store.
+    event loop until the last top-level window closes.
+
+    W3 launch ordering (the "app never starts again" fixes): opens the
+    rides database HERE -- a ``finally`` always owns the Store, so a
+    bootstrap raise still closes it -- builds the window with no
+    modal, shows it, then runs the launch flow
+    (:func:`_run_launch_flow`: ``resume_dlg`` when the previous
+    session left a ride running, else the No Ride Open alert), defers
+    the R-44 self-test to the running event loop, and enters
+    ``MainLoop``. A raise anywhere before the loop shows a parentless
+    error box (:func:`~rivercrossing.ui.std_dialogs.show_error`) and
+    is re-raised, so the crash excepthook still appends the crash
+    log.
 
     Args:
         db_path: The rides database to open; ``None`` uses the per-user
@@ -3413,11 +3474,29 @@ def main(db_path: Path | None = None) -> int:
     _install_crash_excepthook(app)
     wx.Log.SetActiveTarget(wx.LogStderr())  # see module docstring: the exit-time modal hang
 
-    frame, store = _bootstrap_window(app, db_path=_resolve_db_path(db_path))
+    store: Store | None = None
     try:
+        store = Store.open(default_db_path(_resolve_db_path(db_path)))
+        frame, _opened = _bootstrap_window(app, store=store)
         frame.Show()
+        _run_launch_flow(app.launch_context, store)
+        wx.CallAfter(_run_launch_self_test, app.launch_context)
         app.MainLoop()
+    except Exception as exc:
+        # W3: a raise with no frame to own the notice (a store open or
+        # bootstrap failure) still gets a parentless error box, then
+        # the raise propagates to the crash excepthook, which appends
+        # the crash log.
+        from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+        std_dialogs.show_error(
+            None,
+            "RiverCrossing Could Not Start",
+            f"RiverCrossing could not start:\n{exc}",
+        )
+        raise
     finally:
-        store.close()
+        if store is not None:
+            store.close()
 
     return 0

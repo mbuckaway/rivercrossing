@@ -239,12 +239,15 @@ def test_main_source_opens_the_store_before_it_builds_the_window() -> None:
     """W3: main() opens the Store itself so a finally always owns it."""
     source = inspect.getsource(app.main)
 
-    assert "Store.open(" in source
-    assert source.index("Store.open(") < source.index("build_main_window")
+    assert "store = Store.open(default_db_path(_resolve_db_path(db_path)))" in source
+    assert source.index("Store.open(") < source.index("_bootstrap_window(app, store=store)")
 
 
 def test_main_source_shows_the_frame_before_running_the_launch_flow() -> None:
-    """W3: Show() then the launch flow then MainLoop -- never a modal first."""
+    """Show() precedes the launch flow, which precedes MainLoop.
+
+    A launch modal must never run before the frame is visible.
+    """
     source = inspect.getsource(app.main)
 
     assert (
@@ -264,10 +267,11 @@ def test_main_source_closes_the_store_inside_a_finally() -> None:
 
 def test_bootstrap_window_accepts_an_opened_store_and_still_opens_its_own() -> None:
     """W3: main() passes its Store in; helpers keep the db_path seam."""
-    parameters = inspect.signature(app._bootstrap_window).parameters
+    source = inspect.getsource(app._bootstrap_window)
 
-    assert tuple(parameters) == ("app", "db_path", "store", "clock", "settings_path")
-    assert parameters["store"].default is None
+    assert "store: Store | None = None" in source
+    assert "if store is None:" in source
+    assert "Store.open(default_db_path(db_path))" in source
 
 
 def test_resolve_db_path_given_the_env_var_returns_the_env_path(
