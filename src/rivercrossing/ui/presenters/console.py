@@ -53,6 +53,17 @@ W5 adds the console-button gates and the native-dialog seams:
   roster gets a native warning (no Stop dialog at all), a RUNNING
   ride gets the native confirm (``view.confirm``), and a confirmed OK
   runs the unchanged ``on_stop_confirmed`` act-3 flow.
+
+W6 adds the stopped-clock display freeze:
+
+- ``_refresh_clock`` freezes the elapsed/remaining labels and the
+  gauge dials while the engine is stopped (R-35's guard, state still
+  RUNNING): the value is captured lazily on the first refresh that
+  observes the stop, so a console rebuild while stopped re-captures
+  on its next tick. The engine keeps spec.md's wall-clock elapsed
+  (spec.md:38), so continue jumps the display forward and nothing is
+  lost. The freeze is a display product decision; the design
+  write-back lands in W15.
 """
 
 from time import monotonic
@@ -270,6 +281,9 @@ class ConsolePresenter:
         self.source = source
         self._now = now if now is not None else monotonic
         self._armed_at: float | None = None
+        # W6: the elapsed value shown while the engine is stopped;
+        # None while live, so the first refresh after a stop captures.
+        self._frozen_elapsed: float | None = None
 
     def on_plate_entered(self, text: str) -> None:
         """Handle Enter (or Record) with the plate entry's text.
@@ -319,7 +333,10 @@ class ConsolePresenter:
 
         ``engine.start()`` covers both DRAFT -> RUNNING and continue-
         after-stop; on success the console reflects RUNNING, unlocks
-        the entry row and posts a notice. A start the engine blocks
+        the entry row and posts a notice. On continue the same call
+        re-renders the clock (W6): the stop freeze clears and the
+        display jumps to the live wall-clock elapsed without waiting
+        for the next tick. A start the engine blocks
         because the ride is not ready (:class:`StartBlockedError`)
         surfaces as a modal warning naming the reason (W5); a state-
         machine refusal (finished ride) stays a status notice.
@@ -336,6 +353,7 @@ class ConsolePresenter:
         self._refresh_counters()
         self.view.set_state(self.engine.state)
         self.view.set_entry_locked(locked=False)
+        self._refresh_clock()  # W6: continue unfreezes and shows live elapsed now
         self.view.show_notice("Ride started")
 
     def on_stop_requested(self) -> None:
@@ -514,25 +532,50 @@ class ConsolePresenter:
         the elapsed dial fills as the ride runs and the remaining dial
         drains -- the same clamp ``_clock_fraction`` applies at both
         ends keeps a ride past its planned duration on-scale.
+
+        W6: while the engine is stopped (R-35's guard, state still
+        RUNNING) the clock freezes at the elapsed value this refresh
+        first observes after the stop -- labels and dials alike, so
+        the numbers never advance across ticks. The freeze is lazy
+        and presenter-local: a console rebuild over the same stopped
+        engine re-captures on its first refresh, so library
+        open/close round-trips land on the engine's live elapsed and
+        then hold. The freeze is a display product decision that
+        overrides the spec's wall-clock display rule (spec.md:38);
+        the engine keeps counting underneath (R-30), so continue
+        jumps the display forward and nothing is lost. The design
+        write-back lands in W15 -- no engine change was wanted or
+        made.
         """
         if self.engine.state is RideStatus.DRAFT:
             self.view.show_clock("0:00:00", "0:00:00")
             self.view.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
             return
-        try:
-            elapsed = self.engine.elapsed()
-            remaining = self.engine.remaining()
-        except IllegalStateError:
-            # logic-coverage-exempt: T-3 -- the engine state machine
-            # makes this arm unreachable: a started ride always has an
-            # actual_start, and DRAFT (the only state without one) is
-            # returned above. Kept as the pre-existing defensive twin
-            # of the DRAFT branch.
-            self.view.show_clock("0:00:00", "0:00:00")
-            self.view.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
-            return
+        if self.engine.stopped:
+            frozen = self._frozen_elapsed
+            if frozen is None:
+                # First refresh that observes the stop: capture once,
+                # then keep rendering that value until continue.
+                frozen = self.engine.elapsed()
+                self._frozen_elapsed = frozen
+            elapsed = frozen
+            remaining = max(0.0, float(self.engine.config.planned_duration_s) - elapsed)
+        else:
+            self._frozen_elapsed = None
+            try:
+                elapsed = self.engine.elapsed()
+                remaining = self.engine.remaining()
+            except IllegalStateError:
+                # logic-coverage-exempt: T-3 -- the engine state machine
+                # makes this arm unreachable: a started ride always
+                # has an actual_start, and DRAFT (the only state
+                # without one) returns above. Kept as the
+                # pre-existing defensive twin of the DRAFT branch.
+                self.view.show_clock("0:00:00", "0:00:00")
+                self.view.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
+                return
+            remaining = max(0.0, remaining)
         total = float(self.engine.config.planned_duration_s)
-        remaining = max(0.0, remaining)
         self.view.show_clock(format_duration(elapsed), format_duration(remaining))
         self.view.set_clock_fractions(
             elapsed_frac=_clock_fraction(elapsed, total),

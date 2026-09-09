@@ -1251,7 +1251,7 @@ def test_on_tick_given_draft_ride_shows_a_zeroed_clock() -> None:
 
 
 def test_on_tick_given_stopped_ride_freezes_the_clock_across_ticks() -> None:
-    """W6: a stopped ride's clock holds the stop value, never advances."""
+    """W6: a stopped ride's clock freezes at the stop value."""
     engine, clock = _running_engine()
     clock.advance(100)
     engine.stop()
@@ -1274,7 +1274,7 @@ def test_on_tick_given_stopped_ride_freezes_the_clock_across_ticks() -> None:
 
 
 def test_on_start_given_stopped_ride_shows_live_elapsed_immediately() -> None:
-    """W6: continue clears the freeze and re-renders live in the same call."""
+    """W6: continue clears the freeze and renders live immediately."""
     engine, clock = _running_engine()
     clock.advance(100)
     engine.stop()
@@ -1292,7 +1292,7 @@ def test_on_start_given_stopped_ride_shows_live_elapsed_immediately() -> None:
 
 
 def test_on_tick_given_rebuilt_presenter_while_stopped_recaptures() -> None:
-    """W6: a rebuild over a stopped engine shows live time, then freezes.
+    """W6: a rebuilt presenter over a stopped engine re-captures.
 
     The freeze is presenter-local: a fresh presenter (console swap,
     library open/close) has no stored value, so its first tick
