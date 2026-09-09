@@ -5,6 +5,8 @@
 **Predecessor:** `docs/FUNCTIONAL-SUITE-INSTABILITY.md` (the brief this session followed)
 **Purpose:** record every functional test run, every issue found, every fix applied (and every fix tried and reverted), and the exact remaining defect — so a fresh agent can review the whole body of work without re-deriving it. The session looped for hours on one remaining leak; the goal of this doc is that the next agent does not loop again.
 
+**Status (2026-09-08, after this record was written):** the remaining leak's root cause was found and fixed — `test_reopened_mode.py::_build_ride_console` raised inside `MainFrame.__init__` after `window.Show()` and before the test's `try:` (traceback in `.vm_dbg.log`), leaking a shown frame; the builder is now release-safe and the harness's Fault-B gate type-checks concrete classes. Separately, the functional and acceptance stages were removed from CI pending UI stabilization (decision 2026-09-08); the suites and their hardening work are retained for the revisit. The record below is the historical session ledger.
+
 ---
 
 ## 1. Branch state
@@ -104,7 +106,7 @@ The upstream wx/SIP wrapper-cache corruption and XRC degradation are **process-g
 
 1. **`close_window(strict=True)` in `release_main_window`** — a single leaked same-named `main_frame` made every later close raise "different window" → cascading failures (182 WindowStillResolvingErrors in one run). Reverted; `strict` remains available as an opt-in.
 2. **Periodic `gc.collect()` inside the close settle loop** — broke the deterministic contract of the harness's own gc-counting tests under load. Reverted; the 100-attempt bound stayed.
-3. **Release-time modal sweep** (`EndModal` every surviving modal before closing the frame) — caused the catastrophic 24-Fault-A regression (`.vm_clean_1.log`). Reverted (`e85abec`). **Why it backfired is not understood** — worth an investigation, not a blind retry.
+3. **Release-time modal sweep** (`EndModal` every surviving modal before closing the frame) — caused the catastrophic 24-Fault-A regression (`.vm_clean_1.log`). Reverted (`e85abec`). **Why it backfired (resolved 2026-09-08):** the sweep ran at release time, right before frames were closed — `EndModal` on dialogs whose `ShowModal()` had already returned, followed by the parent frame's destroy, double-queued pending deletes: the [Phoenix #1343](https://github.com/wxWidgets/Phoenix/issues/1343) double-`Destroy` pattern (reporter: ~100 % macOS crash rate), cascading into the 24-Fault-A run. **Never re-apply verbatim.**
 4. **`RIVERCROSSING_CLOSE_DEBUG=1` on full-suite runs** — the stderr prints perturb wx timing (screen_smoke and harness fail deterministically under it). The env is for single-file diagnosis only.
 
 ---
@@ -167,7 +169,7 @@ The survivor is created by something **outside the test's own builder/release cy
 
 ## 8. Open questions for the reviewer
 
-- Why did the release-time modal sweep (EndModal of all surviving modals) cause a 24-Fault-A catastrophe? Understanding this may reveal the leak mechanism itself.
+- **Q1 — answered (2026-09-08):** the release-time modal sweep backfired because it `EndModal`'d dialogs whose `ShowModal()` had already returned and whose parents were being destroyed in the same pass — the double-`Destroy`/double-pending-delete pattern of [Phoenix #1343](https://github.com/wxWidgets/Phoenix/issues/1343) (macOS ~100 % crash rate). See §5 item 3. It does not reveal the leak mechanism; the leak is unrelated (§6, updated after the fix lands).
 - Is `load_window_verified`'s rebuild path leaking its first-load frame when a degraded load triggers a rebuild, and does the sweep-reap in conftest interact with it?
 - Does the finish-again flow (finish route → results) construct an extra top-level `main_frame`-named frame that the test neither sees nor releases?
 
@@ -178,3 +180,13 @@ The survivor is created by something **outside the test's own builder/release cy
 - VM runner env knobs and defaults (current branch): `RIVERCROSSING_VM_TIMEOUT` 5400, `RIVERCROSSING_FUNCTIONAL_PERFILE_TIMEOUT_S` 900, `RIVERCROSSING_FUNCTIONAL_PERFILE_JOBS` 1 (perfile default), `RIVERCROSSING_CLOSE_DEBUG` forwarded when set.
 - Headless gates: `nox -s lint typecheck importlint ids_drift unit` (3251 passed on the branch tip).
 - The functional suite: 45 files, 929 items collected (928 + 1 smoke test deselected from unit runs by its marker).
+
+## 10. Upstream evidence & watchlist (2026-09-08)
+
+Live watchlist only — revisit each when its state changes; the full ~45-reference inventory (all fetched and verified) lives in the fix plan this session produced.
+
+- [wxWidgets/Phoenix #2931](https://github.com/wxWidgets/Phoenix/issues/2931) — open: SIP never invalidates wrappers for C++-constructed objects (use-after-free; wrong-typed-wrapper symptoms). No released fix.
+- [wxWidgets/wxWidgets #26789](https://github.com/wxWidgets/wxWidgets/issues/26789) — open: the enabling `wxTrackable` proposal (ABI break; 3.3.x-dev only). Blocks the wrapper-invalidation cure.
+- [Python-SIP/sip #113](https://github.com/Python-SIP/sip/issues/113) — closed without a fix: no wrapper-invalidation path for the from_cpp path; maintainer requires a wx-side deletion-test mechanism first.
+- [Python-SIP/sip #115](https://github.com/Python-SIP/sip/issues/115) — open: close-time crash inside the sip runtime reportedly fixed by a 13.11.1→13.12.0 point bump (reporter-stated). Worth one look only if close-time crashes reappear.
+- Decision recorded: dependency upgrade is not a fix lever today (wxPython 4.3.1 is the latest stable; the 4.3.x line tracks ABI-unstable wxWidgets master; #26172's OnExit fix is already in our 3.3.3).
