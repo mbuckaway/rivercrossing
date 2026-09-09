@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import FeedRow
 
 __all__ = [
+    "COLUMN_LABELS",
+    "COLUMN_WIDTHS",
     "COL_CARD",
     "COL_LAP",
     "COL_LAP_TIME",
@@ -33,13 +35,11 @@ __all__ = [
     "COL_PLATE",
     "COL_TIME",
     "COL_TOTAL",
-    "COLUMN_LABELS",
-    "COLUMN_WIDTHS",
     "TIME_COLUMNS",
     "card_asset_key_or_none",
     "edited_row_indexes",
-    "flash_crossing_label",
     "flagged_row_indexes",
+    "flash_crossing_label",
 ]
 
 COL_TIME = 0
@@ -117,7 +117,4 @@ def flash_crossing_label(row: FeedRow) -> str:
     code = row.card
     display = "JK★" if code == "JK" else f"{code[:-1]}{glyphs[code[-1]]}"
     held = " (held)" if row.flagged else ""
-    return (
-        f"✓ {row.plate} · {row.entry} · Lap {row.lap} · "
-        f"{row.lap_time} · dealt {display}{held}"
-    )
+    return f"✓ {row.plate} · {row.entry} · Lap {row.lap} · {row.lap_time} · dealt {display}{held}"

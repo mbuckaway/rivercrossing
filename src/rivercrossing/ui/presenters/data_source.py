@@ -512,8 +512,8 @@ class EngineDataSource:
                         totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
                     ),
                     # W9: every row carries the real dealt code -- the
-                    # held card's own code when this lap's card sits in
-                    # the hold queue (R-34), the credited card otherwise.
+                    # held card's own when this lap's card is held
+                    # (R-34), the credited card otherwise.
                     card=(
                         held_card.code()
                         if held_card is not None

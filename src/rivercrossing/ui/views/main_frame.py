@@ -218,6 +218,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         if col == feed_model.COL_CARD:
             return self._card_bitmap(feed_row.card)
         return _TEXT_ACCESSORS[col](feed_row)
+
     def GetAttrByRow(self, row: int, col: int, attr: Any) -> bool:  # noqa: ANN401, ARG002
         """Bold the whole row when its crossing is flagged or edited.
 
@@ -234,7 +235,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return True
 
     def _card_bitmap(self, card: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the dealt card's bitmap, or a blank cell if unmappable.
+        """Return the dealt card's bitmap, or a blank cell otherwise.
 
         W9: every feed row's ``card`` is a real dealt code (a held
         crossing's row carries the held card's own code), so the
