@@ -302,6 +302,25 @@ def test_run_launch_flow_given_a_resume_warranted_record_without_a_ride_raises()
         app_module._run_launch_flow(context, _FixedPreviousStore(session))
 
 
+def test_run_resume_dialog_given_no_end_time_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The dialog shell's own guard names the missing record field."""
+    session = PreviousSession(state=SessionState.RUNNING_AT_EXIT, ride_id=7, ended_at=None)
+    context = _context(store=None)
+
+    def _fake_wx() -> _FakeWx:
+        """Return a recorder wx stand-in."""
+        return _FakeWx()
+
+    monkeypatch.setattr(app_module, "require_wx", _fake_wx)
+
+    with pytest.raises(
+        RuntimeError, match=re.escape("resume dialog warranted without a ride or end time")
+    ):
+        app_module._run_resume_dialog(context, _FixedPreviousStore(session), session)
+
+
 # ------------------------------------------------- Continue path
 
 
