@@ -1247,6 +1247,74 @@ def test_on_tick_given_draft_ride_shows_a_zeroed_clock() -> None:
     assert view.last_clock_fractions == (0.0, 0.0)
 
 
+# ---------------------------------------------- W6 stopped-clock freeze
+
+
+def test_on_tick_given_stopped_ride_freezes_the_clock_across_ticks() -> None:
+    """W6: a stopped ride's clock holds the stop value, never advances."""
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.stop()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+    frozen_clock = view.last_clock
+    frozen_fractions = view.last_clock_fractions
+    clock.advance(30)
+    presenter.tick()
+    clock.advance(30)
+    presenter.tick()
+
+    assert frozen_clock == ("0:01:40", "5:58:20")  # 100 s, elapsed at the stop
+    assert frozen_fractions == pytest.approx((100 / 21600, 21500 / 21600))
+    assert view.last_clock == frozen_clock
+    assert view.last_clock_fractions == frozen_fractions
+    assert engine.elapsed() == 160.0  # the engine kept counting underneath
+
+
+def test_on_start_given_stopped_ride_shows_live_elapsed_immediately() -> None:
+    """W6: continue clears the freeze and re-renders live in the same call."""
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.stop()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+    assert view.last_clock == ("0:01:40", "5:58:20")  # frozen at 100 s
+    clock.advance(50)  # engine elapsed is now 150 s
+
+    presenter.on_start()
+
+    assert engine.events[-1].action == "continue"
+    assert view.last_clock == ("0:02:30", "5:57:30")  # live, no tick needed
+    assert view.last_clock_fractions == pytest.approx((150 / 21600, 21450 / 21600))
+
+
+def test_on_tick_given_rebuilt_presenter_while_stopped_recaptures() -> None:
+    """W6: a rebuild over a stopped engine shows live time, then freezes.
+
+    The freeze is presenter-local: a fresh presenter (console swap,
+    library open/close) has no stored value, so its first tick
+    re-captures the engine's current elapsed and holds from there.
+    """
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.stop()
+    clock.advance(40)  # engine elapsed is 140 s by the rebuild's first tick
+    rebuilt_view = FakeConsoleView()
+    rebuilt_presenter = _make_presenter(engine, rebuilt_view)
+
+    rebuilt_presenter.tick()
+    first_tick_clock = rebuilt_view.last_clock
+
+    assert first_tick_clock == ("0:02:20", "5:57:40")
+    assert rebuilt_view.last_clock_fractions == pytest.approx((140 / 21600, 21460 / 21600))
+    clock.advance(20)
+    rebuilt_presenter.tick()
+    assert rebuilt_view.last_clock == first_tick_clock
+
+
 # ------------------------------------------- WS-D/WS-H gauge + review
 
 
