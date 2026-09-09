@@ -261,6 +261,40 @@ def _click_continue_resume(found: dict[str, Any]) -> None:
     harness.click(dialog, ids.CONTINUE_BTN)
 
 
+_RESUME_PROBE_WAIT_MS = 50
+_RESUME_PROBE_ATTEMPTS = 100
+
+
+def _probe_continue_resume(
+    found: dict[str, Any], attempts_left: int = _RESUME_PROBE_ATTEMPTS
+) -> None:
+    """Click Continue on the launch flow's resume modal once it shows.
+
+    W3: resume_dlg appears in the launch flow after the frame is
+    visible, so a probe armed before the bootstrap can be dispatched
+    too early; re-arm on a timer until the modal is actually shown
+    (the same cadence console_subprocess_scenarios uses).
+    """
+    dialog = wx.Window.FindWindowByName(ids.RESUME_DLG)
+    if dialog is not None and dialog.IsShown():
+        _click_continue_resume(found)
+        return
+    if attempts_left <= 0:
+        raise AssertionError("resume_dlg never became a shown modal window")
+    wx.CallLater(_RESUME_PROBE_WAIT_MS, _probe_continue_resume, found, attempts_left - 1)
+
+
+def _launch_after_show(store: Any, clock: Any | None = None) -> None:  # noqa: ANN401 -- the live Store
+    """Run the W3 launch flow over the visible frame (main()'s step).
+
+    Call right after ``frame.Show()``/``frame.Layout()``: the flow
+    shows resume_dlg synchronously, and the probe armed before the
+    build runs inside the modal's own event loop.
+    """
+    app_module._run_launch_flow(wx.GetApp().launch_context, store, clock)
+    harness.pump()
+
+
 def _click_quit_on_exit_dialog() -> None:
     """Click Quit (wxID_OK) on the running-ride exit dialog."""
     dialog = wx.Window.FindWindowByName(ids.EXIT_RUNNING_DLG)
@@ -329,11 +363,11 @@ def _race_record_crash(env: RaceEnv) -> dict[str, Any]:
     crash the next launcher words.
     """
     found: dict[str, Any] = {"resume_message": ""}
-    wx.CallAfter(lambda: _click_continue_resume(found))
+    _probe_continue_resume(found)
     frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path)
     frame.Show()
     frame.Layout()
-    harness.pump()
+    _launch_after_show(store)
     previous = store.previous_session()
     ride_id = previous.ride_id
     if ride_id is None:
@@ -375,11 +409,11 @@ def _race_record_quit(env: RaceEnv) -> dict[str, Any]:
     ``closed_at`` and destroys the frame -- ending the loop.
     """
     found: dict[str, Any] = {"resume_message": ""}
-    wx.CallAfter(lambda: _click_continue_resume(found))
+    _probe_continue_resume(found)
     frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path)
     frame.Show()
     frame.Layout()
-    harness.pump()
+    _launch_after_show(store)
     previous = store.previous_session()
     ride_id = previous.ride_id
     if ride_id is None:
@@ -753,11 +787,11 @@ def _race_setup_import_and_run(env: RaceEnv) -> dict[str, Any]:
         if ride_id is None:
             raise RuntimeError("no ride to resume on the shared db")
         clock = _race_clock(conn, ride_id)
-    wx.CallAfter(lambda: _click_continue_resume(found))
-    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path, clock=clock)
+    _probe_continue_resume(found)
+    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path)
     frame.Show()
     frame.Layout()
-    harness.pump()
+    _launch_after_show(store, clock)
     previous = store.previous_session()
     ride_id = previous.ride_id
     if ride_id is None:
@@ -814,11 +848,11 @@ def _race_resume_verify_quit(env: RaceEnv) -> dict[str, Any]:
         if ride_id is None:
             raise RuntimeError("no ride to resume on the shared db")
         clock = _race_clock(conn, ride_id)
-    wx.CallAfter(lambda: _click_continue_resume(found))
-    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path, clock=clock)
+    _probe_continue_resume(found)
+    frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path)
     frame.Show()
     frame.Layout()
-    harness.pump()
+    _launch_after_show(store, clock)
     previous = store.previous_session()
     ride_id = previous.ride_id
     if ride_id is None:
@@ -871,7 +905,7 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     if exports_dir is None:
         raise RuntimeError(f"{RACE_EXPORTS_DIR_ENV} must name an exports directory")
     found: dict[str, Any] = {"resume_message": ""}
-    wx.CallAfter(lambda: _click_continue_resume(found))
+    _probe_continue_resume(found)
     original_bind_routes = app_module._bind_routes
     captured: list[Any] = []
 
@@ -886,7 +920,7 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
         app_module._bind_routes = original_bind_routes
     frame.Show()
     frame.Layout()
-    harness.pump()
+    _launch_after_show(store)
     previous = store.previous_session()
     ride_id = previous.ride_id
     if ride_id is None or not captured:
@@ -1013,7 +1047,7 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
         if ride_id is None:
             raise RuntimeError("no ride to resume on the shared db")
         clock = _race_clock(conn, ride_id)
-    wx.CallAfter(lambda: _click_continue_resume(found))
+    _probe_continue_resume(found)
     original_bind_routes = app_module._bind_routes
     captured: list[Any] = []
 
@@ -1023,12 +1057,12 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
 
     app_module._bind_routes = _capture_and_bind
     try:
-        frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path, clock=clock)
+        frame, store = app_module._bootstrap_window(wx.GetApp(), db_path=env.db_path)
     finally:
         app_module._bind_routes = original_bind_routes
     frame.Show()
     frame.Layout()
-    harness.pump()
+    _launch_after_show(store, clock)
     previous = store.previous_session()
     ride_id = previous.ride_id
     if ride_id is None or not captured:
