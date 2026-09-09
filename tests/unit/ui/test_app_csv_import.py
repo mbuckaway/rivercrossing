@@ -15,11 +15,10 @@ same headless route-test shape ``test_app_exports.py`` /
 
 from __future__ import annotations
 
-from datetime import date, datetime
 from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
-from rivercrossing.ride import RideConfig
+from conftest import gorba_config
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
@@ -41,23 +40,6 @@ class _StubFrame:
     def SetStatusText(self, text: str) -> None:  # noqa: N802 -- wx API name
         """Record *text* as the latest notice."""
         self.notices.append(text)
-
-
-def _config() -> RideConfig:
-    """Build the store ride config these tests persist."""
-    return RideConfig(
-        name="GORBA EPIC 2026",
-        event_date=date(2026, 9, 20),
-        venue="Sea to Sky Gondola",
-        lap_km=8.0,
-        organizer="GORBA",
-        scorer="K. Singh",
-        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
-        planned_duration_s=21600,
-        min_lap_s=1080,
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-    )
 
 
 def _staged_roster() -> Roster:
@@ -100,7 +82,7 @@ def test_handle_import_csv_committed_import_persists_roster_to_the_active_ride(
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     try:
-        ride_id = store.create_ride(_config())
+        ride_id = store.create_ride(gorba_config())
         store.save_roster(ride_id, _staged_roster())
         context = _context(store=store, ride_id=ride_id)
         monkeypatch.setattr(rider_editor, "run_csv_import_flow", lambda _f, _r: True)
@@ -119,7 +101,7 @@ def test_handle_import_csv_cancelled_import_leaves_the_stored_roster_untouched(
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     try:
-        ride_id = store.create_ride(_config())
+        ride_id = store.create_ride(gorba_config())
         store.save_roster(ride_id, _staged_roster())
         context = _context(store=store, ride_id=ride_id)
         monkeypatch.setattr(rider_editor, "run_csv_import_flow", lambda _f, _r: False)

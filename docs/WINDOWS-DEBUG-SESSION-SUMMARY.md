@@ -46,7 +46,8 @@ reporting, and verify the whole suite + build on a real Windows 11 desktop.
 
 - Local (Windows 11 desktop, branch head): unit 2150 passed / 5 skipped / 0 failed (98.3 %);
   functional green ×3 — each pass converged via `tools/functional_rerun.py` after the documented
-  upstream wx/SIP churn stall (fresh-process reruns absorb it by design, Addendum 2).
+  upstream wx/SIP churn stall (fresh-process reruns absorb it by design — `docs/EPIC3-SESSION-SUMMARY.md`
+  Addendum 2).
 - CI (PR #14, run 33324682158): static + unit green on both OSes; **functional windows
   green** (pass 1 stall on `test_mini_acceptance.py` → rerun 1 clean, exit 0);
   **stage 5 windows green** — PyInstaller bundle, exe-launch smoke, NSIS compile, and the
@@ -67,4 +68,5 @@ reporting, and verify the whole suite + build on a real Windows 11 desktop.
   for this Windows pass. The macOS functional job was red on master's latest run too.
 - **Residual upstream SIP churn** on Windows remains (pass-1 stalls on `test_rider_editor.py`,
   `test_csv_preview.py`, `test_mini_acceptance.py`, `test_view_support.py`); the fresh-process
-  rerun wrapper (budget 4) converges each time. No in-process repair exists (Addendum 2).
+  rerun wrapper (budget 4) converges each time. No in-process repair exists
+  (`docs/EPIC3-SESSION-SUMMARY.md` Addendum 2).

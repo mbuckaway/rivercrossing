@@ -21,7 +21,10 @@ adjacency, so "BNBA1" and "BNBA 1" are two teams while "Full Send" and
 from :meth:`Roster.next_free_plate` when blank; under
 ``rider_pooled`` each rider owns their row's plate, under
 ``team_relay`` a team's member rows share the team's single plate
-(solo rows get their own).
+(solo rows get their own). An explicit ``rider_pooled`` NUMBER cell
+must be a whole number -- a non-digit "77A"-style cell is a per-row
+conflict, never a crash (a ``team_relay`` plate stays any string;
+the roster only derives from numbers under ``rider_pooled``).
 
 :func:`preview` reads the file and reports every conflict found without
 raising for content problems and without writing anything -- to the
@@ -155,6 +158,7 @@ __all__ = [
 _HEADER_PROBLEM = "missing or malformed header: no first or last name column"
 _FINISHED_COLUMNS = ("laps", "cards", "best_hand", "total_time")
 _MISSING_NAME_PROBLEM = "missing name"
+_NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
 _UNIFIED_COLUMNS = ("FIRSTNAME", "LASTNAME", "TYPE", "TEAMNAME", "NUMBER", "NOTES")
 
 _TEAM_NAME_PATTERN = re.compile(r"team\s*name", re.IGNORECASE)
@@ -359,7 +363,13 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
     The file's header is resolved through :func:`_map_header`; unmapped
     columns are ignored, and a header that names neither a first nor a
     last name column reports the whole file as one header conflict at
-    row 1 with no rows parsed (spec S7).
+    row 1 with no rows parsed (spec S7). The file opens as UTF-8 with
+    signature detection (``utf-8-sig``), so a spreadsheet-written BOM
+    never leaks into the first header cell and disables that column's
+    matcher. A file that cannot decode as UTF-8 (cp1252, say) or that
+    trips the csv parser itself (a cell past the field-size limit, for
+    example) is one file-level conflict at row 1 -- the file reads as
+    neither header nor data, so nothing is parsed.
 
     Args:
         path: The CSV file to read. Never written to.
@@ -375,18 +385,21 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
         OSError: *path* cannot be opened (e.g. it does not exist).
             Preview does not catch or wrap I/O errors.
     """
-    with path.open(encoding="utf-8", newline="") as handle:
+    with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.reader(handle)
         try:
-            header_row = next(reader)
-        except StopIteration:
-            conflict = ImportConflict(row=1, problem=_HEADER_PROBLEM)
-            return ImportPreview(source_path=path, ride=ride, entries=(), conflicts=(conflict,))
-        mapping = _map_header(header_row)
-        if "FIRSTNAME" not in mapping and "LASTNAME" not in mapping:
-            conflict = ImportConflict(row=1, problem=_HEADER_PROBLEM)
-            return ImportPreview(source_path=path, ride=ride, entries=(), conflicts=(conflict,))
-        rows, row_conflicts = _read_data_rows(reader, mapping)
+            try:
+                header_row = next(reader)
+            except StopIteration:
+                return _whole_file_conflict(path, ride, _HEADER_PROBLEM)
+            mapping = _map_header(header_row)
+            if "FIRSTNAME" not in mapping and "LASTNAME" not in mapping:
+                return _whole_file_conflict(path, ride, _HEADER_PROBLEM)
+            rows, row_conflicts = _read_data_rows(reader, mapping)
+        except UnicodeDecodeError:
+            return _whole_file_conflict(path, ride, _NOT_UTF8_PROBLEM)
+        except csv.Error as exc:
+            return _whole_file_conflict(path, ride, f"malformed CSV data: {exc}")
     entries, entry_conflicts, entry_warnings = _assemble(rows, ride)
     conflicts = sorted((*row_conflicts, *entry_conflicts), key=lambda conflict: conflict.row)
     warnings = sorted(
@@ -399,6 +412,21 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
         entries=tuple(entries),
         conflicts=tuple(conflicts),
         warnings=tuple(warnings),
+    )
+
+
+def _whole_file_conflict(path: Path, ride: Roster, problem: str) -> ImportPreview:
+    """Return the empty preview naming one file-level problem at row 1.
+
+    The row-1 anchor matches the header-conflict convention: a file
+    that never yields usable header/data rows reports its one reason
+    there, so the caller sees a conflict, never an exception.
+    """
+    return ImportPreview(
+        source_path=path,
+        ride=ride,
+        entries=(),
+        conflicts=(ImportConflict(row=1, problem=problem),),
     )
 
 
@@ -672,6 +700,11 @@ def _roster_plates(ride: Roster) -> set[str]:
 def _duplicate_plate_problem(plate: str) -> str:
     """Return the conflict text for *plate* repeating in the file."""
     return f"duplicate plate {plate}"
+
+
+def _non_digit_plate_problem(number: str) -> str:
+    """Return the conflict text for a non-whole-number NUMBER cell."""
+    return f"plate {number!r} must be a whole number"
 
 
 def _team_size_problem(size: int, max_team_size: int) -> str | None:
@@ -963,6 +996,12 @@ def _assemble_pooled(
     conflicts: list[ImportConflict] = []
     seen_plates: set[str] = set()
     for row in rows:
+        if row.number and not row.number.isdigit():
+            # A pooled rider's plate is the NUMBER column's domain:
+            # roster derivation ("lowest-numbered") needs digits, so a
+            # "77A"-style cell is a per-row conflict, not a crash.
+            conflicts.append(ImportConflict(row.row, _non_digit_plate_problem(row.number)))
+            continue
         plate = row.number or allocator.allocate()
         if plate in seen_plates:
             conflicts.append(ImportConflict(row.row, _duplicate_plate_problem(plate)))

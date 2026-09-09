@@ -256,3 +256,22 @@ def test_apply_to_menubar_default_seam_resolves_ids_lazily() -> None:
     menu_state.apply_to_menubar(menubar, state, xrcid=_FAKE_IDS.__getitem__)
 
     assert menubar.items[_FAKE_IDS[ids.MI_DEAL_MANUAL]].enabled is True
+
+
+def test_apply_to_menubar_without_a_seam_walks_real_wx_xrcid_ids() -> None:
+    """The no-``xrcid`` path resolves through ``wx.xrc.XRCID`` itself.
+
+    ``apply_to_menubar``'s default resolver is the real
+    ``wx.xrc.XRCID`` -- the same id space a loaded ``wx.MenuBar`` keys
+    its items with -- and a ``FindItem`` miss on every other routed id
+    (no live menubar holds them here) is a silent skip, never a crash.
+    """
+    import wx.xrc  # noqa: PLC0415 -- the real resolver this one test pins
+
+    state = _baseline_state(RideStatus.RUNNING)
+    real_id = wx.xrc.XRCID(ids.MI_UNDO_CROSSING)
+    menubar = _FakeMenuBar({ids.MI_UNDO_CROSSING}, {ids.MI_UNDO_CROSSING: real_id})
+
+    menu_state.apply_to_menubar(menubar, state)
+
+    assert menubar.items[real_id].enabled is True

@@ -12,8 +12,6 @@ import time
 faulthandler.enable()
 faulthandler.dump_traceback_later(20, exit=True)
 
-import wx  # noqa: E402
-
 sys.path.insert(0, "tests/functional")
 import console_subprocess_scenarios as scenarios  # noqa: E402
 import harness  # noqa: E402
@@ -25,6 +23,8 @@ from rivercrossing.ui import ids  # noqa: E402
 
 def main() -> dict[str, bool]:
     """Run the scenario and report its result."""
+    import wx
+
     _app = wx.App()
     db_path = scenarios._resume_db_path("rc-diag-")  # noqa: SLF001 -- diagnostic
     scenarios._create_resumed_ride(  # noqa: SLF001 -- diagnostic

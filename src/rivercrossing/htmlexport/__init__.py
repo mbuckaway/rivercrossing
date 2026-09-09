@@ -23,7 +23,7 @@ embedded.
 import base64
 import json
 from dataclasses import dataclass, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
@@ -449,7 +449,7 @@ def _generated_now() -> str:
     "Generated 16:07, Sept 20 2026" -- the operator's wall clock, so a
     tz-aware local ``now()`` feeds the format.
     """
-    at = datetime.now(tz=timezone.utc).astimezone()  # noqa: UP017 -- this 3.14 build lacks datetime.UTC
+    at = datetime.now(UTC).astimezone()
     return f"Generated {at.strftime('%H:%M')}, {_MONTH_ABBR[at.month - 1]} {at.day} {at.year}"
 
 

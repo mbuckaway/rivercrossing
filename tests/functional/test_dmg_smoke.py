@@ -21,9 +21,9 @@ where this suite actually gates.
 
 import subprocess
 import sys
-import time
 from pathlib import Path
 
+import _installer_tools
 import pytest
 
 import rivercrossing
@@ -35,6 +35,14 @@ DIST = ROOT / "dist"
 DMG_PATH = DIST / f"RiverCrossing-{rivercrossing.__version__}.dmg"
 
 HDIUTIL = "/usr/bin/hdiutil"
+
+# Every hdiutil spawn below is bounded so a wedged mount/detach/verify
+# fails the pass by name instead of hanging it (mirrors
+# test_winsetup_smoke.py's ``*_TIMEOUT_SECONDS`` constants; attach and
+# verify get the longer bound).
+ATTACH_TIMEOUT_SECONDS = 120
+DETACH_TIMEOUT_SECONDS = 60
+VERIFY_TIMEOUT_SECONDS = 120
 
 # hdiutil occasionally reports a just-attached read-only volume as
 # busy on hosted runners (project-plan.md §4's flake note); bounded
@@ -54,19 +62,27 @@ def dmg_path() -> Path:
     return DMG_PATH
 
 
+def _run_hdiutil(
+    cmd: list[str], *, timeout: int, check: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Run *cmd* bounded by *timeout*, failing by name if it hangs."""
+    try:
+        return subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
+            cmd, capture_output=True, text=True, check=check, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"hdiutil timed out after {exc.timeout}s")
+
+
 def _detach(mount_point: Path) -> None:
     """Detach *mount_point*, retrying and forcing as a last resort."""
-    for attempt in range(DETACH_MAX_ATTEMPTS):
-        is_last_attempt = attempt == DETACH_MAX_ATTEMPTS - 1
-        cmd = [HDIUTIL, "detach", str(mount_point)]
-        if is_last_attempt:
-            cmd.append("-force")
-        result = subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
-            cmd, capture_output=True, text=True, check=False
-        )
-        if result.returncode == 0:
-            return
-        time.sleep(DETACH_RETRY_SECONDS)
+    _installer_tools.detach_with_retries(
+        _run_hdiutil,
+        mount_point,
+        attempts=DETACH_MAX_ATTEMPTS,
+        retry_seconds=DETACH_RETRY_SECONDS,
+        timeout_seconds=DETACH_TIMEOUT_SECONDS,
+    )
 
 
 @pytest.fixture
@@ -74,7 +90,7 @@ def mounted_dmg(dmg_path: Path, tmp_path: Path) -> Path:
     """Attach *dmg_path* read-only and yield the mount point."""
     mount_point = tmp_path / "mnt"
     mount_point.mkdir()
-    subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
+    _run_hdiutil(
         [
             HDIUTIL,
             "attach",
@@ -84,9 +100,8 @@ def mounted_dmg(dmg_path: Path, tmp_path: Path) -> Path:
             str(mount_point),
             str(dmg_path),
         ],
+        timeout=ATTACH_TIMEOUT_SECONDS,
         check=True,
-        capture_output=True,
-        text=True,
     )
     try:
         yield mount_point
@@ -106,9 +121,7 @@ def test_dmg_passes_hdiutil_verify(dmg_path: Path) -> None:
     the plan): a mount-side flake must never be misattributed to a
     corrupt image, or vice versa.
     """
-    result = subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
-        [HDIUTIL, "verify", str(dmg_path)], capture_output=True, text=True, check=False
-    )
+    result = _run_hdiutil([HDIUTIL, "verify", str(dmg_path)], timeout=VERIFY_TIMEOUT_SECONDS)
 
     assert result.returncode == 0, result.stdout + result.stderr
 

@@ -31,9 +31,9 @@ Two claims, because they fail for different reasons:
 
 import subprocess
 import sys
-import time
 from pathlib import Path
 
+import _installer_tools
 import pytest
 import scenario_runner
 
@@ -50,6 +50,15 @@ CODESIGN = "/usr/bin/codesign"
 HDIUTIL = "/usr/bin/hdiutil"
 SPCTL = "/usr/sbin/spctl"
 
+# Every tool spawn below is bounded so a wedged codesign/spctl/hdiutil
+# fails the pass by name instead of hanging it (mirrors
+# test_winsetup_smoke.py's ``*_TIMEOUT_SECONDS`` constants; attach and
+# hdiutil verify get the longer bound, as in test_dmg_smoke.py).
+CODESIGN_TIMEOUT_SECONDS = 60
+SPCTL_TIMEOUT_SECONDS = 60
+DETACH_TIMEOUT_SECONDS = 60
+ATTACH_TIMEOUT_SECONDS = 120
+
 # The app is a GUI process: once it reaches its main loop it never
 # exits on its own, so the launch probe waits this long for a crash
 # to show up, then kills it. Mirrors test_bundle_smoke.py's constant.
@@ -63,6 +72,18 @@ DETACH_MAX_ATTEMPTS = 5
 DETACH_RETRY_SECONDS = 1
 
 
+def _run_tool(
+    cmd: list[str], *, timeout: int, check: bool = False
+) -> subprocess.CompletedProcess[str]:
+    """Run *cmd* bounded by *timeout*, failing by name if it hangs."""
+    try:
+        return subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
+            cmd, capture_output=True, text=True, check=check, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"{Path(cmd[0]).name} timed out after {exc.timeout}s")
+
+
 def _developer_id_signature(app_path: Path) -> bool:
     """Return whether *app_path* carries a Developer ID signature.
 
@@ -70,9 +91,7 @@ def _developer_id_signature(app_path: Path) -> bool:
     bundle reports ``Signature=adhoc``, while a Developer ID signed
     app names the ``Developer ID Application`` authority.
     """
-    completed = subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
-        [CODESIGN, "-dv", str(app_path)], capture_output=True, text=True, check=False
-    )
+    completed = _run_tool([CODESIGN, "-dv", str(app_path)], timeout=CODESIGN_TIMEOUT_SECONDS)
     if completed.returncode != 0:
         return False
     return "Developer ID Application" in completed.stderr
@@ -103,17 +122,13 @@ _SIGNED_APP_ABSENT_REASON = _missing_signed_app_reason()
 
 def _detach(mount_point: Path) -> None:
     """Detach *mount_point*, retrying and forcing as a last resort."""
-    for attempt in range(DETACH_MAX_ATTEMPTS):
-        is_last_attempt = attempt == DETACH_MAX_ATTEMPTS - 1
-        cmd = [HDIUTIL, "detach", str(mount_point)]
-        if is_last_attempt:
-            cmd.append("-force")
-        result = subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
-            cmd, capture_output=True, text=True, check=False
-        )
-        if result.returncode == 0:
-            return
-        time.sleep(DETACH_RETRY_SECONDS)
+    _installer_tools.detach_with_retries(
+        _run_tool,
+        mount_point,
+        attempts=DETACH_MAX_ATTEMPTS,
+        retry_seconds=DETACH_RETRY_SECONDS,
+        timeout_seconds=DETACH_TIMEOUT_SECONDS,
+    )
 
 
 def _launch(executable: Path) -> tuple[int | None, str, str]:
@@ -137,7 +152,7 @@ def _launch(executable: Path) -> tuple[int | None, str, str]:
 )
 def test_signed_app_passes_spctl_assessment() -> None:
     """E9.1.3: Gatekeeper accepts the Developer ID-signed ``.app``."""
-    completed = subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
+    completed = _run_tool(
         [
             SPCTL,
             "--assess",
@@ -147,9 +162,7 @@ def test_signed_app_passes_spctl_assessment() -> None:
             "context:primary-signature",
             str(APP_PATH),
         ],
-        capture_output=True,
-        text=True,
-        check=False,
+        timeout=SPCTL_TIMEOUT_SECONDS,
     )
 
     assert completed.returncode == 0, completed.stdout + completed.stderr
@@ -177,7 +190,7 @@ def mounted_signed_dmg(signed_dmg_path: Path, tmp_path: Path) -> Path:
     """
     mount_point = tmp_path / "mnt"
     mount_point.mkdir()
-    subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
+    _run_tool(
         [
             HDIUTIL,
             "attach",
@@ -187,9 +200,8 @@ def mounted_signed_dmg(signed_dmg_path: Path, tmp_path: Path) -> Path:
             str(mount_point),
             str(signed_dmg_path),
         ],
+        timeout=ATTACH_TIMEOUT_SECONDS,
         check=True,
-        capture_output=True,
-        text=True,
     )
     try:
         app_path = mount_point / "RiverCrossing.app"

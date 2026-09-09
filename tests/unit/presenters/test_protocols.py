@@ -467,13 +467,17 @@ def test_console_view_missing_method_fails_mypy_typecheck() -> None:
     # --no-color-output: CI exports FORCE_COLOR=1 and mypy honours it,
     # wrapping the quoted names below in ANSI codes on win32 (measured
     # on windows-latest) -- the substring asserts need plain text.
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "mypy", "--no-color-output", str(fixture)],
-        capture_output=True,
-        text=True,
-        cwd=_REPO_ROOT,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "mypy", "--no-color-output", str(fixture)],
+            capture_output=True,
+            text=True,
+            cwd=_REPO_ROOT,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"mypy on {fixture.name} timed out after {exc.timeout}s")
 
     assert result.returncode == 1
     assert 'is missing following "ConsoleView" protocol member' in result.stdout
@@ -503,10 +507,14 @@ def test_presenter_module_import_does_not_load_wx(module_name: str) -> None:
     needed to make this probe honest.
     """
     probe = _PRESENTER_IMPORT_PROBE.format(module=module_name)
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", probe],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"{module_name} import probe timed out after {exc.timeout}s")
     assert result.returncode == 0, result.stderr

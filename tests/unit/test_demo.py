@@ -69,13 +69,17 @@ def test_demo_data_source_conforms_to_data_source_via_mypy_strict() -> None:
     an incompatible method signature is caught even though that line
     itself never executes.
     """
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, "-m", "mypy", str(_DEMO_MODULE)],
-        capture_output=True,
-        text=True,
-        cwd=_REPO_ROOT,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-m", "mypy", str(_DEMO_MODULE)],
+            capture_output=True,
+            text=True,
+            cwd=_REPO_ROOT,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"mypy on {_DEMO_MODULE} timed out after {exc.timeout}s")
 
     assert result.returncode == 0, result.stdout + result.stderr
 
@@ -180,6 +184,28 @@ def test_demo_ride_status_returns_running_to_match_the_canvas_fixture() -> None:
     status = DemoDataSource().ride_status()
 
     assert status == RideStatus.RUNNING
+
+
+# ------------------------------------------------------- stale check
+
+
+@pytest.mark.parametrize(
+    "export_watermark",
+    [None, 0],
+    ids=["never_exported_none", "exported_at_zero"],
+)
+def test_demo_results_stale_returns_false_for_none_or_zero_export_watermark(
+    export_watermark: int | None,
+) -> None:
+    """E7.3.2: static fixture rows never go stale, whatever the marker.
+
+    ``None`` (never exported) and ``0`` (exported before any event)
+    are the two nullable boundaries of the ``DataSource`` signature;
+    both must read the honest static answer, False.
+    """
+    source = DemoDataSource()
+
+    assert source.results_stale(export_watermark) is False
 
 
 # ---------------------------------------------------------------- rides
@@ -353,12 +379,16 @@ def test_demo_module_import_does_not_load_the_ui_bootstrap_or_wx() -> None:
     back into it, isolated in a subprocess this test does not
     itself pollute.
     """
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", _NO_UI_BOOTSTRAP_PROBE],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", _NO_UI_BOOTSTRAP_PROBE],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"demo import probe timed out after {exc.timeout}s")
 
     assert result.returncode == 0, result.stderr
 

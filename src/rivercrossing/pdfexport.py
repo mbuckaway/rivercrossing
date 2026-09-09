@@ -39,7 +39,7 @@ import os
 import re
 import zlib
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -542,6 +542,13 @@ def _store_streams_raw(pdf: bytes) -> bytes:
     deltas = [(len(replacement) - (end - start)) for start, _body_start, end, replacement in spans]
     objects: list[tuple[int, int]] = []  # (original offset, object number)
     for marker in re.finditer(rb"\n(\d+) 0 obj", pdf):
+        # logic-coverage-exempt: T-3 -- True outcome unreachable in
+        # this function's real input universe (fpdf2 output): every
+        # stream body in the scanned original is deflate-compressed,
+        # so the marker's ASCII pattern never occurs there. Only a
+        # synthetic PDF could hit it, and crafting one needs
+        # platform-specific deflate bytes -- the zlib-ng divergence
+        # this pass exists to remove.
         if any(b_start <= marker.start() < b_end for b_start, b_end in bodies):
             continue
         # The xref offset must point at the object's first byte, not
@@ -1187,13 +1194,7 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
     Raises:
         ValueError: *created_at* is not tz-aware.
     """
-    stamp = (
-        created_at
-        if created_at is not None
-        else datetime.now(
-            timezone.utc  # noqa: UP017 -- this mypy build lacks datetime.UTC; the portable form
-        )
-    )
+    stamp = created_at if created_at is not None else datetime.now(UTC)
     report = _ReportPDF(ride, opts, letter=letter, created_at=stamp, logo_path=logo_path)
     report.build(placed)
     data = _store_streams_raw(bytes(report.output()))
@@ -1241,13 +1242,7 @@ def podium_poster(  # noqa: PLR0913 -- module-skeletons.md's frozen (ride, place
     Raises:
         ValueError: *created_at* is not tz-aware.
     """
-    stamp = (
-        created_at
-        if created_at is not None
-        else datetime.now(
-            timezone.utc  # noqa: UP017 -- this mypy build lacks datetime.UTC; the portable form
-        )
-    )
+    stamp = created_at if created_at is not None else datetime.now(UTC)
     poster = _PosterPDF(ride, letter=letter, created_at=stamp, logo_path=logo_path)
     poster.build(placed)
     data = _store_streams_raw(bytes(poster.output()))

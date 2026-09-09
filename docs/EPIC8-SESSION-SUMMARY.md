@@ -46,7 +46,7 @@
 ## 3 · Known / carried forward
 
 - **`main_frame` resizable-on-Windows question** — the primary item in `docs/WINDOWS-AGENT-HANDOFF.md`; needs a real Windows box to confirm `wxRESIZE_BORDER` and, if absent, add `<style>wxDEFAULT_FRAME_STYLE</style>` to `main.xrc`/`results.xrc`.
-- **wx-churn functional flakes** — the usual files (`test_rider_editor.py`, `test_harness.py`, `test_empty_state_screenshots.py`, `test_ride_library_live.py`, `test_results_exports.py`, `test_view_support.py`, occasionally `test_settings.py`) still flake under wx/SIP wrapper-cache corruption; the fresh-process rerun wrapper (budget 4) converges each run. No in-process repair exists (WINDOWS-DEBUG-SESSION-SUMMARY Addendum 2).
+- **wx-churn functional flakes** — the usual files (`test_rider_editor.py`, `test_harness.py`, `test_empty_state_screenshots.py`, `test_ride_library_live.py`, `test_results_exports.py`, `test_view_support.py`, occasionally `test_settings.py`) still flake under wx/SIP wrapper-cache corruption; the fresh-process rerun wrapper (budget 4) converges each run. No in-process repair exists (`docs/EPIC3-SESSION-SUMMARY.md` Addendum 2).
 - **E9 packaging** — the user guide (`docs/user-guide.html`) must be bundled (E9.1.1 asset completeness); `ui/help.guide_path()` already resolves a bundled location first.
 
 ## 4 · Resuming — EPIC 9 (Packaging & release)

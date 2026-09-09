@@ -139,7 +139,7 @@ runner, and `scripts/*.sh` are one-line wrappers around it.
 ```bash
 uv venv .venv && uv pip install -e '.[dev]'   # or: python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 
-nox -s lint typecheck importlint ids_drift    # CI stage 1 — static
+nox -s lint typecheck importlint ids_drift css_drift  # CI stage 1 — static
 nox -s unit                                   # CI stage 2 — unit + coverage gate
 nox -s functional                              # CI stage 3 — real wx windows
 nox -s bundle smoke                            # CI stage 5 — build, then smoke the binary

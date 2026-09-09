@@ -222,16 +222,17 @@ def test_ride_library_duplicate_forwards_the_selected_ride(xrc_resource: object)
     window, _ = _library_for_rows(xrc_resource, [_draft_row()], on_duplicate=duplicated.append)
     found: dict[str, Any] = {}
 
-    def _confirm_duplicate() -> None:
-        dialog = wx.Window.FindWindowByName(ids.DUPLICATE_RIDE_DLG)
-        found["dialog_shown"] = dialog is not None
-        if dialog is None:
-            return
+    def _confirm_duplicate(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        found["dialog_shown"] = True
         harness.click(dialog, pages.WX_ID_OK)
 
     try:
         harness.select_row(window, ids.RIDES_LIST, 0)
-        wx.CallAfter(_confirm_duplicate)
+        harness.dismiss_modal(
+            ids.DUPLICATE_RIDE_DLG,
+            dismiss_with=wx.ID_OK,
+            drive=_confirm_duplicate,
+        )
         harness.click(window, ids.DUPLICATE_BTN)
     finally:
         harness.close_window(window)
@@ -262,7 +263,7 @@ def test_duplicate_ride_route_without_a_store_ride_posts_notice(
         harness.fire_menu_event(frame, "mi_duplicate_ride")
         status_text = frame.GetStatusBar().GetStatusText(0)
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
     assert status_text == "Duplicate Ride… — no store ride is open"
     assert wx.Window.FindWindowByName(ids.DUPLICATE_RIDE_DLG) is None

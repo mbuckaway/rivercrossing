@@ -1,16 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Page objects for the 23 XRC windows, keyed off ``ids.py`` (E1.3.3).
+"""Window specs for the 23 XRC windows, keyed off ``ids.py`` (E1.3.3).
 
 xrc-windows.md sections A-E, in that order. Each :class:`WindowSpec`
 is one window's load recipe (which ``.xrc`` file, ``LoadFrame`` vs
 ``LoadDialog``) plus its complete frozen-name and button inventory,
 built from ``ui/ids.py`` constants rather than ad hoc strings so a
-test reads as intent (``page.find(ids.START_BTN)``) instead of a bare
-string lookup. Stock button ids (``wxID_OK`` and friends) are not in
-``ui/ids.py`` -- ``tools/gen_ids.py`` deliberately excludes them, since
-they are not part of the frozen custom-name registry -- but they are
-still real XRC names that ``FindWindowByName`` resolves (measured),
-so they are named here as plain module constants instead.
+test reads as intent (``harness.find_control(frame, ids.START_BTN)``)
+instead of a bare string lookup. Stock button ids (``wxID_OK`` and
+friends) are not in ``ui/ids.py`` -- ``tools/gen_ids.py`` deliberately
+excludes them, since they are not part of the frozen custom-name
+registry -- but they are still real XRC names that ``FindWindowByName``
+resolves (measured), so they are named here as plain module constants
+instead.
 
 ``main_menubar`` is a menu-bar resource, not a window: it loads via
 ``LoadMenuBar``, not ``LoadFrame``/``LoadDialog``, and its XRC handler
@@ -21,13 +22,10 @@ silently omitting it.
 """
 
 from dataclasses import dataclass
-from typing import Any
-
-import harness
 
 from rivercrossing.ui import ids
 
-__all__ = ["WINDOWS", "Page", "WindowSpec"]
+__all__ = ["WINDOWS", "WindowSpec"]
 
 # Real XRC names and FindWindowByName targets (measured), but excluded
 # from ui/ids.py by tools/gen_ids.py's STOCK_IDS set (spec.md 15b).
@@ -48,23 +46,6 @@ class WindowSpec:
     is_frame: bool
     controls: tuple[str, ...]
     buttons: tuple[str, ...]
-
-
-class Page:
-    """A loaded window plus its :class:`WindowSpec` contract.
-
-    Wraps :func:`harness.find_control` so call sites read as intent
-    rather than a bare string lookup against the raw wx window.
-    """
-
-    def __init__(self, window: Any, spec: WindowSpec) -> None:  # noqa: ANN401
-        """Wrap an already-loaded *window* with its *spec* contract."""
-        self.window = window
-        self.spec = spec
-
-    def find(self, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Resolve one of this page's own frozen control names."""
-        return harness.find_control(self.window, name)
 
 
 # --- xrc-windows section A: the console -------------------------------

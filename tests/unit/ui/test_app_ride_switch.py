@@ -20,10 +20,10 @@ with a recorder so the deferred ``wx.CallAfter`` switch is observed
 without constructing any GUI (T-10: wx is the GUI I/O boundary).
 """
 
-from datetime import date, datetime
 from typing import TYPE_CHECKING
 
-from rivercrossing.ride import Event, RideConfig, RideStatus
+from conftest import gorba_config
+from rivercrossing.ride import Event, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
@@ -79,23 +79,6 @@ class _FakeWx:
         self.calls.append((callable_, args))
 
 
-def _config() -> RideConfig:
-    """Build the store ride config these tests persist."""
-    return RideConfig(
-        name="GORBA EPIC 2026",
-        event_date=date(2026, 9, 20),
-        venue="Sea to Sky Gondola",
-        lap_km=8.0,
-        organizer="GORBA",
-        scorer="K. Singh",
-        planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive local, Store's own contract
-        planned_duration_s=21600,
-        min_lap_s=1080,
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-    )
-
-
 def _roster() -> Roster:
     """Build the one-entry roster the switch must rebuild."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
@@ -128,7 +111,7 @@ def test_persist_created_ride_sets_active_and_schedules_console_switch(
         fake_wx = _FakeWx()
         monkeypatch.setattr(app_module, "require_wx", lambda: fake_wx)
 
-        app_module._persist_created_ride(context, _config())
+        app_module._persist_created_ride(context, gorba_config())
 
         rides = store.rides()
         assert [ride.name for ride in rides] == ["GORBA EPIC 2026"]
@@ -150,7 +133,7 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     try:
-        ride_id = store.create_ride(_config())
+        ride_id = store.create_ride(gorba_config())
         store.save_roster(ride_id, _roster())
         view = _FakeConsoleView()
         context = _context(store=store, view=view, roster=_roster())

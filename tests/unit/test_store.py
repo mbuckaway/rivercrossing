@@ -2246,6 +2246,107 @@ def test_store_save_roster_round_trips_a_teams_logo_image(tmp_path: Path) -> Non
     assert _team_of(reloaded).logo_card is None
 
 
+# ------------------------------------------------ coverage-gap close
+# R-71's >=90% line/branch audit (2026-09): the guard branches below
+# were never exercised -- the exhausted-retry raise, save_roster's
+# negative path, backup_now's two arms, and delete_ride's no-backing-
+# path refusal (Store.__init__'s own docstring allows direct
+# construction "tests only", so the no-path guard is reachable and
+# must be pinned, not waived).
+
+
+def test_store_open_transient_errors_exhausting_retries_raise_last_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An always-transient failure exhausts the budget, then raises."""
+    calls = {"n": 0}
+
+    def always_transient(_conn: sqlite3.Connection) -> None:
+        calls["n"] += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store_module, "apply_pragmas", always_transient)
+
+    with pytest.raises(sqlite3.OperationalError, match=re.escape("database is locked")):
+        store_module.Store.open(tmp_path / "store.db")
+
+    assert calls["n"] == store_module._OPEN_RETRY_ATTEMPTS
+
+
+def test_store_save_roster_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
+    """T-5: save_roster's negative case names the missing ride."""
+    Store.open(tmp_path / "rides.db").close()
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.save_roster(999, _solo_roster())
+    finally:
+        store.close()
+
+
+def test_store_backup_now_writes_a_manual_backup_of_the_open_database(
+    tmp_path: Path,
+) -> None:
+    """R-54: backup_now writes a real backup the ride round-trips in."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Back me up"))
+        backup_path = store.backup_now()
+    finally:
+        store.close()
+
+    assert backup_path.is_file()
+    assert backup_path in _backup_files(db_path)
+    reopened = Store.open(backup_path)
+    try:
+        assert [ride.name for ride in reopened.rides()] == ["Back me up"]
+        assert reopened.rides()[0].id == ride_id
+    finally:
+        reopened.close()
+
+
+def test_store_backup_now_without_a_backing_path_refuses(tmp_path: Path) -> None:
+    """A direct-constructed store (no path) cannot back up (T-5)."""
+    conn = sqlite3.connect(str(tmp_path / "direct.db"))
+    conn.row_factory = sqlite3.Row
+    try:
+        store = Store(conn)
+
+        with pytest.raises(StoreError, match=re.escape("store has no backing path")):
+            store.backup_now()
+    finally:
+        conn.close()
+
+
+def test_store_delete_ride_without_a_backing_path_refuses_before_deleting(
+    tmp_path: Path,
+) -> None:
+    """A direct-constructed store refuses to delete: no backup path."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="No path"))
+    finally:
+        store.close()
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    try:
+        direct = Store(conn)
+
+        with pytest.raises(StoreError, match=re.escape("store has no backing path")):
+            direct.delete_ride(ride_id, "No path")
+    finally:
+        conn.close()
+
+    reopened = Store.open(db_path)
+    try:
+        assert [ride.name for ride in reopened.rides()] == ["No path"]
+    finally:
+        reopened.close()
+
+
 def test_store_load_roster_gives_the_rebuilt_roster_the_rides_logo_seed(
     tmp_path: Path,
 ) -> None:

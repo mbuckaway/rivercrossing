@@ -1,0 +1,373 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""Headless tests for app.py's store- and settings-write guards.
+
+Store writes (``create_ride``/``save_roster``/``delete_ride``/
+``duplicate_ride``/``close_session`` and the ``on_event`` append
+sink) and settings writes run inside wx menu/button/sash handlers,
+and wx swallows a Python exception raised inside an event handler
+(measured: ``docs/EPIC3-SESSION-SUMMARY.md``) -- so an unguarded
+write failure vanishes with zero signal, and worst case the operator
+is told an import succeeded while the roster silently stayed
+unpersisted. Each write route below wraps its store call in
+``try/except (OSError, sqlite3.Error)`` and posts a status notice,
+the app's own notice idiom (``_handle_backup_database``). This
+module drives every guard headless with a notice-capturing frame
+stub and failing-store fakes -- no wx window is constructed.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from typing import TYPE_CHECKING
+
+from rivercrossing.ride import RideStatus
+from rivercrossing.roster import Roster
+from rivercrossing.ui import app as app_module
+from rivercrossing.ui.presenters.data_source import RideSummary
+from rivercrossing.ui.presenters.settings import AppSettings
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
+
+
+class _NoticeFrame:
+    """A minimal frame: status notices are captured, nothing else."""
+
+    def __init__(self) -> None:
+        """Start with no notices."""
+        self.notices: list[str] = []
+
+    def SetStatusText(self, text: str) -> None:  # noqa: N802 -- wx API name
+        """Record *text* as the latest notice."""
+        self.notices.append(text)
+
+
+class _RideRow:
+    """A minimal store ``rides()`` row: the fields these routes read."""
+
+    def __init__(self, *, ride_id: int, name: str) -> None:
+        """Store the row's id and name."""
+        self.id = ride_id
+        self.name = name
+
+
+def _context(*, store: object) -> app_module._RouteContext:
+    """Build a route context carrying *store* and a notice frame."""
+    return app_module._RouteContext(
+        frame=_NoticeFrame(),
+        resource=None,
+        roster=Roster(),
+        app=None,
+        theme_controller=None,
+        store=store,
+    )
+
+
+class _DeleteFailsStore:
+    """A store whose ride delete fails like a locked database."""
+
+    def rides(self) -> list[_RideRow]:
+        """Return the one ride the delete callback matches."""
+        return [_RideRow(ride_id=3, name="Ride A")]
+
+    def delete_ride(self, _ride_id: int, _typed_name: str) -> None:
+        """Refuse the write."""
+        raise sqlite3.OperationalError("database is locked")
+
+
+class _DuplicateFailsStore:
+    """A store whose ride duplicate fails like a full disk."""
+
+    def duplicate_ride(self, _ride_id: int) -> int:
+        """Refuse the write."""
+        raise OSError("disk full")
+
+
+class _MenuDuplicateFailsStore(_DuplicateFailsStore):
+    """Adds the ``rides()`` lookup the File ▸ Duplicate route needs."""
+
+    def rides(self) -> list[_RideRow]:
+        """Return the one ride whose name the confirm dialog shows."""
+        return [_RideRow(ride_id=3, name="Ride A")]
+
+
+class _SaveRosterFailsStore:
+    """A store whose roster save fails like a full disk."""
+
+    def save_roster(self, _ride_id: int, _roster: object) -> None:
+        """Refuse the write."""
+        raise OSError("disk full")
+
+
+class _CloseSessionFailsStore:
+    """A store whose session stamp fails like a locked database."""
+
+    def close_session(self) -> None:
+        """Refuse the write."""
+        raise sqlite3.OperationalError("database is locked")
+
+
+class _CreateFailsStore:
+    """A store whose ride create is refused like a locked database."""
+
+    def create_ride(self, _config: object) -> int:
+        """Refuse the write."""
+        raise sqlite3.OperationalError("database is locked")
+
+    def save_roster(self, _ride_id: int, _roster: object) -> None:
+        """Raise if the guard lets the flow past the failed create."""
+        raise AssertionError("save_roster must not run after a failed create")
+
+    def set_active_ride(self, _ride_id: int) -> None:
+        """Raise if the guard lets the flow past the failed create."""
+        raise AssertionError("set_active_ride must not run after a failed create")
+
+
+class _CreateOkRosterSaveFailsStore:
+    """A store whose ride create succeeds but roster save fails."""
+
+    def create_ride(self, _config: object) -> int:
+        """Succeed at creating the ride row."""
+        return 41
+
+    def save_roster(self, _ride_id: int, _roster: object) -> None:
+        """Refuse the write."""
+        raise OSError("disk full")
+
+    def set_active_ride(self, _ride_id: int) -> None:
+        """Raise if the guard lets the flow past the failed save."""
+        raise AssertionError("set_active_ride must not run after a failed save")
+
+
+class _CallAfterRecorder:
+    """Record every deferred call without constructing any GUI."""
+
+    def __init__(self) -> None:
+        """Start with an empty schedule log."""
+        self.calls: list[tuple[object, tuple[object, ...]]] = []
+
+    def CallAfter(self, callable_: object, *args: object) -> None:  # noqa: N802 -- wx API name
+        """Record one deferred call."""
+        self.calls.append((callable_, args))
+
+
+# --------------------------------------------- store-write route guards
+
+
+def test_persist_created_ride_given_a_failed_create_posts_a_notice_and_schedules_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused ride create surfaces; no ride is switched onto."""
+    from conftest import gorba_config  # noqa: PLC0415 -- the shared live-config fixture
+
+    context = _context(store=_CreateFailsStore())
+    recorder = _CallAfterRecorder()
+    monkeypatch.setattr(app_module, "require_wx", lambda: recorder)
+
+    app_module._persist_created_ride(context, gorba_config())
+
+    assert context.frame.notices == ["Could not create ride: database is locked"]
+    assert recorder.calls == []
+
+
+def test_persist_created_ride_given_a_failed_roster_save_posts_a_notice_and_schedules_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused roster save leaves the new ride unswitched."""
+    from conftest import gorba_config  # noqa: PLC0415 -- the shared live-config fixture
+
+    context = _context(store=_CreateOkRosterSaveFailsStore())
+    recorder = _CallAfterRecorder()
+    monkeypatch.setattr(app_module, "require_wx", lambda: recorder)
+
+    app_module._persist_created_ride(context, gorba_config())
+
+    assert context.frame.notices == ["Could not save riders: disk full"]
+    assert recorder.calls == []
+
+
+def test_library_delete_callback_given_a_failed_delete_posts_a_notice() -> None:
+    """A refused delete surfaces; it never raises into wx."""
+    context = _context(store=_DeleteFailsStore())
+
+    callback = app_module._library_delete_callback(context)
+    assert callback is not None
+    callback("Ride A")
+
+    assert context.frame.notices == ["Could not delete ride: database is locked"]
+
+
+def test_live_library_duplicate_given_a_failed_duplicate_posts_a_notice() -> None:
+    """A refused duplicate surfaces on the status bar."""
+    context = _context(store=_DuplicateFailsStore())
+    _open, _new, duplicate = app_module._live_library_callbacks(
+        context, window=object(), store=_DuplicateFailsStore()
+    )
+    selected = RideSummary(
+        name="Ride A", date="2026-09-20", status=RideStatus.DRAFT, entries=0, ride_id=3
+    )
+
+    duplicate(selected)
+
+    assert context.frame.notices == ["Could not duplicate ride: disk full"]
+
+
+def test_handle_duplicate_ride_route_given_a_failed_duplicate_posts_a_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """File ▸ Duplicate Ride…'s refused write surfaces, never raises."""
+    context = _context(store=_MenuDuplicateFailsStore())
+    context.active_ride_id = 3
+    monkeypatch.setattr(app_module, "_open_ride_confirm", lambda _ctx, _dlg, _msg: True)
+
+    app_module._handle_duplicate_ride_route(context)
+
+    assert context.frame.notices == ["Could not duplicate ride: disk full"]
+
+
+def test_handle_import_csv_given_a_failed_roster_save_posts_a_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A committed import whose save fails never reports success."""
+    from rivercrossing.ui.views import rider_editor  # noqa: PLC0415 -- the flow seam
+
+    context = _context(store=_SaveRosterFailsStore())
+    context.active_ride_id = 5
+    monkeypatch.setattr(rider_editor, "run_csv_import_flow", lambda _f, _r: True)
+
+    app_module._handle_import_csv(context)
+
+    assert context.frame.notices == ["Could not save riders: disk full"]
+
+
+def test_handle_check_rider_issues_given_a_failed_roster_save_posts_a_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A converted issue whose save fails surfaces, never raises."""
+    from rivercrossing.ui.views import rider_issues  # noqa: PLC0415 -- the flow seam
+
+    context = _context(store=_SaveRosterFailsStore())
+    context.active_ride_id = 5
+    monkeypatch.setattr(rider_issues, "run_rider_issues_flow", lambda _f, _r: True)
+
+    app_module._handle_check_rider_issues(context)
+
+    assert context.frame.notices == ["Could not save riders: disk full"]
+
+
+def test_stamp_closed_session_given_a_failed_session_close_posts_a_notice() -> None:
+    """A refused ``closed_at`` stamp surfaces; the quit proceeds."""
+    context = _context(store=_CloseSessionFailsStore())
+
+    app_module._stamp_closed_session(context)
+
+    assert context.frame.notices == ["Could not close session: database is locked"]
+
+
+# -------------------------------------- settings-write route guards
+
+
+def test_save_layout_settings_given_an_unwritable_settings_file_posts_a_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused layout save surfaces; the in-memory settings stay put.
+
+    ``persist_layout`` fires from the sash/move/size/close handlers;
+    an unguarded raise there is swallowed by wx and, on close, stalls
+    ``event.Skip()`` -- the window never quits and nothing is said.
+    """
+    context = _context(store=None)
+    context.settings_path = tmp_path / "settings.json"
+    settings_before = context.settings
+
+    def _save_that_fails(_settings: object, _path: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(app_module.settings_store, "save_settings", _save_that_fails)
+
+    app_module._save_layout_settings(context, sash=111, geometry=(1, 2, 3, 4))
+
+    assert context.frame.notices == ["Could not save settings: disk full"]
+    assert context.settings is settings_before
+
+
+def test_save_layout_settings_given_a_writable_file_persists_and_updates_context(
+    tmp_path: Path,
+) -> None:
+    """A successful layout save writes the file and updates settings."""
+    context = _context(store=None)
+    context.settings_path = tmp_path / "settings.json"
+
+    app_module._save_layout_settings(context, sash=222, geometry=(5, 6, 7, 8))
+
+    assert context.frame.notices == []
+    assert context.settings.splitter_sash == 222
+    assert context.settings.window_geometry == (5, 6, 7, 8)
+    assert (tmp_path / "settings.json").exists()
+
+
+def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A refused settings-dialog save posts a notice and still applies.
+
+    The dialog's OK handler runs this; an unguarded raise would be
+    swallowed by wx with the dialog already closed and nothing said.
+    """
+
+    class _StubMenubar:
+        """Record every radio-check call the apply path makes."""
+
+        def __init__(self) -> None:
+            """Start with an empty check log."""
+            self.checks: list[tuple[int, bool]] = []
+
+        def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- mirrors wx MenuBar.Check's positional bool
+            """Record one check call."""
+            self.checks.append((item_id, checked))
+
+    class _SettingsFrame(_NoticeFrame):
+        """A notice frame that also answers GetMenuBar."""
+
+        def __init__(self) -> None:
+            """Start with a recording menubar."""
+            super().__init__()
+            self.menubar = _StubMenubar()
+
+        def GetMenuBar(self) -> _StubMenubar:  # noqa: N802 -- wx API name
+            """Return the recording menubar."""
+            return self.menubar
+
+    class _FakeThemeController:
+        """A theme controller reporting no notice."""
+
+        def on_menu(self, _menu_id: str) -> None:
+            """Report no notice."""
+
+    context = app_module._RouteContext(
+        frame=_SettingsFrame(),
+        resource=None,
+        roster=Roster(),
+        app=None,
+        theme_controller=_FakeThemeController(),
+        store=None,
+    )
+    context.settings_path = tmp_path / "settings.json"
+    new_settings = AppSettings(
+        appearance="system",
+        sound_on=True,
+        hide_times=False,
+        zoom_percent=context.settings.zoom_percent,
+    )
+
+    def _save_that_fails(_settings: object, _path: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(app_module.settings_store, "save_settings", _save_that_fails)
+
+    app_module._apply_settings_live(context, new_settings)
+
+    assert context.frame.notices == ["Could not save settings: disk full"]
+    assert context.settings is new_settings

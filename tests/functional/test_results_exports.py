@@ -64,8 +64,7 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
     try:
         yield frame
     finally:
-        wx.GetApp().really_quitting = True
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s inputs
@@ -183,30 +182,44 @@ def _build_live_context(
     engine.start()
     engine.record_crossing("12", at=datetime(2026, 9, 20, 10, 30))  # noqa: DTZ001
     source = EngineDataSource(engine, roster)
-    frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-    frame.SetMenuBar(menubar)
-    frame.Show()
-    frame.Layout()
-    harness.pump()
-    console = MainFrame(frame, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    context = app_module._RouteContext(
-        frame=frame,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx_app,
-        theme_controller=theme.ThemeController(wx_app),
-        presenter=presenter,
-        console_view=console,
-        detail_plate="12",
-    )
-    app_module._bind_routes(context)
-    app_module._apply_menu_state(context, engine.state)
-    return context, engine, roster
+    # load_window, not load_window_verified: this context's own
+    # ``main_frame`` coexists with the module-scoped ``firing_frame``
+    # fixture (also a legitimate ``main_frame`` top-level), so the
+    # verified loader's entry guard would refuse the same name as a
+    # leak (Fault B / PR #45). Every access here is scoped through
+    # ``context``/``frame``, never a name-based lookup, so the guard's
+    # shadow protection is not needed.
+    frame = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
+    try:
+        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+        frame.SetMenuBar(menubar)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        context = app_module._RouteContext(
+            frame=frame,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx_app,
+            theme_controller=theme.ThemeController(wx_app),
+            presenter=presenter,
+            console_view=console,
+            detail_plate="12",
+        )
+        app_module._bind_routes(context)
+        app_module._apply_menu_state(context, engine.state)
+    except BaseException:
+        # Fault A (the E7.2.2 leak): a wire-up raise after Show() must
+        # not leak the shown frame the caller's finally never sees.
+        harness.release_main_window(wx_app, frame)
+        raise
+    else:
+        return context, engine, roster
 
 
 @pytest.fixture
@@ -218,7 +231,7 @@ def live_context(
     try:
         yield context, engine, roster
     finally:
-        harness.close_window(context.frame)
+        harness.release_main_window(wx_app, context.frame)
 
 
 def _schedule_drive(dialog_name: str, drive: Any) -> None:  # noqa: ANN401 -- wx ships no stubs

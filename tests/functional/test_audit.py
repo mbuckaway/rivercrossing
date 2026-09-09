@@ -90,14 +90,20 @@ def _open_audit(  # noqa: PLR0913 -- (xrc_resource, rows, roster, entry_filter)
 ) -> AuditDialog:
     """Load ``audit_dlg`` and bind the real viewer over *rows*."""
     window = harness.load_window_verified(xrc_resource, ids.AUDIT_DLG, frame=False)
-    window.Show()
-    harness.pump()
-    return AuditDialog(
-        window,
-        data_source=_AuditSource(rows),
-        roster=roster,
-        entry_filter=entry_filter,
-    )
+    try:
+        window.Show()
+        harness.pump()
+        return AuditDialog(
+            window,
+            data_source=_AuditSource(rows),
+            roster=roster,
+            entry_filter=entry_filter,
+        )
+    except BaseException:
+        # Fault A (the E7.2.2 leak shape, dialog variant): a view ctor
+        # raise after Show() must not leak the shown dialog.
+        harness.close_window(window)
+        raise
 
 
 def _visible_rows(view: AuditDialog) -> list[tuple[str, ...]]:

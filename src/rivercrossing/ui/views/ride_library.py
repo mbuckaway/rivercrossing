@@ -384,7 +384,7 @@ class RideLibrary:
         event.Skip()
         # logic-coverage-exempt: T-3 -- both True arms are defensive:
         # the Delete button is disabled for None/RUNNING selections
-        # (_update_delete_enablement), so a click cannot carry one here;
+        # (_update_action_enablement), so a click cannot carry one here;
         # the re-check keeps the open path safe by construction.
         if selected is None or selected.status is RideStatus.RUNNING:
             return

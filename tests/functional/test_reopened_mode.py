@@ -118,31 +118,42 @@ def _build_ride_console(
     source = EngineDataSource(engine, roster)
 
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-    window.SetMenuBar(menubar)
-    console = MainFrame(window, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    console.focus_entry()
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+        window.SetMenuBar(menubar)
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        console.focus_entry()
 
-    context = app_module._RouteContext(
-        frame=window,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx.GetApp(),
-        theme_controller=theme.ThemeController(wx.GetApp()),
-        presenter=presenter,
-        console_view=console,
-        detail_plate="12",
-    )
-    app_module._bind_routes(context)
-    app_module._apply_menu_state(context, engine.state)
-    return window, console, presenter, engine, source
+        context = app_module._RouteContext(
+            frame=window,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx.GetApp(),
+            theme_controller=theme.ThemeController(wx.GetApp()),
+            presenter=presenter,
+            console_view=console,
+            detail_plate="12",
+        )
+        app_module._bind_routes(context)
+        app_module._apply_menu_state(context, engine.state)
+    except BaseException:
+        # Fault A (the E7.2.2 leak): the builder owns the window from
+        # the moment load_window_verified returns it. A raise after
+        # Show() -- MainFrame.__init__ failing a concrete _find -- must
+        # release the window before propagating, or the shown frame
+        # survives the session-end sweep (the builder runs before the
+        # test's try:).
+        harness.release_main_window(wx.GetApp(), window)
+        raise
+    else:
+        return window, console, presenter, engine, source
 
 
 def _menu_item_enabled(window: Any, item_id: str) -> bool:  # noqa: ANN401
@@ -200,7 +211,7 @@ def test_reopened_mode_entry_disabled_and_corrections_enabled(
             assert _menu_item_enabled(window, item_id) is False, item_id
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_reopened_mode_reopened_infobar_visible_after_reopen(
@@ -219,7 +230,7 @@ def test_reopened_mode_reopened_infobar_visible_after_reopen(
         assert harness.find_control(window, ids.RIDE_STATUS_LBL).GetLabelText() == "FINISHED"
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_reopened_mode_corrected_crossing_highlighted_in_feed(
@@ -241,7 +252,7 @@ def test_reopened_mode_corrected_crossing_highlighted_in_feed(
         assert by_lap[("34", 1)] is False
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa: PLR0915 -- the scenario IS the test: one finish-again script
@@ -270,7 +281,7 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
             consulted.append(True)
             return original_gate()
 
-        def _drive(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        def _drive_and_capture(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             captured["title"] = dialog.GetTitle()
             ok_button = wx.Window.FindWindowById(wx.ID_OK, dialog)
             captured["ok_label"] = ok_button.GetLabel() if ok_button is not None else None
@@ -278,7 +289,11 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
 
         console_module.FINISH_GATE = _recording_gate
         try:
-            wx.CallAfter(_drive)
+            harness.dismiss_modal(
+                ids.FINISH_CONFIRM_DLG,
+                dismiss_with=wx.ID_OK,
+                drive=_drive_and_capture,
+            )
             harness.fire_menu_event(window, ids.MI_FINISH_RIDE)
         finally:
             console_module.FINISH_GATE = original_gate
@@ -315,4 +330,4 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
             harness.close_window(results_frame)
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)

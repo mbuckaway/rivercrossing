@@ -115,6 +115,9 @@ LAUNCH_SETTLE_SECONDS = 20
 # A spec-evaluation failure aborts PyInstaller in seconds; this only
 # has to outlast that, never a real build.
 BUILD_TIMEOUT_SECONDS = 180
+# The arch probe (lipo) is bounded so a wedged toolchain fails the
+# pass by name instead of hanging it.
+LIPO_TIMEOUT_SECONDS = 60
 
 EXPECTED_XRC_FILES = 10
 EXPECTED_CARD_BITMAPS = 106
@@ -827,12 +830,16 @@ def test_built_app_is_apple_silicon_arm64(bundle_executable: Path) -> None:
     lipo = shutil.which("lipo")
     if lipo is None:
         pytest.skip("lipo (Xcode command line tools) not found")
-    completed = subprocess.run(  # noqa: S603 -- resolved absolute path, fixed argv
-        [lipo, "-archs", str(bundle_executable)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(  # noqa: S603 -- resolved absolute path, fixed argv
+            [lipo, "-archs", str(bundle_executable)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=LIPO_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"lipo timed out after {exc.timeout}s")
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == "arm64"
 

@@ -89,10 +89,12 @@ code to diagnose -- the same empty-pipe failure mode
 case.
 """
 
+import atexit
 import faulthandler
 import gc
 import json
 import os
+import shutil
 import sqlite3
 import sys
 import tempfile
@@ -170,6 +172,14 @@ _library_roster = library_roster
 _create_library_ride = create_library_ride
 _running_ride_with_roster = running_ride_with_roster
 
+
+def _temp_dir(prefix: str) -> Path:
+    """Create a temp dir removed when the interpreter exits."""
+    path = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
 # E8.1.1 hermeticity: every scenario builds the app through
 # _build_app_window, which injects a per-process tmp settings file.
 # Each scenario runs in its OWN spawned interpreter, so a module-level
@@ -179,7 +189,7 @@ _running_ride_with_roster = running_ride_with_roster
 # VM clone, flipping appearance_unchanged on rerun). Scenarios that
 # need a specific file pass settings_path= explicitly and the helper
 # leaves it untouched.
-_SCENARIO_SETTINGS_PATH = Path(tempfile.mkdtemp(prefix="rc-scenario-settings-")) / "settings.json"
+_SCENARIO_SETTINGS_PATH = _temp_dir("rc-scenario-settings-") / "settings.json"
 
 
 def _build_app_window(**kwargs: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
@@ -530,36 +540,20 @@ def _close_without_prompt(frame: Any) -> None:  # noqa: ANN401 -- wx ships no st
     vetoable ``Close()`` at cleanup time -- what
     ``harness.close_window`` always does -- runs the very same
     ``_confirm_quit`` flow File ▸ Exit does on any platform but
-    macOS, and nothing in this child dismisses that dialog. Setting
-    ``really_quitting`` first makes ``_on_main_frame_close``'s own
+    macOS, and nothing in this child dismisses that dialog. The
+    prompt-free sequence that prevents it now lives once, as
+    :func:`harness.release_main_window`'s contract: ``really_quitting``
+    is set first so ``_on_main_frame_close``'s own
     ``not event.CanVeto() or context.app.really_quitting`` guard
-    destroy *frame* immediately instead, on every platform -- the
-    same guard :func:`_handle_exit_route`'s own forced close already
-    relies on. Every scenario that builds ``main_frame`` through
+    destroys *frame* immediately on every platform, then the two
+    app-level references the build wiring left behind (``main_frame``,
+    the ``wxEVT_QUERY_END_SESSION`` handler) are dropped -- the
+    SIP wrapper-cache rationale is that function's docstring. Every
+    scenario that builds ``main_frame`` through
     :func:`~rivercrossing.ui.app.build_main_window` uses this in its
     cleanup ``finally``, never before the behaviour under test runs.
-
-    Ends by breaking the two app-level Python references
-    ``build_main_window``'s wiring leaves behind once *frame*'s C++
-    object is gone: the ``app.main_frame`` attribute and the
-    ``wxEVT_QUERY_END_SESSION`` handler whose closure holds the route
-    context (and through it *frame* and its console). Both would
-    otherwise pin frame #1's wrappers -- and their SIP pointer->
-    wrapper map entries -- for the rest of the process, and a caller
-    that builds a second ``main_frame`` in the same process (the
-    E8.1 settings/zoom/hide-times relaunch scenarios) would find a
-    frame #2 control that lands on a recycled C++ address resolving
-    to frame #1's stale wrapper instead: the address-reuse poison
-    ``ui/views/_support.py``'s ``find_control`` documents. The
-    caller's own ``gc.collect()`` after this returns then deallocs
-    the released graph.
     """
-    app = wx.GetApp()
-    app.really_quitting = True
-    harness.close_window(frame)
-    if app.main_frame is frame:
-        app.main_frame = None
-    app.Unbind(wx.EVT_QUERY_END_SESSION)
+    harness.release_main_window(wx.GetApp(), frame)
 
 
 def _click_no_ride_button(button_name: str) -> None:
@@ -1587,9 +1581,7 @@ def _bundle_launch_open_crossing_exports_html() -> dict[str, Any]:
     found: dict[str, Any] = {}
     frame: Any = None
     store: Any = None
-    export_path = (
-        Path(tempfile.mkdtemp(prefix="rc-bundle-export-")) / "gorba-epic-2026-results.html"
-    )
+    export_path = _temp_dir("rc-bundle-export-") / "gorba-epic-2026-results.html"
     original_pick = app_module._pick_export_path
     original_offloop = app_module._run_export_offloop
     clock = _ScenarioClock(datetime(2026, 9, 20, 11, 0))  # noqa: DTZ001 -- fixed fake launch clock
@@ -1698,7 +1690,7 @@ def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
     whether that backup reopens with the ride and a clean integrity
     check, and whether the ride row is gone.
     """
-    db_path = Path(tempfile.mkdtemp(prefix="rc-delete-")) / "rides.db"
+    db_path = _temp_dir("rc-delete-") / "rides.db"
     boot = Store.open(db_path)
     try:
         config = RideConfig(

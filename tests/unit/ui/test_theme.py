@@ -163,6 +163,114 @@ def test_theme_controller_constructed_with_system_mode_applies_nothing() -> None
     assert fake.appearances == []
 
 
+# --- ThemeController: on_menu and the sys-colour re-apply -----------
+
+
+class _RecordingThemeApp:
+    """A wx.App double fixing every ``SetAppearance`` result."""
+
+    def __init__(self, result: object) -> None:
+        """Fix the result every ``SetAppearance`` call returns."""
+        self.result = result
+        self.appearances: list[object] = []
+
+    def SetAppearance(self, appearance: object) -> object:  # noqa: N802 -- wx.App's own name, the API theme.apply calls
+        """Record the appearance and return the fixed result."""
+        self.appearances.append(appearance)
+        return self.result
+
+
+ON_MENU_CASES = (
+    (
+        ids.MI_THEME_DARK,
+        theme.ThemeMode.DARK,
+        wx.PyApp.AppearanceResult.Ok,
+        wx.PyApp.Appearance.Dark,
+        None,
+    ),
+    (
+        ids.MI_THEME_LIGHT,
+        theme.ThemeMode.LIGHT,
+        wx.PyApp.AppearanceResult.CannotChange,
+        wx.PyApp.Appearance.Light,
+        "Theme change takes effect at next launch",
+    ),
+    (
+        ids.MI_THEME_SYSTEM,
+        theme.ThemeMode.SYSTEM,
+        wx.PyApp.AppearanceResult.Failure,
+        wx.PyApp.Appearance.System,
+        None,
+    ),
+)
+
+
+@pytest.mark.parametrize("case", ON_MENU_CASES)
+def test_theme_controller_on_menu_applies_the_mode_and_returns_its_notice(
+    case: tuple[str, theme.ThemeMode, object, object, str | None],
+) -> None:
+    """A View > Theme click applies the mode and words the result."""
+    item_id, expected_mode, result, expected_appearance, expected_notice = case
+    fake = _RecordingThemeApp(result)
+    controller = theme.ThemeController(fake)  # System construction: silent
+
+    notice = controller.on_menu(item_id)
+
+    assert controller.mode is expected_mode
+    assert fake.appearances == [expected_appearance]
+    assert notice == expected_notice
+
+
+class _RecordingEvent:
+    """A wx event double recording whether ``Skip()`` was called."""
+
+    def __init__(self) -> None:
+        """Start with Skip() not yet called."""
+        self.skipped = False
+
+    def Skip(self) -> None:  # noqa: N802 -- wx.Event's own API name, what the handler calls
+        """Record the Skip call."""
+        self.skipped = True
+
+
+def test_theme_controller_on_sys_colour_changed_reapplies_system_mode() -> None:
+    """System mode tracks the OS: a colour change re-applies it."""
+    fake = _RecordingThemeApp(wx.PyApp.AppearanceResult.Ok)
+    controller = theme.ThemeController(fake)
+    event = _RecordingEvent()
+
+    controller.on_sys_colour_changed(event)
+
+    assert fake.appearances == [wx.PyApp.Appearance.System]
+    assert event.skipped is True
+    assert controller._reapplying is False
+
+
+def test_theme_controller_on_sys_colour_changed_leaves_a_selected_mode_alone() -> None:
+    """A Light/Dark selection is not overwritten by an OS change."""
+    fake = _RecordingThemeApp(wx.PyApp.AppearanceResult.Ok)
+    controller = theme.ThemeController(fake, mode=theme.ThemeMode.DARK)
+    event = _RecordingEvent()
+
+    controller.on_sys_colour_changed(event)
+
+    assert fake.appearances == [wx.PyApp.Appearance.Dark]
+    assert event.skipped is True
+
+
+def test_theme_controller_on_sys_colour_changed_skips_a_reentrant_reapply() -> None:
+    """The ``_reapplying`` guard stops a reentrant re-apply loop."""
+    fake = _RecordingThemeApp(wx.PyApp.AppearanceResult.Ok)
+    controller = theme.ThemeController(fake)
+    controller._reapplying = True
+    event = _RecordingEvent()
+
+    controller.on_sys_colour_changed(event)
+
+    assert fake.appearances == []
+    assert event.skipped is True
+
+
 # --- apply: the E8.1.2 capability guard -----------------------------
 
 

@@ -13,7 +13,8 @@ worker, so it cannot absorb the corruption.
 
 This wrapper therefore re-runs the *files* that failed, each set in
 its own freshly spawned pytest process (same ``--no-cov -n auto
---dist loadfile`` flags), at most twice after the initial run.
+--dist loadfile`` flags), up to ``_MAX_RERUNS`` times after the
+initial run.
 Usage::
 
     python tools/functional_rerun.py pytest tests/functional \\
@@ -151,29 +152,35 @@ _RESULT_RE = re.compile(r"\b(?:PASSED|FAILED|RERUN|SKIPPED)\s+(tests/[\w./-]+\.p
 _TEARDOWN_RE = re.compile(r"\b(?:ERROR|FAILED) at (?:setup|teardown) of (\S+)")
 
 
-def stalled_file(text: str) -> str | None:
-    """Return the file of the last test started but never finished.
+def stalled_files(text: str) -> set[str]:
+    """Return the files of every test started but never finished.
 
-    A timed-out pass ends with the stalled test's bare start line and
-    no result line for it (measured on windows-latest CI: the suite
-    stalls in the last window-heavy file until the pass bound kills
-    it). Every bare start line whose node id also appears in a result
-    line is ruled out; the survivor -- the last one -- names the file
-    the fresh-process rerun must target. Returns ``None`` when every
-    started test produced a result, or nothing started.
+    A timed-out pass ends with started tests whose result lines never
+    arrived (measured on windows-latest CI: the suite stalls in the
+    last window-heavy files until the pass bound kills it). Every bare
+    start line names a started test, and every result line
+    (PASSED/FAILED/RERUN/SKIPPED) names a finished one, so the
+    started-but-unfinished tests are the start node ids minus the
+    result node ids, mapped to their files. Returns an empty set when
+    every started test produced a result, or nothing started.
+
+    Two residual edges remain. A hang whose start line the kill
+    truncation itself lost is invisible here and still escapes to the
+    whole-suite fallback. A test whose result line was cut mid-pipe
+    looks unfinished, so its file is re-run too; that false positive is
+    harmless, because a fresh-process rerun of a finished file is
+    green.
     """
-    started: str | None = None
+    started: set[str] = set()
     resulted: set[str] = set()
     for line in _ANSI_RE.sub("", text).splitlines():
         start = _START_RE.match(line)
         if start is not None:
-            started = start.group(1)
+            started.add(start.group(1))
             continue
         for match in _RESULT_RE.finditer(line):
             resulted.add(match.group(1))
-    if started is None or started in resulted:
-        return None
-    return started.partition("::")[0]
+    return {node.partition("::")[0] for node in started - resulted}
 
 
 def _spawn(
@@ -299,11 +306,11 @@ def _run_pass(command: list[str], runner: _Runner, label: str) -> tuple[int, set
             print(completed.stderr, end="", file=sys.stderr)
     files = parse_summary(f"{completed.stdout}{completed.stderr}")
     if completed.returncode == _TIMEOUT_RC:
-        stalled = stalled_file(f"{completed.stdout}{completed.stderr}")
-        if stalled is not None:
-            # The pass that timed out never evaluated this file's
-            # unfinished test; the fresh-process rerun must cover it.
-            files = set(files) | {stalled}
+        # The timed-out pass never evaluated these files' unfinished
+        # tests, so the fresh-process rerun must cover every one of
+        # them. An empty stalled set unions to nothing and the caller
+        # falls back to the whole suite, as before.
+        files = set(files) | stalled_files(f"{completed.stdout}{completed.stderr}")
     print(
         f"functional_rerun: {label}: exit {completed.returncode}, "
         f"{len(files)} failed file(s): {', '.join(sorted(files)) or 'none'}",
@@ -324,14 +331,14 @@ def rerun_failed_files(  # noqa: PLR0911 -- one return per pass outcome; each is
     spawned process, up to ``_MAX_RERUNS`` times, returning 0 on the
     first fully green pass. A timed-out pass (124) never prints that
     summary, so its file set comes from the streamed progress lines
-    (``parse_summary`` searches mid-line) plus the file of the last
-    started-but-unfinished test (``stalled_file``); those files are
+    (``parse_summary`` searches mid-line) plus the files of every
+    started-but-unfinished test (``stalled_files``); those files are
     re-run fresh the same way -- the one measured remedy for the
     process-granular wx/SIP wrapper-cache corruption the hang signals.
     When a pass's output cannot be mapped to re-runnable files -- no
-    FAILED/ERROR lines and no stalled test -- the whole suite is re-run
-    once in a fresh process, and that result is returned. Returns the
-    final pytest exit code.
+    FAILED/ERROR lines and no started-but-unfinished test -- the whole
+    suite is re-run once in a fresh process, and that result is
+    returned. Returns the final pytest exit code.
     """
     program, args = _program_and_args(command)
     initial_rc, initial_files = _run_pass(program + args, runner, "initial")

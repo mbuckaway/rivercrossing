@@ -27,10 +27,12 @@ from __future__ import annotations
 
 import string
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from hypothesis import given
 from hypothesis import strategies as st
 
+from rivercrossing import csvio
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, EntryType, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters.data_source import RiderRow
@@ -43,6 +45,9 @@ from rivercrossing.ui.presenters.riders import (
     _rider_rows,
     _team_choices,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 # tests/unit/fixtures/csv/ is test_csvio.py's own fixture home (its
 # module docstring); reused here rather than re-derived, per E3.4's
@@ -976,6 +981,59 @@ def test_on_pick_csv_import_given_a_clean_file_carries_no_warnings() -> None:
     assert preview.summary == "clean_pooled.csv → 9 riders · 2 teams · 0 conflicts"
     assert preview.conflicts == ()
     assert preview.warnings == ()
+
+
+def test_on_pick_csv_import_given_an_unreadable_file_shows_validation_and_disables_import(
+    tmp_path: Path,
+) -> None:
+    """A missing file surfaces through show_validation, never raises.
+
+    The picker's must-exist check cannot catch a file that vanishes
+    between the pick and the read (or one that is unreadable for
+    another reason), so ``csvio.preview``'s ``OSError`` must reach the
+    operator -- wx swallows an exception that escapes the presenter's
+    caller (EPIC3-SESSION-SUMMARY.md's measured note), leaving the
+    dialog open with nothing happening.
+    """
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    missing = tmp_path / "missing.csv"
+
+    presenter.on_pick_csv_import(missing)
+
+    validation = next(args for name, args in view.calls if name == "show_validation")
+    assert validation[0].startswith(f"Could not read {missing.name}: ")
+    assert view.calls[-1] == ("set_import_enabled", (False,))
+    assert presenter.on_confirm_csv_import() is False
+
+
+def test_on_pick_csv_import_given_a_preview_value_error_shows_validation_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A preview ``ValueError`` is surfaced, never raised.
+
+    ``csvio.preview`` reports content problems as conflicts, but a
+    decode/parse failure that still escapes it raises ``ValueError``;
+    the handler surfaces it through ``show_validation`` with Import
+    disabled, keeping the dialog open (wx swallows an exception that
+    escapes the presenter's caller -- EPIC3-SESSION-SUMMARY.md's
+    measured note).
+    """
+
+    def _preview_that_raises(_path: object, _ride: object) -> object:
+        raise ValueError("simulated parse failure")
+
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    monkeypatch.setattr(csvio, "preview", _preview_that_raises)
+    picked = tmp_path / "riders.csv"
+
+    presenter.on_pick_csv_import(picked)
+
+    validation = next(args for name, args in view.calls if name == "show_validation")
+    assert validation[0] == f"Could not read {picked.name}: simulated parse failure"
+    assert view.calls[-1] == ("set_import_enabled", (False,))
+    assert presenter.on_confirm_csv_import() is False
 
 
 # -------------------------------------------- confirming a csv import

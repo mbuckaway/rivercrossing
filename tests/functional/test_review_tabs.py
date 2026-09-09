@@ -16,7 +16,7 @@ read-only assertions afterwards. The two state-mutating seams
 so no test depends on another's page state.
 """
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import harness
@@ -45,7 +45,12 @@ from rivercrossing.ui.views.main_frame import (
 
 pytestmark = pytest.mark.functional
 
-_START = datetime(2026, 9, 20, 10, 0, tzinfo=datetime.UTC)
+# Notebook page changes apply in the notebook's own deferred pass;
+# this bound is the event-driven settle for page-visibility assertions
+# (mirrors the harness's other bounded settle loops).
+_PAGE_SWITCH_SETTLE_ATTEMPTS = 25
+
+_START = datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
 
 
 def _fixture_roster() -> Roster:
@@ -144,7 +149,7 @@ def review_console(xrc_resource: object) -> MainFrame:
         # from evicting (Addendum 2; test_console_demo's precedent).
         window = console.frame
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def _notebook(review_console: MainFrame) -> Any:  # noqa: ANN401 -- wx ships no stubs
@@ -182,9 +187,22 @@ def test_review_notebook_switching_to_riders_shows_only_that_page(
     notebook.SetSelection(1)
     harness.pump()
 
+    # Page flips are deferred on macOS: the notebook applies the
+    # selection in its own page-change pass, so one pump is not enough
+    # to hide the previous page. Settle until the flag list stops
+    # rendering on screen -- an idle drain per attempt (never a bare
+    # sleep; a bare SafeYield does not process the deferred idle work).
+    # IsShownOnScreen, not IsShown: macOS tab views keep a non-selected
+    # page's window flags set and hide it by clipping, so IsShown
+    # still reports True for its children (measured).
+    for _ in range(_PAGE_SWITCH_SETTLE_ATTEMPTS):
+        if not flagged_list.IsShownOnScreen():
+            break
+        harness.flush_deferred_deletions()
+
     assert notebook.GetSelection() == 1
-    assert riders_list.IsShown()
-    assert not flagged_list.IsShown()
+    assert riders_list.IsShownOnScreen()
+    assert not flagged_list.IsShownOnScreen()
 
 
 # --- the flagged tab ----------------------------------------------

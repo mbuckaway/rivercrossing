@@ -19,8 +19,6 @@ from xml.etree import ElementTree as ET
 
 import pytest
 
-pytestmark = pytest.mark.functional
-
 XRC_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" / "xrc"
 
 XRC_FILES = ("main.xrc", "setup.xrc")

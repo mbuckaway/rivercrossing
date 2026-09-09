@@ -13,11 +13,7 @@ pins its exact contract in isolation, with no window required.
 
 from unittest.mock import MagicMock, call
 
-import pytest
-
 from rivercrossing.ui.views import _support
-
-pytestmark = pytest.mark.functional
 
 
 def test_associate_model_associates_then_refreshes_then_updates() -> None:

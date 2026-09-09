@@ -244,26 +244,33 @@ def _build_mini_console(
     source = EngineDataSource(engine, roster)
 
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    console = MainFrame(window, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    console.focus_entry()
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        console.focus_entry()
 
-    context = app_module._RouteContext(
-        frame=window,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx.GetApp(),
-        theme_controller=theme.ThemeController(wx.GetApp()),
-        presenter=presenter,
-    )
-    app_module._bind_routes(context)
-    return window, console, presenter, engine, source, clock
+        context = app_module._RouteContext(
+            frame=window,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx.GetApp(),
+            theme_controller=theme.ThemeController(wx.GetApp()),
+            presenter=presenter,
+        )
+        app_module._bind_routes(context)
+    except BaseException:
+        # Fault A (the E7.2.2 leak): a wire-up raise after Show() must
+        # not leak the shown frame the caller's finally never sees.
+        harness.release_main_window(wx.GetApp(), window)
+        raise
+    else:
+        return window, console, presenter, engine, source, clock
 
 
 def _post_text_enter(control: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -444,12 +451,11 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
 
         console_module.FINISH_GATE = _recording_gate
         try:
-
-            def _click_finish_ok() -> None:
-                dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                harness.click(dialog, "wxID_OK")
-
-            wx.CallAfter(_click_finish_ok)
+            harness.dismiss_modal(
+                ids.FINISH_CONFIRM_DLG,
+                dismiss_with=wx.ID_OK,
+                drive=lambda dialog: harness.click(dialog, "wxID_OK"),
+            )
             harness.fire_menu_event(window, "mi_finish_ride")
         finally:
             console_module.FINISH_GATE = original_gate
@@ -474,7 +480,7 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
         assert actual == EXPECTED_STANDINGS
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)
 
 
 def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource: object) -> None:
@@ -496,12 +502,11 @@ def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource:
 
         console_module.FINISH_GATE = _recording_gate
         try:
-
-            def _click_finish_cancel() -> None:
-                dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                harness.click(dialog, "wxID_CANCEL")
-
-            wx.CallAfter(_click_finish_cancel)
+            harness.dismiss_modal(
+                ids.FINISH_CONFIRM_DLG,
+                dismiss_with=wx.ID_CANCEL,
+                drive=lambda dialog: harness.click(dialog, "wxID_CANCEL"),
+            )
             harness.fire_menu_event(window, "mi_finish_ride")
         finally:
             console_module.FINISH_GATE = original_gate
@@ -512,4 +517,4 @@ def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource:
         assert harness.find_control(window, ids.PLATE_INPUT).IsEnabled() is True
     finally:
         del console
-        harness.close_window(window)
+        harness.release_main_window(wx.GetApp(), window)

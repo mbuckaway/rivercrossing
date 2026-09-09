@@ -100,7 +100,9 @@ NO_RIDE_OPEN_LIBRARY_BTN = ids.OPEN_LIBRARY_BTN
 # MainLoop (the prompt's own wx.CallAfter), so a second probe closes
 # that window before the frame close ends the loop.
 _MAINLOOP_PROBE_SCRIPT = """
+import atexit
 import json
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -172,8 +174,11 @@ def _build_app_then_arm():
 wx.App.MainLoop = _mainloop_then_close
 app_module.build_app = _build_app_then_arm
 # A fresh db resumes no ride, so the ux-polish launch shows
-# no_ride_dlg; the armed probe answers it.
-db_path = Path(tempfile.mkdtemp(prefix="rc-main-probe-")) / "rides.db"
+# no_ride_dlg; the armed probe answers it. The scratch dir is
+# removed when this probe interpreter exits.
+_scratch_dir = Path(tempfile.mkdtemp(prefix="rc-main-probe-"))
+atexit.register(shutil.rmtree, _scratch_dir, ignore_errors=True)
+db_path = _scratch_dir / "rides.db"
 store = Store.open(db_path)
 store.close()
 _captured["exit_code"] = app_module.main(db_path)
@@ -192,7 +197,7 @@ def bound_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see do
     try:
         yield frame
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 @pytest.fixture(scope="module")
@@ -207,7 +212,7 @@ def firing_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see d
     try:
         yield frame
     finally:
-        harness.close_window(frame)
+        harness.release_main_window(wx_app, frame)
 
 
 def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -424,10 +429,25 @@ def _choose_no_ride_button(
     if dialog is not None and dialog.IsShown():
         observed["prompt_shown"] = True
         observed["prompt_title"] = dialog.GetTitle()
-        harness.click(dialog, button_name)
-        return
+        try:
+            harness.click(dialog, button_name)
+        except Exception:  # noqa: BLE001, S110 -- any probe failure must re-arm
+            # The click's own find can trip the address-reuse poison
+            # (a stale wrapper raising LookupError, or a dead C++
+            # object raising RuntimeError). Fall through to the timer
+            # re-arm; the modal loop dispatches timers.
+            pass
+        else:
+            return
     if attempts_left <= 0:
+        # Never leave the prompt open: a leaked modal hangs the
+        # caller's close path past the pass budget (measured --
+        # faulthandler dump, 2026-09-07). End it directly; the
+        # caller's assertion fails loudly on the missing dispatch.
         observed["prompt_shown"] = False
+        fresh = wx.Window.FindWindowByName(NO_RIDE_DLG)
+        if fresh is not None and fresh.IsShown():
+            fresh.EndModal(fresh.GetAffirmativeId())
         return
     wx.CallLater(
         _NO_RIDE_DRIVE_WAIT_MS,
@@ -455,15 +475,19 @@ def test_store_backed_bootstrap_with_no_ride_shows_the_no_ride_prompt_and_open_l
     observed: dict[str, object] = {}
     try:
 
-        def _dismiss_library() -> None:
-            library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
-            if library is not None and library.IsShown():
-                observed["library_shown"] = True
-                harness.click(library, pages.WX_ID_CLOSE)
+        def _dismiss_library(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+            observed["library_shown"] = True
+            harness.click(dialog, pages.WX_ID_CLOSE)
 
         wx.CallAfter(_choose_no_ride_button, NO_RIDE_OPEN_LIBRARY_BTN, observed)
         frame = app_module.build_main_window(wx_app, store=store)
-        wx.CallAfter(_dismiss_library)
+        harness.dismiss_modal(
+            ids.RIDE_LIBRARY_DLG,
+            dismiss_with=wx.ID_CANCEL,
+            drive=_dismiss_library,
+            wait_ms=_NO_RIDE_DRIVE_WAIT_MS,
+            attempts=_NO_RIDE_DRIVE_ATTEMPTS,
+        )
         harness.pump()
         assert observed == {
             "prompt_shown": True,
@@ -473,7 +497,7 @@ def test_store_backed_bootstrap_with_no_ride_shows_the_no_ride_prompt_and_open_l
     finally:
         store.close()
         if frame is not None:
-            harness.close_window(frame)
+            harness.release_main_window(wx_app, frame)
 
 
 def test_store_backed_bootstrap_no_ride_prompt_create_button_routes_to_ride_setup(
@@ -491,15 +515,19 @@ def test_store_backed_bootstrap_no_ride_prompt_create_button_routes_to_ride_setu
     observed: dict[str, object] = {}
     try:
 
-        def _dismiss_setup() -> None:
-            setup = wx.Window.FindWindowByName(ids.RIDE_SETUP_DLG)
-            if setup is not None and setup.IsShown():
-                observed["setup_shown"] = True
-                harness.click(setup, pages.WX_ID_CANCEL)
+        def _dismiss_setup(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+            observed["setup_shown"] = True
+            harness.click(dialog, pages.WX_ID_CANCEL)
 
         wx.CallAfter(_choose_no_ride_button, NO_RIDE_CREATE_BTN, observed)
         frame = app_module.build_main_window(wx_app, store=store)
-        wx.CallAfter(_dismiss_setup)
+        harness.dismiss_modal(
+            ids.RIDE_SETUP_DLG,
+            dismiss_with=wx.ID_CANCEL,
+            drive=_dismiss_setup,
+            wait_ms=_NO_RIDE_DRIVE_WAIT_MS,
+            attempts=_NO_RIDE_DRIVE_ATTEMPTS,
+        )
         harness.pump()
         assert observed == {
             "prompt_shown": True,
@@ -509,7 +537,7 @@ def test_store_backed_bootstrap_no_ride_prompt_create_button_routes_to_ride_setu
     finally:
         store.close()
         if frame is not None:
-            harness.close_window(frame)
+            harness.release_main_window(wx_app, frame)
 
 
 def test_void_card_route_targets_the_authored_dialog_not_the_sentinel() -> None:
@@ -626,6 +654,16 @@ def test_tick_timer_stops_when_the_frame_is_destroyed(xrc_resource: object) -> N
     wxTimerImpl::SendEvent against the freed owner (segfault,
     reproduced deterministically in a Tart clone). The fix stops the
     timer on EVT_DESTROY.
+
+    Loads through :func:`harness.load_window`, not
+    ``load_window_verified``: this test builds its own third
+    ``main_frame`` while the module-scoped ``bound_frame`` and
+    ``firing_frame`` fixtures (both legitimate ``main_frame``
+    top-levels) are still alive, so the verified loader's entry guard
+    would refuse the same name as a leak (Fault B / PR #45). Every
+    access here is scoped through ``console``/``window``, never a
+    name-based lookup, so the guard's shadow protection is not needed
+    and the un-guarded load is the correct tool.
     """
     from rivercrossing.ui.presenters.data_source import EmptyDataSource  # noqa: PLC0415
     from rivercrossing.ui.views.main_frame import MainFrame  # noqa: PLC0415
@@ -636,7 +674,7 @@ def test_tick_timer_stops_when_the_frame_is_destroyed(xrc_resource: object) -> N
         def tick(self) -> None:
             """No-op tick: the timer's only call at this scope."""
 
-    window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
+    window = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
     console = MainFrame(window, data_source=EmptyDataSource(), resource=xrc_resource)
     console.wire_console(_StubPresenter())  # type: ignore[arg-type]
     try:

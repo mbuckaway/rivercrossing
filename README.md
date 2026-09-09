@@ -17,10 +17,11 @@ lap length, duration, shoe composition, card cap and tie-break order are all per
 
 ## Status
 
-**EPIC 9 of 9 — v1.0.0.** The scoring engine (cards, hands, standings, ride) is wired into the running
+**v1.0.10 — all nine EPICs complete.** The scoring engine (cards, hands, standings, ride) is wired into the running
 app, every crossing persists to SQLite through the store, and results export as HTML, PDF and CSV.
 Corrections — edit, void, reassign, reopen — land in an append-only audit trail, and the macOS and
-Windows installers are built and smoke-tested.
+Windows installers are built and smoke-tested. The UX polish layer (start gate, console gauges,
+review tabs, editor reworks) shipped in 1.0.10.
 
 See [design/docs-md/project-plan.md](design/docs-md/project-plan.md) for the full nine-EPIC plan.
 

@@ -107,7 +107,12 @@ def finished_ride_view(xrc_resource: object) -> ResultsWindow:
     ride's stored ``tiebreak_order`` (the config default) seeds
     ``tiebreak_list``.
     """
-    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    # load_window, not load_window_verified: this second module-scoped
+    # results window coexists with the shared_results fixture's
+    # same-named ``results_frame`` (set up earlier in the module), so
+    # the verified loader's entry guard would refuse the coexistence
+    # (Fault B / PR #45); access is reference-scoped, never name-based.
+    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
         window.Show()
         window.Layout()
@@ -202,7 +207,10 @@ def test_results_window_given_a_different_source_shows_its_rows_not_the_demo(
                 )
             ]
 
-    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    # load_window, not load_window_verified: this test's own frame
+    # coexists with the module-scoped shared_results fixture's
+    # same-named window (Fault B / PR #45); access is reference-scoped.
+    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
         window.Show()
         harness.pump()
@@ -267,7 +275,10 @@ def test_results_window_show_standings_repaints_the_list_after_associating_its_m
     xrc_resource: object,
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
-    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    # load_window, not load_window_verified: this test's own frame
+    # coexists with the module-scoped shared_results fixture's
+    # same-named window (Fault B / PR #45); access is reference-scoped.
+    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
         window.Show()
         harness.pump()
@@ -332,7 +343,11 @@ def test_results_window_tie_rows_carry_the_warning_badge(xrc_resource: object) -
     the draw pair is passed as the Teams section, so the section
     header row precedes the two flagged rows.
     """
-    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    # load_window, not load_window_verified: this test's own frame
+    # coexists with the module-scoped shared_results/finished_ride_view
+    # fixtures' same-named windows (Fault B / PR #45); access is
+    # reference-scoped.
+    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
     try:
         window.Show()
         window.Layout()

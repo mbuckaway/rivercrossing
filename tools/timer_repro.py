@@ -15,11 +15,12 @@ import faulthandler
 import gc
 import sys
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import wx
 
 faulthandler.enable()
-
-import wx  # noqa: E402
 
 sys.path.insert(0, "tests/functional")
 import harness  # noqa: E402
@@ -40,6 +41,8 @@ def _build_frame(app: wx.App) -> Any:  # noqa: ANN401 -- wx ships no stubs
 
 def main() -> int:
     """Run the build/destroy/pump loop and report whether it crashed."""
+    import wx
+
     app = wx.App()
     crashes = 0
     for i in range(40):

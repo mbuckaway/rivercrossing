@@ -9,6 +9,7 @@ it goes out of scope and the interpreter then hangs at exit. Every
 functional test module in this directory shares the one instance.
 """
 
+import gc
 from functools import cache
 from typing import Any
 
@@ -16,6 +17,11 @@ import harness
 import pytest
 
 from rivercrossing.ui import require_wx
+
+# How many pump+flush+collect rounds the session-end Fault-A sweep
+# runs before asserting, so a mid-deletion frame (Close()/Destroy()
+# already done) gets reaped instead of false-failing the worker.
+_SWEEP_REAP_ATTEMPTS = 25
 
 
 @cache
@@ -80,9 +86,22 @@ def _assert_no_surviving_windows(wx_app: Any) -> Any:  # noqa: ANN401
     """
     yield wx_app
     wx = require_wx()
+    # Final reap before the assertion: a frame whose Close()/Destroy()
+    # ran cleanly can still be mid-deletion at session end (measured:
+    # closed=True, deletion pending past the close settle -- the
+    # faulthandler-era 2026-09-08 runs). Drive the deferred deletion
+    # to completion first; whatever genuinely survives the reap is a
+    # real leak and still fails the run.
+    for _ in range(_SWEEP_REAP_ATTEMPTS):
+        if not wx.GetTopLevelWindows():
+            break
+        harness.pump()
+        harness.flush_deferred_deletions()
+        gc.collect()
     survivors = wx.GetTopLevelWindows()
     assert not survivors, (
         f"functional session ended with {len(survivors)} top-level wx "
-        f"window(s) still alive: {[w.GetName() for w in survivors]!r} -- "
+        f"window(s) still alive: "
+        f"{[(w.GetName(), w.GetHandle()) for w in survivors]!r} -- "
         "a load+construct path leaked (Fault A); fix the leak, never waive it"
     )

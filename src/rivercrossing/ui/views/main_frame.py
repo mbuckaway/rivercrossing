@@ -72,6 +72,7 @@ __all__ = [
     "REMAINING_CLOCK_PANEL",
     "REOPENED_INFOBAR",
     "REQUIRED_CONTROLS",
+    "REQUIRED_CONTROL_CLASSES",
     "RESUME_INFOBAR",
     "REVIEW_NOTEBOOK",
     "RIDERS_COLUMN_LABELS",
@@ -331,6 +332,40 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.REVIEW_BTN,
     CONSOLE_RIDERS_LIST,
 )
+
+# The concrete wx class each REQUIRED_CONTROLS name must resolve to.
+# Transcribed verbatim from ``MainFrame.__init__``'s own
+# ``self._find(name, Class)`` calls below -- the one name->class
+# contract the app guard (``ui.app._load_frame_verified``) and the
+# harness's gate both read, so the guard can never demand a class the
+# ctor does not. Keep the keys in lockstep with REQUIRED_CONTROLS
+# (tests/unit/test_main_frame_guard.py pins both transcriptions).
+REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
+    ids.CROSSINGS_LIST: wx.dataview.DataViewCtrl,
+    ids.MAIN_SPLITTER: wx.SplitterWindow,
+    ids.PLATE_INPUT: wx.TextCtrl,
+    ids.RECORD_BTN: wx.Button,
+    ids.LAST_CROSSING_LBL: wx.StaticText,
+    ids.RIDE_NAME_LBL: wx.StaticText,
+    ids.RIDE_STATUS_LBL: wx.StaticText,
+    ids.CROSSINGS_COUNT_LBL: wx.StaticText,
+    ids.CARDS_COUNT_LBL: wx.StaticText,
+    ids.ON_COURSE_LBL: wx.StaticText,
+    ids.SHOE_LBL: wx.StaticText,
+    ids.START_BTN: wx.BitmapButton,
+    ids.ARM_STOP_CHK: wx.CheckBox,
+    ids.STOP_BTN: wx.BitmapButton,
+    ids.UNDO_BTN: wx.Button,
+    ELAPSED_CLOCK_PANEL: wx.Panel,
+    REMAINING_CLOCK_PANEL: wx.Panel,
+    RIDE_STATUS_PANEL: wx.Panel,
+    ids.CLOCK_ELAPSED_LBL: wx.StaticText,
+    ids.CLOCK_REMAINING_LBL: wx.StaticText,
+    REVIEW_NOTEBOOK: wx.Notebook,
+    ids.FLAGGED_LIST: wx.dataview.DataViewCtrl,
+    ids.REVIEW_BTN: wx.Button,
+    CONSOLE_RIDERS_LIST: wx.dataview.DataViewCtrl,
+}
 
 
 class MainFrame:

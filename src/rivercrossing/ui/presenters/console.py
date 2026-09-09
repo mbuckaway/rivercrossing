@@ -34,8 +34,8 @@ E4.4.1-E4.4.3 behavior (spec §10/§13, R-31/32/34/35/37):
   presenter's own monotonic clock seam (``now``), driven by ``tick``
   -- testable with a fake tick, no bare sleeps.
 - ``FINISH_GATE`` is the E6.4.3 hook: the finish flow consults it
-  before finishing; the stub returns True (green) until E6.4.3 wires
-  the real evaluator self-test.
+  before finishing; the gate runs the real evaluator self-test
+  (``hands.self_test()``) fresh on each finish.
 """
 
 from time import monotonic
@@ -75,8 +75,8 @@ def _finish_gate_clear() -> bool:
     return hands.self_test().passed
 
 
-# E6.4.3 wires the real evaluator self-test report here; until then a
-# stub returns True so the finish flow is green (task-briefs E4.4.2).
+# E6.4.3 hook: the gate runs the real evaluator self-test suite
+# (``hands.self_test()``) fresh on each finish (module docstring).
 FINISH_GATE: Callable[[], bool] = _finish_gate_clear
 
 

@@ -48,9 +48,13 @@ shared flow functions, the one place that route and
 explains why it is hosted there, not here).
 """
 
+import gc
 import os
 import re
+import sqlite3
+import sys
 import threading
+import traceback
 import webbrowser
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -90,7 +94,9 @@ from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataS
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from types import TracebackType
 
+    from rivercrossing.ride import Event
     from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
@@ -123,6 +129,11 @@ _VIEW_ROUTE_TARGET = "view_setting"
 # a temp rides.db (the packaged-app smoke stages one through it), with
 # an explicit ``main(db_path=...)`` argument taking precedence over it.
 _DB_PATH_ENV = "RIVERCROSSING_DB_PATH"
+
+# The per-user crash log's file name; it lives next to settings.json
+# (the same per-user config directory, E8.1.1) so both the operator
+# and a support session can find it in one place.
+_CRASH_LOG_NAME = "rivercrossing.log"
 
 
 @dataclass
@@ -344,24 +355,50 @@ def _fresh_xrc_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
     return resource
 
 
+# 25, mirroring ui.views._support.FIND_SETTLE_ATTEMPTS (and the
+# harness's own _FIND_SETTLE_ATTEMPTS): the same wx/SIP wrapper-cache
+# stale-lookup hazard _support.find_control settles applies to the app
+# gate's own name lookups too.
+_FIND_SETTLE_ATTEMPTS = 25
+
+
 def _missing_required_control(
     frame: Any,  # noqa: ANN401 -- wx ships no stubs; Any is honest
     required: tuple[str, ...],
+    classes: dict[str, type],
 ) -> str | None:
     """Return *required*'s first name that does not resolve in *frame*.
 
-    The verify step of :func:`_load_frame_verified`: a name
-    ``wx.Window.FindWindowByName`` (scoped to *frame*) cannot resolve
-    means XRC silently skipped a subtree during the load (the Fault-B
-    degraded-load class); ``None`` means the build is complete. No
-    settle loop -- yielding during verification is exactly the event
-    processing the degradation hides in (harness's own measured note).
+    The verify step of :func:`_load_frame_verified`. A name resolves
+    only when ``wx.Window.FindWindowByName(name, frame)`` answers an
+    instance of ``classes[name]`` -- the concrete class
+    ``MainFrame.__init__`` later ``_find``s. A ``None`` answer, or a
+    NON-None stale wrapper of the WRONG Python type (the wx/SIP
+    wrapper-cache corruption: an address reuse answers a stale wrapper
+    whose Python class is wrong for the live control), means XRC
+    silently skipped that control during the load (the Fault-B
+    degraded-load class) -- a degraded load is rebuilt, never
+    false-fasted. ``None`` (the return) means every required name
+    resolved to its expected class: the build is complete.
+
+    Each lookup settles the stale-lookup hazard with the bounded
+    ``del control; gc.collect()`` re-query idiom the harness's own gate
+    uses -- never a ``SafeYield``: yielding during verification is
+    exactly the event processing the degradation hides in.
     """
     require_wx()
     import wx  # noqa: PLC0415 -- deferred, see module docstring
 
     for name in required:
-        if wx.Window.FindWindowByName(name, frame) is None:
+        expected = classes[name]
+        control = wx.Window.FindWindowByName(name, frame)
+        attempts = 0
+        while not isinstance(control, expected) and attempts < _FIND_SETTLE_ATTEMPTS:
+            del control
+            gc.collect()
+            control = wx.Window.FindWindowByName(name, frame)
+            attempts += 1
+        if not isinstance(control, expected):
             return name
     return None
 
@@ -369,6 +406,7 @@ def _missing_required_control(
 def _load_frame_verified(
     resource: Any,  # noqa: ANN401 -- wx ships no stubs; Any is honest
     required: tuple[str, ...],
+    classes: dict[str, type],
 ) -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
     """Load ``main_frame`` from *resource* and verify *required*.
 
@@ -379,8 +417,11 @@ def _load_frame_verified(
     control ``MainFrame.__init__`` later needs -- which would otherwise
     surface as a bare ``LookupError`` from
     ``ui.views._support.find_control``. This verifies every name in
-    *required* resolves; a genuinely incomplete build is rebuilt ONCE
-    from a fresh private ``wx.xrc.XmlResource()`` (never the degraded
+    *required* resolves to the concrete class ``classes[name]`` the ctor
+    demands -- a name that cannot resolve to its expected control class
+    (a ``None`` answer or a NON-None stale wrong-typed wrapper) counts
+    as missing; a genuinely incomplete build is rebuilt ONCE from a
+    fresh private ``wx.xrc.XmlResource()`` (never the degraded
     singleton) and re-verified. The rebuild happens while the degraded
     frame is still alive -- mirroring the harness's ordering, so the
     rebuilt controls cannot land on the degraded frame's just-freed
@@ -396,7 +437,7 @@ def _load_frame_verified(
             ``ui.views._support.find_control`` uses.
     """
     frame = resource.LoadFrame(None, ids.MAIN_FRAME)
-    if _missing_required_control(frame, required) is None:
+    if _missing_required_control(frame, required, classes) is None:
         return frame
 
     fresh = _fresh_xrc_resource()
@@ -404,7 +445,7 @@ def _load_frame_verified(
     frame.Destroy()
     if rebuilt is None:
         raise LookupError(f"fresh XmlResource found no window named {ids.MAIN_FRAME!r} to rebuild")
-    missing = _missing_required_control(rebuilt, required)
+    missing = _missing_required_control(rebuilt, required, classes)
     if missing is not None:
         window_name = rebuilt.GetName()
         children = [child.GetName() for child in rebuilt.GetChildren()]
@@ -643,6 +684,12 @@ def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | 
     store module docstring's E5.3.2/E5.4.1 boundary resolution. The
     no-store library's rows are the E5.4.2 empty state (zero rows), so
     there is no ride name to match either way.
+
+    A refused delete (a locked database, an unwritable backup target)
+    surfaces as a status notice: the callback runs from the library's
+    delete-confirm handler, and an unguarded raise there is swallowed
+    by wx with zero signal (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records).
     """
     store = context.store
     if store is None:
@@ -651,7 +698,10 @@ def _library_delete_callback(context: _RouteContext) -> Callable[[str], None] | 
     def _delete(ride_name: str) -> None:
         for ride in store.rides():
             if ride.name == ride_name:
-                store.delete_ride(ride.id, ride_name)
+                try:
+                    store.delete_ride(ride.id, ride_name)
+                except (OSError, sqlite3.Error) as exc:
+                    context.frame.SetStatusText(f"Could not delete ride: {exc}")
                 return
 
     return _delete
@@ -691,7 +741,23 @@ class _StoreLibrarySource:
         ]
 
 
-def _wire_store_append(engine: RideEngine, store: Store, ride_id: int) -> None:
+def _status_notice(context: _RouteContext) -> Callable[[str], None]:
+    """Return a status-bar notice poster for *context*'s frame.
+
+    The store-write guards' ``notify`` seam: a lazy closure so the
+    frame is only touched when a failure actually posts (frame-less
+    test constructions stay safe on the success path).
+    """
+
+    def _post(text: str) -> None:
+        context.frame.SetStatusText(text)
+
+    return _post
+
+
+def _wire_store_append(  # noqa: PLR0913 -- (engine, store, ride_id) + the notice seam
+    engine: RideEngine, store: Store, ride_id: int, *, notify: Callable[[str], None]
+) -> None:
     """Persist every future engine event to *store* (E9.1.3).
 
     Attaches the store's append as the engine's event sink: from here
@@ -700,8 +766,31 @@ def _wire_store_append(engine: RideEngine, store: Store, ride_id: int) -> None:
     only after ``store.load_engine``'s replay completes, so the
     replayed tail is never re-persisted (the sink is off during
     replay; ``RideEngine.on_event`` docstring).
+
+    A refused append (a locked or unwritable database) is caught
+    inside the sink and surfaced through *notify* as
+    ``Could not save event: {exc}``: the sink runs inside the engine
+    mutation (``ride._append``), so an unguarded store error would
+    abort the mutation mid-way and the wx handler calling it would
+    swallow the raise with zero signal (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records) -- the in-memory ride
+    changed, the database did not, and nothing was said.
+
+    Args:
+        engine: The engine to attach the sink to.
+        store: The live Store the sink writes to.
+        ride_id: The ride every future event belongs to.
+        notify: Where a refused append's notice goes (the main
+            frame's status bar).
     """
-    engine.on_event = lambda event: store.append(ride_id, event)
+
+    def _append(event: Event) -> None:
+        try:
+            store.append(ride_id, event)
+        except (OSError, sqlite3.Error) as exc:
+            notify(f"Could not save event: {exc}")
+
+    engine.on_event = _append
 
 
 def _switch_console_to_ride(
@@ -725,7 +814,7 @@ def _switch_console_to_ride(
         return
     roster = store.roster_for(ride_id)
     engine = store.load_engine(ride_id, roster, clock=clock)
-    _wire_store_append(engine, store, ride_id)
+    _wire_store_append(engine, store, ride_id, notify=_status_notice(context))
     source = EngineDataSource(engine, roster)
     presenter = ConsolePresenter(context.console_view, engine=engine, source=source)
     context.console_view.set_presenter(presenter)
@@ -760,13 +849,28 @@ def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
     Args:
         context: The route context whose store/roster to act on.
         config: The committed ride configuration.
+
+    A refused store write (a locked or unwritable database) surfaces
+    as a status notice and leaves the console where it is: this runs
+    inside the setup dialog's submit handler, and an unguarded raise
+    there is swallowed by wx with zero signal (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records) -- the operator would
+    believe the ride was created.
     """
     store = context.store
     if store is None:
         return
-    ride_id = store.create_ride(config)
-    store.save_roster(ride_id, context.roster)
-    store.set_active_ride(ride_id)
+    try:
+        ride_id = store.create_ride(config)
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not create ride: {exc}")
+        return
+    try:
+        store.save_roster(ride_id, context.roster)
+        store.set_active_ride(ride_id)
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not save riders: {exc}")
+        return
     require_wx().CallAfter(_switch_console_to_ride, context, ride_id)
 
 
@@ -790,7 +894,10 @@ def _live_library_callbacks(
     - **Duplicate** shows the ride's name in the E5.4.1 mock-first
       confirm and, on OK, calls ``Store.duplicate_ride`` -- the view
       refreshes its own rows afterwards, so the new DRAFT ride
-      appears immediately (R-15).
+      appears immediately (R-15). A refused duplicate surfaces as a
+      status notice: an unguarded raise from this button callback is
+      swallowed by wx with zero signal (the measured note
+      ``docs/EPIC3-SESSION-SUMMARY.md`` records).
 
     ``window`` is the live ``ride_library_dlg``, used to end the
     modal for Open/New. ``store`` is the live Store the callbacks
@@ -813,7 +920,10 @@ def _live_library_callbacks(
     def _duplicate(selected: RideSummary) -> None:
         if selected.ride_id is None:
             return
-        store.duplicate_ride(selected.ride_id)
+        try:
+            store.duplicate_ride(selected.ride_id)
+        except (OSError, sqlite3.Error) as exc:
+            context.frame.SetStatusText(f"Could not duplicate ride: {exc}")
 
     return _open, _new, _duplicate
 
@@ -834,7 +944,14 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
     (``_check_loaded_zoom_radio``).
     """
     zoom_changed = settings.zoom_percent != context.settings.zoom_percent
-    settings_store.save_settings(settings, context.settings_path)
+    try:
+        settings_store.save_settings(settings, context.settings_path)
+    except OSError as exc:
+        # A failed settings write is a notice, not a crash: this runs
+        # inside the dialog's OK handler, and an unguarded raise there
+        # is swallowed by wx with zero signal -- the operator would
+        # believe the choice was saved.
+        context.frame.SetStatusText(f"Could not save settings: {exc}")
     context.settings = settings
     mode = theme.ThemeMode(settings.appearance)
     notice = context.theme_controller.on_menu(theme.menu_item_id_for(mode))
@@ -849,6 +966,37 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
         presenter.on_hide_times(hide=settings.hide_times)
     if zoom_changed:
         zoom.set_percent(settings.zoom_percent)
+
+
+def _save_layout_settings(
+    context: _RouteContext,
+    sash: int | None,
+    geometry: tuple[int, int, int, int] | None,
+) -> None:
+    """Persist *sash*/*geometry*; keep the context current.
+
+    The app bootstrap wires this as ``MainFrame``'s own
+    ``on_layout_changed`` callback (E8.1.1): ``persist_layout`` fires
+    it from the sash, move/size and close handlers. A refused write
+    surfaces as a status notice instead of an unguarded raise out of
+    those wx handlers, which wx swallows with zero signal -- and from
+    the close handler would stall ``event.Skip()``, leaving the
+    window unable to quit (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+
+    Args:
+        context: The route context whose settings to advance.
+        sash: The splitter sash position to persist.
+        geometry: The frame placement ``(x, y, width, height)`` to
+            persist.
+    """
+    updated = replace(context.settings, splitter_sash=sash, window_geometry=geometry)
+    try:
+        settings_store.save_settings(updated, context.settings_path)
+    except OSError as exc:
+        context.frame.SetStatusText(f"Could not save settings: {exc}")
+        return
+    context.settings = updated
 
 
 def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target; each binds a different view class
@@ -1114,13 +1262,25 @@ def _handle_import_csv(context: _RouteContext) -> None:
     roster and typed plates would be rejected as unknown. With no
     store-backed ride open the import keeps its bootstrap in-memory
     behavior.
+
+    A refused roster save (a locked or unwritable database) surfaces
+    as a status notice and the console is NOT rebuilt: this runs
+    inside a wx menu handler, and an unguarded raise there is
+    swallowed with zero signal (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records) -- worst case the
+    operator is told the import succeeded while the roster silently
+    stayed unpersisted.
     """
     from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
 
     committed = rider_editor.run_csv_import_flow(context.frame, context.roster)
     store = context.store
     if committed and store is not None and context.active_ride_id is not None:
-        store.save_roster(context.active_ride_id, context.roster)
+        try:
+            store.save_roster(context.active_ride_id, context.roster)
+        except (OSError, sqlite3.Error) as exc:
+            context.frame.SetStatusText(f"Could not save riders: {exc}")
+            return
         presenter = context.presenter
         # Carry the live engine's clock across the rebuild: a scripted
         # (injected) clock must survive, or every typed lap after the
@@ -1134,11 +1294,19 @@ def _handle_export_csv(context: _RouteContext) -> None:
 
     No window opens for this ``COMMAND`` row (spec.md §15's own
     "OS-native ... dialog, no app window") -- a cancelled picker is a
-    silent no-op, the same shape :func:`_handle_import_csv` uses.
+    silent no-op, the same shape :func:`_handle_import_csv` uses. A
+    failed write surfaces on the status bar through the flow's
+    ``on_error`` seam (``Export failed: {exc}``), the same notice
+    idiom :func:`_handle_backup_database` uses -- never an unguarded
+    raise into the wx menu handler, which swallows it.
     """
     from rivercrossing.ui.views import rider_editor  # noqa: PLC0415
 
-    path = rider_editor.run_csv_export_flow(context.frame, context.roster)
+    path = rider_editor.run_csv_export_flow(
+        context.frame,
+        context.roster,
+        on_error=context.frame.SetStatusText,
+    )
     if path is not None:
         context.frame.SetStatusText(f"Exported {path.name}")
 
@@ -1149,14 +1317,22 @@ def _handle_check_rider_issues(context: _RouteContext) -> None:
     A conversion made inside the dialog mutates the shared in-memory
     roster; persist + rebuild after the modal ends, exactly like a CSV
     import (persist first, then ``_switch_console_to_ride`` with the
-    live clock), so a converted team-of-one survives a relaunch.
+    live clock), so a converted team-of-one survives a relaunch. A
+    refused roster save surfaces as a status notice and skips the
+    rebuild -- the same guard :func:`_handle_import_csv` uses, for
+    the same wx-swallowed-raise reason (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records).
     """
     from rivercrossing.ui.views import rider_issues  # noqa: PLC0415
 
     changed = rider_issues.run_rider_issues_flow(context.frame, context.roster)
     store = context.store
     if changed and store is not None and context.active_ride_id is not None:
-        store.save_roster(context.active_ride_id, context.roster)
+        try:
+            store.save_roster(context.active_ride_id, context.roster)
+        except (OSError, sqlite3.Error) as exc:
+            context.frame.SetStatusText(f"Could not save riders: {exc}")
+            return
         presenter = context.presenter
         clock = presenter.engine.clock if presenter is not None else None
         _switch_console_to_ride(context, context.active_ride_id, clock=clock)
@@ -1494,8 +1670,9 @@ def _handle_finish_route(context: _RouteContext) -> None:
     :func:`~rivercrossing.ui.views.dialogs.run_dialog` -- the one seam
     every dialog in this codebase shows through -- and only a confirmed
     ``wx.ID_OK`` fires the live console presenter's ``on_finish``,
-    which consults ``FINISH_GATE`` and calls ``engine.finish()`` (the
-    E6.4.3 gate hook stays the stub until then). Mirrors the
+    which consults ``FINISH_GATE`` -- the hook that runs the
+    evaluator's real self-test suite -- and calls ``engine.finish()``.
+    Mirrors the
     ``undo_last_crossing`` route's presenter-first shape: with no live
     presenter threaded (route-level tests), a notice stands in for the
     action after a confirmed dialog.
@@ -1592,7 +1769,10 @@ def _handle_duplicate_ride_route(context: _RouteContext) -> None:
     ride the library Open or the resume flow loaded). R-15: the copy
     is setup + roster, no timing data. Without a store-backed open
     ride there is nothing to duplicate, and the confirm's OK posts a
-    notice instead of inventing a ride.
+    notice instead of inventing a ride. A refused duplicate (a locked
+    or unwritable database) surfaces as a status notice: an unguarded
+    raise from this wx menu handler is swallowed with zero signal
+    (the measured note ``docs/EPIC3-SESSION-SUMMARY.md`` records).
     """
     ride_id = context.active_ride_id
     if ride_id is None:
@@ -1615,7 +1795,11 @@ def _handle_duplicate_ride_route(context: _RouteContext) -> None:
     )
     if not confirmed:
         return
-    copy_id = store.duplicate_ride(ride_id)
+    try:
+        copy_id = store.duplicate_ride(ride_id)
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not duplicate ride: {exc}")
+        return
     copy_name = next(
         (ride.name for ride in store.rides() if ride.id == copy_id),
         "a new ride",
@@ -2196,9 +2380,10 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     presenter and never reach this path; the DRAFT/"The ride"
     fallbacks mirror the finish route's own presenter-less stub.
 
-    A confirmed ``QuitOutcome.QUIT`` closes the live session through
-    *context*.store (E5.2.1: stamp ``closed_at`` so the next launch
-    reads a clean quit, not a crash); a ``QuitOutcome.FINISH_FIRST``
+    A confirmed ``QuitOutcome.QUIT`` stamps the open session's
+    ``closed_at`` through :func:`_stamp_closed_session` (E5.2.1: a
+    clean quit, not a crash, at the next launch); a
+    ``QuitOutcome.FINISH_FIRST``
     hands off to the E4.4.4 finish flow -- :func:`_handle_finish_route`
     -- which shows ``finish_confirm_dlg`` and, on OK, runs the live
     console presenter's ``on_finish`` (E5.2.3 replaces the old stub
@@ -2241,12 +2426,30 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
 
     outcome = quit_flow.outcome_for(result, ok_id=wx.ID_OK, finish_first_id=finish_first_id)
     if outcome is quit_flow.QuitOutcome.QUIT:
-        store = context.store
-        if store is not None:
-            store.close_session()
+        _stamp_closed_session(context)
     elif outcome is quit_flow.QuitOutcome.FINISH_FIRST:
         _handle_finish_route(context)
     return outcome
+
+
+def _stamp_closed_session(context: _RouteContext) -> None:
+    """Stamp the open session's ``closed_at`` (R-52); surface failures.
+
+    A clean quit writes ``closed_at`` so the next launch reads a clean
+    quit, not a crash. With no store open there is nothing to stamp.
+    A refused write (a locked or unwritable database) surfaces as a
+    status notice: this runs inside the quit flow's wx handlers, and
+    an unguarded raise there is swallowed with zero signal (the
+    measured note ``docs/EPIC3-SESSION-SUMMARY.md`` records) -- the
+    next launch would then wrongly report a crash.
+    """
+    store = context.store
+    if store is None:
+        return
+    try:
+        store.close_session()
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not close session: {exc}")
 
 
 def _handle_exit_route(context: _RouteContext) -> None:
@@ -2668,7 +2871,7 @@ def _resume_console_engine(
             engine = store.load_engine(ride_id, roster, clock=clock)
             # E9.1.3: after replay, every live event the resumed
             # engine records persists to the store.
-            _wire_store_append(engine, store, ride_id)
+            _wire_store_append(engine, store, ride_id, notify=_status_notice(context))
             return engine, EngineDataSource(engine, roster)
     finally:
         if not dialog.IsBeingDeleted():
@@ -2833,6 +3036,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     """
     from rivercrossing.ui.views import MainFrame  # noqa: PLC0415 -- deferred, see module docstring
     from rivercrossing.ui.views.main_frame import (  # noqa: PLC0415 -- deferred, see module docstring
+        REQUIRED_CONTROL_CLASSES,
         REQUIRED_CONTROLS,
     )
 
@@ -2840,16 +3044,21 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     # below reads the same loaded object, and the layout save callback
     # writes back through the same path.
     settings_path = settings_path if settings_path is not None else settings_store.default_path()
+    # The crash log follows the launch's real settings file (E8.1.1's
+    # directory), including a temp path injected by the test suites.
+    app.crash_log_path = Path(settings_path).with_name(_CRASH_LOG_NAME)
     loaded_settings = settings_store.load_settings(settings_path)
     loaded_mode = theme.ThemeMode(loaded_settings.appearance)
 
     resource = _load_xrc_resources()
 
     # Fault-B (degraded-XRC-load) guard: verify every control
-    # MainFrame.__init__ needs actually resolved, and rebuild once from
-    # a fresh private XmlResource if the singleton skipped a subtree;
-    # the frame and resource used downstream are the verified ones.
-    frame = _load_frame_verified(resource, REQUIRED_CONTROLS)
+    # MainFrame.__init__ needs actually resolved to its concrete class,
+    # and rebuild once from a fresh private XmlResource if the singleton
+    # skipped a subtree (or a stale wrong-typed wrapper poisoned the
+    # lookup); the frame and resource used downstream are the verified
+    # ones.
+    frame = _load_frame_verified(resource, REQUIRED_CONTROLS, REQUIRED_CONTROL_CLASSES)
     menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
     _check_default_menu_radios(menubar)
@@ -2893,9 +3102,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
 
     def _save_layout(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
         """Persist the console's layout and keep the context current."""
-        updated = replace(context.settings, splitter_sash=sash, window_geometry=geometry)
-        settings_store.save_settings(updated, settings_path)
-        context.settings = updated
+        _save_layout_settings(context, sash, geometry)
 
     _console = MainFrame(
         frame,
@@ -2964,6 +3171,60 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     return frame
 
 
+def _append_exception_log(  # noqa: PLR0913, PLR0917 -- (type, value, traceback) is sys.excepthook's own triple, plus the target path
+    path: Path,
+    exc_type: type[BaseException],
+    exc_value: BaseException,
+    exc_tb: TracebackType | None,
+) -> Path:
+    """Append *exc*'s formatted traceback to the crash log at *path*.
+
+    The one writer the app's uncaught-exception handler and the
+    bootstrap hook use. A failed write (an unwritable log directory,
+    a full disk) is swallowed: crash logging must never replace the
+    original error with a second exception raised from inside
+    ``sys.excepthook`` -- the caller still surfaces its own notice.
+
+    Returns:
+        *path*.
+    """
+    header = f"\n===== {datetime.now(UTC).isoformat(timespec='seconds')} =====\n"
+    payload = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+    try:
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(header + payload)
+    except OSError:
+        # A crash log that cannot be written must not crash the app
+        # a second time from inside sys.excepthook.
+        return path
+    return path
+
+
+def _install_crash_excepthook(app: Any) -> None:  # noqa: ANN401 -- the live wx.App
+    """Route unhandled exceptions to *app*'s crash-log handler.
+
+    wxPython 4.3.1 swallows a Python exception that escapes an event
+    handler only after routing it through ``sys.excepthook``
+    (measured: the main loop calls ``PyErr_Print``, and an
+    ``OnExceptionInMainLoop`` override is never dispatched), so this
+    hook is the one seam that sees both the pre-MainLoop bootstrap
+    path and the handler exceptions the loop swallows. The windowed
+    bundle has no console to show the default hook's stderr traceback,
+    so the app's own handler takes its place: full traceback to the
+    per-user crash log next to the settings file, plus a one-line
+    status notice (:func:`main` installs this before the bootstrap).
+    """
+
+    def _hook(
+        exc_type: type[BaseException], exc_value: BaseException, exc_tb: TracebackType | None
+    ) -> None:
+        app._handle_uncaught_exception(  # noqa: SLF001 -- the app seam this hook exists to call
+            exc_type, exc_value, exc_tb
+        )
+
+    sys.excepthook = _hook
+
+
 def _build_app_class() -> type[Any]:
     """Build the ``wx.App`` subclass Dock-reopen and quit need.
 
@@ -2990,11 +3251,18 @@ def _build_app_class() -> type[Any]:
         :func:`build_main_window`/:func:`_handle_exit_route`/
         :func:`_on_main_frame_close`/:func:`_on_query_end_session`
         once they exist; both default here so every attribute access
-        is safe even before then.
+        is safe even before then. ``crash_log_path`` (the
+        :meth:`_handle_uncaught_exception` writer's target) defaults
+        to the per-user config directory and is re-pointed at the
+        launch's actual settings_path by :func:`build_main_window`.
         """
 
         main_frame: Any = None
         really_quitting: bool = False
+        # The per-user crash log, next to the settings file (E8.1.1's
+        # directory); ``build_main_window`` re-points this at the
+        # launch's actual settings_path when one is injected.
+        crash_log_path: Path = settings_store.default_path().with_name(_CRASH_LOG_NAME)
 
         def MacReopenApp(self) -> None:  # noqa: N802 -- wx's own override name
             """Show and raise the hidden main frame (P8-D2).
@@ -3009,6 +3277,31 @@ def _build_app_class() -> type[Any]:
             if self.main_frame is not None:
                 self.main_frame.Show()
                 self.main_frame.Raise()
+
+        def _handle_uncaught_exception(
+            self,
+            exc_type: type[BaseException],
+            exc_value: BaseException,
+            exc_tb: TracebackType | None,
+        ) -> None:
+            """Log an uncaught exception; show a one-line notice.
+
+            The target of :func:`_install_crash_excepthook` (the
+            ``sys.excepthook`` :func:`main` installs): wxPython 4.3.1
+            swallows a Python exception that escapes an event handler
+            only after routing it through ``sys.excepthook``, so this
+            handler covers both the pre-MainLoop bootstrap path and
+            the main-loop exceptions that would otherwise vanish with
+            zero signal in the windowed bundle (the measured note
+            ``docs/EPIC3-SESSION-SUMMARY.md`` records). Writes the
+            full traceback to :attr:`crash_log_path` and posts a
+            one-line notice on the status bar when a frame exists.
+            """
+            _append_exception_log(self.crash_log_path, exc_type, exc_value, exc_tb)
+            if self.main_frame is not None:
+                self.main_frame.SetStatusText(
+                    f"An unexpected error occurred — see {self.crash_log_path.name} for details"
+                )
 
     return RiverCrossingApp
 
@@ -3102,6 +3395,9 @@ def main(db_path: Path | None = None) -> int:
     """
     wx = require_wx()
     app = build_app()  # bound for this whole call -- an unbound App is collected immediately
+    # Route unhandled exceptions (bootstrap and main-loop alike) to
+    # the per-user crash log before anything can raise.
+    _install_crash_excepthook(app)
     wx.Log.SetActiveTarget(wx.LogStderr())  # see module docstring: the exit-time modal hang
 
     frame, store = _bootstrap_window(app, db_path=_resolve_db_path(db_path))

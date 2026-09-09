@@ -59,10 +59,14 @@ def test_ride_module_import_does_not_load_wx() -> None:
         "import rivercrossing.ride\n"
         "assert 'wx' not in sys.modules, 'wx leaked into rivercrossing.ride'\n"
     )
-    result = subprocess.run(  # noqa: S603
-        [sys.executable, "-c", probe],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(f"rivercrossing.ride import probe timed out after {exc.timeout}s")
     assert result.returncode == 0, result.stderr

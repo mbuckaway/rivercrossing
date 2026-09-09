@@ -283,6 +283,24 @@ def _insert_session(conn: sqlite3.Connection, active_ride_id: int | None) -> Non
         conn.execute(_INSERT_SESSION_SQL, (now, active_ride_id))
 
 
+def _require_rowid(cursor: sqlite3.Cursor) -> int:
+    """Return *cursor*'s last insert row id after a single-row INSERT.
+
+    A single INSERT on an INTEGER PRIMARY KEY always sets
+    ``lastrowid``; the ``None`` branch only exists to narrow
+    typeshed's ``int | None`` back to ``int``.
+    """
+    # logic-coverage-exempt: T-3 -- unreachable by construction. A
+    # single INSERT on an INTEGER PRIMARY KEY always sets lastrowid.
+    # Reaching the None branch would require mocking sqlite3, which
+    # this task's test contract forbids; the guard only narrows
+    # typeshed's int | None.
+    rowid = cursor.lastrowid
+    if rowid is None:
+        raise RuntimeError("INSERT returned no rowid")
+    return rowid
+
+
 def _to_epoch(value: datetime) -> int:
     """Convert one datetime to UTC epoch seconds.
 
@@ -792,14 +810,7 @@ class Store:
                         entry.logo_png,
                     ),
                 )
-                entry_id = cursor.lastrowid
-                if entry_id is None:
-                    # logic-coverage-exempt: T-3 -- unreachable by
-                    # construction, the same lastrowid narrowing as
-                    # create_ride: a single INSERT on an INTEGER PRIMARY
-                    # KEY always sets it, and this task's test contract
-                    # forbids mocking sqlite3.
-                    raise RuntimeError("INSERT returned no rowid")
+                entry_id = _require_rowid(cursor)
                 for rider in entry.riders:
                     self._conn.execute(
                         "INSERT INTO rider"
@@ -867,15 +878,7 @@ class Store:
         )
         with self._conn:
             cursor = self._conn.execute(_INSERT_RIDE_SQL, params)
-        rowid = cursor.lastrowid
-        if rowid is None:
-            # logic-coverage-exempt: T-3 -- unreachable by construction.
-            # A single INSERT on an INTEGER PRIMARY KEY always sets
-            # lastrowid; reaching this branch would require mocking
-            # sqlite3, which this task's test contract forbids. The
-            # guard exists only to narrow typeshed's `int | None`.
-            raise RuntimeError("INSERT returned no rowid")
-        return rowid
+        return _require_rowid(cursor)
 
     def rides(self) -> list[RideRow]:
         """Return all ride summaries, oldest first by creation.
@@ -1214,12 +1217,7 @@ class Store:
         )
         with self._conn:
             cursor = self._conn.execute(_INSERT_RIDE_SQL, params)
-            new_id = cursor.lastrowid
-            if new_id is None:
-                # logic-coverage-exempt: T-3 -- unreachable by
-                # construction, the same lastrowid narrowing as
-                # create_ride (module docstring's delete-order note).
-                raise RuntimeError("INSERT returned no rowid")
+            new_id = _require_rowid(cursor)
             for source_entry in self._conn.execute(
                 "SELECT id, plate, display_name, type, team_size, status, notes,"
                 " logo_card, logo_png FROM entry WHERE ride_id = ? ORDER BY id",
@@ -1242,11 +1240,7 @@ class Store:
                         source_entry["logo_png"],
                     ),
                 )
-                new_entry_id = entry_cursor.lastrowid
-                if new_entry_id is None:
-                    # logic-coverage-exempt: T-3 -- unreachable by
-                    # construction (lastrowid narrowing, as above).
-                    raise RuntimeError("INSERT returned no rowid")
+                new_entry_id = _require_rowid(entry_cursor)
                 for rider in self._conn.execute(
                     "SELECT first_name, last_name, plate, sort_order FROM rider"
                     " WHERE entry_id = ? ORDER BY sort_order, id",
