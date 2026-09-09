@@ -143,7 +143,7 @@ def empty_console(xrc_resource: object) -> MainFrame:
         harness.pump()
         roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
         _engine, source = app_module._build_console_engine(roster)
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         yield console
     finally:
         del console
@@ -206,7 +206,7 @@ def test_main_frame_given_a_fresh_engine_shows_an_empty_feed(
         window.Show()
         window.Layout()
         harness.pump()
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)

@@ -1856,55 +1856,14 @@ def _handle_reopen_ride_route(context: _RouteContext) -> None:
 # Ride ▸ Stop Ride… and Ride ▸ Set Start Time… were the final
 # dead-control audit's two remaining dead menu items: their DIALOG
 # targets opened through _open_target's generic path, so the dialog
-# appeared and a confirmed OK did nothing. Each now has a real
-# handler, dispatched by its dialog target in _make_route_handler via
-# _LIVE_FLOW_HANDLERS (the same target-keyed shape the E5.4.1 ride
-# confirms use): stop runs the identical confirm -> on_stop_confirmed
-# flow the console Stop button runs (R-35), set-start runs the
-# set_start_dlg form through views.corrections and applies
-# engine.set_start_time (spec §3 3d's gun-missed correction).
-
-
-def _handle_stop_ride_route(context: _RouteContext) -> None:
-    """Ride ▸ Stop Ride…: confirm, then the presenter stops (R-35).
-
-    ux-polish wires the dead row: the route opens ``stop_confirm_dlg``
-    and, on a confirmed ``wx.ID_OK``, fires the live presenter's
-    ``on_stop_confirmed`` -- the identical flow the console Stop
-    button runs through :meth:`~rivercrossing.ui.views.main_frame.
-    MainFrame._on_stop_clicked`, so the menu row and the button cannot
-    drift. The menu row carries no Arm requirement of its own (§15:
-    "Stop confirm dialog (console button additionally requires the
-    Arm checkbox)"). With no live presenter (route-level tests) a
-    notice stands in after a confirmed dialog, mirroring the reopen
-    route's presenter-less stub.
-    """
-    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
-
-    wx = require_wx()
-    # logic-coverage-exempt: T-3 -- the two defensive arms (a resource
-    # without the dialog; a route context without a live presenter)
-    # are unreachable in every live construction, mirroring the
-    # stop-confirm guards in main_frame.py. The cancel arm below IS
-    # driven functionally (test_menu_coverage's stop-cancel case).
-    dialog = context.resource.LoadDialog(None, ids.STOP_CONFIRM_DLG)
-    if dialog is None:
-        label = commands.route_for_id("mi_stop_ride").label
-        context.frame.SetStatusText(f"{label} — no dialog authored yet")
-        return
-    try:
-        result = dialogs.run_dialog(dialog, opener=context.frame)
-    finally:
-        if not dialog.IsBeingDeleted():
-            dialog.Destroy()
-    if result != wx.ID_OK:
-        return
-    presenter = context.presenter
-    if presenter is None:
-        label = commands.route_for_id("mi_stop_ride").label
-        context.frame.SetStatusText(f"{label} — not yet implemented")
-        return
-    presenter.on_stop_confirmed()
+# appeared and a confirmed OK did nothing. Stop Ride… now reaches the
+# live presenter's native stop-confirm flow through the "stop_ride"
+# COMMAND target (W5 -- see _make_route_handler), and set-start runs
+# the set_start_dlg form through views.corrections and applies
+# engine.set_start_time (spec §3 3d's gun-missed correction). The
+# XRC stop_confirm_dlg retired with W5's native confirm; set-start
+# keeps its XRC form and dispatches by target through
+# _LIVE_FLOW_HANDLERS below.
 
 
 def _handle_set_start_time_route(context: _RouteContext) -> None:
@@ -2572,14 +2531,13 @@ _RIDE_CONFIRM_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
     ids.REOPEN_RIDE_DLG: _handle_reopen_ride_route,
 }
 
-# ux-polish: the two Ride ▸ rows the final dead-control audit found
-# (their DIALOG targets opened generically and a confirmed OK did
-# nothing) now dispatch by target the same way the E5.4.1 confirms
-# above do: mi_stop_ride -> the confirm -> on_stop_confirmed flow the
-# console Stop button runs (R-35), mi_set_start_time -> the
-# set_start_dlg form + engine back-date (spec §3, 3d).
+# ux-polish: the remaining dead Ride ▸ row dispatches by target the
+# same way the E5.4.1 confirms above do: mi_set_start_time -> the
+# set_start_dlg form + engine back-date (spec §3, 3d). Ride ▸
+# Stop Ride… needs no entry here -- W5 gave it the "stop_ride"
+# COMMAND target, dispatched straight from _make_route_handler to the
+# live presenter's native stop-confirm flow.
 _LIVE_FLOW_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
-    ids.STOP_CONFIRM_DLG: _handle_stop_ride_route,
     ids.SET_START_DLG: _handle_set_start_time_route,
 }
 
@@ -2637,20 +2595,24 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     generic stub. ``start_ride`` (ux-polish) fires the live
     presenter's ``on_start`` the same way -- the engine's own start
     gate (empty roster, incomplete setup) refuses through
-    ``StartBlockedError`` and the presenter surfaces the notice; with
+    ``StartBlockedError`` and the presenter surfaces a native warning
+    (W5); with
     no presenter the fallback posts "Start Ride — no ride open".
-    ``focus_review_panel`` (ux-polish) focuses the console's
+    ``stop_ride`` (W5) fires the live presenter's native stop-confirm
+    flow (``on_stop_requested``) the same way -- a riderless roster
+    gets a native warning from the flow itself; with no presenter the
+    fallback posts the generic stub. ``focus_review_panel``
+    (ux-polish) focuses the console's
     review-panel "Needs Review" tab through the wired console view,
     with the generic stub standing in for a console-less route-level
     context. ``finish_confirm_dlg`` (E4.4.4) opens its confirm
     through :func:`_handle_finish_route`, which runs
     ``presenter.on_finish`` on a confirmed OK -- the same
     presenter-first shape ``undo_last_crossing`` uses -- instead of
-    :func:`_open_target`'s generic open-and-return. ``stop_confirm_dlg``
-    and ``set_start_dlg`` (ux-polish) dispatch through
-    :data:`_LIVE_FLOW_HANDLERS` the same target-keyed way: Stop Ride…
-    runs the confirm -> ``presenter.on_stop_confirmed`` flow
-    (:func:`_handle_stop_ride_route`), Set Start Time… runs the
+    :func:`_open_target`'s generic open-and-return. ``set_start_dlg``
+    (ux-polish) dispatches through
+    :data:`_LIVE_FLOW_HANDLERS` the same target-keyed way: Set Start
+    Time… runs the
     ``set_start_dlg`` picker form and applies ``engine.set_start_time``
     (:func:`_handle_set_start_time_route`). ``csv_preview_dlg``
     (E3.4) is the one
@@ -2688,6 +2650,16 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
         if start_presenter is not None:
             return lambda _event: start_presenter.on_start()
         return lambda _event: context.frame.SetStatusText("Start Ride — no ride open")
+    if route.target == "stop_ride":
+        # W5: mi_stop_ride reaches the live presenter's native
+        # stop-confirm flow (on_stop_requested) -- the identical
+        # handler the console Stop button fires, so the menu row and
+        # the button cannot drift. Same distinct-local reason as the
+        # start branch above.
+        stop_presenter = context.presenter
+        if stop_presenter is not None:
+            return lambda _event: stop_presenter.on_stop_requested()
+        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     if route.target == "focus_review_panel":
         console_view = context.console_view
         if console_view is not None:
@@ -2701,10 +2673,11 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     ride_confirm_handler = _RIDE_CONFIRM_HANDLERS.get(route.target)
     if ride_confirm_handler is not None:
         return lambda _event: ride_confirm_handler(context)
-    # ux-polish: the last two dead Ride ▸ rows (Stop Ride…, Set Start
-    # Time…) dispatch by target through the same table shape -- their
-    # DIALOG targets opened generically before, and a confirmed OK did
-    # nothing.
+    # ux-polish: the remaining dead Ride ▸ row (Set Start Time…)
+    # dispatches by target through the same table shape -- its DIALOG
+    # target opened generically before, and a confirmed OK did
+    # nothing. (Stop Ride… dispatched this way too until W5 retired
+    # its dialog for the "stop_ride" COMMAND branch above.)
     live_flow_handler = _LIVE_FLOW_HANDLERS.get(route.target)
     if live_flow_handler is not None:
         return lambda _event: live_flow_handler(context)
@@ -3176,7 +3149,6 @@ def build_main_window(
     _console = MainFrame(
         frame,
         data_source=engine_source,
-        resource=resource,
         initial_sash=loaded_settings.splitter_sash,
         initial_geometry=loaded_settings.window_geometry,
         on_layout_changed=_save_layout,

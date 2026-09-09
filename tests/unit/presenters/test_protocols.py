@@ -139,7 +139,14 @@ class FakeConsoleView:
     def show_warning(self, title: str, message: str) -> None:
         """Record the shown warning (unused here)."""
 
-    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+    def confirm(
+        self,
+        _title: str,
+        _message: str,
+        *,
+        _ok_label: str,
+        _cancel_label: str,
+    ) -> bool:
         """Return the scripted confirm verdict (unused here)."""
         return False
 

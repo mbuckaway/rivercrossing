@@ -136,7 +136,7 @@ from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.store import backup as backup_module
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import feed_model, ids, sound, theme
+from rivercrossing.ui import feed_model, ids, sound, std_dialogs, theme
 from rivercrossing.ui import help as help_module
 from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
 from rivercrossing.ui.presenters.console import ConsolePresenter
@@ -2512,7 +2512,7 @@ def _live_console_parts(  # noqa: PLR0913 -- scenario inputs: resource + policy 
     window.Show()
     window.Layout()
     harness.pump()
-    console = MainFrame(window, data_source=source, resource=resource)
+    console = MainFrame(window, data_source=source)
     presenter = ConsolePresenter(console, engine=engine, source=source)
     console.wire_entry(presenter.on_plate_entered)
     console.wire_console(presenter)
@@ -2589,7 +2589,15 @@ def _live_flagged_crossing_row_is_bold() -> dict[str, Any]:
 
 
 def _live_arm_stop_confirm_flow() -> dict[str, Any]:
-    """R-35: arm enables Stop; the confirm stops the engine, locks."""
+    """R-35: arm enables Stop; the native confirm stops, locks (W5).
+
+    The stop confirm is the native ``wx.MessageDialog`` behind
+    ``std_dialogs.show_confirm``, which this harness cannot dismiss
+    programmatically (measured 2026-09-09: a native message dialog
+    has no wx children and neither EndModal nor a parent force-close
+    ends its ShowModal), so the seam is scripted to OK -- the W5
+    equivalent of the retired XRC dialog's click-the-OK drive.
+    """
     resource = harness.load_xrc_resources()
     window, console, engine, _clock = _live_console_parts(resource, min_lap_s=1)
     try:
@@ -2600,12 +2608,12 @@ def _live_arm_stop_confirm_flow() -> dict[str, Any]:
         _set_checkbox(window, ids.ARM_STOP_CHK, value=True)
         while_armed = stop_btn.IsEnabled()
 
-        def _click_stop_ok() -> None:
-            dialog = wx.Window.FindWindowByName(ids.STOP_CONFIRM_DLG)
-            harness.click(dialog, "wxID_OK")
-
-        wx.CallAfter(_click_stop_ok)
-        harness.click(window, ids.STOP_BTN)  # opens the confirm; CallAfter clicks Stop ride
+        original_confirm = std_dialogs.show_confirm
+        std_dialogs.show_confirm = lambda *_args, **_kwargs: wx.ID_OK
+        try:
+            harness.click(window, ids.STOP_BTN)  # confirm scripted to OK
+        finally:
+            std_dialogs.show_confirm = original_confirm
 
         after_use = stop_btn.IsEnabled()
         arm_after = arm_chk.GetValue()

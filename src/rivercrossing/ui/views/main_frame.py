@@ -383,13 +383,12 @@ class MainFrame:
     call it after construction.
     """
 
-    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source, card_images, resource) + E4.4.2/E8.1.1 seams + every control it resolves
+    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source, card_images) + E4.4.2/E8.1.1 seams + every control it resolves
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
         card_images: CardImageList | None = None,
-        resource: Any | None = None,  # noqa: ANN401 -- wx ships no stubs
         initial_sash: int | None = None,
         initial_geometry: tuple[int, int, int, int] | None = None,
         on_layout_changed: Callable[[int | None, tuple[int, int, int, int] | None], None]
@@ -409,9 +408,6 @@ class MainFrame:
                 data since E5.4.2).
             card_images: The card bitmaps for the feed's Card column;
                 defaults to the packaged deck at 1x.
-            resource: The loaded ``wx.xrc.XmlResource`` the Stop
-                confirm dialog is loaded from (E4.4.2); ``None`` only
-                in constructions that never open that dialog.
             initial_sash: The persisted splitter sash position to
                 restore at construction (E8.1.1); ``None`` keeps the
                 XRC default.
@@ -426,7 +422,6 @@ class MainFrame:
         self.frame = frame
         self.data_source = data_source
         self.card_images = card_images if card_images is not None else default_card_images()
-        self._stop_confirm_resource = resource
         self._on_layout_changed = on_layout_changed
 
         # Every name resolved below is also in module-level
@@ -980,7 +975,14 @@ class MainFrame:
         """
         std_dialogs.show_warning(self.frame, title, message)
 
-    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
         """Ask a destructive confirm; return whether OK was chosen (W5).
 
         The native stop confirm behind ``ConsolePresenter.
@@ -988,7 +990,8 @@ class MainFrame:
         modal call, returning only the boolean verdict to the
         presenter.
         """
-        return std_dialogs.show_confirm(self.frame, title, message, ok_label, cancel_label) == wx.ID_OK
+        result = std_dialogs.show_confirm(self.frame, title, message, ok_label, cancel_label)
+        return result == int(wx.ID_OK)
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Render the ride clock's numeric labels (ConsoleView, R-30).
@@ -1026,10 +1029,13 @@ class MainFrame:
         """Bind the lifecycle controls and tick timer to *presenter*.
 
         Mirrors :meth:`wire_entry`'s callback idiom: Start Ride,
-        the Arm checkbox, Stop Ride (through the confirm dialog,
-        :meth:`_on_stop_clicked`) and Undo each forward to the
+        the Arm checkbox, Stop Ride and Undo each forward to the
         presenter, and a 1 s ``wx.Timer`` drives ``presenter.tick()``
         (feed/counters/clock refresh + R-35's 10 s arm auto-clear).
+        W5: Stop Ride forwards straight to the presenter's native
+        stop-confirm flow (``on_stop_requested``) -- the view opens
+        no dialog itself; the retired ``stop_confirm_dlg`` load lived
+        here before.
 
         The presenter is stored as :attr:`_presenter` and every
         handler routes through it, so :meth:`set_presenter` can swap
@@ -1042,7 +1048,7 @@ class MainFrame:
             wx.EVT_CHECKBOX,
             lambda _event: self._presenter.on_arm_stop(armed=self.arm_stop_chk.GetValue()),
         )
-        self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_stop_clicked())
+        self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_stop_requested())
         self.undo_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_undo())
         self._tick_timer = wx.Timer(self.frame)
         self.frame.Bind(wx.EVT_TIMER, lambda _event: self._presenter.tick(), self._tick_timer)
@@ -1067,39 +1073,6 @@ class MainFrame:
         """
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
-
-    def _on_stop_clicked(self) -> None:
-        """Handle Stop Ride: R-35's confirm, then ``on_stop_confirmed``.
-
-        Loads ``stop_confirm_dlg`` from the constructor's resource and
-        shows it through ``dialogs.run_dialog`` -- the one entry point
-        every dialog in this codebase shows through -- so the default
-        + focused Cancel is honoured (test_dialog_behavior pins it on
-        the raw dialog) and only ``wxID_OK`` ("Stop ride") confirms.
-        A construction with no resource (a screen that never opens the
-        dialog) posts a notice rather than silently stopping.
-
-        # logic-coverage-exempt: T-3 -- the two ``is None`` guards are
-        # defensive for constructions that never open the dialog (the
-        # shared read-only fixtures); every live construction supplies
-        # the resource and the OK/Cancel arms are driven functionally.
-        """
-        from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
-
-        if self._stop_confirm_resource is None:
-            self.show_notice("Stop confirm unavailable")
-            return
-        dialog = self._stop_confirm_resource.LoadDialog(None, ids.STOP_CONFIRM_DLG)
-        if dialog is None:
-            self.show_notice("Stop confirm unavailable")
-            return
-        try:
-            result = dialogs.run_dialog(dialog, opener=self.stop_btn)
-        finally:
-            if not dialog.IsBeingDeleted():
-                dialog.Destroy()
-        if result == wx.ID_OK:
-            self._presenter.on_stop_confirmed()
 
 
 def _format_count(value: int) -> str:

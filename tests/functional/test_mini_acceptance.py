@@ -65,7 +65,7 @@ from rivercrossing.ride import RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.standings import rank
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import feed_model, ids, theme
+from rivercrossing.ui import feed_model, ids, std_dialogs, theme
 from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
@@ -249,7 +249,7 @@ def _build_mini_console(
         window.Show()
         window.Layout()
         harness.pump()
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)
@@ -415,12 +415,16 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
         _set_checkbox(window, ids.ARM_STOP_CHK, value=True)
         assert harness.find_control(window, ids.STOP_BTN).IsEnabled() is True
 
-        def _click_stop_ok() -> None:
-            dialog = wx.Window.FindWindowByName(ids.STOP_CONFIRM_DLG)
-            harness.click(dialog, "wxID_OK")
-
-        wx.CallAfter(_click_stop_ok)
-        harness.click(window, ids.STOP_BTN)
+        # The stop confirm is the native wx.MessageDialog behind
+        # std_dialogs.show_confirm, which this harness cannot dismiss
+        # programmatically (measured 2026-09-09 -- native message
+        # dialogs have no wx children), so the seam is scripted to OK.
+        original_confirm = std_dialogs.show_confirm
+        std_dialogs.show_confirm = lambda *_args, **_kwargs: wx.ID_OK
+        try:
+            harness.click(window, ids.STOP_BTN)
+        finally:
+            std_dialogs.show_confirm = original_confirm
 
         assert harness.find_control(window, ids.STOP_BTN).IsEnabled() is False
         assert harness.find_control(window, ids.ARM_STOP_CHK).GetValue() is False

@@ -56,7 +56,7 @@ def test_main_frame_empty_state_screenshot_captures_the_empty_feed(
         window.Layout()
         harness.pump()
         _engine, source = app_module._build_console_engine(_empty_mixed_roster())
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         saved = harness.screenshot(window, SCREENSHOT_DIR / "main_frame_empty_state.png")
         row_count = console.crossings_list.GetModel().GetCount()
     finally:

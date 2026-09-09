@@ -73,7 +73,14 @@ class IncompleteConsoleView:
     def show_warning(self, title: str, message: str) -> None:
         """No-op fixture stub."""
 
-    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+    def confirm(
+        self,
+        _title: str,
+        _message: str,
+        *,
+        _ok_label: str,
+        _cancel_label: str,
+    ) -> bool:
         """No-op fixture stub."""
         return False
 

@@ -234,8 +234,12 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="Ride",
         label="Stop Ride…",
         ids=("mi_stop_ride",),
-        kind=TargetKind.DIALOG,
-        target=ids.STOP_CONFIRM_DLG,
+        # W5: the row dispatches to the live presenter's native
+        # stop-confirm flow (kind=COMMAND target "stop_ride") -- the
+        # XRC stop_confirm_dlg retired with it; a riderless roster
+        # gets a native warning instead of any dialog.
+        kind=TargetKind.COMMAND,
+        target="stop_ride",
         enabled_when=Enablement(allowed_states=_RUNNING),  # "RUNNING"
     ),
     MenuRoute(

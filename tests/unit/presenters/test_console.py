@@ -118,7 +118,7 @@ def _roster_with_entries(*plates: str) -> Roster:
     return roster
 
 
-def _make_engine(
+def _make_engine(  # noqa: PLR0913 -- (roster, config) + the two W4 policy knobs
     *,
     roster: Roster | None = None,
     config: RideConfig | None = None,
@@ -265,7 +265,14 @@ class FakeConsoleView:
         """Record the shown warning (W5)."""
         self.last_warning = (title, message)
 
-    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+    def confirm(  # noqa: PLR0913 -- mirrors std_dialogs.show_confirm's (title, message) + 2 labels
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
         """Record the confirm and return the scripted verdict (W5)."""
         self.last_confirm = (title, message, ok_label, cancel_label)
         return self.confirm_result
@@ -1014,9 +1021,11 @@ def test_on_stop_requested_given_running_ride_with_entries_confirms_then_stops()
 
     assert view.last_confirm == (
         "Stop Ride?",
-        "The clock stops for everyone. Riders still on course keep their laps; "
-        "no cards are dealt after stop. You can continue the ride later "
-        "without losing anything.",
+        (
+            "The clock stops for everyone. Riders still on course keep their laps; "
+            "no cards are dealt after stop. You can continue the ride later "
+            "without losing anything."
+        ),
         "Stop ride",
         "Cancel",
     )
@@ -1054,7 +1063,7 @@ def test_on_stop_requested_given_empty_roster_warns_and_shows_no_confirm() -> No
 
 
 def test_on_stop_requested_given_draft_ride_with_entries_refuses_with_notice() -> None:
-    """W5: a not-RUNNING ride never shows the confirm (UI-unreachable)."""
+    """W5: a not-RUNNING ride never shows the confirm."""
     engine, _clock = _make_engine()
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
@@ -1072,7 +1081,10 @@ def test_on_stop_requested_given_draft_ride_with_entries_refuses_with_notice() -
 def _engine_gated(
     state: RideStatus, *, crossings: int, stopped: bool
 ) -> tuple[RideEngine, _FakeDatetimeClock]:
-    """Build an engine in *state* with *crossings* laps, optionally stopped."""
+    """Build an engine in *state* with *crossings* laps.
+
+    *stopped* applies to the RUNNING case (stop-as-guard).
+    """
     engine, clock = _make_engine()
     if state in (RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED):
         engine.start()
@@ -1119,12 +1131,12 @@ def test_refresh_console_gates_matches_start_and_undo_enablement_rules(  # noqa:
     expected_start: bool,
     expected_undo: bool,
 ) -> None:
-    """W5: start_btn mirrors mi_start_ride; undo_btn mirrors the undo row.
+    """W5: start_btn mirrors mi_start_ride; undo_btn the undo row.
 
-    The engine state is the single source of truth: DRAFT or
-    stopped-RUNNING enables Start (continue-after-stop is the resume
-    mechanism); RUNNING with >= 1 crossing enables Undo. REOPENED's
-    engine-level undo stays but is no longer UI-reachable.
+    The engine is the source of truth: DRAFT or stopped-RUNNING
+    enables Start (continue-after-stop is the resume mechanism);
+    RUNNING with >= 1 crossing enables Undo. REOPENED's undo stays
+    but is no longer UI-reachable.
     """
     engine, _clock = _engine_gated(ride_state, crossings=crossings, stopped=stopped)
     view = FakeConsoleView()
@@ -1136,7 +1148,7 @@ def test_refresh_console_gates_matches_start_and_undo_enablement_rules(  # noqa:
 
 
 def test_on_start_given_draft_ride_disables_start_through_the_state_render() -> None:
-    """W5: the RUNNING state render turns Start off (no phantom continue)."""
+    """W5: the RUNNING render turns Start off (no phantom continue)."""
     engine, _clock = _make_engine()
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
@@ -1148,7 +1160,7 @@ def test_on_start_given_draft_ride_disables_start_through_the_state_render() -> 
 
 
 def test_on_stop_confirmed_given_stopped_ride_enables_start_through_the_state_render() -> None:
-    """W5: a stopped ride's render keeps Start on -- continue-to-resume."""
+    """W5: a stopped ride's render keeps Start on (resume)."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     view = FakeConsoleView()
@@ -1162,7 +1174,7 @@ def test_on_stop_confirmed_given_stopped_ride_enables_start_through_the_state_re
 
 
 def test_on_undo_given_last_crossing_disables_undo_through_the_feed_render() -> None:
-    """W5: undoing the only crossing turns Undo off via the feed render."""
+    """W5: undoing the only crossing turns Undo off (feed render)."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     view = FakeConsoleView()

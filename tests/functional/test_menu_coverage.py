@@ -30,8 +30,10 @@ What only this module can prove:
    treatment: clicking it runs the reopen flow the menu row runs.
 5. ux-polish's final dead-row audit wired the last two Ride ▸ rows
    (Stop Ride…, Set Start Time…) to real confirm/form flows; the
-   wired-row section drives them at a real bound frame (auto-OK /
-   auto-Cancel through the ``dialogs.run_dialog`` seam), pins S2's
+   wired-row section drives them at a real bound frame (Stop Ride…
+   scripts the native ``std_dialogs.show_confirm`` seam, W5; the
+   XRC-driven rows auto-OK / auto-Cancel through the
+   ``dialogs.run_dialog`` seam), pins S2's
    incomplete-setup start gate (a DRAFT ride with one rider but a
    blank minimum field stays DRAFT with the refusal notice), and
    exercises the Settings dialog's ``backup_now_btn`` seam (S5) --
@@ -58,7 +60,7 @@ from rivercrossing.cards import Shoe
 from rivercrossing.ride import RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
-from rivercrossing.ui import accelerators, commands, ids, theme
+from rivercrossing.ui import accelerators, commands, ids, std_dialogs, theme
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
@@ -431,7 +433,7 @@ def _build_live_console(  # noqa: PLR0913 -- (xrc_resource, wx_app, store, venue
             frame.Show()
             frame.Layout()
             harness.pump()
-            console = MainFrame(frame, data_source=source, resource=xrc_resource)
+            console = MainFrame(frame, data_source=source)
             presenter = ConsolePresenter(console, engine=engine, source=source)
             console.wire_entry(presenter.on_plate_entered)
             console.wire_console(presenter)
@@ -512,7 +514,11 @@ def test_results_reopen_btn_runs_the_same_reopen_flow_as_the_menu(
 # did nothing. The section below drives both wired handlers at a real,
 # bound bootstrap frame (routes bound via _bind_routes, live presenter
 # threaded), plus S2 (Start Ride's incomplete-setup gate) and S5 (the
-# Settings dialog's backup_now_btn seam).
+# Settings dialog's backup_now_btn seam). W5: mi_stop_ride is now a
+# COMMAND row reaching the live presenter's native stop-confirm flow
+# (std_dialogs.show_confirm, scripted here -- native message dialogs
+# are not programmatically dismissible, measured 2026-09-09), so the
+# row and the console Stop button share one handler.
 
 
 def test_mi_stop_ride_confirmed_runs_the_presenter_stop_flow(
@@ -520,29 +526,47 @@ def test_mi_stop_ride_confirmed_runs_the_presenter_stop_flow(
     wx_app: object,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ride ▸ Stop Ride…: the confirm opens and OK stops the ride.
+    """Ride ▸ Stop Ride…: the native confirm OK stops the ride.
 
-    The wired row runs the identical confirm -> ``on_stop_confirmed``
-    flow the console Stop button runs (R-35): the ``stop_confirm_dlg``
-    opens (auto-OK, the suite's standard seam) and a confirmed OK
+    The wired row runs the identical native-confirm ->
+    ``on_stop_confirmed`` flow the console Stop button runs (R-35,
+    W5): the ``std_dialogs`` confirm is scripted to OK (the suite's
+    standard seam for native message dialogs) and a confirmed OK
     locks plate entry while the ride stays RUNNING and posts the
-    presenter's notice -- proof the row no longer opens the dialog and
-    does nothing.
+    presenter's notice -- proof the row no longer opens the retired
+    ``stop_confirm_dlg`` and does nothing.
     """
     context, engine = _build_live_console(xrc_resource, wx_app)
-    opened: list[str] = []
+    confirmed: list[tuple[str, str, str, str]] = []
 
-    def _auto_ok(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        opened.append(dialog.GetName())
+    def _recording_confirm(  # noqa: PLR0913, PLR0917 -- mirrors std_dialogs.show_confirm's signature
+        _parent: object,
+        title: str,
+        message: str,
+        ok_label: str,
+        cancel_label: str,
+    ) -> int:
+        confirmed.append((title, message, ok_label, cancel_label))
         return wx.ID_OK
 
     try:
-        monkeypatch.setattr(dialogs, "run_dialog", _auto_ok)
+        monkeypatch.setattr(std_dialogs, "show_confirm", _recording_confirm)
         harness.fire_menu_event(context.frame, "mi_stop_ride")
 
         status_text = context.frame.GetStatusBar().GetStatusText()
         status_label = harness.find_control(context.frame, ids.RIDE_STATUS_LBL)
-        assert opened == [ids.STOP_CONFIRM_DLG]
+        assert confirmed == [
+            (
+                "Stop Ride?",
+                (
+                    "The clock stops for everyone. Riders still on course keep their laps; "
+                    "no cards are dealt after stop. You can continue the ride later "
+                    "without losing anything."
+                ),
+                "Stop ride",
+                "Cancel",
+            )
+        ]
         assert engine.stopped is True
         assert engine.state is RideStatus.RUNNING  # stop is a guard, not a state
         assert status_text == "Ride stopped — continue to resume"
@@ -558,17 +582,24 @@ def test_mi_stop_ride_cancelled_leaves_the_ride_running(
 ) -> None:
     """A cancelled stop confirm changes nothing (R-35's guard)."""
     context, engine = _build_live_console(xrc_resource, wx_app)
-    opened: list[str] = []
+    confirmed: list[tuple[str, str, str, str]] = []
 
-    def _auto_cancel(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        opened.append(dialog.GetName())
+    def _recording_cancel(  # noqa: PLR0913, PLR0917 -- mirrors std_dialogs.show_confirm's signature
+        _parent: object,
+        title: str,
+        message: str,
+        ok_label: str,
+        cancel_label: str,
+    ) -> int:
+        confirmed.append((title, message, ok_label, cancel_label))
         return wx.ID_CANCEL
 
     try:
-        monkeypatch.setattr(dialogs, "run_dialog", _auto_cancel)
+        monkeypatch.setattr(std_dialogs, "show_confirm", _recording_cancel)
         harness.fire_menu_event(context.frame, "mi_stop_ride")
 
-        assert opened == [ids.STOP_CONFIRM_DLG]
+        assert len(confirmed) == 1
+        assert confirmed[0][0] == "Stop Ride?"  # the row still asks first
         assert engine.stopped is False
         assert engine.state is RideStatus.RUNNING
     finally:

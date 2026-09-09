@@ -53,7 +53,7 @@ import wx.xrc
 
 from rivercrossing.standings import hand_name, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import feed_model, ids
+from rivercrossing.ui import feed_model, ids, std_dialogs
 from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import corrections, dialogs, rider_editor
 
@@ -596,11 +596,14 @@ def _import_csv_via_route(frame: Any, csv_path: Path) -> None:  # noqa: ANN401 -
 
 
 def _stop_and_continue(frame: Any) -> dict[str, bool]:  # noqa: ANN401 -- wx ships no stubs
-    """Arm, confirm the stop, check the lock, continue (R-35).
+    """Arm, confirm the stop, check the lock, continue (R-35, W5).
 
     Returns whether the stop locked plate entry and the continue
     re-enabled it with the same start (the caller compares the
-    start/continue audit payloads).
+    start/continue audit payloads). The stop confirm is the native
+    ``wx.MessageDialog`` behind ``std_dialogs.show_confirm``, which
+    this harness cannot dismiss programmatically (measured
+    2026-09-09), so the seam is scripted to OK around the click.
     """
     arm_stop = harness.find_control(frame, ids.ARM_STOP_CHK)
     arm_stop.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
@@ -609,14 +612,13 @@ def _stop_and_continue(frame: Any) -> dict[str, bool]:  # noqa: ANN401 -- wx shi
     arm_stop.GetEventHandler().ProcessEvent(event)
     harness.pump()
 
-    def _click_stop_ok() -> None:
-        dialog = wx.Window.FindWindowByName(ids.STOP_CONFIRM_DLG)
-        if dialog is not None:
-            harness.click(dialog, "wxID_OK")
-
-    wx.CallAfter(_click_stop_ok)
-    harness.click(frame, ids.STOP_BTN)
-    harness.pump()
+    original_confirm = std_dialogs.show_confirm
+    std_dialogs.show_confirm = lambda *_args, **_kwargs: wx.ID_OK
+    try:
+        harness.click(frame, ids.STOP_BTN)
+        harness.pump()
+    finally:
+        std_dialogs.show_confirm = original_confirm
     entry_locked = not harness.find_control(frame, ids.PLATE_INPUT).IsEnabled()
 
     harness.click(frame, ids.START_BTN)

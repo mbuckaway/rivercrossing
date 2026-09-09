@@ -196,7 +196,7 @@ def _build_live_context(
         frame.Show()
         frame.Layout()
         harness.pump()
-        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        console = MainFrame(frame, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)

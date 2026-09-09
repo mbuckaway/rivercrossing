@@ -131,14 +131,6 @@ SET_START_DLG = WindowSpec(
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
-STOP_CONFIRM_DLG = WindowSpec(
-    name=ids.STOP_CONFIRM_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(WX_ID_OK, WX_ID_CANCEL),
-    buttons=(WX_ID_OK, WX_ID_CANCEL),
-)
-
 FINISH_CONFIRM_DLG = WindowSpec(
     name=ids.FINISH_CONFIRM_DLG,
     xrc_file="dialogs.xrc",
@@ -458,14 +450,14 @@ SELFTEST_DLG = WindowSpec(
     buttons=(ids.RERUN_BTN, WX_ID_CLOSE),
 )
 
-# xrc-windows's own A-E order: 1 console + 10 setup/lifecycle dialogs +
-# 9 rider/card dialogs (team_editor_dlg is Phase 4's section-C member)
-# + 4 results/library/audit + 4 system/help = 28.
+# xrc-windows's own A-E order: 1 console + 9 setup/lifecycle dialogs
+# (stop_confirm_dlg retired W5) + 9 rider/card dialogs (team_editor_dlg
+# is Phase 4's section-C member) + 4 results/library/audit +
+# 4 system/help = 27.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
     SET_START_DLG,
-    STOP_CONFIRM_DLG,
     FINISH_CONFIRM_DLG,
     DUPLICATE_RIDE_DLG,
     REOPEN_RIDE_DLG,

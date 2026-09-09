@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The seventeen small dialogs of spec.md 15b's dialogs.xrc entry:
-  set_start_dlg, stop_confirm_dlg, finish_confirm_dlg,
+  The sixteen small dialogs of spec.md 15b's dialogs.xrc entry:
+  set_start_dlg, finish_confirm_dlg,
   resume_dlg, exit_running_dlg, exit_confirm_dlg
   (xrc-windows.md section B; exit_confirm_dlg added Phase 8, P8-D1),
   duplicate_ride_dlg and reopen_ride_dlg (section B, E5.4.1 mock-first —
@@ -11,6 +11,9 @@
   edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg,
   void_card_confirm_dlg (section C), about_dlg, selftest_dlg,
   shortcuts_dlg (section E).
+  stop_confirm_dlg (section B) retired in W5: the Stop flow now asks
+  through the native confirm (ui.std_dialogs.show_confirm) instead of
+  an XRC dialog.
   Control names are frozen; tests find them with
   FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
   (R-05, R-73). Names repeat across these windows on purpose -
@@ -145,47 +148,6 @@
           </object>
           <object class="button">
             <object class="wxButton" name="wxID_CANCEL"/>
-          </object>
-        </object>
-      </object>
-
-    </object>
-  </object>
-
-  <!-- Destructive confirm: Cancel is both the default and the initially
-       focused control, so a reflex Enter is safe (spec.md 13,
-       UX-DESKTOP 3). wxID_OK carries the canvas's verb label; the stock
-       id is what keeps it on the platform-correct side. -->
-  <object class="wxDialog" name="stop_confirm_dlg">
-    <title>Stop Ride?</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText">
-          <label>The clock stops for everyone. Riders still on course keep their laps; no cards are dealt after stop. You can continue the ride later without losing anything.</label>
-          <wrap>420</wrap>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
-            <object class="wxButton" name="wxID_OK">
-              <label>Stop ride</label>
-            </object>
-          </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL">
-              <default>1</default>
-              <focused>1</focused>
-            </object>
           </object>
         </object>
       </object>

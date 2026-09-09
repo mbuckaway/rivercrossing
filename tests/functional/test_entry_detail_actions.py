@@ -183,7 +183,7 @@ def live_context(xrc_resource: object, wx_app: object) -> Iterator[tuple[Any, Ri
         frame.SetMenuBar(menubar)
         frame.Show()
         harness.pump()
-        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        console = MainFrame(frame, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)

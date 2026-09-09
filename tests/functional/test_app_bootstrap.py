@@ -649,7 +649,7 @@ def test_tick_timer_stops_when_the_frame_is_destroyed(xrc_resource: object) -> N
             """No-op tick: the timer's only call at this scope."""
 
     window = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
-    console = MainFrame(window, data_source=EmptyDataSource(), resource=xrc_resource)
+    console = MainFrame(window, data_source=EmptyDataSource())
     console.wire_console(_StubPresenter())  # type: ignore[arg-type]
     try:
         assert console._tick_timer.IsRunning() is True

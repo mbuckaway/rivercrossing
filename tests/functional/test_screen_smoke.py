@@ -59,9 +59,9 @@ def _unplaced_buttons(window: object, buttons: tuple[str, ...]) -> tuple[str, ..
     return tuple(unplaced)
 
 
-def test_window_registry_declares_all_twenty_eight_windows() -> None:
+def test_window_registry_declares_all_twenty_seven_windows() -> None:
     """A window disappearing must shrink this, not the suite."""
-    assert len(pages.WINDOWS) == 28
+    assert len(pages.WINDOWS) == 27
 
 
 @pytest.mark.parametrize("spec", pages.WINDOWS, ids=lambda spec: spec.name)
@@ -232,7 +232,7 @@ def test_type_text_given_a_string_updates_the_controls_value(xrc_resource: objec
 
 def test_click_given_a_stock_button_fires_its_bound_handler(xrc_resource: object) -> None:
     """Direct event injection delivers a real EVT_BUTTON (measured)."""
-    dialog = harness.load_window_verified(xrc_resource, ids.STOP_CONFIRM_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.FINISH_CONFIRM_DLG, frame=False)
     dialog.Show()
     harness.pump()
     fired_ids = []

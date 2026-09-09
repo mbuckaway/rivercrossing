@@ -220,7 +220,14 @@ class ConsoleView(Protocol):
         """Show *message* as a modal warning over this console (W5)."""
         ...
 
-    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
         """Ask a destructive confirm; return whether OK was chosen.
 
         The view owns the parent window and opens the native confirm
