@@ -17,6 +17,10 @@ complete in memory.
 
 import sqlite3
 from datetime import date, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
@@ -130,7 +134,7 @@ def test_wire_store_append_given_a_failing_store_posts_a_notice_and_keeps_the_cr
     assert notices == ["Could not save event: database is locked"]
 
 
-# ------------------------------- W3: the session lifecycle (start/finish)
+# ------------------------- W3: the session lifecycle (start/finish)
 
 
 def test_wire_store_append_start_event_marks_the_ride_active_on_the_session(
