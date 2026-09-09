@@ -29,6 +29,7 @@ import wx
 import wx.dataview
 from _lists_common import demo_seeded_roster
 
+from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.riders import SOLO_TEAM_CHOICE, CsvPreview
@@ -396,6 +397,22 @@ def test_rider_editor_dlg_successful_add_via_the_dialog_dismisses_a_prior_infoba
 
 
 # ----------------------------------------------------- save gating (W7)
+
+
+def test_rider_editor_dlg_plate_input_disabled_once_the_ride_has_started(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """W7: once the ride leaves DRAFT, the plate field is locked."""
+    roster = demo_seeded_roster()
+    roster.status = RideStatus.RUNNING
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        plate_enabled = harness.find_control(dialog, ids.PLATE_INPUT).IsEnabled()
+    finally:
+        harness.close_window(dialog)
+
+    assert plate_enabled is False
 
 
 def test_rider_editor_dlg_save_btn_enabled_only_while_the_form_differs(

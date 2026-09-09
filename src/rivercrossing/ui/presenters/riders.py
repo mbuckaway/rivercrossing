@@ -60,6 +60,7 @@ from rivercrossing.roster import (
     RosterError,
     TeamSizeError,
     can_delete_entry,
+    can_edit_structure,
 )
 from rivercrossing.ui.presenters.data_source import RiderRow
 
@@ -136,6 +137,10 @@ class RidersView(Protocol):
 
     def set_save_enabled(self, *, enabled: bool) -> None:
         """Gate save_btn: enabled only when the form is dirty (W7)."""
+        ...
+
+    def set_plate_enabled(self, *, enabled: bool) -> None:
+        """Toggle plate_input's editability (W7 plate lock)."""
         ...
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
@@ -418,6 +423,10 @@ class RidersPresenter:
         self.roster = roster
         self._selected: tuple[Entry, Rider] | None = None
         self._csv_preview: csvio.ImportPreview | None = None
+        # W7 close-persist flag: True once any add/save/delete has
+        # actually committed this session (app.py's editor-close save
+        # consults :attr:`roster_changed`).
+        self._roster_changed = False
         # W7 search/sort state: what riders_list currently shows, and
         # the two narrowings that decide it (_refresh_rows applies).
         self._visible: list[tuple[Entry, Rider]] = []
@@ -486,6 +495,7 @@ class RidersPresenter:
         both list and team_choice, then reset to the no-selection add
         form (next free plate now one higher).
         """
+        self._roster_changed = True
         self._refresh_rows()
         self._show_add_form()
 
@@ -532,6 +542,7 @@ class RidersPresenter:
         except RosterError as exc:
             self.view.show_validation(str(exc))
             return
+        self._roster_changed = True
         self._refresh_rows()
         self._show_record(entry, rider)
 
@@ -551,6 +562,7 @@ class RidersPresenter:
         except LockedError as exc:
             self.view.show_validation(str(exc))
             return
+        self._roster_changed = True
         self._refresh_rows()
         self._show_add_form()
 
@@ -654,6 +666,20 @@ class RidersPresenter:
         self._refresh_rows()
         self.view.set_team_ui_visible(visible=self.roster.entry_mode is EntryMode.MIXED)
         self._show_add_form()
+        # W7 plate lock: once the ride has left DRAFT, plate_input is
+        # disabled (spec S3:46's start lock) -- the roster refuses the
+        # change anyway, but the disabled field says so up front.
+        self.view.set_plate_enabled(enabled=can_edit_structure(self.roster.status))
+
+    @property
+    def roster_changed(self) -> bool:
+        """Return whether this session committed a roster change (W7).
+
+        The app's editor-close persistence hook reads this after the
+        modal ends; only real commits (an add, save or delete that
+        actually applied) set it, never a refusal or a no-op.
+        """
+        return self._roster_changed
 
     def _refresh_rows(self) -> None:
         """Re-render riders_list and team_choice from the roster.

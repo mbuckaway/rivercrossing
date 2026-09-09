@@ -1013,7 +1013,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs
     route: commands.MenuRoute,
-) -> None:
+) -> Any:  # noqa: ANN401 -- the one caller reads the rider-editor view back; other routes return None
     """Bind *window*'s code-side view class, if *route.target* has one.
 
     E7.3.1 added the audit trail to that set: ``audit_dlg`` now binds
@@ -1068,8 +1068,11 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # E5.4.2: the roster is the store's when a store-backed ride is
         # open (E5.4.1's library Open replaced context.roster), and the
         # empty bootstrap roster otherwise -- the rider editor shows a
-        # correct empty state until a real ride is opened.
-        RiderEditor(window, roster=context.roster)
+        # correct empty state until a real ride is opened. W7 returns
+        # the built view: _open_target persists this editor's changes
+        # once its modal ends (the only route that needs the view
+        # after decoration).
+        return RiderEditor(window, roster=context.roster)
     elif route.target == ids.TEAM_EDITOR_DLG:
         # Phase 4: the same live-roster wiring as the rider editor --
         # team records (name, relay plate, notes, logo) over the
@@ -2248,7 +2251,7 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         # and the view's show_settings re-sets it. Base fonts come from
         # the fresh XRC load, scaled once (never compounded).
         zoom.apply_to(window)
-        _decorate(context, window, route)
+        view = _decorate(context, window, route)
         _apply_dialog_defaults(window, route)
     except Exception:
         # Fault A: any post-load failure must close the just-loaded
@@ -2284,6 +2287,45 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         if not window.IsBeingDeleted():
             window.Destroy()
 
+    # W7: the Rider Editor route is the one dialog whose roster edits
+    # must persist when it closes -- the console tab path
+    # (_open_rider_editor_for) and this route both persist through
+    # the same helper once their modal has ended.
+    if route.target == ids.RIDER_EDITOR_DLG and view is not None:
+        _persist_rider_editor_changes(context, view)
+
+
+def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
+    """Persist the roster after a rider-editor modal ends (W7).
+
+    Both editor-open paths (the Rider Editor menu route above and the
+    console Riders-tab path :func:`_open_rider_editor_for`) call this
+    after their modal has ended. With a store-backed ride open and
+    any committed change this session (the presenter's own
+    ``roster_changed``), the in-memory roster is written back so the
+    edits survive a relaunch. A refused save (a locked or unwritable
+    database) surfaces as a status notice -- the guard idiom
+    :func:`_handle_import_csv` uses, for the same wx-swallowed-raise
+    reason (the measured note ``docs/EPIC3-SESSION-SUMMARY.md``
+    records): worst case the operator is told nothing happened while
+    the edit silently stayed unpersisted.
+
+    Args:
+        context: The route context whose store/roster to act on.
+        view: The closed ``RiderEditor`` (or a presenter-shaped
+            stand-in) whose ``presenter.roster_changed`` says whether
+            this session committed anything.
+    """
+    if not view.presenter.roster_changed:
+        return
+    store = context.store
+    if store is None or context.active_ride_id is None:
+        return
+    try:
+        store.save_roster(context.active_ride_id, context.roster)
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not save riders: {exc}")
+
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     """Open ``rider_editor_dlg`` over the shared roster at *plate*.
@@ -2295,10 +2337,15 @@ def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     decoration :func:`_decorate` performs for the Rider Editor route
     -- and selects the rider's row, landing the operator on that
     rider's form instead of the add form
-    (:meth:`RiderEditor.select_rider_by_plate`). The dialog path
-    mirrors :func:`_open_target`'s own: zoom applied before
-    decoration, shown through ``dialogs.run_dialog``, destroyed in a
-    ``finally`` (Fault A: a decoration raise must not leak it).
+    (:meth:`RiderEditor.select_rider_by_plate`). W7 closes this
+    path's two gaps against the menu route: it now applies the
+    recorded dialog defaults (``_apply_dialog_defaults`` -- the menu
+    route always had them) and persists the roster when the editor
+    closes with changes (:func:`_persist_rider_editor_changes`). The
+    dialog path mirrors :func:`_open_target`'s own: zoom applied
+    before decoration, shown through ``dialogs.run_dialog``,
+    destroyed in a ``finally`` (Fault A: a decoration raise must not
+    leak it).
     """
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415 -- deferred
@@ -2307,14 +2354,19 @@ def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     if window is None:
         context.frame.SetStatusText("Rider Editor — no window authored yet")
         return
+    view = None
     try:
         zoom.apply_to(window)
         view = RiderEditor(window, roster=context.roster)
+        _apply_dialog_defaults(window, commands.route_for_id("mi_rider_editor"))
         view.select_rider_by_plate(plate)
         dialogs.run_dialog(window, opener=context.frame)
     finally:
         if not window.IsBeingDeleted():
             window.Destroy()
+
+    if view is not None:
+        _persist_rider_editor_changes(context, view)
 
 
 def _wire_rider_open_seam(context: _RouteContext) -> None:

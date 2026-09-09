@@ -472,6 +472,10 @@ class RiderEditor:
         """Toggle ``save_btn`` on the form's dirty state (W7)."""
         self.save_btn.Enable(enabled)
 
+    def set_plate_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``plate_input``'s editability (W7 plate lock)."""
+        self.plate_input.Enable(enabled)
+
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """Render ``csv_preview_dlg``; that dialog's own job.
 
@@ -815,6 +819,15 @@ class CsvPreviewDialog:
         Raises:
             NotImplementedError: Always -- ``csv_preview_dlg`` has no
                 ``save_btn`` of its own.
+        """
+        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
+
+    def set_plate_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``plate_input``; that dialog's own job.
+
+        Raises:
+            NotImplementedError: Always -- ``csv_preview_dlg`` has no
+                ``plate_input`` of its own.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
