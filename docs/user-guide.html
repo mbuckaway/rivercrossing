@@ -81,10 +81,9 @@
   <li><strong>Appearance</strong> — System (follow the OS), Light, or Dark. All three work on both platforms. On Windows a change applies at next launch; macOS applies it live.</li>
   <li><strong>Sound on crossing</strong> — three cues: a click when a crossing records, a two-tone alert when a short lap holds its card, and a buzz for an unknown plate or empty entry.</li>
   <li><strong>Hide times on the console</strong> — hides lap/total times mid-ride (it's-not-a-race mode). Times are still recorded underneath. The ride clock stays.</li>
-  <li><strong>Text zoom</strong> — 90–150%, the same ladder as the <strong>View ▸ Zoom</strong> menu.</li>
   <li><strong>Back up now</strong> — writes a backup immediately.</li>
 </ul>
-<p>The <strong>View</strong> menu mirrors Settings: Theme radios, Hide Times, and the Zoom radios. One setting, two places — they stay in sync.</p>
+<p>Appearance and text zoom each live on one surface: the theme radios are in <strong>Settings</strong> only (the View menu no longer mirrors them), and text zoom is <strong>View ▸ Zoom</strong> only (90–150%). Hide times on the console is the one setting with two controls — the Settings checkbox and the View-menu item — and they stay in sync.</p>
 
 <h3>Where your data lives</h3>
 <p>All rides live in one SQLite database (<code>rides.db</code>) in your user data folder. Every crossing commits as it happens (WAL journal), so a crash loses at most a keystroke. Backups are written on open and hourly while a ride runs, kept in a <code>&lt;db&gt;.backups/</code> sibling folder, pruned to the newest 20.</p>
@@ -93,7 +92,7 @@
 
 <section id="setting-up-a-ride">
 <h2>2 · Setting up a ride</h2>
-<p>Create a ride from <strong>File ▸ New Ride…</strong>, or open an existing one from the ride library. <strong>Ride ▸ Ride Setup…</strong> reopens the setup window for the current ride while it is still a draft.</p>
+<p><strong>File ▸ New Ride…</strong> opens the setup window for a new ride — the single entry point to ride setup (the former Ride-menu Ride Setup… row is gone; the setup window opens for a new ride, not for re-editing an existing one). Existing rides open from the ride library.</p>
 <ul>
   <li><strong>Name, date, venue, organizer, scorer, logo</strong> — the identity shown on the console and in published results. The logo file is embedded in exports.</li>
   <li><strong>Planned start &amp; duration</strong> — the riding window; the console counts down the time to close.</li>
