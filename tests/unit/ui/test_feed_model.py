@@ -114,7 +114,11 @@ DEALT_CARD_CASES = (
     ("JK", "joker"),
 )
 
-NON_CARD_CASES = ("held", "", "ZZ", "A")
+# W9: the feed never emits a literal "held" cell any more -- the card
+# column always carries a real dealt code -- so the seam's old
+# placeholder case is retired. Any other unmappable text still maps
+# to None (empty string boundary included, T-4).
+NON_CARD_CASES = ("", "ZZ", "A")
 
 
 @pytest.mark.parametrize(("card", "key"), DEALT_CARD_CASES)
@@ -127,7 +131,7 @@ def test_card_asset_key_or_none_given_a_dealt_code_returns_its_asset_key(
 
 @pytest.mark.parametrize("card", NON_CARD_CASES)
 def test_card_asset_key_or_none_given_a_non_card_string_returns_none(card: str) -> None:
-    """R-34's "held" placeholder and any other unmappable text is None.
+    """Any unmappable text is None -- the blank cell seam (W9).
 
     ``""`` is the empty-string boundary case (T-4): a missing card
     value must not be mistaken for a dealt one either.

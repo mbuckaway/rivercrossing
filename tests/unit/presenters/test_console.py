@@ -18,10 +18,12 @@ tabs (the flagged feed subset and the riders rows, both refreshed in
 
 ``EngineDataSource`` is the first real ``DataSource`` implementation
 over ``(engine, roster)``; its mapping tests pin the feed shape (R-32:
-time, plate, entry, lap, lap time, total, card or "held", flagged,
-newest-first, cap 30), the counters, and the non-console methods
-(standings/entry_detail/audit_rows/riders/rides) implemented simply
-for E5/E6 to replace.
+time, plate, entry, lap, lap time, total, card code, flagged,
+newest-first, cap 30 -- W9: the card cell always carries the real
+code; a held crossing's row is flagged and shows the held card's own
+code, never the literal placeholder "held"), the counters, and the
+non-console methods (standings/entry_detail/audit_rows/riders/rides)
+implemented simply for E5/E6 to replace.
 """
 
 import dataclasses
@@ -431,16 +433,18 @@ def test_engine_data_source_feed_rows_caps_at_thirty_rows(recorded: int, shown: 
     assert [row.lap for row in feed] == list(range(recorded, recorded - shown, -1))
 
 
-def test_engine_data_source_feed_rows_given_flagged_crossing_reports_held_card() -> None:
-    """R-34: a short lap's row is flagged and shows 'held', no card."""
+def test_engine_data_source_feed_rows_given_flagged_crossing_reports_the_held_cards_code() -> None:
+    """W9: a held lap flags AND its row carries the real held code."""
     engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)  # 5 s < 60 s min lap
     source = EngineDataSource(engine, engine._roster)
+    held = engine.held_crossings()[0]
 
     feed = source.feed_rows()
 
     assert feed[0].flagged is True
-    assert feed[0].card == "held"
+    assert feed[0].card == held.card.code()
+    assert feed[0].card != "held"
 
 
 # ----------------------------------------------------------- counters
@@ -1328,7 +1332,7 @@ def test_on_plate_entered_given_flagged_crossing_lists_it_in_the_flagged_rows() 
     presenter.on_plate_entered("12")
 
     assert [row.plate for row in view.last_flagged] == ["12"]
-    assert view.last_flagged[0].card == "held"
+    assert view.last_flagged[0].card == engine.held_crossings()[0].card.code()
 
 
 def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> None:

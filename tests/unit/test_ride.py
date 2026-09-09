@@ -1672,6 +1672,68 @@ def test_engine_card_for_given_an_unknown_crossing_raises_key_error() -> None:
         engine.card_for(crossing)
 
 
+# --------------------------------------- W9: held-card lookup (R-34)
+
+
+def test_engine_held_card_for_given_a_held_crossing_returns_its_card() -> None:
+    """A short-lap crossing's held card resolves by crossing (W9)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+
+    held_card = engine.held_card_for(crossing)
+
+    assert held_card == result.card
+    assert engine.card_for(crossing) == result.card  # dealt, not credited
+
+
+def test_engine_held_card_for_given_a_credited_crossing_returns_none() -> None:
+    """A normal lap's card is credited, never held -- None (W9)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    crossing = engine.crossings[-1]
+
+    assert engine.held_card_for(crossing) is None
+
+
+def test_engine_held_card_for_given_a_short_lap_under_always_deal_returns_none() -> None:
+    """W4 default: a short lap credits like any other -- not held."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    assert engine.held_crossings() == ()
+    assert engine.held_card_for(engine.crossings[-1]) is None
+
+
+@pytest.mark.parametrize(
+    "release",
+    ["confirm_held", "void_held"],
+    ids=["released_by_confirm", "released_by_void"],
+)
+def test_engine_held_card_for_given_a_released_crossing_returns_none(release: str) -> None:
+    """Confirm or void moves the card out of the hold queue (W9)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    getattr(engine, release)(held.crossing)
+
+    assert engine.held_card_for(held.crossing) is None
+
+
+def test_engine_held_card_for_given_a_crossing_never_dealt_returns_none() -> None:
+    """A stranger crossing is not in the hold queue -- None (W9)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    crossing = Crossing(entry_id="12", seq=99, crossed_at=_dt(10, 30))
+
+    assert engine.held_card_for(crossing) is None
+
+
 def test_engine_shoe_remaining_and_total_track_the_current_cycle() -> None:
     """The Shoe counter's source: remaining + dealt = cycle total."""
     engine, _ = _make_engine()

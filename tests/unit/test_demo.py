@@ -124,7 +124,7 @@ def test_demo_feed_rows_matches_the_canvas_fixture_exactly() -> None:
             lap=6,
             lap_time="07:12",
             total="2:44:30",
-            card="held",
+            card="2S",  # W9: the held crossing shows its real dealt code
             flagged=True,
         ),
         FeedRow(
