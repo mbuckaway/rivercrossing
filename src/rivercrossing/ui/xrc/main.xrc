@@ -456,9 +456,9 @@
   </object>
 
   <!--
-    Seven menus, 46 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 7 - Riders 5 - Cards 7 - Results 7 -
-    View 1 row, 11 items - Help 4). File order follows the 15 table
+    Seven menus, 44 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 8 - Ride 7 - Riders 6 - Cards 7 - Results 7 -
+    View 1 row, 8 items - Help 4). File order follows the 15 table
     (Import CSV, Export CSV, Back Up), not 15b's listing order.
 
     wxID_PREFERENCES / wxID_EXIT / wxID_ABOUT carry no <label>: the stock id
@@ -467,8 +467,9 @@
 
     Radio menu items get no <checked> here: wxWidgets' XRC handler applies
     that property only when kind == wxITEM_CHECK (src/xrc/xh_menu.cpp), so it
-    is a silent no-op on wxITEM_RADIO. Code checks mi_theme_system and
-    mi_zoom_100 - the two documented defaults - after LoadMenuBar.
+    is a silent no-op on wxITEM_RADIO. Code checks mi_zoom_100 - the one
+    documented zoom default - after LoadMenuBar (W13: the theme trio left
+    the View menu; the Settings appearance radios own appearance).
   -->
   <object class="wxMenuBar" name="main_menubar">
 
@@ -598,27 +599,17 @@
     </object>
 
     <!--
-      The theme trio and the zoom ladder are two separate radio groups; wx
-      groups consecutive wxITEM_RADIO entries, so mi_hide_times and the
-      separators around it are what keep them apart. The zoom items carry no
-      mnemonic: seven numeric labels cannot hold unique ones, and the whole
-      ladder is reachable with Alt+V then the arrow keys.
+      W13: the theme trio left this menu (the Settings appearance radios
+      are the single theme surface). The zoom ladder is one radio group;
+      wx groups consecutive wxITEM_RADIO entries, and the checkable
+      mi_hide_times between the menu's start and the ladder keeps the
+      zoom group from ever merging with a neighbouring radio item. The
+      zoom items carry no mnemonic: seven numeric labels cannot hold
+      unique ones, and the whole ladder is reachable with Alt+V then the
+      arrow keys.
     -->
     <object class="wxMenu">
       <label>&amp;View</label>
-      <object class="wxMenuItem" name="mi_theme_system">
-        <label>Theme: &amp;System</label>
-        <radio>1</radio>
-      </object>
-      <object class="wxMenuItem" name="mi_theme_light">
-        <label>Theme: &amp;Light</label>
-        <radio>1</radio>
-      </object>
-      <object class="wxMenuItem" name="mi_theme_dark">
-        <label>Theme: &amp;Dark</label>
-        <radio>1</radio>
-      </object>
-      <object class="separator"/>
       <object class="wxMenuItem" name="mi_hide_times">
         <label>&amp;Hide Times on Console</label>
         <checkable>1</checkable>

@@ -63,13 +63,15 @@ def test_settings_persistence_applies_and_round_trips_every_control_through_a_re
     layout settings that have no dialog control. The scenario reports
     the values applied from a pre-saved file in run one, the values
     its own mutations saved, and the values a fresh build restores
-    after that run closed.
+    after that run closed. The applied appearance reads from the
+    theme controller's mode -- W13 removed the View-menu theme radio
+    this used to mirror into.
     """
     result = scenario_runner.run_scenario("settings_persistence_round_trip")
 
     assert result["ok"], result["context"]
     data = result["data"]
-    assert data["applied_dark_radio"] is True, result["context"]
+    assert data["applied_theme_mode"] == "dark", result["context"]
     assert data["applied_sound_muted"] is True, result["context"]
     assert data["applied_hide_times_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["applied_sash"] == 320, result["context"]
@@ -111,20 +113,20 @@ def test_settings_dialog_renders_the_persisted_values() -> None:
 
 @_DARWIN_ONLY
 def test_settings_dialog_ok_applies_and_persists_dark_on_mac() -> None:
-    """Toggle Dark + OK: live apply, menu radio, file, relaunch render.
+    """Toggle Dark + OK: live apply, mode, file, relaunch render.
 
-    The appearance mirror both ways: the dialog's OK applies Dark live
-    (SystemAppearance flips), re-checks the View-menu radio, writes the
-    file, and a relaunch still renders Dark in a fresh dialog. Sound
-    off and hide-times on ride the same OK.
+    The appearance apply path: the dialog's OK applies Dark live
+    (SystemAppearance flips), records the mode on the theme controller
+    (W13: there is no View-menu radio to re-check any more), writes
+    the file, and a relaunch still renders Dark in a fresh dialog.
+    Sound off and hide-times on ride the same OK.
     """
     result = scenario_runner.run_scenario("settings_dialog_ok_applies_and_persists_dark")
-
     assert result["ok"], result["context"]
     data = result["data"]
     assert data["dlg_shown"] is True, result["context"]
     assert data["is_dark_after"] is True, result["context"]
-    assert data["menu_dark_checked"] is True, result["context"]
+    assert data["theme_mode_after"] == "dark", result["context"]
     assert data["sound_muted_after"] is True, result["context"]
     assert data["hide_times_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["saved_appearance"] == "dark", result["context"]
@@ -141,7 +143,7 @@ def test_settings_dialog_ok_persists_dark_where_runtime_cannot_change_on_windows
     Never asserts ``is_dark_after``'s absolute value -- the CannotChange
     contract (theme.py's own module docstring) only documents that the
     call has no runtime effect, not the pre-existing OS appearance. The
-    mirror facts (menu radio, saved file, relaunch render) hold on
+    mirror facts (recorded mode, saved file, relaunch render) hold on
     every platform.
     """
     result = scenario_runner.run_scenario("settings_dialog_ok_applies_and_persists_dark")
@@ -149,7 +151,7 @@ def test_settings_dialog_ok_persists_dark_where_runtime_cannot_change_on_windows
     assert result["ok"], result["context"]
     data = result["data"]
     assert data["dlg_shown"] is True, result["context"]
-    assert data["menu_dark_checked"] is True, result["context"]
+    assert data["theme_mode_after"] == "dark", result["context"]
     assert data["sound_muted_after"] is True, result["context"]
     assert data["hide_times_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["saved_appearance"] == "dark", result["context"]
@@ -160,13 +162,13 @@ def test_settings_dialog_ok_persists_dark_where_runtime_cannot_change_on_windows
 
 
 def test_settings_dialog_cancel_applies_and_persists_nothing() -> None:
-    """Toggle then Cancel: no apply, no menu change, file untouched.
+    """Toggle then Cancel: no apply, no mode change, file untouched.
 
     Platform-independent: "no change" is the documented contract on
     both macOS (the toggle never reached OK) and MSW (where live change
     is impossible anyway) -- the pre-existing LIGHT appearance, light
-    menu radio, sound on and the untouched file all read as they did
-    before the dialog opened.
+    theme-controller mode, sound on and the untouched file all read as
+    they did before the dialog opened.
     """
     result = scenario_runner.run_scenario("settings_dialog_cancel_applies_nothing")
 
@@ -174,7 +176,7 @@ def test_settings_dialog_cancel_applies_and_persists_nothing() -> None:
     data = result["data"]
     assert data["dlg_shown"] is True, result["context"]
     assert data["appearance_unchanged"] is True, result["context"]
-    assert data["menu_dark_checked"] is False, result["context"]
+    assert data["theme_mode_after"] == "light", result["context"]
     assert data["sound_muted_after"] is False, result["context"]
     assert data["saved_appearance"] == "light", result["context"]
     assert data["saved_sound_on"] is True, result["context"]
@@ -235,6 +237,24 @@ def test_zoom_view_menu_scales_console_fonts_and_bounds_the_ladder() -> None:
     assert data["pt_at_150"] == round(base * 150 / 100), result["context"]
     assert data["radio_150_checked"] is True, result["context"]
     assert data["saved_zoom"] == 150, result["context"]
+
+
+def test_zoom_view_menu_posts_no_stub_notice_and_persists() -> None:
+    """mi_zoom_110 posts no stub; the radio ticks and the file saves.
+
+    W13 inherited this contract from the theme-vs-zoom scenario that
+    retired with the View-menu theme trio: the View row is now
+    hide-times + zoom, and firing a zoom id must never post the
+    generic not-yet-implemented stub. Zoom is platform-independent --
+    no CannotChange split -- so one test covers both OSes.
+    """
+    result = scenario_runner.run_scenario("zoom_id_does_not_post_the_stub_notice_and_applies")
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    assert data["zoom_notice_unchanged"] is True, result["context"]
+    assert data["zoom_radio_checked"] is True, result["context"]
+    assert data["zoom_percent_after"] == 110, result["context"]
 
 
 def test_zoom_settings_choice_mirrors_the_view_radio_and_dialogs_scale() -> None:

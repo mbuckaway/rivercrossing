@@ -137,9 +137,10 @@ _EMPTY_SOURCE = EmptyDataSource()
 # empty view-model), so the lookup key itself no longer matters.
 _ENTRY_DETAIL_DEFAULT_PLATE = ""
 
-# The View row's own commands.py target (P8-D8): its 11 ids share one
-# route, dispatched further by event id below -- the theme trio to
-# theme.ThemeController, the other 8 to the generic COMMAND stub.
+# The View row's own commands.py target (P8-D8): its 8 ids share one
+# route, dispatched further by event id below -- mi_hide_times and the
+# seven zoom radios, with anything else falling to the generic COMMAND
+# stub (W13: the theme trio left the View menu).
 _VIEW_ROUTE_TARGET = "view_setting"
 
 # E9.1.1's launch seam: the env var that points the bundled binary at
@@ -505,42 +506,6 @@ def _apply_accelerators(frame: Any, menubar: Any) -> None:  # noqa: ANN401 -- wx
     frame.SetAcceleratorTable(wx.AcceleratorTable(_accelerator_entries(menubar)))
 
 
-def _check_default_menu_radios(menubar: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Tick the two documented radio defaults after ``LoadMenuBar``.
-
-    ``<checked>`` is a silent no-op on ``wxITEM_RADIO`` (main.xrc's
-    own comment, measured against ``src/xrc/xh_menu.cpp``) -- both
-    documented defaults are ticked here in code instead (P8-D4).
-    ``mi_theme_system`` already reads checked before this call in
-    practice (it is the first item of its own radio group, and wx
-    checks a fresh group's first member by default, measured); this
-    still ticks it explicitly rather than relying on group order,
-    which XRC authoring could change without this line noticing.
-    """
-    require_wx()
-    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
-
-    menubar.Check(wx.xrc.XRCID(ids.MI_THEME_SYSTEM), True)  # noqa: FBT003 -- wx API takes a positional bool
-    menubar.Check(wx.xrc.XRCID(ids.MI_ZOOM_100), True)  # noqa: FBT003 -- wx API takes a positional bool
-
-
-def _check_loaded_theme_radio(menubar: Any, mode: theme.ThemeMode) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Tick the appearance radio for *mode* (E8.1.1, startup + mirror).
-
-    ``wxMenuBar.Check`` also unchecks the theme trio's other two
-    members (measured, ``_handle_view_row``'s own note), so ticking the
-    mode's radio alone restores the selection. Called at startup after
-    ``_check_default_menu_radios`` (ticking System there is a no-op --
-    it is already checked) and whenever the settings dialog applies a
-    new appearance (E8.1.2's mirror), where the previously checked
-    radio must be reverted too.
-    """
-    require_wx()
-    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
-
-    menubar.Check(wx.xrc.XRCID(theme.menu_item_id_for(mode)), True)  # noqa: FBT003 -- wx API takes a positional bool
-
-
 def _check_loaded_hide_times(menubar: Any, *, hide: bool) -> None:  # noqa: ANN401 -- wx ships no stubs
     """Set ``mi_hide_times``'s check item to *hide* (E8.1.3).
 
@@ -564,10 +529,11 @@ def _check_loaded_zoom_radio(menubar: Any, percent: int) -> None:  # noqa: ANN40
     ``wxMenuBar.Check`` also unchecks the zoom group's other six
     members (measured, ``_handle_view_row``'s own note), so ticking the
     percent's radio alone restores the selection. Called at startup
-    after ``_check_default_menu_radios`` (ticking 100 there is a no-op
-    -- it is already checked) and whenever the settings dialog applies
-    a new zoom (the mirror), where the previously checked radio must
-    be reverted too.
+    with the loaded percent (ticking 100 -- the default when no file
+    exists -- is the documented ``mi_zoom_100`` default the XRC cannot
+    declare: ``<checked>`` is a no-op on ``wxITEM_RADIO``) and
+    whenever the settings dialog applies a new zoom (the mirror),
+    where the previously checked radio must be reverted too.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -597,29 +563,13 @@ def _toggle_hide_times(context: _RouteContext) -> None:
         presenter.on_hide_times(hide=hide)
 
 
-def _theme_item_id_for(real_id: int) -> str | None:
-    """Return the theme radio's own XRC name for *real_id*, if any.
-
-    The reverse of ``wx.xrc.XRCID``: an ``EVT_MENU`` only ever carries
-    the resolved runtime int, never the name that produced it, so the
-    three theme ids are walked back explicitly rather than kept in
-    some other, larger lookup this row's other eight ids would also
-    need to share.
-    """
-    require_wx()
-    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
-
-    return next(
-        (item_id for item_id in theme.THEME_MENU_ITEM_IDS if wx.xrc.XRCID(item_id) == real_id),
-        None,
-    )
-
-
 def _zoom_item_id_for(real_id: int) -> str | None:
     """Return the zoom radio's own XRC name for *real_id*, if any.
 
-    The zoom analogue of :func:`_theme_item_id_for` -- an ``EVT_MENU``
-    carries only the resolved runtime int, never the XRC name.
+    An ``EVT_MENU`` carries only the resolved runtime int, never the
+    XRC name, so the seven zoom ids are walked back explicitly rather
+    than kept in some other, larger lookup this row's other id would
+    also need to share.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -631,42 +581,30 @@ def _zoom_item_id_for(real_id: int) -> str | None:
 
 
 def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: Any) -> None:  # noqa: ANN401
-    """Dispatch the View row: theme, hide-times and zoom ids, else stub.
+    """Dispatch the View row: hide-times and zoom ids, else stub.
 
-    P8-D4. A synthetic ``EVT_MENU`` never flips a menu item's own
-    checked state the way a genuine native click does (measured: this
+    E8.1.3 adds ``mi_hide_times``: a live toggle -- flip
+    ``context.settings.hide_times``, apply through the console
+    presenter, persist, and set the check item explicitly (a synthetic
+    event does not auto-toggle check items either). E8.1.4 adds the
+    seven ``mi_zoom_*`` radios: apply through the zoom controller,
+    persist, and tick the fired radio explicitly.
+
+    A synthetic ``EVT_MENU`` never flips a menu item's own checked
+    state the way a genuine native click does (measured: this
     harness's functional suite has no delivery mechanism but direct
     event injection, harness.py's own module docstring), so each
     branch sets its item's checked state explicitly; ``wxMenuBar.
     Check`` also unchecks the other members of a radio group
     (measured), matching a real click's native handling.
 
-    E8.1.2 closed the appearance mirror: a theme radio click now also
-    persists the choice (and updates ``context.settings``), so the
-    next Settings dialog open renders it -- the same file the dialog's
-    OK writes. E8.1.3 adds ``mi_hide_times``: a live toggle -- flip
-    ``context.settings.hide_times``, apply through the console
-    presenter, persist, and set the check item explicitly (a synthetic
-    event does not auto-toggle check items either). E8.1.4 adds the
-    seven ``mi_zoom_*`` radios: apply through the zoom controller,
-    persist, and tick the fired radio explicitly.
+    W13 (notes #14): the theme trio left this row -- the Settings
+    appearance radios are the single theme surface, applied through
+    ``_apply_settings_live``; only hide-times and zoom dispatch here.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
 
-    item_id = _theme_item_id_for(event.GetId())
-    if item_id is not None:
-        context.frame.GetMenuBar().Check(event.GetId(), True)  # noqa: FBT003 -- wx API takes a positional bool
-        notice = context.theme_controller.on_menu(item_id)
-        if notice is not None:
-            context.frame.SetStatusText(notice)
-        # E8.1.2: persist the choice -- only appearance changes; the
-        # other fields stay as currently held.
-        mode = theme.mode_for_menu_id(item_id)
-        updated = replace(context.settings, appearance=mode.value)
-        settings_store.save_settings(updated, context.settings_path)
-        context.settings = updated
-        return
     if event.GetId() == wx.xrc.XRCID(ids.MI_HIDE_TIMES):
         _toggle_hide_times(context)
         return
@@ -1003,8 +941,9 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
 
     The settings dialog's OK callback: saves to the config file,
     updates the context's current settings, then applies what has live
-    paths -- appearance through the live theme controller (which
-    re-checks the View-menu radio via ``_check_loaded_theme_radio``),
+    paths -- appearance through the live theme controller (W13: the
+    Settings appearance radios are the single theme surface, so the
+    mode is applied directly, with no View-menu radio to re-check),
     sound through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
     through the console presenter's ``on_hide_times`` (when a
     presenter is threaded) with the View-menu check item synced
@@ -1024,10 +963,9 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
         context.frame.SetStatusText(f"Could not save settings: {exc}")
     context.settings = settings
     mode = theme.ThemeMode(settings.appearance)
-    notice = context.theme_controller.on_menu(theme.menu_item_id_for(mode))
+    notice = context.theme_controller.apply_mode(mode)
     if notice is not None:
         context.frame.SetStatusText(notice)
-    _check_loaded_theme_radio(context.frame.GetMenuBar(), mode)
     _check_loaded_hide_times(context.frame.GetMenuBar(), hide=settings.hide_times)
     _check_loaded_zoom_radio(context.frame.GetMenuBar(), settings.zoom_percent)
     sound.set_muted(muted=not settings.sound_on)
@@ -3319,11 +3257,12 @@ def build_main_window(
     Loads every packaged XRC resource, builds the console
     (:class:`~rivercrossing.ui.views.MainFrame`) and attaches its
     menubar via ``LoadMenuBar`` (never ``FindWindowByName`` -- the XRC
-    menubar handler drops the name, spec.md §15b), ticks the two
-    documented radio defaults, applies the accelerator table, binds
-    every §15 route and the theme controller's own
-    ``EVT_SYS_COLOUR_CHANGED`` re-apply, and wires the two
-    process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
+    menubar handler drops the name, spec.md §15b), ticks the loaded
+    hide-times check item and zoom radio (the radio defaults the XRC
+    cannot declare: ``<checked>`` is a no-op on ``wxITEM_RADIO``),
+    applies the accelerator table, binds every §15 route and the theme
+    controller's own ``EVT_SYS_COLOUR_CHANGED`` re-apply, and wires
+    the two process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
     (Phase 8, P8-D1/P8-D2/P8-D4). E5.4.2 retired the
     :class:`DemoDataSource` construction: the bootstrap roster is
     empty (no store-backed ride is open), the console reads its own
@@ -3334,7 +3273,8 @@ def build_main_window(
     E8.1.1 loads the per-user settings file at startup and applies
     what already has live paths: the persisted appearance through
     :class:`~rivercrossing.ui.theme.ThemeController` (constructed with
-    the loaded mode, and the matching menu radio checked), the sound
+    the loaded mode; W13 removed the View-menu theme trio, so there is
+    no menu radio to tick), the sound
     mute through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
     through the console presenter's ``on_hide_times`` (with the menu
     check item synced, E8.1.3), zoom through
@@ -3417,8 +3357,6 @@ def build_main_window(
     frame = _load_frame_verified(resource, REQUIRED_CONTROLS, REQUIRED_CONTROL_CLASSES)
     menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
-    _check_default_menu_radios(menubar)
-    _check_loaded_theme_radio(menubar, loaded_mode)
     _check_loaded_hide_times(menubar, hide=loaded_settings.hide_times)
     _check_loaded_zoom_radio(menubar, loaded_settings.zoom_percent)
 

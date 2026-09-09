@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-wx tests for View > Theme: live SetAppearance wiring (Phase 8).
+"""Real-wx tests for appearance modes: live SetAppearance wiring.
 
-R-03/P8-D4: the three theme radios apply the OS appearance at runtime
-via ``wx.App.SetAppearance``. Appearance is process-global state --
-the same reasoning ``test_quit_flow_wx.py`` gives for quitting -- so
-every behaviour-mutating case here runs in a fresh, spawned
-interpreter via ``console_subprocess_scenarios.py``, following that
-module's own isolation rationale exactly (reproduced rather than
-shared, per that module's own note about this task's file batch
-having no room for a shared sibling helper).
+R-03: the Settings window's System/Light/Dark appearance radios apply
+the OS appearance at runtime via ``wx.App.SetAppearance``. W13
+(testing notes #14) removed the View > Theme menu trio -- the
+Settings radios are the single theme surface -- so every scenario
+drives ``settings_dlg``'s radios + OK (``theme.apply_mode``), never a
+View-menu event. Appearance is process-global state -- the same
+reasoning ``test_quit_flow_wx.py`` gives for quitting -- so every
+behaviour-mutating case here runs in a fresh, spawned interpreter via
+``console_subprocess_scenarios.py``, following that module's own
+isolation rationale exactly (reproduced rather than shared, per that
+module's own note about this task's file batch having no room for a
+shared sibling helper).
 
 The one test that is *not* a subprocess scenario is the spelling
 probe below: it pins the exact ``wx.PyApp.Appearance`` /
@@ -102,17 +106,17 @@ _WIN32_ONLY = pytest.mark.skipif(
 
 
 @_DARWIN_ONLY
-def test_theme_dark_applies_at_runtime_and_keeps_the_radio_checked_on_mac() -> None:
-    """mi_theme_dark flips SystemAppearance live; a screenshot is saved.
+def test_theme_dark_applies_at_runtime_and_records_the_mode_on_mac() -> None:
+    """Apply Dark via Settings OK: live flip; a screenshot saves.
 
-    macOS live-switch half of P8-D4: no restart, no capability check.
+    macOS live-switch half of R-03: no restart, no capability check.
     """
     result = scenario_runner.run_scenario("theme_dark_applies_at_runtime")
 
     assert result["data"] == {
         "is_dark_after": True,
         "appearance_unchanged": False,
-        "radio_checked": True,
+        "theme_mode_after": "dark",
         "notice_after": "",
         "screenshot_exists": True,
     }, result["context"]
@@ -120,29 +124,30 @@ def test_theme_dark_applies_at_runtime_and_keeps_the_radio_checked_on_mac() -> N
 
 @_WIN32_ONLY
 def test_theme_dark_cannot_change_at_runtime_and_posts_the_next_launch_notice_on_windows() -> None:
-    """mi_theme_dark: CannotChange leaves the appearance untouched.
+    """Apply Dark via Settings OK: CannotChange leaves appearance alone.
 
     Never asserts ``is_dark_after``'s absolute value -- that Windows
     CI runner's own current OS theme is not knowable in advance, and
     the CannotChange contract (theme.py's own module docstring) only
     documents that the call has no runtime effect, not what the
-    unrelated pre-existing appearance was.
+    unrelated pre-existing appearance was. The controller's recorded
+    mode and the notice hold on every platform.
     """
     result = scenario_runner.run_scenario("theme_dark_applies_at_runtime")
 
     assert result["data"]["appearance_unchanged"] is True, result["context"]
-    assert result["data"]["radio_checked"] is True, result["context"]
+    assert result["data"]["theme_mode_after"] == "dark", result["context"]
     assert result["data"]["notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
 
 
 @_DARWIN_ONLY
 def test_theme_light_round_trip_restores_light_appearance_on_mac() -> None:
-    """Dark then Light: SystemAppearance and the radio flip back."""
+    """Dark then Light through Settings OK: appearance and mode flip."""
     result = scenario_runner.run_scenario("theme_light_round_trip")
 
     assert result["data"] == {
         "is_dark_after": False,
-        "radio_checked": True,
+        "theme_mode_after": "light",
         "notice_after": "",
     }, result["context"]
 
@@ -152,93 +157,50 @@ def test_theme_light_round_trip_cannot_change_on_windows() -> None:
     """Dark then Light: CannotChange means no runtime effect."""
     result = scenario_runner.run_scenario("theme_light_round_trip")
 
-    assert result["data"]["radio_checked"] is True, result["context"]
+    assert result["data"]["theme_mode_after"] == "light", result["context"]
     assert result["data"]["notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
 
 
 @_DARWIN_ONLY
 def test_theme_system_reapplies_on_sys_colour_changed_bounded_by_the_guard_on_mac() -> None:
-    """Dark then System: a bounded, guarded re-apply; mode stays System.
+    """Dark then System via Settings OK: a bounded, guarded re-apply.
 
     Dark first is deliberate: measured, a same-value ``SetAppearance``
     call does not re-fire ``EVT_SYS_COLOUR_CHANGED`` on this pin, so a
-    scenario that never leaves System would exercise no reentrant
-    path at all. ``apply_call_count`` == 3 is itself measured against
-    the real ``ThemeController`` -- one call for Dark (mode isn't
-    System, so ``on_sys_colour_changed`` takes no further action), and
-    two for System (the menu handler's own call, plus exactly one
-    guarded re-apply the resulting ``EVT_SYS_COLOUR_CHANGED`` triggers
-    -- a would-be third, nested call never happens on this pin, since
-    the guarded re-apply's ``SetAppearance(System)`` is itself a
-    same-value call once the first one already landed).
+    run that never leaves System would exercise no reentrant path at
+    all. ``apply_call_count`` == 3 is itself measured against the real
+    ``ThemeController`` -- one call for Dark (mode isn't System, so
+    ``on_sys_colour_changed`` takes no further action), and two for
+    System (the settings OK's own apply, plus exactly one guarded
+    re-apply the resulting ``EVT_SYS_COLOUR_CHANGED`` triggers -- a
+    would-be third, nested call never happens on this pin, since the
+    guarded re-apply's ``SetAppearance(System)`` is itself a same-value
+    call once the first one already landed).
     """
     result = scenario_runner.run_scenario("theme_system_reapplies_on_sys_colour_changed")
 
-    assert result["data"] == {"apply_call_count": 3, "radio_checked": True}, result["context"]
+    assert result["data"] == {"apply_call_count": 3, "theme_mode_after": "system"}, result[
+        "context"
+    ]
 
 
 @_WIN32_ONLY
-def test_theme_system_menu_clicks_still_apply_and_check_the_radio_on_windows() -> None:
-    """Dark then System still call apply and check the radio on Windows.
+def test_theme_system_settings_ok_still_applies_and_records_the_mode_on_windows() -> None:
+    """Dark then System through Settings OK still apply on Windows.
 
     Never asserts an exact ``apply_call_count``: whether MSW re-fires
     ``EVT_SYS_COLOUR_CHANGED`` from inside a ``CannotChange``
     ``SetAppearance`` call is not documented anywhere this design
     depends on (theme.py's own module docstring measures only the
-    macOS reentrancy pinned above), so only the floor two menu clicks
-    guarantee by construction -- one ``on_menu`` call each -- is
-    asserted, regardless of any further reentrant calls this pin may
-    or may not add.
+    macOS reentrancy pinned above), so only the floor of two Settings
+    OK applies -- guaranteed by construction, one ``apply_mode`` call
+    each -- is asserted, regardless of any further reentrant calls
+    this pin may or may not add.
     """
     result = scenario_runner.run_scenario("theme_system_reapplies_on_sys_colour_changed")
 
     assert result["data"]["apply_call_count"] >= 2, result["context"]
-    assert result["data"]["radio_checked"] is True, result["context"]
-
-
-_THEME_VS_ZOOM_SCENARIO = "theme_ids_do_not_post_the_stub_notice_and_zoom_applies"
-
-
-@_DARWIN_ONLY
-def test_theme_and_zoom_ids_post_no_stub_notice_while_zoom_applies_on_mac() -> None:
-    """Theme and mi_zoom_110 post no notice; zoom 110 applies.
-
-    E8.1.4 wired the zoom radios, so the old contract -- zoom still
-    posts the not-yet-implemented stub -- is gone by design. The new
-    contract: a theme click posts no stub (Ok on macOS), a zoom click
-    posts nothing at all (the status text is unchanged by it), the
-    fired radio is checked, and the settings file records 110.
-    """
-    result = scenario_runner.run_scenario(_THEME_VS_ZOOM_SCENARIO)
-
-    assert result["ok"], result["context"]
-    data = result["data"]
-    assert data["theme_notice_unchanged"] is True, result["context"]
-    assert data["theme_notice_after"] == "", result["context"]
-    assert data["zoom_notice_after"] == data["theme_notice_after"], result["context"]
-    assert data["zoom_radio_checked"] is True, result["context"]
-    assert data["zoom_percent_after"] == 110, result["context"]
-
-
-@_WIN32_ONLY
-def test_theme_posts_next_launch_notice_while_zoom_applies_on_windows() -> None:
-    """Theme posts CannotChange; zoom still applies and posts nothing.
-
-    Never asserts an absolute appearance value -- the CannotChange
-    contract (theme.py's own module docstring) only documents that the
-    call has no runtime effect. The zoom facts hold on every platform:
-    the fired radio is checked, the settings file records 110, and the
-    status text after the zoom click still shows the theme's own
-    notice (zoom posted nothing -- no stub).
-    """
-    result = scenario_runner.run_scenario(_THEME_VS_ZOOM_SCENARIO)
-
-    assert result["ok"], result["context"]
-    data = result["data"]
-    assert data["theme_notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
-    assert data["zoom_notice_after"] == theme._NEXT_LAUNCH_NOTICE, result["context"]
-    assert data["zoom_radio_checked"] is True, result["context"]
-    assert data["zoom_percent_after"] == 110, result["context"]
+    assert result["data"]["theme_mode_after"] == "system", result["context"]
 
 
 # --- ux-polish: the light-mode panel background ----------------------
@@ -247,7 +209,8 @@ def test_theme_posts_next_launch_notice_while_zoom_applies_on_windows() -> None:
 # scenario above: the dialog tint is decided from
 # ``wx.SystemSettings.GetAppearance()``, process-global state, so the
 # probe runs in its own fresh interpreter. The scenario
-# (``ride_setup_dlg_light_panel_background``) fires the Light radio,
+# (``ride_setup_dlg_light_panel_background``) applies the Light radio
+# through the Settings dialog's OK (the W13 single theme surface),
 # opens the real ``mi_new_ride`` route, and records the shown dialog's
 # background colour plus the live appearance.
 
@@ -259,9 +222,9 @@ _PANEL_BG_RGBA = [*theme._LIGHT_PANEL_BG, 255]
 def test_ride_setup_dlg_carries_the_light_panel_background_in_light_mode_on_mac() -> None:
     """Ride Setup opened in a Light appearance shows the panel tone.
 
-    macOS applies ``mi_theme_light`` live, so forcing it guarantees
-    ``IsDark()`` reads False while the dialog is shown, and the
-    dialog's background must then be exactly
+    macOS applies the Settings-applied Light live (W13), so forcing it
+    guarantees ``IsDark()`` reads False while the dialog is shown, and
+    the dialog's background must then be exactly
     ``theme._LIGHT_PANEL_BG`` (+ opaque alpha) -- the non-default
     panel tone that keeps the native white entry boxes distinct. The
     route also destroys the dialog after Cancel, so no stale window
@@ -283,11 +246,11 @@ def test_ride_setup_dlg_background_follows_the_unchangeable_appearance_on_window
 
     Never asserts ``is_dark_at_open``'s absolute value -- that Windows
     CI runner's own current OS theme is not knowable in advance, and
-    the CannotChange contract means the Light radio click cannot alter
-    it. The invariant holds on both outcomes: the dialog carries the
-    panel tone exactly when the live appearance reads Light (a Light
-    OS tints -- its entry boxes are white; a Dark OS stays fully
-    native -- dark mode is unchanged by design).
+    the CannotChange contract means the Settings-applied Light radio
+    cannot alter it. The invariant holds on both outcomes: the dialog
+    carries the panel tone exactly when the live appearance reads
+    Light (a Light OS tints -- its entry boxes are white; a Dark OS
+    stays fully native -- dark mode is unchanged by design).
     """
     result = scenario_runner.run_scenario(_PANEL_BG_SCENARIO)
 

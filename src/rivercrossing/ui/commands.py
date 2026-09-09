@@ -115,9 +115,10 @@ class MenuRoute:
         label: The row's own text, transcribed from the "Menu item"
             column (the part after "▸").
         ids: The XRC names this row covers -- one for almost every
-            row; the View row's single "Theme · Hide Times · Zoom"
-            entry covers all eleven of its radio/check items, since
-            §15 itself groups them into one row.
+            row; the View row's single "Hide Times · Zoom"
+            entry covers all eight of its radio/check items, since
+            §15 itself groups them into one row (W13 removed the three
+            theme radios -- Settings owns appearance now).
         kind: Which :class:`TargetKind` *target* is.
         target: A ``ui/ids.py`` frozen name for ``WINDOW``/``DIALOG``
             kinds, or a short symbolic action name for ``COMMAND``.
@@ -464,14 +465,12 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="focus_tiebreak_control",
         enabled_when=Enablement(requires_ride_open=True),  # "ride open"
     ),
-    # --- View: 1 row, 11 ids ---
+    # --- View: 1 row, 8 ids (W13: the theme trio left the View menu;
+    # the Settings appearance radios are the single theme surface) ---
     MenuRoute(
         menu="View",
-        label="Theme · Hide Times · Zoom",
+        label="Hide Times · Zoom",
         ids=(
-            "mi_theme_system",
-            "mi_theme_light",
-            "mi_theme_dark",
             "mi_hide_times",
             "mi_zoom_90",
             "mi_zoom_100",
@@ -481,7 +480,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
             "mi_zoom_140",
             "mi_zoom_150",
         ),
-        kind=TargetKind.COMMAND,  # "Direct commands ... mirrored in Settings"
+        kind=TargetKind.COMMAND,  # "Direct commands"
         target="view_setting",
         enabled_when=ALWAYS,  # "always"
     ),

@@ -2351,8 +2351,9 @@ def _rider_issues_import_and_check() -> dict[str, Any]:
 def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401
     """Post a real ``EVT_MENU`` for *item_id* at *frame* and pump it.
 
-    Safe to pump right after, unlike ``_fire_exit_route`` above: no
-    theme id ever opens a modal dialog.
+    Safe to pump right after, unlike ``_fire_exit_route`` above: the
+    ids this fires (the View row's hide-times check item and zoom
+    radios, W13) never open a modal dialog.
     """
     real_id = wx.xrc.XRCID(item_id)
     event = wx.CommandEvent(wx.EVT_MENU.typeId, real_id)
@@ -2367,21 +2368,61 @@ def _menu_item_checked(frame: Any, item_id: str) -> bool:  # noqa: ANN401
     return bool(item.IsChecked())
 
 
+def _theme_mode_now() -> str:
+    """Return the theme controller's currently selected mode spelling.
+
+    W13: the View-menu theme radio is gone (the Settings appearance
+    radios are the single theme surface), so the controller's own
+    ``mode`` -- what ``build_main_window`` recorded at startup or the
+    settings OK path last applied -- is the platform-independent
+    observable the old ``_menu_item_checked`` probe replaced.
+    """
+    return wx.GetApp().launch_context.theme_controller.mode.value
+
+
+def _apply_appearance_via_settings(frame: Any, mode: theme.ThemeMode) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Drive the Settings dialog's OK to apply *mode* (W13 surface).
+
+    Opens ``settings_dlg`` through the File ▸ Settings… route, sets
+    the three appearance radios to *mode* -- explicitly clearing the
+    others, since a programmatic ``SetValue`` may not auto-uncheck the
+    group -- and clicks OK. The dialog is the single theme surface
+    since W13 removed the View-menu theme trio.
+    """
+
+    def _drive(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        system_radio = harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO)
+        light_radio = harness.find_control(dialog, ids.APPEARANCE_LIGHT_RADIO)
+        dark_radio = harness.find_control(dialog, ids.APPEARANCE_DARK_RADIO)
+        system_radio.SetValue(mode == theme.ThemeMode.SYSTEM)
+        light_radio.SetValue(mode == theme.ThemeMode.LIGHT)
+        dark_radio.SetValue(mode == theme.ThemeMode.DARK)
+        harness.click(dialog, pages.WX_ID_OK)
+
+    wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _drive)
+    harness.fire_menu_event(frame, "wxID_PREFERENCES")
+    harness.pump()
+
+
 def _theme_dark_applies_at_runtime() -> dict[str, Any]:
-    """mi_theme_dark: SystemAppearance flips dark, radio stays checked.
+    """Apply Dark via Settings OK: appearance flips, mode records.
 
-    Also captures a dark-mode screenshot artifact (Phase 8's own
-    visual record) via the same ``harness.screenshot`` machinery
-    ``test_screen_smoke.py`` already uses, into the same
-    ``_screenshots`` directory.
+    W13 (notes #14): the Settings appearance radios are the single
+    theme surface, so the scenario drives settings_dlg's Dark radio +
+    OK where it used to fire the View-menu theme id. Also captures a
+    dark-mode screenshot artifact (Phase 8's own visual record) via
+    the same ``harness.screenshot`` machinery ``test_screen_smoke.py``
+    already uses, into the same ``_screenshots`` directory.
 
-    Captures the appearance both before and after firing the theme id,
-    rather than only the raw post-fire value: macOS's own live-switch
-    contract (theme.py's own module docstring) forces ``IsDark()`` to
-    the requested value deterministically, but MSW's ``CannotChange``
+    Captures the appearance both before and after the apply, rather
+    than only the raw post-OK value: macOS's own live-switch contract
+    (theme.py's own module docstring) forces ``IsDark()`` to the
+    requested value deterministically, but MSW's ``CannotChange``
     contract only documents that it does not change at all -- an
     invariant this caller can check without ever needing to know
     either OS's actual, environment-dependent starting appearance.
+    The controller's recorded ``mode`` is the platform-independent
+    "the choice applied" fact (``theme_mode_now``).
     """
     frame = _build_app_window()
     frame.Show()
@@ -2389,13 +2430,13 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
     harness.pump()
     try:
         is_dark_before = wx.SystemSettings.GetAppearance().IsDark()
-        _fire_menu_event(frame, ids.MI_THEME_DARK)
+        _apply_appearance_via_settings(frame, theme.ThemeMode.DARK)
         is_dark_after = wx.SystemSettings.GetAppearance().IsDark()
         saved = harness.screenshot(frame, _SCREENSHOT_DIR / "theme_dark.png")
         return {
             "is_dark_after": is_dark_after,
             "appearance_unchanged": is_dark_after == is_dark_before,
-            "radio_checked": _menu_item_checked(frame, ids.MI_THEME_DARK),
+            "theme_mode_after": _theme_mode_now(),
             "notice_after": frame.GetStatusBar().GetStatusText(0),
             "screenshot_exists": saved.exists(),
         }
@@ -2404,9 +2445,9 @@ def _theme_dark_applies_at_runtime() -> dict[str, Any]:
 
 
 def _theme_light_round_trip() -> dict[str, Any]:
-    """Dark then Light: SystemAppearance and the radio flip back.
+    """Dark then Light via Settings OK: appearance and mode flip back.
 
-    Captures the pre-fire notice text too (see
+    Captures the pre-OK notice text too (see
     :func:`_theme_dark_applies_at_runtime`'s own docstring for why):
     MSW's ``CannotChange`` contract means the notice after this round
     trip is never the generic stub, but *is* the same next-launch text
@@ -2418,11 +2459,11 @@ def _theme_light_round_trip() -> dict[str, Any]:
     frame.Layout()
     harness.pump()
     try:
-        _fire_menu_event(frame, ids.MI_THEME_DARK)
-        _fire_menu_event(frame, ids.MI_THEME_LIGHT)
+        _apply_appearance_via_settings(frame, theme.ThemeMode.DARK)
+        _apply_appearance_via_settings(frame, theme.ThemeMode.LIGHT)
         return {
             "is_dark_after": wx.SystemSettings.GetAppearance().IsDark(),
-            "radio_checked": _menu_item_checked(frame, ids.MI_THEME_LIGHT),
+            "theme_mode_after": _theme_mode_now(),
             "notice_after": frame.GetStatusBar().GetStatusText(0),
         }
     finally:
@@ -2430,7 +2471,7 @@ def _theme_light_round_trip() -> dict[str, Any]:
 
 
 def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
-    """Dark then System: a guarded re-apply, bounded (best-effort).
+    """Re-apply System via Settings OK; the guard bounds it best-effort.
 
     # logic-coverage-exempt: T-10 -- this passthrough spy targets an
     # internal module function (``theme.apply``), not a true I/O
@@ -2457,11 +2498,11 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
         frame.Layout()
         harness.pump()
         try:
-            _fire_menu_event(frame, ids.MI_THEME_DARK)
-            _fire_menu_event(frame, ids.MI_THEME_SYSTEM)
+            _apply_appearance_via_settings(frame, theme.ThemeMode.DARK)
+            _apply_appearance_via_settings(frame, theme.ThemeMode.SYSTEM)
             return {
                 "apply_call_count": len(calls),
-                "radio_checked": _menu_item_checked(frame, ids.MI_THEME_SYSTEM),
+                "theme_mode_after": _theme_mode_now(),
             }
         finally:
             _close_without_prompt(frame)
@@ -2469,17 +2510,17 @@ def _theme_system_reapplies_on_sys_colour_changed() -> dict[str, Any]:
         theme.apply = original_apply
 
 
-def _theme_ids_do_not_post_the_stub_notice_and_zoom_applies() -> dict[str, Any]:
-    """Theme and zoom ids post no stub notice; zoom applies (E8.1.4).
+def _zoom_id_does_not_post_the_stub_notice_and_applies() -> dict[str, Any]:
+    """mi_zoom_110 posts no stub notice and applies (E8.1.4).
 
-    Returns the raw post-fire theme notice text too, not only whether
-    it changed: MSW's ``CannotChange`` contract means firing the theme
-    id *does* change the status bar on Windows (to the documented
-    next-launch text), so "unchanged" alone would read as a false
-    positive there for the one fact this scenario needs to prove on
-    every platform -- that neither the theme nor the zoom id posts the
-    generic ``route.label — not yet implemented`` stub. Zoom applies:
-    the fired radio is checked and the settings file records 110.
+    W13 retired this scenario's theme half with the View-menu theme
+    trio: zoom is now the only View-menu id besides mi_hide_times that
+    routes live, so the remaining contract to prove is zoom's -- firing
+    ``mi_zoom_110`` must not post the generic ``route.label — not yet
+    implemented`` stub. Returns the raw post-fire status text too, not
+    only whether it changed, so the platform tests can assert the exact
+    invariant on both OSes. Zoom applies: the fired radio is checked
+    and the settings file records 110.
     """
     frame = _build_app_window()
     frame.Show()
@@ -2487,13 +2528,10 @@ def _theme_ids_do_not_post_the_stub_notice_and_zoom_applies() -> dict[str, Any]:
     harness.pump()
     try:
         before = frame.GetStatusBar().GetStatusText(0)
-        _fire_menu_event(frame, ids.MI_THEME_DARK)
-        after_theme = frame.GetStatusBar().GetStatusText(0)
-        _fire_menu_event(frame, "mi_zoom_110")
+        _fire_menu_event(frame, ids.MI_ZOOM_110)
         after_zoom = frame.GetStatusBar().GetStatusText(0)
         return {
-            "theme_notice_unchanged": after_theme == before,
-            "theme_notice_after": after_theme,
+            "zoom_notice_unchanged": after_zoom == before,
             "zoom_notice_after": after_zoom,
             "zoom_radio_checked": _menu_item_checked(frame, ids.MI_ZOOM_110),
             "zoom_percent_after": load_settings(_SCENARIO_SETTINGS_PATH).zoom_percent,
@@ -2505,16 +2543,17 @@ def _theme_ids_do_not_post_the_stub_notice_and_zoom_applies() -> dict[str, Any]:
 def _ride_setup_dlg_light_panel_background() -> dict[str, Any]:
     """Light: ``ride_setup_dlg`` carries the panel tone at open.
 
-    ux-polish: fires the Light radio, then opens the real
-    ``mi_new_ride`` route (Ride Setup is the store-less form here --
-    no store threaded, so nothing is submitted), and records the
-    dialog's background colour together with the appearance that was
-    live while it was shown. Cancel, never OK: the probe must not
-    submit the form. The scenario only gathers facts -- each
-    platform's test asserts its own contract (darwin forces Light live
-    and pins the tone; win32 asserts the tint follows the OS
-    appearance, since ``SetAppearance`` returns ``CannotChange`` there
-    and never alters it).
+    ux-polish: applies Light through the Settings dialog's OK (W13:
+    the single theme surface -- the scenario used to fire the View
+    menu's Light radio), then opens the real ``mi_new_ride`` route
+    (Ride Setup is the store-less form here -- no store threaded, so
+    nothing is submitted), and records the dialog's background colour
+    together with the appearance that was live while it was shown.
+    Cancel, never OK: the probe must not submit the form. The scenario
+    only gathers facts -- each platform's test asserts its own contract
+    (darwin forces Light live and pins the tone; win32 asserts the
+    tint follows the OS appearance, since ``SetAppearance`` returns
+    ``CannotChange`` there and never alters it).
     """
     frame = _build_app_window()
     frame.Show()
@@ -2530,7 +2569,7 @@ def _ride_setup_dlg_light_panel_background() -> dict[str, Any]:
         harness.click(dialog, pages.WX_ID_CANCEL)
 
     try:
-        _fire_menu_event(frame, ids.MI_THEME_LIGHT)
+        _apply_appearance_via_settings(frame, theme.ThemeMode.LIGHT)
         wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _probe_and_cancel)
         harness.fire_menu_event(frame, ids.MI_NEW_RIDE)
         harness.pump()
@@ -2777,7 +2816,11 @@ def _settings_persistence_round_trip() -> dict[str, Any]:
                 splitter = harness.find_control(frame, ids.MAIN_SPLITTER)
                 crossings_list = harness.find_control(frame, ids.CROSSINGS_LIST)
                 applied = {
-                    "applied_dark_radio": _menu_item_checked(frame, ids.MI_THEME_DARK),
+                    # W13: the persisted appearance applies through the
+                    # theme controller -- there is no View-menu radio
+                    # to read back (the Settings radios are the single
+                    # theme surface).
+                    "applied_theme_mode": _theme_mode_now(),
                     "applied_sound_muted": sound._default_player._muted,
                     "applied_hide_times_columns": _visible_column_titles(crossings_list),
                     "applied_sash": splitter.GetSashPosition(),
@@ -2904,11 +2947,12 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
 def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: PLR0915 -- scripted modal-driving flow: nested probes + store facts, the scenario pattern this file owns
     """Toggle Dark in Settings, OK: applied, persisted, relaunched.
 
-    E8.1.2's appearance-mirror proof. Pre-saves a LIGHT set so the
-    toggle is visible; opens Settings, sets the Dark radio (explicitly
-    clearing the others -- a programmatic ``SetValue`` may not
-    auto-uncheck the group) plus sound-off and hide-times-on, clicks
-    OK; reads the live appearance, the View-menu radio, the sound
+    E8.1.2's appearance proof. Pre-saves a LIGHT set so the toggle is
+    visible; opens Settings, sets the Dark radio (explicitly clearing
+    the others -- a programmatic ``SetValue`` may not auto-uncheck the
+    group) plus sound-off and hide-times-on, clicks OK; reads the live
+    appearance, the theme controller's recorded mode (W13: the View
+    menu no longer carries a theme radio to mirror into), the sound
     mute, the hide-times columns and the saved file. A second build
     with the same path re-opens Settings and the Dark radio renders
     checked.
@@ -2956,7 +3000,7 @@ def _settings_dialog_ok_applies_and_persists_dark() -> dict[str, Any]:  # noqa: 
                 harness.fire_menu_event(frame, "wxID_PREFERENCES")
                 harness.pump()
                 found["is_dark_after"] = wx.SystemSettings.GetAppearance().IsDark()
-                found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
+                found["theme_mode_after"] = _theme_mode_now()
                 found["sound_muted_after"] = sound._default_player._muted
                 found["hide_times_columns"] = _visible_column_titles(
                     harness.find_control(frame, ids.CROSSINGS_LIST)
@@ -3011,8 +3055,9 @@ def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
 
     E8.1.2's cancel half. Pre-saves a LIGHT set; opens Settings, flips
     Dark + sound off, and clicks Cancel. Reads the live appearance
-    (unchanged), the View-menu radio (still light), the sound mute
-    (still on) and the saved file (still light/on).
+    (unchanged), the theme controller's recorded mode (still light --
+    the View-menu radio this used to read left with W13), the sound
+    mute (still on) and the saved file (still light/on).
     """
     with tempfile.TemporaryDirectory(prefix="rc-settings-cancel-") as tmp:
         settings_path = Path(tmp) / "settings.json"
@@ -3045,7 +3090,7 @@ def _settings_dialog_cancel_applies_nothing() -> dict[str, Any]:
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
             found["appearance_unchanged"] = wx.SystemSettings.GetAppearance().IsDark() == was_dark
-            found["menu_dark_checked"] = _menu_item_checked(frame, ids.MI_THEME_DARK)
+            found["theme_mode_after"] = _theme_mode_now()
             found["sound_muted_after"] = sound._default_player._muted
             saved = load_settings(settings_path)
             found["saved_appearance"] = saved.appearance
@@ -3688,8 +3733,8 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "theme_system_reapplies_on_sys_colour_changed": (
         _theme_system_reapplies_on_sys_colour_changed
     ),
-    "theme_ids_do_not_post_the_stub_notice_and_zoom_applies": (
-        _theme_ids_do_not_post_the_stub_notice_and_zoom_applies
+    "zoom_id_does_not_post_the_stub_notice_and_applies": (
+        _zoom_id_does_not_post_the_stub_notice_and_applies
     ),
     "ride_setup_dlg_light_panel_background": _ride_setup_dlg_light_panel_background,
     "live_typed_plate_appears_in_feed": _live_typed_plate_appears_in_feed,

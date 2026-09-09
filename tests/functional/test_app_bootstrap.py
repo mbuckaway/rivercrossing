@@ -300,29 +300,24 @@ def test_build_main_window_wires_the_console_to_the_draft_data_source(
     assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (False, "DRAFT")
 
 
-# --- theme + zoom menu radio defaults (Phase 8, 8.6, P8-D4) -------
+# --- zoom menu radio default (Phase 8, 8.6) -------------------------
 
 
-def test_build_main_window_checks_the_theme_and_zoom_menu_defaults(
+def test_build_main_window_checks_the_zoom_menu_default(
     bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """main.xrc:338-341's documented gap: no ``.Check(`` call existed.
+    """main.xrc's documented gap: no ``.Check(`` call existed for 100.
 
-    ``mi_theme_system`` happens to read checked even before this fix,
-    since it is the first item of its own ``wxRB_GROUP`` and wx
-    checks a fresh radio group's first member by default (measured);
-    ``mi_zoom_100`` is not first in its own group and reads
-    unchecked until the fix lands, which is what actually turns this
-    combined assertion red today.
+    ``mi_zoom_100`` is not the first member of its own radio group (wx
+    checks a fresh group's first member, ``mi_zoom_90``), so the
+    startup tick through ``_check_loaded_zoom_radio`` is what actually
+    lands the documented 100% default. W13 removed the theme trio from
+    the View menu (Settings owns appearance), so the theme half of
+    this combined assertion is gone with it.
     """
     menubar = bound_frame.GetMenuBar()
 
-    checked = (
-        menubar.IsChecked(wx.xrc.XRCID(ids.MI_THEME_SYSTEM)),
-        menubar.IsChecked(wx.xrc.XRCID(ids.MI_ZOOM_100)),
-    )
-
-    assert checked == (True, True)
+    assert menubar.IsChecked(wx.xrc.XRCID(ids.MI_ZOOM_100)) is True
 
 
 # --- every §15 route is bound (T-3, R-73) -------------------------
