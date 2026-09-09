@@ -26,6 +26,7 @@ from rivercrossing.ui.feed_model import (
     COL_TIME,
     COL_TOTAL,
     COLUMN_LABELS,
+    COLUMN_WIDTHS,
     TIME_COLUMNS,
     card_asset_key_or_none,
     edited_row_indexes,
@@ -65,6 +66,33 @@ def test_column_labels_rename_entry_to_name_throughout() -> None:
     """W9: no column still reads "Entry" -- the header is "Name"."""
     assert "Entry" not in COLUMN_LABELS
     assert "Name" in COLUMN_LABELS
+
+
+# --- explicit column widths (W9: nothing truncates at the default size)
+
+# One width per canvas column, in canvas order: enough for the widest
+# demo value in each text column ("14:22:41", "9999", "Trail Blazers
+# (T)", "999", "3:02:11") and the 24x32 card face plus padding in the
+# bitmap one (entry_detail's own D16 width precedent).
+CANVAS_COLUMN_WIDTHS = (80, 50, 150, 60, 50, 80, 80)
+
+
+def test_column_widths_length_matches_the_column_labels() -> None:
+    """Every label has exactly one width -- the two stay in lockstep."""
+    assert len(COLUMN_WIDTHS) == len(COLUMN_LABELS)
+
+
+def test_column_widths_zipped_by_label_cover_each_canvas_column() -> None:
+    """W9: per-label widths pin the content-fit numbers, in order."""
+    assert dict(zip(CANVAS_COLUMN_ORDER, COLUMN_WIDTHS, strict=True)) == {
+        "Time": 80,
+        "Plate": 50,
+        "Name": 150,
+        "Card": 60,
+        "Lap": 50,
+        "Lap time": 80,
+        "Total": 80,
+    }
 
 
 def test_column_indexes_are_contiguous_from_zero_with_no_duplicate() -> None:
