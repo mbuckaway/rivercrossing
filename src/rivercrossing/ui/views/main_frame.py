@@ -629,6 +629,12 @@ class MainFrame:
             The hide-times-affected columns (Lap time, Total), in
             column order, for :meth:`set_hide_times` to toggle.
 
+        Each column gets the explicit width from ``feed_model.
+        COLUMN_WIDTHS`` (W9): DataView columns never autosize to
+        their content, so unpinned widths truncate or stretch with
+        the platform default; the widths live in the wx-free module
+        so the values stay headlessly pinned.
+
         The Card column uses an explicit
         ``DataViewBitmapRenderer("wxBitmap")`` rather than
         ``AppendBitmapColumn``'s default: this wx build (4.3.1 /
@@ -640,12 +646,13 @@ class MainFrame:
         """
         hideable = []
         for col, label in enumerate(feed_model.COLUMN_LABELS):
+            width = feed_model.COLUMN_WIDTHS[col]
             if col == feed_model.COL_CARD:
                 renderer = wx.dataview.DataViewBitmapRenderer("wxBitmap")
-                column = wx.dataview.DataViewColumn(label, renderer, col)
+                column = wx.dataview.DataViewColumn(label, renderer, col, width=width)
                 self.crossings_list.AppendColumn(column)
             else:
-                column = self.crossings_list.AppendTextColumn(label, col)
+                column = self.crossings_list.AppendTextColumn(label, col, width=width)
             if col in feed_model.TIME_COLUMNS:
                 hideable.append(column)
         return tuple(hideable)
