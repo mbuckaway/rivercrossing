@@ -2768,3 +2768,17 @@ def test_roster_validate_for_start_refuses_an_empty_team() -> None:
     assert roster.validate_for_start() == [
         StartViolation(entry=entry, reason="team size must be at least 2, got 0")
     ]
+
+
+def test_roster_exposes_its_team_logo_seed_when_seeded() -> None:
+    """The seed that drives team-logo cards is public read-only."""
+    roster = Roster(entry_mode=EntryMode.MIXED, team_logo_seed=8843)
+
+    assert roster.team_logo_seed == 8843
+
+
+def test_roster_exposes_no_team_logo_seed_when_unseeded() -> None:
+    """An unseeded roster reports None, the pick-card refusal cause."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    assert roster.team_logo_seed is None

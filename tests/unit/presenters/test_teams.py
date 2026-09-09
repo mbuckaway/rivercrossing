@@ -161,6 +161,24 @@ def _unseeded_mixed_roster() -> Roster:
     return roster
 
 
+def _exhausted_deck_roster() -> Roster:
+    """Return a seeded roster whose 52 logo codes are all claimed."""
+    roster = Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        team_logo_seed=_SEED,
+    )
+    for index in range(52):
+        roster.create_team_entry(
+            display_name=f"Team {index}",
+            riders=[
+                Rider(first_name="A", last_name="B", plate=str(index * 2 + 1)),
+                Rider(first_name="C", last_name="D", plate=str(index * 2 + 2)),
+            ],
+        )
+    return roster
+
+
 def _teams(roster: Roster) -> tuple[object, ...]:
     """Return every TEAM entry of *roster*, in list order."""
     return tuple(entry for entry in roster.entries if entry.type is EntryType.TEAM)
@@ -773,8 +791,8 @@ def test_add_team_presenter_staged_card_wins_over_a_previously_staged_image() ->
     assert created.logo_png is None
 
 
-def test_add_team_presenter_pick_card_on_an_unseeded_roster_says_so() -> None:
-    """No seed means no card to stage in the Add dialog."""
+def test_add_team_presenter_pick_card_on_an_unseeded_roster_says_no_deck_is_available() -> None:
+    """No seed means no card deck exists to stage from (W8 wording)."""
     view = RecordingAddTeamView()
     roster = _unseeded_mixed_roster()
     presenter = AddTeamPresenter(view, roster)
@@ -782,7 +800,48 @@ def test_add_team_presenter_pick_card_on_an_unseeded_roster_says_so() -> None:
     presenter.on_pick_card()
 
     assert view.logo == {"card": None, "image": None}
+    assert ("show_validation", ("no card deck is available for this ride",)) in view.calls
+
+
+def test_add_team_presenter_pick_card_when_the_deck_is_exhausted_says_every_card_is_in_use() -> None:
+    """All 52 codes claimed: the in-use message, not the no-deck one."""
+    view = RecordingAddTeamView()
+    roster = _exhausted_deck_roster()
+    presenter = AddTeamPresenter(view, roster)
+
+    presenter.on_pick_card()
+
+    assert view.logo == {"card": None, "image": None}
     assert ("show_validation", ("every card logo is already in use by a team",)) in view.calls
+
+
+# ------------------------------------------- editor pick card on pick
+# (the editor's own Pick card works on the selected team; the two
+# refusal causes are split so the operator knows which one hit)
+
+
+def test_teams_presenter_pick_card_on_an_unseeded_roster_says_no_deck_is_available() -> None:
+    """No seed means no card deck exists to pick from (W8 wording)."""
+    view = RecordingTeamsView()
+    roster = _unseeded_mixed_roster()
+    presenter = TeamsPresenter(view, roster)
+
+    presenter.on_row_selected(0)
+    presenter.on_pick_card()
+
+    assert view.validation == ["no card deck is available for this ride"]
+
+
+def test_teams_presenter_pick_card_when_the_deck_is_exhausted_says_every_card_is_in_use() -> None:
+    """All 52 codes claimed: the in-use message, not the no-deck one."""
+    view = RecordingTeamsView()
+    roster = _exhausted_deck_roster()
+    presenter = TeamsPresenter(view, roster)
+
+    presenter.on_row_selected(0)
+    presenter.on_pick_card()
+
+    assert view.validation == ["every card logo is already in use by a team"]
 
 
 
