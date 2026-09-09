@@ -593,3 +593,83 @@ def test_open_rider_editor_for_close_without_changes_skips_the_save(
     app_module._open_rider_editor_for(context, "77")
 
     assert context.frame.notices == []
+
+
+# ------------------------ W8: team editor close persists its changes
+
+
+def test_persist_team_editor_changes_given_a_failed_save_posts_a_notice() -> None:
+    """The team editor's close-save refuses like the rider editor's."""
+    context = _context(store=_SaveRosterFailsStore())
+    context.active_ride_id = 5
+    context.roster = Roster()
+
+    app_module._persist_team_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert context.frame.notices == ["Could not save teams: disk full"]
+
+
+def test_persist_team_editor_changes_given_no_change_is_a_silent_no_op() -> None:
+    """A clean team-editor session never touches the store (W8)."""
+    context = _context(store=_SaveMustNotRunStore())
+    context.active_ride_id = 5
+
+    app_module._persist_team_editor_changes(context, _EditorViewStub(roster_changed=False))
+
+    assert context.frame.notices == []
+
+
+def test_persist_team_editor_changes_given_no_store_is_a_silent_no_op() -> None:
+    """A bootstrap (store-less) team-editor session never touches a store."""
+    context = _context(store=None)
+    context.active_ride_id = None
+
+    app_module._persist_team_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert context.frame.notices == []
+
+
+def test_open_target_given_team_editor_close_with_changes_saves_the_roster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The menu route persists a changed team editor when its modal ends."""
+    store = _SaveRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster = Roster()
+    context.roster = roster
+    context.resource = _FakeResource(_FakeWindow())
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(
+        app_module, "_decorate", lambda _ctx, _w, _route: _EditorViewStub(roster_changed=True)
+    )
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+
+    app_module._open_target(context, app_module.commands.route_for_id("mi_team_editor"))
+
+    assert store.saved == [(5, roster)]
+
+
+def test_open_target_given_team_editor_close_without_changes_skips_the_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unchanged team-editor session saves nothing (W8)."""
+    context = _context(store=_SaveMustNotRunStore())
+    context.active_ride_id = 5
+    context.roster = Roster()
+    context.resource = _FakeResource(_FakeWindow())
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(
+        app_module, "_decorate", lambda _ctx, _w, _route: _EditorViewStub(roster_changed=False)
+    )
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+
+    app_module._open_target(context, app_module.commands.route_for_id("mi_team_editor"))
+
+    assert context.frame.notices == []

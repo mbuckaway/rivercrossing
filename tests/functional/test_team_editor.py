@@ -14,10 +14,12 @@ The rework asserts: the three ``Team | Riders | Logo`` columns
 (built code-side over ``wxDataViewCtrl``) with rider counts and the
 logo *kind* text (``Card``/``Image``/blank), the real-bitmap
 ``logo_bmp`` preview, the multi-line Notes field with a three-line
-minimum, the panes' action-button relocation (Add bottom-right,
-Save/Remove/Close bottom-left), and Add reading the form directly --
-no native name prompt -- with staged-logo picks when nothing is
-selected.
+minimum, and the panes' action-button relocation (Add bottom-right,
+Save/Remove/Close bottom-left). W8 retires the in-form Add (the W7
+rider-editor shape): ``add_btn`` opens the dedicated ``add_team_dlg``
+dialog, whose own form names the team -- a zero-rider TEAM entry
+whose members join later through the Rider Editor -- and the editor
+records Save gating, Remove logo, and Close at Save/Remove width.
 
 ``_lists_common.demo_seeded_roster`` seeds its roster with
 ``team_logo_seed=8843`` (Phase 4), so the seeded Trail Blazers team
@@ -39,7 +41,14 @@ from PIL import Image
 from rivercrossing.cards import seeded_card_codes
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import ids
-from rivercrossing.ui.views.team_editor import CARD_TEXT, IMAGE_TEXT, TEAMS_INFOBAR, TeamEditor
+from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.views.team_editor import (
+    ADD_TEAM_INFOBAR,
+    CARD_TEXT,
+    IMAGE_TEXT,
+    TEAMS_INFOBAR,
+    TeamEditor,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -177,61 +186,92 @@ def test_team_editor_dlg_selecting_a_team_fills_the_form_members_and_logo(
 
 
 # ----------------------------------------------------------------- add
+# (W8: add_btn opens the dedicated add_team_dlg; the editor's own
+# form no longer adds. The dialog's ShowModal is driven through the
+# run_add_team_flow -> dialogs.run_dialog seam, monkeypatched to
+# fill/click the real dialog then report how it ended, the same
+# driver pattern test_rider_editor.py uses for add_rider_dlg.)
 
 
-def test_team_editor_dlg_add_creates_a_team_typed_into_the_form(
+def test_team_editor_dlg_add_creates_a_zero_rider_team_via_the_add_dialog(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Add team reads the form's name -- no native prompt involved."""
+    """add_btn opens add_team_dlg; Add commits a zero-rider team."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
+    def _drive(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(add_dialog, ids.NAME_INPUT, "Dirt Dynamos")
+        harness.click(add_dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive)
+
     try:
-        harness.type_text(dialog, ids.NAME_INPUT, "Dirt Dynamos")
         harness.click(dialog, ids.ADD_BTN)
         rows = _teams_list_rows(dialog)
+        team = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
     finally:
         harness.close_window(dialog)
 
     assert [row[0] for row in rows] == ["Trail Blazers", "Dirt Dynamos"]
-    assert rows[1][1] == "1"
-    assert rows[1][2] == CARD_TEXT
+    assert rows[1] == ("Dirt Dynamos", "0", CARD_TEXT)
+    assert team.riders == []
 
 
-def test_team_editor_dlg_add_given_a_blank_name_refuses_via_the_infobar(
+def test_team_editor_dlg_add_given_a_blank_name_refuses_on_the_add_dialogs_infobar(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Add with an empty form creates nothing and says so."""
+    """Add with an empty dialog name creates nothing and says so."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
+    found: dict[str, object] = {}
+
+    def _drive(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.click(add_dialog, "wxID_OK")
+        found["infobar_shown"] = harness.find_control(add_dialog, ADD_TEAM_INFOBAR).IsShown()
+        harness.click(add_dialog, "wxID_CANCEL")
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive)
 
     try:
         harness.click(dialog, ids.ADD_BTN)
-        infobar_shown = harness.find_control(dialog, TEAMS_INFOBAR).IsShown()
         rows = _teams_list_rows(dialog)
     finally:
         harness.close_window(dialog)
 
-    assert infobar_shown is True
+    assert found["infobar_shown"] is True
     assert rows == _seeded_rows()
 
 
-def test_team_editor_dlg_add_given_a_duplicate_name_refuses_via_the_infobar(
+def test_team_editor_dlg_add_given_a_duplicate_name_refuses_on_the_add_dialogs_infobar(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A name another team already carries is refused, case-folded."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
+    found: dict[str, object] = {}
+
+    def _drive(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(add_dialog, ids.NAME_INPUT, "  trail blazers  ")
+        harness.click(add_dialog, "wxID_OK")
+        found["infobar_shown"] = harness.find_control(add_dialog, ADD_TEAM_INFOBAR).IsShown()
+        harness.click(add_dialog, "wxID_CANCEL")
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive)
 
     try:
-        harness.type_text(dialog, ids.NAME_INPUT, "  trail blazers  ")
         harness.click(dialog, ids.ADD_BTN)
-        infobar_shown = harness.find_control(dialog, TEAMS_INFOBAR).IsShown()
         rows = _teams_list_rows(dialog)
     finally:
         harness.close_window(dialog)
 
-    assert infobar_shown is True
+    assert found["infobar_shown"] is True
     assert rows == _seeded_rows()
 
 
@@ -299,6 +339,51 @@ def test_team_editor_dlg_save_persists_notes_for_the_selected_team(
     assert notes == "second wave"
 
 
+def test_team_editor_dlg_save_btn_is_gated_on_the_forms_dirty_state(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """Save stays disabled until the form differs from the record."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+    save = harness.find_control(dialog, ids.SAVE_BTN)
+
+    try:
+        disabled_before = save.IsEnabled()
+        harness.select_row(dialog, ids.TEAMS_LIST, 0)
+        disabled_after_select = save.IsEnabled()
+        harness.type_text(dialog, ids.NAME_INPUT, "Moss Ridge Riders")
+        enabled_after_edit = save.IsEnabled()
+        harness.click(dialog, ids.SAVE_BTN)
+        disabled_after_save = save.IsEnabled()
+    finally:
+        harness.close_window(dialog)
+
+    assert disabled_before is False  # no selection: gated off
+    assert disabled_after_select is False
+    assert enabled_after_edit is True
+    assert disabled_after_save is False
+
+
+def test_team_editor_dlg_save_given_a_blank_name_refuses_via_the_infobar(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A whitespace-only save name refuses and changes nothing (W8)."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        harness.select_row(dialog, ids.TEAMS_LIST, 0)
+        harness.find_control(dialog, ids.NAME_INPUT).SetValue("   ")
+        harness.click(dialog, ids.SAVE_BTN)
+        infobar_shown = harness.find_control(dialog, TEAMS_INFOBAR).IsShown()
+        rows = _teams_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert infobar_shown is True
+    assert rows[0][0] == "Trail Blazers"
+
+
 # ------------------------------------------------------------- remove
 
 
@@ -317,6 +402,27 @@ def test_team_editor_dlg_remove_deletes_the_selected_draft_team(
         harness.close_window(dialog)
 
     assert rows == ()
+
+
+def test_team_editor_dlg_remove_logo_clears_the_selected_teams_logo(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """Remove logo empties the cell and the preview bitmap (W8)."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        harness.select_row(dialog, ids.TEAMS_LIST, 0)
+        harness.click(dialog, ids.REMOVE_LOGO_BTN)
+        rows = _teams_list_rows(dialog)
+        bitmap = _logo_bitmap(dialog)
+        team = next(entry for entry in roster.entries if entry.display_name == "Trail Blazers")
+    finally:
+        harness.close_window(dialog)
+
+    assert rows[0][2] == ""
+    assert (team.logo_card, team.logo_png) == (None, None)
+    assert bitmap.IsOk() is False
 
 
 # --------------------------------------------------- relay plate row
@@ -369,22 +475,31 @@ def test_team_editor_dlg_relay_plate_row_visibility_matches_plate_model(
     assert row_shown is expected_visible
 
 
-def test_team_editor_dlg_add_on_a_solo_only_ride_refuses_via_the_infobar(
+def test_team_editor_dlg_add_on_a_solo_only_ride_refuses_on_the_add_dialogs_infobar(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """R-11: a solo-only roster refuses Add with the reason shown."""
+    """R-11: a solo-only roster refuses Add inside the dialog (W8)."""
     roster = _solo_only_roster()
     dialog, _view = _show(xrc_resource, roster)
+    found: dict[str, object] = {}
+
+    def _drive(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(add_dialog, ids.NAME_INPUT, "Dirt Dynamos")
+        harness.click(add_dialog, "wxID_OK")
+        found["infobar_shown"] = harness.find_control(add_dialog, ADD_TEAM_INFOBAR).IsShown()
+        harness.click(add_dialog, "wxID_CANCEL")
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive)
 
     try:
-        harness.type_text(dialog, ids.NAME_INPUT, "Dirt Dynamos")
         harness.click(dialog, ids.ADD_BTN)
-        infobar_shown = harness.find_control(dialog, TEAMS_INFOBAR).IsShown()
         rows = _teams_list_rows(dialog)
     finally:
         harness.close_window(dialog)
 
-    assert infobar_shown is True
+    assert found["infobar_shown"] is True
     assert rows == ()
 
 
@@ -468,36 +583,59 @@ def test_team_editor_dlg_image_btn_loads_the_picked_bytes_and_image_wins(
     assert bitmap.IsOk() is True
 
 
-def test_team_editor_dlg_pick_card_in_add_mode_stages_the_logo_for_the_add(
+def test_team_editor_dlg_logo_preview_is_bounded_so_rows_never_push_off(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """Picking a card with no selection previews it; Add applies it."""
+    """logo_bmp caps at the 128x128 preview box (W8)."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        max_size = harness.find_control(dialog, ids.LOGO_BMP).GetMaxSize()
+    finally:
+        harness.close_window(dialog)
+
+    assert (max_size.GetWidth(), max_size.GetHeight()) == (128, 128)
+
+
+def test_team_editor_dlg_add_dialog_staged_card_becomes_the_new_teams_logo(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pick card inside add_team_dlg; Add commits the team with it."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
     codes = seeded_card_codes(_SEED)
+    found: dict[str, object] = {}
+
+    def _drive(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.click(add_dialog, ids.PICK_CARD_BTN)
+        found["staged_ok"] = harness.find_control(add_dialog, ids.LOGO_BMP).GetBitmap().IsOk()
+        harness.type_text(add_dialog, ids.NAME_INPUT, "Dirt Dynamos")
+        harness.click(add_dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive)
 
     try:
-        harness.click(dialog, ids.PICK_CARD_BTN)
-        staged_bitmap = _logo_bitmap(dialog)
-        harness.type_text(dialog, ids.NAME_INPUT, "Dirt Dynamos")
         harness.click(dialog, ids.ADD_BTN)
         rows = _teams_list_rows(dialog)
         team = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
     finally:
         harness.close_window(dialog)
 
-    assert staged_bitmap.IsOk() is True
-    assert rows[1] == ("Dirt Dynamos", "1", CARD_TEXT)
+    assert found["staged_ok"] is True
+    assert rows[1] == ("Dirt Dynamos", "0", CARD_TEXT)
     assert team.logo_card == codes[1]
     assert team.logo_png is None
 
 
-def test_team_editor_dlg_image_btn_in_add_mode_stages_the_logo_for_the_add(
+def test_team_editor_dlg_add_dialog_staged_image_becomes_the_new_teams_logo(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """An image staged with no selection previews; Add applies it."""
+    """Image… inside add_team_dlg; Add commits the team with it."""
     logo_bytes = _tiny_logo_bytes()
     logo_file = tmp_path / "logo.png"
     logo_file.write_bytes(logo_bytes)
@@ -506,19 +644,26 @@ def test_team_editor_dlg_image_btn_in_add_mode_stages_the_logo_for_the_add(
     monkeypatch.setattr(
         "rivercrossing.ui.views.team_editor.pick_logo_image_path", lambda _parent: logo_file
     )
+    found: dict[str, object] = {}
+
+    def _drive(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.click(add_dialog, ids.IMAGE_BTN)
+        found["staged_ok"] = harness.find_control(add_dialog, ids.LOGO_BMP).GetBitmap().IsOk()
+        harness.type_text(add_dialog, ids.NAME_INPUT, "Dirt Dynamos")
+        harness.click(add_dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive)
 
     try:
-        harness.click(dialog, ids.IMAGE_BTN)
-        staged_bitmap = _logo_bitmap(dialog)
-        harness.type_text(dialog, ids.NAME_INPUT, "Dirt Dynamos")
         harness.click(dialog, ids.ADD_BTN)
         rows = _teams_list_rows(dialog)
         team = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
     finally:
         harness.close_window(dialog)
 
-    assert staged_bitmap.IsOk() is True
-    assert rows[1] == ("Dirt Dynamos", "1", IMAGE_TEXT)
+    assert found["staged_ok"] is True
+    assert rows[1] == ("Dirt Dynamos", "0", IMAGE_TEXT)
     assert team.logo_png == logo_bytes
     assert team.logo_card is None
 
@@ -567,6 +712,24 @@ def test_team_editor_dlg_action_buttons_sit_below_their_own_panes(
     assert remove_y > teams_bottom
     assert close_y > teams_bottom
     assert add_y > members_bottom
+
+
+def test_team_editor_dlg_close_button_matches_save_and_remove_width(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """wxID_CLOSE's sizer option=1 stretches it to its siblings (W8)."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        save_width = harness.find_control(dialog, ids.SAVE_BTN).GetSize().GetWidth()
+        remove_width = harness.find_control(dialog, ids.REMOVE_BTN).GetSize().GetWidth()
+        close_width = harness.find_control(dialog, "wxID_CLOSE").GetSize().GetWidth()
+    finally:
+        harness.close_window(dialog)
+
+    assert save_width == remove_width
+    assert close_width == save_width
 
 
 def test_team_editor_dlg_members_list_height_stays_bounded_when_the_dialog_grows(

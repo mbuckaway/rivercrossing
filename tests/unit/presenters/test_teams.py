@@ -65,6 +65,11 @@ class RecordingTeamsView:
         self.members: list[str] = []
         self.validation: list[str] = []
         self.logo: dict[str, object] = {"card": None, "image": None}
+        self.save_enabled: bool = True
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Record save_btn's dirty-gated enabled state (W8)."""
+        self.save_enabled = enabled
 
     def show_teams(self, rows: list[TeamRow]) -> None:
         """Record the rendered teams_list rows."""
@@ -984,3 +989,93 @@ def test_add_team_presenter_remove_logo_clears_a_staged_image() -> None:
     presenter.on_remove_logo()
 
     assert view.logo == {"card": None, "image": None}
+
+
+# ============================================================ W8 slice F
+# Save gating + trim-on-save: save_btn is enabled exactly while the
+# form differs from the selected record, saves store the trimmed
+# name, and a blank-name save refuses instead of storing "".
+
+
+def test_teams_presenter_construction_and_selection_disable_save() -> None:
+    """A fresh or just-selected record is clean: Save starts disabled."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
+
+    assert view.save_enabled is False
+    presenter.on_row_selected(0)
+
+    assert view.save_enabled is False
+
+
+def test_teams_presenter_form_change_enables_save_only_when_the_record_differs() -> None:
+    """Typing a new name marks the form dirty; restoring it is clean."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
+    presenter.on_row_selected(0)
+
+    presenter.on_form_changed(_new_form("Dirt Dynamos"))
+    assert view.save_enabled is True
+    presenter.on_form_changed(_new_form("Trail Blazers"))
+    assert view.save_enabled is False
+
+
+def test_teams_presenter_form_change_ignores_the_relay_plate_on_a_pooled_ride() -> None:
+    """A pooled team's hidden plate row can never dirty the form."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
+    presenter.on_row_selected(0)
+
+    presenter.on_form_changed(TeamFormValues(name="Trail Blazers", relay_plate="99", notes=""))
+
+    assert view.save_enabled is False
+
+
+def test_teams_presenter_form_change_counts_the_relay_plate_on_a_relay_ride() -> None:
+    """On relay rides the visible plate row is part of the record."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_relay_roster())
+    presenter.on_row_selected(0)
+
+    presenter.on_form_changed(TeamFormValues(name="Moss Ridge", relay_plate="99", notes=""))
+
+    assert view.save_enabled is True
+
+
+def test_teams_presenter_form_change_with_no_selection_stays_disabled() -> None:
+    """The blank no-selection form never enables Save."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
+
+    presenter.on_form_changed(_new_form("Dirt Dynamos"))
+
+    assert view.save_enabled is False
+
+
+def test_teams_presenter_save_given_a_blank_name_refuses_via_validation() -> None:
+    """A whitespace-only save name refuses and changes nothing (W8)."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+
+    presenter.on_row_selected(0)
+    presenter.on_save(_new_form("   "))
+
+    team = _teams(roster)[0]
+    assert team.display_name == "Trail Blazers"
+    assert view.validation == ["A team name is required"]
+
+
+def test_teams_presenter_save_stores_the_trimmed_name_and_disables_save_again() -> None:
+    """Save trims the typed name before storing; the form lands clean."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+
+    presenter.on_row_selected(0)
+    presenter.on_save(_new_form("  Dirt Dynamos  "))
+
+    team = _teams(roster)[0]
+    assert team.display_name == "Dirt Dynamos"
+    assert view.teams[0].name == "Dirt Dynamos"
+    assert view.save_enabled is False
