@@ -214,16 +214,12 @@ RIDER_EDITOR_DLG = WindowSpec(
         ids.ADD_BTN,
         ids.SAVE_BTN,
         ids.DELETE_BTN,
-        ids.IMPORT_BTN,
-        ids.EXPORT_BTN,
         WX_ID_CLOSE,
     ),
     buttons=(
         ids.ADD_BTN,
         ids.SAVE_BTN,
         ids.DELETE_BTN,
-        ids.IMPORT_BTN,
-        ids.EXPORT_BTN,
         WX_ID_CLOSE,
     ),
 )
