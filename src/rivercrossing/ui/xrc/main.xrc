@@ -22,7 +22,10 @@
       wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). The
       canvas minimum of 1100x700 is declared as <size> below and must be
       re-applied code-side with SetMinSize(). (spec.md 13 says 1180x740;
-      the canvas is implementation truth and wins - recorded conflict.)
+      the canvas is implementation truth and wins - recorded conflict.
+      W9 raises the declared size to 1100x780 code-side and here so the
+      full 30-row crossings feed stays visible at 100% zoom; the canvas
+      drawing's own amendment is W15's.)
 
   Code-side per the canvas footnotes: feed columns/rows and bold flagged-row
   attributes, card bitmaps from the imagelist, InfoBar text and show/hide,
@@ -34,7 +37,7 @@
 
   <object class="wxFrame" name="main_frame">
     <title>RiverCrossing</title>
-    <size>1100,700</size>
+    <size>1100,780</size>
 
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>

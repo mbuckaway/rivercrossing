@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONSOLE_RIDERS_LIST",
+    "DEFAULT_SASH",
     "ELAPSED_CLOCK",
     "ELAPSED_CLOCK_PANEL",
     "FINISHED_INFOBAR",
@@ -146,9 +147,20 @@ REOPENED_BANNER = (
 )
 
 # xrc-windows.md section A: "Min frame 1100x700, fits 1366x768."
-# XRC has no window-level minsize property (main.xrc's own header) --
-# only <size>, which sets the *initial* size, not the floor.
-MIN_SIZE = (1100, 700)
+# W9 raises the floor to 1100x780 (still 1366x768-safe on macOS and
+# Windows with a taskbar): the extra 80 px of feed-pane height keeps
+# the full 30-row feed (R-32's cap) visible at 100% zoom without
+# scrolling. XRC has no window-level minsize property (main.xrc's own
+# header) -- only <size>, which sets the *initial* size, not the
+# floor. The frozen canvas drawing still shows 1100x700; W15's canvas
+# amendment records the raised size in xrc-windows.md.
+MIN_SIZE = (1100, 780)
+
+# W9: the fresh-launch splitter position (no persisted sash): the
+# canvas draws the review sidebar at ~250 px, so the feed pane takes
+# the rest of the 1100-wide frame. E8.1.1's persisted sash always
+# wins over this default when present.
+DEFAULT_SASH = 850
 
 # How often wire_console's timer drives presenter.tick() (E4.4.1).
 # 1 s keeps the clock, counters and R-35's 10 s arm auto-clear honest
@@ -730,9 +742,16 @@ class MainFrame:
     # -------------------------------------------------------- splitter
 
     def _restore_sash_position(self, initial_sash: int | None) -> None:
-        """Apply the persisted sash position, if saved (E8.1.1)."""
-        if initial_sash is not None:
-            self.main_splitter.SetSashPosition(initial_sash)
+        """Apply the persisted sash position, or the W9 default.
+
+        ``initial_sash`` is E8.1.1's persisted position and always
+        wins when present; ``None`` (no saved layout yet) falls back
+        to :data:`DEFAULT_SASH`, so a fresh launch opens with the
+        feed pane at the pinned width instead of wherever the XRC
+        shell's bare splitter happens to land.
+        """
+        sash = initial_sash if initial_sash is not None else DEFAULT_SASH
+        self.main_splitter.SetSashPosition(sash)
 
     def persist_layout(self) -> None:
         """Report the current sash position and frame geometry (E8.1.1).
