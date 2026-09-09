@@ -8,8 +8,9 @@ half of that -- ``CrossingsFeedModel``, a ``wx.dataview.
 DataViewIndexListModel`` subclass -- lives in ``views/main_frame.py``
 alongside its one consumer (SIMPLECODE Rule 7: no file split without
 a second real consumer). *This* module is deliberately ``wx``-free:
-it holds the column layout and the two decisions
-``CrossingsFeedModel`` delegates to, so they are testable headlessly
+it holds the column layout and the decisions ``CrossingsFeedModel``
+delegates to -- plus the last-crossing label ``MainFrame.
+flash_crossing`` renders -- so they are testable headlessly
 (``tests/unit/ui/test_feed_model.py``) without a display, the same
 split ``cards_imagelist.py`` draws between its pure helpers and
 ``CardImageList`` itself.
@@ -37,6 +38,7 @@ __all__ = [
     "TIME_COLUMNS",
     "card_asset_key_or_none",
     "edited_row_indexes",
+    "flash_crossing_label",
     "flagged_row_indexes",
 ]
 
@@ -98,3 +100,24 @@ def edited_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
     here, exactly as it does for :func:`flagged_row_indexes`.
     """
     return frozenset(index for index, row in enumerate(rows) if row.edited)
+
+
+def flash_crossing_label(row: FeedRow) -> str:
+    """Return the last-crossing label ``flash_crossing`` renders.
+
+    The console's just-recorded line: ``"✓ 12 · Rider 12 · Lap 3 ·
+    1:40 · dealt 9♥"``. W9: the dealt card's code spells its suit as
+    a glyph (the row's ``card`` is always a real code, held or not),
+    and a held crossing -- the row's own ``flagged`` bit, R-34 --
+    appends ``" (held)"``. The four-entry suit map is local to this
+    helper: per-view maps already exist (``results_win``,
+    ``dialogs``, ``pdfexport``) and this adds no shared structure.
+    """
+    glyphs = {"H": "♥", "D": "♦", "C": "♣", "S": "♠"}
+    code = row.card
+    display = "JK★" if code == "JK" else f"{code[:-1]}{glyphs[code[-1]]}"
+    held = " (held)" if row.flagged else ""
+    return (
+        f"✓ {row.plate} · {row.entry} · Lap {row.lap} · "
+        f"{row.lap_time} · dealt {display}{held}"
+    )

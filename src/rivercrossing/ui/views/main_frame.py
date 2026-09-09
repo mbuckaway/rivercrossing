@@ -844,9 +844,7 @@ class MainFrame:
 
     def flash_crossing(self, r: FeedRow) -> None:
         """Highlight the just-recorded crossing (ConsoleView)."""
-        self.last_crossing_lbl.SetLabel(
-            f"✓ {r.plate} · {r.entry} · Lap {r.lap} · {r.lap_time} · dealt {r.card}"
-        )
+        self.last_crossing_lbl.SetLabel(feed_model.flash_crossing_label(r))
 
     def set_state(self, status: RideStatus) -> None:
         """Reflect the ride's lifecycle state (ConsoleView).
