@@ -48,6 +48,7 @@ shared flow functions, the one place that route and
 explains why it is hosted there, not here).
 """
 
+import gc
 import os
 import re
 import sqlite3
@@ -354,24 +355,50 @@ def _fresh_xrc_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
     return resource
 
 
+# 25, mirroring ui.views._support.FIND_SETTLE_ATTEMPTS (and the
+# harness's own _FIND_SETTLE_ATTEMPTS): the same wx/SIP wrapper-cache
+# stale-lookup hazard _support.find_control settles applies to the app
+# gate's own name lookups too.
+_FIND_SETTLE_ATTEMPTS = 25
+
+
 def _missing_required_control(
     frame: Any,  # noqa: ANN401 -- wx ships no stubs; Any is honest
     required: tuple[str, ...],
+    classes: dict[str, type],
 ) -> str | None:
     """Return *required*'s first name that does not resolve in *frame*.
 
-    The verify step of :func:`_load_frame_verified`: a name
-    ``wx.Window.FindWindowByName`` (scoped to *frame*) cannot resolve
-    means XRC silently skipped a subtree during the load (the Fault-B
-    degraded-load class); ``None`` means the build is complete. No
-    settle loop -- yielding during verification is exactly the event
-    processing the degradation hides in (harness's own measured note).
+    The verify step of :func:`_load_frame_verified`. A name resolves
+    only when ``wx.Window.FindWindowByName(name, frame)`` answers an
+    instance of ``classes[name]`` -- the concrete class
+    ``MainFrame.__init__`` later ``_find``s. A ``None`` answer, or a
+    NON-None stale wrapper of the WRONG Python type (the wx/SIP
+    wrapper-cache corruption: an address reuse answers a stale wrapper
+    whose Python class is wrong for the live control), means XRC
+    silently skipped that control during the load (the Fault-B
+    degraded-load class) -- a degraded load is rebuilt, never
+    false-fasted. ``None`` (the return) means every required name
+    resolved to its expected class: the build is complete.
+
+    Each lookup settles the stale-lookup hazard with the bounded
+    ``del control; gc.collect()`` re-query idiom the harness's own gate
+    uses -- never a ``SafeYield``: yielding during verification is
+    exactly the event processing the degradation hides in.
     """
     require_wx()
     import wx  # noqa: PLC0415 -- deferred, see module docstring
 
     for name in required:
-        if wx.Window.FindWindowByName(name, frame) is None:
+        expected = classes[name]
+        control = wx.Window.FindWindowByName(name, frame)
+        attempts = 0
+        while not isinstance(control, expected) and attempts < _FIND_SETTLE_ATTEMPTS:
+            del control
+            gc.collect()
+            control = wx.Window.FindWindowByName(name, frame)
+            attempts += 1
+        if not isinstance(control, expected):
             return name
     return None
 
@@ -379,6 +406,7 @@ def _missing_required_control(
 def _load_frame_verified(
     resource: Any,  # noqa: ANN401 -- wx ships no stubs; Any is honest
     required: tuple[str, ...],
+    classes: dict[str, type],
 ) -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
     """Load ``main_frame`` from *resource* and verify *required*.
 
@@ -389,8 +417,11 @@ def _load_frame_verified(
     control ``MainFrame.__init__`` later needs -- which would otherwise
     surface as a bare ``LookupError`` from
     ``ui.views._support.find_control``. This verifies every name in
-    *required* resolves; a genuinely incomplete build is rebuilt ONCE
-    from a fresh private ``wx.xrc.XmlResource()`` (never the degraded
+    *required* resolves to the concrete class ``classes[name]`` the ctor
+    demands -- a name that cannot resolve to its expected control class
+    (a ``None`` answer or a NON-None stale wrong-typed wrapper) counts
+    as missing; a genuinely incomplete build is rebuilt ONCE from a
+    fresh private ``wx.xrc.XmlResource()`` (never the degraded
     singleton) and re-verified. The rebuild happens while the degraded
     frame is still alive -- mirroring the harness's ordering, so the
     rebuilt controls cannot land on the degraded frame's just-freed
@@ -406,7 +437,7 @@ def _load_frame_verified(
             ``ui.views._support.find_control`` uses.
     """
     frame = resource.LoadFrame(None, ids.MAIN_FRAME)
-    if _missing_required_control(frame, required) is None:
+    if _missing_required_control(frame, required, classes) is None:
         return frame
 
     fresh = _fresh_xrc_resource()
@@ -414,7 +445,7 @@ def _load_frame_verified(
     frame.Destroy()
     if rebuilt is None:
         raise LookupError(f"fresh XmlResource found no window named {ids.MAIN_FRAME!r} to rebuild")
-    missing = _missing_required_control(rebuilt, required)
+    missing = _missing_required_control(rebuilt, required, classes)
     if missing is not None:
         window_name = rebuilt.GetName()
         children = [child.GetName() for child in rebuilt.GetChildren()]
@@ -3005,6 +3036,7 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     """
     from rivercrossing.ui.views import MainFrame  # noqa: PLC0415 -- deferred, see module docstring
     from rivercrossing.ui.views.main_frame import (  # noqa: PLC0415 -- deferred, see module docstring
+        REQUIRED_CONTROL_CLASSES,
         REQUIRED_CONTROLS,
     )
 
@@ -3021,10 +3053,12 @@ def build_main_window(  # noqa: PLR0913 -- (app, store, clock, settings_path): t
     resource = _load_xrc_resources()
 
     # Fault-B (degraded-XRC-load) guard: verify every control
-    # MainFrame.__init__ needs actually resolved, and rebuild once from
-    # a fresh private XmlResource if the singleton skipped a subtree;
-    # the frame and resource used downstream are the verified ones.
-    frame = _load_frame_verified(resource, REQUIRED_CONTROLS)
+    # MainFrame.__init__ needs actually resolved to its concrete class,
+    # and rebuild once from a fresh private XmlResource if the singleton
+    # skipped a subtree (or a stale wrong-typed wrapper poisoned the
+    # lookup); the frame and resource used downstream are the verified
+    # ones.
+    frame = _load_frame_verified(resource, REQUIRED_CONTROLS, REQUIRED_CONTROL_CLASSES)
     menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
     frame.SetMenuBar(menubar)
     _check_default_menu_radios(menubar)
