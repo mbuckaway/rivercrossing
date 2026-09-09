@@ -7,11 +7,12 @@ Phase 4 wires ``team_editor_dlg`` to a real, in-memory
 (``ui.presenters.teams``) reads and writes directly --
 :class:`TeamEditor` takes ``roster=`` and constructs its own
 presenter (mirroring ``views/rider_editor.py``'s
-presenter-inside-the-view wiring), binding
-Add team/Remove/Save/Pick card/Image/row selection to it. The two
-lists' rows and columns live here (``teams.xrc``'s own header
-explains why -- ``wxDataViewListCtrl`` would overwrite the frozen
-name). The rework widens ``teams_list`` to three columns
+presenter-inside-the-view wiring), binding Remove/Save/Pick
+card/Image/Remove logo/row selection and the W8 Add-team dialog
+opener to it. The two lists' rows and columns live here
+(``teams.xrc``'s own header explains why --
+``wxDataViewListCtrl`` would overwrite the frozen name). The rework
+widens ``teams_list`` to three columns
 (``Team | Riders | Logo`` -- :data:`COLUMN_LABELS`), where the Logo
 cell carries the logo's *kind* (:data:`CARD_TEXT`/:data:`IMAGE_TEXT`,
 :func:`format_logo`) rather than the card code, and turns the logo
@@ -20,9 +21,19 @@ XRC declares above ``members_list``) renders the team's card bitmap
 (from :func:`default_card_images`, keyed via
 :func:`~rivercrossing.ui.feed_model.card_asset_key_or_none` -- the
 same seam ``main_frame``'s crossings feed uses) or the picked
-image's decoded PNG bytes. The read-only ``members_list`` renders
-rider names only: membership is managed in the Rider Editor, never
-here.
+image's decoded PNG bytes -- W8 bounds every preview into the
+:data:`LOGO_PREVIEW_BOX`/:data:`CARD_LOGO_BOX` so no decoded bitmap
+can push the members/Add rows off the dialog. The read-only
+``members_list`` renders rider names only: membership is managed in
+the Rider Editor, never here.
+
+W8 (like W7's rider editor) retires the in-form Add: ``add_btn``
+opens the dedicated ``add_team_dlg`` window through
+:func:`run_add_team_flow` (its own :class:`AddTeamDialog` pairs with
+``ui.presenters.teams.AddTeamPresenter``, which creates zero-rider
+TEAM entries), Save is dirty-gated through
+``TeamsView.set_save_enabled``, and ``remove_logo_btn`` clears a
+team's logo via :meth:`Roster.clear_team_logo`.
 
 A refused operation (add/remove after start, a relay plate change
 once locked, a blank or duplicate team name, ...) renders as a
