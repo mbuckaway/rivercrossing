@@ -639,7 +639,7 @@ _TEAM_LOGO_URI = "data:image/png;base64,TEAMLOGO"
 
 
 def _team_and_solo_pair() -> tuple[Placed, Placed]:
-    """A placed team (#88) and a placed solo (#7), for logo pins."""
+    """Return a placed team (#88) and a placed solo (#7)."""
     return (
         Placed(
             place=1,
@@ -657,7 +657,7 @@ def _team_and_solo_pair() -> tuple[Placed, Placed]:
 
 
 def test_result_row_to_record_emits_the_logo_only_when_set() -> None:
-    """logo is a sparse record key, like tie/dnf."""
+    """Logo is a sparse record key, like tie/dnf."""
     with_logo = ResultRow(
         place=1,
         plate=88,
@@ -703,7 +703,7 @@ def test_render_public_embeds_team_logos_in_the_team_rows_only() -> None:
 
 
 def test_render_public_team_logo_round_trips_through_the_embedded_record() -> None:
-    """race-data row gains the logo key; parsing it back preserves it."""
+    """The race-data row keeps the logo through a parse round-trip."""
     placed = _team_and_solo_pair()
     html = render(_StubRide(), placed, ExportOptions(), team_logos={"88": _TEAM_LOGO_URI})
 

@@ -225,7 +225,7 @@ def _bitmap_from_png(image_bytes: bytes) -> Any:  # noqa: ANN401 -- wx ships no 
     return wx.Bitmap(image)
 
 
-def logo_fit_size(
+def logo_fit_size(  # noqa: PLR0913 -- (width, height, within, upscale): the pure fit rule's inputs
     width: int,
     height: int,
     *,
@@ -318,9 +318,7 @@ def _set_relay_row_visible(relay_plate_input: wx.TextCtrl, *, visible: bool) -> 
     """
     sizer = relay_plate_input.GetContainingSizer()
     items = list(sizer.GetChildren())
-    index = next(
-        i for i, item in enumerate(items) if item.GetWindow() is relay_plate_input
-    )
+    index = next(i for i, item in enumerate(items) if item.GetWindow() is relay_plate_input)
     label = items[index - 1].GetWindow()
     sizer.Show(label, visible)
     sizer.Show(relay_plate_input, visible)

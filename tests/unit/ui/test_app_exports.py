@@ -8,7 +8,6 @@ browser seams are monkeypatched, and the no-engine and cancel paths
 post notices instead of failing.
 """
 
-import base64
 from base64 import b64encode
 from datetime import date
 from pathlib import Path
@@ -364,7 +363,7 @@ def test_handle_preview_browser_without_export_notices() -> None:
 
 
 def _team_logo_uri() -> str:
-    """A tiny deterministic data URI for the export pins."""
+    """Return a tiny deterministic data URI for the export pins."""
     return "data:image/png;base64,TEAMLOGO"
 
 
@@ -388,7 +387,7 @@ def test_write_export_html_embeds_team_logos_when_supplied(tmp_path: Path) -> No
     placed = _placed((team_result,))
     opts = app_module.ExportOptions()
 
-    app_module._write_export(  # noqa: SLF001 -- the dispatch seam under test
+    app_module._write_export(
         config,
         placed,
         (),
@@ -412,13 +411,13 @@ def test_write_export_html_without_team_logos_renders_no_logo_images(tmp_path: P
     assert 'class="team-logo"' not in out.read_text(encoding="utf-8")
 
 
-def test_team_logo_srcs_maps_card_and_image_teams_to_data_uris(tmp_path: Path) -> None:
+def test_team_logo_srcs_maps_card_and_image_teams_to_data_uris() -> None:
     """W8: a card-code team and a PNG team both resolve to data URIs."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     card_team = roster.create_empty_team(display_name="Card Team", logo_card="AS")
     png_team = roster.create_empty_team(display_name="Png Team", logo_png=b"fake-png-bytes")
 
-    srcs = app_module._team_logo_srcs(roster)  # noqa: SLF001 -- the pure seam under test
+    srcs = app_module._team_logo_srcs(roster)
 
     assert srcs[card_team.plate].startswith("data:image/png;base64,")
     assert srcs[png_team.plate] == "data:image/png;base64," + b64encode(b"fake-png-bytes").decode()
@@ -429,8 +428,7 @@ def test_team_logo_srcs_omits_logo_less_and_solo_entries() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED)
     roster.create_empty_team(display_name="Plain Team")
     roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="2")
-    (team,) = [e for e in roster.entries if e.display_name == "Plain Team"]
 
-    srcs = app_module._team_logo_srcs(roster)  # noqa: SLF001 -- the pure seam under test
+    srcs = app_module._team_logo_srcs(roster)
 
     assert srcs == {}

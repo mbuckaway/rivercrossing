@@ -164,7 +164,9 @@ def _team_entries(roster: Roster) -> tuple[Entry, ...]:
     return tuple(entry for entry in roster.entries if entry.type is EntryType.TEAM)
 
 
-def _duplicate_team_entry(roster: Roster, name: str, *, exclude: Entry | None = None) -> Entry | None:
+def _duplicate_team_entry(
+    roster: Roster, name: str, *, exclude: Entry | None = None
+) -> Entry | None:
     """Return a TEAM entry of *roster* whose name collides with *name*.
 
     A collision compares :func:`~rivercrossing.roster.rider_name_key`
@@ -256,7 +258,9 @@ class AddTeamPresenter:
         try:
             entry = self.roster.create_empty_team(
                 display_name=name,
-                plate=form.relay_plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None,
+                plate=(
+                    form.relay_plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
+                ),
                 logo_card=self._pending_logo_card,
                 logo_png=self._pending_logo_image,
             )
@@ -275,7 +279,8 @@ class AddTeamPresenter:
         matching the roster's own either-or rule. When no next code
         exists, says why instead of silently doing nothing: no card
         deck at all when the roster has no seed, every card in use
-        when the deck is genuinely exhausted (:func:`_logo_pick_refusal`).
+        when the deck is genuinely exhausted
+        (:func:`_logo_pick_refusal`).
         """
         code = self.roster.next_team_logo_card(after=self._pending_logo_card)
         if code is None:
@@ -455,7 +460,8 @@ class TeamsPresenter:
         any logo image -- a picked card wins. When no next code
         exists, says why instead of silently doing nothing: no card
         deck at all when the roster has no seed, every card in use
-        when the deck is genuinely exhausted (:func:`_logo_pick_refusal`).
+        when the deck is genuinely exhausted
+        (:func:`_logo_pick_refusal`).
         """
         entry = self._selected
         if entry is None:
@@ -558,10 +564,7 @@ class TeamsPresenter:
             return False
         if form.name.strip() != entry.display_name:
             return True
-        if (
-            self.roster.plate_model is PlateModel.TEAM_RELAY
-            and form.relay_plate != entry.plate
-        ):
+        if self.roster.plate_model is PlateModel.TEAM_RELAY and form.relay_plate != entry.plate:
             return True
         return form.notes != entry.notes
 

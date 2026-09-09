@@ -427,7 +427,7 @@ def test_teams_presenter_save_allows_renaming_to_the_same_name_in_another_case()
 
 
 def test_teams_presenter_on_add_committed_renders_a_team_the_dialog_created() -> None:
-    """After add_team_dlg commits, the editor re-renders rows and form."""
+    """A dialog-created team renders once the editor catches up."""
     view = RecordingTeamsView()
     roster = _draft_pooled_roster()
     presenter = TeamsPresenter(view, roster)
@@ -598,7 +598,7 @@ class RecordingAddTeamView:
 
 
 def test_add_team_presenter_init_on_a_pooled_ride_hides_the_relay_row_and_blank_form() -> None:
-    """Construction: no relay row on pooled rides, blank fields, no logo."""
+    """Construction: no relay row on pooled rides, blank form."""
     view = RecordingAddTeamView()
     roster = _draft_pooled_roster()
 
@@ -649,11 +649,13 @@ def test_add_team_presenter_submit_applies_the_form_notes() -> None:
 
 
 def test_add_team_presenter_submit_on_a_relay_ride_uses_the_prefilled_relay_plate() -> None:
-    """A relay Add commits the prefilled next free plate on the entry."""
+    """A relay Add commits the prefilled plate as the entry's own."""
     roster = _draft_relay_roster()
     presenter = AddTeamPresenter(RecordingAddTeamView(), roster)
 
-    committed = presenter.on_submit(TeamFormValues(name="Dirt Dynamos", relay_plate="124", notes=""))
+    committed = presenter.on_submit(
+        TeamFormValues(name="Dirt Dynamos", relay_plate="124", notes="")
+    )
 
     assert committed is True
     created = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
@@ -695,7 +697,9 @@ def test_add_team_presenter_submit_given_a_blank_relay_plate_refuses_and_returns
     presenter = AddTeamPresenter(view, roster)
     before = len(roster.entries)
 
-    committed = presenter.on_submit(TeamFormValues(name="Dirt Dynamos", relay_plate="  ", notes=""))
+    committed = presenter.on_submit(
+        TeamFormValues(name="Dirt Dynamos", relay_plate="  ", notes="")
+    )
 
     assert committed is False
     assert len(roster.entries) == before
@@ -731,11 +735,14 @@ def test_add_team_presenter_submit_after_start_refuses_and_returns_false() -> No
 
     assert committed is False
     assert len(roster.entries) == before
-    assert ("show_validation", ("a new team cannot be started once the ride is running",)) in view.calls
+    assert (
+        "show_validation",
+        ("a new team cannot be started once the ride is running",),
+    ) in view.calls
 
 
 def test_add_team_presenter_pick_card_stages_the_next_unused_card() -> None:
-    """Pick card in the dialog only stages; nothing touches the roster."""
+    """Pick card in the dialog only stages; the roster stays put."""
     view = RecordingAddTeamView()
     roster = _draft_pooled_roster()
     presenter = AddTeamPresenter(view, roster)
@@ -813,7 +820,9 @@ def test_add_team_presenter_pick_card_on_an_unseeded_roster_says_no_deck_is_avai
     assert ("show_validation", ("no card deck is available for this ride",)) in view.calls
 
 
-def test_add_team_presenter_pick_card_when_the_deck_is_exhausted_says_every_card_is_in_use() -> None:
+def test_add_team_presenter_pick_card_when_the_deck_is_exhausted_says_every_card_is_in_use() -> (
+    None
+):
     """All 52 codes claimed: the in-use message, not the no-deck one."""
     view = RecordingAddTeamView()
     roster = _exhausted_deck_roster()
@@ -854,7 +863,6 @@ def test_teams_presenter_pick_card_when_the_deck_is_exhausted_says_every_card_is
     assert view.validation == ["every card logo is already in use by a team"]
 
 
-
 # ------------------------------------------------------- format_logo
 
 
@@ -889,10 +897,9 @@ def test_format_logo_given_any_logo_state_returns_only_the_three_kind_texts(
     assert (text == CARD_TEXT) == (card is not None and not has_image)
 
 
-
-# ============================================================ W8 slice D
-# Logo preview sizing + Remove logo: the preview bitmaps fit a bounded
-# box (card 3:4, photos 128 max), and remove_logo_btn clears both logo
+# ---------- W8 slice D
+# Logo sizing + Remove logo: previews fit a bounded box
+# (card 3:4, photos 128 max); remove_logo_btn clears both forms
 # forms at once in the editor and the Add dialog.
 
 
@@ -907,7 +914,7 @@ def test_format_logo_given_any_logo_state_returns_only_the_three_kind_texts(
         pytest.param(48, 64, (96, 128), True, (96, 128), id="card_2x_upscales_to_card_box"),
     ],
 )
-def test_logo_fit_size_scales_into_the_bounded_box_preserving_aspect(
+def test_logo_fit_size_scales_into_the_bounded_box_preserving_aspect(  # noqa: PLR0913, PLR0917 -- the parametrize row's five fields
     width: int,
     height: int,
     within: tuple[int, int],
@@ -932,7 +939,7 @@ def test_logo_fit_size_never_exceeds_the_box_and_keeps_aspect(
 
 
 def test_teams_presenter_remove_logo_clears_the_selected_teams_logo() -> None:
-    """Remove logo on a selected team clears both forms and refreshes."""
+    """Remove logo clears both forms on the selected team."""
     view = RecordingTeamsView()
     roster = _draft_pooled_roster()
     presenter = TeamsPresenter(view, roster)
@@ -951,7 +958,7 @@ def test_teams_presenter_remove_logo_clears_the_selected_teams_logo() -> None:
 
 
 def test_teams_presenter_remove_logo_with_no_selection_is_a_no_op() -> None:
-    """Nothing selected, nothing cleared."""
+    """With nothing selected, no logo is cleared."""
     view = RecordingTeamsView()
     roster = _draft_pooled_roster()
     presenter = TeamsPresenter(view, roster)
@@ -991,14 +998,14 @@ def test_add_team_presenter_remove_logo_clears_a_staged_image() -> None:
     assert view.logo == {"card": None, "image": None}
 
 
-# ============================================================ W8 slice F
-# Save gating + trim-on-save: save_btn is enabled exactly while the
-# form differs from the selected record, saves store the trimmed
-# name, and a blank-name save refuses instead of storing "".
+# ---------- W8 slice F
+# Save gating + trim-on-save: save_btn is enabled while the form
+# differs from the selected record; saves store the trimmed name
+# and a blank-name save refuses instead of storing "".
 
 
 def test_teams_presenter_construction_and_selection_disable_save() -> None:
-    """A fresh or just-selected record is clean: Save starts disabled."""
+    """A fresh or just-selected record leaves Save disabled."""
     view = RecordingTeamsView()
     presenter = TeamsPresenter(view, _draft_pooled_roster())
 
@@ -1053,7 +1060,7 @@ def test_teams_presenter_form_change_with_no_selection_stays_disabled() -> None:
 
 
 def test_teams_presenter_save_given_a_blank_name_refuses_via_validation() -> None:
-    """A whitespace-only save name refuses and changes nothing (W8)."""
+    """A whitespace-only save name refuses and changes nothing."""
     view = RecordingTeamsView()
     roster = _draft_pooled_roster()
     presenter = TeamsPresenter(view, roster)
@@ -1067,7 +1074,7 @@ def test_teams_presenter_save_given_a_blank_name_refuses_via_validation() -> Non
 
 
 def test_teams_presenter_save_stores_the_trimmed_name_and_disables_save_again() -> None:
-    """Save trims the typed name before storing; the form lands clean."""
+    """Save stores the trimmed name; the form lands clean again."""
     view = RecordingTeamsView()
     roster = _draft_pooled_roster()
     presenter = TeamsPresenter(view, roster)

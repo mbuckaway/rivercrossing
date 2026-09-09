@@ -620,7 +620,7 @@ def test_persist_team_editor_changes_given_no_change_is_a_silent_no_op() -> None
 
 
 def test_persist_team_editor_changes_given_no_store_is_a_silent_no_op() -> None:
-    """A bootstrap (store-less) team-editor session never touches a store."""
+    """A store-less bootstrap session never touches a store."""
     context = _context(store=None)
     context.active_ride_id = None
 
@@ -632,7 +632,7 @@ def test_persist_team_editor_changes_given_no_store_is_a_silent_no_op() -> None:
 def test_open_target_given_team_editor_close_with_changes_saves_the_roster(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The menu route persists a changed team editor when its modal ends."""
+    """The menu route persists a changed editor once its modal ends."""
     store = _SaveRecorderStore()
     context = _context(store=store)
     context.active_ride_id = 5

@@ -421,11 +421,11 @@ def _zero_rider_team_roster() -> Roster:
 
 
 def test_presenter_init_given_a_zero_rider_team_reports_team_of_one_with_size_zero() -> None:
-    """An empty team is reported as a team-of-one issue at size 0."""
+    """An empty team is reported as a team-of-one at size 0."""
     view = RecordingRiderIssuesView()
     presenter = RiderIssuesPresenter(view, _zero_rider_team_roster())
 
-    (issue,) = presenter._issues  # noqa: SLF001 -- the row's own kind is the report's contract
+    (issue,) = presenter._issues
     assert issue.kind == "team-of-one"
     assert issue.message == "team size must be at least 2, got 0"
     assert ("show_summary", ("1 rider issue(s)",)) in view.calls
@@ -443,7 +443,7 @@ def test_on_row_selected_given_a_zero_rider_team_disables_convert() -> None:
 
 
 def test_on_convert_solo_given_a_zero_rider_team_returns_false_and_validates() -> None:
-    """Convert on an empty team refuses, naming why, changing nothing."""
+    """Convert on an empty team refuses, naming why, changing none."""
     view = RecordingRiderIssuesView()
     roster = _zero_rider_team_roster()
     presenter = RiderIssuesPresenter(view, roster)

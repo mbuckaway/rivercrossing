@@ -2581,8 +2581,8 @@ def test_change_pooled_rider_plate_blank_raises_and_changes_nothing() -> None:
 # at least one rider) which the first joined rider replaces.
 
 
-def test_roster_create_empty_team_pooled_creates_a_zero_rider_team_with_a_provisional_plate() -> None:
-    """A pooled empty team claims the next free plate until a rider joins."""
+def test_roster_create_empty_team_pooled_claims_a_provisional_plate() -> None:
+    """A pooled empty team claims the next free plate provisionally."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     roster.create_solo_entry(first_name="Bo", last_name="", plate="3")
 
@@ -2617,7 +2617,7 @@ def test_roster_create_empty_team_relay_uses_the_given_relay_plate() -> None:
 
 
 def test_roster_create_empty_team_relay_without_a_plate_takes_the_next_free() -> None:
-    """team_relay: no plate given, the roster auto-claims the next free."""
+    """team_relay with no plate: the roster claims the next free."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
     roster.create_team_entry(
         display_name="Moss Ridge",
@@ -2631,7 +2631,7 @@ def test_roster_create_empty_team_relay_without_a_plate_takes_the_next_free() ->
 
 
 def test_roster_create_empty_team_relay_blank_plate_raises_plate_shape_error() -> None:
-    """A blank relay plate is refused, exactly as on every relay path."""
+    """A blank relay plate is refused on the empty path too."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
 
     with pytest.raises(PlateShapeError, match=re.escape("must not be empty")):
@@ -2652,7 +2652,7 @@ def test_roster_create_empty_team_relay_duplicate_plate_raises_duplicate_plate_e
 
 
 def test_roster_create_empty_team_pooled_with_an_explicit_plate_raises_plate_shape_error() -> None:
-    """A pooled team's plate is derived from its riders -- never given."""
+    """A pooled team's plate derives from riders, never a caller."""
     roster = Roster(entry_mode=EntryMode.MIXED)
 
     with pytest.raises(PlateShapeError, match=re.escape("derived")):
@@ -2677,7 +2677,7 @@ def test_roster_create_empty_team_after_start_raises_locked_error() -> None:
 
 
 def test_roster_create_empty_team_auto_assigns_the_next_seeded_logo_card() -> None:
-    """Like every create path, None logo_card takes the next seeded code."""
+    """None logo_card takes the next seeded code, like every create."""
     seeded = seeded_card_codes(8843)
     roster = _seeded_mixed_roster()
 
@@ -2732,7 +2732,9 @@ def test_roster_create_empty_team_appends_one_audit_event() -> None:
 # ---------------------------------------- empty teams meet later riders
 
 
-def test_roster_add_rider_to_team_fills_an_empty_pooled_team_and_replaces_its_placeholder() -> None:
+def test_roster_add_rider_to_team_fills_an_empty_pooled_team_and_replaces_its_placeholder() -> (
+    None
+):
     """A joining pooled rider's plate becomes the team's plate."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     entry = roster.create_empty_team(display_name="Trail Blazers")
@@ -2744,7 +2746,7 @@ def test_roster_add_rider_to_team_fills_an_empty_pooled_team_and_replaces_its_pl
     assert entry.riders == [rider]
 
 
-def test_roster_move_rider_onto_an_empty_team_dissolves_the_source_and_replaces_the_placeholder() -> None:
+def test_roster_move_rider_onto_an_empty_team_dissolves_the_source() -> None:
     """The rider editor's fold-in path works against an empty target."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     target = roster.create_empty_team(display_name="Trail Blazers")

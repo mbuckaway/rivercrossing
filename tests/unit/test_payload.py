@@ -27,7 +27,6 @@ from rivercrossing.htmlexport import (
     _snake_to_camel,
 )
 
-
 _SAMPLE_LOGO = "data:image/png;base64,"
 
 

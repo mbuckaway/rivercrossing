@@ -2629,7 +2629,7 @@ def test_store_load_roster_gives_the_rebuilt_roster_the_rides_logo_seed(
 
 
 def test_store_save_roster_zero_rider_team_round_trips_with_no_rider_rows(tmp_path: Path) -> None:
-    """W8: an empty pooled TEAM entry persists as one entry, no riders."""
+    """An empty pooled team persists as one entry with no riders."""
     db_path = tmp_path / "rides.db"
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_empty_team(display_name="Trail Blazers", logo_card="AS")
