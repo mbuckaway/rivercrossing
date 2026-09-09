@@ -1666,8 +1666,9 @@ def _bundle_launch_open_crossing_exports_html() -> dict[str, Any]:
         solo: Any,  # noqa: ANN401 -- the captured solo standings
         opts: Any,  # noqa: ANN401 -- the captured ExportOptions
         watermark: int,
+        team_logos: dict[str, str] | None = None,
     ) -> None:
-        app_module._write_export(config, teams, solo, opts, target, path)
+        app_module._write_export(config, teams, solo, opts, target, path, team_logos=team_logos)
         context.last_export_path = path
         context.export_watermark = watermark
 

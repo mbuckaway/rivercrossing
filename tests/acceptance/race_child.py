@@ -753,8 +753,9 @@ def _install_sync_exports(exports_dir: Path, paths: dict[str, Path]) -> None:
         solo: object,
         opts: object,
         watermark: int | None = None,
+        team_logos: dict[str, str] | None = None,
     ) -> None:
-        app_module._write_export(config, teams, solo, opts, target, path)
+        app_module._write_export(config, teams, solo, opts, target, path, team_logos=team_logos)
         ctx.last_export_path = path  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
         paths[target] = path

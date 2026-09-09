@@ -77,6 +77,7 @@ def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s in
     solo: object,
     opts: object,
     watermark: int | None = None,
+    team_logos: dict[str, str] | None = None,
 ) -> None:
     """Run the export synchronously; record it as completion does.
 
@@ -85,7 +86,9 @@ def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s in
     results window's banner clear (E7.3.2) -- so the walk can assert
     the file AND the stale flag in one call.
     """
-    app_module._write_export(config, teams, solo, opts, target, path)  # type: ignore[arg-type]
+    app_module._write_export(  # type: ignore[arg-type]
+        config, teams, solo, opts, target, path, team_logos=team_logos
+    )
     context.last_export_path = path  # type: ignore[attr-defined]
     context.export_watermark = watermark  # type: ignore[attr-defined]
     if watermark is not None:
