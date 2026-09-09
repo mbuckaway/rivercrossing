@@ -69,6 +69,8 @@ FILE_MENU_ITEMS = (
     "wxID_PREFERENCES",
     "wxID_EXIT",
 )
+# W14: mi_ride_setup left the Ride menu with its §15 row -- File ▸
+# New Ride… is the single entry point to the ride-setup window.
 RIDE_MENU_ITEMS = (
     "mi_start_ride",
     "mi_stop_ride",
@@ -76,7 +78,6 @@ RIDE_MENU_ITEMS = (
     "mi_finish_ride",
     "mi_reopen_ride",
     "mi_audit_trail",
-    "mi_ride_setup",
 )
 RIDERS_MENU_ITEMS = (
     "mi_rider_editor",
@@ -176,13 +177,14 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15 has 40 rows: File 8, Ride 7, Riders 6, Cards 7,
-# Results 7, View 1, Help 4. The single View row expands into the 8
+# spec.md section 15 has 39 rows: File 8, Ride 6, Riders 6, Cards 7,
+# Results 7, View 1, Help 4 (W14: the Ride Setup… row left the Ride
+# menu with mi_ride_setup). The single View row expands into the 8
 # items section 15b names for it (W13: hide-times + the seven zoom
 # radios; the theme trio left the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
-    ("&Ride", 7),
+    ("&Ride", 6),
     ("Ri&ders", 6),
     ("&Cards", 7),
     ("Re&sults", 7),
@@ -394,13 +396,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_four_menu_item_names() -> None:
-    """spec.md 15b names 44 ``mi_*`` items across the menus (W13)."""
+def test_main_menubar_declares_forty_three_menu_item_names() -> None:
+    """spec.md 15b names 43 ``mi_*`` items across the menus (W14)."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 44
+    assert len(menu_item_names) == 43
 
 
 def test_file_menu_declares_the_spec_15_row_order() -> None:
