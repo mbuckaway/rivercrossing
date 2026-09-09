@@ -203,15 +203,18 @@ class RideLibrary:
     name interpolated into ``message_lbl`` and the type-to-confirm
     gate armed; a confirmed Delete invokes the injected ``on_delete``
     callback -- the seam E5.4 wires to ``Store.delete_ride`` (which
-    writes its backup first). E5.4.1 wires the live library's other
-    three buttons the same way: ``wxID_OPEN`` and ``duplicate_btn``
-    are enabled only while a ride row is selected (the "no ride
-    selected" disable rule the store-backed library carries over from
-    Delete), ``wxID_NEW`` is always enabled, and each forwards its
-    selection to the injected ``on_open``/``on_new``/``on_duplicate``
-    callbacks -- the seams ``app.py`` wires to ``Store.load_engine``
-    + console switch, the ride-setup flow, and ``Store.duplicate_ride``
-    + :meth:`refresh`.
+    writes its backup first) -- with the selected ride row, then the
+    view refreshes so the deleted row disappears (W10). E5.4.1 wires
+    the live library's other three buttons the same way: ``wxID_OPEN``
+    and ``duplicate_btn`` are enabled only while a ride row is
+    selected (the "no ride selected" disable rule the store-backed
+    library carries over from Delete), ``wxID_NEW`` is enabled only
+    when an ``on_new`` callback was injected (W10: the no-store
+    library disables New instead of silently no-oping a click), and
+    each forwards its selection to the injected
+    ``on_open``/``on_new``/``on_duplicate`` callbacks -- the seams
+    ``app.py`` wires to ``Store.load_engine`` + console switch, the
+    ride-setup flow, and ``Store.duplicate_ride`` + :meth:`refresh`.
     """
 
     def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the four injected action callbacks
@@ -245,7 +248,8 @@ class RideLibrary:
                 clicked; ``None`` leaves the button a no-op (the empty
                 library, which has no store ride to load).
             on_new: Called when New is clicked (the app opens the ride
-                setup flow); ``None`` leaves it a no-op.
+                setup flow); ``None`` disables the New button (W10 --
+                the no-store library has no setup flow to open).
             on_duplicate: Called with the selected ride when Duplicate
                 is clicked; ``None`` leaves it a no-op. The view
                 refreshes its rows after the callback returns so a
@@ -390,11 +394,14 @@ class RideLibrary:
         selection-driven action: Open and Duplicate are enabled only
         while a ride row is selected, exactly as Delete is (and Delete
         additionally stays off for a RUNNING ride -- R-18, spec §3).
-        New is never selection-dependent.
+        New is never selection-dependent; it is enabled only when an
+        ``on_new`` callback was injected (W10: the no-store library
+        disables the button rather than silently swallowing a click).
         """
         selected = self._selected
         self.open_button.Enable(selected is not None)
         self.duplicate_button.Enable(selected is not None)
+        self.new_button.Enable(self._on_new is not None)
         self.delete_button.Enable(
             selected is not None and selected.status is not RideStatus.RUNNING
         )
@@ -421,8 +428,9 @@ class RideLibrary:
         """Forward the New click to ``on_new`` (E5.4.1).
 
         The app-side callback ends this modal and opens the ride setup
-        flow (File ▸ New Ride…'s target). Always enabled -- no
-        selection needed.
+        flow (File ▸ New Ride…'s target). No selection needed -- the
+        button is disabled without an injected ``on_new`` (W10), and
+        this guard re-checks anyway.
         """
         event.Skip()
         if self._on_new is not None:
