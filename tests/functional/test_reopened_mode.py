@@ -48,7 +48,12 @@ from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import MainFrame
-from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
+from rivercrossing.ui.views.main_frame import (
+    FINISHED_INFOBAR,
+    FINISHED_REOPEN_BTN,
+    FINISHED_RESULTS_BTN,
+    REOPENED_INFOBAR,
+)
 
 pytestmark = pytest.mark.functional
 
@@ -223,11 +228,18 @@ def test_reopened_mode_reopened_infobar_visible_after_reopen(
         infobar = wx.Window.FindWindowByName(REOPENED_INFOBAR, window)
         assert infobar is not None
         assert infobar.IsShown() is True
+        # W11 F3: REOPENED must not carry the FINISHED banner.
+        finished_bar = wx.Window.FindWindowByName(FINISHED_INFOBAR, window)
+        assert finished_bar is not None
+        assert finished_bar.IsShown() is False
 
         engine.finish()  # finish again -- the infobar clears
         console.set_state(engine.state)
         assert infobar.IsShown() is False
         assert harness.find_control(window, ids.RIDE_STATUS_LBL).GetLabelText() == "FINISHED"
+        # W11 F3: the state transition back to FINISHED shows the
+        # result banner.
+        assert finished_bar.IsShown() is True
     finally:
         del console
         harness.release_main_window(wx.GetApp(), window)
@@ -328,6 +340,102 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
             assert model.GetValueByRow(1, 1) == "34"  # COL_PLATE
         finally:
             harness.close_window(results_frame)
+    finally:
+        del console
+        harness.release_main_window(wx.GetApp(), window)
+
+
+# ---------------------------------- W11 F3: the FINISHED banner
+#
+# xrc-windows.md A's state variant was frozen-but-unimplemented:
+# ``finished_infobar`` was constructed and never shown. F3 shows it on
+# FINISHED with two app-wired buttons -- "Reopen…" runs the same
+# mi_reopen_ride confirm flow, "View results…" opens the results frame
+# -- and dismisses it on FINISHED -> REOPENED (whose corrections
+# banner takes over).
+
+
+def _route_context_for(  # noqa: PLR0913, PLR0917 -- (window, resource, app, console): the builder's four seams
+    window: object, xrc_resource: object, wx_app: object, console: MainFrame
+) -> Any:  # noqa: ANN401 -- mirrors _build_ride_console's own context shape
+    """Build the wired route context the banner seams act through."""
+    return app_module._RouteContext(
+        frame=window,
+        resource=xrc_resource,
+        roster=console._presenter.engine._roster,
+        app=wx_app,
+        theme_controller=theme.ThemeController(wx_app),
+        presenter=console._presenter,
+        console_view=console,
+    )
+
+
+def test_finished_mode_banner_shows_on_a_finished_ride(
+    xrc_resource: object,
+) -> None:
+    """F3: FINISHED shows the result banner with both named buttons."""
+    window, console, _presenter, _engine, _source = _build_ride_console(xrc_resource, reopen=False)
+    try:
+        finished_bar = wx.Window.FindWindowByName(FINISHED_INFOBAR, window)
+        assert finished_bar is not None
+        assert finished_bar.IsShown() is True
+        assert finished_bar.GetButtonCount() == 2
+
+        reopen_btn = wx.Window.FindWindowByName(FINISHED_REOPEN_BTN, window)
+        assert reopen_btn is not None
+        assert reopen_btn.GetLabelText() == "Reopen…"
+        results_btn = wx.Window.FindWindowByName(FINISHED_RESULTS_BTN, window)
+        assert results_btn is not None
+        assert results_btn.GetLabelText() == "View results…"
+    finally:
+        del console
+        harness.release_main_window(wx.GetApp(), window)
+
+
+def test_finished_mode_reopen_button_runs_the_reopen_flow(
+    xrc_resource: object,
+    wx_app: object,
+) -> None:
+    """F3: the banner's Reopen… runs mi_reopen_ride's own confirm flow.
+
+    A confirmed reopen moves the console to REOPENED, which dismisses
+    the FINISHED banner and shows the corrections banner.
+    """
+    window, console, _presenter, engine, _source = _build_ride_console(xrc_resource, reopen=False)
+    context = _route_context_for(window, xrc_resource, wx_app, console)
+    app_module._wire_finished_banner_actions(context)
+    try:
+        harness.dismiss_modal(
+            ids.REOPEN_RIDE_DLG,
+            dismiss_with=wx.ID_OK,
+            drive=None,
+        )
+        harness.click(window, FINISHED_REOPEN_BTN)
+
+        assert engine.state is RideStatus.REOPENED
+        reopened_bar = wx.Window.FindWindowByName(REOPENED_INFOBAR, window)
+        assert reopened_bar.IsShown() is True
+        finished_bar = wx.Window.FindWindowByName(FINISHED_INFOBAR, window)
+        assert finished_bar.IsShown() is False
+    finally:
+        del console
+        harness.release_main_window(wx.GetApp(), window)
+
+
+def test_finished_mode_view_results_button_opens_the_results_frame(
+    xrc_resource: object,
+    wx_app: object,
+) -> None:
+    """F3: the banner's View results… opens the results frame."""
+    window, console, _presenter, _engine, _source = _build_ride_console(xrc_resource, reopen=False)
+    context = _route_context_for(window, xrc_resource, wx_app, console)
+    app_module._wire_finished_banner_actions(context)
+    try:
+        harness.click(window, FINISHED_RESULTS_BTN)
+
+        results_frame = wx.Window.FindWindowByName(ids.RESULTS_FRAME)
+        assert results_frame is not None
+        harness.close_window(results_frame)
     finally:
         del console
         harness.release_main_window(wx.GetApp(), window)
