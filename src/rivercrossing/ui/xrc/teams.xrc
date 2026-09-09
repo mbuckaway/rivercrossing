@@ -81,9 +81,10 @@
               <orient>wxHORIZONTAL</orient>
               <!-- Save/Remove/Close sit bottom-left (rework): Save
                    replaces the old Add team slot, Remove keeps its
-                   own, and wxID_CLOSE follows in its stock sizer
-                   (the teams.xrc save_btn/riders.xrc sibling-sizer
-                   pattern for stock-adjacent custom buttons). -->
+                   own, and wxID_CLOSE follows in its stock sizer.
+                   W8 gives the Close sizer item the same option=1 as
+                   Save/Remove so the stock button stretches to their
+                   size (Close previously rendered smaller). -->
               <object class="sizeritem">
                 <option>1</option>
                 <flag>wxEXPAND|wxRIGHT</flag>
@@ -101,6 +102,7 @@
                 </object>
               </object>
               <object class="sizeritem">
+                <option>1</option>
                 <flag>wxEXPAND</flag>
                 <object class="wxStdDialogButtonSizer">
                   <object class="button">

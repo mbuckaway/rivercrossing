@@ -129,6 +129,10 @@ class TeamsView(Protocol):
         """
         ...
 
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Gate save_btn: enabled only while the form is dirty (W8)."""
+        ...
+
     def show_validation(self, message: str) -> None:
         """Show a refused-operation message (teams_infobar)."""
         ...
@@ -385,10 +389,11 @@ class TeamsPresenter:
     def on_save(self, form: TeamFormValues) -> None:
         """Handle save_btn: apply the form to the selected team.
 
-        A rename onto another team's name (trimmed, case-insensitive)
-        refuses before anything is touched. A relay team's plate
-        routes through :meth:`Roster.change_team_plate` (its own
-        DRAFT lock); the name and notes through
+        A blank name (whitespace-only) refuses first; a rename onto
+        another team's name (trimmed, case-insensitive) refuses
+        before anything is touched. A relay team's plate routes
+        through :meth:`Roster.change_team_plate` (its own DRAFT
+        lock); the name (stored trimmed, W8) and notes through
         :meth:`Roster.update_entry`. A refusal (the ride has left
         DRAFT) shows via :meth:`TeamsView.show_validation`. A no-op
         if nothing is selected.
@@ -397,6 +402,9 @@ class TeamsPresenter:
         if entry is None:
             return
         name = form.name.strip()
+        if not name:
+            self.view.show_validation("A team name is required")
+            return
         if (
             name != entry.display_name
             and _duplicate_team_entry(self.roster, name, exclude=entry) is not None
@@ -410,8 +418,10 @@ class TeamsPresenter:
             ):
                 self.roster.change_team_plate(entry, plate=form.relay_plate)
             changes: dict[str, str] = {}
-            if form.name != entry.display_name:
-                changes["display_name"] = form.name
+            if name != entry.display_name:
+                # W8: store the trimmed name -- the dup guard compares
+                # trimmed, so the store must too (the raw-form bug).
+                changes["display_name"] = name
             if form.notes != entry.notes:
                 changes["notes"] = form.notes
             if changes:
@@ -421,6 +431,21 @@ class TeamsPresenter:
             return
         self._roster_changed = True
         self._refresh_rows()
+        # The form now equals the record (or a refusal already left it
+        # dirty): Save lands disabled on the clean form.
+        self.view.set_save_enabled(enabled=False)
+
+    def on_form_changed(self, form: TeamFormValues) -> None:
+        """Re-gate save_btn from the form's own current values (W8).
+
+        The view forwards every name/relay-plate/notes edit here; the
+        button is enabled exactly while *form* differs from the
+        selected record -- a clean form (or no selection at all)
+        disables it, so Save can never rewrite a record the operator
+        did not mean to change. Logo picks are immediate roster
+        writes, never form state, so they do not gate Save.
+        """
+        self.view.set_save_enabled(enabled=self._is_dirty(form))
 
     def on_pick_card(self) -> None:
         """Handle pick_card_btn on the selected team: cycle its card.
@@ -519,6 +544,27 @@ class TeamsPresenter:
             ]
         )
 
+    def _is_dirty(self, form: TeamFormValues) -> bool:
+        """Return whether *form* differs from the selected record.
+
+        The name compares trimmed (that is what Save stores); the
+        relay plate counts only on a team_relay ride, where its row is
+        visible and settable -- a pooled team's hidden plate row can
+        never dirty the form (a pooled plate is derived from riders).
+        Notes compare verbatim.
+        """
+        entry = self._selected
+        if entry is None:
+            return False
+        if form.name.strip() != entry.display_name:
+            return True
+        if (
+            self.roster.plate_model is PlateModel.TEAM_RELAY
+            and form.relay_plate != entry.plate
+        ):
+            return True
+        return form.notes != entry.notes
+
     def _show_entry(self, entry: Entry) -> None:
         """Render *entry*'s record form, logo and read-only members.
 
@@ -535,6 +581,8 @@ class TeamsPresenter:
         )
         self.view.show_logo(card=entry.logo_card, image=entry.logo_png)
         self.view.show_members([rider.full_name for rider in entry.riders])
+        # A record's own values are clean by definition.
+        self.view.set_save_enabled(enabled=False)
 
     def _show_add_form(self) -> None:
         """Reset the editor: nothing selected, blank form, no logo."""
@@ -542,3 +590,4 @@ class TeamsPresenter:
         self.view.show_form(name="", relay_plate="", notes="")
         self.view.show_logo(card=None, image=None)
         self.view.show_members([])
+        self.view.set_save_enabled(enabled=False)

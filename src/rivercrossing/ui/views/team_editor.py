@@ -456,6 +456,15 @@ class TeamEditor:
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.teams_list
         )
+        # W8 save gating: every keystroke into the three text fields
+        # re-runs the dirty check that gates save_btn (the W7 rider
+        # editor shape). The presenter's own show_form calls re-fire
+        # these events (SetValue), which is harmless: each re-reads
+        # the whole form, so the state after the last field lands is
+        # the state of the full form.
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.name_input)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.relay_plate_input)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.notes_input)
         self.dialog.Bind(
             wx.EVT_CHECKBOX, self._on_toggle_single_member, self.single_member_only_chk
         )
@@ -513,6 +522,11 @@ class TeamEditor:
         """Handle ``remove_logo_btn``: forward to the presenter."""
         event.Skip()
         self.presenter.on_remove_logo()
+
+    def _on_form_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle a form edit: re-run the presenter's dirty gating."""
+        event.Skip()
+        self.presenter.on_form_changed(self._form_values())
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``teams_list`` selection: forward its row index.
@@ -573,6 +587,10 @@ class TeamEditor:
         """
         _set_relay_row_visible(self.relay_plate_input, visible=visible)
         self.dialog.Layout()
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``save_btn`` on the form's dirty state (W8)."""
+        self.save_btn.Enable(enabled)
 
     def show_members(self, names: list[str]) -> None:
         """Render ``members_list`` rows read-only (``TeamsView``)."""

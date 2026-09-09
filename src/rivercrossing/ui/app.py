@@ -1021,7 +1021,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs
     route: commands.MenuRoute,
-) -> Any:  # noqa: ANN401 -- the one caller reads the rider-editor view back; other routes return None
+) -> Any:  # noqa: ANN401 -- the caller reads the rider/team editor views back; other routes return None
     """Bind *window*'s code-side view class, if *route.target* has one.
 
     E7.3.1 added the audit trail to that set: ``audit_dlg`` now binds
@@ -1086,8 +1086,10 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
         # team records (name, relay plate, notes, logo) over the
         # store's roster when one is open, the empty bootstrap roster
         # otherwise. The menu's own teams_allowed gate (entry_mode is
-        # MIXED) is what lets this route fire at all.
-        TeamEditor(window, roster=context.roster)
+        # MIXED) is what lets this route fire at all. W8 returns the
+        # built view: _open_target persists this editor's changes
+        # once its modal ends, exactly like the rider editor.
+        return TeamEditor(window, roster=context.roster)
     elif route.target == ids.RIDE_SETUP_DLG:
         # E9.1.2/E9.1.4: with a store open, a committed New Ride
         # persists the ride row and the roster the dialog was opened
@@ -2359,12 +2361,14 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         if not window.IsBeingDeleted():
             window.Destroy()
 
-    # W7: the Rider Editor route is the one dialog whose roster edits
-    # must persist when it closes -- the console tab path
-    # (_open_rider_editor_for) and this route both persist through
-    # the same helper once their modal has ended.
+    # W7/W8: the Rider Editor and the Teams Editor are the two
+    # dialogs whose roster edits must persist when they close -- the
+    # console tab path (_open_rider_editor_for) and the menu routes
+    # both persist through the same helpers once their modal ends.
     if route.target == ids.RIDER_EDITOR_DLG and view is not None:
         _persist_rider_editor_changes(context, view)
+    elif route.target == ids.TEAM_EDITOR_DLG and view is not None:
+        _persist_team_editor_changes(context, view)
 
 
 def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
@@ -2397,6 +2401,37 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
         store.save_roster(context.active_ride_id, context.roster)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save riders: {exc}")
+
+
+def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
+    """Persist the roster after a team-editor modal ends (W8).
+
+    The Teams Editor menu route calls this after its modal has ended,
+    the mirror of :func:`_persist_rider_editor_changes`: with a
+    store-backed ride open and any committed change this session (the
+    presenter's own ``roster_changed``), the in-memory roster is
+    written back so team records -- including W8's empty teams and
+    their logos -- survive a relaunch. A refused save (a locked or
+    unwritable database) surfaces as a status notice -- the same
+    guard idiom the rider editor uses, for the same
+    wx-swallowed-raise reason (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+
+    Args:
+        context: The route context whose store/roster to act on.
+        view: The closed ``TeamEditor`` (or a presenter-shaped
+            stand-in) whose ``presenter.roster_changed`` says whether
+            this session committed anything.
+    """
+    if not view.presenter.roster_changed:
+        return
+    store = context.store
+    if store is None or context.active_ride_id is None:
+        return
+    try:
+        store.save_roster(context.active_ride_id, context.roster)
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not save teams: {exc}")
 
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
