@@ -333,6 +333,10 @@ def test_open_entry_detail_dialog_live_branch_records_and_builds_the_live_dialog
     assert built[0].kwargs["engine"] is engine
     assert built[0].kwargs["data_source"] is source
     assert built[0].kwargs["roster"] is roster
+    # W11 F2b: the picker's app seam writes the current-entry context.
+    on_plate_picked = built[0].kwargs["on_plate_picked"]
+    on_plate_picked("34")
+    assert context.detail_plate == "34"
 
 
 def test_open_entry_detail_dialog_empty_branch_opens_the_empty_state(

@@ -167,6 +167,75 @@ def test_move_rider_button_disabled_for_a_solo_entry(xrc_resource: object) -> No
     assert enabled is False
 
 
+# ---------------------------- W11 F2b: the plate picker
+
+
+def test_entry_detail_plate_choice_lists_the_roster_and_selects_the_open_plate(
+    xrc_resource: object,
+) -> None:
+    """F2b: the choice lists the entries; the open one is selected."""
+    roster = _pooled_team_roster()
+    view, _engine = _live_entry_detail(xrc_resource, plate="77", roster=roster)
+
+    try:
+        choice = harness.find_control(view.dialog, ids.PLATE_CHOICE)
+        plates = tuple(choice.GetItems())
+        selection = choice.GetStringSelection()
+    finally:
+        harness.close_window(view.dialog)
+
+    assert plates == ("12", "77")  # roster order: the solo, then the team
+    assert selection == "77"
+
+
+def test_entry_detail_plate_choice_pick_rerenders_the_picked_entry(
+    xrc_resource: object,
+) -> None:
+    """F2b: picking a plate re-renders the dialog for that entry."""
+    roster = _pooled_team_roster()
+    view, _engine = _live_entry_detail(xrc_resource, plate="12", roster=roster)
+
+    try:
+        harness.select_choice(view.dialog, ids.PLATE_CHOICE, "77")
+        header = harness.find_control(view.dialog, ids.ENTRY_HEADER_LBL).GetLabelText()
+    finally:
+        harness.close_window(view.dialog)
+
+    assert header.startswith("Team")  # the pooled team's detail, not the solo's
+    assert "2 riders" in header
+
+
+def test_entry_detail_plate_choice_pick_records_the_current_entry(
+    live_context: tuple[Any, RideEngine],
+) -> None:
+    """F2b: a pick becomes the current entry the menu routes target.
+
+    The app wires ``on_plate_picked`` to ``context.detail_plate``, so
+    after this modal ends the correction menu routes (Mark DNF,
+    Reassign Plate, Void Card) act on the picked entry instead of
+    refusing with "open an entry first". The dialog opens at plate 12
+    (a real selection, the way the flagged seam opens it), the drive
+    picks plate 34 inside the modal, then the assertion reads the
+    recorded context.
+    """
+    context, _engine = live_context
+    frame = context.frame
+    context.detail_plate = "12"
+
+    def _drive_pick(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        harness.select_choice(dialog, ids.PLATE_CHOICE, "34")
+        harness.click(dialog, "wxID_CLOSE")
+
+    harness.dismiss_modal(
+        ids.ENTRY_DETAIL_DLG,
+        dismiss_with=wx.ID_CLOSE,
+        drive=_drive_pick,
+    )
+    harness.fire_menu_event(frame, ids.MI_ENTRY_DETAIL)
+
+    assert context.detail_plate == "34"
+
+
 # ---------------- the live binder follows ride state on the menubar
 
 
