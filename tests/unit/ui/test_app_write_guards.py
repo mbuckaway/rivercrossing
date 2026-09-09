@@ -65,16 +65,24 @@ def _context(*, store: object) -> app_module._RouteContext:
     )
 
 
-class _DeleteFailsStore:
-    """A store whose ride delete fails like a locked database."""
+class _RecordsDeleteStore:
+    """A store that records every ``delete_ride`` call (W10 by-id seam).
+
+    ``rides()`` raises: the by-id delete callback must never scan rows
+    to resolve the ride -- the selected row already carries the id.
+    """
+
+    def __init__(self) -> None:
+        """Start with an empty delete log."""
+        self.calls: list[tuple[int, str]] = []
 
     def rides(self) -> list[_RideRow]:
-        """Return the one ride the delete callback matches."""
-        return [_RideRow(ride_id=3, name="Ride A")]
+        """Refuse the scan a by-id delete does not need."""
+        raise AssertionError("a by-id delete must not read rides()")
 
-    def delete_ride(self, _ride_id: int, _typed_name: str) -> None:
-        """Refuse the write."""
-        raise sqlite3.OperationalError("database is locked")
+    def delete_ride(self, ride_id: int, typed_name: str) -> None:
+        """Record the exact delete the callback requested."""
+        self.calls.append((ride_id, typed_name))
 
 
 class _DuplicateFailsStore:
@@ -188,15 +196,50 @@ def test_persist_created_ride_given_a_failed_roster_save_posts_a_notice_and_sche
     assert recorder.calls == []
 
 
-def test_library_delete_callback_given_a_failed_delete_posts_a_notice() -> None:
-    """A refused delete surfaces; it never raises into wx."""
-    context = _context(store=_DeleteFailsStore())
+def _selected_ride(*, ride_id: int = 3, name: str = "Ride A") -> RideSummary:
+    """One library row as the delete seam receives it (W10)."""
+    return RideSummary(
+        name=name, date="2026-09-20", status=RideStatus.DRAFT, entries=0, ride_id=ride_id
+    )
 
-    callback = app_module._library_delete_callback(context)
+
+def test_library_delete_callback_given_a_selected_ride_deletes_that_exact_ride() -> None:
+    """The seam hands the selected row's id to ``Store.delete_ride``.
+
+    No name-resolution scan over ``rides()``: the row the operator
+    confirmed carries the ``ride_id``, so ``delete_ride`` addresses
+    the exact row -- duplicate ride names can no longer delete the
+    wrong (first) match.
+    """
+    store = _RecordsDeleteStore()
+    context = _context(store=store)
+
+    callback = app_module._library_delete_callback(context, window=_NoticeFrame())
     assert callback is not None
-    callback("Ride A")
+    callback(_selected_ride())
 
-    assert context.frame.notices == ["Could not delete ride: database is locked"]
+    assert store.calls == [(3, "Ride A")]
+
+
+def test_library_delete_callback_without_a_store_returns_none() -> None:
+    """No store open: there is nothing to delete -- no callback."""
+    context = _context(store=None)
+
+    callback = app_module._library_delete_callback(context, window=_NoticeFrame())
+
+    assert callback is None
+
+
+def test_library_delete_callback_given_a_row_without_a_ride_id_is_a_noop() -> None:
+    """E5.4.2 demo-era rows carry no store id -- nothing to delete."""
+    store = _RecordsDeleteStore()
+    context = _context(store=store)
+
+    callback = app_module._library_delete_callback(context, window=_NoticeFrame())
+    assert callback is not None
+    callback(_selected_ride(ride_id=None))
+
+    assert store.calls == []
 
 
 def test_live_library_duplicate_given_a_failed_duplicate_posts_a_notice() -> None:

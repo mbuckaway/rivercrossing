@@ -1744,12 +1744,13 @@ def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
     The E5.3.2 functional proof of R-18's "automatic database backup
     is written first": drives the real ``delete_ride_dlg`` (name
     interpolated into ``message_lbl``, type-to-confirm gate armed),
-    types the exact name, clicks Delete, and -- the callback E5.4 will
-    thread from the library -- runs ``Store.delete_ride``. The facts
-    returned are all first-class disk/store observations: whether a
-    backup existed *before* the delete ran, whether one exists after,
-    whether that backup reopens with the ride and a clean integrity
-    check, and whether the ride row is gone.
+    types the exact name, clicks Delete, and -- the exact call the
+    W10 app callback makes from the library -- runs
+    ``Store.delete_ride``. The facts returned are all first-class
+    disk/store observations: whether a backup existed *before* the
+    delete ran, whether one exists after, whether that backup reopens
+    with the ride and a clean integrity check, and whether the ride
+    row is gone.
     """
     db_path = _temp_dir("rc-delete-") / "rides.db"
     boot = Store.open(db_path)
@@ -1788,8 +1789,9 @@ def _delete_ride_dlg_backup_written_before_delete() -> dict[str, Any]:
             list(backup_dir.glob("*.db"))
         )
         if found["confirmed"]:
-            # The exact confirmed-delete callback E5.4 wires from the
-            # library: Store.delete_ride writes its backup first.
+            # The exact confirmed-delete call the W10 app callback
+            # makes from the library: delete by the row's ride_id
+            # (Store.delete_ride writes its backup first).
             store.delete_ride(ride_id, ride_name)
         found["backup_exists"] = backup_dir.is_dir() and bool(list(backup_dir.glob("*.db")))
         found["ride_removed"] = store.rides() == []
@@ -1979,6 +1981,87 @@ def _library_live_duplicate_appears_as_new_draft() -> dict[str, Any]:  # noqa: P
                     "SELECT rng_seed FROM ride WHERE id = ?", (copy.id,)
                 ).fetchone()[0]
                 found["fresh_seed"] = copy_seed != source_seed
+        finally:
+            reopened.close()
+    finally:
+        store.close()
+        if frame is not None:
+            _close_without_prompt(frame)
+    return found
+
+
+def _library_live_delete_removes_exact_row_and_refreshes() -> dict[str, Any]:  # noqa: PLR0915 -- scripted modal-driving flow: nested probes + store facts, the scenario pattern this file owns
+    """Library Delete removes the selected row; the list refreshes.
+
+    W10's delete-by-id regression: two rides share the name "GORBA
+    EPIC 2026" (``ride.name`` has no UNIQUE constraint). The name-
+    based resolution the E5.4 callback did would delete the FIRST
+    matching row; the by-id seam deletes the row the operator
+    selected -- the second. Drives the library's Delete button on the
+    second row: ``delete_ride_dlg`` opens nested in the library
+    modal, the driver types the exact name and clicks Delete, the
+    confirmed app callback deletes by ``ride_id``, the view refreshes,
+    and the surviving first row is what the list shows.
+    """
+    db_path = _temp_dir("rc-lib-del-") / "rides.db"
+    boot = Store.open(db_path)
+    try:
+        first_id = boot.create_ride(_library_ride_config("GORBA EPIC 2026"))
+        boot.create_ride(_library_ride_config("GORBA EPIC 2026"))
+    finally:
+        boot.close()
+    store = Store.open(db_path)
+    found: dict[str, Any] = {}
+    frame: Any = None
+
+    def _drive_delete_dialog() -> None:
+        dialog = wx.Window.FindWindowByName(ids.DELETE_RIDE_DLG)
+        found["delete_dlg_shown"] = dialog is not None
+        if dialog is None:
+            return
+        harness.type_text(dialog, ids.CONFIRM_NAME_INPUT, "GORBA EPIC 2026")
+        harness.click(dialog, pages.WX_ID_DELETE)
+
+    def _record_rows_and_close(library: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        model = harness.find_control(library, ids.RIDES_LIST).GetModel()
+        found["rows_after"] = [
+            (model.GetValueByRow(row, COL_NAME), model.GetValueByRow(row, COL_STATUS))
+            for row in range(model.GetCount())
+        ]
+        found["library_refreshed"] = model.GetCount() == 1
+        if not library.IsBeingDeleted():
+            library.EndModal(wx.ID_CLOSE)
+
+    def _drive_library() -> None:
+        library = wx.Window.FindWindowByName(ids.RIDE_LIBRARY_DLG)
+        if library is None:
+            return
+        harness.select_row(library, ids.RIDES_LIST, 1)  # the newer second row
+        wx.CallAfter(_drive_delete_dialog)
+        harness.click(library, pages.WX_ID_DELETE)
+        wx.CallAfter(_record_rows_and_close, library)
+
+    try:
+        frame = _build_app_window(store=store)
+        frame.Show()
+        frame.Layout()
+        harness.pump()
+        # W3: the launch flow would show the native No Ride Open alert
+        # here (measured 2026-09-09: not programmatically dismissible),
+        # so the scenario fires the mi_open_library route the alert's
+        # copy points the operator at; the delete driver runs inside
+        # the library's modal.
+        _drive_when_shown(ids.RIDE_LIBRARY_DLG, _drive_library)
+        harness.fire_menu_event(frame, "mi_open_library")
+        harness.pump()
+
+        reopened = Store.open(db_path)
+        try:
+            rows = reopened.rides()
+            found["first_ride_id"] = first_id
+            found["survivor_id"] = rows[0].id if rows else None
+            backup_dir = backup_module.backup_dir_for(db_path)
+            found["backup_exists"] = backup_dir.is_dir() and bool(list(backup_dir.glob("*.db")))
         finally:
             reopened.close()
     finally:
@@ -3578,6 +3661,9 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     ),
     "library_live_open_switches_console_context": (_library_live_open_switches_console_context),
     "library_live_duplicate_appears_as_new_draft": (_library_live_duplicate_appears_as_new_draft),
+    "library_live_delete_removes_exact_row_and_refreshes": (
+        _library_live_delete_removes_exact_row_and_refreshes
+    ),
     "duplicate_ride_menu_route_opens_confirm_and_duplicates": (
         _duplicate_ride_menu_route_opens_confirm_and_duplicates
     ),
