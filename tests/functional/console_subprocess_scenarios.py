@@ -2572,7 +2572,7 @@ def _live_typed_plate_appears_in_feed() -> dict[str, Any]:
 
 
 def _live_flagged_crossing_row_is_bold() -> dict[str, Any]:
-    """Record a short lap; its feed row must read bold (R-34)."""
+    """Short lap: row bolds and shows its held card's chip (R-34/W9)."""
     resource = harness.load_xrc_resources()
     window, console, engine, _clock = _live_console_parts(
         resource, min_lap_s=60, hold_short_laps=True
@@ -2587,6 +2587,7 @@ def _live_flagged_crossing_row_is_bold() -> dict[str, Any]:
         card_bitmap = model.GetValueByRow(0, feed_model.COL_CARD)
         return {
             "row_bold": bool(attr_set and attr.GetBold()),
+            # W9: the held card's real code renders its own bitmap.
             "card_chip_ok": bool(card_bitmap is not None and card_bitmap.IsOk()),
             "held_count": len(engine.held_crossings()),
         }

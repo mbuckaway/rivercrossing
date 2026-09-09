@@ -32,8 +32,9 @@ from rivercrossing.ui.presenters.settings import ZOOM_LADDER
 pytestmark = pytest.mark.functional
 
 # R-37 with hide-times ON: the Lap time/Total columns vanish, leaving
-# these five. Mirrors test_console_demo.py's own pinned spelling.
-_HIDDEN_TIMES_COLUMNS = ["Time", "Plate", "Entry", "Lap", "Card"]
+# these five. Mirrors test_console_demo.py's own pinned spelling (W9
+# column order: Name header, Card before Lap).
+_HIDDEN_TIMES_COLUMNS = ["Time", "Plate", "Name", "Card", "Lap"]
 
 _DARWIN_ONLY = pytest.mark.skipif(
     sys.platform != "darwin",

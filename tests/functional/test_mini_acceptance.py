@@ -302,8 +302,9 @@ def _set_checkbox(window: Any, name: str, *, value: bool) -> None:  # noqa: ANN4
 def _feed_model_rows(window: Any) -> tuple[tuple[str, int, bool, bool], ...]:  # noqa: ANN401
     """Read each feed row as ``(plate, lap, card_bitmap_ok, bold)``.
 
-    The Card column renders a bitmap; a held crossing draws no chip
-    (``wx.NullBitmap``), which is the UI half of R-34's "held" cell.
+    W9: the Card column always draws the dealt card's bitmap -- a
+    held crossing shows its held card's own chip (the retired "held"
+    placeholder used to map to ``wx.NullBitmap``).
     """
     model = harness.find_control(window, ids.CROSSINGS_LIST).GetModel()
     rows = []
@@ -352,19 +353,23 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
                 assert engine.shoe_remaining == shoe_before + 1
 
         # The two short laps are flagged and their cards held (R-34).
+        # W9: each held row's card cell is the held card's real code
+        # and the feed draws its chip.
         feed = source.feed_rows()
         assert feed[0].plate == "1"
         assert feed[0].lap == 5
-        assert feed[0].card == "held"
         assert feed[0].flagged is True
         assert feed[1].plate == "1"
         assert feed[1].lap == 4
-        assert feed[1].card == "held"
         assert feed[1].flagged is True
+        held_by_code = {hc.card.code(): hc for hc in engine.held_crossings()}
+        assert set(held_by_code) == {CONFIRM_CARD, VOID_CARD}
+        assert feed[1].card == CONFIRM_CARD  # #59, released below
+        assert feed[0].card == VOID_CARD  # #60, voided below
         model_rows = _feed_model_rows(window)
-        assert model_rows[0][2] is False  # held: no chip
+        assert model_rows[0][2] is True  # held: its own card chip (W9)
         assert model_rows[0][3] is True  # held: bold
-        assert model_rows[1][2] is False
+        assert model_rows[1][2] is True
         assert model_rows[1][3] is True
 
         # The undo's restitution: the crossing typed right after the
@@ -374,15 +379,13 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
         assert engine.card_for(plate2_lap3).code() == undone_card == "4D"
 
         # Held confirm + held void (engine surface; E7 wires dialogs).
-        held_by_code = {hc.card.code(): hc for hc in engine.held_crossings()}
-        assert set(held_by_code) == {CONFIRM_CARD, VOID_CARD}
         engine.confirm_held(held_by_code[CONFIRM_CARD].crossing)
         presenter.tick()
         assert len(engine.held_crossings()) == 1
         feed = source.feed_rows()
         assert feed[1].card == CONFIRM_CARD  # #59 released
         assert feed[1].flagged is False
-        assert feed[0].card == "held"  # #60 still held
+        assert feed[0].card == VOID_CARD  # #60 still held: its own code
         assert feed[0].flagged is True
 
         engine.void_held(held_by_code[VOID_CARD].crossing)

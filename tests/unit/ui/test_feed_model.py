@@ -32,8 +32,8 @@ from rivercrossing.ui.feed_model import (
     TIME_COLUMNS,
     card_asset_key_or_none,
     edited_row_indexes,
-    flash_crossing_label,
     flagged_row_indexes,
+    flash_crossing_label,
 )
 from rivercrossing.ui.presenters.data_source import FeedRow
 
@@ -288,7 +288,7 @@ def _flash_row(*, card: str = "9H", flagged: bool = False) -> FeedRow:
 def test_flash_crossing_label_given_a_dealt_code_spells_its_suit_glyph(
     card: str, display: str
 ) -> None:
-    """W9 glyph polish: the flash reads ``dealt 9♥``, not ``dealt 9H``."""
+    """W9 glyph polish: ``dealt 9H`` renders as ``dealt 9♥``."""
     label = flash_crossing_label(_flash_row(card=card))
 
     assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt {display}"
@@ -302,7 +302,7 @@ def test_flash_crossing_label_given_a_dealt_code_spells_its_suit_glyph(
 def test_flash_crossing_label_given_a_flagged_row_appends_the_held_marker(
     card: str, display: str
 ) -> None:
-    """W9: a held crossing's flash names the card and says ``(held)``."""
+    """W9: a held flash names the card and appends ``(held)``."""
     label = flash_crossing_label(_flash_row(card=card, flagged=True))
 
     assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt {display} (held)"
@@ -315,12 +315,12 @@ def test_flash_crossing_label_given_an_unknown_suit_letter_raises_key_error() ->
 
 
 @given(
-    st.text(alphabet="23456789TJQKA", min_size=1, max_size=1),
-    st.sampled_from("SHDC"),
-    st.booleans(),
+    rank=st.text(alphabet="23456789TJQKA", min_size=1, max_size=1),
+    suit=st.sampled_from("SHDC"),
+    flagged=st.booleans(),
 )
 def test_flash_crossing_label_given_any_natural_code_renders_the_matching_glyph(
-    rank: str, suit: str, flagged: bool
+    rank: str, suit: str, *, flagged: bool
 ) -> None:
     """Property: rank+glyph pairing is exact for every natural card."""
     glyphs = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}

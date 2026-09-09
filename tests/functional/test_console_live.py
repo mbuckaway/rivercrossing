@@ -277,12 +277,12 @@ def test_live_typed_plate_appears_in_feed_with_card_chip() -> None:
 
 
 def test_live_flagged_crossing_row_is_bold() -> None:
-    """R-34: a short-lap row bolds and its held card draws no chip."""
+    """R-34/W9: a short-lap row bolds and shows its held card's chip."""
     result = scenario_runner.run_scenario("live_flagged_crossing_row_is_bold")
 
     assert result["ok"], result["context"]
     assert result["data"]["row_bold"] is True, result["context"]
-    assert result["data"]["card_chip_ok"] is False, result["context"]
+    assert result["data"]["card_chip_ok"] is True, result["context"]
     assert result["data"]["held_count"] == 1, result["context"]
 
 

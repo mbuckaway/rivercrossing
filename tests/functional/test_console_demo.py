@@ -19,7 +19,8 @@ counters). The empty-state facts are pinned through the production
 below (zero counters, full shoe) and the fresh-engine drive inside
 ``test_main_frame_given_a_fresh_engine_shows_an_empty_feed`` (empty
 feed at rest). The demo ``shared_console`` fixture stays for the
-view-capability assertions (bold mapping, card bitmap, held-no-chip)
+view-capability assertions (bold mapping, card bitmap, the held
+row's own chip)
 -- ``rivercrossing.demo`` remains importable from tests.
 
 Everything here needs a live ``wx.App`` and the packaged card
@@ -355,7 +356,7 @@ def test_main_frame_hide_times_removes_lap_time_and_total_columns_both_ways() ->
 
     assert result["ok"], result["context"]
     assert result["data"]["before"] == list(feed_model.COLUMN_LABELS), result["context"]
-    assert result["data"]["during"] == ["Time", "Plate", "Entry", "Lap", "Card"], result["context"]
+    assert result["data"]["during"] == ["Time", "Plate", "Name", "Card", "Lap"], result["context"]
     assert result["data"]["after"] == list(feed_model.COLUMN_LABELS), result["context"]
 
 
@@ -397,7 +398,7 @@ def test_main_frame_card_images_defaults_to_the_shared_support_cache(
 
 
 def test_main_frame_applies_the_canvas_minimum_size(shared_console: MainFrame) -> None:
-    """W9 min 1100x780: raised so the feed shows more rows, still 1366x768."""
+    """W9 min 1100x780: raised for the 30-row feed, still 1366x768."""
     min_size = shared_console.frame.GetMinSize()
 
     assert (min_size.width, min_size.height) == MIN_SIZE
@@ -416,24 +417,26 @@ def test_main_frame_splitter_defaults_to_the_feed_pane_sash(
     assert shared_console.main_splitter.GetSashPosition() == DEFAULT_SASH
 
 
-# --- negative case: a held crossing must not silently draw a card ----
+# --- positive case: a held crossing's real card draws its chip (W9) ---
 
 
-def test_main_frame_crossings_model_held_card_row_renders_no_bitmap(
+def test_main_frame_crossings_model_held_card_row_renders_the_held_cards_bitmap(
     shared_console: MainFrame,
 ) -> None:
-    """A binding mapping "held" onto some default card would still pass.
+    """W9: the flagged row's card cell is the held card's own bitmap.
 
-    Every other assertion here about R-34's held cards would keep
-    passing even if this specific mapping silently did nothing.
+    The old "held" placeholder mapped to no asset and drew no chip;
+    W9 removed the placeholder, so the always-visible card rule pins
+    the held row to the exact imagelist bitmap of its real code --
+    never a lookalike and never a blank.
     """
     rows = shared_console.data_source.feed_rows()
-    held_row = next(index for index, row in enumerate(rows) if row.card == "held")
+    held_row = next(index for index, row in enumerate(rows) if row.flagged)
     model = shared_console.crossings_list.GetModel()
 
     rendered = model.GetValueByRow(held_row, feed_model.COL_CARD)
 
-    assert rendered.IsOk() is False
+    assert rendered is shared_console.card_images.bitmap("2s")  # plate 45 -> held "2S"
 
 
 # --- record-crossing row: record_btn, plate font, A4 wiring -----------
