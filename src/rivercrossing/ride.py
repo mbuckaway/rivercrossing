@@ -952,6 +952,17 @@ class RideEngine:
             HeldCrossing(crossing=crossing, card=card) for crossing, card in self._held.items()
         )
 
+    def held_card_for(self, crossing: Crossing) -> Card | None:
+        """Return *crossing*'s held card, or ``None`` if not held.
+
+        W9's feed seam: the console feed shows every crossing's dealt
+        card, so a held crossing's row carries the real code of the
+        card in the hold queue, never a placeholder. Returns ``None``
+        for a credited, released or unknown crossing -- exactly the
+        :meth:`held_crossings` membership test, read-only.
+        """
+        return self._held.get(crossing)
+
     def confirm_held(self, crossing: Crossing) -> Event:
         """Release *crossing*'s held card into its entry's hand (R-34).
 

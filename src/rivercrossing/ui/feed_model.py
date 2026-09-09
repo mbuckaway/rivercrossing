@@ -70,10 +70,11 @@ COLUMN_WIDTHS: tuple[int, ...] = (80, 50, 150, 60, 50, 80, 80)
 def card_asset_key_or_none(card: str) -> str | None:
     """Return *card*'s imagelist key, or ``None`` if it names no card.
 
-    A held crossing (R-34) reports the literal placeholder string
-    ``"held"`` in place of a dealt code -- this is the seam that
-    tells the two apart without needing a ``CardImageList`` (or
-    ``wx``) at all.
+    W9: the feed's Card column always carries a real dealt code -- a
+    held crossing's row shows the held card's own code, not the
+    retired literal placeholder -- so ``None`` is the blank-cell seam
+    for any unmappable text (``""``, corrupt strings) that does not
+    need a ``CardImageList`` (or ``wx``) to be detected.
     """
     try:
         return asset_key(card)

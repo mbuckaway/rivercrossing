@@ -72,7 +72,7 @@ _FEED_ROWS: tuple[FeedRow, ...] = (
         lap=6,
         lap_time="07:12",
         total="2:44:30",
-        card="held",
+        card="2S",  # W9: held rows show the held card's real code
         flagged=True,
     ),
     FeedRow(

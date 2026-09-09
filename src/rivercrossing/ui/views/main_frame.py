@@ -222,7 +222,13 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return True
 
     def _card_bitmap(self, card: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the dealt card's bitmap, or a blank cell if held."""
+        """Return the dealt card's bitmap, or a blank cell if unmappable.
+
+        W9: every feed row's ``card`` is a real dealt code (a held
+        crossing's row carries the held card's own code), so the
+        blank ``wx.NullBitmap`` path is the seam for text that maps
+        to no asset (``""``, corrupt strings), not for held cards.
+        """
         key = feed_model.card_asset_key_or_none(card)
         if key is None:
             return wx.NullBitmap

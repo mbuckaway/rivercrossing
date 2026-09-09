@@ -498,6 +498,7 @@ class EngineDataSource:
             times = times_by_entry.get(crossing.entry_id, ())
             totals = totals_by_entry.get(crossing.entry_id, [])
             flagged = crossing in held
+            held_card = engine.held_card_for(crossing)
             rows.append(
                 FeedRow(
                     time=_feed_time(crossing.crossed_at),
@@ -510,7 +511,14 @@ class EngineDataSource:
                     total=format_duration(
                         totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
                     ),
-                    card="held" if flagged else engine.card_for(crossing).code(),
+                    # W9: every row carries the real dealt code -- the
+                    # held card's own code when this lap's card sits in
+                    # the hold queue (R-34), the credited card otherwise.
+                    card=(
+                        held_card.code()
+                        if held_card is not None
+                        else engine.card_for(crossing).code()
+                    ),
                     flagged=flagged,
                     edited=(crossing.entry_id, crossing.seq) in edited,
                 )
