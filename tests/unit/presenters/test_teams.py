@@ -1086,3 +1086,29 @@ def test_teams_presenter_save_stores_the_trimmed_name_and_disables_save_again() 
     assert team.display_name == "Dirt Dynamos"
     assert view.teams[0].name == "Dirt Dynamos"
     assert view.save_enabled is False
+
+
+def test_teams_presenter_pick_card_with_no_selection_is_a_no_op() -> None:
+    """Pick card with nothing selected never touches the roster."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+    before = roster.audit_log
+
+    presenter.on_pick_card()
+
+    assert roster.audit_log == before
+    assert view.logo == {"card": None, "image": None}
+
+
+def test_teams_presenter_pick_image_with_no_selection_is_a_no_op() -> None:
+    """Image… with nothing selected never touches the roster."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+    before = roster.audit_log
+
+    presenter.on_pick_image(b"team-logo-png")
+
+    assert roster.audit_log == before
+    assert view.logo == {"card": None, "image": None}
