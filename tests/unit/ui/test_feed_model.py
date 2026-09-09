@@ -19,9 +19,9 @@ from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui.cards_imagelist import CARD_KEYS
 from rivercrossing.ui.feed_model import (
     COL_CARD,
-    COL_ENTRY,
     COL_LAP,
     COL_LAP_TIME,
+    COL_NAME,
     COL_PLATE,
     COL_TIME,
     COL_TOTAL,
@@ -35,21 +35,36 @@ from rivercrossing.ui.presenters.data_source import FeedRow
 
 # --- column layout (pure data, matches xrc-windows.md section A) ------
 
-CANVAS_COLUMN_ORDER = ("Time", "Plate", "Entry", "Lap", "Lap time", "Total", "Card")
+# W9 column order: the Entry header is renamed "Name" and the Card
+# column moves ahead of Lap -- Time | Plate | Name | Card | Lap |
+# Lap time | Total.
+CANVAS_COLUMN_ORDER = ("Time", "Plate", "Name", "Card", "Lap", "Lap time", "Total")
 CANVAS_COLUMN_INDEXES = (
     COL_TIME,
     COL_PLATE,
-    COL_ENTRY,
+    COL_NAME,
+    COL_CARD,
     COL_LAP,
     COL_LAP_TIME,
     COL_TOTAL,
-    COL_CARD,
 )
 
 
 def test_column_labels_matches_the_canvas_exact_order() -> None:
-    """xrc-windows.md A: Time-Plate-Entry-Lap-Lap time-Total-Card."""
+    """W9: Time-Plate-Name-Card-Lap-Lap time-Total."""
     assert COLUMN_LABELS == CANVAS_COLUMN_ORDER
+
+
+def test_column_indexes_pin_card_before_lap_under_the_name_header() -> None:
+    """W9: index 2 is Name, Card is 3, Lap is 4 -- in that order."""
+    assert (COL_NAME, COL_CARD, COL_LAP) == (2, 3, 4)
+    assert COLUMN_LABELS[COL_NAME] == "Name"
+
+
+def test_column_labels_rename_entry_to_name_throughout() -> None:
+    """W9: no column still reads "Entry" -- the header is "Name"."""
+    assert "Entry" not in COLUMN_LABELS
+    assert "Name" in COLUMN_LABELS
 
 
 def test_column_indexes_are_contiguous_from_zero_with_no_duplicate() -> None:
