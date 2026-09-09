@@ -97,7 +97,7 @@ class _FakeConsoleView:
         """Record the rendered counters."""
         self.calls.append(("show_counters", counters))
 
-    def set_team_ui_visible(self, visible: bool) -> None:
+    def set_team_ui_visible(self, *, visible: bool) -> None:
         """Record the R-11 teams-chip visibility push (W12 protocol)."""
         self.calls.append(("set_team_ui_visible", visible))
 
