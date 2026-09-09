@@ -225,7 +225,7 @@
        (add_rider_infobar, wxInfoBar: XRC cannot author one). -->
   <object class="wxDialog" name="add_rider_dlg">
     <title>Add Rider</title>
-    <style>wxDEFAULT_DIALOG_STYLE</style>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
 
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
