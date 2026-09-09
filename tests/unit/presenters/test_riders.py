@@ -44,8 +44,12 @@ from rivercrossing.ui.presenters.riders import (
     CsvPreview,
     RiderFormValues,
     RidersPresenter,
+    _pair_rows,
+    _plate_order_key,
+    _rider_pairs,
     _rider_rows,
     _team_choices,
+    _visible_pairs,
 )
 
 # tests/unit/fixtures/csv/ is test_csvio.py's own fixture home (its
@@ -1281,6 +1285,222 @@ def test_on_save_given_a_blank_solo_plate_shows_validation_not_crash() -> None:
 
     assert view.calls == [("show_validation", ("plate '' must not be empty",))]
     assert roster.entries[0].plate == "123"
+
+
+# --------------------------- W7 search + sort (riders_list narrowing)
+
+
+def _three_solo_roster() -> Roster:
+    """Return a DRAFT roster of three solos in a shuffled plate order."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_solo_entry(first_name="Bo", last_name="Lindqvist", plate="2")
+    roster.create_solo_entry(first_name="Alex", last_name="Roy", plate="77")
+    return roster
+
+
+def _searched_rows(view: RecordingRidersView) -> list[RiderRow]:
+    """Return the rows of *view*'s last show_riders call."""
+    return next(args for name, args in view.calls if name == "show_riders")[0]
+
+
+def test_on_search_text_given_a_matching_name_keeps_only_those_rows() -> None:
+    """Search matches the rider's name, case-insensitively (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    view.calls.clear()
+
+    presenter.on_search_text("ALEX")
+
+    assert _searched_rows(view) == [RiderRow(plate="77", name="Alex Roy", team=None)]
+
+
+def test_on_search_text_given_a_matching_plate_keeps_only_those_rows() -> None:
+    """Search also matches the row's plate text (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    view.calls.clear()
+
+    presenter.on_search_text("77")
+
+    assert _searched_rows(view) == [RiderRow(plate="77", name="Alex Roy", team=None)]
+
+
+def test_on_search_text_given_no_match_shows_an_empty_list() -> None:
+    """A miss filters every row out; the editor does not crash (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    view.calls.clear()
+
+    presenter.on_search_text("nobody-by-this-name")
+
+    assert view.calls == [
+        ("show_riders", ([],)),
+        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
+    ]
+
+
+def test_on_search_text_given_a_blank_text_restores_every_row() -> None:
+    """Clearing the search restores the full roster (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_search_text("sam")
+    view.calls.clear()
+
+    presenter.on_search_text("   ")
+
+    assert _searched_rows(view) == [
+        RiderRow(plate="123", name="Sam Ellis", team=None),
+        RiderRow(plate="2", name="Bo Lindqvist", team=None),
+        RiderRow(plate="77", name="Alex Roy", team=None),
+    ]
+
+
+def test_on_row_selected_given_a_search_uses_the_filtered_row_order() -> None:
+    """A visible row index maps to the filtered list, not the roster."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_search_text("2")  # only Bo's plate 2 survives the filter
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert ("show_form", ("2", "Bo", "Lindqvist", SOLO_TEAM_CHOICE)) in view.calls
+
+
+def test_on_sort_by_column_given_the_plate_column_sorts_numerically() -> None:
+    """Plate sort is numeric-aware: 2, 77, 123 -- not lexicographic."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    view.calls.clear()
+
+    presenter.on_sort_by_column(0)
+
+    assert [row.plate for row in _searched_rows(view)] == ["2", "77", "123"]
+
+
+def test_on_sort_by_column_given_a_second_click_toggles_descending() -> None:
+    """Re-clicking the active column reverses the order (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_sort_by_column(0)
+    view.calls.clear()
+
+    presenter.on_sort_by_column(0)
+
+    assert [row.plate for row in _searched_rows(view)] == ["123", "77", "2"]
+
+
+def test_on_sort_by_column_given_the_name_column_sorts_casefolded() -> None:
+    """Name sort is text order, case-insensitive (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    view.calls.clear()
+
+    presenter.on_sort_by_column(1)
+
+    assert [row.name for row in _searched_rows(view)] == [
+        "Alex Roy",
+        "Bo Lindqvist",
+        "Sam Ellis",
+    ]
+
+
+def test_on_sort_by_column_given_the_team_column_groups_solos_first() -> None:
+    """Team sort puts solo rows (no team) first, then team names."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_team_entry(
+        display_name="Zebras",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    roster.create_team_entry(
+        display_name="Alpha",
+        riders=[
+            Rider(first_name="Bo", last_name="Lindqvist", plate="2"),
+            Rider(first_name="Cy", last_name="Nguyen", plate="3"),
+        ],
+    )
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    view.calls.clear()
+
+    presenter.on_sort_by_column(2)
+
+    assert _searched_rows(view) == [
+        RiderRow(plate="123", name="Sam Ellis", team=None),
+        RiderRow(plate="2", name="Bo Lindqvist", team="Alpha"),
+        RiderRow(plate="3", name="Cy Nguyen", team="Alpha"),
+        RiderRow(plate="77", name="A. Roy", team="Zebras"),
+        RiderRow(plate="78", name="K. Singh", team="Zebras"),
+    ]
+
+
+def test_on_sort_by_column_given_relay_plates_sorts_digits_then_strings() -> None:
+    """Non-numeric relay plates sort after every digit plate (W7)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    for plate in ("10", "2", "K1", "9"):
+        roster.create_solo_entry(first_name=plate, last_name="Rider", plate=plate)
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    view.calls.clear()
+
+    presenter.on_sort_by_column(0)
+
+    assert [row.plate for row in _searched_rows(view)] == ["2", "9", "10", "K1"]
+
+
+def test_on_row_selected_given_a_sort_uses_the_sorted_row_order() -> None:
+    """After a plate sort, row 0 is the lowest plate's rider."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_sort_by_column(0)
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert ("show_form", ("2", "Bo", "Lindqvist", SOLO_TEAM_CHOICE)) in view.calls
+
+
+def test_on_sort_by_column_given_a_search_applies_both_narrowings() -> None:
+    """Search filters first; the active sort orders the survivors."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_sort_by_column(0)
+    view.calls.clear()
+
+    presenter.on_search_text("a")  # Sam and Alex carry an "a"; Bo does not
+
+    assert [row.plate for row in _searched_rows(view)] == ["77", "123"]
+
+
+def test_plate_order_key_given_mixed_plates_groups_digits_before_strings() -> None:
+    """The pure key orders every digit plate before any string plate."""
+    assert sorted(
+        ["9", "K1", "2", "A", "10"],
+        key=_plate_order_key,
+    ) == ["2", "9", "10", "A", "K1"]
+
+
+def test_pair_rows_given_a_pair_list_builds_rows_in_that_order() -> None:
+    """_pair_rows renders exactly the pairs it is given, in order."""
+    roster = _three_solo_roster()
+
+    rows = _pair_rows(roster, list(reversed(_rider_pairs(roster))))
+
+    assert [row.plate for row in rows] == ["77", "2", "123"]
+
+
+def test_visible_pairs_given_no_filters_preserves_the_roster_order() -> None:
+    """No search and no sort column keep the roster's own order."""
+    roster = _three_solo_roster()
+
+    visible = _visible_pairs(roster, _rider_pairs(roster), "", None, True)
+
+    assert [pair[1].plate for pair in visible] == ["123", "2", "77"]
 
 
 # -------------------------------------------------- property test T-7

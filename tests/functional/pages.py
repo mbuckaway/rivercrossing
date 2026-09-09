@@ -207,6 +207,7 @@ RIDER_EDITOR_DLG = WindowSpec(
     is_frame=False,
     controls=(
         ids.RIDERS_LIST,
+        ids.RIDER_SEARCH,
         ids.PLATE_INPUT,
         ids.FIRST_NAME_INPUT,
         ids.LAST_NAME_INPUT,

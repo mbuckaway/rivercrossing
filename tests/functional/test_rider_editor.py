@@ -169,6 +169,80 @@ def test_rider_editor_dlg_opens_populating_team_choice_with_solo_then_teams(
     assert team_items == [SOLO_TEAM_CHOICE, "Trail Blazers"]
 
 
+# ------------------------------------------------- W7 search + sort
+
+
+def test_rider_editor_dlg_rider_search_filters_rows_by_name(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """Typing in rider_search narrows riders_list to matching rows."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        harness.type_text(dialog, ids.RIDER_SEARCH, "sam")
+        rows = _rider_list_rows(dialog)
+        harness.type_text(dialog, ids.RIDER_SEARCH, "")
+        cleared_rows = _rider_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert rows == (("123", "Sam Ellis", "solo"),)
+    assert cleared_rows == _SEEDED_ROWS
+
+
+def test_rider_editor_dlg_rider_search_filters_rows_by_plate(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """Search matches the Plate column as well as names (W7)."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        harness.type_text(dialog, ids.RIDER_SEARCH, "77")
+        rows = _rider_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert rows == (("77", "A. Roy", "Trail Blazers"),)
+
+
+def test_rider_editor_dlg_rider_search_given_no_match_shows_an_empty_list(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """A miss empties the list; the editor keeps working (W7)."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        harness.type_text(dialog, ids.RIDER_SEARCH, "no-such-rider")
+        rows = _rider_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert rows == ()
+
+
+def test_rider_editor_dlg_riders_list_declares_the_three_sortable_headers(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """The three canvas columns exist; sorting is presenter-side (W7).
+
+    Header clicks route to the presenter's own sort (the wxDataView
+    index-list model cannot sort itself); the column header objects
+    are asserted so a rename or reorder fails here, not in the VM.
+    """
+    roster = demo_seeded_roster()
+    dialog, view = _show(xrc_resource, roster)
+
+    try:
+        headers = [view.riders_list.GetColumn(col).GetTitle() for col in range(3)]
+    finally:
+        harness.close_window(dialog)
+
+    assert headers == ["Plate", "Name", "Team"]
+
+
 # ------------------------------------------------------------------ add
 # (W7: add_btn opens the dedicated add_rider_dlg; the editor's own
 # form no longer adds. The dialog's ShowModal is driven through the
