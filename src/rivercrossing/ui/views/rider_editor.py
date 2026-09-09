@@ -247,12 +247,14 @@ class RiderEditor:
         self.dialog = dialog
 
         self.riders_list = self._find(ids.RIDERS_LIST, wx.dataview.DataViewCtrl)
-        self._team_column = self._build_columns()
+        self._columns = self._build_columns()
+        self._team_column = self._columns[COL_TEAM]
         # Replaced by the presenter's own show_riders() call below,
         # before any event can fire -- typed non-optional so
         # _on_row_selected never has to narrow it.
         self._model: RidersListModel = RidersListModel([])
 
+        self.rider_search = self._find(ids.RIDER_SEARCH, wx.SearchCtrl)
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)
         self.first_name_input = self._find(ids.FIRST_NAME_INPUT, wx.TextCtrl)
         self.last_name_input = self._find(ids.LAST_NAME_INPUT, wx.TextCtrl)
@@ -281,18 +283,21 @@ class RiderEditor:
         """
         return find_control(self.dialog, name, expected_type)
 
-    def _build_columns(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    def _build_columns(self) -> list[Any]:  # noqa: ANN401 -- wx ships no stubs
         """Append ``riders_list``'s three columns in canvas order.
 
         Returns:
-            The Team column object, for :meth:`set_team_ui_visible`
-            to hide or show per the presenter's own R-11 decision.
+            The appended columns in order -- the Team column (index
+            :data:`COL_TEAM`) is what :meth:`set_team_ui_visible`
+            hides; header clicks compare against the others to route
+            the presenter's own sort (W7: a ``DataViewIndexListModel``
+            cannot sort itself, so the columns carry no wx sort
+            flags and the presenter owns row order).
         """
-        columns = [
+        return [
             self.riders_list.AppendTextColumn(label, col)
             for col, label in enumerate(COLUMN_LABELS)
         ]
-        return columns[COL_TEAM]
 
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build :data:`ROSTER_INFOBAR`, wrapped on top of the sizer.
@@ -320,8 +325,20 @@ class RiderEditor:
         self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.first_name_input)
         self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.last_name_input)
         self.dialog.Bind(wx.EVT_CHOICE, self._on_form_changed, self.team_choice)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_search_text, self.rider_search)
+        self.dialog.Bind(
+            wx.EVT_SEARCHCTRL_SEARCH_BTN, self._on_search_text, self.rider_search
+        )
+        self.dialog.Bind(
+            wx.EVT_SEARCHCTRL_CANCEL_BTN, self._on_search_text, self.rider_search
+        )
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.riders_list
+        )
+        self.dialog.Bind(
+            wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK,
+            self._on_column_header_click,
+            self.riders_list,
         )
 
     def _form_values(self) -> RiderFormValues:
@@ -365,6 +382,33 @@ class RiderEditor:
         """Handle a form edit: re-run the presenter's dirty gating."""
         event.Skip()
         self.presenter.on_form_changed(self._form_values())
+
+    def _on_search_text(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle a rider_search change; forward its current text.
+
+        ``rider_search`` is a ``wxSearchCtrl``: text changes (typing,
+        the harness's ``SetValue``, the native clear X) all re-run the
+        filter, and the search button (Enter) does too -- every path
+        reads the control's current value, so one handler serves all
+        three events (the audit dialog's own precedent).
+        """
+        event.Skip()
+        self.presenter.on_search_text(self.rider_search.GetValue())
+
+    def _on_column_header_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle a riders_list header click: sort by that column.
+
+        W7: the presenter owns row order (see :meth:`_build_columns`),
+        so a header click resolves to its column index and forwards
+        it -- never wx's own internal sort, which an index-list model
+        cannot drive.
+        """
+        event.Skip()
+        clicked = event.GetColumn()
+        for column, control in enumerate(self._columns):
+            if control is clicked:
+                self.presenter.on_sort_by_column(column)
+                return
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``riders_list`` selection: forward its row index.

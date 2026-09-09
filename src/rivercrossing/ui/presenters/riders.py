@@ -46,6 +46,7 @@ of ``RiderEditor``'s own E3.2-era CSV stubs.
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
@@ -178,14 +179,90 @@ def _rider_plate(roster: Roster, entry: Entry, rider: Rider) -> str:
 
 def _rider_rows(roster: Roster) -> list[RiderRow]:
     """Map every roster rider onto one riders_list row (R-20)."""
+    return _pair_rows(roster, _rider_pairs(roster))
+
+
+def _pair_rows(roster: Roster, pairs: Sequence[tuple[Entry, Rider]]) -> list[RiderRow]:
+    """Map *pairs* onto riders_list rows, in the pairs' own order."""
     return [
         RiderRow(
             plate=_rider_plate(roster, entry, rider),
             name=rider.full_name,
             team=entry.display_name if entry.type is EntryType.TEAM else None,
         )
-        for entry, rider in _rider_pairs(roster)
+        for entry, rider in pairs
     ]
+
+
+def _plate_order_key(plate: str) -> tuple[int, int] | tuple[int, str]:
+    """Return the numeric-aware sort key of one Plate cell (W7).
+
+    Digit plates order by value (``2`` before ``10``); every non-digit
+    relay plate orders after all of them, alphabetically.
+    """
+    if plate.isdigit():
+        return (0, int(plate))
+    return (1, plate)
+
+
+def _visible_pairs(
+    roster: Roster,
+    pairs: Sequence[tuple[Entry, Rider]],
+    search_text: str,
+    column: int | None,
+    ascending: bool,
+) -> list[tuple[Entry, Rider]]:
+    """Filter *pairs* by *search_text*, then order them (W7).
+
+    *search_text* matches the row's Plate or Name cell as a
+    case-insensitive substring (the audit dialog's own precedent);
+    a blank search filters nothing. Ordering: ``None`` *column*
+    keeps the pairs' given (roster) order; the Plate column uses
+    numeric-aware keys (:func:`_plate_order_key`); Name and Team are
+    casefolded text, with Team treating solo rows (whose cell reads
+    "solo") as the smallest group. ``sorted`` is stable, so equal
+    keys keep roster order; *ascending* ``False`` reverses the
+    comparison.
+    """
+    needle = search_text.strip().casefold()
+    visible = [
+        pair
+        for pair in pairs
+        if not needle
+        or needle in _rider_plate(roster, *pair).casefold()
+        or needle in pair[1].full_name.casefold()
+    ]
+    if column is None:
+        return visible
+    key = _column_sort_key(roster, column)
+    return sorted(visible, key=key, reverse=not ascending)
+
+
+def _column_sort_key(roster: Roster, column: int) -> Callable[[tuple[Entry, Rider]], object]:
+    """Return the sort-key callable for riders_list *column* (W7).
+
+    Columns are the view's Plate | Name | Team order (0..2); the key
+    a callable extracts from one (entry, rider) pair.
+    """
+    if column == 0:
+
+        def plate_key(pair: tuple[Entry, Rider]) -> tuple[int, int] | tuple[int, str]:
+            return _plate_order_key(_rider_plate(roster, *pair))
+
+        return plate_key
+    if column == 1:
+
+        def name_key(pair: tuple[Entry, Rider]) -> str:
+            return pair[1].full_name.casefold()
+
+        return name_key
+
+    def team_key(pair: tuple[Entry, Rider]) -> str:
+        entry = pair[0]
+        team = entry.display_name if entry.type is EntryType.TEAM else ""
+        return team.casefold()
+
+    return team_key
 
 
 def _team_choices(roster: Roster) -> list[str]:
@@ -341,18 +418,54 @@ class RidersPresenter:
         self.roster = roster
         self._selected: tuple[Entry, Rider] | None = None
         self._csv_preview: csvio.ImportPreview | None = None
+        # W7 search/sort state: what riders_list currently shows, and
+        # the two narrowings that decide it (_refresh_rows applies).
+        self._visible: list[tuple[Entry, Rider]] = []
+        self._search_text = ""
+        self._sort_column: int | None = None
+        self._sort_ascending = True
         if load:
             self._load()
 
     def on_row_selected(self, index: int) -> None:
         """Fill the form from riders_list row *index* (R-20, W7).
 
+        *index* addresses the currently *visible* rows -- the
+        search/sort narrowed list -- never the raw roster, so the
+        selection always lands on the row the operator can see.
+
         The fresh record's own values are clean by definition, so the
         row lands with save_btn disabled until the form differs
         (:meth:`on_form_changed`).
         """
-        entry, rider = _rider_pairs(self.roster)[index]
+        entry, rider = self._visible[index]
         self._show_record(entry, rider)
+
+    def on_search_text(self, text: str) -> None:
+        """Narrow riders_list to rows matching *text* (W7).
+
+        Matches the row's Plate or Name cell case-insensitively (the
+        audit dialog's own precedent). The active sort, if any, keeps
+        ordering the survivors; clearing the text restores every row.
+        """
+        self._search_text = text
+        self._refresh_rows()
+
+    def on_sort_by_column(self, column: int) -> None:
+        """Sort riders_list by *column*; re-clicking toggles (W7).
+
+        The presenter owns row order (a ``DataViewIndexListModel``
+        cannot sort itself -- see the W7 report note), so the view
+        forwards header clicks here and re-renders through
+        ``show_riders``. The first click on a column sorts ascending;
+        clicking the active column again reverses it.
+        """
+        if self._sort_column == column:
+            self._sort_ascending = not self._sort_ascending
+        else:
+            self._sort_column = column
+            self._sort_ascending = True
+        self._refresh_rows()
 
     def on_form_changed(self, form: RiderFormValues) -> None:
         """Re-gate save_btn from the form's own current values (W7).
@@ -543,8 +656,21 @@ class RidersPresenter:
         self._show_add_form()
 
     def _refresh_rows(self) -> None:
-        """Re-render riders_list and team_choice from the roster."""
-        self.view.show_riders(_rider_rows(self.roster))
+        """Re-render riders_list and team_choice from the roster.
+
+        The search/sort narrowings (:data:`_visible`) are recomputed
+        here, so every caller -- initial load, add/save/delete, the
+        search and sort handlers themselves -- renders the same
+        filtered, ordered list the selection events index into.
+        """
+        self._visible = _visible_pairs(
+            self.roster,
+            _rider_pairs(self.roster),
+            self._search_text,
+            self._sort_column,
+            self._sort_ascending,
+        )
+        self.view.show_riders(_pair_rows(self.roster, self._visible))
         self.view.show_team_choices(_team_choices(self.roster))
 
     def _show_add_form(self) -> None:

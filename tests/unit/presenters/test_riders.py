@@ -1360,7 +1360,7 @@ def test_on_row_selected_given_a_search_uses_the_filtered_row_order() -> None:
     """A visible row index maps to the filtered list, not the roster."""
     view = RecordingRidersView()
     presenter = RidersPresenter(view, _three_solo_roster())
-    presenter.on_search_text("2")  # only Bo's plate 2 survives the filter
+    presenter.on_search_text("indqvist")  # only Bo survives the filter
     view.calls.clear()
 
     presenter.on_row_selected(0)

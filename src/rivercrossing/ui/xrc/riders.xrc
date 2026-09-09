@@ -57,6 +57,29 @@
         <object class="wxBoxSizer">
           <orient>wxVERTICAL</orient>
 
+          <!-- W7 search: rider_search narrows riders_list by name or
+               plate (the audit_dlg precedent's own shape: a label +
+               wxSearchCtrl row above the list). -->
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxStaticText">
+                  <label>Search</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxSearchCtrl" name="rider_search"/>
+              </object>
+            </object>
+          </object>
+
           <object class="sizeritem">
             <option>1</option>
             <flag>wxEXPAND|wxBOTTOM</flag>
