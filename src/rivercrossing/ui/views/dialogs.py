@@ -101,6 +101,7 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
     (ids.RIDE_SETUP_DLG, WX_ID_OK),
     (ids.CSV_PREVIEW_DLG, WX_ID_OK),
     (ids.ADD_RIDER_DLG, WX_ID_OK),
+    (ids.ADD_TEAM_DLG, WX_ID_OK),
     (ids.ENTRY_DETAIL_DLG, WX_ID_CLOSE),
     (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
     (ids.TEAM_EDITOR_DLG, ids.SAVE_BTN),
@@ -110,7 +111,8 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
 # spec.md §13's initial-focus decision for every form dialog: the
 # first input field, never the default button (set_initial_focus's
 # own docstring). add_rider_dlg (W7) starts on its plate field, the
-# same first input the editor itself opens on.
+# same first input the editor itself opens on; add_team_dlg (W8)
+# starts on its name field, like team_editor_dlg.
 FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.SET_START_DLG, ids.START_DATE_PICKER),
     (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
@@ -120,6 +122,7 @@ FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.RIDER_EDITOR_DLG, ids.PLATE_INPUT),
     (ids.ADD_RIDER_DLG, ids.PLATE_INPUT),
     (ids.TEAM_EDITOR_DLG, ids.NAME_INPUT),
+    (ids.ADD_TEAM_DLG, ids.NAME_INPUT),
 )
 
 

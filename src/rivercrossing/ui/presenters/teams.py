@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Teams presenter -- team_editor_dlg (Phase 4, reworked Add flow).
+"""Teams presenters -- team_editor_dlg + add_team_dlg (W8 rework).
 
 ``TeamsPresenter`` drives ``team_editor_dlg`` from a real, in-memory
 :class:`~rivercrossing.roster.Roster` -- the same presenter-inside-
@@ -12,33 +12,36 @@ card or image -- while membership is read-only here (the read-only
 rows carry the team's rider count (:class:`TeamRow.rider_count`, the
 ``Riders`` column) so the operator sees size at a glance.
 
-**Team creation (W8's empty-team shape).** R-81's original anchor-rider
-mandate is amended in this workstream: a new team is a zero-rider TEAM
-entry (:meth:`Roster.create_empty_team`) whose members arrive later
-through the Rider Editor -- nothing invents a rider named from the
-team's name. :meth:`TeamsPresenter.on_add` reads ``name``/``notes``
-straight from the form (no native name prompt) and validates the name
-non-blank and not a duplicate of any existing team's (trimmed,
-case-insensitive; the same guard applies to a rename on Save). The
-entry's plate follows the roster's own plate-model rules -- a
-team_relay team carries the next free relay plate, a rider_pooled one
-the provisional next-free claim :meth:`Roster.create_empty_team`
-documents -- and the staged logo applies: a picked card is passed
-straight to the create, a picked image lands through
-:meth:`Roster.set_team_logo_image` (an image wins over a card, so
-either clears the other). Add/Remove are DRAFT-only
+**Team creation (W8's empty-team shape).** R-81's anchor-rider
+mandate is amended in this workstream: a new team is a zero-rider
+TEAM entry (:meth:`Roster.create_empty_team`) whose members arrive
+later through the Rider Editor -- nothing invents a rider named from
+the team's name. The editor's own in-form Add is retired (the W7
+rider-editor shape): ``add_btn`` opens the dedicated ``add_team_dlg``
+window (``ui/views/team_editor.run_add_team_flow``), which pairs with
+a *second* presenter class, :class:`AddTeamPresenter`. It owns the
+create logic -- name/notes off the dialog's form plus the staged
+logo, a blank or duplicate team name refused (trimmed,
+case-insensitive; the same guard applies to a rename on Save), the
+relay plate row shown only on team_relay rides and prefilled with the
+next free plate -- and reports success as a bool so the view closes
+only on a real commit. A roster refusal (solo-only ride, the ride has
+left DRAFT, ...) leaves the dialog open, showing why on its own
+infobar, and never mutates the roster. A committed Add closes the
+dialog; the editor's own :class:`TeamsPresenter` then re-renders
+through :meth:`TeamsPresenter.on_add_committed`.
+
+**Logo picks.** The editor's ``on_pick_card``/``on_pick_image`` apply
+to the selected team only (each pick is an immediate roster write);
+the Add dialog stages its own pending card or image
+(``AddTeamPresenter._pending_logo_card``/``_pending_logo_image``)
+until Add commits it. A picked card wins over a picked image in both
+places, matching the roster's own either-or rule
+(:meth:`Roster.set_team_logo_card`/:meth:`Roster.set_team_logo_image`).
+Add/Remove are DRAFT-only
 (:func:`~rivercrossing.roster.can_edit_structure`), like every other
 structural roster edit (R-15); the roster's own refusals surface via
-:meth:`TeamsView.show_validation`.
-
-**Staged logo picks.** ``on_pick_card``/``on_pick_image`` apply to
-the selected team when one is selected; with nothing selected (the
-Add form) they stage into ``_pending_logo_card``/
-``_pending_logo_image`` instead -- the logo preview
-(:meth:`TeamsView.show_logo`) shows the staged card or image, and
-the next successful Add consumes it. Selecting a row discards any
-staged logo (the form becomes that team's editor); a successful Add
-or Remove resets both pending slots with the blank Add form.
+each view's ``show_validation``.
 
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
@@ -57,6 +60,8 @@ if TYPE_CHECKING:
     from rivercrossing.roster import Entry, Roster
 
 __all__ = [
+    "AddTeamPresenter",
+    "AddTeamView",
     "TeamFormValues",
     "TeamRow",
     "TeamsPresenter",
@@ -83,11 +88,11 @@ class TeamRow:
 
 @dataclass(frozen=True, slots=True)
 class TeamFormValues:
-    """The team editor's text fields, forwarded verbatim by the view.
+    """A team form's text fields, forwarded verbatim by the view.
 
     ``relay_plate`` is whatever ``relay_plate_input`` currently holds
     even on a rider_pooled ride, where the row is hidden -- the
-    presenter ignores it there (a pooled team's plate is derived from
+    presenters ignore it there (a pooled team's plate is derived from
     its riders, never set), the passive-view contract.
     """
 
@@ -129,14 +134,160 @@ class TeamsView(Protocol):
         ...
 
 
+@runtime_checkable
+class AddTeamView(Protocol):
+    """View surface for the Add Team dialog (add_team_dlg, W8)."""
+
+    def set_relay_plate_visible(self, *, visible: bool) -> None:
+        """Show/hide the Plate (relay) row (team_relay rides only)."""
+        ...
+
+    def show_form(self, *, name: str, relay_plate: str, notes: str) -> None:
+        """Fill the dialog's three text fields (R-20)."""
+        ...
+
+    def show_logo(self, *, card: str | None, image: bytes | None) -> None:
+        """Render the staged logo preview (``logo_bmp``)."""
+        ...
+
+    def show_validation(self, message: str) -> None:
+        """Show a refused-add message on the dialog's infobar."""
+        ...
+
+
+def _team_entries(roster: Roster) -> tuple[Entry, ...]:
+    """Return every TEAM entry of *roster*, in creation order."""
+    return tuple(entry for entry in roster.entries if entry.type is EntryType.TEAM)
+
+
+def _duplicate_team_entry(roster: Roster, name: str, *, exclude: Entry | None = None) -> Entry | None:
+    """Return a TEAM entry of *roster* whose name collides with *name*.
+
+    A collision compares :func:`~rivercrossing.roster.rider_name_key`
+    keys -- trimmed, whitespace-collapsed and case-folded -- so
+    ``"Trail Blazers"`` and ``" trail blazers "`` name the same team.
+    *exclude* (the entry being renamed) never collides with its own
+    name.
+    """
+    key = rider_name_key(name)
+    return next(
+        (
+            entry
+            for entry in _team_entries(roster)
+            if entry is not exclude and rider_name_key(entry.display_name) == key
+        ),
+        None,
+    )
+
+
+class AddTeamPresenter:
+    """Presenter for the Add Team dialog (add_team_dlg, W8).
+
+    Owns team creation for the whole editor: a zero-rider TEAM entry
+    (:meth:`Roster.create_empty_team`) whose plate follows the ride's
+    plate model -- the dialog's relay row (team_relay only) is
+    prefilled with the next free plate, a pooled team takes the
+    roster's provisional claim -- plus the form's notes and the
+    staged logo. ``on_submit`` reports success as a bool so the view
+    can close only on a real commit: a refusal (blank or duplicate
+    name, a solo-only ride, the ride has left DRAFT, a blank relay
+    plate, ...) leaves the dialog open, showing why on its own
+    infobar, and never mutates the roster.
+    """
+
+    def __init__(self, view: AddTeamView, roster: Roster) -> None:
+        """Store the collaborators and render the dialog's start state.
+
+        Args:
+            view: The add_team_dlg view driving this roster.
+            roster: The in-memory roster this presenter reads/writes.
+        """
+        self.view = view
+        self.roster = roster
+        self._pending_logo_card: str | None = None
+        self._pending_logo_image: bytes | None = None
+        relay = self.roster.plate_model is PlateModel.TEAM_RELAY
+        self.view.set_relay_plate_visible(visible=relay)
+        self.view.show_form(
+            name="",
+            relay_plate=self.roster.next_free_plate() if relay else "",
+            notes="",
+        )
+        self.view.show_logo(card=None, image=None)
+
+    def on_submit(self, form: TeamFormValues) -> bool:
+        """Create *form*'s zero-rider team, or refuse with a message.
+
+        A blank or duplicate name (trimmed, case-insensitive) refuses
+        before any roster rule runs; a relay ride's plate row is
+        forwarded to the roster's own non-empty and duplicate guards.
+        A roster refusal (solo-only ride, the ride has left DRAFT,
+        ...) shows via :meth:`AddTeamView.show_validation` and leaves
+        the roster unchanged, never raising past this handler.
+
+        Returns:
+            True only once the team entry actually exists.
+        """
+        name = form.name.strip()
+        if not name:
+            self.view.show_validation("enter a team name")
+            return False
+        if _duplicate_team_entry(self.roster, name) is not None:
+            self.view.show_validation(f'a team named "{name}" already exists')
+            return False
+        try:
+            entry = self.roster.create_empty_team(
+                display_name=name,
+                plate=form.relay_plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None,
+                logo_card=self._pending_logo_card,
+                logo_png=self._pending_logo_image,
+            )
+            if form.notes:
+                self.roster.update_entry(entry, notes=form.notes)
+        except RosterError as exc:
+            self.view.show_validation(str(exc))
+            return False
+        return True
+
+    def on_pick_card(self) -> None:
+        """Handle pick_card_btn: stage the next unused seeded card.
+
+        Each click walks the deck past the previously staged card
+        (module docstring). A staged card wins over a staged image,
+        matching the roster's own either-or rule. When every one of
+        the 52 codes is already claimed (or the roster has no seed),
+        says so instead of silently doing nothing.
+        """
+        code = self.roster.next_team_logo_card(after=self._pending_logo_card)
+        if code is None:
+            self.view.show_validation("every card logo is already in use by a team")
+            return
+        self._pending_logo_image = None
+        self._pending_logo_card = code
+        self.view.show_logo(card=code, image=None)
+
+    def on_pick_image(self, image: bytes) -> None:
+        """Handle a picked logo image: stage *image* for the Add.
+
+        An image wins over a card -- any staged ``logo_card`` clears,
+        matching :meth:`Roster.set_team_logo_image`.
+        """
+        self._pending_logo_card = None
+        self._pending_logo_image = image
+        self.view.show_logo(card=None, image=image)
+
+
 class TeamsPresenter:
     """Presenter for the teams editor (team_editor_dlg, Phase 4).
 
     Rows are the roster's TEAM entries, in creation order; the
     selection drives the record form and the read-only members list.
-    Save/Remove follow the module docstring's lock shape: roster
-    refusals surface through :meth:`TeamsView.show_validation` and
-    leave the roster unchanged, never raising past a handler.
+    W8: the editor never adds (its own form is record-only --
+    ``add_btn`` opens ``add_team_dlg``, and :meth:`on_add_committed`
+    catches the roster up when that dialog commits). Save/Remove
+    follow the module docstring's lock shape: roster refusals surface
+    through :meth:`TeamsView.show_validation` and leave the roster
+    unchanged, never raising past a handler.
     """
 
     def __init__(self, view: TeamsView, roster: Roster) -> None:
@@ -150,20 +301,21 @@ class TeamsPresenter:
         self.roster = roster
         self._selected: Entry | None = None
         self._single_member_only: bool = False
-        self._pending_logo_card: str | None = None
-        self._pending_logo_image: bytes | None = None
+        # W8 close-persist flag: True once any add/save/remove/logo
+        # edit has actually committed this session (app.py's
+        # editor-close save consults :attr:`roster_changed`).
+        self._roster_changed = False
         self._load()
 
     def on_row_selected(self, index: int) -> None:
         """Fill the form from ``teams_list`` row *index*.
 
-        Selecting a team leaves the Add form: any staged logo is
-        discarded (module docstring) and the entry's own logo shows.
+        The selection makes the form that team's editor; nothing is
+        staged in the editor any more (W8 -- Add lives in its own
+        dialog), so the entry's own record and logo simply show.
         """
         entry = self._visible_teams()[index]
         self._selected = entry
-        self._pending_logo_card = None
-        self._pending_logo_image = None
         self._show_entry(entry)
 
     def on_toggle_single_member(self, *, enabled: bool) -> None:
@@ -175,36 +327,14 @@ class TeamsPresenter:
         self._single_member_only = enabled
         self._refresh_rows()
 
-    def on_add(self, form: TeamFormValues) -> None:
-        """Handle add_btn: create an empty team from the form (W8).
+    def on_add_committed(self) -> None:
+        """Re-render after add_team_dlg committed into this roster.
 
-        Reads ``name``/``notes`` off the form and applies the staged
-        logo (module docstring): the created entry carries zero
-        riders, and members arrive later through the Rider Editor. A
-        blank or duplicate name (trimmed, case-insensitive) refuses
-        via :meth:`TeamsView.show_validation`; a roster refusal
-        (solo-only ride, the ride has left DRAFT, ...) shows the same
-        way. Nothing is created on any refusal and the form keeps
-        what the operator typed.
+        W8: ``add_team_dlg``'s own :class:`AddTeamPresenter` did the
+        creating; this editor only catches its rows/form up -- refresh
+        the list, then reset to the blank no-selection form.
         """
-        name = form.name.strip()
-        if not name:
-            self.view.show_validation("enter a team name")
-            return
-        if self._duplicate_team_name(name) is not None:
-            self.view.show_validation(f'a team named "{name}" already exists')
-            return
-        try:
-            entry = self.roster.create_empty_team(
-                display_name=name,
-                logo_card=self._pending_logo_card,
-                logo_png=self._pending_logo_image,
-            )
-            if form.notes:
-                self.roster.update_entry(entry, notes=form.notes)
-        except RosterError as exc:
-            self.view.show_validation(str(exc))
-            return
+        self._roster_changed = True
         self._refresh_rows()
         self._show_add_form()
 
@@ -222,6 +352,7 @@ class TeamsPresenter:
         except RosterError as exc:
             self.view.show_validation(str(exc))
             return
+        self._roster_changed = True
         self._refresh_rows()
         self._show_add_form()
 
@@ -242,7 +373,7 @@ class TeamsPresenter:
         name = form.name.strip()
         if (
             name != entry.display_name
-            and self._duplicate_team_name(name, exclude=entry) is not None
+            and _duplicate_team_entry(self.roster, name, exclude=entry) is not None
         ):
             self.view.show_validation(f'a team named "{name}" already exists')
             return
@@ -262,46 +393,54 @@ class TeamsPresenter:
         except RosterError as exc:
             self.view.show_validation(str(exc))
             return
+        self._roster_changed = True
         self._refresh_rows()
 
     def on_pick_card(self) -> None:
-        """Handle pick_card_btn: cycle a logo card, or stage one.
+        """Handle pick_card_btn on the selected team: cycle its card.
 
-        With a team selected, each click advances to the next unused
-        code in the roster's seeded sequence (skipping every other
-        team's card), clearing any logo image -- a picked card wins.
-        With nothing selected (the Add form) the card is staged for
-        the next Add instead (module docstring). Either way, when
-        every one of the 52 codes is already claimed (or the roster
-        has no seed), says so instead of silently doing nothing.
+        Each click advances to the next unused code in the roster's
+        seeded sequence (skipping every other team's card), clearing
+        any logo image -- a picked card wins. When every one of the
+        52 codes is already claimed (or the roster has no seed), says
+        so instead of silently doing nothing.
         """
-        if self._selected is None:
-            self._stage_logo_card()
-            return
         entry = self._selected
+        if entry is None:
+            return
         code = self.roster.next_team_logo_card(after=entry.logo_card)
         if code is None:
             self.view.show_validation("every card logo is already in use by a team")
             return
         self.roster.set_team_logo_card(entry, code=code)
+        self._roster_changed = True
         self._refresh_rows()
         self._show_entry(entry)
 
     def on_pick_image(self, image: bytes) -> None:
-        """Handle a picked logo image: set or stage it.
+        """Handle a picked logo image on the selected team.
 
-        With a team selected, the image is set on it -- an image wins
-        over a card, and :meth:`Roster.set_team_logo_image` clears
-        any ``logo_card``. With nothing selected (the Add form) the
-        bytes are staged for the next Add instead (module docstring).
+        The image is set on it -- an image wins over a card, and
+        :meth:`Roster.set_team_logo_image` clears any ``logo_card``.
         """
-        if self._selected is None:
-            self._stage_logo_image(image)
-            return
         entry = self._selected
+        if entry is None:
+            return
         self.roster.set_team_logo_image(entry, image=image)
+        self._roster_changed = True
         self._refresh_rows()
         self._show_entry(entry)
+
+    @property
+    def roster_changed(self) -> bool:
+        """Return whether this session committed a roster change (W8).
+
+        The app's editor-close persistence hook reads this after the
+        modal ends; only real commits (an add, save, remove or logo
+        edit that actually applied) set it, never a refusal or a
+        no-op.
+        """
+        return self._roster_changed
 
     def _load(self) -> None:
         """Render the editor's full initial state from the roster."""
@@ -311,7 +450,7 @@ class TeamsPresenter:
 
     def _teams(self) -> tuple[Entry, ...]:
         """Return every TEAM entry, in ``teams_list``'s row order."""
-        return tuple(entry for entry in self.roster.entries if entry.type is EntryType.TEAM)
+        return _team_entries(self.roster)
 
     def _visible_teams(self) -> tuple[Entry, ...]:
         """Return the TEAM entries the list should currently show.
@@ -323,46 +462,6 @@ class TeamsPresenter:
         if not self._single_member_only:
             return teams
         return tuple(entry for entry in teams if entry.team_size == 1)
-
-    def _duplicate_team_name(self, name: str, *, exclude: Entry | None = None) -> Entry | None:
-        """Return a TEAM entry whose name collides with *name*.
-
-        A collision compares :func:`~rivercrossing.roster.
-        rider_name_key` keys -- trimmed, whitespace-collapsed and
-        case-folded -- so ``"Trail Blazers"`` and ``" trail
-        blazers "`` name the same team. *exclude* (the entry being
-        renamed) never collides with its own name.
-        """
-        key = rider_name_key(name)
-        return next(
-            (
-                entry
-                for entry in self._teams()
-                if entry is not exclude and rider_name_key(entry.display_name) == key
-            ),
-            None,
-        )
-
-    def _stage_logo_card(self) -> None:
-        """Stage the next unused seeded card for the Add form.
-
-        Each click walks the deck past the previously staged card
-        (module docstring). A staged card wins over a staged image,
-        matching the roster's own either-or rule.
-        """
-        code = self.roster.next_team_logo_card(after=self._pending_logo_card)
-        if code is None:
-            self.view.show_validation("every card logo is already in use by a team")
-            return
-        self._pending_logo_image = None
-        self._pending_logo_card = code
-        self.view.show_logo(card=code, image=None)
-
-    def _stage_logo_image(self, image: bytes) -> None:
-        """Stage *image* for the Add form (module docstring)."""
-        self._pending_logo_card = None
-        self._pending_logo_image = image
-        self.view.show_logo(card=None, image=image)
 
     def _refresh_rows(self) -> None:
         """Re-render ``teams_list`` from the roster."""
@@ -396,10 +495,8 @@ class TeamsPresenter:
         self.view.show_members([rider.full_name for rider in entry.riders])
 
     def _show_add_form(self) -> None:
-        """Reset the form: nothing selected, blank, no staged logo."""
+        """Reset the editor: nothing selected, blank form, no logo."""
         self._selected = None
-        self._pending_logo_card = None
-        self._pending_logo_image = None
         self.view.show_form(name="", relay_plate="", notes="")
         self.view.show_logo(card=None, image=None)
         self.view.show_members([])
