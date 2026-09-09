@@ -39,6 +39,7 @@ from rivercrossing.roster import EntryMode, EntryType, PlateModel, Rider, Roster
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.presenters.riders import (
     SOLO_TEAM_CHOICE,
+    AddRiderPresenter,
     CsvConflict,
     CsvPreview,
     RiderFormValues,
@@ -280,97 +281,141 @@ def test_on_row_selected_given_entry_with_data_disables_delete() -> None:
     assert ("set_delete_enabled", (False,)) in view.calls
 
 
-# -------------------------------------------------------- on_add
+# ---------------------------------------------- on_add_committed (W7)
+# (the editor's add_btn now opens add_rider_dlg -- the add itself is
+# AddRiderPresenter's job below; the editor only re-renders after the
+# dialog reports a commit, which is what this method is.)
 
 
-def test_on_add_given_a_solo_form_creates_the_entry() -> None:
-    """Add with team = solo creates a solo entry (R-20)."""
-    roster = Roster()
-    presenter = RidersPresenter(RecordingRidersView(), roster)
-
-    presenter.on_add(
-        RiderFormValues(plate="1", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
-    )
-
-    assert [entry.display_name for entry in roster.entries] == ["Sam Ellis"]
-
-
-def test_on_add_given_a_solo_form_refreshes_rows_and_prefills_the_next_plate() -> None:
-    """Add re-renders the rows and prefills the new next-free plate."""
-    roster = Roster()
+def test_on_add_committed_refreshes_rows_and_prefills_the_next_plate() -> None:
+    """After the Add dialog commits, the editor re-renders + resets."""
+    roster = _draft_solo_roster()
     view = RecordingRidersView()
     presenter = RidersPresenter(view, roster)
     view.calls.clear()
+    roster.create_solo_entry(first_name="New", last_name="Rider", plate="124")
 
-    presenter.on_add(
-        RiderFormValues(plate="1", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
-    )
+    presenter.on_add_committed()
 
     assert view.calls == [
-        ("show_riders", ([RiderRow(plate="1", name="Sam Ellis", team=None)],)),
+        (
+            "show_riders",
+            (
+                [
+                    RiderRow(plate="123", name="Sam Ellis", team=None),
+                    RiderRow(plate="124", name="New Rider", team=None),
+                ],
+            ),
+        ),
         ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
-        ("show_form", ("2", "", "", SOLO_TEAM_CHOICE)),
+        ("show_form", ("125", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
         ("set_save_enabled", (False,)),
     ]
 
 
-def test_on_add_given_a_duplicate_plate_shows_validation_and_does_not_crash() -> None:
-    """A colliding plate refuses via show_validation, not a crash."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _draft_solo_roster())
-    view.calls.clear()
+# ------------------------------------------- AddRiderPresenter (W7)
+# (the add_rider_dlg presenter: same create logic the editor's in-form
+# Add used, now owned by the dialog's own pairing -- see the module
+# docstring's mirror-image note.)
 
-    presenter.on_add(
-        RiderFormValues(plate="123", first_name="Dupe", last_name="Rider", team=SOLO_TEAM_CHOICE)
+
+class RecordingAddRiderView:
+    """A complete ``AddRiderView`` spy recording each call, in order."""
+
+    def __init__(self) -> None:
+        """Start with an empty call log."""
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+    def show_team_choices(self, names: list[str]) -> None:
+        """Record the rendered team_choice content."""
+        self.calls.append(("show_team_choices", (names,)))
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the Team row's visibility."""
+        self.calls.append(("set_team_ui_visible", (visible,)))
+
+    def show_form(self, *, plate: str, team: str) -> None:
+        """Record the prefilled plate/team fields."""
+        self.calls.append(("show_form", (plate, team)))
+
+    def show_validation(self, message: str) -> None:
+        """Record a refused-operation message."""
+        self.calls.append(("show_validation", (message,)))
+
+
+def test_add_rider_presenter_init_given_a_mixed_roster_renders_the_choices_and_form() -> None:
+    """Construction renders team choices, Team UI, and the prefill."""
+    view = RecordingAddRiderView()
+    roster = _draft_mixed_roster()
+
+    AddRiderPresenter(view, roster)
+
+    assert view.calls == [
+        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers"],)),
+        ("set_team_ui_visible", (True,)),
+        ("show_form", ("79", SOLO_TEAM_CHOICE)),
+    ]
+
+
+def test_add_rider_presenter_init_given_a_solo_only_ride_hides_the_team_row() -> None:
+    """R-11: a solo-only ride shows no Team choice in the dialog."""
+    view = RecordingAddRiderView()
+
+    AddRiderPresenter(view, Roster())
+
+    assert view.calls == [
+        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
+        ("set_team_ui_visible", (False,)),
+        ("show_form", ("1", SOLO_TEAM_CHOICE)),
+    ]
+
+
+def test_add_rider_presenter_submit_given_a_solo_form_creates_the_entry_and_returns_true() -> None:
+    """Add with team = solo creates a solo entry (R-20)."""
+    roster = Roster()
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    created = presenter.on_submit(
+        RiderFormValues(plate="1", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
     )
 
-    assert view.calls == [("show_validation", ("plate '123' is already in use",))]
-
-
-def test_on_add_given_a_duplicate_plate_leaves_the_roster_unchanged() -> None:
-    """A refused add creates no entry (a state, not a call, check)."""
-    roster = _draft_solo_roster()
-    presenter = RidersPresenter(RecordingRidersView(), roster)
-
-    presenter.on_add(
-        RiderFormValues(plate="123", first_name="Dupe", last_name="Rider", team=SOLO_TEAM_CHOICE)
-    )
-
+    assert created is True
     assert [entry.display_name for entry in roster.entries] == ["Sam Ellis"]
 
 
-def test_on_add_given_an_existing_pooled_team_name_joins_the_team() -> None:
+def test_add_rider_presenter_submit_given_an_existing_team_name_joins_it() -> None:
     """Add onto an existing pooled team folds the rider in (E3.2)."""
     roster = _draft_mixed_roster()
-    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
 
-    presenter.on_add(
+    created = presenter.on_submit(
         RiderFormValues(plate="79", first_name="L.", last_name="Marchetti", team="Trail Blazers")
     )
 
+    assert created is True
     team = roster.entries[0]
     assert [r.full_name for r in team.riders] == ["A. Roy", "K. Singh", "L. Marchetti"]
 
 
-def test_on_add_given_an_existing_pooled_team_name_leaves_no_stray_entry() -> None:
+def test_add_rider_presenter_submit_given_a_team_join_leaves_no_stray_entry() -> None:
     """Joining an existing team leaves exactly one entry named it."""
     roster = _draft_mixed_roster()
-    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
 
-    presenter.on_add(
+    presenter.on_submit(
         RiderFormValues(plate="79", first_name="L.", last_name="Marchetti", team="Trail Blazers")
     )
 
     assert [e.display_name for e in roster.entries] == ["Trail Blazers"]
 
 
-def test_on_add_given_an_existing_relay_team_name_joins_it_plateless() -> None:
+def test_add_rider_presenter_submit_given_a_relay_team_join_lands_plateless() -> None:
     """Joining an existing relay team drops the new rider's plate."""
     roster = _draft_relay_roster()
-    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
 
-    presenter.on_add(
+    presenter.on_submit(
         RiderFormValues(plate="99", first_name="L.", last_name="Marchetti", team="Trail Blazers")
     )
 
@@ -378,7 +423,48 @@ def test_on_add_given_an_existing_relay_team_name_joins_it_plateless() -> None:
     assert [r.plate for r in team.riders] == [None, None, None]
 
 
-def test_on_add_given_an_existing_team_at_max_size_shows_validation() -> None:
+def test_add_rider_presenter_submit_given_a_duplicate_plate_returns_false_and_shows_it() -> None:
+    """A colliding plate refuses via show_validation, not a crash."""
+    view = RecordingAddRiderView()
+    presenter = AddRiderPresenter(view, _draft_solo_roster())
+    view.calls.clear()
+
+    created = presenter.on_submit(
+        RiderFormValues(plate="123", first_name="Dupe", last_name="Rider", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert created is False
+    assert view.calls == [("show_validation", ("plate '123' is already in use",))]
+
+
+def test_add_rider_presenter_submit_given_a_duplicate_plate_leaves_the_roster_unchanged() -> None:
+    """A refused add creates no entry (a state, not a call, check)."""
+    roster = _draft_solo_roster()
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    presenter.on_submit(
+        RiderFormValues(plate="123", first_name="Dupe", last_name="Rider", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert [entry.display_name for entry in roster.entries] == ["Sam Ellis"]
+
+
+def test_add_rider_presenter_submit_given_a_blank_plate_returns_false_and_shows_it() -> None:
+    """A blanked plate refuses via the roster's non-empty guard (W7)."""
+    view = RecordingAddRiderView()
+    presenter = AddRiderPresenter(view, Roster())
+    view.calls.clear()
+
+    created = presenter.on_submit(
+        RiderFormValues(plate="", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert created is False
+    assert view.calls == [("show_validation", ("plate '' must not be empty",))]
+    assert presenter.roster.entries == ()
+
+
+def test_add_rider_presenter_submit_given_an_existing_team_at_max_size_returns_false() -> None:
     """Joining a team already at max_team_size refuses (R-12)."""
     roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=2)
     roster.create_team_entry(
@@ -388,37 +474,36 @@ def test_on_add_given_an_existing_team_at_max_size_shows_validation() -> None:
             Rider(first_name="K.", last_name="Singh", plate="78"),
         ],
     )
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, roster)
+    view = RecordingAddRiderView()
+    presenter = AddRiderPresenter(view, roster)
     view.calls.clear()
 
-    presenter.on_add(
+    created = presenter.on_submit(
         RiderFormValues(plate="79", first_name="L.", last_name="Marchetti", team="Trail Blazers")
     )
 
-    assert (
-        "show_validation",
-        ("move would exceed the destination team's max size",),
-    ) in view.calls
-
-
-def test_on_add_given_an_existing_team_at_max_size_rolls_back_the_transient() -> None:
-    """A refused join leaves no stray transient team behind (E3.2)."""
-    roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=2)
-    roster.create_team_entry(
-        display_name="Trail Blazers",
-        riders=[
-            Rider(first_name="A.", last_name="Roy", plate="77"),
-            Rider(first_name="K.", last_name="Singh", plate="78"),
-        ],
-    )
-    presenter = RidersPresenter(RecordingRidersView(), roster)
-
-    presenter.on_add(
-        RiderFormValues(plate="79", first_name="L.", last_name="Marchetti", team="Trail Blazers")
-    )
-
+    assert created is False
+    assert view.calls == [
+        ("show_validation", ("move would exceed the destination team's max size",))
+    ]
     assert [e.display_name for e in roster.entries] == ["Trail Blazers"]
+
+
+def test_add_rider_presenter_submit_given_a_solo_only_ride_and_a_team_choice_returns_false() -> None:
+    """A team choice on a solo-only ride refuses (R-11)."""
+    view = RecordingAddRiderView()
+    presenter = AddRiderPresenter(view, Roster())
+    view.calls.clear()
+
+    created = presenter.on_submit(
+        RiderFormValues(plate="1", first_name="Sam", last_name="Ellis", team="Ghosts")
+    )
+
+    assert created is False
+    assert view.calls == [
+        ("show_validation", ("this ride is solo-only; team entries are not allowed",))
+    ]
+    assert presenter.roster.entries == ()
 
 
 # ------------------------------------------------------- on_save
@@ -948,7 +1033,7 @@ def test_on_form_changed_given_a_reverted_edit_disables_save_again() -> None:
     assert view.calls == [("set_save_enabled", (False,))]
 
 
-# -------------------------------------- W7 add requires both names
+# --------------------------------- W7 add dialog requires both names
 
 
 @pytest.mark.parametrize(
@@ -961,17 +1046,20 @@ def test_on_form_changed_given_a_reverted_edit_disables_save_again() -> None:
     ],
     ids=["blank_first", "blank_last", "blankish_first", "blankish_last"],
 )
-def test_on_add_given_a_blank_name_shows_the_required_names_message(
+def test_add_rider_presenter_submit_given_a_blank_name_returns_false_and_shows_it(
     first_name: str,
     last_name: str,
 ) -> None:
     """Add with a blank first or last name refuses up front (W7)."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, Roster())
+    view = RecordingAddRiderView()
+    presenter = AddRiderPresenter(view, Roster())
     view.calls.clear()
 
-    presenter.on_add(RiderFormValues(plate="1", first_name=first_name, last_name=last_name, team=SOLO_TEAM_CHOICE))
+    created = presenter.on_submit(
+        RiderFormValues(plate="1", first_name=first_name, last_name=last_name, team=SOLO_TEAM_CHOICE)
+    )
 
+    assert created is False
     assert view.calls == [("show_validation", ("First name and last name are required",))]
 
 
@@ -980,14 +1068,14 @@ def test_on_add_given_a_blank_name_shows_the_required_names_message(
     [("", ""), (" ", " ")],
     ids=["both_blank", "both_blankish"],
 )
-def test_on_add_given_blank_names_leaves_the_roster_unchanged(
+def test_add_rider_presenter_submit_given_blank_names_leaves_the_roster_unchanged(
     first_name: str, last_name: str
 ) -> None:
     """A refused add mutates nothing (a state, not a call, check)."""
     roster = Roster()
-    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
 
-    presenter.on_add(
+    presenter.on_submit(
         RiderFormValues(plate="1", first_name=first_name, last_name=last_name, team=SOLO_TEAM_CHOICE)
     )
 

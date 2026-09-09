@@ -32,7 +32,13 @@ from _lists_common import demo_seeded_roster
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.riders import SOLO_TEAM_CHOICE, CsvPreview
-from rivercrossing.ui.views.rider_editor import COL_TEAM, ROSTER_INFOBAR, RiderEditor
+from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.views.rider_editor import (
+    ADD_RIDER_INFOBAR,
+    COL_TEAM,
+    ROSTER_INFOBAR,
+    RiderEditor,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -164,18 +170,56 @@ def test_rider_editor_dlg_opens_populating_team_choice_with_solo_then_teams(
 
 
 # ------------------------------------------------------------------ add
+# (W7: add_btn opens the dedicated add_rider_dlg; the editor's own
+# form no longer adds. The dialog's ShowModal is driven through the
+# run_add_rider_flow -> dialogs.run_dialog seam, monkeypatched to
+# fill/click the real dialog then report how it ended, the same
+# driver pattern the CSV-preview flow tests use.)
 
 
-def test_rider_editor_dlg_add_creates_a_solo_entry_and_reprefills_the_plate(
+def test_rider_editor_dlg_add_btn_opens_the_add_dialog_prefilled_with_next_plate(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Add with the default (solo) team appends a row, re-prefills."""
+    """add_btn opens add_rider_dlg; a cancelled Add changes nothing."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+    found: dict[str, object] = {}
+
+    def _drive_add(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        found["plate"] = harness.find_control(add_dialog, ids.PLATE_INPUT).GetValue()
+        harness.click(add_dialog, "wxID_CANCEL")
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive_add)
+
+    try:
+        harness.click(dialog, ids.ADD_BTN)
+        rows = _rider_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert found["plate"] == "213"
+    assert rows == _SEEDED_ROWS
+
+
+def test_rider_editor_dlg_add_btn_commits_a_new_rider_via_the_add_dialog(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adding through the dialog appends a row and re-prefills."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
+    def _drive_add(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(add_dialog, ids.FIRST_NAME_INPUT, "New")
+        harness.type_text(add_dialog, ids.LAST_NAME_INPUT, "Rider")
+        harness.click(add_dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive_add)
+
     try:
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "New")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
         harness.click(dialog, ids.ADD_BTN)
         rows = _rider_list_rows(dialog)
         plate_value = _plate_input_value(dialog)
@@ -186,48 +230,125 @@ def test_rider_editor_dlg_add_creates_a_solo_entry_and_reprefills_the_plate(
     assert plate_value == "214"
 
 
-def test_rider_editor_dlg_add_duplicate_plate_shows_the_infobar_without_crashing(
+def test_rider_editor_dlg_add_btn_blank_names_refuse_on_the_add_dialogs_infobar(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A colliding plate refuses via roster_infobar, not a crash."""
+    """W7: Add with a blank name shows the dialog's infobar, no row."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
+    found: dict[str, object] = {}
+
+    def _drive_add(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.click(add_dialog, "wxID_OK")
+        found["infobar_shown"] = harness.find_control(add_dialog, ADD_RIDER_INFOBAR).IsShown()
+        harness.click(add_dialog, "wxID_CANCEL")
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive_add)
 
     try:
-        harness.type_text(dialog, ids.PLATE_INPUT, "77")
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Dupe")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
         harness.click(dialog, ids.ADD_BTN)
-        infobar_shown = harness.find_control(dialog, ROSTER_INFOBAR).IsShown()
-        row_count = harness.find_control(dialog, ids.RIDERS_LIST).GetModel().GetCount()
+        rows = _rider_list_rows(dialog)
     finally:
         harness.close_window(dialog)
 
-    assert infobar_shown is True
-    assert row_count == len(_SEEDED_ROWS)
+    assert found["infobar_shown"] is True
+    assert rows == _SEEDED_ROWS
 
 
-def test_rider_editor_dlg_successful_add_dismisses_a_prior_infobar(
+def test_rider_editor_dlg_add_btn_duplicate_plate_refuses_on_the_add_dialogs_infobar(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The next successful action clears a prior warning (E3.2)."""
+    """A colliding plate refuses inside the dialog; the editor is whole."""
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+    found: dict[str, object] = {}
+
+    def _drive_add(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(add_dialog, ids.PLATE_INPUT, "77")
+        harness.type_text(add_dialog, ids.FIRST_NAME_INPUT, "Dupe")
+        harness.type_text(add_dialog, ids.LAST_NAME_INPUT, "Rider")
+        harness.click(add_dialog, "wxID_OK")
+        found["infobar_shown"] = harness.find_control(add_dialog, ADD_RIDER_INFOBAR).IsShown()
+        harness.click(add_dialog, "wxID_CANCEL")
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive_add)
+
+    try:
+        harness.click(dialog, ids.ADD_BTN)
+        rows = _rider_list_rows(dialog)
+    finally:
+        harness.close_window(dialog)
+
+    assert found["infobar_shown"] is True
+    assert rows == _SEEDED_ROWS
+
+
+def test_rider_editor_dlg_successful_add_via_the_dialog_dismisses_a_prior_infobar(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The next successful action clears a prior editor warning (E3.2)."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
+    def _drive_add(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(add_dialog, ids.FIRST_NAME_INPUT, "Unique")
+        harness.type_text(add_dialog, ids.LAST_NAME_INPUT, "Rider")
+        harness.click(add_dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive_add)
+
     try:
+        # A refused Save (colliding plate) puts the editor's own
+        # warning up first.
+        harness.select_row(dialog, ids.RIDERS_LIST, 0)
         harness.type_text(dialog, ids.PLATE_INPUT, "77")
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Dupe")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
-        harness.click(dialog, ids.ADD_BTN)
-        harness.type_text(dialog, ids.PLATE_INPUT, "999")
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Unique")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Rider")
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Sam")
+        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Ellis")
+        harness.click(dialog, ids.SAVE_BTN)
+        refused_shown = harness.find_control(dialog, ROSTER_INFOBAR).IsShown()
         harness.click(dialog, ids.ADD_BTN)
         infobar_shown = harness.find_control(dialog, ROSTER_INFOBAR).IsShown()
     finally:
         harness.close_window(dialog)
 
+    assert refused_shown is True
     assert infobar_shown is False
+
+
+# ----------------------------------------------------- save gating (W7)
+
+
+def test_rider_editor_dlg_save_btn_enabled_only_while_the_form_differs(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """W7: a clean record disables Save; edits enable it; reverting not.
+
+    A clean form means Enter is a no-op (its default button is
+    disabled), which is what closes the plate-1-disappears trap:
+    Save can never fire over a record the operator did not change.
+    """
+    roster = demo_seeded_roster()
+    dialog, _view = _show(xrc_resource, roster)
+
+    try:
+        harness.select_row(dialog, ids.RIDERS_LIST, 0)
+        clean_enabled = harness.find_control(dialog, ids.SAVE_BTN).IsEnabled()
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Samuel")
+        dirty_enabled = harness.find_control(dialog, ids.SAVE_BTN).IsEnabled()
+        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Sam")
+        reverted_enabled = harness.find_control(dialog, ids.SAVE_BTN).IsEnabled()
+    finally:
+        harness.close_window(dialog)
+
+    assert clean_enabled is False
+    assert dirty_enabled is True
+    assert reverted_enabled is False
 
 
 # ----------------------------------------------------------------- save

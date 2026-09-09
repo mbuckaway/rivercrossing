@@ -224,6 +224,25 @@ RIDER_EDITOR_DLG = WindowSpec(
     ),
 )
 
+# W7: the dedicated Add Rider dialog the editor's add_btn opens. Its
+# input names reuse the editor's own (plate_input etc.); each
+# top-level window is its own name namespace, so the ids constants
+# stay shared (tools/gen_ids.py's own rule).
+ADD_RIDER_DLG = WindowSpec(
+    name=ids.ADD_RIDER_DLG,
+    xrc_file="riders.xrc",
+    is_frame=False,
+    controls=(
+        ids.PLATE_INPUT,
+        ids.FIRST_NAME_INPUT,
+        ids.LAST_NAME_INPUT,
+        ids.TEAM_CHOICE,
+        WX_ID_OK,
+        WX_ID_CANCEL,
+    ),
+    buttons=(WX_ID_OK, WX_ID_CANCEL),
+)
+
 CSV_PREVIEW_DLG = WindowSpec(
     name=ids.CSV_PREVIEW_DLG,
     xrc_file="riders.xrc",
@@ -447,9 +466,9 @@ SELFTEST_DLG = WindowSpec(
 )
 
 # xrc-windows's own A-E order: 1 console + 9 setup/lifecycle dialogs
-# (stop_confirm_dlg retired W5) + 9 rider/card dialogs (team_editor_dlg
-# is Phase 4's section-C member) + 4 results/library/audit +
-# 4 system/help = 27.
+# (stop_confirm_dlg retired W5) + 10 rider/card dialogs (add_rider_dlg
+# and team_editor_dlg are W7/Phase 4 section-C members) + 4
+# results/library/audit + 4 system/help = 28.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
@@ -462,6 +481,7 @@ WINDOWS: tuple[WindowSpec, ...] = (
     EXIT_CONFIRM_DLG,
     NO_RIDE_DLG,
     RIDER_EDITOR_DLG,
+    ADD_RIDER_DLG,
     CSV_PREVIEW_DLG,
     RIDER_ISSUES_DLG,
     TEAM_EDITOR_DLG,

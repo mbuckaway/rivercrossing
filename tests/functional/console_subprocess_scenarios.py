@@ -1535,10 +1535,17 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
     found: dict[str, Any] = {}
     ride_name = "Fresh Ride 2026"
 
-    def _add_rider_and_close(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    def _fill_add_dialog(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         harness.type_text(dialog, ids.PLATE_INPUT, "12")
         harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Sam")
         harness.type_text(dialog, ids.LAST_NAME_INPUT, "Ellis")
+        harness.click(dialog, "wxID_OK")
+
+    def _add_rider_and_close(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        # W7: the editor's add_btn opens the modal add_rider_dlg
+        # nested inside this one, so its driver is queued before the
+        # click (the file's modal-chaining rule).
+        wx.CallAfter(_drive_when_shown, ids.ADD_RIDER_DLG, _fill_add_dialog)
         harness.click(dialog, ids.ADD_BTN)
         harness.click(dialog, pages.WX_ID_CLOSE)
 
