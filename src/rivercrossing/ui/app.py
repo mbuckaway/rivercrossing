@@ -72,7 +72,7 @@ from rivercrossing.ride import (
     RideStatus,
     UnknownPlateError,
 )
-from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.roster import EntryMode, EntryType, PlateModel, Roster
 from rivercrossing.standings import Placed, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.store import (
     PreviousSession,
@@ -1449,30 +1449,87 @@ def _export_options() -> ExportOptions:
     return ExportOptions()
 
 
-def _write_export(  # noqa: PLR0913, PLR0917 -- (config, teams, solo, opts, target, path): the pure writer's inputs
+def _team_logo_srcs(roster: Roster | None) -> dict[str, str]:
+    """Map every logo-carrying TEAM entry's plate to its data URI (W8).
+
+    The HTML export's roster-entry lookup seam: htmlexport renders
+    each placed row's small logo image from this map, keyed by the
+    entry's plate. A stored image bytes become a PNG data URI
+    directly; a card code resolves to its packaged 48x64 card bitmap
+    (the same asset key the wx imagelist uses, read at the 2x scale
+    so the ~48px-tall page image stays crisp). A team with no logo,
+    or a code with no asset behind it, contributes no entry --
+    ``None``/``{}`` both render nothing.
+
+    Args:
+        roster: The in-memory roster to read TEAM entries from
+            (``None`` when no ride is threaded).
+
+    Returns:
+        A plate -> ``data:image/png;base64,...`` mapping, empty when
+        no team carries a logo.
+    """
+    import base64  # noqa: PLC0415 -- the only consumer of base64 in this module
+
+    from rivercrossing.ui.cards_imagelist import (  # noqa: PLC0415 -- deferred, wx-adjacent package
+        SCALE_2X,
+        UnknownCardCodeError,
+        asset_filename,
+        asset_key,
+        cards_dir,
+    )
+
+    if roster is None:
+        return {}
+    srcs: dict[str, str] = {}
+    for entry in roster.entries:
+        if entry.type is not EntryType.TEAM:
+            continue
+        if entry.logo_png is not None:
+            encoded = base64.b64encode(entry.logo_png).decode("ascii")
+            srcs[entry.plate] = f"data:image/png;base64,{encoded}"
+            continue
+        if entry.logo_card is None:
+            continue
+        try:
+            key = asset_key(entry.logo_card)
+        except UnknownCardCodeError:
+            continue
+        png = (cards_dir() / asset_filename(key, SCALE_2X)).read_bytes()
+        encoded = base64.b64encode(png).decode("ascii")
+        srcs[entry.plate] = f"data:image/png;base64,{encoded}"
+    return srcs
+
+
+def _write_export(  # noqa: PLR0913, PLR0917 -- (config, teams, solo, opts, target, path, team_logos): the pure writer's inputs
     config: RideConfig,
     teams: tuple[Placed, ...],
     solo: tuple[Placed, ...],
     opts: ExportOptions,
     target: str,
     path: Path,
+    team_logos: dict[str, str] | None = None,
 ) -> None:
     """Render and write one results export to *path* (E6.4.2).
 
     Pure -- no wx, no context: it runs on the off-loop thread, so it
     must never touch wx (measured: a wx call from the worker thread
     bus-errors the process). The handler captures *config*/*teams*/
-    *solo*/*opts* on the main thread first.
+    *solo*/*opts*/*team_logos* on the main thread first.
 
     Phase 3 (team/solo results split): the two groups merge
     Teams-then-Solo into the single ``placed`` sequence each frozen
     writer takes -- the HTML/PDF full fields partition it back into the
     two sections on ``result.kind``, and the standings CSV emits the
-    ``type`` column.
+    ``type`` column. W8: *team_logos* (the :func:`_team_logo_srcs`
+    map) reaches the HTML renderer only -- the PDF report keeps no
+    team logos (W8 scope note).
     """
     placed = (*teams, *solo)
     if target == "export_html":
-        html = htmlexport.render(config, placed, opts, logo_path=config.logo_path)
+        html = htmlexport.render(
+            config, placed, opts, logo_path=config.logo_path, team_logos=team_logos
+        )
         path.write_text(html, encoding="utf-8")
     elif target == "export_pdf":
         pdfexport.render(config, placed, opts, path, logo_path=config.logo_path)
@@ -1495,6 +1552,7 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
     solo: tuple[Placed, ...],
     opts: ExportOptions,
     watermark: int,
+    team_logos: dict[str, str] | None = None,
 ) -> None:
     """Write the export on a background thread; notice via CallAfter.
 
@@ -1512,7 +1570,7 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
 
     def write() -> None:
         try:
-            _write_export(config, teams, solo, opts, target, path)
+            _write_export(config, teams, solo, opts, target, path, team_logos=team_logos)
         except Exception as exc:  # noqa: BLE001 -- a failed export is a notice, not a crash
             wx = require_wx()
             wx.CallAfter(context.frame.SetStatusText, f"Export failed: {exc}")
@@ -1567,6 +1625,10 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     teams, solo = _placed_for_export(context)
     opts = _export_options()
     watermark = len(engine.events)
+    # W8: the roster's team logos are captured on the main thread like
+    # every other export input (the off-loop writer never touches the
+    # live context).
+    team_logos = _team_logo_srcs(context.roster)
     _run_export_offloop(
         context,
         target,
@@ -1576,6 +1638,7 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
         solo=solo,
         opts=opts,
         watermark=watermark,
+        team_logos=team_logos,
     )
 
 

@@ -143,6 +143,10 @@ class ResultRow:
     dnf: bool = False
     cards: tuple[CardPair, ...] = ()
     drawn: tuple[CardPair, ...] = ()
+    # W8: the entry's logo as a data URI (a card bitmap or the team's
+    # image), mirroring the org logo's own logo_src mechanism. Sparse
+    # in the record -- absent rows have no logo and render nothing.
+    logo: str | None = None
 
     @property
     def type(self) -> str:
@@ -172,6 +176,8 @@ class ResultRow:
             record["dnf"] = True
         record["cards"] = [list(pair) for pair in self.cards]
         record["drawn"] = [list(pair) for pair in self.drawn]
+        if self.logo is not None:
+            record["logo"] = self.logo
         return record
 
 
@@ -508,7 +514,7 @@ def _card_pair(card: Card) -> CardPair:
     return (_RANK_PAIR_LETTER[rank.value], suit.value.lower())
 
 
-def _result_row_from_placed(placed: Placed) -> ResultRow:
+def _result_row_from_placed(placed: Placed, *, logo: str | None = None) -> ResultRow:
     """Map one ``standings.Placed`` to the record's results row.
 
     ``result.hand.best5`` supplies the displayed best-5 cards and
@@ -516,7 +522,9 @@ def _result_row_from_placed(placed: Placed) -> ResultRow:
     ``cards`` vs ``drawn`` split. ``entry_type`` is the kind in
     uppercase ("SOLO"/"TEAM"); the sample's team-size suffix (as in
     "TEAM by 4") is a display form ``EntryResult`` does not carry, so
-    it is not reproduced (documented seam).
+    it is not reproduced (documented seam). *logo* (W8) is the row's
+    logo data URI, resolved by the caller from the roster entry that
+    holds the placed plate -- ``None`` renders no logo image.
     """
     result = placed.result
     return ResultRow(
@@ -532,6 +540,7 @@ def _result_row_from_placed(placed: Placed) -> ResultRow:
         dnf=result.dnf,
         cards=tuple(_card_pair(card) for card in result.hand.best5),
         drawn=tuple(_card_pair(card) for card in result.cards),
+        logo=logo,
     )
 
 
@@ -587,20 +596,23 @@ def _boards_from_placed(
     return laps, times
 
 
-def _payload_from_ride(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, generated): D15's mapping inputs
+def _payload_from_ride(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, generated, team_logos): D15's mapping inputs
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,
     generated: str | None,
+    team_logos: Mapping[str, str] | None = None,
 ) -> RacePayload:
     """Build the export payload from a ride and its placed standings.
 
     The fixture payloads (which carry the golden boards) reach the
     page through ``_render_payload`` (D15); the public
     :func:`render` path derives its boards from *placed* here
-    (E6.4.2).
+    (E6.4.2). *team_logos* (W8) maps a placed entry's plate to its
+    logo data URI -- the roster-entry lookup seam the app supplies.
     """
-    results = tuple(_result_row_from_placed(p) for p in placed)
+    logos = team_logos if team_logos is not None else {}
+    results = tuple(_result_row_from_placed(p, logo=logos.get(p.result.plate)) for p in placed)
     laps_board, time_board = _boards_from_placed(placed, opts)
     event = EventInfo(
         kicker=_KICKER,
@@ -629,7 +641,7 @@ def _logo_data_uri(path: Path | str) -> str:
     return f"data:image/png;base64,{payload}"
 
 
-def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo_src, generated)
+def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo_src, generated, team_logos)
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,
@@ -637,6 +649,7 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     logo_src: str | None = None,
     generated: str | None = None,
     logo_path: Path | str | None = None,
+    team_logos: Mapping[str, str] | None = None,
 ) -> str:
     """Render one finished ride's results as a self-contained HTML page.
 
@@ -649,7 +662,10 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     ``logo_src`` is the ride logo as a base64 data URI, falling back
     to a transparent 1x1 PNG when absent (D8); ``logo_path`` is the
     alternative raw-file form, base64-encoded when *logo_src* is
-    None.
+    None. ``team_logos`` (W8) maps a placed entry's plate to its logo
+    data URI (card bitmap or team image), rendered as a small image
+    in the team's Top ten and Full field rows; absent entries render
+    nothing.
 
     Args:
         ride: Ride-like object exposing ``name``/``event_date``/
@@ -661,6 +677,8 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
         generated: Footer timestamp; defaults to now, samples' style.
         logo_path: Raw PNG path, base64-embedded when *logo_src* is
             None (R-61's logo-base64 rule).
+        team_logos: Plate -> logo data URI for the entries that carry
+            one; rows without a mapping render no logo.
 
     Returns:
         The full HTML page as a string.
@@ -670,7 +688,7 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     """
     if logo_src is None and logo_path is not None:
         logo_src = _logo_data_uri(logo_path)
-    payload = _payload_from_ride(ride, placed, opts, generated)
+    payload = _payload_from_ride(ride, placed, opts, generated, team_logos=team_logos)
     return _render_payload(payload, logo_src=logo_src)
 
 
@@ -716,6 +734,7 @@ def _result_row_from_record(row: Mapping[str, object]) -> ResultRow:
         dnf=cast("bool", row.get("dnf", False)),
         cards=_card_pairs(row.get("cards", [])),
         drawn=_card_pairs(row.get("drawn", [])),
+        logo=cast("str | None", row.get("logo")),
     )
 
 
