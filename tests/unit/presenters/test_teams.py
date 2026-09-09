@@ -766,3 +766,43 @@ def test_format_logo_given_any_logo_state_returns_only_the_three_kind_texts(
     assert text in (CARD_TEXT, IMAGE_TEXT, "")
     assert (text == IMAGE_TEXT) == has_image
     assert (text == CARD_TEXT) == (card is not None and not has_image)
+
+
+# ============================================================ W8
+# Empty teams: on_add no longer anchors a team with a rider named from
+# the team's name -- W8 amends R-81, so the new team row shows 0
+# riders and members join later through the Rider Editor.
+
+
+def test_teams_presenter_add_creates_an_empty_team_with_zero_riders() -> None:
+    """The form name becomes a zero-rider team, shown with Riders = 0."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+
+    presenter.on_add(_new_form("Dirt Dynamos"))
+
+    created = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
+    assert created.type is EntryType.TEAM
+    assert created.riders == []
+    assert view.teams[-1] == TeamRow(
+        name="Dirt Dynamos",
+        rider_count=0,
+        logo_card=seeded_card_codes(_SEED)[1],
+        has_image=False,
+    )
+    assert view.members == []
+
+
+def test_teams_presenter_add_on_a_relay_ride_creates_an_empty_team_with_no_anchor_rider() -> None:
+    """A relay add creates the entry only; no rider is invented."""
+    view = RecordingTeamsView()
+    roster = _draft_relay_roster()
+    presenter = TeamsPresenter(view, roster)
+
+    presenter.on_add(_new_form("Dirt Dynamos"))
+
+    created = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
+    assert created.riders == []
+    assert (created.plate, created.type) == ("124", EntryType.TEAM)
+    assert view.teams[-1].rider_count == 0

@@ -2621,3 +2621,51 @@ def test_store_load_roster_gives_the_rebuilt_roster_the_rides_logo_seed(
         return created.logo_card
 
     assert _new_team_logo() == _new_team_logo()
+
+
+# ============================================================ W8
+# Zero-rider TEAM entries: save_roster writes the entry row with no
+# rider rows, and _load_roster rebuilds the empty team as-is (W8).
+
+
+def test_store_save_roster_zero_rider_team_round_trips_with_no_rider_rows(tmp_path: Path) -> None:
+    """W8: an empty pooled TEAM entry persists as one entry, no riders."""
+    db_path = tmp_path / "rides.db"
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_empty_team(display_name="Trail Blazers", logo_card="AS")
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    reloaded = _round_trip_roster(db_path, ride_id)
+
+    (entry,) = reloaded.entries
+    assert (entry.display_name, entry.type.value, entry.team_size) == (
+        "Trail Blazers",
+        "team",
+        0,
+    )
+    assert entry.riders == []
+    assert (entry.logo_card, entry.plate) == ("AS", "1")
+
+
+def test_store_save_roster_zero_rider_relay_team_keeps_its_relay_plate(tmp_path: Path) -> None:
+    """W8: an empty relay team round-trips its own plate, no riders."""
+    db_path = tmp_path / "rides.db"
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_empty_team(display_name="Trail Blazers", plate="RC 88")
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.TEAM_RELAY,
+    )
+
+    reloaded = _round_trip_roster(db_path, ride_id)
+
+    (entry,) = reloaded.entries
+    assert entry.plate == "RC 88"
+    assert entry.riders == []

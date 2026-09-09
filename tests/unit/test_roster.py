@@ -2569,3 +2569,202 @@ def test_change_pooled_rider_plate_blank_raises_and_changes_nothing() -> None:
         roster.change_pooled_rider_plate(alex, plate="   ")
 
     assert (alex.plate, entry.plate) == ("3", "3")
+
+
+# ============================================================ W8
+# Empty teams: teams created with zero riders whose members join later
+# (W8 amends the anchor-rider mandate of R-81). create_empty_team is
+# DRAFT-only, MIXED-only, and shapes its entry plate per plate_model:
+# a team_relay empty team carries its explicit relay plate (auto next
+# free when none is given); a rider_pooled empty team carries a
+# PROVISIONAL next-free entry plate (the model's derived plate needs
+# at least one rider) which the first joined rider replaces.
+
+
+def test_roster_create_empty_team_pooled_creates_a_zero_rider_team_with_a_provisional_plate() -> None:
+    """A pooled empty team claims the next free plate until a rider joins."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_solo_entry(first_name="Bo", last_name="", plate="3")
+
+    entry = roster.create_empty_team(display_name="Trail Blazers")
+
+    assert (entry.display_name, entry.type, entry.team_size) == (
+        "Trail Blazers",
+        EntryType.TEAM,
+        0,
+    )
+    assert entry.riders == []
+    assert entry.plate == "4"  # the provisional claim, one past 3
+
+
+def test_roster_create_empty_team_pooled_duplicate_placeholder_is_claimed() -> None:
+    """The provisional plate collides with nothing already in use."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_empty_team(display_name="Team A")
+    roster.create_empty_team(display_name="Team B")
+
+    assert tuple(entry.plate for entry in roster.entries) == ("1", "2")
+
+
+def test_roster_create_empty_team_relay_uses_the_given_relay_plate() -> None:
+    """team_relay: the given plate becomes the empty entry's plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+
+    entry = roster.create_empty_team(display_name="Trail Blazers", plate="RC 88")
+
+    assert (entry.plate, entry.type, entry.team_size) == ("RC 88", EntryType.TEAM, 0)
+    assert entry.riders == []
+
+
+def test_roster_create_empty_team_relay_without_a_plate_takes_the_next_free() -> None:
+    """team_relay: no plate given, the roster auto-claims the next free."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="Moss Ridge",
+        riders=[Rider(first_name="A."), Rider(first_name="B.")],
+        plate="88",
+    )
+
+    entry = roster.create_empty_team(display_name="Trail Blazers")
+
+    assert entry.plate == "89"
+
+
+def test_roster_create_empty_team_relay_blank_plate_raises_plate_shape_error() -> None:
+    """A blank relay plate is refused, exactly as on every relay path."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+
+    with pytest.raises(PlateShapeError, match=re.escape("must not be empty")):
+        roster.create_empty_team(display_name="Trail Blazers", plate="  ")
+
+
+def test_roster_create_empty_team_relay_duplicate_plate_raises_duplicate_plate_error() -> None:
+    """An empty relay team cannot claim another entry's plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="Moss Ridge",
+        riders=[Rider(first_name="A."), Rider(first_name="B.")],
+        plate="88",
+    )
+
+    with pytest.raises(DuplicatePlateError, match=re.escape("88")):
+        roster.create_empty_team(display_name="Trail Blazers", plate="88")
+
+
+def test_roster_create_empty_team_pooled_with_an_explicit_plate_raises_plate_shape_error() -> None:
+    """A pooled team's plate is derived from its riders -- never given."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    with pytest.raises(PlateShapeError, match=re.escape("derived")):
+        roster.create_empty_team(display_name="Trail Blazers", plate="99")
+
+
+def test_roster_create_empty_team_on_a_solo_only_ride_raises_solo_only_ride_error() -> None:
+    """A solo-only ride refuses an empty team entry (R-11)."""
+    roster = Roster(entry_mode=EntryMode.SOLO)
+
+    with pytest.raises(SoloOnlyRideError, match=re.escape("solo-only")):
+        roster.create_empty_team(display_name="Trail Blazers")
+
+
+def test_roster_create_empty_team_after_start_raises_locked_error() -> None:
+    """An empty team cannot be created once the ride has left DRAFT."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("running")):
+        roster.create_empty_team(display_name="Trail Blazers")
+
+
+def test_roster_create_empty_team_auto_assigns_the_next_seeded_logo_card() -> None:
+    """Like every create path, None logo_card takes the next seeded code."""
+    seeded = seeded_card_codes(8843)
+    roster = _seeded_mixed_roster()
+
+    entry = roster.create_empty_team(display_name="Dirt Dynamos")
+
+    assert entry.logo_card == seeded[0]
+    assert entry.logo_png is None
+
+
+def test_roster_create_empty_team_keeps_a_supplied_logo_card_verbatim() -> None:
+    """A caller-supplied card is never overridden by auto-assignment."""
+    roster = Roster(entry_mode=EntryMode.MIXED, team_logo_seed=8843)
+
+    entry = roster.create_empty_team(display_name="Dirt Dynamos", logo_card="AS")
+
+    assert entry.logo_card == "AS"
+
+
+def test_roster_create_empty_team_unseeded_carries_no_auto_logo() -> None:
+    """Without a team_logo_seed no card is auto-assigned."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    entry = roster.create_empty_team(display_name="Dirt Dynamos")
+
+    assert entry.logo_card is None
+
+
+def test_roster_create_empty_team_logo_image_wins_over_a_supplied_card() -> None:
+    """logo_png given with a logo_card: image wins, card clears."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    entry = roster.create_empty_team(
+        display_name="Dirt Dynamos", logo_card="AS", logo_png=b"team-logo-png"
+    )
+
+    assert entry.logo_png == b"team-logo-png"
+    assert entry.logo_card is None
+
+
+def test_roster_create_empty_team_appends_one_audit_event() -> None:
+    """create_empty_team logs one event naming plate and team size."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    entry = roster.create_empty_team(display_name="Trail Blazers")
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="create_empty_team",
+        payload={"plate": entry.plate, "display_name": "Trail Blazers", "team_size": 0},
+    )
+
+
+# ---------------------------------------- empty teams meet later riders
+
+
+def test_roster_add_rider_to_team_fills_an_empty_pooled_team_and_replaces_its_placeholder() -> None:
+    """A joining pooled rider's plate becomes the team's plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    entry = roster.create_empty_team(display_name="Trail Blazers")
+    rider = Rider(first_name="A.", last_name="Roy", plate="9")
+
+    roster.add_rider_to_team(rider, to_entry=entry)
+
+    assert (entry.team_size, entry.plate) == (1, "9")
+    assert entry.riders == [rider]
+
+
+def test_roster_move_rider_onto_an_empty_team_dissolves_the_source_and_replaces_the_placeholder() -> None:
+    """The rider editor's fold-in path works against an empty target."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    target = roster.create_empty_team(display_name="Trail Blazers")
+    transient = roster.create_team_entry_of_one(
+        display_name="Trail Blazers", rider=Rider(first_name="A.", last_name="Roy", plate="9")
+    )
+    rider = transient.riders[0]
+
+    roster.move_rider(rider, to_entry=target)
+
+    assert transient not in roster.entries
+    assert (target.team_size, target.plate) == (1, "9")
+    assert target.riders == [rider]
+
+
+def test_roster_validate_for_start_refuses_an_empty_team() -> None:
+    """The start-time floor-2 gate still refuses a zero-rider team."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    entry = roster.create_empty_team(display_name="Trail Blazers")
+
+    assert roster.validate_for_start() == [
+        StartViolation(entry=entry, reason="team size must be at least 2, got 0")
+    ]

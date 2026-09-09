@@ -2766,3 +2766,22 @@ def test_preview_csv_error_mid_file_reports_a_row_one_file_conflict(tmp_path: Pa
     assert result.conflicts[0].row == 1
     assert result.conflicts[0].problem.startswith(_CSV_MALFORMED_PREFIX)
     assert result.entries == ()
+
+
+# ============================================================ W8
+# Zero-rider TEAM entries (W8): export writes one row per RIDER, so an
+# empty team contributes no rows and nothing assumes >=1 rider.
+
+
+def test_export_roster_with_zero_rider_teams_writes_only_entries_with_riders(
+    tmp_path: Path,
+) -> None:
+    """W8: an empty team exports nothing; its members join later."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.create_empty_team(display_name="Trail Blazers", plate="RC 88")
+    roster.create_solo_entry(first_name="Alex", last_name="Tremblay", plate="1")
+
+    export(roster, path)
+
+    assert _read_lines(path) == [_CANONICAL_HEADER, "Alex,Tremblay,solo,,1,"]
