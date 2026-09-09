@@ -776,6 +776,15 @@ def _wire_store_append(  # noqa: PLR0913 -- (engine, store, ride_id) + the notic
     ``docs/EPIC3-SESSION-SUMMARY.md`` records) -- the in-memory ride
     changed, the database did not, and nothing was said.
 
+    W3 session lifecycle: the sink also owns the R-52 resume marker.
+    A ``start`` event calls :meth:`Store.set_active_ride` (the ride
+    creation path used to mark the session; only a ride that actually
+    started may offer "continue" at the next launch) and a ``finish``
+    event calls :meth:`Store.clear_active_ride` (a finished ride is
+    never offered as still running). Both run under the same guard as
+    the append: a refused marker write degrades to the *notify*
+    notice, never a raise into the engine mutation.
+
     Args:
         engine: The engine to attach the sink to.
         store: The live Store the sink writes to.
@@ -787,6 +796,10 @@ def _wire_store_append(  # noqa: PLR0913 -- (engine, store, ride_id) + the notic
     def _append(event: Event) -> None:
         try:
             store.append(ride_id, event)
+            if event.action == "start":
+                store.set_active_ride(ride_id)
+            elif event.action == "finish":
+                store.clear_active_ride()
         except (OSError, sqlite3.Error) as exc:
             notify(f"Could not save event: {exc}")
 
@@ -833,18 +846,19 @@ def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
 
     The ride-setup dialog's submit callback (``_decorate``'s
     ``RIDE_SETUP_DLG`` branch): with a store open, creates the ride
-    row, persists the roster the dialog was opened on, marks the new
-    ride active on the open session -- so a quit after creating it
-    resumes the right ride, the same call the resume flow's Continue
-    makes -- and switches the console onto the new ride. With no store
-    the dialog keeps its E3.5 in-memory behavior.
+    row, persists the roster the dialog was opened on, and switches
+    the console onto the new ride. With no store the dialog keeps its
+    E3.5 in-memory behavior.
 
-    The switch is deferred through ``wx.CallAfter``, the same
-    modal-chaining rule the library Open uses (``_live_library_
-    callbacks``'s own docstring): this runs inside the setup dialog's
-    submit, before ``EndModal``, and a post-modal action performed
-    synchronously inside a modal's unwind is not dismissible by the
-    functional harness (measured there).
+    W3 session lifecycle: creating a ride no longer marks it active on
+    the open session -- the ``start`` event's sink owns the R-52
+    marker, so a ride that was never started is never offered as
+    running at the next launch. The console switch is deferred through
+    ``wx.CallAfter``, the same modal-chaining rule the library Open
+    uses (``_live_library_callbacks``'s own docstring): this runs
+    inside the setup dialog's submit, before ``EndModal``, and a
+    post-modal action performed synchronously inside a modal's unwind
+    is not dismissible by the functional harness (measured there).
 
     Args:
         context: The route context whose store/roster to act on.
@@ -867,7 +881,6 @@ def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
         return
     try:
         store.save_roster(ride_id, context.roster)
-        store.set_active_ride(ride_id)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save riders: {exc}")
         return

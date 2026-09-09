@@ -667,6 +667,24 @@ class Store:
                 (ride_id,),
             )
 
+    def clear_active_ride(self) -> None:
+        """Clear the OPEN session's running ride (W3 session lifecycle).
+
+        :meth:`set_active_ride`'s mirror: NULLs ``active_ride_id`` on
+        the newest ``app_session`` row -- the session :meth:`open`
+        inserted. The event sink calls it when the open ride finishes
+        (a ``finish`` audit event), so a quit after finishing reads
+        CLEAN_QUIT at the next launch; the launch flow calls it when a
+        resume replay cannot rebuild the ride, so the next launch does
+        not offer a ride the store cannot load. With no session row at
+        all this is a no-op (nothing updates).
+        """
+        with self._conn:
+            self._conn.execute(
+                "UPDATE app_session SET active_ride_id = NULL"
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)"
+            )
+
     def roster_for(self, ride_id: int) -> Roster:
         """Return *ride_id*'s full roster reconstructed from the DB.
 

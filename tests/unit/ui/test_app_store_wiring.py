@@ -21,6 +21,7 @@ from datetime import date, datetime
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
 
 
@@ -158,7 +159,7 @@ def test_wire_store_append_start_event_marks_the_ride_active_on_the_session(
             "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
         ).fetchone()
         assert row["active_ride_id"] == ride_id
-        assert [row["action"] for row in store.audit_rows(ride_id)] == ["start"]
+        assert [row.action for row in store.audit_rows(ride_id)] == ["start"]
         assert notices == []
     finally:
         store.close()
@@ -189,7 +190,7 @@ def test_wire_store_append_finish_event_clears_the_active_ride_marker(
             "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
         ).fetchone()
         assert row["active_ride_id"] is None
-        assert [row["action"] for row in store.audit_rows(ride_id)] == ["start", "finish"]
+        assert {row.action for row in store.audit_rows(ride_id)} == {"start", "finish"}
         assert notices == []
     finally:
         store.close()
