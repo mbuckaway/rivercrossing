@@ -457,6 +457,7 @@ _NO_DEFAULT_DECLARED = (
     ids.RIDE_SETUP_DLG,
     ids.RIDER_EDITOR_DLG,
     ids.ADD_RIDER_DLG,
+    ids.ADD_TEAM_DLG,
     ids.CSV_PREVIEW_DLG,
     ids.ENTRY_DETAIL_DLG,
 )
@@ -761,9 +762,9 @@ def test_run_dialog_returns_result_and_restores_opener_focus(
 _ALL_DIALOG_SPECS = tuple(spec for spec in pages.WINDOWS if not spec.is_frame)
 
 
-def test_all_dialogs_declare_exactly_twenty_six_rows() -> None:
+def test_all_dialogs_declare_exactly_twenty_seven_rows() -> None:
     """A dialog disappearing from ``pages.WINDOWS`` must shrink this."""
-    assert len(_ALL_DIALOG_SPECS) == 26
+    assert len(_ALL_DIALOG_SPECS) == 27
 
 
 @pytest.mark.parametrize("spec", _ALL_DIALOG_SPECS, ids=lambda s: s.name)

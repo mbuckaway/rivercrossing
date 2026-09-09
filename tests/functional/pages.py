@@ -302,6 +302,29 @@ TEAM_EDITOR_DLG = WindowSpec(
     ),
 )
 
+# --- xrc-windows section C: W8 Add Team dialog ---
+
+# W8: the dedicated Add Team dialog the teams editor's add_btn opens.
+# Its input names reuse the editor's own (name_input etc.); each
+# top-level window is its own name namespace, so the ids constants
+# stay shared (tools/gen_ids.py's own rule).
+ADD_TEAM_DLG = WindowSpec(
+    name=ids.ADD_TEAM_DLG,
+    xrc_file="teams.xrc",
+    is_frame=False,
+    controls=(
+        ids.NAME_INPUT,
+        ids.RELAY_PLATE_INPUT,
+        ids.NOTES_INPUT,
+        ids.LOGO_BMP,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        WX_ID_OK,
+        WX_ID_CANCEL,
+    ),
+    buttons=(WX_ID_OK, WX_ID_CANCEL, ids.PICK_CARD_BTN, ids.IMAGE_BTN),
+)
+
 ENTRY_DETAIL_DLG = WindowSpec(
     name=ids.ENTRY_DETAIL_DLG,
     xrc_file="detail.xrc",
@@ -486,6 +509,7 @@ WINDOWS: tuple[WindowSpec, ...] = (
     CSV_PREVIEW_DLG,
     RIDER_ISSUES_DLG,
     TEAM_EDITOR_DLG,
+    ADD_TEAM_DLG,
     ENTRY_DETAIL_DLG,
     EDIT_CROSSING_DLG,
     REASSIGN_DLG,

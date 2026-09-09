@@ -245,8 +245,10 @@
             <object class="wxBoxSizer">
               <orient>wxHORIZONTAL</orient>
               <!-- Add team anchors the right pane's bottom (rework):
-                   the form above it is the Add form when nothing is
-                   selected. -->
+                   the form above it is the selected team's record
+                   editor -- W8 relabelled the button and made it open
+                   add_team_dlg (its own Add dialog) instead of
+                   adding from this form. -->
               <object class="spacer">
                 <option>1</option>
                 <size>0,0</size>
@@ -254,12 +256,147 @@
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL</flag>
                 <object class="wxButton" name="add_btn">
-                  <label>Add team</label>
+                  <label>Add team…</label>
                 </object>
               </object>
             </object>
           </object>
 
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- W8: the dedicated Add Team dialog. The editor's add_btn opens
+       this window instead of adding from the editor's own form (the
+       W7 add_rider_dlg shape): a zero-rider team entry is created
+       and its riders join later through the Rider Editor. Control
+       names reuse the editor's own (name_input, notes_input,
+       relay_plate_input, logo_bmp, pick_card_btn, image_btn: each
+       top-level window is its own name namespace, tools/gen_ids.py's
+       rule), so the ids constants stay shared. The Plate (relay)
+       row's visibility follows plate_model like the editor's
+       (code-side); refusals show on a code-side infobar
+       (add_team_infobar, wxInfoBar: XRC cannot author one). -->
+  <object class="wxDialog" name="add_team_dlg">
+    <title>Add Team</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Team</label>
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxFlexGridSizer">
+              <cols>2</cols>
+              <vgap>6</vgap>
+              <hgap>8</hgap>
+              <growablecols>1</growablecols>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Name</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="name_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Plate (relay)</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="relay_plate_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Notes</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="notes_input">
+                  <style>wxTE_MULTILINE</style>
+                </object>
+              </object>
+
+            </object>
+          </object>
+
+          <!-- Logo row: pick the new team's card or image logo before
+               Add. logo_bmp's bitmap is supplied in code (a card
+               asset bitmap, the picked PNG's decode, or wx.NullBitmap
+               for a blank state), the same seam the editor uses. -->
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>8</border>
+                <object class="wxStaticText">
+                  <label>Logo</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxStaticBitmap" name="logo_bmp"/>
+              </object>
+              <object class="spacer">
+                <option>1</option>
+                <size>0,0</size>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxButton" name="pick_card_btn">
+                  <label>Pick card…</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxButton" name="image_btn">
+                  <label>Image…</label>
+                </object>
+              </object>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <!-- wxID_OK carries the "Add" label; the stock id keeps the
+           button on the platform-correct side and Enter safe. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Add</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
         </object>
       </object>
 
