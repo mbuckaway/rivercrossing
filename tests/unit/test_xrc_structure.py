@@ -352,10 +352,10 @@ def test_dialog_declares_a_std_dialog_button_sizer(dialog_name: str) -> None:
 
 
 def test_main_frame_declares_the_canvas_minimum_size() -> None:
-    """Canvas footnote 1100x700 beats spec.md 13's 1180x740."""
+    """W9 raised the min 700->780; W15 records the canvas amendment."""
     frame = _top_level_windows("main.xrc")["main_frame"]
 
-    assert _param(frame, "size") == "1100,700"
+    assert _param(frame, "size") == "1100,780"
 
 
 def test_main_splitter_is_declared_as_a_splitter_window() -> None:

@@ -75,6 +75,7 @@ from rivercrossing.ui import feed_model, ids
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.views import MainFrame, _support
 from rivercrossing.ui.views.main_frame import (
+    DEFAULT_SASH,
     FINISHED_INFOBAR,
     MIN_SIZE,
     REOPENED_INFOBAR,
@@ -396,10 +397,23 @@ def test_main_frame_card_images_defaults_to_the_shared_support_cache(
 
 
 def test_main_frame_applies_the_canvas_minimum_size(shared_console: MainFrame) -> None:
-    """xrc-windows.md A: "Min frame 1100x700, fits 1366x768."."""
+    """W9 min 1100x780: raised so the feed shows more rows, still 1366x768."""
     min_size = shared_console.frame.GetMinSize()
 
     assert (min_size.width, min_size.height) == MIN_SIZE
+
+
+def test_main_frame_splitter_defaults_to_the_feed_pane_sash(
+    shared_console: MainFrame,
+) -> None:
+    """W9: a fresh launch splits feed/sidebar at the pinned default.
+
+    No persisted sash (E8.1.1's ``initial_sash=None``) falls back to
+    ``DEFAULT_SASH``, so the sidebar keeps its drawn ~250 px and the
+    feed pane gets the rest; the round-trip scenario pins that a
+    persisted position still wins over this default.
+    """
+    assert shared_console.main_splitter.GetSashPosition() == DEFAULT_SASH
 
 
 # --- negative case: a held crossing must not silently draw a card ----

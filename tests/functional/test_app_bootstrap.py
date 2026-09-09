@@ -273,10 +273,10 @@ def test_build_main_window_wires_the_console_to_the_live_engine_feed(
 def test_build_main_window_applies_the_console_canvas_minimum_size(
     bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """xrc-windows.md A: "1100x700" -- honoured via the bootstrap."""
+    """W9 min "1100x780": raised floor, honoured via the bootstrap."""
     min_size = bound_frame.GetMinSize()
 
-    assert (min_size.width, min_size.height) == (1100, 700)
+    assert (min_size.width, min_size.height) == (1100, 780)
 
 
 # --- record-crossing wiring runs at bootstrap (Phase 8, A4) -------
