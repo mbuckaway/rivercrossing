@@ -18,11 +18,14 @@ from pypdf import PdfReader
 if TYPE_CHECKING:
     import pytest
 
+import inspect
+
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
 from rivercrossing.roster import EntryMode, Roster
 from rivercrossing.standings import EntryResult, Placed
 from rivercrossing.ui import app as app_module
+from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS, ResultsWindow
 
 
 class _StubConfig:
@@ -448,8 +451,6 @@ def test_team_logo_srcs_omits_logo_less_and_solo_entries() -> None:
 
 def test_results_window_export_buttons_map_each_button_to_its_route_target() -> None:
     """W11: the four buttons name the four menu export targets."""
-    from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS
-
     assert dict(_EXPORT_BUTTONS) == {
         "export_html_btn": "export_html",
         "export_pdf_btn": "export_pdf",
@@ -465,8 +466,6 @@ def test_results_window_export_button_targets_all_dispatch_like_the_menu_rows() 
     consults for the Results menu rows, so a button target missing
     here would fire a callback with no route behind it.
     """
-    from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS
-
     for _button_name, target in _EXPORT_BUTTONS:
         assert target in app_module._EXPORT_SUGGESTED_NAMES
         assert target in app_module._TARGET_ACTIONS
@@ -480,12 +479,11 @@ def test_results_window_accepts_an_on_export_callback_seam() -> None:
     the app wires it to ``_handle_export_command`` at decoration time
     (the same seam shape as ``on_reopen``).
     """
-    import inspect
+    # Source pin, not inspect.signature: the view's DataSource
+    # annotation is TYPE_CHECKING-only and lazily evaluated (PEP 649
+    # on 3.14), so resolving the signature raises NameError. The
+    # repo's own wiring pins (test_app_wiring.py) use the same
+    # inspect.getsource form.
+    source = inspect.getsource(ResultsWindow.__init__)
 
-    from rivercrossing.ui.views.results_win import ResultsWindow
-
-    # eval_str=False: DataSource is TYPE_CHECKING-only in the view
-    # module, so its PEP 649 annotation is a lazy string at runtime.
-    parameters = inspect.signature(ResultsWindow.__init__, eval_str=False).parameters
-
-    assert "on_export" in parameters
+    assert "on_export: Callable[[str], None] | None = None" in source

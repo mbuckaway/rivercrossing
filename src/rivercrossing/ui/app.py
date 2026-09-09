@@ -1198,6 +1198,12 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
                 tiebreak_order=presenter.engine.config.tiebreak_order,
                 export_watermark=context.export_watermark,
                 on_reopen=lambda: _handle_reopen_ride_route(context),
+                # W11: the four export buttons fire the same
+                # _handle_export_command route the matching mi_export_*
+                # menu row runs -- the dead synthetic-EVT_MENU
+                # forwarding is gone (the parentless results frame
+                # never reached the main frame's handlers).
+                on_export=lambda target: _handle_export_command(context, target),
             )
         else:
             ResultsWindow(window, data_source=_EMPTY_SOURCE)

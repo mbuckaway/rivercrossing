@@ -34,8 +34,17 @@ here like ``RideSetup`` builds its own) owns that label map and the
 ``reopen_btn``: the app threads an ``on_reopen`` callback (its own
 ``_handle_reopen_ride_route`` flow, the same one ``mi_reopen_ride``
 fires) into the results frame, so the button and the menu row share
-one handler implementation -- the same one-surface-per-action pattern
-the export buttons' menu-event forwarding serves.
+one handler implementation. W11 wires the four export buttons the
+same way: the app threads an ``on_export(target)`` callback (its own
+``_handle_export_command`` route, the same one each ``mi_export_*``
+menu row runs) into the frame at decoration time. The old mechanism
+this replaces -- forwarding a synthetic ``EVT_MENU`` through the
+results frame's own handler chain -- was dead: the frame opens
+parentless (app.py's ``LoadFrame(None, ...)`` in the route opener),
+so command events never propagated up to the main frame where the
+``mi_export_*`` handlers are bound. Both callbacks are the
+one-surface-per-action pattern: one handler implementation serves the
+menu row and the results-frame button.
 
 ``_find`` is now shared via ``ui.views._support.find_control`` --
 see that module's docstring for why it used to be duplicated here.
@@ -113,13 +122,16 @@ MIN_SIZE = (720, 442)
 STALE_INFOBAR = "stale_infobar"
 
 
-# E6.4.2: the results-frame export buttons and the menu rows they fire,
-# so one handler implementation serves both surfaces.
+# E6.4.2: the results-frame export buttons and the route targets they
+# fire, so one handler implementation serves both surfaces (W11: the
+# values are the ``_handle_export_command`` route targets, matching the
+# Results menu rows' dispatch; the old menu-id values fed a synthetic
+# EVT_MENU that never reached the main frame).
 _EXPORT_BUTTONS: tuple[tuple[str, str], ...] = (
-    ("export_html_btn", ids.MI_EXPORT_HTML),
-    ("export_pdf_btn", ids.MI_EXPORT_PDF),
-    ("poster_btn", ids.MI_EXPORT_POSTER),
-    ("export_csv_btn", ids.MI_EXPORT_RESULTS_CSV),
+    ("export_html_btn", "export_html"),
+    ("export_pdf_btn", "export_pdf"),
+    ("poster_btn", "export_poster"),
+    ("export_csv_btn", "export_results_csv"),
 )
 
 
@@ -236,7 +248,7 @@ class ResultsWindow:
     ``mi_reopen_ride`` menu row runs -- when the app wired one.
     """
 
-    def __init__(  # noqa: PLR0913 -- (frame, data_source) + the tie-break order, export-watermark and reopen seams
+    def __init__(  # noqa: PLR0913 -- (frame, data_source) + the tie-break order, export-watermark, reopen and export seams
         self,
         frame: wx.Frame,
         *,
@@ -244,6 +256,7 @@ class ResultsWindow:
         tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER,
         export_watermark: int | None = None,
         on_reopen: Callable[[], None] | None = None,
+        on_export: Callable[[str], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``results_frame`` window.
 
@@ -265,10 +278,16 @@ class ResultsWindow:
                 ``_handle_reopen_ride_route`` ``mi_reopen_ride``
                 fires. ``reopen_btn`` runs it; ``None`` (a results
                 window with no live ride) leaves the button inert.
+            on_export: The app's export flow (W11) -- the same
+                ``_handle_export_command`` route each ``mi_export_*``
+                menu row runs. Each export button fires it with the
+                button's route target; ``None`` leaves the buttons
+                inert (a results window with no live ride).
         """
         self.frame = frame
         self.data_source = data_source
         self.on_reopen = on_reopen
+        self.on_export = on_export
 
         self.standings_list = self._find(ids.STANDINGS_LIST, wx.dataview.DataViewCtrl)
         self.show_times_chk = self._find(ids.SHOW_TIMES_CHK, wx.CheckBox)
@@ -319,23 +338,23 @@ class ResultsWindow:
         return find_control(self.frame, name, expected_type)
 
     def _bind_export_buttons(self) -> None:
-        """Route the four export buttons through the menu command table.
+        """Wire the four export buttons to the app's export flow (W11).
 
-        E6.4.2: each button fires the same ``mi_export_*`` event the
-        Results menu row does, so one handler implementation serves
-        both surfaces -- the frame's bound ``EVT_MENU`` handlers run
-        the export off-loop (R-02).
+        ``on_export`` is the app's own ``_handle_export_command``
+        (the flow each ``mi_export_*`` menu row runs), threaded at
+        decoration time -- the same callback seam ``reopen_btn``
+        uses. Each button fires it with its route target. This
+        replaces the dead synthetic-event mechanism: the results
+        frame opens parentless, so a forwarded ``EVT_MENU`` never
+        reached the main frame's ``mi_export_*`` handlers (module
+        docstring). A results window with no live ride (``None``)
+        leaves the buttons inert, mirroring ``reopen_btn``.
         """
-        import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
-
-        for button_name, menu_id in _EXPORT_BUTTONS:
+        if self.on_export is None:
+            return
+        for button_name, target in _EXPORT_BUTTONS:
             button = self._find(button_name, wx.Button)
-            button.Bind(
-                wx.EVT_BUTTON,
-                lambda _event, mid=menu_id: self.frame.GetEventHandler().ProcessEvent(
-                    wx.CommandEvent(wx.EVT_MENU.typeId, wx.xrc.XRCID(mid))
-                ),
-            )
+            button.Bind(wx.EVT_BUTTON, lambda _event, t=target: self.on_export(t))
 
     def _bind_reopen_button(self) -> None:
         """Wire ``reopen_btn`` to the app's reopen flow (ux-polish).

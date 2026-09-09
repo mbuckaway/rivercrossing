@@ -135,7 +135,8 @@ def test_results_preview_browser_opens_the_last_export(
     assert opened == [out]
 
 
-# --------------------------------------------------- W11 F1: the results-frame export buttons
+# ------------------------------------- W11 F1: the results-frame
+# export buttons
 
 # Each results-window button maps to the export target the matching
 # menu row runs (results_win._EXPORT_BUTTONS). The old mechanism -- a
