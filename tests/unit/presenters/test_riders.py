@@ -1594,6 +1594,46 @@ def test_on_add_committed_marks_the_roster_changed() -> None:
 
 
 @given(
+    plates=st.lists(
+        st.text(alphabet=string.digits, min_size=1, max_size=6),
+        min_size=1,
+        max_size=8,
+    )
+)
+def test_plate_order_key_given_digit_plates_matches_integer_order(
+    plates: list[str],
+) -> None:
+    """The numeric-aware key is monotonic in the integer value (T-7)."""
+    ordered = sorted(set(plates), key=_plate_order_key)
+
+    assert ordered == sorted(set(plates), key=int)
+
+
+@given(
+    plates=st.lists(
+        st.text(alphabet=string.ascii_letters + string.digits, min_size=1, max_size=6),
+        min_size=1,
+        max_size=8,
+        unique=True,
+    )
+)
+def test_visible_pairs_plate_sorting_is_idempotent(plates: list[str]) -> None:
+    """Sorting the same rows twice yields the same order (T-7)."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+    # logic-coverage-exempt: T-8 -- the loop is pure Arrange (a
+    # Hypothesis-sized roster fixture); the Assert runs once after it.
+    for index, plate in enumerate(plates):
+        roster.create_solo_entry(first_name=f"R{index}", last_name="", plate=plate)
+
+    pairs = _rider_pairs(roster)
+    once = _visible_pairs(roster, pairs, search_text="", column=0, ascending=True)
+    twice = _visible_pairs(roster, pairs, search_text="", column=0, ascending=True)
+
+    assert [pair[0].plate for pair in once] == [pair[0].plate for pair in twice]
+    assert len(once) == len(pairs)
+
+
+@given(
     team_names=st.lists(
         st.text(alphabet=string.ascii_letters, min_size=1, max_size=8),
         min_size=0,
