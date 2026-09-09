@@ -76,6 +76,9 @@ from rivercrossing.roster import EntryMode, EntryType, PlateModel, Roster
 from rivercrossing.standings import Placed, rank_by_kind, tiebreak_order_from_spellings
 from rivercrossing.store import (
     PreviousSession,
+    RideNameMismatchError,
+    RideNotFoundError,
+    RideRunningError,
     Store,
     StoreError,
     default_db_path,
@@ -679,9 +682,36 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
     context.frame.SetStatusText(f"{route.label} — not yet implemented")
 
 
+def _delete_refusal_text(exc: Exception) -> str:
+    """Return the operator-facing delete-refusal message for *exc*.
+
+    ``StoreError`` subclasses carry developer-facing text (a row id, a
+    stored-status word) that UX-DESKTOP §9 bars from the UI, so each
+    maps to a plain what/why line; ``OSError`` and ``sqlite3.Error``
+    refusals (a locked database, an unwritable backup target) pass
+    their own text through, the idiom the resume-error alert uses.
+
+    Args:
+        exc: The refusal the store raised.
+
+    Returns:
+        The message ``std_dialogs.show_error`` shows.
+    """
+    if isinstance(exc, RideRunningError):
+        return "The ride is running, so it cannot be deleted. Finish the ride first."
+    if isinstance(exc, RideNotFoundError):
+        return "The ride is no longer in the library."
+    if isinstance(exc, RideNameMismatchError):
+        return (
+            "The ride's name changed since the library opened."
+            " Close and reopen the library, then try again."
+        )
+    return f"Could not delete ride: {exc}"
+
+
 def _library_delete_callback(
     context: _RouteContext,
-    window: Any,  # noqa: ANN401, ARG001 -- wx ships no stubs; parent for the W10 refusal dialog (slice C)
+    window: Any,  # noqa: ANN401 -- wx ships no stubs; the loaded ride_library_dlg
 ) -> Callable[[RideSummary], None] | None:
     """Return the library's store-backed delete callback, if any.
 
@@ -696,14 +726,21 @@ def _library_delete_callback(
     E5.4.2 empty state (zero rows), so there is no ride to delete
     either way.
 
-    A refused delete (a locked database, an unwritable backup target)
-    surfaces as a status notice: the callback runs from the library's
-    delete-confirm handler, and an unguarded raise there is swallowed
-    by wx with zero signal (the measured note
-    ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+    A refused delete -- a locked database, an unwritable backup
+    target, or the store's own ``RideRunningError`` refusal --
+    surfaces as an error dialog above *window*, the library the
+    delete was confirmed on (W10): the callback runs from the
+    library's delete-confirm handler, an unguarded raise there is
+    swallowed by wx with zero signal (the measured note
+    ``docs/EPIC3-SESSION-SUMMARY.md`` records), and a status notice
+    is invisible behind the library modal. ``StoreError`` joins
+    ``OSError``/``sqlite3.Error`` in the guard so every refusal the
+    store raises is caught.
 
-    ``window`` is the live ``ride_library_dlg`` the delete was
-    confirmed on; the refusal surfacing parents to it.
+    Args:
+        context: The route context whose store deletes the ride.
+        window: The live ``ride_library_dlg`` the delete was
+            confirmed on; the refusal dialog parents to it.
     """
     store = context.store
     if store is None:
@@ -717,8 +754,12 @@ def _library_delete_callback(
             return
         try:
             store.delete_ride(selected.ride_id, selected.name)
-        except (OSError, sqlite3.Error) as exc:
-            context.frame.SetStatusText(f"Could not delete ride: {exc}")
+        except (OSError, sqlite3.Error, StoreError) as exc:
+            from rivercrossing.ui import (  # noqa: PLC0415 -- deferred, see module docstring
+                std_dialogs,
+            )
+
+            std_dialogs.show_error(window, "Could Not Delete Ride", _delete_refusal_text(exc))
 
     return _delete
 
