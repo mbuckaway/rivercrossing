@@ -21,7 +21,7 @@ import pytest
 
 XRC_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" / "xrc"
 
-XRC_FILES = ("main.xrc", "setup.xrc")
+XRC_FILES = ("main.xrc", "setup.xrc", "settings.xrc")
 
 # xrc-windows.md section A. main_menubar is the *menubar* resource's
 # own name, so it is not one of the frame's controls. resume_infobar,
@@ -48,6 +48,8 @@ MAIN_FRAME_CONTROLS = (
     "cards_count_lbl",
     "on_course_lbl",
     "shoe_lbl",
+    "riders_count_lbl",
+    "teams_count_lbl",
     "review_notebook",
     "flagged_list",
     "review_btn",
@@ -67,6 +69,8 @@ FILE_MENU_ITEMS = (
     "wxID_PREFERENCES",
     "wxID_EXIT",
 )
+# W14: mi_ride_setup left the Ride menu with its §15 row -- File ▸
+# New Ride… is the single entry point to the ride-setup window.
 RIDE_MENU_ITEMS = (
     "mi_start_ride",
     "mi_stop_ride",
@@ -74,7 +78,6 @@ RIDE_MENU_ITEMS = (
     "mi_finish_ride",
     "mi_reopen_ride",
     "mi_audit_trail",
-    "mi_ride_setup",
 )
 RIDERS_MENU_ITEMS = (
     "mi_rider_editor",
@@ -102,7 +105,6 @@ RESULTS_MENU_ITEMS = (
     "mi_preview_browser",
     "mi_tiebreak_order",
 )
-THEME_MENU_ITEMS = ("mi_theme_system", "mi_theme_light", "mi_theme_dark")
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
     "mi_zoom_100",
@@ -112,7 +114,10 @@ ZOOM_MENU_ITEMS = (
     "mi_zoom_140",
     "mi_zoom_150",
 )
-VIEW_MENU_ITEMS = (*THEME_MENU_ITEMS, "mi_hide_times", *ZOOM_MENU_ITEMS)
+# W13 (testing notes #14): the theme trio left the View menu -- the
+# Settings appearance radios are the single theme surface -- so the
+# View row is hide-times plus the seven zoom radios.
+VIEW_MENU_ITEMS = ("mi_hide_times", *ZOOM_MENU_ITEMS)
 HELP_MENU_ITEMS = ("mi_user_guide", "mi_shortcuts", "mi_selftest", "wxID_ABOUT")
 
 MAIN_MENUBAR_CONTROLS = (
@@ -137,6 +142,8 @@ RIDE_SETUP_CONTROLS = (
     "scorer_input",
     "duration_input",
     "min_lap_input",
+    "hold_short_radio",
+    "always_deal_radio",
     "logo_picker",
     "solo_radio",
     "mixed_radio",
@@ -170,16 +177,18 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15 has 40 rows: File 8, Ride 7, Riders 6, Cards 7,
-# Results 7, View 1, Help 4. The single View row expands into the 11
-# items section 15b names for it.
+# spec.md section 15 has 39 rows: File 8, Ride 6, Riders 6, Cards 7,
+# Results 7, View 1, Help 4 (W14: the Ride Setup… row left the Ride
+# menu with mi_ride_setup). The single View row expands into the 8
+# items section 15b names for it (W13: hide-times + the seven zoom
+# radios; the theme trio left the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
-    ("&Ride", 7),
+    ("&Ride", 6),
     ("Ri&ders", 6),
     ("&Cards", 7),
     ("Re&sults", 7),
-    ("&View", 11),
+    ("&View", 8),
     ("&Help", 4),
 )
 
@@ -190,13 +199,20 @@ ACCELERATOR_CASES = (
 )
 ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
-RADIO_MENU_ITEMS = (*THEME_MENU_ITEMS, *ZOOM_MENU_ITEMS)
+RADIO_MENU_ITEMS = ZOOM_MENU_ITEMS
 
-# Canvas defaults, and the first member of each of the dialog's three
-# radio groups (entry mode, plate model, jokers per deck).
-SELECTED_RADIOS = ("mixed_radio", "pooled_radio", "jokers_2_radio")
-GROUP_OPENING_RADIOS = ("solo_radio", "pooled_radio", "jokers_0_radio")
-GROUP_FOLLOWING_RADIOS = ("mixed_radio", "relay_radio", "jokers_2_radio", "jokers_4_radio")
+# Canvas defaults, and the first member of each of the dialog's four
+# radio groups (short-lap policy, entry mode, plate model, jokers per
+# deck).
+SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio", "jokers_2_radio")
+GROUP_OPENING_RADIOS = ("hold_short_radio", "solo_radio", "pooled_radio", "jokers_0_radio")
+GROUP_FOLLOWING_RADIOS = (
+    "always_deal_radio",
+    "mixed_radio",
+    "relay_radio",
+    "jokers_2_radio",
+    "jokers_4_radio",
+)
 
 FEED_LIST_NAMES = ("crossings_list", "flagged_list")
 
@@ -343,10 +359,10 @@ def test_dialog_declares_a_std_dialog_button_sizer(dialog_name: str) -> None:
 
 
 def test_main_frame_declares_the_canvas_minimum_size() -> None:
-    """Canvas footnote 1100x700 beats spec.md 13's 1180x740."""
+    """W9 raised the min 700->780; W15 records the canvas amendment."""
     frame = _top_level_windows("main.xrc")["main_frame"]
 
-    assert _param(frame, "size") == "1100,700"
+    assert _param(frame, "size") == "1100,780"
 
 
 def test_main_splitter_is_declared_as_a_splitter_window() -> None:
@@ -380,13 +396,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_seven_menu_item_names() -> None:
-    """spec.md 15b names 47 ``mi_*`` items across the seven menus."""
+def test_main_menubar_declares_forty_three_menu_item_names() -> None:
+    """spec.md 15b names 43 ``mi_*`` items across the menus (W14)."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 47
+    assert len(menu_item_names) == 43
 
 
 def test_file_menu_declares_the_spec_15_row_order() -> None:
@@ -419,7 +435,7 @@ def test_only_the_documented_menu_items_declare_an_accelerator() -> None:
 
 @pytest.mark.parametrize("item_name", RADIO_MENU_ITEMS)
 def test_view_menu_radio_item_declares_the_radio_kind(item_name: str) -> None:
-    """The theme trio and the seven zoom steps are radio items."""
+    """The seven zoom steps are radio items (the View row's radios)."""
     item = _objects_by_name(_window("main_menubar"))[item_name]
 
     assert _param(item, "radio") == "1"
@@ -432,9 +448,25 @@ def test_view_menu_hide_times_item_declares_the_check_kind() -> None:
     assert _param(item, "checkable") == "1"
 
 
+def test_settings_dialog_declares_no_text_zoom_control() -> None:
+    """W13: View ▸ Zoom is the single zoom surface (settings.xrc E).
+
+    The settings dialog used to carry ``zoom_choice`` -- the text-zoom
+    surface testing notes #12 removed. Its removal is structural here
+    (no ``zoom_choice`` object and no ``wxChoice`` at all in the
+    dialog), and behavioural in the functional suite (pages.py's
+    SETTINGS_DLG spec and the renders scenario's raw-name probe).
+    """
+    names = _control_names_in(_top_level_windows("settings.xrc")["settings_dlg"])
+    classes = [obj.attrib["class"] for obj in _parse("settings.xrc").iter("object")]
+
+    assert "zoom_choice" not in names
+    assert classes.count("wxChoice") == 0
+
+
 @pytest.mark.parametrize("radio_name", SELECTED_RADIOS)
 def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
-    """solo, pooled and jokers-2 start selected, exactly as drawn."""
+    """always-deal/mixed/pooled/jokers-2 start selected, as drawn."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert _param(radio, "value") == "1"
@@ -442,7 +474,7 @@ def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
 
 @pytest.mark.parametrize("radio_name", GROUP_OPENING_RADIOS)
 def test_radio_group_first_member_declares_rb_group(radio_name: str) -> None:
-    """Each of the dialog's three groups is opened by wxRB_GROUP."""
+    """Each of the dialog's four groups is opened by wxRB_GROUP."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert "wxRB_GROUP" in _param(radio, "style")
@@ -463,6 +495,35 @@ def test_team_size_spin_declares_the_spec_documented_range() -> None:
     bounds = (_param(spin, "min"), _param(spin, "max"), _param(spin, "value"))
 
     assert bounds == ("2", "10", "4")
+
+
+# ------------------------------------------------- W4 lap fields
+# (labels declare the entry format, and the short-lap card policy pair
+# sits next to them with always-deal as the declared XRC default.)
+
+
+def test_lap_field_static_labels_declare_the_entry_formats() -> None:
+    """The lap labels name their H:MM/M:SS entry shapes."""
+    labels = [
+        _param(obj, "label")
+        for obj in _window("ride_setup_dlg").iter("object")
+        if obj.attrib["class"] == "wxStaticText"
+    ]
+
+    assert "Duration (H:MM)" in labels
+    assert "Min lap (M:SS)" in labels
+
+
+def test_short_lap_policy_radios_declare_the_two_policy_labels() -> None:
+    """hold_short_radio/always_deal_radio carry the W4 policy copy."""
+    window = _window("ride_setup_dlg")
+    hold = _objects_by_name(window)["hold_short_radio"]
+    deal = _objects_by_name(window)["always_deal_radio"]
+
+    assert (_param(hold, "label"), _param(deal, "label")) == (
+        "Hold short-lap cards for review",
+        "Always deal cards",
+    )
 
 
 # --------------------------------------------------------------------

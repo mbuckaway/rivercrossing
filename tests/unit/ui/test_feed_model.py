@@ -4,12 +4,14 @@
 Everything here runs without ``wx`` and without a display:
 ``ui/feed_model.py`` never imports it. The wx-facing half --
 ``CrossingsFeedModel``, a ``wx.dataview.DataViewIndexListModel``
-subclass that delegates to the two functions tested here -- lives in
+subclass that delegates to the pure functions tested here -- lives in
 ``views/main_frame.py`` and is proven by the real-toolkit suite,
 ``tests/functional/test_console_demo.py`` (``cards_imagelist``'s own
 split between ``tests/unit/`` and ``tests/functional/`` is the
 precedent this mirrors).
 """
+
+import re
 
 import pytest
 from hypothesis import given
@@ -19,37 +21,81 @@ from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui.cards_imagelist import CARD_KEYS
 from rivercrossing.ui.feed_model import (
     COL_CARD,
-    COL_ENTRY,
     COL_LAP,
     COL_LAP_TIME,
+    COL_NAME,
     COL_PLATE,
     COL_TIME,
     COL_TOTAL,
     COLUMN_LABELS,
+    COLUMN_WIDTHS,
     TIME_COLUMNS,
     card_asset_key_or_none,
     edited_row_indexes,
     flagged_row_indexes,
+    flash_crossing_label,
 )
 from rivercrossing.ui.presenters.data_source import FeedRow
 
 # --- column layout (pure data, matches xrc-windows.md section A) ------
 
-CANVAS_COLUMN_ORDER = ("Time", "Plate", "Entry", "Lap", "Lap time", "Total", "Card")
+# W9 column order: the Entry header is renamed "Name" and the Card
+# column moves ahead of Lap -- Time | Plate | Name | Card | Lap |
+# Lap time | Total.
+CANVAS_COLUMN_ORDER = ("Time", "Plate", "Name", "Card", "Lap", "Lap time", "Total")
 CANVAS_COLUMN_INDEXES = (
     COL_TIME,
     COL_PLATE,
-    COL_ENTRY,
+    COL_NAME,
+    COL_CARD,
     COL_LAP,
     COL_LAP_TIME,
     COL_TOTAL,
-    COL_CARD,
 )
 
 
 def test_column_labels_matches_the_canvas_exact_order() -> None:
-    """xrc-windows.md A: Time-Plate-Entry-Lap-Lap time-Total-Card."""
+    """W9: Time-Plate-Name-Card-Lap-Lap time-Total."""
     assert COLUMN_LABELS == CANVAS_COLUMN_ORDER
+
+
+def test_column_indexes_pin_card_before_lap_under_the_name_header() -> None:
+    """W9: index 2 is Name, Card is 3, Lap is 4 -- in that order."""
+    assert (COL_NAME, COL_CARD, COL_LAP) == (2, 3, 4)
+    assert COLUMN_LABELS[COL_NAME] == "Name"
+
+
+def test_column_labels_rename_entry_to_name_throughout() -> None:
+    """W9: no column still reads "Entry" -- the header is "Name"."""
+    assert "Entry" not in COLUMN_LABELS
+    assert "Name" in COLUMN_LABELS
+
+
+# --- explicit column widths (W9: nothing truncates at the default size)
+
+# One width per canvas column, in canvas order: enough for the widest
+# demo value in each text column ("14:22:41", "9999", "Trail Blazers
+# (T)", "999", "3:02:11") and the 24x32 card face plus padding in the
+# bitmap one (entry_detail's own D16 width precedent).
+CANVAS_COLUMN_WIDTHS = (80, 50, 150, 60, 50, 80, 80)
+
+
+def test_column_widths_length_matches_the_column_labels() -> None:
+    """Every label has exactly one width -- the two stay in lockstep."""
+    assert len(COLUMN_WIDTHS) == len(COLUMN_LABELS)
+
+
+def test_column_widths_zipped_by_label_cover_each_canvas_column() -> None:
+    """W9: per-label widths pin the content-fit numbers, in order."""
+    assert dict(zip(CANVAS_COLUMN_ORDER, COLUMN_WIDTHS, strict=True)) == {
+        "Time": 80,
+        "Plate": 50,
+        "Name": 150,
+        "Card": 60,
+        "Lap": 50,
+        "Lap time": 80,
+        "Total": 80,
+    }
 
 
 def test_column_indexes_are_contiguous_from_zero_with_no_duplicate() -> None:
@@ -71,7 +117,11 @@ DEALT_CARD_CASES = (
     ("JK", "joker"),
 )
 
-NON_CARD_CASES = ("held", "", "ZZ", "A")
+# W9: the feed never emits a literal "held" cell any more -- the card
+# column always carries a real dealt code -- so the seam's old
+# placeholder case is retired. Any other unmappable text still maps
+# to None (empty string boundary included, T-4).
+NON_CARD_CASES = ("", "ZZ", "A")
 
 
 @pytest.mark.parametrize(("card", "key"), DEALT_CARD_CASES)
@@ -84,7 +134,7 @@ def test_card_asset_key_or_none_given_a_dealt_code_returns_its_asset_key(
 
 @pytest.mark.parametrize("card", NON_CARD_CASES)
 def test_card_asset_key_or_none_given_a_non_card_string_returns_none(card: str) -> None:
-    """R-34's "held" placeholder and any other unmappable text is None.
+    """Any unmappable text is None -- the blank cell seam (W9).
 
     ``""`` is the empty-string boundary case (T-4): a missing card
     value must not be mistaken for a dealt one either.
@@ -204,3 +254,79 @@ def test_edited_row_indexes_given_arbitrary_edits_agrees_with_each_rows_own_bit(
 
     agrees = all((index in indexes) == rows[index].edited for index in range(len(rows)))
     assert agrees is True
+
+
+# --- flash_crossing_label (W9: dealt code glyphs + held suffix) -----
+
+
+def _flash_row(*, card: str = "9H", flagged: bool = False) -> FeedRow:
+    """Build the just-recorded crossing row ``flash_crossing`` shows."""
+    return FeedRow(
+        time="10:00:05",
+        plate="12",
+        entry="Rider 12",
+        lap=3,
+        lap_time="1:40",
+        total="0:05:00",
+        card=card,
+        flagged=flagged,
+    )
+
+
+@pytest.mark.parametrize(
+    ("card", "display"),
+    [
+        ("9H", "9♥"),
+        ("KS", "K♠"),
+        ("4D", "4♦"),
+        ("7C", "7♣"),
+        ("TD", "T♦"),
+        ("JK", "JK★"),
+    ],
+    ids=["hearts", "spades", "diamonds", "clubs", "ten_keeps_t", "joker_star"],
+)
+def test_flash_crossing_label_given_a_dealt_code_spells_its_suit_glyph(
+    card: str, display: str
+) -> None:
+    """W9 glyph polish: ``dealt 9H`` renders as ``dealt 9♥``."""
+    label = flash_crossing_label(_flash_row(card=card))
+
+    assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt {display}"
+
+
+@pytest.mark.parametrize(
+    ("card", "display"),
+    [("9H", "9♥"), ("QH", "Q♥"), ("JK", "JK★")],
+    ids=["held_natural", "held_queen", "held_joker"],
+)
+def test_flash_crossing_label_given_a_flagged_row_appends_the_held_marker(
+    card: str, display: str
+) -> None:
+    """W9: a held flash names the card and appends ``(held)``."""
+    label = flash_crossing_label(_flash_row(card=card, flagged=True))
+
+    assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt {display} (held)"
+
+
+def test_flash_crossing_label_given_an_unknown_suit_letter_raises_key_error() -> None:
+    """Fail loud on a corrupt code, like results_win.format_card."""
+    with pytest.raises(KeyError, match=re.escape("X")):
+        flash_crossing_label(_flash_row(card="9X"))
+
+
+@given(
+    rank=st.text(alphabet="23456789TJQKA", min_size=1, max_size=1),
+    suit=st.sampled_from("SHDC"),
+    flagged=st.booleans(),
+)
+def test_flash_crossing_label_given_any_natural_code_renders_the_matching_glyph(
+    rank: str, suit: str, *, flagged: bool
+) -> None:
+    """Property: rank+glyph pairing is exact for every natural card."""
+    glyphs = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
+
+    label = flash_crossing_label(_flash_row(card=f"{rank}{suit}", flagged=flagged))
+
+    suffix = " (held)" if flagged else ""
+    assert label.endswith(f"dealt {rank}{glyphs[suit]}{suffix}")
+    assert label.startswith("✓ ")

@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 40 menu rows reaches ("Opens / does"), and when it is allowed to
+the 39 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 40 :class:`MenuRoute` rows
+once, so both jobs read off the same 39 :class:`MenuRoute` rows
 instead of two tables that could drift apart.
 
 No wx import lands here (R-71 does not require it, since nothing
@@ -115,9 +115,10 @@ class MenuRoute:
         label: The row's own text, transcribed from the "Menu item"
             column (the part after "▸").
         ids: The XRC names this row covers -- one for almost every
-            row; the View row's single "Theme · Hide Times · Zoom"
-            entry covers all eleven of its radio/check items, since
-            §15 itself groups them into one row.
+            row; the View row's single "Hide Times · Zoom"
+            entry covers all eight of its radio/check items, since
+            §15 itself groups them into one row (W13 removed the three
+            theme radios -- Settings owns appearance now).
         kind: Which :class:`TargetKind` *target* is.
         target: A ``ui/ids.py`` frozen name for ``WINDOW``/``DIALOG``
             kinds, or a short symbolic action name for ``COMMAND``.
@@ -215,7 +216,11 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="exit_or_quit",
         enabled_when=ALWAYS,  # "always"
     ),
-    # --- Ride: 7 rows ---
+    # --- Ride: 6 rows ---
+    # W14: the Ride Setup… row left the menu with mi_ride_setup -- its
+    # "edit this ride" semantics were never built, so File ▸ New Ride…
+    # is the single entry point to the setup window (both rows always
+    # dispatched to the identical RIDE_SETUP_DLG New-Ride branch).
     MenuRoute(
         menu="Ride",
         label="Start Ride",
@@ -234,8 +239,12 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="Ride",
         label="Stop Ride…",
         ids=("mi_stop_ride",),
-        kind=TargetKind.DIALOG,
-        target=ids.STOP_CONFIRM_DLG,
+        # W5: the row dispatches to the live presenter's native
+        # stop-confirm flow (kind=COMMAND target "stop_ride") -- the
+        # XRC stop_confirm_dlg retired with it; a riderless roster
+        # gets a native warning instead of any dialog.
+        kind=TargetKind.COMMAND,
+        target="stop_ride",
         enabled_when=Enablement(allowed_states=_RUNNING),  # "RUNNING"
     ),
     MenuRoute(
@@ -274,15 +283,6 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         enabled_when=Enablement(
             requires_ride_open=True, min_audit_rows=1
         ),  # "ride open, ≥1 audit row"
-    ),
-    MenuRoute(
-        menu="Ride",
-        label="Ride Setup…",
-        ids=("mi_ride_setup",),
-        kind=TargetKind.WINDOW,
-        target=ids.RIDE_SETUP_DLG,
-        # spec.md §15: ride open (locks tighten after start)
-        enabled_when=Enablement(requires_ride_open=True),
     ),
     # --- Riders: 6 rows ---
     MenuRoute(
@@ -460,14 +460,12 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="focus_tiebreak_control",
         enabled_when=Enablement(requires_ride_open=True),  # "ride open"
     ),
-    # --- View: 1 row, 11 ids ---
+    # --- View: 1 row, 8 ids (W13: the theme trio left the View menu;
+    # the Settings appearance radios are the single theme surface) ---
     MenuRoute(
         menu="View",
-        label="Theme · Hide Times · Zoom",
+        label="Hide Times · Zoom",
         ids=(
-            "mi_theme_system",
-            "mi_theme_light",
-            "mi_theme_dark",
             "mi_hide_times",
             "mi_zoom_90",
             "mi_zoom_100",
@@ -477,7 +475,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
             "mi_zoom_140",
             "mi_zoom_150",
         ),
-        kind=TargetKind.COMMAND,  # "Direct commands ... mirrored in Settings"
+        kind=TargetKind.COMMAND,  # "Direct commands"
         target="view_setting",
         enabled_when=ALWAYS,  # "always"
     ),

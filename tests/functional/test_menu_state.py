@@ -19,6 +19,11 @@ between the authored control and the code-side rule:
   ride-state label does not move ("Stop is a UI guard, not a state",
   spec §3). A binding that was dead, or a view that ignored it,
   would fail the assertions below.
+* W5's RUNNING gate: ``arm_stop_chk`` and ``stop_btn`` are disabled
+  whenever the ride is not RUNNING (``set_state`` composes the armed
+  mirror with the status), so the arm flow is only drivable on a
+  started ride -- the drive below starts the engine through the real
+  ``start_btn`` binding first.
 
 The single window is wired exactly as the app bootstrap wires it
 (``wire_console`` + ``set_state`` over ``app._build_console_engine``),
@@ -61,11 +66,13 @@ def _tick_arm_stop_checkbox(frame: Any, *, value: bool) -> None:  # noqa: ANN401
 def test_stop_button_tracks_arm_stop_chk_from_xrc_default_through_a_wired_toggle(
     xrc_resource: object,
 ) -> None:
-    """R-35: Arm ticks in XRC, then the wired toggle drives Stop.
+    """R-35: Arm ticks in XRC, then the wired toggle drives Stop (W5).
 
     Reads the authored default before any code runs, then builds the
-    real console over the same frame and drives the checkbox both
-    ways through the binding ``wire_console`` installs.
+    real console over the same frame, starts the ride through the
+    real ``start_btn`` binding (the W5 RUNNING gate keeps the arm
+    flow off until then), and drives the checkbox both ways through
+    the binding ``wire_console`` installs.
     """
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     console = None
@@ -82,26 +89,39 @@ def test_stop_button_tracks_arm_stop_chk_from_xrc_default_through_a_wired_toggle
         # as the app bootstrap does: production engine, presenter,
         # ``wire_console`` bindings, initial state render. The code
         # also gates Stop at construction even if XRC ever left it on.
+        # W5: DRAFT is not RUNNING, so the arm checkbox itself is off.
         roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+        roster.create_solo_entry(first_name="Rider 12", last_name="", plate="12")
         engine, source = app_module._build_console_engine(roster)
-        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        console = MainFrame(frame, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_console(presenter)
         console.set_state(source.ride_status())
         stop_btn = harness.find_control(frame, ids.STOP_BTN)
         status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
         assert (stop_btn.IsEnabled(), status_lbl.GetLabelText()) == (False, "DRAFT")
+        assert arm_chk.IsEnabled() is False  # W5: arming only guards a live ride
 
-        # Phase 3 -- arm through a real EVT_CHECKBOX. The binding's
+        # Phase 3 -- start through the real start_btn binding: RUNNING
+        # re-enables the arm checkbox (unticked); Stop stays off.
+        harness.click(frame, ids.START_BTN)
+        assert (arm_chk.IsEnabled(), arm_chk.GetValue(), stop_btn.IsEnabled()) == (
+            True,
+            False,
+            False,
+        )
+        assert status_lbl.GetLabelText() == "RUNNING"
+
+        # Phase 4 -- arm through a real EVT_CHECKBOX. The binding's
         # handler reads the checkbox and the presenter enables Stop.
         _tick_arm_stop_checkbox(frame, value=True)
         assert (arm_chk.GetValue(), stop_btn.IsEnabled()) == (True, True)
 
         # R-35 is a UI guard, not a state: arming must not move the
         # ride-status label.
-        assert status_lbl.GetLabelText() == "DRAFT"
+        assert status_lbl.GetLabelText() == "RUNNING"
 
-        # Phase 4 -- Show + pump, then read the rendered controls:
+        # Phase 5 -- Show + pump, then read the rendered controls:
         # both carry their assistive-tech labels (R-83) with the
         # enabled/checked state the drive produced.
         frame.Show()
@@ -109,12 +129,24 @@ def test_stop_button_tracks_arm_stop_chk_from_xrc_default_through_a_wired_toggle
         harness.pump()
         assert (arm_chk.GetLabelText(), arm_chk.GetValue()) == ("Arm", True)
         assert (stop_btn.GetLabelText(), stop_btn.IsEnabled()) == ("Stop ride…", True)
-        assert status_lbl.GetLabelText() == "DRAFT"
+        assert status_lbl.GetLabelText() == "RUNNING"
 
-        # Phase 5 -- disarm round trip: the same binding turns Stop
+        # Phase 6 -- disarm round trip: the same binding turns Stop
         # back off, so a one-way (sticky) handler would fail here.
         _tick_arm_stop_checkbox(frame, value=False)
         assert (arm_chk.GetValue(), stop_btn.IsEnabled()) == (False, False)
+
+        # Phase 7 -- leaving RUNNING closes the whole arm flow (W5):
+        # finishing through the engine and re-rendering state disables
+        # the checkbox and Stop together.
+        engine.finish()
+        console.set_state(source.ride_status())
+        assert status_lbl.GetLabelText() == "FINISHED"
+        assert (arm_chk.IsEnabled(), arm_chk.GetValue(), stop_btn.IsEnabled()) == (
+            False,
+            False,
+            False,
+        )
     finally:
         # Phase-2 reference hygiene (the shared-fixture precedent):
         # drop the view and presenter before the window dies so

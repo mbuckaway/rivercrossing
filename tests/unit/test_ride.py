@@ -133,6 +133,17 @@ def test_ride_config_bare_required_fields_defaults_logo_path_to_none() -> None:
     assert config.logo_path is None
 
 
+def test_ride_config_bare_required_fields_defaults_hold_short_laps_to_false() -> None:
+    """W4 default: a short lap always deals unless the operator opts in.
+
+    The always-deal decision rides on ``hold_short_laps=False``, the
+    field's dataclass default.
+    """
+    config = _config()
+
+    assert config.hold_short_laps is False
+
+
 def test_ride_config_given_a_logo_path_stores_it_verbatim() -> None:
     """A chosen logo_picker path round-trips exactly."""
     path = Path("/tmp/gorba-logo.png")  # noqa: S108 -- a stored value, never opened here
@@ -896,6 +907,34 @@ def test_on_course_counts_active_entries_with_odd_lap_counts() -> None:
     assert engine.on_course == 1
 
 
+def test_entry_count_given_empty_roster_returns_zero() -> None:
+    """W5: the stop flow reads a zero-entry roster as no riders."""
+    engine, _ = _make_engine(roster=_roster_with_entries())
+
+    assert engine.entry_count == 0
+
+
+def test_entry_count_given_two_entries_returns_two() -> None:
+    """W5: the count matches the roster the engine was built over."""
+    engine, _ = _make_engine(roster=_roster_with_entries("12", "34"))
+
+    assert engine.entry_count == 2
+
+
+def test_entry_count_tracks_entries_added_after_construction() -> None:
+    """W5: the count is a live roster read, never a construction copy.
+
+    The roster the engine holds is shared and mutable, so an entry
+    added after ``RideEngine`` construction must appear in the count
+    (mirrors ``on_course``'s own live read).
+    """
+    roster = _roster_with_entries("12")
+    engine, _ = _make_engine(roster=roster)
+    roster.create_solo_entry(first_name="Rider 34", last_name="", plate="34")
+
+    assert engine.entry_count == 2
+
+
 # ============================================ E4.2 crossings + dealing
 
 
@@ -916,7 +955,7 @@ def test_record_crossing_normal_lap_credits_card_and_reports_flagged_false() -> 
 
 def test_record_crossing_short_lap_flags_holds_card_and_still_records_lap() -> None:
     """A lap under min_lap_s flags short, records, holds its card."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
 
     result = engine.record_crossing("12", at=_dt(10, 0, 30))
@@ -930,6 +969,21 @@ def test_record_crossing_short_lap_flags_holds_card_and_still_records_lap() -> N
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].laps == 1
     assert results["12"].cards == ()
+
+
+def test_record_crossing_short_lap_given_always_deal_default_credits_the_card() -> None:
+    """W4 default: a short lap's card deals; nothing flags or holds."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    assert result.accepted is True
+    assert result.flagged is False
+    assert engine.held_crossings() == ()
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["12"].laps == 1
+    assert results["12"].cards == (result.card,)
 
 
 def test_record_crossing_min_lap_exact_equal_is_not_flagged() -> None:
@@ -946,7 +1000,7 @@ def test_record_crossing_min_lap_exact_equal_is_not_flagged() -> None:
 
 def test_record_crossing_min_lap_one_second_under_is_flagged() -> None:
     """A lap a second under min_lap_s flags short, holds card."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
 
     result = engine.record_crossing("12", at=_dt(10, 17, 59))
@@ -1010,7 +1064,7 @@ def test_record_crossing_held_card_confirm_void_table(
     action: str, expected_hand_cards: int, expected_held: int
 ) -> None:
     """Held-card lifecycle: confirm credits, void discards (R-34)."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
     held = engine.held_crossings()[0]
@@ -1024,7 +1078,7 @@ def test_record_crossing_held_card_confirm_void_table(
 
 def test_confirm_held_returns_audit_event_and_best_hand_improves() -> None:
     """confirm_held writes an audit row; the credited hand improves."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
     held = engine.held_crossings()[0]
@@ -1042,7 +1096,7 @@ def test_confirm_held_returns_audit_event_and_best_hand_improves() -> None:
 
 def test_void_held_returns_audit_event_and_hand_stays_empty() -> None:
     """void_held writes an audit row and never credits the card."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
     held = engine.held_crossings()[0]
@@ -1060,7 +1114,7 @@ def test_void_held_returns_audit_event_and_hand_stays_empty() -> None:
 
 def test_confirm_held_already_credited_crossing_raises_illegal_state_error() -> None:
     """confirm_held on a non-held crossing raises (R-34 negative)."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
     crossing = engine.held_crossings()[0].crossing
@@ -1072,7 +1126,7 @@ def test_confirm_held_already_credited_crossing_raises_illegal_state_error() -> 
 
 def test_void_held_already_voided_crossing_raises_illegal_state_error() -> None:
     """void_held on a non-held crossing raises (R-34 negative)."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
     crossing = engine.held_crossings()[0].crossing
@@ -1100,7 +1154,7 @@ def test_record_crossing_shoe_exhaustion_reshuffles_and_audits() -> None:
 
 def test_snapshot_cards_reflect_credited_and_released_cards() -> None:
     """EntryResult.cards pools credited plus released cards (R-34)."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     normal = engine.record_crossing("12", at=_dt(10, 30))
     flagged = engine.record_crossing("12", at=_dt(10, 32))
@@ -1114,7 +1168,7 @@ def test_snapshot_cards_reflect_credited_and_released_cards() -> None:
 
 def test_snapshot_excludes_held_and_voided_cards_from_the_hand() -> None:
     """Held (unconfirmed) and voided cards never reach the hand."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     normal = engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 32))
@@ -1195,7 +1249,7 @@ def test_undo_then_rerecord_deals_the_same_card_from_the_shoe_front() -> None:
 
 def test_undo_last_held_crossing_releases_hold_and_restitutes_card() -> None:
     """Undo of a held crossing drops the hold, never credits."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
     held = engine.held_crossings()[0]
@@ -1210,7 +1264,7 @@ def test_undo_last_held_crossing_releases_hold_and_restitutes_card() -> None:
 
 def test_undo_last_voided_crossing_returns_its_card_to_the_shoe() -> None:
     """Undo fully reverses a voided crossing, card back to shoe."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))
     held = engine.held_crossings()[0]
@@ -1504,7 +1558,7 @@ def test_deal_manual_respects_card_cap() -> None:
 
 def test_deal_manual_credits_directly_never_releases_held_card() -> None:
     """deal_manual never bypasses the held queue (R-34)."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> card held
     held_before = engine.held_crossings()
@@ -1618,6 +1672,68 @@ def test_engine_card_for_given_an_unknown_crossing_raises_key_error() -> None:
         engine.card_for(crossing)
 
 
+# --------------------------------------- W9: held-card lookup (R-34)
+
+
+def test_engine_held_card_for_given_a_held_crossing_returns_its_card() -> None:
+    """A short-lap crossing's held card resolves by crossing (W9)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+
+    held_card = engine.held_card_for(crossing)
+
+    assert held_card == result.card
+    assert engine.card_for(crossing) == result.card  # dealt, not credited
+
+
+def test_engine_held_card_for_given_a_credited_crossing_returns_none() -> None:
+    """A normal lap's card is credited, never held -- None (W9)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    crossing = engine.crossings[-1]
+
+    assert engine.held_card_for(crossing) is None
+
+
+def test_engine_held_card_for_given_a_short_lap_under_always_deal_returns_none() -> None:
+    """W4 default: a short lap credits like any other -- not held."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    assert engine.held_crossings() == ()
+    assert engine.held_card_for(engine.crossings[-1]) is None
+
+
+@pytest.mark.parametrize(
+    "release",
+    ["confirm_held", "void_held"],
+    ids=["released_by_confirm", "released_by_void"],
+)
+def test_engine_held_card_for_given_a_released_crossing_returns_none(release: str) -> None:
+    """Confirm or void moves the card out of the hold queue (W9)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    getattr(engine, release)(held.crossing)
+
+    assert engine.held_card_for(held.crossing) is None
+
+
+def test_engine_held_card_for_given_a_crossing_never_dealt_returns_none() -> None:
+    """A stranger crossing is not in the hold queue -- None (W9)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    crossing = Crossing(entry_id="12", seq=99, crossed_at=_dt(10, 30))
+
+    assert engine.held_card_for(crossing) is None
+
+
 def test_engine_shoe_remaining_and_total_track_the_current_cycle() -> None:
     """The Shoe counter's source: remaining + dealt = cycle total."""
     engine, _ = _make_engine()
@@ -1722,7 +1838,7 @@ def test_apply_set_start_time_event_backdates_actual_start() -> None:
 
 def test_apply_confirm_held_event_releases_held_card_into_the_hand() -> None:
     """apply("confirm_held") releases a held card by entry/seq."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start(at=_dt(10, 0))
     engine.record_crossing("12", at=_dt(10, 0, 30))
     held = engine.held_crossings()[0]
@@ -1740,7 +1856,7 @@ def test_apply_confirm_held_event_releases_held_card_into_the_hand() -> None:
 
 def test_apply_void_held_event_discards_held_card_never_credited() -> None:
     """apply("void_held") discards the held card, never credited."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start(at=_dt(10, 0))
     engine.record_crossing("12", at=_dt(10, 0, 30))
     held = engine.held_crossings()[0]

@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The seventeen small dialogs of spec.md 15b's dialogs.xrc entry:
-  set_start_dlg, stop_confirm_dlg, finish_confirm_dlg,
+  The fifteen small dialogs of spec.md 15b's dialogs.xrc entry:
+  set_start_dlg, finish_confirm_dlg,
   resume_dlg, exit_running_dlg, exit_confirm_dlg
   (xrc-windows.md section B; exit_confirm_dlg added Phase 8, P8-D1),
   duplicate_ride_dlg and reopen_ride_dlg (section B, E5.4.1 mock-first —
-  the two §15 rows that had no frozen window until then), no_ride_dlg
-  (section B, ux-polish — the no-ride prompt whose two buttons the app
-  bootstrap wires; it replaced the retired continue_or_new_dlg),
+  the two §15 rows that had no frozen window until then),
   edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg,
   void_card_confirm_dlg (section C), about_dlg, selftest_dlg,
   shortcuts_dlg (section E).
+  stop_confirm_dlg (section B) retired in W5: the Stop flow now asks
+  through the native confirm (ui.std_dialogs.show_confirm) instead of
+  an XRC dialog.
+  no_ride_dlg (section B) retired in W15: the store-backed launch that
+  resumes nothing and opens nothing shows the native info dialog
+  (ui.std_dialogs.show_info) instead; the create/open choice is the
+  File menus' own job.
   Control names are frozen; tests find them with
   FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
   (R-05, R-73). Names repeat across these windows on purpose -
@@ -145,47 +150,6 @@
           </object>
           <object class="button">
             <object class="wxButton" name="wxID_CANCEL"/>
-          </object>
-        </object>
-      </object>
-
-    </object>
-  </object>
-
-  <!-- Destructive confirm: Cancel is both the default and the initially
-       focused control, so a reflex Enter is safe (spec.md 13,
-       UX-DESKTOP 3). wxID_OK carries the canvas's verb label; the stock
-       id is what keeps it on the platform-correct side. -->
-  <object class="wxDialog" name="stop_confirm_dlg">
-    <title>Stop Ride?</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText">
-          <label>The clock stops for everyone. Riders still on course keep their laps; no cards are dealt after stop. You can continue the ride later without losing anything.</label>
-          <wrap>420</wrap>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
-            <object class="wxButton" name="wxID_OK">
-              <label>Stop ride</label>
-            </object>
-          </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL">
-              <default>1</default>
-              <focused>1</focused>
-            </object>
           </object>
         </object>
       </object>
@@ -403,8 +367,8 @@
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
         <!-- E5.2.3: the message line carries the frozen name message_lbl
-             (spec §15b's shared name, also in resume_dlg and
-             no_ride_dlg) so the exit path can interpolate the running
+             (spec §15b's shared name, also in resume_dlg) so the exit
+             path can interpolate the running
              ride's name into it; the label below is the fallback copy
              the smoke test screenshot renders, and app.py overwrites it
              with the ride-naming copy before ShowModal. -->
@@ -504,64 +468,6 @@
               <focused>1</focused>
             </object>
           </object>
-        </object>
-      </object>
-
-    </object>
-  </object>
-
-  <!-- ux-polish: the no-ride prompt. The app bootstrap decides when to
-       show it and wires both buttons (SetAffirmativeId and the default
-       are code-side: XRC cannot give a custom button a stock id, see
-       the file header, and the create/open choice is the bootstrap's
-       to make). message_lbl ships the static copy below unchanged —
-       the no-ride wording is fixed, so nothing is interpolated into
-       it (unlike exit_running_dlg's ride-name copy). Two custom
-       buttons, so there is no std sizer at all, exactly like
-       resume_dlg: open_library_btn is the secondary and
-       create_ride_btn the primary, ordered left to right per
-       spec.md 13. -->
-  <object class="wxDialog" name="no_ride_dlg">
-    <title>No Ride Open</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText" name="message_lbl">
-          <label>No ride is open.</label>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxBoxSizer">
-          <orient>wxHORIZONTAL</orient>
-
-          <object class="spacer">
-            <option>1</option>
-            <size>0,0</size>
-          </object>
-
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxButton" name="open_library_btn">
-              <label>Open library…</label>
-            </object>
-          </object>
-
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxButton" name="create_ride_btn">
-              <label>Create new ride…</label>
-            </object>
-          </object>
-
         </object>
       </object>
 

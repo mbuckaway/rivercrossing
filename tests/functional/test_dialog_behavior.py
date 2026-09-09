@@ -188,7 +188,6 @@ def _spy_on_set_focus(control: Any) -> list[bool]:  # noqa: ANN401
 _HAS_NATIVE_CANCEL = (
     ids.RIDE_SETUP_DLG,
     ids.SET_START_DLG,
-    ids.STOP_CONFIRM_DLG,
     ids.FINISH_CONFIRM_DLG,
     ids.DUPLICATE_RIDE_DLG,
     ids.REOPEN_RIDE_DLG,
@@ -382,7 +381,6 @@ class _DefaultClickCase:
 # E1.5.3 report.
 _DEFAULT_CLICK_CASES = (
     _DefaultClickCase(ids.SET_START_DLG, pages.WX_ID_OK, wx.ID_OK),
-    _DefaultClickCase(ids.STOP_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.FINISH_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     # E5.4.1's two non-destructive confirms: the primary is the default
     # so a reflex Enter is safe (spec.md 13) -- the opposite of the
@@ -458,6 +456,8 @@ def test_dialog_default_item_names_expected_control_no_bound_click_yet(
 _NO_DEFAULT_DECLARED = (
     ids.RIDE_SETUP_DLG,
     ids.RIDER_EDITOR_DLG,
+    ids.ADD_RIDER_DLG,
+    ids.ADD_TEAM_DLG,
     ids.CSV_PREVIEW_DLG,
     ids.ENTRY_DETAIL_DLG,
 )
@@ -579,9 +579,10 @@ def test_set_default_button_given_a_non_button_control_raises(xrc_resource: obje
 # marker alongside that default, which was reported rather than
 # guessed at. exit_confirm_dlg joined in Phase 8 (P8-D1): quitting
 # with no ride running is destructive too, and its XRC co-declares
-# <default> and <focused> on Cancel from the start.
+# <default> and <focused> on Cancel from the start. stop_confirm_dlg
+# (W5) left this set when the Stop flow retired the XRC dialog for
+# the native confirm (ui.std_dialogs.show_confirm).
 _DESTRUCTIVE = (
-    ids.STOP_CONFIRM_DLG,
     ids.DNF_CONFIRM_DLG,
     ids.DELETE_RIDE_DLG,
     ids.EXIT_RUNNING_DLG,
@@ -719,7 +720,7 @@ def test_bind_delete_confirmation_gate_redisables_after_clearing_exact_match(
 # ------------------------------------------ focus returns to opener
 
 _RUN_DIALOG_CASES = (
-    (ids.STOP_CONFIRM_DLG, wx.ID_CANCEL),  # native Cancel path
+    (ids.DUPLICATE_RIDE_DLG, wx.ID_CANCEL),  # native Cancel path
     (ids.SET_START_DLG, wx.ID_CANCEL),  # native Cancel path, a form dialog
     (ids.ABOUT_DLG, wx.ID_CLOSE),  # Close-only, needs run_dialog's own wiring
 )
@@ -776,7 +777,7 @@ def test_dialog_is_a_real_wx_dialog_so_tab_stays_trapped(
     harness can inject would prove containment either way (the
     same ``UIActionSimulator`` limitation as Esc/Enter), so this
     asserts the one precondition that makes the OS trap Tab in the
-    first place -- every one of the 21 rows really is a
+    first place -- every one of the 26 rows really is a
     ``wx.Dialog``, never a ``wx.Frame``.
     """
     window = harness.load_window_verified(xrc_resource, spec.name, frame=False)

@@ -22,6 +22,7 @@ from hypothesis import strategies as st
 
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
+    DEFAULT_LAP_KM,
     DEFAULT_TIEBREAK_ORDER,
     RideConfig,
     RideStatus,
@@ -55,6 +56,10 @@ class RecordingSetupView:
     def show_deck_count(self, count: int) -> None:
         """Record decks_spin's rendered value."""
         self.calls.append(("show_deck_count", (count,)))
+
+    def show_lap_km(self, lap_km: float) -> None:
+        """Record lap_km_spin's rendered value."""
+        self.calls.append(("show_lap_km", (lap_km,)))
 
     def show_entry_settings(
         self, *, entry_mode: EntryMode, max_team_size: int, plate_model: PlateModel
@@ -101,6 +106,7 @@ _VALID_FORM_KWARGS: dict[str, object] = {
     "start_time": time(10, 0),
     "duration_text": "6:00",
     "min_lap_text": "18:00",
+    "hold_short_laps": False,
     "entry_mode": EntryMode.MIXED,
     "max_team_size": 4,
     "plate_model": PlateModel.RIDER_POOLED,
@@ -141,6 +147,15 @@ def test_setup_presenter_init_shows_the_presenter_supplied_deck_count() -> None:
     SetupPresenter(view, Roster())
 
     assert ("show_deck_count", (DEFAULT_DECK_COUNT,)) in view.calls
+
+
+def test_setup_presenter_init_shows_the_presenter_supplied_lap_km() -> None:
+    """lap_km_spin has no XRC value; the presenter supplies 8.0 (W4)."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, Roster())
+
+    assert ("show_lap_km", (DEFAULT_LAP_KM,)) in view.calls
 
 
 def test_setup_presenter_init_shows_the_rosters_own_entry_settings() -> None:
@@ -349,6 +364,47 @@ def test_on_submit_given_a_malformed_min_lap_shows_validation_not_crash() -> Non
     assert view.calls[-1][0] == "show_validation"
 
 
+@pytest.mark.parametrize("duration_text", ["", "   "], ids=["empty", "whitespace"])
+def test_on_submit_given_a_blank_duration_shows_the_blank_message_and_refuses(
+    duration_text: str,
+) -> None:
+    """A stripped-empty duration_input names the blank, not a format."""
+    view = RecordingSetupView()
+    presenter = SetupPresenter(view, Roster())
+
+    result = presenter.on_submit(_form(duration_text=duration_text))
+
+    assert result is None
+    assert view.calls[-1] == (
+        "show_validation",
+        ("Duration is empty and must be completed",),
+    )
+
+
+@pytest.mark.parametrize("min_lap_text", ["", "   "], ids=["empty", "whitespace"])
+def test_on_submit_given_a_blank_min_lap_shows_the_blank_message_and_refuses(
+    min_lap_text: str,
+) -> None:
+    """A stripped-empty min_lap_input names the blank, not a format."""
+    view = RecordingSetupView()
+    presenter = SetupPresenter(view, Roster())
+
+    result = presenter.on_submit(_form(min_lap_text=min_lap_text))
+
+    assert result is None
+    assert view.calls[-1] == ("show_validation", ("Min lap is blank and must be completed",))
+
+
+def test_on_submit_given_hold_short_laps_checked_carries_it_onto_the_config() -> None:
+    """hold_short_radio checked flows through to the built config."""
+    presenter = SetupPresenter(RecordingSetupView(), Roster())
+
+    config = presenter.on_submit(_form(hold_short_laps=True))
+
+    assert config is not None
+    assert config.hold_short_laps is True
+
+
 def test_on_submit_given_an_out_of_range_team_size_shows_validation_not_crash() -> None:
     """A RideConfig-level refusal (R-12) shows validation too (T-5)."""
     view = RecordingSetupView()
@@ -446,8 +502,15 @@ def test_parse_duration_given_h_mm_returns_seconds(text: str, expected_seconds: 
     assert _parse_duration(text) == expected_seconds
 
 
+@pytest.mark.parametrize("text", ["", "   ", "\t"], ids=["empty", "spaces", "tab"])
+def test_parse_duration_given_a_blank_text_raises_the_blank_message(text: str) -> None:
+    """T-5: a stripped-empty duration names the blank, not a format."""
+    with pytest.raises(ValueError, match=re.escape("Duration is empty and must be completed")):
+        _parse_duration(text)
+
+
 @pytest.mark.parametrize(
-    "text", ["", "6", "6:00:00", "a:bb"], ids=["empty", "no_colon", "two_colons", "non_numeric"]
+    "text", ["6", "6:00:00", "a:bb"], ids=["no_colon", "two_colons", "non_numeric"]
 )
 def test_parse_duration_given_malformed_text_raises(text: str) -> None:
     """T-5: _parse_duration's own raise, on every malformed shape."""
@@ -465,8 +528,15 @@ def test_parse_min_lap_given_m_ss_returns_seconds(text: str, expected_seconds: i
     assert _parse_min_lap(text) == expected_seconds
 
 
+@pytest.mark.parametrize("text", ["", "   ", "\t"], ids=["empty", "spaces", "tab"])
+def test_parse_min_lap_given_a_blank_text_raises_the_blank_message(text: str) -> None:
+    """T-5: a stripped-empty min lap names the blank, not a format."""
+    with pytest.raises(ValueError, match=re.escape("Min lap is blank and must be completed")):
+        _parse_min_lap(text)
+
+
 @pytest.mark.parametrize(
-    "text", ["", "18", "18:00:00", "a:bb"], ids=["empty", "no_colon", "two_colons", "non_numeric"]
+    "text", ["18", "18:00:00", "a:bb"], ids=["no_colon", "two_colons", "non_numeric"]
 )
 def test_parse_min_lap_given_malformed_text_raises(text: str) -> None:
     """T-5: _parse_min_lap's own raise, on every malformed shape."""

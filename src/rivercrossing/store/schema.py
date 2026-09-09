@@ -11,13 +11,23 @@ spec.md §2 does not list one, and E8.1.1 stores per-user settings in
 a JSON config file (``rivercrossing.ui.presenters.settings``), not
 this database -- the schema stays untouched.
 
-**Greenfield reset (Phase 1 rider-name split).** This DDL is edited
-in place, not migrated: the ``rider.name`` column becomes
-``first_name``/``last_name`` and ``entry`` gains nullable
-``logo_card``/``logo_png`` columns. The project has no production
+**Greenfield reset (Phase 1 rider-name split).** This DDL was edited
+in place, not migrated: the ``rider.name`` column became
+``first_name``/``last_name`` and ``entry`` gained nullable
+``logo_card``/``logo_png`` columns. The project had no production
 data to preserve, so no ALTER TABLE migration was written -- any
-database file created by an older build is stale and must be
-recreated (existing dev DBs are not upgraded).
+database file created by an older build was stale and had to be
+recreated.
+
+**Shipped databases now migrate (W4, first additive migration).**
+The tables below are the immutable v1 baseline; v2 -- the ride
+setup dialog's ``hold_short_laps`` short-lap policy column -- is an
+additive ALTER delivered by ``rivercrossing.store.migrations``
+(``_migrate_v1_to_v2``), never a second edit of this CREATE. A fresh
+file still chains v0 -> v1 -> v2 on first open, and a shipped v1
+file upgrades in place with existing rows defaulting to 0 (always
+deal). From here on, schema change means "append a migration", not
+"edit this DDL".
 
 Two schema decisions are recorded here because the spec is silent:
 

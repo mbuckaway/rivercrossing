@@ -57,9 +57,15 @@ class _RideSource:
         return self._rows
 
 
-def _draft_row(name: str = _RIDE_NAME) -> RideSummary:
-    """One DRAFT library row (arrange helper)."""
-    return RideSummary(name=name, date="2026-09-20", status=RideStatus.DRAFT, entries=1)
+def _draft_row(name: str = _RIDE_NAME, *, ride_id: int = 7) -> RideSummary:
+    """One DRAFT library row carrying its store id (arrange helper)."""
+    return RideSummary(
+        name=name,
+        date="2026-09-20",
+        status=RideStatus.DRAFT,
+        entries=1,
+        ride_id=ride_id,
+    )
 
 
 def _show(resource: object, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
@@ -153,18 +159,24 @@ def test_delete_ride_dlg_message_never_blank_for_any_ride_name() -> None:
 # ------------------------------- library Delete enablement (RUNNING)
 
 
-def _library_for_rows(
+def _library_for_rows(  # noqa: PLR0913 -- (xrc_resource, rows) + the injected delete/new callbacks
     xrc_resource: object,
     rows: list[RideSummary],
     *,
-    on_delete: Callable[[str], None] | None = None,
+    on_delete: Callable[[RideSummary], None] | None = None,
+    on_new: Callable[[], None] | None = None,
 ) -> tuple[Any, Any]:
     """Build one shown ``RideLibrary`` over *rows*."""
     window = harness.load_window_verified(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
     window.Show()
     harness.pump()
     try:
-        view = RideLibrary(window, data_source=_RideSource(rows), on_delete=on_delete)
+        view = RideLibrary(
+            window,
+            data_source=_RideSource(rows),
+            on_delete=on_delete,
+            on_new=on_new,
+        )
     except Exception:
         harness.close_window(window)
         raise
@@ -218,6 +230,39 @@ def test_ride_library_delete_enabled_for_draft_selected_ride(
     assert enabled is True
 
 
+def test_ride_library_new_disabled_when_no_new_callback_injected(
+    xrc_resource: object,
+) -> None:
+    """W10: no New flow injected -- the button is off, never a no-op.
+
+    The no-store library has no ride-setup flow to open (``on_new`` is
+    ``None`` there), so New is disabled instead of silently swallowing
+    the click the way the old handler did.
+    """
+    window, _ = _library_for_rows(xrc_resource, [_draft_row()])
+
+    try:
+        enabled = harness.find_control(window, pages.WX_ID_NEW).IsEnabled()
+    finally:
+        harness.close_window(window)
+
+    assert enabled is False
+
+
+def test_ride_library_new_enabled_when_a_new_callback_is_injected(
+    xrc_resource: object,
+) -> None:
+    """With ``on_new`` injected the store-backed New stays enabled."""
+    window, _ = _library_for_rows(xrc_resource, [_draft_row()], on_new=lambda: None)
+
+    try:
+        enabled = harness.find_control(window, pages.WX_ID_NEW).IsEnabled()
+    finally:
+        harness.close_window(window)
+
+    assert enabled is True
+
+
 # ------------------------------------ Delete button opens the dialog
 
 
@@ -230,10 +275,11 @@ def test_ride_library_delete_button_opens_delete_dlg_naming_the_ride(
     ``wx.CallAfter``-probe pattern ``test_dialog_behavior.py`` uses
     for a modal: the probe finds the just-opened ``delete_ride_dlg``,
     records its label and gate state, types the exact name, and clicks
-    its Delete; the confirmed callback records the ride name it was
-    handed.
+    its Delete; the confirmed callback records the selected ride row
+    it was handed (W10: the seam passes the whole ``RideSummary``, so
+    the app side deletes by its ``ride_id`` -- never by name).
     """
-    called: list[str] = []
+    called: list[RideSummary] = []
     window, view = _library_for_rows(xrc_resource, [_draft_row()], on_delete=called.append)
     found: dict[str, Any] = {}
 
@@ -265,7 +311,41 @@ def test_ride_library_delete_button_opens_delete_dlg_naming_the_ride(
     assert _RIDE_NAME in found.get("message_lbl", "")
     assert found.get("delete_before_typing") is False
     assert found.get("delete_after_typing") is True
-    assert called == [_RIDE_NAME]
+    assert called == [_draft_row()]
+
+
+def test_ride_library_delete_refreshes_rows_after_a_confirmed_delete(
+    xrc_resource: object,
+) -> None:
+    """W10: a confirmed delete re-reads ``rides()``; the row disappears.
+
+    The view refreshes after the confirmed callback returns -- the
+    same post-action refresh the Duplicate flow already did -- so a
+    store row the callback removed never lingers in the list. The
+    stub source simulates the store: its ``rides()`` re-reads the same
+    mutable list the callback clears.
+    """
+    rows = [_draft_row()]
+    window, view = _library_for_rows(xrc_resource, rows, on_delete=lambda _selected: rows.clear())
+
+    def _probe() -> None:
+        dialog = wx.Window.FindWindowByName(ids.DELETE_RIDE_DLG)
+        if dialog is None:
+            return
+        wx.CallAfter(_end_modal_if_undecided, dialog)
+        harness.type_text(dialog, ids.CONFIRM_NAME_INPUT, _RIDE_NAME)
+        harness.click(dialog, pages.WX_ID_DELETE)
+
+    try:
+        harness.select_row(window, ids.RIDES_LIST, 0)
+        wx.CallAfter(_probe)
+        harness.click(window, pages.WX_ID_DELETE)
+        model = view.rides_list.GetModel()
+        rows_after = model.GetCount()
+    finally:
+        harness.close_window(window)
+
+    assert rows_after == 0
 
 
 # ------------------------------- backup written before delete (Tart)

@@ -9,8 +9,8 @@ instead of the new ride. This module proves the two seams that fix
 it, headless with a real Store and a recording fake console view:
 
 - :func:`rivercrossing.ui.app._persist_created_ride` creates the
-  ride row, persists the roster, marks the ride active on the open
-  session, and schedules the console switch.
+  ride row, persists the roster, and schedules the console switch
+  (the R-52 session marker is W3's start-event sink, not creation).
 - :func:`rivercrossing.ui.app._switch_console_to_ride` loads the ride
   from the store, renders its name and DRAFT state onto the view, and
   wires the store's append as the engine's event sink.
@@ -62,6 +62,10 @@ class _FakeConsoleView:
         """Record the rendered counters."""
         self.calls.append(("show_counters", counters))
 
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the teams-chip visibility verdict (R-11, W12)."""
+        self.calls.append(("set_team_ui_visible", visible))
+
     def focus_entry(self) -> None:
         """Record the focus request."""
         self.calls.append(("focus_entry", None))
@@ -99,10 +103,18 @@ def _context(*, store: Store, view: _FakeConsoleView, roster: Roster) -> app_mod
     )
 
 
-def test_persist_created_ride_sets_active_and_schedules_console_switch(
+def test_persist_created_ride_persists_roster_and_schedules_console_switch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """New Ride submit persists, marks active, schedules the switch."""
+    """New Ride submit persists the ride and roster; no session marker.
+
+    W3 moved the R-52 resume marker from ride creation to the audit
+    log: ``set_active_ride`` now runs when the ride's ``start`` event
+    is appended (the ``_wire_store_append`` sink), so a never-started
+    ride never offers "continue" at the next launch. Creation itself
+    leaves ``app_session.active_ride_id`` NULL and still schedules the
+    console switch.
+    """
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     try:
@@ -120,7 +132,7 @@ def test_persist_created_ride_sets_active_and_schedules_console_switch(
         session = store._conn.execute(
             "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
         ).fetchone()
-        assert session["active_ride_id"] == ride_id
+        assert session["active_ride_id"] is None
         assert fake_wx.calls == [(app_module._switch_console_to_ride, (context, ride_id))]
     finally:
         store.close()
@@ -143,6 +155,7 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
         assert context.active_ride_id == ride_id
         assert [entry.plate for entry in context.roster.entries] == ["12"]
         assert [name for name, _arg in view.calls] == [
+            "set_team_ui_visible",
             "set_presenter",
             "show_ride_name",
             "set_state",
@@ -155,6 +168,9 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
         assert swapped.engine.state is RideStatus.DRAFT
         assert ("show_ride_name", "GORBA EPIC 2026") in view.calls
         assert ("set_state", RideStatus.DRAFT) in view.calls
+        # W12/R-11: the presenter pushes the teams-chip verdict on
+        # birth -- this mixed roster keeps the Teams chip visible.
+        assert ("set_team_ui_visible", True) in view.calls
         # The engine's event sink is wired to the store for this ride.
         swapped.engine.on_event(
             Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})

@@ -65,7 +65,7 @@ from rivercrossing.ride import RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.standings import rank
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import feed_model, ids, theme
+from rivercrossing.ui import feed_model, ids, std_dialogs, theme
 from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
@@ -231,6 +231,7 @@ def _build_mini_console(
         planned_start=datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- scenario clock is naive
         planned_duration_s=21600,
         min_lap_s=60,  # lowered so the 30 s simulated laps flag (R-34)
+        hold_short_laps=True,  # the acceptance race pins R-34's hold path
         entry_mode=roster.entry_mode,
         plate_model=roster.plate_model,
         max_team_size=roster.max_team_size,
@@ -248,7 +249,7 @@ def _build_mini_console(
         window.Show()
         window.Layout()
         harness.pump()
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)
@@ -301,8 +302,9 @@ def _set_checkbox(window: Any, name: str, *, value: bool) -> None:  # noqa: ANN4
 def _feed_model_rows(window: Any) -> tuple[tuple[str, int, bool, bool], ...]:  # noqa: ANN401
     """Read each feed row as ``(plate, lap, card_bitmap_ok, bold)``.
 
-    The Card column renders a bitmap; a held crossing draws no chip
-    (``wx.NullBitmap``), which is the UI half of R-34's "held" cell.
+    W9: the Card column always draws the dealt card's bitmap -- a
+    held crossing shows its held card's own chip (the retired "held"
+    placeholder used to map to ``wx.NullBitmap``).
     """
     model = harness.find_control(window, ids.CROSSINGS_LIST).GetModel()
     rows = []
@@ -351,19 +353,23 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
                 assert engine.shoe_remaining == shoe_before + 1
 
         # The two short laps are flagged and their cards held (R-34).
+        # W9: each held row's card cell is the held card's real code
+        # and the feed draws its chip.
         feed = source.feed_rows()
         assert feed[0].plate == "1"
         assert feed[0].lap == 5
-        assert feed[0].card == "held"
         assert feed[0].flagged is True
         assert feed[1].plate == "1"
         assert feed[1].lap == 4
-        assert feed[1].card == "held"
         assert feed[1].flagged is True
+        held_by_code = {hc.card.code(): hc for hc in engine.held_crossings()}
+        assert set(held_by_code) == {CONFIRM_CARD, VOID_CARD}
+        assert feed[1].card == CONFIRM_CARD  # #59, released below
+        assert feed[0].card == VOID_CARD  # #60, voided below
         model_rows = _feed_model_rows(window)
-        assert model_rows[0][2] is False  # held: no chip
+        assert model_rows[0][2] is True  # held: its own card chip (W9)
         assert model_rows[0][3] is True  # held: bold
-        assert model_rows[1][2] is False
+        assert model_rows[1][2] is True
         assert model_rows[1][3] is True
 
         # The undo's restitution: the crossing typed right after the
@@ -373,15 +379,13 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
         assert engine.card_for(plate2_lap3).code() == undone_card == "4D"
 
         # Held confirm + held void (engine surface; E7 wires dialogs).
-        held_by_code = {hc.card.code(): hc for hc in engine.held_crossings()}
-        assert set(held_by_code) == {CONFIRM_CARD, VOID_CARD}
         engine.confirm_held(held_by_code[CONFIRM_CARD].crossing)
         presenter.tick()
         assert len(engine.held_crossings()) == 1
         feed = source.feed_rows()
         assert feed[1].card == CONFIRM_CARD  # #59 released
         assert feed[1].flagged is False
-        assert feed[0].card == "held"  # #60 still held
+        assert feed[0].card == VOID_CARD  # #60 still held: its own code
         assert feed[0].flagged is True
 
         engine.void_held(held_by_code[VOID_CARD].crossing)
@@ -393,6 +397,9 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
 
         # Counters track the engine: 60 typed - 1 undo = 59 crossings,
         # no held cards, every entry on an odd lap, 373/432 in the shoe.
+        # W12: the registration chips read the mini roster -- 20
+        # registered riders (18 solo + the 2-rider Team Alpha) and 1
+        # team entry.
         counters = source.counters()
         assert (
             counters.crossings,
@@ -400,26 +407,34 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
             counters.on_course,
             counters.shoe_remaining,
             counters.shoe_total,
-        ) == (59, 59, 19, 373, 432)
+            counters.riders,
+            counters.teams,
+        ) == (59, 59, 19, 373, 432, 20, 1)
         labels = (
             harness.find_control(window, ids.CROSSINGS_COUNT_LBL).GetLabelText(),
             harness.find_control(window, ids.CARDS_COUNT_LBL).GetLabelText(),
             harness.find_control(window, ids.ON_COURSE_LBL).GetLabelText(),
             harness.find_control(window, ids.SHOE_LBL).GetLabelText(),
+            harness.find_control(window, ids.RIDERS_COUNT_LBL).GetLabelText(),
+            harness.find_control(window, ids.TEAMS_COUNT_LBL).GetLabelText(),
         )
-        assert labels == ("59", "59", "19", "373/432")
+        assert labels == ("59", "59", "19", "373/432", "20", "1")
 
         # --- 4. stop / continue (R-35, spec section 3)
         elapsed_before_stop = engine.elapsed()
         _set_checkbox(window, ids.ARM_STOP_CHK, value=True)
         assert harness.find_control(window, ids.STOP_BTN).IsEnabled() is True
 
-        def _click_stop_ok() -> None:
-            dialog = wx.Window.FindWindowByName(ids.STOP_CONFIRM_DLG)
-            harness.click(dialog, "wxID_OK")
-
-        wx.CallAfter(_click_stop_ok)
-        harness.click(window, ids.STOP_BTN)
+        # The stop confirm is the native wx.MessageDialog behind
+        # std_dialogs.show_confirm, which this harness cannot dismiss
+        # programmatically (measured 2026-09-09 -- native message
+        # dialogs have no wx children), so the seam is scripted to OK.
+        original_confirm = std_dialogs.show_confirm
+        std_dialogs.show_confirm = lambda *_args, **_kwargs: wx.ID_OK
+        try:
+            harness.click(window, ids.STOP_BTN)
+        finally:
+            std_dialogs.show_confirm = original_confirm
 
         assert harness.find_control(window, ids.STOP_BTN).IsEnabled() is False
         assert harness.find_control(window, ids.ARM_STOP_CHK).GetValue() is False

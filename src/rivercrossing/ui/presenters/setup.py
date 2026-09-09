@@ -13,14 +13,25 @@ is the eventual consumer, module-skeletons.md:158).
 ``decks_spin`` is ``ride_setup_dlg``'s one XRC-unset control
 (setup.xrc's own header comment): :data:`~rivercrossing.ride.
 DEFAULT_DECK_COUNT` (8, spec §4's own binding decision, 2026-08-08)
-is what :meth:`SetupPresenter._load` pushes to it. ``entry_mode``/
+is what :meth:`SetupPresenter._load` pushes to it. W4 adds the
+mirror seam for ``lap_km_spin``: XRC declares no value there either,
+so a fresh ``wxSpinCtrlDouble`` sits at 0.0 and the minimum-setup
+gate would refuse every untouched submit -- :meth:`SetupPresenter.
+_load` now pushes :data:`~rivercrossing.ride.DEFAULT_LAP_KM` (8.0,
+the canvas's own drawing) through the new
+:meth:`SetupView.show_lap_km` view seam. ``entry_mode``/
 ``max_team_size``/``plate_model`` are the mirror image -- XRC *does*
 declare defaults for their controls (mixed/pooled/4 -- the entry-mode
 default now sits on ``mixed_radio``, teams-first, per setup.xrc's own
 header comment), but opening setup on a live roster must show that
 roster's own values instead
 (xrc-windows.md's own "field values are loaded from the ride record"
-footnote); :meth:`SetupPresenter._load` overrides XRC there too.
+footnote); :meth:`SetupPresenter._load` overrides XRC there too. The
+W4 short-lap policy radio pair (``hold_short_radio``/
+``always_deal_radio``, always-deal checked by XRC) translates to the
+boolean ``SetupFormValues.hold_short_laps`` the view reads straight
+off the radio, and ``on_submit`` carries it onto
+:class:`~rivercrossing.ride.RideConfig`.
 
 :meth:`SetupPresenter.on_submit` refuses a form whose built config
 fails the minimum-setup rule -- blank name/venue/organizer/scorer or
@@ -47,6 +58,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
+    DEFAULT_LAP_KM,
     RideConfig,
     RideConfigError,
     setup_minimum_violations,
@@ -69,15 +81,18 @@ class SetupFormValues:
     Mirrors :class:`~rivercrossing.ui.presenters.riders.
     RiderFormValues`'s own precedent: every field is read exactly as
     its control holds it, never translated by the view (passive
-    view) -- except ``entry_mode``/``plate_model``/``jokers_per_deck``,
-    which the view *must* translate (which radio is checked -> which
-    enum/int value), since wx has no "enum radio group" control of its
-    own; the same kind of view-side translation :class:`RiderEditor`'s
-    own ``team_choice`` reading already does. ``duration_text``/
-    ``min_lap_text`` stay raw "H:MM"/"M:SS" strings -- ``duration_
-    input``/``min_lap_input`` are plain ``wxTextCtrl``, so parsing
-    them into seconds is this module's own job
-    (:func:`_parse_duration`/:func:`_parse_min_lap`), not the view's.
+    view) -- except ``entry_mode``/``plate_model``/``jokers_per_deck``/
+    ``hold_short_laps``, which the view *must* translate (which radio
+    is checked -> which enum/int/bool value), since wx has no "enum
+    radio group" control of its own; the same kind of view-side
+    translation :class:`RiderEditor`'s own ``team_choice`` reading
+    already does. ``duration_text``/``min_lap_text`` stay raw
+    "H:MM"/"M:SS" strings -- ``duration_input``/``min_lap_input`` are
+    plain ``wxTextCtrl``, so parsing them into seconds is this
+    module's own job (:func:`_parse_duration`/:func:`_parse_min_lap`),
+    not the view's. ``hold_short_laps`` mirrors the W4 radio pair:
+    True when ``hold_short_radio`` is checked, False (always deal)
+    when ``always_deal_radio`` is -- the pair's XRC default.
     """
 
     name: str
@@ -89,6 +104,7 @@ class SetupFormValues:
     start_time: time
     duration_text: str
     min_lap_text: str
+    hold_short_laps: bool
     entry_mode: EntryMode
     max_team_size: int
     plate_model: PlateModel
@@ -123,7 +139,17 @@ class SetupView(Protocol):
         ...
 
     def show_deck_count(self, count: int) -> None:
-        """Render decks_spin -- the one control XRC leaves unset."""
+        """Render decks_spin -- one of the two XRC-unset controls."""
+        ...
+
+    def show_lap_km(self, lap_km: float) -> None:
+        """Render lap_km_spin -- the other XRC-unset control (W4).
+
+        A bare ``wxSpinCtrlDouble`` sits at 0.0, which the minimum-
+        setup gate would refuse, so :meth:`SetupPresenter._load`
+        pushes :data:`~rivercrossing.ride.DEFAULT_LAP_KM` exactly as
+        it pushes the deck count.
+        """
         ...
 
     def show_entry_settings(
@@ -140,10 +166,17 @@ class SetupView(Protocol):
 def _parse_duration(text: str) -> int:
     """Parse ``duration_input``'s "H:MM" into whole seconds (spec §2).
 
+    A stripped-empty *text* gets its own refusal message (W4: a
+    fresh dialog submits blank until the operator fills the field --
+    "blank" names the gap, "format" names a wrong shape).
+
     Raises:
-        ValueError: *text* is not exactly one ``H:MM`` pair of
-            integers.
+        ValueError: *text* is blank, or not exactly one ``H:MM``
+            pair of integers.
     """
+    if not text.strip():
+        msg = "Duration is empty and must be completed"
+        raise ValueError(msg)
     try:
         hours_text, minutes_text = text.split(":")
         return int(hours_text) * 3600 + int(minutes_text) * 60
@@ -155,10 +188,16 @@ def _parse_duration(text: str) -> int:
 def _parse_min_lap(text: str) -> int:
     """Parse ``min_lap_input``'s "M:SS" into whole seconds (spec §6).
 
+    A stripped-empty *text* gets its own refusal message (W4), the
+    mirror of :func:`_parse_duration`'s blank guard.
+
     Raises:
-        ValueError: *text* is not exactly one ``M:SS`` pair of
-            integers.
+        ValueError: *text* is blank, or not exactly one ``M:SS``
+            pair of integers.
     """
+    if not text.strip():
+        msg = "Min lap is blank and must be completed"
+        raise ValueError(msg)
     try:
         minutes_text, seconds_text = text.split(":")
         return int(minutes_text) * 60 + int(seconds_text)
@@ -194,6 +233,7 @@ class SetupPresenter:
         silently undo the other's effect on those two controls.
         """
         self.view.show_deck_count(DEFAULT_DECK_COUNT)
+        self.view.show_lap_km(DEFAULT_LAP_KM)
         self.view.show_entry_settings(
             entry_mode=self.roster.entry_mode,
             max_team_size=self.roster.max_team_size,
@@ -253,6 +293,7 @@ class SetupPresenter:
                 planned_start=planned_start,
                 planned_duration_s=duration_s,
                 min_lap_s=min_lap_s,
+                hold_short_laps=form.hold_short_laps,
                 entry_mode=form.entry_mode,
                 max_team_size=form.max_team_size,
                 plate_model=form.plate_model,

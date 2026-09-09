@@ -70,6 +70,26 @@ def test_ride_library_open_switches_console_to_the_ride() -> None:
     assert data["feed_plate"] == "12", result["context"]
 
 
+def test_ride_library_delete_removes_the_exact_selected_row_and_refreshes() -> None:
+    """W10: Delete removes the selected row by id; the list refreshes.
+
+    Two store rides share the name "GORBA EPIC 2026" (``ride.name``
+    has no UNIQUE constraint, and the name-based resolution the old
+    delete callback did would remove the FIRST match -- the wrong
+    row). Selecting the second row and confirming Delete must remove
+    that exact row, and the refreshed list must show the surviving
+    first row immediately.
+    """
+    result = scenario_runner.run_scenario("library_live_delete_removes_exact_row_and_refreshes")
+
+    data = result["data"]
+    assert data["delete_dlg_shown"] is True, result["context"]
+    assert data["library_refreshed"] is True, result["context"]
+    assert data["rows_after"] == [["GORBA EPIC 2026", "DRAFT"]], result["context"]
+    assert data["survivor_id"] == data["first_ride_id"], result["context"]
+    assert data["backup_exists"] is True, result["context"]
+
+
 def test_ride_library_duplicate_appears_as_new_draft_with_no_timing() -> None:
     """R-15: the copy is a DRAFT ride, same roster, no timing.
 

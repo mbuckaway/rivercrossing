@@ -124,7 +124,7 @@ def test_demo_feed_rows_matches_the_canvas_fixture_exactly() -> None:
             lap=6,
             lap_time="07:12",
             total="2:44:30",
-            card="held",
+            card="2S",  # W9: the held crossing shows its real dealt code
             flagged=True,
         ),
         FeedRow(
@@ -161,11 +161,17 @@ def test_demo_feed_rows_flags_plate_45_as_the_short_lap_crossing() -> None:
 
 
 def test_demo_counters_matches_the_canvas_fixture_exactly() -> None:
-    """``counters()`` returns the exact four canvas counter values."""
+    """``counters()`` returns the exact demo counter values."""
     counters = DemoDataSource().counters()
 
     assert counters == Counters(
-        crossings=1124, cards_dealt=1092, on_course=42, shoe_remaining=41, shoe_total=108
+        crossings=1124,
+        cards_dealt=1092,
+        on_course=42,
+        shoe_remaining=41,
+        shoe_total=108,
+        riders=262,
+        teams=82,
     )
 
 
@@ -174,6 +180,13 @@ def test_demo_counters_reports_shoe_as_41_of_108() -> None:
     counters = DemoDataSource().counters()
 
     assert (counters.shoe_remaining, counters.shoe_total) == (41, 108)
+
+
+def test_demo_counters_reports_registration_as_262_riders_and_82_teams() -> None:
+    """The registration chips match the fixture's roster totals."""
+    counters = DemoDataSource().counters()
+
+    assert (counters.riders, counters.teams) == (262, 82)
 
 
 # -------------------------------------------------------- ride status

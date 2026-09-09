@@ -626,3 +626,88 @@ def test_render_public_logo_path_embeds_base64_data_uri() -> None:
         html = render(_StubRide(), _placed_pair(), ExportOptions(), logo_path=logo_file)
 
     assert "data:image/png;base64," in html
+
+
+# ============================================================ W8
+# Team logos on the results page: ResultRow carries an optional logo
+# (a data URI, mirroring the org-logo mechanism), the record emits it
+# sparsely, and the standings/full-field rows render a small image --
+# nothing when the row has no logo.
+
+
+_TEAM_LOGO_URI = "data:image/png;base64,TEAMLOGO"
+
+
+def _team_and_solo_pair() -> tuple[Placed, Placed]:
+    """Return a placed team (#88) and a placed solo (#7)."""
+    return (
+        Placed(
+            place=1,
+            result=_sample_entry("88", "Moss Ridge Riders", 11, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        Placed(
+            place=2,
+            result=_sample_entry("7", "Luca Ferrari", 10),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+
+def test_result_row_to_record_emits_the_logo_only_when_set() -> None:
+    """Logo is a sparse record key, like tie/dnf."""
+    with_logo = ResultRow(
+        place=1,
+        plate=88,
+        entry="Moss Ridge Riders",
+        entry_type="TEAM",
+        laps=11,
+        hand="Four of a Kind",
+        logo=_TEAM_LOGO_URI,
+    )
+    without_logo = ResultRow(
+        place=2,
+        plate=7,
+        entry="Luca Ferrari",
+        entry_type="SOLO",
+        laps=10,
+        hand="Pair",
+    )
+
+    assert with_logo.to_record(show_times=False)["logo"] == _TEAM_LOGO_URI
+    assert "logo" not in without_logo.to_record(show_times=False)
+
+
+def test_render_public_embeds_team_logos_in_the_team_rows_only() -> None:
+    """A supplied team_logos map renders the small image per team row.
+
+    The mapping is keyed by the placed entry's plate, the same seam
+    the org logo uses; the row appears once in the Top ten table and
+    once in the Full field table, so exactly two images render for
+    the one logo-carrying team -- and none for the solo row beside
+    it or when the map is absent.
+    """
+    placed = _team_and_solo_pair()
+    html = render(_StubRide(), placed, ExportOptions(), team_logos={"88": _TEAM_LOGO_URI})
+
+    assert html.count('class="team-logo"') == 2
+    # The URI appears in the two images plus the embedded race-data
+    # record once -- the image markup is what this pins.
+    assert html.count('<img src="data:image/png;base64,TEAMLOGO"') == 2
+
+    plain = render(_StubRide(), placed, ExportOptions())
+
+    assert 'class="team-logo"' not in plain
+
+
+def test_render_public_team_logo_round_trips_through_the_embedded_record() -> None:
+    """The race-data row keeps the logo through a parse round-trip."""
+    placed = _team_and_solo_pair()
+    html = render(_StubRide(), placed, ExportOptions(), team_logos={"88": _TEAM_LOGO_URI})
+
+    record = json.loads(race_data_block(html))
+    (team_row,) = [row for row in record["results"] if row["plate"] == 88]
+
+    assert team_row["logo"] == _TEAM_LOGO_URI

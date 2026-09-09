@@ -58,6 +58,13 @@ them open and later EPICs will build on them:
   :func:`_to_epoch`'s naive branch. A naive config value round-trips
   exactly; an aware one keeps its instant but loses its tzinfo (the
   config's own convention is naive local, RideConfig docstring).
+- **hold_short_laps (W4)**: the setup dialog's short-lap card policy
+  is one of the config columns the facade writes and reads
+  (``_INSERT_RIDE_SQL``/``create_ride``/``duplicate_ride``/
+  ``load_engine``, migration v2). Stored as INTEGER 0/1 and rebuilt
+  as ``bool``, so event replay reproduces each ride's own hold
+  disposition. A v1 file upgraded in place back-fills 0 (always
+  deal, the W4 default) onto every existing ride.
 - **roster boundary (E5.1.2)**: :meth:`Store.load_engine` took the
   roster from the caller -- the engine needs plate->entry resolution,
   and full roster-from-DB reconstruction was E5.4.1's job.
@@ -258,9 +265,9 @@ _INSERT_RIDE_SQL = """
         logo_png, planned_start, planned_duration_s, actual_start,
         finished_at, status, entry_mode, max_team_size, plate_model,
         min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
-        rng_seed, created_at, updated_at
+        rng_seed, created_at, updated_at, hold_short_laps
     ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
 """
 
@@ -667,6 +674,24 @@ class Store:
                 (ride_id,),
             )
 
+    def clear_active_ride(self) -> None:
+        """Clear the OPEN session's running ride (W3 session lifecycle).
+
+        :meth:`set_active_ride`'s mirror: NULLs ``active_ride_id`` on
+        the newest ``app_session`` row -- the session :meth:`open`
+        inserted. The event sink calls it when the open ride finishes
+        (a ``finish`` audit event), so a quit after finishing reads
+        CLEAN_QUIT at the next launch; the launch flow calls it when a
+        resume replay cannot rebuild the ride, so the next launch does
+        not offer a ride the store cannot load. With no session row at
+        all this is a no-op (nothing updates).
+        """
+        with self._conn:
+            self._conn.execute(
+                "UPDATE app_session SET active_ride_id = NULL"
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)"
+            )
+
     def roster_for(self, ride_id: int) -> Roster:
         """Return *ride_id*'s full roster reconstructed from the DB.
 
@@ -875,6 +900,7 @@ class Store:
             ),  # DB-owned seed (spec §4), never from config
             now,
             now,
+            int(config.hold_short_laps),
         )
         with self._conn:
             cursor = self._conn.execute(_INSERT_RIDE_SQL, params)
@@ -1087,6 +1113,7 @@ class Store:
             max_cards=row["max_cards"],
             tiebreak_order=cast("tuple[str, str, str]", tuple(json.loads(row["tiebreak_order"]))),
             logo_path=None,
+            hold_short_laps=bool(row["hold_short_laps"]),
         )
         engine = RideEngine(
             config=config,
@@ -1214,6 +1241,7 @@ class Store:
             secrets.randbits(63),  # fresh seed (spec §4)
             now,
             now,
+            row["hold_short_laps"],
         )
         with self._conn:
             cursor = self._conn.execute(_INSERT_RIDE_SQL, params)

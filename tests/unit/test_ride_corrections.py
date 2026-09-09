@@ -159,7 +159,7 @@ def test_edit_crossing_changes_only_the_timestamp_and_recomputes_laps() -> None:
 
 def test_edit_crossing_held_crossing_keeps_the_card_held() -> None:
     """Editing a held crossing's time never releases or re-deals it."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))  # 30 s < min_lap_s -> held
     held_before = engine.held_crossings()[0]
@@ -466,7 +466,7 @@ def test_reassign_crossing_moves_crossing_and_card_to_the_new_entry() -> None:
 
 def test_reassign_crossing_held_card_travels_while_still_held() -> None:
     """A reassigned short-lap card stays in the hold queue."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> held
@@ -677,7 +677,7 @@ def test_void_card_removes_card_from_hand_and_keeps_the_lap() -> None:
 
 def test_void_card_refuses_a_held_card() -> None:
     """A held card is refused; the review surface owns it."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     result = engine.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> held
     assert result.flagged is True
@@ -688,7 +688,7 @@ def test_void_card_refuses_a_held_card() -> None:
 
 def test_void_card_ignores_an_unrelated_held_card_and_voids_the_credited_one() -> None:
     """A held card does not block voiding a different credited one."""
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start()
     engine.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> held
     engine.record_crossing("12", at=_dt(10, 40))  # normal lap -> credited
@@ -902,7 +902,7 @@ def test_apply_confirm_held_event_finds_the_target_beyond_the_first_crossing() -
     continue to the later matching crossing rather than confirm --
     or crash on -- the wrong one.
     """
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
     engine.start(at=_dt(10, 0))
     first = engine.record_crossing("12", at=_dt(10, 30))  # normal, credited
     engine.record_crossing("12", at=_dt(10, 32))  # 120 s < min lap -> held, seq 2

@@ -45,7 +45,7 @@ class _FakeControl:
 
 
 def test_required_controls_lists_exactly_the_init_find_controls() -> None:
-    """The verify tuple is the single source for __init__'s 24 finds.
+    """The verify tuple is the single source for __init__'s 26 finds.
 
     Pins the contract so the guard can never silently drift from
     ``MainFrame.__init__``: if a control is added/removed there without
@@ -63,6 +63,9 @@ def test_required_controls_lists_exactly_the_init_find_controls() -> None:
         ids.CARDS_COUNT_LBL,
         ids.ON_COURSE_LBL,
         ids.SHOE_LBL,
+        # W12: the two registration chips join the four live counters.
+        ids.RIDERS_COUNT_LBL,
+        ids.TEAMS_COUNT_LBL,
         ids.START_BTN,
         ids.ARM_STOP_CHK,
         ids.STOP_BTN,
@@ -100,6 +103,8 @@ def test_required_control_classes_transcribe_the_init_find_calls() -> None:
         ids.CARDS_COUNT_LBL: wx.StaticText,
         ids.ON_COURSE_LBL: wx.StaticText,
         ids.SHOE_LBL: wx.StaticText,
+        ids.RIDERS_COUNT_LBL: wx.StaticText,
+        ids.TEAMS_COUNT_LBL: wx.StaticText,
         ids.START_BTN: wx.BitmapButton,
         ids.ARM_STOP_CHK: wx.CheckBox,
         ids.STOP_BTN: wx.BitmapButton,

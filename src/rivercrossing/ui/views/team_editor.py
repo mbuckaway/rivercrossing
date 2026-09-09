@@ -7,11 +7,12 @@ Phase 4 wires ``team_editor_dlg`` to a real, in-memory
 (``ui.presenters.teams``) reads and writes directly --
 :class:`TeamEditor` takes ``roster=`` and constructs its own
 presenter (mirroring ``views/rider_editor.py``'s
-presenter-inside-the-view wiring), binding
-Add team/Remove/Save/Pick card/Image/row selection to it. The two
-lists' rows and columns live here (``teams.xrc``'s own header
-explains why -- ``wxDataViewListCtrl`` would overwrite the frozen
-name). The rework widens ``teams_list`` to three columns
+presenter-inside-the-view wiring), binding Remove/Save/Pick
+card/Image/Remove logo/row selection and the W8 Add-team dialog
+opener to it. The two lists' rows and columns live here
+(``teams.xrc``'s own header explains why --
+``wxDataViewListCtrl`` would overwrite the frozen name). The rework
+widens ``teams_list`` to three columns
 (``Team | Riders | Logo`` -- :data:`COLUMN_LABELS`), where the Logo
 cell carries the logo's *kind* (:data:`CARD_TEXT`/:data:`IMAGE_TEXT`,
 :func:`format_logo`) rather than the card code, and turns the logo
@@ -20,9 +21,19 @@ XRC declares above ``members_list``) renders the team's card bitmap
 (from :func:`default_card_images`, keyed via
 :func:`~rivercrossing.ui.feed_model.card_asset_key_or_none` -- the
 same seam ``main_frame``'s crossings feed uses) or the picked
-image's decoded PNG bytes. The read-only ``members_list`` renders
-rider names only: membership is managed in the Rider Editor, never
-here.
+image's decoded PNG bytes -- W8 bounds every preview into the
+:data:`LOGO_PREVIEW_BOX`/:data:`CARD_LOGO_BOX` so no decoded bitmap
+can push the members/Add rows off the dialog. The read-only
+``members_list`` renders rider names only: membership is managed in
+the Rider Editor, never here.
+
+W8 (like W7's rider editor) retires the in-form Add: ``add_btn``
+opens the dedicated ``add_team_dlg`` window through
+:func:`run_add_team_flow` (its own :class:`AddTeamDialog` pairs with
+``ui.presenters.teams.AddTeamPresenter``, which creates zero-rider
+TEAM entries), Save is dirty-gated through
+``TeamsView.set_save_enabled``, and ``remove_logo_btn`` clears a
+team's logo via :meth:`Roster.clear_team_logo`.
 
 A refused operation (add/remove after start, a relay plate change
 once locked, a blank or duplicate team name, ...) renders as a
@@ -41,7 +52,13 @@ import wx.dataview
 
 from rivercrossing.ui import ids
 from rivercrossing.ui.feed_model import card_asset_key_or_none
-from rivercrossing.ui.presenters.teams import TeamFormValues, TeamRow, TeamsPresenter
+from rivercrossing.ui.presenters.teams import (
+    AddTeamPresenter,
+    TeamFormValues,
+    TeamRow,
+    TeamsPresenter,
+)
+from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import associate_model, default_card_images, find_control
 
 if TYPE_CHECKING:
@@ -50,6 +67,8 @@ if TYPE_CHECKING:
     from rivercrossing.roster import Roster
 
 __all__ = [
+    "ADD_TEAM_INFOBAR",
+    "CARD_LOGO_BOX",
     "CARD_TEXT",
     "COLUMN_LABELS",
     "COL_LOGO",
@@ -57,16 +76,20 @@ __all__ = [
     "COL_NAME",
     "COL_RIDERS",
     "IMAGE_TEXT",
+    "LOGO_PREVIEW_BOX",
     "MEMBERS_COLUMN_LABELS",
     "MEMBERS_MIN_HEIGHT",
     "MIN_SIZE",
     "NOTES_MIN_LINES",
     "TEAMS_INFOBAR",
+    "AddTeamDialog",
     "MembersListModel",
     "TeamEditor",
     "TeamsListModel",
     "format_logo",
+    "logo_fit_size",
     "pick_logo_image_path",
+    "run_add_team_flow",
 ]
 
 COL_NAME = 0
@@ -89,6 +112,19 @@ IMAGE_TEXT = "Image"
 # never appears there since XRC cannot author a wxInfoBar at all
 # (teams.xrc's own header, rider_editor.py's precedent).
 TEAMS_INFOBAR = "teams_infobar"
+
+# add_team_dlg's own code-side infobar (W8), the same wxInfoBar
+# exception.
+ADD_TEAM_INFOBAR = "add_team_infobar"
+
+# W8 logo-preview bounds (px): photo logos fit within a 128x128 box
+# (shrunk to fit, never enlarged); card logos render at the card's
+# 3:4 ratio scaled into a 96x128 box. logo_bmp itself carries
+# SetMaxSize(LOGO_PREVIEW_BOX) so no decoded bitmap -- however large
+# the picked PNG -- can ever push the members list or the Add row off
+# the dialog.
+LOGO_PREVIEW_BOX = (128, 128)
+CARD_LOGO_BOX = (96, 128)
 
 # The Notes box's code-side floor (teams.xrc declares the style):
 # wxTE_MULTILINE plus a minimum tall enough for three text lines, so
@@ -200,6 +236,128 @@ def _bitmap_from_png(image_bytes: bytes) -> Any:  # noqa: ANN401 -- wx ships no 
     return wx.Bitmap(image)
 
 
+def logo_fit_size(  # noqa: PLR0913 -- (width, height, within, upscale): the pure fit rule's inputs
+    width: int,
+    height: int,
+    *,
+    within: tuple[int, int],
+    upscale: bool = False,
+) -> tuple[int, int]:
+    """Return *width*/*height* scaled into the *within* box.
+
+    The pure fit rule behind the logo previews (W8): photo logos
+    shrink to fit ``within`` and never enlarge (``upscale`` False --
+    a small picked image keeps its natural size); card bitmaps render
+    into their fixed 3:4 box with ``upscale`` True, so the packaged
+    24x32/48x64 faces both land at the same preview size. The aspect
+    ratio survives, up to one rounding pixel per side.
+    """
+    box_w, box_h = within
+    if not upscale and width <= box_w and height <= box_h:
+        return (width, height)
+    scale = min(box_w / width, box_h / height)
+    return (max(1, round(width * scale)), max(1, round(height * scale)))
+
+
+def _scaled_bitmap(
+    bitmap: Any,  # noqa: ANN401 -- wx ships no stubs
+    *,
+    within: tuple[int, int],
+    upscale: bool,
+) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return *bitmap* scaled into *within* (see :func:`logo_fit_size`).
+
+    A bitmap already at or under the box (and not asked to upscale)
+    is returned as-is; anything else rescales through ``wx.Image``
+    with the high-quality filter so the preview never distorts.
+    """
+    image = wx.Image(bitmap)
+    width, height = image.GetWidth(), image.GetHeight()
+    fitted = logo_fit_size(width, height, within=within, upscale=upscale)
+    if fitted == (width, height):
+        return bitmap
+    return wx.Bitmap(image.Rescale(*fitted, wx.IMAGE_QUALITY_HIGH))
+
+
+def _logo_bitmap(card: str | None, image: bytes | None) -> Any:  # noqa: ANN401
+    """Return the bounded preview bitmap for *card*/*image*.
+
+    The image wins when set (the roster never carries both): its
+    decoded PNG fits within :data:`LOGO_PREVIEW_BOX`, shrunk to fit,
+    never enlarged. A card code draws its packaged card bitmap scaled
+    into :data:`CARD_LOGO_BOX` -- the card's 3:4 ratio -- resolved the
+    same way ``main_frame``'s crossings feed resolves one; unknown
+    codes render blank. Shared by ``team_editor_dlg``'s and
+    ``add_team_dlg``'s own previews.
+    """
+    if image is not None:
+        bitmap = _bitmap_from_png(image)
+        if bitmap is not None:
+            return _scaled_bitmap(bitmap, within=LOGO_PREVIEW_BOX, upscale=False)
+    if card is not None:
+        key = card_asset_key_or_none(card)
+        if key is not None:
+            return _scaled_bitmap(
+                default_card_images().bitmap(key), within=CARD_LOGO_BOX, upscale=True
+            )
+    return wx.NullBitmap
+
+
+def _floor_notes_min_height(notes_input: wx.TextCtrl) -> None:
+    """Floor the Notes box at :data:`NOTES_MIN_LINES` text lines.
+
+    ``teams.xrc`` declares ``wxTE_MULTILINE``; the style alone leaves
+    the control one line tall inside its flex-grid row, so the row's
+    minimum is computed from the control's own font metrics
+    (measured-safe across the 90-150% text zoom) plus a native bezel
+    allowance. Shared by the editor's and the Add dialog's Notes box.
+    """
+    line_height = notes_input.GetCharHeight()
+    minimum = line_height * NOTES_MIN_LINES + _TEXT_CTRL_VERTICAL_PADDING
+    notes_input.SetMinSize(wx.Size(-1, minimum))
+
+
+def _set_relay_row_visible(relay_plate_input: wx.TextCtrl, *, visible: bool) -> None:
+    """Show/hide the Plate (relay) row and its label.
+
+    The row's "Plate (relay)" label carries no frozen name to find it
+    by (only ``relay_plate_input`` itself does), so its sizer item is
+    located structurally instead: it is always the item immediately
+    before ``relay_plate_input`` in their shared ``wxFlexGridSizer``
+    row. Shared by ``team_editor_dlg`` and ``add_team_dlg`` (each
+    caller Layout()s its own dialog afterwards).
+    """
+    sizer = relay_plate_input.GetContainingSizer()
+    items = list(sizer.GetChildren())
+    index = next(i for i, item in enumerate(items) if item.GetWindow() is relay_plate_input)
+    label = items[index - 1].GetWindow()
+    sizer.Show(label, visible)
+    sizer.Show(relay_plate_input, visible)
+
+
+def _build_infobar(dialog: wx.Dialog, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Build the code-side InfoBar named *name*, wrapped on top.
+
+    ``teams.xrc``'s dialogs carry no reserved InfoBar slot, so each
+    dialog's existing sizer is kept alive and nested inside a new
+    outer vertical one instead of edited in the frozen XRC. Measured
+    (wxPython 4.3.1 / wxWidgets 3.3.3): calling ``Dismiss()``/
+    ``ShowMessage()`` on a ``wx.InfoBar`` with its default slide
+    effect never returns -- disabling both effects here is what makes
+    ``show_validation`` safe, the identical fix
+    ``rider_editor._build_infobar`` documents.
+    """
+    bar = wx.InfoBar(dialog)
+    bar.SetName(name)
+    bar.SetShowHideEffects(wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
+    content = dialog.GetSizer()
+    outer = wx.BoxSizer(wx.VERTICAL)
+    outer.Add(bar, 0, wx.EXPAND)
+    outer.Add(content, 1, wx.EXPAND)
+    dialog.SetSizer(outer, deleteOld=False)
+    return bar
+
+
 class TeamEditor:
     """Code-side behaviour for ``team_editor_dlg`` (Phase 4 rework).
 
@@ -237,9 +395,13 @@ class TeamEditor:
         self._apply_notes_min_height()
         self.pick_card_btn = self._find(ids.PICK_CARD_BTN, wx.Button)
         self.image_btn = self._find(ids.IMAGE_BTN, wx.Button)
+        self.remove_logo_btn = self._find(ids.REMOVE_LOGO_BTN, wx.Button)
         # The rework's preview bitmap, resolved through the generated
         # ui/ids.py registry (logo_bmp is XRC-authored in teams.xrc).
+        # W8 bounds it so no decoded PNG can push the members/Add rows
+        # off the dialog (team_editor's own module docstring).
         self.logo_bmp = self._find(ids.LOGO_BMP, wx.StaticBitmap)
+        self.logo_bmp.SetMaxSize(wx.Size(*LOGO_PREVIEW_BOX))
         self.members_list = self._find(ids.MEMBERS_LIST, wx.dataview.DataViewCtrl)
         self._build_member_columns()
         self.members_list.SetMinSize(wx.Size(-1, MEMBERS_MIN_HEIGHT))
@@ -271,17 +433,8 @@ class TeamEditor:
         return find_control(self.dialog, name, expected_type)
 
     def _apply_notes_min_height(self) -> None:
-        """Floor the Notes box at :data:`NOTES_MIN_LINES` text lines.
-
-        ``teams.xrc`` declares ``wxTE_MULTILINE``; the style alone
-        leaves the control one line tall inside its flex-grid row, so
-        the row's minimum is computed from the control's own font
-        metrics (measured-safe across the 90-150% text zoom) plus a
-        native bezel allowance.
-        """
-        line_height = self.notes_input.GetCharHeight()
-        minimum = line_height * NOTES_MIN_LINES + _TEXT_CTRL_VERTICAL_PADDING
-        self.notes_input.SetMinSize(wx.Size(-1, minimum))
+        """Floor the Notes box at :data:`NOTES_MIN_LINES` text lines."""
+        _floor_notes_min_height(self.notes_input)
 
     def _build_team_columns(self) -> None:
         """Append ``teams_list``'s three columns in canvas order."""
@@ -296,25 +449,10 @@ class TeamEditor:
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build the code-side :data:`TEAMS_INFOBAR`, wrapped on top.
 
-        ``teams.xrc``'s already-authored top sizer has no reserved
-        InfoBar slot (it predates this decision, like ``riders.xrc``
-        before it), so the existing sizer is kept alive and nested
-        inside a new outer vertical one instead of edited in the
-        frozen XRC. Measured (wxPython 4.3.1 / wxWidgets 3.3.3):
-        calling ``Dismiss()``/``ShowMessage()`` on a ``wx.InfoBar``
-        with its default slide effect never returns -- disabling both
-        effects here is what makes :meth:`show_validation` safe,
-        the identical fix ``RiderEditor._build_infobar`` documents.
+        See :func:`_build_infobar`'s docstring (this module) for the
+        measured slide-effect hang and the shared wrapper.
         """
-        bar = wx.InfoBar(self.dialog)
-        bar.SetName(TEAMS_INFOBAR)
-        bar.SetShowHideEffects(wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
-        content = self.dialog.GetSizer()
-        outer = wx.BoxSizer(wx.VERTICAL)
-        outer.Add(bar, 0, wx.EXPAND)
-        outer.Add(content, 1, wx.EXPAND)
-        self.dialog.SetSizer(outer, deleteOld=False)
-        return bar
+        return _build_infobar(self.dialog, TEAMS_INFOBAR)
 
     def _bind_events(self) -> None:
         """Forward every control event straight to the presenter."""
@@ -323,9 +461,19 @@ class TeamEditor:
         self.dialog.Bind(wx.EVT_BUTTON, self._on_save, self.save_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_pick_card, self.pick_card_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_image_click, self.image_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_remove_logo, self.remove_logo_btn)
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.teams_list
         )
+        # W8 save gating: every keystroke into the three text fields
+        # re-runs the dirty check that gates save_btn (the W7 rider
+        # editor shape). The presenter's own show_form calls re-fire
+        # these events (SetValue), which is harmless: each re-reads
+        # the whole form, so the state after the last field lands is
+        # the state of the full form.
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.name_input)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.relay_plate_input)
+        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.notes_input)
         self.dialog.Bind(
             wx.EVT_CHECKBOX, self._on_toggle_single_member, self.single_member_only_chk
         )
@@ -339,9 +487,17 @@ class TeamEditor:
         )
 
     def _on_add(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``add_btn``: forward the form to the presenter."""
+        """Handle ``add_btn``: open the Add Team dialog (W8).
+
+        The editor's in-form Add is retired (teams.xrc): the add
+        dialog's own :class:`AddTeamPresenter` commits, and a real
+        commit refreshes this editor's rows/form via
+        :meth:`TeamsPresenter.on_add_committed` -- nothing else would
+        tell this open editor the roster changed underneath it.
+        """
         event.Skip()
-        self.presenter.on_add(self._form_values())
+        if run_add_team_flow(self.dialog, self.presenter.roster):
+            self.presenter.on_add_committed()
 
     def _on_remove(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``remove_btn``: forward to the presenter."""
@@ -370,6 +526,16 @@ class TeamEditor:
         if path is None:
             return
         self.presenter.on_pick_image(path.read_bytes())
+
+    def _on_remove_logo(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``remove_logo_btn``: forward to the presenter."""
+        event.Skip()
+        self.presenter.on_remove_logo()
+
+    def _on_form_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle a form edit: re-run the presenter's dirty gating."""
+        event.Skip()
+        self.presenter.on_form_changed(self._form_values())
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``teams_list`` selection: forward its row index.
@@ -419,44 +585,21 @@ class TeamEditor:
         preview is visibly empty. Re-layout follows so the sizer
         reflows around a changed bitmap size before the dialog shows.
         """
-        self.logo_bmp.SetBitmap(self._logo_bitmap(card=card, image=image))
+        self.logo_bmp.SetBitmap(_logo_bitmap(card=card, image=image))
         self.dialog.Layout()
-
-    def _logo_bitmap(self, *, card: str | None, image: bytes | None) -> Any:  # noqa: ANN401
-        """Return the bitmap *card*/*image* render (or NullBitmap).
-
-        The image wins when set (the roster never carries both); the
-        card's asset key resolves the same way ``main_frame``'s
-        crossings feed resolves one -- unknown codes render blank.
-        """
-        if image is not None:
-            bitmap = _bitmap_from_png(image)
-            if bitmap is not None:
-                return bitmap
-        if card is not None:
-            key = card_asset_key_or_none(card)
-            if key is not None:
-                return default_card_images().bitmap(key)
-        return wx.NullBitmap
 
     def set_relay_plate_visible(self, *, visible: bool) -> None:
         """Show/hide the Plate (relay) row (team_relay rides only).
 
-        ``teams.xrc``'s "Plate (relay)" label carries no frozen name
-        to find it by (only ``relay_plate_input`` itself does), so
-        its sizer item is located structurally instead: it is always
-        the item immediately before ``relay_plate_input`` in their
-        shared ``wxFlexGridSizer`` row.
+        ``TeamsView`` member; see :func:`_set_relay_row_visible`'s
+        docstring for the structural label lookup.
         """
-        sizer = self.relay_plate_input.GetContainingSizer()
-        items = list(sizer.GetChildren())
-        index = next(
-            i for i, item in enumerate(items) if item.GetWindow() is self.relay_plate_input
-        )
-        label = items[index - 1].GetWindow()
-        sizer.Show(label, visible)
-        sizer.Show(self.relay_plate_input, visible)
+        _set_relay_row_visible(self.relay_plate_input, visible=visible)
         self.dialog.Layout()
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``save_btn`` on the form's dirty state (W8)."""
+        self.save_btn.Enable(enabled)
 
     def show_members(self, names: list[str]) -> None:
         """Render ``members_list`` rows read-only (``TeamsView``)."""
@@ -483,6 +626,187 @@ class TeamEditor:
         """
         self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
         self.dialog.Fit()
+
+
+class AddTeamDialog:
+    """Code-side behaviour for ``add_team_dlg`` (W8, R-20).
+
+    Implements ``AddTeamView`` (``ui.presenters.teams``) over its own
+    :class:`~rivercrossing.ui.presenters.teams.AddTeamPresenter`
+    instance. The dialog pairs per-open like
+    ``rider_editor.AddRiderDialog`` (the module docstring's
+    mirror-image note): it never renders ``team_editor_dlg``'s own
+    rows, and a live ``TeamEditor`` sees the added team through
+    ``run_add_team_flow``'s ``True`` result, which refreshes the
+    editor's own presenter.
+    """
+
+    def __init__(self, dialog: wx.Dialog, *, roster: Roster) -> None:
+        """Decorate an already-loaded ``add_team_dlg`` window.
+
+        Args:
+            dialog: The ``wx.Dialog`` ``run_add_team_flow`` loaded
+                from ``teams.xrc``.
+            roster: The in-memory roster this dialog adds into.
+        """
+        self.dialog = dialog
+
+        self.name_input = self._find(ids.NAME_INPUT, wx.TextCtrl)
+        self.relay_plate_input = self._find(ids.RELAY_PLATE_INPUT, wx.TextCtrl)
+        self.notes_input = self._find(ids.NOTES_INPUT, wx.TextCtrl)
+        _floor_notes_min_height(self.notes_input)
+        self.logo_bmp = self._find(ids.LOGO_BMP, wx.StaticBitmap)
+        self.logo_bmp.SetMaxSize(wx.Size(*LOGO_PREVIEW_BOX))
+        self.pick_card_btn = self._find(ids.PICK_CARD_BTN, wx.Button)
+        self.image_btn = self._find(ids.IMAGE_BTN, wx.Button)
+        self.remove_logo_btn = self._find(ids.REMOVE_LOGO_BTN, wx.Button)
+        self.ok_btn = self._find("wxID_OK", wx.Button)
+
+        self.add_team_infobar = _build_infobar(self.dialog, ADD_TEAM_INFOBAR)
+
+        self.presenter = AddTeamPresenter(self, roster)
+
+        self._bind_events()
+
+    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
+        """Resolve one of this dialog's own child controls by name.
+
+        See :func:`find_control`'s docstring (``ui.views._support``)
+        for the full measured reasoning this mirrors.
+
+        Raises:
+            LookupError: If *name* does not resolve to an
+                *expected_type* instance inside this dialog, even
+                after settling.
+        """
+        return find_control(self.dialog, name, expected_type)
+
+    def _bind_events(self) -> None:
+        """Forward every control event straight to the presenter."""
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_add, self.ok_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_pick_card, self.pick_card_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_image_click, self.image_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_remove_logo, self.remove_logo_btn)
+
+    def _on_add(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
+        """Handle ``wxID_OK`` ("Add"): commit, then close if it did.
+
+        Measured: ``wxID_OK`` is a stock id wx auto-binds to
+        ``EndModal(wx.ID_OK)`` on any ``EVT_BUTTON`` whose handler
+        calls ``event.Skip()`` (the note ``AddRiderDialog._on_add``
+        carries), so *event* is never skipped here: this handler is
+        the only thing allowed to decide whether the dialog closes. A
+        refused add (blank or duplicate name, a roster refusal, ...)
+        leaves the dialog open, showing why on
+        :data:`ADD_TEAM_INFOBAR`, so the operator can correct or
+        Cancel -- never a silent, unexplained non-close.
+        """
+        if self.presenter.on_submit(self._form_values()):
+            self.dialog.EndModal(wx.ID_OK)
+
+    def _form_values(self) -> TeamFormValues:
+        """Return the dialog's current fields, read verbatim (R-20)."""
+        return TeamFormValues(
+            name=self.name_input.GetValue(),
+            relay_plate=self.relay_plate_input.GetValue(),
+            notes=self.notes_input.GetValue(),
+        )
+
+    def _on_pick_card(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``pick_card_btn``: forward to the presenter."""
+        event.Skip()
+        self.presenter.on_pick_card()
+
+    def _on_image_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``image_btn``: pick a file, read it, forward bytes.
+
+        A cancelled picker is a silent no-op. The picked file is read
+        here -- the presenter stays pure Python, and the file dialog
+        is this view's own OS-native seam (R-71).
+        """
+        event.Skip()
+        path = pick_logo_image_path(self.dialog)
+        if path is None:
+            return
+        self.presenter.on_pick_image(path.read_bytes())
+
+    def _on_remove_logo(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``remove_logo_btn``: forward to the presenter."""
+        event.Skip()
+        self.presenter.on_remove_logo()
+
+    # ---------------------------------------------------- AddTeamView
+
+    def set_relay_plate_visible(self, *, visible: bool) -> None:
+        """Show/hide the Plate (relay) row (team_relay rides only)."""
+        _set_relay_row_visible(self.relay_plate_input, visible=visible)
+        self.dialog.Layout()
+
+    def show_form(self, *, name: str, relay_plate: str, notes: str) -> None:
+        """Fill the dialog's three text fields (R-20)."""
+        self.name_input.SetValue(name)
+        self.relay_plate_input.SetValue(relay_plate)
+        self.notes_input.SetValue(notes)
+
+    def show_logo(self, *, card: str | None, image: bytes | None) -> None:
+        """Render the staged logo preview (``logo_bmp``)."""
+        self.logo_bmp.SetBitmap(_logo_bitmap(card=card, image=image))
+        self.dialog.Layout()
+
+    def show_validation(self, message: str) -> None:
+        """Show *message* on :data:`ADD_TEAM_INFOBAR`.
+
+        ``AddTeamView`` member: non-modal, mirroring the editor's own
+        refusal surface -- it stays up until the next successful Add
+        re-renders (or the dialog closes), never blocking the
+        operator from correcting the form.
+        """
+        self.add_team_infobar.ShowMessage(message, wx.ICON_WARNING)
+        self.dialog.Layout()
+
+
+def run_add_team_flow(parent: wx.Window, roster: Roster) -> bool:
+    """Open the Add Team dialog; commit only if the operator Adds.
+
+    W8's dedicated add path: ``team_editor_dlg``'s own ``add_btn``
+    handler calls this. The dialog pairs with its own
+    :class:`~rivercrossing.ui.presenters.teams.AddTeamPresenter`
+    instance over the same live roster (the module docstring's
+    mirror-image split -- the editor's own ``TeamsPresenter`` never
+    adds); on a committed Add the caller refreshes its own rows/form
+    through :meth:`~rivercrossing.ui.presenters.teams.
+    TeamsPresenter.on_add_committed`.
+
+    Args:
+        parent: The window to return focus to once ``add_team_dlg``
+            ends.
+        roster: The roster a clean Add commits into.
+
+    Returns:
+        Whether an add actually committed.
+    """
+    window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.ADD_TEAM_DLG)
+    if window is None:
+        return False
+    try:
+        AddTeamDialog(window, roster=roster)
+        default_button = dialogs.default_button_for(ids.ADD_TEAM_DLG)
+        if default_button is not None:
+            dialogs.set_default_button(window, default_button)
+        first_field = dialogs.first_field_for(ids.ADD_TEAM_DLG)
+        if first_field is not None:
+            dialogs.set_initial_focus(window, first_field)
+        result = dialogs.run_dialog(window, opener=parent)
+    finally:
+        # Fault A: construction now runs inside the close guard -- a
+        # post-load raise (AddTeamDialog's _find can exhaust its 25
+        # retries under hosted-runner load) must not leave the
+        # just-loaded dialog fully alive, rerun-masked until the reap
+        # pin catches it.
+        if not window.IsBeingDeleted():
+            window.Destroy()
+    ok_id: int = wx.ID_OK  # mypy: an int-typed local isolates wx's own Any
+    return result == ok_id
 
 
 def pick_logo_image_path(parent: wx.Window) -> Path | None:

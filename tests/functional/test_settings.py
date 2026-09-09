@@ -27,13 +27,13 @@ import pytest
 import scenario_runner
 
 from rivercrossing.ui import feed_model
-from rivercrossing.ui.presenters.settings import ZOOM_LADDER
 
 pytestmark = pytest.mark.functional
 
 # R-37 with hide-times ON: the Lap time/Total columns vanish, leaving
-# these five. Mirrors test_console_demo.py's own pinned spelling.
-_HIDDEN_TIMES_COLUMNS = ["Time", "Plate", "Entry", "Lap", "Card"]
+# these five. Mirrors test_console_demo.py's own pinned spelling (W9
+# column order: Name header, Card before Lap).
+_HIDDEN_TIMES_COLUMNS = ["Time", "Plate", "Name", "Card", "Lap"]
 
 _DARWIN_ONLY = pytest.mark.skipif(
     sys.platform != "darwin",
@@ -62,13 +62,15 @@ def test_settings_persistence_applies_and_round_trips_every_control_through_a_re
     layout settings that have no dialog control. The scenario reports
     the values applied from a pre-saved file in run one, the values
     its own mutations saved, and the values a fresh build restores
-    after that run closed.
+    after that run closed. The applied appearance reads from the
+    theme controller's mode -- W13 removed the View-menu theme radio
+    this used to mirror into.
     """
     result = scenario_runner.run_scenario("settings_persistence_round_trip")
 
     assert result["ok"], result["context"]
     data = result["data"]
-    assert data["applied_dark_radio"] is True, result["context"]
+    assert data["applied_theme_mode"] == "dark", result["context"]
     assert data["applied_sound_muted"] is True, result["context"]
     assert data["applied_hide_times_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["applied_sash"] == 320, result["context"]
@@ -89,11 +91,14 @@ def test_settings_persistence_applies_and_round_trips_every_control_through_a_re
 
 
 def test_settings_dialog_renders_the_persisted_values() -> None:
-    """Open Settings: radios/checkboxes/choice reflect the saved file.
+    """Open Settings: radios/checkboxes reflect the saved file.
 
     The dialog must render what the app loaded -- light appearance,
-    sound off, hide-times on, zoom 130 -- and rendering must itself
-    change nothing (closed via Cancel).
+    sound off, hide-times on -- and rendering must itself change
+    nothing (closed via Cancel). The saved zoom_percent rides the file
+    unchanged: W13 removed the dialog's zoom_choice (View ▸ Zoom is
+    the single zoom surface), so the probe also confirms the control
+    is gone.
     """
     result = scenario_runner.run_scenario("settings_dialog_renders_persisted_values")
 
@@ -105,25 +110,25 @@ def test_settings_dialog_renders_the_persisted_values() -> None:
     assert data["rendered_dark"] is False, result["context"]
     assert data["rendered_sound"] is False, result["context"]
     assert data["rendered_hide_times"] is True, result["context"]
-    assert data["rendered_zoom_selection"] == ZOOM_LADDER.index(130), result["context"]
+    assert data["no_zoom_choice"] is True, result["context"]
 
 
 @_DARWIN_ONLY
 def test_settings_dialog_ok_applies_and_persists_dark_on_mac() -> None:
-    """Toggle Dark + OK: live apply, menu radio, file, relaunch render.
+    """Toggle Dark + OK: live apply, mode, file, relaunch render.
 
-    The appearance mirror both ways: the dialog's OK applies Dark live
-    (SystemAppearance flips), re-checks the View-menu radio, writes the
-    file, and a relaunch still renders Dark in a fresh dialog. Sound
-    off and hide-times on ride the same OK.
+    The appearance apply path: the dialog's OK applies Dark live
+    (SystemAppearance flips), records the mode on the theme controller
+    (W13: there is no View-menu radio to re-check any more), writes
+    the file, and a relaunch still renders Dark in a fresh dialog.
+    Sound off and hide-times on ride the same OK.
     """
     result = scenario_runner.run_scenario("settings_dialog_ok_applies_and_persists_dark")
-
     assert result["ok"], result["context"]
     data = result["data"]
     assert data["dlg_shown"] is True, result["context"]
     assert data["is_dark_after"] is True, result["context"]
-    assert data["menu_dark_checked"] is True, result["context"]
+    assert data["theme_mode_after"] == "dark", result["context"]
     assert data["sound_muted_after"] is True, result["context"]
     assert data["hide_times_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["saved_appearance"] == "dark", result["context"]
@@ -140,7 +145,7 @@ def test_settings_dialog_ok_persists_dark_where_runtime_cannot_change_on_windows
     Never asserts ``is_dark_after``'s absolute value -- the CannotChange
     contract (theme.py's own module docstring) only documents that the
     call has no runtime effect, not the pre-existing OS appearance. The
-    mirror facts (menu radio, saved file, relaunch render) hold on
+    mirror facts (recorded mode, saved file, relaunch render) hold on
     every platform.
     """
     result = scenario_runner.run_scenario("settings_dialog_ok_applies_and_persists_dark")
@@ -148,7 +153,7 @@ def test_settings_dialog_ok_persists_dark_where_runtime_cannot_change_on_windows
     assert result["ok"], result["context"]
     data = result["data"]
     assert data["dlg_shown"] is True, result["context"]
-    assert data["menu_dark_checked"] is True, result["context"]
+    assert data["theme_mode_after"] == "dark", result["context"]
     assert data["sound_muted_after"] is True, result["context"]
     assert data["hide_times_columns"] == _HIDDEN_TIMES_COLUMNS, result["context"]
     assert data["saved_appearance"] == "dark", result["context"]
@@ -159,13 +164,13 @@ def test_settings_dialog_ok_persists_dark_where_runtime_cannot_change_on_windows
 
 
 def test_settings_dialog_cancel_applies_and_persists_nothing() -> None:
-    """Toggle then Cancel: no apply, no menu change, file untouched.
+    """Toggle then Cancel: no apply, no mode change, file untouched.
 
     Platform-independent: "no change" is the documented contract on
     both macOS (the toggle never reached OK) and MSW (where live change
     is impossible anyway) -- the pre-existing LIGHT appearance, light
-    menu radio, sound on and the untouched file all read as they did
-    before the dialog opened.
+    theme-controller mode, sound on and the untouched file all read as
+    they did before the dialog opened.
     """
     result = scenario_runner.run_scenario("settings_dialog_cancel_applies_nothing")
 
@@ -173,7 +178,7 @@ def test_settings_dialog_cancel_applies_and_persists_nothing() -> None:
     data = result["data"]
     assert data["dlg_shown"] is True, result["context"]
     assert data["appearance_unchanged"] is True, result["context"]
-    assert data["menu_dark_checked"] is False, result["context"]
+    assert data["theme_mode_after"] == "light", result["context"]
     assert data["sound_muted_after"] is False, result["context"]
     assert data["saved_appearance"] == "light", result["context"]
     assert data["saved_sound_on"] is True, result["context"]
@@ -211,7 +216,7 @@ def test_hide_times_view_menu_toggles_live_mirrors_settings_and_survives_relaunc
     assert data["relaunch_menu_checked"] is True, result["context"]
 
 
-# --- E8.1.4: zoom (View menu, Settings mirror, dialogs, relaunch) ---
+# --- E8.1.4: zoom (View menu, dialogs, relaunch) --------------------
 
 
 def test_zoom_view_menu_scales_console_fonts_and_bounds_the_ladder() -> None:
@@ -236,29 +241,46 @@ def test_zoom_view_menu_scales_console_fonts_and_bounds_the_ladder() -> None:
     assert data["saved_zoom"] == 150, result["context"]
 
 
-def test_zoom_settings_choice_mirrors_the_view_radio_and_dialogs_scale() -> None:
-    """The zoom_choice mirrors the menu radio; dialogs opened scale.
+def test_zoom_view_menu_posts_no_stub_notice_and_persists() -> None:
+    """mi_zoom_110 posts no stub; the radio ticks and the file saves.
 
-    The dialog-scaling half proves the base-font capture: the
-    ``zoom_choice`` control opened after zoom 120 reads
-    ``round(choice_base * 120 / 100)``, where ``choice_base`` was
-    captured by opening the same dialog at 100% first.
+    W13 inherited this contract from the theme-vs-zoom scenario that
+    retired with the View-menu theme trio: the View row is now
+    hide-times + zoom, and firing a zoom id must never post the
+    generic not-yet-implemented stub. Zoom is platform-independent --
+    no CannotChange split -- so one test covers both OSes.
     """
-    result = scenario_runner.run_scenario("zoom_settings_mirror_and_dialog")
+    result = scenario_runner.run_scenario("zoom_id_does_not_post_the_stub_notice_and_applies")
+
+    assert result["ok"], result["context"]
+    data = result["data"]
+    assert data["zoom_notice_unchanged"] is True, result["context"]
+    assert data["zoom_radio_checked"] is True, result["context"]
+    assert data["zoom_percent_after"] == 110, result["context"]
+
+
+def test_zoom_dialogs_opened_after_a_menu_zoom_scale() -> None:
+    """Dialogs opened after View-menu zoom 120 carry scaled fonts.
+
+    The dialog-scaling half of E8.1.4 proves the base-font capture:
+    the settings dialog opened after zoom 120 reads
+    ``round(control_base * 120 / 100)``, where ``control_base`` was
+    captured by opening the same dialog at 100% first. W13 removed the
+    settings zoom_choice this scenario used to drive -- the View menu
+    is the single zoom surface -- so the re-opened dialog only proves
+    the scaling; zoom persistence is proven by the sibling scenarios.
+    """
+    result = scenario_runner.run_scenario("zoom_dialog_scales_after_view_menu_zoom")
 
     assert result["ok"], result["context"]
     data = result["data"]
     base = data["base_pt"]
-    choice_base = data["choice_base_pt"]
+    control_base = data["control_base_pt"]
     assert data["dlg_shown"] is True, result["context"]
     assert data["pt_after_menu_120"] == round(base * 120 / 100), result["context"]
     assert data["radio_120_checked"] is True, result["context"]
     assert data["dlg_shown_2"] is True, result["context"]
-    assert data["choice_selection_at_120"] == ZOOM_LADDER.index(120), result["context"]
-    assert data["choice_pt_at_120"] == round(choice_base * 120 / 100), result["context"]
-    assert data["pt_after_settings_130"] == round(base * 130 / 100), result["context"]
-    assert data["radio_130_checked"] is True, result["context"]
-    assert data["saved_zoom"] == 130, result["context"]
+    assert data["control_pt_at_120"] == round(control_base * 120 / 100), result["context"]
 
 
 def test_zoom_survives_a_relaunch() -> None:

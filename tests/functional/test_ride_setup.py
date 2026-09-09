@@ -65,10 +65,11 @@ def _mixed_relay_running_roster() -> Roster:
 def _fill_setup_minimums(dialog: Any, view: RideSetup) -> None:  # noqa: ANN401
     """Fill every field the minimum-setup submit gate requires (R-20).
 
-    ``view.lap_km_spin`` takes a float via ``SetValue`` -- a bare XRC
-    load leaves a fresh ``wxSpinCtrlDouble`` at 0.0, which the gate
-    refuses ("lap length must be positive"), so the OK-path tests
-    must set it explicitly; the text controls take ``type_text``.
+    ``view.lap_km_spin`` takes a float via ``SetValue``. The presenter
+    pushes the 8.0 lap default on load (W4, mirroring decks_spin's
+    own presenter-supplied 8), and the explicit set keeps the OK-path
+    tests independent of that default; the text controls take
+    ``type_text``.
     """
     harness.type_text(dialog, ids.NAME_INPUT, "GORBA EPIC 2026")
     harness.type_text(dialog, ids.VENUE_INPUT, "Sea to Sky Gondola")
@@ -109,6 +110,35 @@ def test_ride_setup_dlg_opens_showing_the_presenter_supplied_deck_count(
         harness.close_window(dialog)
 
     assert deck_count == 8
+
+
+def test_ride_setup_dlg_opens_showing_the_presenter_supplied_lap_km(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """lap_km_spin has no XRC value; the presenter supplies 8.0 (W4)."""
+    dialog, _view = _show(xrc_resource, _mixed_pooled_roster())
+
+    try:
+        lap_km = harness.find_control(dialog, ids.LAP_KM_SPIN).GetValue()
+    finally:
+        harness.close_window(dialog)
+
+    assert lap_km == 8.0
+
+
+def test_ride_setup_dlg_opens_with_always_deal_as_the_short_lap_default(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """W4: a fresh dialog checks always_deal_radio, never hold_short."""
+    dialog, _view = _show(xrc_resource, _mixed_pooled_roster())
+
+    try:
+        hold_checked = harness.find_control(dialog, ids.HOLD_SHORT_RADIO).GetValue()
+        deal_checked = harness.find_control(dialog, ids.ALWAYS_DEAL_RADIO).GetValue()
+    finally:
+        harness.close_window(dialog)
+
+    assert (hold_checked, deal_checked) == (False, True)
 
 
 def test_ride_setup_dlg_opens_showing_the_rosters_own_entry_settings(
@@ -328,6 +358,26 @@ def test_ride_setup_dlg_ok_with_valid_values_yields_the_built_config(
     assert shown_after is False
 
 
+def test_ride_setup_dlg_ok_given_hold_short_selected_builds_the_policy_config(
+    xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """Selecting hold_short_radio flows onto the built config (W4)."""
+    dialog, view = _show(xrc_resource, _mixed_pooled_roster())
+    _fill_setup_minimums(dialog, view)
+    harness.select_radio(dialog, ids.HOLD_SHORT_RADIO)
+
+    try:
+        harness.click(dialog, "wxID_OK")
+        config = view.config
+        shown_after = dialog.IsShown()
+    finally:
+        harness.close_window(dialog)
+
+    assert config is not None
+    assert config.hold_short_laps is True
+    assert shown_after is False
+
+
 def test_ride_setup_dlg_ok_given_a_malformed_duration_leaves_the_dialog_open(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
@@ -381,10 +431,11 @@ def test_ride_setup_dlg_ok_given_a_missing_minimum_setup_field_leaves_the_dialog
 ) -> None:
     """A minimum-setup refusal (R-20) shows the infobar, never closes.
 
-    Parsing succeeds ("6:00"/"18:00") so the refusal is the minimum-
-    setup gate itself: every blank field (and the fresh 0.0 lap_km)
-    is reported on :data:`SETUP_INFOBAR` and the dialog stays open --
-    the same shape as the parse/bound refusals above.
+    Parsing succeeds ("6:00"/"18:00") and lap_km already carries the
+    presenter's 8.0 default, so the refusal is the minimum-setup gate
+    itself: every blank text field is reported on
+    :data:`SETUP_INFOBAR` and the dialog stays open -- the same shape
+    as the parse/bound refusals above.
     """
     dialog, view = _show(xrc_resource, _mixed_pooled_roster())
     harness.type_text(dialog, ids.DURATION_INPUT, "6:00")

@@ -884,3 +884,83 @@ def test_current_time_prefill_formats_hms_with_leading_zeros() -> None:
     formatted = presenter._current_time()
 
     assert formatted == "09:05:03"
+
+
+# -------------------------------------- W11 F2b: the plate picker
+#
+# entry_detail_dlg gained a plate_choice listing the roster's entries;
+# picking one retargets the dialog to that entry AND reports the pick
+# through the presenter's ``on_plate_picked`` seam, so the app can
+# record it as the current entry (context.detail_plate) and the menu
+# correction routes stop refusing after a pick.
+
+
+def test_on_plate_picked_retargets_and_rerenders_the_entry() -> None:
+    """F2b: a pick switches the shown entry to the picked plate."""
+    engine, _clock = _running_engine()
+    view = FakeDetailView()
+    presenter = _make_presenter(engine, view, engine._roster, plate="12")
+
+    presenter.on_plate_picked("34")
+
+    assert presenter.plate == "34"
+    assert view.shown[-1].header == "Entry 34"
+
+
+def test_on_plate_picked_reports_the_pick_through_the_app_seam() -> None:
+    """F2b: the app seam hears every pick: the plate, once."""
+    engine, _clock = _running_engine()
+    view = FakeDetailView()
+    picked: list[str] = []
+    presenter = DetailPresenter(
+        view,
+        _EngineSource(engine, engine._roster),
+        plate="12",
+        engine=engine,
+        roster=engine._roster,
+        on_plate_picked=picked.append,
+    )
+
+    presenter.on_plate_picked("34")
+
+    assert picked == ["34"]
+
+
+def test_on_plate_picked_retargets_the_following_correction_actions() -> None:
+    """F2b: after a pick, corrections act on the picked entry."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=600)
+    view = FakeDetailView()
+    view.manual_result = ManualDeal(plate="34", reason="flag confirmed")
+    presenter = _make_presenter(engine, view, engine._roster, plate="12")
+
+    presenter.on_plate_picked("34")
+    presenter.on_deal_card_clicked()
+
+    assert view.last_manual == "34"
+    assert view.notices == ["Card dealt"]
+
+
+def test_on_plate_picked_for_a_dissolved_entry_renders_empty_and_reports() -> None:
+    """F2b: an unpickable plate renders empty, but still reports.
+
+    The picker only lists live roster entries, so this is the same
+    dissolved-entry safety net ``refresh`` already provides (a move
+    during this dialog's lifetime can dissolve the entry).
+    """
+    engine, _clock = _running_engine()
+    view = FakeDetailView()
+    picked: list[str] = []
+    presenter = DetailPresenter(
+        view,
+        _DissolvingSource("34"),
+        plate="12",
+        engine=engine,
+        roster=engine._roster,
+        on_plate_picked=picked.append,
+    )
+
+    presenter.on_plate_picked("34")
+
+    assert view.shown[-1] == EntryDetail(header="", members="", cards_held=(), laps=())
+    assert picked == ["34"]

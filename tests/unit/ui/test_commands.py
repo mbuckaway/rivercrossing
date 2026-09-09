@@ -44,7 +44,7 @@ from rivercrossing.ui import commands, ids
 
 ROUTE_COUNTS_BY_MENU = (
     ("File", 8),
-    ("Ride", 7),
+    ("Ride", 6),  # W14: Ride Setup… left the Ride menu with mi_ride_setup
     ("Riders", 6),
     ("Cards", 7),
     ("Results", 7),
@@ -70,12 +70,11 @@ ROUTE_TARGETS = (
     (commands.TargetKind.WINDOW, ids.SETTINGS_DLG),  # Settings...
     (commands.TargetKind.COMMAND, None),  # Exit: branches, no single fixed target
     (commands.TargetKind.COMMAND, None),  # Start Ride: branches, no single fixed target
-    (commands.TargetKind.DIALOG, ids.STOP_CONFIRM_DLG),  # Stop Ride...
+    (commands.TargetKind.COMMAND, None),  # Stop Ride...: native confirm (W5), no XRC dialog
     (commands.TargetKind.DIALOG, ids.SET_START_DLG),  # Set Start Time...
     (commands.TargetKind.DIALOG, ids.FINISH_CONFIRM_DLG),  # Finish Ride...
     (commands.TargetKind.DIALOG, ids.REOPEN_RIDE_DLG),  # Reopen Ride (E5.4.1)
     (commands.TargetKind.WINDOW, ids.AUDIT_DLG),  # Audit Trail...
-    (commands.TargetKind.WINDOW, ids.RIDE_SETUP_DLG),  # Ride Setup...
     (commands.TargetKind.WINDOW, ids.RIDER_EDITOR_DLG),  # Rider Editor
     (commands.TargetKind.WINDOW, ids.TEAM_EDITOR_DLG),  # Teams Editor (Phase 4: mixed rides)
     (commands.TargetKind.WINDOW, ids.RIDER_ISSUES_DLG),  # Check for Rider Issues...
@@ -96,7 +95,7 @@ ROUTE_TARGETS = (
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Preview in Browser: external browser
     (commands.TargetKind.COMMAND, None),  # Tie-break Order...: focuses an existing control
-    (commands.TargetKind.COMMAND, None),  # Theme / Hide Times / Zoom: direct commands
+    (commands.TargetKind.COMMAND, None),  # Hide Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
     (commands.TargetKind.DIALOG, ids.SHORTCUTS_DLG),  # Keyboard Shortcuts
     (commands.TargetKind.DIALOG, ids.SELFTEST_DLG),  # Run Evaluator Self-test
@@ -113,25 +112,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_forty_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 40
+    assert len(commands.ROUTE_TABLE) == 39
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 7, Riders 6, Cards 7, Results 7, View 1, Help 4."""
+    """File 8, Ride 6, Riders 6, Cards 7, Results 7, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_fifty_real_menu_item_ids_once_each() -> None:
-    """47 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_forty_six_real_menu_item_ids_once_each() -> None:
+    """43 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 50
-    assert len(set(flat_ids)) == 50
+    assert len(flat_ids) == 46
+    assert len(set(flat_ids)) == 46
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -194,7 +193,6 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Ride > Finish Ride...
     frozenset({RideStatus.FINISHED}),  # Ride > Reopen Ride: "FINISHED"
     None,  # Ride > Audit Trail...: "ride open, >=1 audit row"
-    None,  # Ride > Ride Setup...: "ride open (locks tighten after start)"
     None,  # Riders > Rider Editor: "ride open"
     None,  # Riders > Teams Editor: "ride open, mixed (teams allowed)" -- teams_allowed is a
     # condition-only gate, never a RideStatus membership rule
@@ -216,7 +214,7 @@ ALLOWED_STATES = (
     frozenset({RideStatus.FINISHED}),  # Results > Export Standings CSV...
     None,  # Results > Preview in Browser: "an export exists"
     None,  # Results > Tie-break Order...: "ride open"
-    None,  # View > Theme / Hide Times / Zoom: "always"
+    None,  # View > Hide Times / Zoom: "always"
     None,  # Help > User Guide: "always"
     None,  # Help > Keyboard Shortcuts: "always"
     None,  # Help > Run Evaluator Self-test: "always"

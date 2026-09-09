@@ -145,6 +145,7 @@ class RiderIssuesPresenter:
         """Return whether *issue* may be converted to a solo entry."""
         return (
             issue.kind == "team-of-one"
+            and bool(issue.entry.riders)
             and self.roster.plate_model is PlateModel.RIDER_POOLED
             and can_edit_structure(self.roster.status)
         )
@@ -153,6 +154,10 @@ class RiderIssuesPresenter:
         """Return why *issue* cannot currently be converted."""
         if issue.kind != "team-of-one":
             return "only a team-of-one can be converted to solo"
+        if not issue.entry.riders:
+            # W8: an empty team is a size-0 "team-of-one"; there is no
+            # rider to extract, so Convert must say so, never raise.
+            return "an empty team has no rider to convert to solo"
         if self.roster.plate_model is not PlateModel.RIDER_POOLED:
             return "convert to solo requires a rider-pooled ride"
         return "a team-of-one can only be converted while the ride is draft"

@@ -22,9 +22,16 @@
   Code-side per the canvas footnotes: riders_list rows, and its Team
   column hidden in a solo-only ride; team_choice contents (teams stay
   editable until start for relay rides, during the ride for pooled
-  ones); delete_btn disabled once an entry has data - after the start
-  it is DNF/void only (R-15); summary_lbl text and conflicts_list rows;
-  csv_preview_dlg's wxID_OK disabled while conflicts > 0.
+  ones); delete_btn disabled until a row is selected and, once the
+  entry has data, forever - after the start it is DNF/void only
+  (R-15); the W7 rework draws the editor at 1280x560 (riders.xrc's
+  own minsize note above: the code-side SetMinSize() floor applies
+  width AND height now) with Delete + Close anchoring the list pane's
+  bottom; summary_lbl text and conflicts_list rows; csv_preview_dlg's
+  wxID_OK disabled while conflicts > 0. The File-menu Import/Export
+  Riders CSV routes stay the one CSV path (W7 removed this editor's
+  import_btn/export_btn; their shared flows still live code-side in
+  ui/views/rider_editor.py for those routes).
 -->
 <resource>
 
@@ -38,14 +45,80 @@
     <object class="wxBoxSizer">
       <orient>wxHORIZONTAL</orient>
 
+      <!-- W7 rework: the riders list pane takes 3/5 of the width and
+           the form pane 2/5 (sizer options 3:2), matching the canvas
+           redraw at 1280px: the list is the editor's dominant pane.
+           rider_search lands above riders_list in the later W7
+           search slice; Delete + Close anchor the pane's bottom. -->
       <object class="sizeritem">
-        <option>1</option>
+        <option>3</option>
         <flag>wxEXPAND|wxALL</flag>
         <border>10</border>
-        <object class="wxDataViewCtrl" name="riders_list"/>
+        <object class="wxBoxSizer">
+          <orient>wxVERTICAL</orient>
+
+          <!-- W7 search: rider_search narrows riders_list by name or
+               plate (the audit_dlg precedent's own shape: a label +
+               wxSearchCtrl row above the list). -->
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxStaticText">
+                  <label>Search</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxSearchCtrl" name="rider_search"/>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxDataViewCtrl" name="riders_list"/>
+          </object>
+
+          <!-- Delete sits bottom-left under riders_list with Close
+               beside it, equal-sized (W7 rework): the standard-dialog
+               sizer pattern cannot stretch stock buttons, so Close is
+               a plain stock-id button like library.xrc's wxID_DELETE;
+               dialogs.wire_close_button still finds it by name and
+               wires Escape. Delete stays disabled until a row is
+               selected (code-side set_delete_enabled). -->
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxButton" name="delete_btn">
+                  <label>Delete</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND</flag>
+                <object class="wxButton" name="wxID_CLOSE"/>
+              </object>
+            </object>
+          </object>
+
+        </object>
       </object>
 
       <object class="sizeritem">
+        <option>2</option>
         <flag>wxEXPAND|wxTOP|wxRIGHT|wxBOTTOM</flag>
         <border>10</border>
         <object class="wxBoxSizer">
@@ -122,64 +195,121 @@
                     <flag>wxRIGHT</flag>
                     <border>6</border>
                     <object class="wxButton" name="add_btn">
-                      <label>Add</label>
+                      <label>Add rider…</label>
                     </object>
                   </object>
                   <object class="sizeritem">
-                    <flag>wxRIGHT</flag>
-                    <border>6</border>
                     <object class="wxButton" name="save_btn">
                       <label>Save</label>
                     </object>
                   </object>
-                  <object class="sizeritem">
-                    <object class="wxButton" name="delete_btn">
-                      <label>Delete</label>
-                    </object>
-                  </object>
                 </object>
               </object>
 
             </object>
           </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- W7: the dedicated Add Rider dialog. The editor's in-form add
+       controls became edit-only; add_btn on rider_editor_dlg opens
+       this window instead. Control names reuse the editor's own
+       (plate_input etc.: each top-level window is its own name
+       namespace, tools/gen_ids.py's rule), so the ids constants stay
+       shared. The Team row's visibility follows entry_mode like the
+       editor's (code-side); refusals show on a code-side infobar
+       (add_rider_infobar, wxInfoBar: XRC cannot author one). -->
+  <object class="wxDialog" name="add_rider_dlg">
+    <title>Add Rider</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Rider</label>
+          <orient>wxVERTICAL</orient>
 
           <object class="sizeritem">
             <flag>wxEXPAND|wxBOTTOM</flag>
             <border>8</border>
-            <object class="wxBoxSizer">
-              <orient>wxHORIZONTAL</orient>
+            <object class="wxFlexGridSizer">
+              <cols>2</cols>
+              <vgap>6</vgap>
+              <hgap>8</hgap>
+              <growablecols>1</growablecols>
+
               <object class="sizeritem">
-                <option>1</option>
-                <flag>wxEXPAND|wxRIGHT</flag>
-                <border>6</border>
-                <object class="wxButton" name="import_btn">
-                  <label>Import CSV…</label>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Plate</label>
                 </object>
               </object>
               <object class="sizeritem">
-                <option>1</option>
                 <flag>wxEXPAND</flag>
-                <object class="wxButton" name="export_btn">
-                  <label>Export CSV…</label>
+                <object class="wxTextCtrl" name="plate_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>First name</label>
                 </object>
               </object>
-            </object>
-          </object>
-
-          <object class="spacer">
-            <option>1</option>
-            <size>0,0</size>
-          </object>
-
-          <object class="sizeritem">
-            <flag>wxEXPAND</flag>
-            <object class="wxStdDialogButtonSizer">
-              <object class="button">
-                <object class="wxButton" name="wxID_CLOSE"/>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="first_name_input"/>
               </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Last name</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="last_name_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Team</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxChoice" name="team_choice"/>
+              </object>
+
             </object>
           </object>
 
+        </object>
+      </object>
+
+      <!-- wxID_OK carries the "Add" label; the stock id keeps the
+           button on the platform-correct side and Enter safe. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Add</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
         </object>
       </object>
 

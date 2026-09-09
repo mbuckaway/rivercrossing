@@ -6,10 +6,53 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-09-09
+
+### Added
+
+- **Native standard-dialog functions** — `ui.std_dialogs` (`show_info`, `show_warning`, `show_error`, `show_confirm`) render the app's alerts and confirms through native `wx.MessageDialog`s instead of bespoke XRC windows (W2).
+- **Add Rider / Add Team dialogs** — the Rider Editor's Add Rider… and the Teams Editor's Add Team… each open a dedicated form dialog that creates the entry on OK (`add_rider_dlg` W7, `add_team_dlg` W8).
+- **Rider search & sort** — a `rider_search` filter narrows the Rider Editor list by name or plate, and the list sorts numerically by plate (W7).
+- **Registration count chips** — the console's six status chips now include the open ride's rider and team counts (`riders_count_lbl`, `teams_count_lbl`) (W12).
+- **Short-lap card policy setting** — Ride Setup's Hold short laps / Always deal radio pair sets the per-ride `hold_short_laps` flag; always deal is the default (W4).
+- **Team logos on the results page** — the HTML results page embeds a team's recorded logo in its standings rows (W8).
+- **FINISHED banner** — the console's info bar becomes a finished banner with Reopen and View Results buttons once the ride finishes (W11).
+
+### Changed
+
+- **Launch flow shows the main window before any prompt** — the launch's modals moved out of `build_main_window` into a post-`Show` flow (`_run_launch_flow`), so the console is already visible behind the resume and no-ride decisions (W3).
+- **Ride Setup labels and blank-field messages** — Duration and Min lap collect typed `H:MM`/`M:SS` values with labelled text fields; a blank or unparseable field now surfaces a message in the dialog instead of failing silently (W4).
+- **Feed columns `Time|Plate|Name|Card|Lap|Lap time|Total`** — the console feed reorders its columns and gives each an explicit width, with the held-card marker on the Card cell (W9).
+- **Clock display freezes while stopped** — the console's elapsed clock stops ticking while the ride is stopped and resumes when the ride continues; the engine's wall clock keeps running (W6).
+- **Stop confirm is a native dialog** — the Stop flow asks through `ui.std_dialogs.show_confirm` (`stop_confirm_dlg` retired) (W5).
+- **Theme moved to Settings, zoom to the View menu** — Settings owns the appearance trio; the View menu owns text zoom. Each option now lives on exactly one surface (W13).
+- **File ▸ New Ride… is the single entry point** — the Ride menu's Ride Setup… row is gone; New Ride… opens the ride setup flow (W14).
+- **Editor Save buttons enable only when dirty** — the Rider and Teams editors gate their Save button on unsaved changes (W7/W8).
+
+### Removed
+
+- **Import/Export CSV buttons from the Rider Editor** — CSV stays under the File menu (W7).
+- **Text zoom from Settings** — zoom is View-menu-only (W13).
+- **Theme trio from the View menu** — appearance is Settings-only (W13).
+- **Ride ▸ Ride Setup…** — File ▸ New Ride… is the single setup entry (W14).
+- **`no_ride_dlg` and `stop_confirm_dlg` windows** — native info and confirm dialogs replace both XRC windows (`no_ride_dlg` retired W15, `stop_confirm_dlg` W5).
+
 ### Fixed
 
 - **Functional-suite determinism** — modal hang in the reopened-finish flow, dead collection of `test_review_tabs.py`, reference-leak hygiene for in-process window builds, rerun attribution for mid-pass hangs, and measured pass budgets.
 - **CI functional budgets** — per-pass budget raised to 2400 s with `-n 2` workers (`RIVERCROSSING_FUNCTIONAL_PASS_TIMEOUT_S`), the local VM runner propagates it into the guest.
+- **Quit-while-running crash loop** — a launch that resumes a quit-keep-running session no longer blocks or crashes behind an unshown modal; a replay failure surfaces a "Cannot Resume Ride" error naming the ride, clears the resume marker, and stays on the empty console (W3).
+- **Team creation no longer fabricates riders/plates** — a team can be created empty; the editor no longer invents an anchor rider with a placeholder plate (W8).
+- **Held cards always visible in the feed** — the feed's Card cell shows the held card's real code with a held marker instead of blanking it until confirm or void (W9).
+- **Ride library truncation and delete-by-id** — deleting removes the ride by its id and refreshes the list, and a refused delete (running ride, referenced by a window) surfaces an error dialog over the library instead of failing silently (W10).
+- **Results-window export buttons** — they reach the same export handlers as the Results menu (W11).
+- **Entry Detail, Mark DNF, Reassign and Void Card reachable** — flagged-list rows open Entry Detail, whose action buttons drive the real commands (W11).
+- **Ride-library New button disabled without a store** — no silent no-op when no store backs the library (W10).
+- **Lap-length default 8.0** — a fresh Ride Setup dialog no longer sits at 0.0 km, which refused every submit; the presenter pushes the canvas's 8.0 default on load (W4).
+
+### Notes
+
+- **Store migration v1→v2** — opening a pre-existing database migrates it forward: the `ride` table gains `hold_short_laps INTEGER NOT NULL DEFAULT 0` (always deal), the per-ride short-lap policy Ride Setup writes (W4).
 
 ## [1.0.10] - 2026-09-07
 

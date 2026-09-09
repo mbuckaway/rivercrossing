@@ -78,7 +78,7 @@ def _build_live_console(
         window.Show()
         window.Layout()
         harness.pump()
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)
@@ -139,9 +139,11 @@ def test_live_console_shows_zero_counters_at_startup(
         harness.find_control(window, ids.CARDS_COUNT_LBL).GetLabelText(),
         harness.find_control(window, ids.ON_COURSE_LBL).GetLabelText(),
         harness.find_control(window, ids.SHOE_LBL).GetLabelText(),
+        harness.find_control(window, ids.RIDERS_COUNT_LBL).GetLabelText(),
+        harness.find_control(window, ids.TEAMS_COUNT_LBL).GetLabelText(),
     )
 
-    assert labels == ("0", "0", "0", "432/432")
+    assert labels == ("0", "0", "0", "432/432", "0", "0")
 
 
 def test_live_console_starts_running_with_entry_enabled_and_stop_disabled(
@@ -277,12 +279,12 @@ def test_live_typed_plate_appears_in_feed_with_card_chip() -> None:
 
 
 def test_live_flagged_crossing_row_is_bold() -> None:
-    """R-34: a short-lap row bolds and its held card draws no chip."""
+    """R-34/W9: a short-lap row bolds and shows its held card's chip."""
     result = scenario_runner.run_scenario("live_flagged_crossing_row_is_bold")
 
     assert result["ok"], result["context"]
     assert result["data"]["row_bold"] is True, result["context"]
-    assert result["data"]["card_chip_ok"] is False, result["context"]
+    assert result["data"]["card_chip_ok"] is True, result["context"]
     assert result["data"]["held_count"] == 1, result["context"]
 
 

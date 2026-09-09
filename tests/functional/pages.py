@@ -79,6 +79,10 @@ MAIN_FRAME = WindowSpec(
         ids.CARDS_COUNT_LBL,
         ids.ON_COURSE_LBL,
         ids.SHOE_LBL,
+        # W12: the two registration chips (riders_count_lbl /
+        # teams_count_lbl) sit beside the four live-timing chips.
+        ids.RIDERS_COUNT_LBL,
+        ids.TEAMS_COUNT_LBL,
         ids.REVIEW_NOTEBOOK,
         ids.FLAGGED_LIST,
         ids.REVIEW_BTN,
@@ -128,14 +132,6 @@ SET_START_DLG = WindowSpec(
     xrc_file="dialogs.xrc",
     is_frame=False,
     controls=(ids.START_DATE_PICKER, ids.START_TIME_PICKER, WX_ID_OK, WX_ID_CANCEL),
-    buttons=(WX_ID_OK, WX_ID_CANCEL),
-)
-
-STOP_CONFIRM_DLG = WindowSpec(
-    name=ids.STOP_CONFIRM_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(WX_ID_OK, WX_ID_CANCEL),
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
@@ -194,18 +190,11 @@ EXIT_CONFIRM_DLG = WindowSpec(
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
-# ux-polish: the no-ride prompt that replaced continue_or_new_dlg at
-# the store-backed bootstrap. Like resume_dlg it has two custom
-# buttons and no std sizer: open_library_btn is the secondary (and
-# Escape's target, via dialogs.wire_escape_to) and create_ride_btn
-# the primary; the app bootstrap wires both.
-NO_RIDE_DLG = WindowSpec(
-    name=ids.NO_RIDE_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(ids.MESSAGE_LBL, ids.OPEN_LIBRARY_BTN, ids.CREATE_RIDE_BTN),
-    buttons=(ids.OPEN_LIBRARY_BTN, ids.CREATE_RIDE_BTN),
-)
+# ux-polish W3: no_ride_dlg, the no-ride prompt that replaced
+# continue_or_new_dlg at the store-backed bootstrap, was removed in
+# W15 — the launch shows the native info dialog (app.py
+# _show_no_ride_info) and the create/open choice lives in the File
+# menus, so this registry no longer lists the window.
 
 # --- xrc-windows section C: riders, corrections & cards ---------------
 
@@ -215,6 +204,7 @@ RIDER_EDITOR_DLG = WindowSpec(
     is_frame=False,
     controls=(
         ids.RIDERS_LIST,
+        ids.RIDER_SEARCH,
         ids.PLATE_INPUT,
         ids.FIRST_NAME_INPUT,
         ids.LAST_NAME_INPUT,
@@ -222,18 +212,33 @@ RIDER_EDITOR_DLG = WindowSpec(
         ids.ADD_BTN,
         ids.SAVE_BTN,
         ids.DELETE_BTN,
-        ids.IMPORT_BTN,
-        ids.EXPORT_BTN,
         WX_ID_CLOSE,
     ),
     buttons=(
         ids.ADD_BTN,
         ids.SAVE_BTN,
         ids.DELETE_BTN,
-        ids.IMPORT_BTN,
-        ids.EXPORT_BTN,
         WX_ID_CLOSE,
     ),
+)
+
+# W7: the dedicated Add Rider dialog the editor's add_btn opens. Its
+# input names reuse the editor's own (plate_input etc.); each
+# top-level window is its own name namespace, so the ids constants
+# stay shared (tools/gen_ids.py's own rule).
+ADD_RIDER_DLG = WindowSpec(
+    name=ids.ADD_RIDER_DLG,
+    xrc_file="riders.xrc",
+    is_frame=False,
+    controls=(
+        ids.PLATE_INPUT,
+        ids.FIRST_NAME_INPUT,
+        ids.LAST_NAME_INPUT,
+        ids.TEAM_CHOICE,
+        WX_ID_OK,
+        WX_ID_CANCEL,
+    ),
+    buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
 CSV_PREVIEW_DLG = WindowSpec(
@@ -278,6 +283,7 @@ TEAM_EDITOR_DLG = WindowSpec(
         ids.LOGO_BMP,
         ids.PICK_CARD_BTN,
         ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
         ids.MEMBERS_LIST,
         ids.SAVE_BTN,
         ids.REMOVE_BTN,
@@ -290,7 +296,38 @@ TEAM_EDITOR_DLG = WindowSpec(
         ids.ADD_BTN,
         ids.PICK_CARD_BTN,
         ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
         WX_ID_CLOSE,
+    ),
+)
+
+# --- xrc-windows section C: W8 Add Team dialog ---
+
+# W8: the dedicated Add Team dialog the teams editor's add_btn opens.
+# Its input names reuse the editor's own (name_input etc.); each
+# top-level window is its own name namespace, so the ids constants
+# stay shared (tools/gen_ids.py's own rule).
+ADD_TEAM_DLG = WindowSpec(
+    name=ids.ADD_TEAM_DLG,
+    xrc_file="teams.xrc",
+    is_frame=False,
+    controls=(
+        ids.NAME_INPUT,
+        ids.RELAY_PLATE_INPUT,
+        ids.NOTES_INPUT,
+        ids.LOGO_BMP,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
+        WX_ID_OK,
+        WX_ID_CANCEL,
+    ),
+    buttons=(
+        WX_ID_OK,
+        WX_ID_CANCEL,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
     ),
 )
 
@@ -299,6 +336,7 @@ ENTRY_DETAIL_DLG = WindowSpec(
     xrc_file="detail.xrc",
     is_frame=False,
     controls=(
+        ids.PLATE_CHOICE,
         ids.ENTRY_HEADER_LBL,
         ids.MEMBERS_LBL,
         ids.CARDS_LIST,
@@ -426,7 +464,6 @@ SETTINGS_DLG = WindowSpec(
         ids.APPEARANCE_DARK_RADIO,
         ids.SOUND_CHK,
         ids.HIDE_TIMES_CHK,
-        ids.ZOOM_CHOICE,
         ids.BACKUP_NOW_BTN,
         WX_ID_OK,
         WX_ID_CANCEL,
@@ -458,25 +495,27 @@ SELFTEST_DLG = WindowSpec(
     buttons=(ids.RERUN_BTN, WX_ID_CLOSE),
 )
 
-# xrc-windows's own A-E order: 1 console + 10 setup/lifecycle dialogs +
-# 9 rider/card dialogs (team_editor_dlg is Phase 4's section-C member)
-# + 4 results/library/audit + 4 system/help = 28.
+# xrc-windows's own A-E order: 1 console + 8 setup/lifecycle dialogs
+# (stop_confirm_dlg retired W5, no_ride_dlg retired W15) + 11
+# rider/card dialogs (add_rider_dlg, add_team_dlg and team_editor_dlg
+# are W7/Phase 4 section-C members) + 4 results/library/audit + 4
+# system/help = 28.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
     SET_START_DLG,
-    STOP_CONFIRM_DLG,
     FINISH_CONFIRM_DLG,
     DUPLICATE_RIDE_DLG,
     REOPEN_RIDE_DLG,
     RESUME_DLG,
     EXIT_RUNNING_DLG,
     EXIT_CONFIRM_DLG,
-    NO_RIDE_DLG,
     RIDER_EDITOR_DLG,
+    ADD_RIDER_DLG,
     CSV_PREVIEW_DLG,
     RIDER_ISSUES_DLG,
     TEAM_EDITOR_DLG,
+    ADD_TEAM_DLG,
     ENTRY_DETAIL_DLG,
     EDIT_CROSSING_DLG,
     REASSIGN_DLG,

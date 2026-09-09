@@ -19,7 +19,8 @@ counters). The empty-state facts are pinned through the production
 below (zero counters, full shoe) and the fresh-engine drive inside
 ``test_main_frame_given_a_fresh_engine_shows_an_empty_feed`` (empty
 feed at rest). The demo ``shared_console`` fixture stays for the
-view-capability assertions (bold mapping, card bitmap, held-no-chip)
+view-capability assertions (bold mapping, card bitmap, the held
+row's own chip)
 -- ``rivercrossing.demo`` remains importable from tests.
 
 Everything here needs a live ``wx.App`` and the packaged card
@@ -75,6 +76,7 @@ from rivercrossing.ui import feed_model, ids
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.views import MainFrame, _support
 from rivercrossing.ui.views.main_frame import (
+    DEFAULT_SASH,
     FINISHED_INFOBAR,
     MIN_SIZE,
     REOPENED_INFOBAR,
@@ -143,7 +145,7 @@ def empty_console(xrc_resource: object) -> MainFrame:
         harness.pump()
         roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
         _engine, source = app_module._build_console_engine(roster)
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         yield console
     finally:
         del console
@@ -206,7 +208,7 @@ def test_main_frame_given_a_fresh_engine_shows_an_empty_feed(
         window.Show()
         window.Layout()
         harness.pump()
-        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        console = MainFrame(window, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)
@@ -276,16 +278,20 @@ def test_main_frame_given_a_fresh_engine_shows_zero_counters_and_full_shoe(
     """E5.4.2: a fresh ride counts 0 crossings/cards/course; full shoe.
 
     The bootstrap engine is a fresh empty DRAFT ride (R-32's counters
-    read from the engine, never a display-data source).
+    read from the engine, never a display-data source). W12: the two
+    registration chips (riders/teams) also read 0 -- the roster is
+    empty.
     """
     labels = (
         empty_console.crossings_count_lbl.GetLabelText(),
         empty_console.cards_count_lbl.GetLabelText(),
         empty_console.on_course_lbl.GetLabelText(),
         empty_console.shoe_lbl.GetLabelText(),
+        empty_console.riders_count_lbl.GetLabelText(),
+        empty_console.teams_count_lbl.GetLabelText(),
     )
 
-    assert labels == ("0", "0", "0", "432/432")
+    assert labels == ("0", "0", "0", "432/432", "0", "0")
 
 
 # --- InfoBars (R-73) ---------------------------------------------
@@ -354,7 +360,7 @@ def test_main_frame_hide_times_removes_lap_time_and_total_columns_both_ways() ->
 
     assert result["ok"], result["context"]
     assert result["data"]["before"] == list(feed_model.COLUMN_LABELS), result["context"]
-    assert result["data"]["during"] == ["Time", "Plate", "Entry", "Lap", "Card"], result["context"]
+    assert result["data"]["during"] == ["Time", "Plate", "Name", "Card", "Lap"], result["context"]
     assert result["data"]["after"] == list(feed_model.COLUMN_LABELS), result["context"]
 
 
@@ -396,30 +402,45 @@ def test_main_frame_card_images_defaults_to_the_shared_support_cache(
 
 
 def test_main_frame_applies_the_canvas_minimum_size(shared_console: MainFrame) -> None:
-    """xrc-windows.md A: "Min frame 1100x700, fits 1366x768."."""
+    """W9 min 1100x780: raised for the 30-row feed, still 1366x768."""
     min_size = shared_console.frame.GetMinSize()
 
     assert (min_size.width, min_size.height) == MIN_SIZE
 
 
-# --- negative case: a held crossing must not silently draw a card ----
-
-
-def test_main_frame_crossings_model_held_card_row_renders_no_bitmap(
+def test_main_frame_splitter_defaults_to_the_feed_pane_sash(
     shared_console: MainFrame,
 ) -> None:
-    """A binding mapping "held" onto some default card would still pass.
+    """W9: a fresh launch splits feed/sidebar at the pinned default.
 
-    Every other assertion here about R-34's held cards would keep
-    passing even if this specific mapping silently did nothing.
+    No persisted sash (E8.1.1's ``initial_sash=None``) falls back to
+    ``DEFAULT_SASH``, so the sidebar keeps its drawn ~250 px and the
+    feed pane gets the rest; the round-trip scenario pins that a
+    persisted position still wins over this default.
+    """
+    assert shared_console.main_splitter.GetSashPosition() == DEFAULT_SASH
+
+
+# --- positive case: a held crossing's real card draws its chip (W9) ---
+
+
+def test_main_frame_crossings_model_held_card_row_renders_the_held_cards_bitmap(
+    shared_console: MainFrame,
+) -> None:
+    """W9: the flagged row's card cell is the held card's own bitmap.
+
+    The old "held" placeholder mapped to no asset and drew no chip;
+    W9 removed the placeholder, so the always-visible card rule pins
+    the held row to the exact imagelist bitmap of its real code --
+    never a lookalike and never a blank.
     """
     rows = shared_console.data_source.feed_rows()
-    held_row = next(index for index, row in enumerate(rows) if row.card == "held")
+    held_row = next(index for index, row in enumerate(rows) if row.flagged)
     model = shared_console.crossings_list.GetModel()
 
     rendered = model.GetValueByRow(held_row, feed_model.COL_CARD)
 
-    assert rendered.IsOk() is False
+    assert rendered is shared_console.card_images.bitmap("2s")  # plate 45 -> held "2S"
 
 
 # --- record-crossing row: record_btn, plate font, A4 wiring -----------

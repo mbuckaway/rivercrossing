@@ -7,8 +7,10 @@ owns. Mirrors ``theme.py``'s split: the id->percent mapping and the
 scaling math are wx-free, and everything that touches a real font
 calls :func:`~rivercrossing.ui.require_wx` at the point wx is first
 needed, never at import time. The ladder itself is
-``ui.presenters.settings.ZOOM_LADDER`` -- the single source shared
-with the XRC ``zoom_choice`` (settings.xrc) -- never duplicated here.
+``ui.presenters.settings.ZOOM_LADDER`` -- the single source, never
+duplicated here. W13 (notes #12): the Settings dialog's ``zoom_choice``
+mirror is gone -- the View menu is the single zoom surface, so the
+ladder has exactly one carrier.
 
 Font scaling is robust by construction: each window's base font is
 captured ONCE (stored as ``window._zoom_base_font`` on first apply)
@@ -79,9 +81,9 @@ def menu_item_id_for(percent: int) -> str:
     """Return the zoom radio's XRC name for *percent*.
 
     The reverse of :func:`percent_for_menu_id`: the bootstrap's
-    restored-zoom radio check and the settings-dialog mirror need the
-    id for a percent. A percent outside :data:`ZOOM_LADDER` raises
-    ``KeyError`` -- the caller always passes a clamped value.
+    restored-zoom radio check needs the id for a percent. A percent
+    outside :data:`ZOOM_LADDER` raises ``KeyError`` -- the caller
+    always passes a clamped value.
     """
     return _ITEM_ID_BY_PERCENT[percent]
 
@@ -156,7 +158,8 @@ class ZoomController:
 
 
 # The one default controller the app's convenience functions drive;
-# the View-menu radios and the settings choice flip it (E8.1.4).
+# the View-menu radios flip it (E8.1.4; W13: the settings zoom_choice
+# mirror is gone).
 _default_controller = ZoomController()
 
 

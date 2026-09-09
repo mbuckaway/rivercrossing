@@ -91,6 +91,9 @@ class FakeConsoleView:
     def show_counters(self, c: Counters) -> None:
         """Record the counters (unused here)."""
 
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the teams-chip visibility verdict (unused here)."""
+
     def flash_crossing(self, r: FeedRow) -> None:
         """Record the flashed crossing (unused here)."""
 
@@ -126,6 +129,30 @@ class FakeConsoleView:
     def set_entry_locked(self, *, locked: bool) -> None:
         """Record the entry-lock request (unused here)."""
 
+    # W5: the Protocol grew the console-button gates and the native
+    # dialog seams the live presenter drives (same "add the member
+    # once the presenter calls it" precedent). Behavioral coverage
+    # lives in tests/unit/presenters/test_console.py; these stay no-ops.
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """Record the start-button enablement (unused here)."""
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """Record the undo-button enablement (unused here)."""
+
+    def show_warning(self, title: str, message: str) -> None:
+        """Record the shown warning (unused here)."""
+
+    def confirm(
+        self,
+        _title: str,
+        _message: str,
+        *,
+        _ok_label: str,
+        _cancel_label: str,
+    ) -> bool:
+        """Return the scripted confirm verdict (unused here)."""
+        return False
+
     # WS-D/WS-H: the Protocol grew the gauge-clock and review-tab
     # members the live presenter drives (see the "add the member once
     # the presenter calls it" precedent above). Behavioral coverage
@@ -152,6 +179,9 @@ class FakeSetupView:
     def show_deck_count(self, count: int) -> None:
         """No-op fake."""
 
+    def show_lap_km(self, lap_km: float) -> None:
+        """No-op fake."""
+
     def show_entry_settings(
         self, *, entry_mode: EntryMode, max_team_size: int, plate_model: PlateModel
     ) -> None:
@@ -171,6 +201,12 @@ class FakeRidersView:
         """No-op fake."""
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
+        """No-op fake."""
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """No-op fake."""
+
+    def set_plate_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
@@ -328,7 +364,13 @@ class FakeDataSource:
     def counters(self) -> Counters:
         """Return one fixed counter set."""
         return Counters(
-            crossings=1124, cards_dealt=1092, on_course=42, shoe_remaining=41, shoe_total=108
+            crossings=1124,
+            cards_dealt=1092,
+            on_course=42,
+            shoe_remaining=41,
+            shoe_total=108,
+            riders=262,
+            teams=82,
         )
 
     def rides(self) -> list[RideSummary]:

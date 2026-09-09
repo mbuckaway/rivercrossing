@@ -34,6 +34,9 @@ class IncompleteConsoleView:
     def show_counters(self, c: Counters) -> None:
         """No-op fixture stub."""
 
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """No-op fixture stub."""
+
     def flash_crossing(self, r: FeedRow) -> None:
         """No-op fixture stub."""
 
@@ -60,6 +63,29 @@ class IncompleteConsoleView:
 
     def set_entry_locked(self, *, locked: bool) -> None:
         """No-op fixture stub."""
+
+    # W5: the Protocol's console-button gates and native dialog seams
+    # (the same "add the member once the presenter calls it"
+    # precedent as WS-D/WS-H's members above).
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """No-op fixture stub."""
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """No-op fixture stub."""
+
+    def show_warning(self, title: str, message: str) -> None:
+        """No-op fixture stub."""
+
+    def confirm(
+        self,
+        _title: str,
+        _message: str,
+        *,
+        _ok_label: str,
+        _cancel_label: str,
+    ) -> bool:
+        """No-op fixture stub."""
+        return False
 
     def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
         """No-op fixture stub."""

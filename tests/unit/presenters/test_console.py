@@ -18,12 +18,15 @@ tabs (the flagged feed subset and the riders rows, both refreshed in
 
 ``EngineDataSource`` is the first real ``DataSource`` implementation
 over ``(engine, roster)``; its mapping tests pin the feed shape (R-32:
-time, plate, entry, lap, lap time, total, card or "held", flagged,
-newest-first, cap 30), the counters, and the non-console methods
-(standings/entry_detail/audit_rows/riders/rides) implemented simply
-for E5/E6 to replace.
+time, plate, entry, lap, lap time, total, card code, flagged,
+newest-first, cap 30 -- W9: the card cell always carries the real
+code; a held crossing's row is flagged and shows the held card's own
+code, never the literal placeholder "held"), the counters, and the
+non-console methods (standings/entry_detail/audit_rows/riders/rides)
+implemented simply for E5/E6 to replace.
 """
 
+import dataclasses
 import re
 from datetime import datetime, timedelta
 from typing import Any
@@ -72,9 +75,9 @@ def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig.planned_start
 
 
-def _config(*, min_lap_s: int = 1) -> RideConfig:
+def _config(*, min_lap_s: int = 1, hold_short_laps: bool = False) -> RideConfig:
     """Build the canonical GORBA config with a tunable min-lap."""
-    return gorba_config(min_lap_s=min_lap_s)
+    return gorba_config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
 
 
 class _FakeDatetimeClock:
@@ -117,13 +120,19 @@ def _roster_with_entries(*plates: str) -> Roster:
     return roster
 
 
-def _make_engine(
+def _make_engine(  # noqa: PLR0913 -- (roster, config) + the two W4 policy knobs
     *,
     roster: Roster | None = None,
+    config: RideConfig | None = None,
     min_lap_s: int = 1,
+    hold_short_laps: bool = False,
 ) -> tuple[RideEngine, _FakeDatetimeClock]:
     """Build a DRAFT engine over a valid config, shoe and roster."""
-    config = _config(min_lap_s=min_lap_s)
+    config = (
+        config
+        if config is not None
+        else _config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
+    )
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     clock = _FakeDatetimeClock(config.planned_start)
     roster = roster if roster is not None else _roster_with_entries("12", "34")
@@ -131,10 +140,28 @@ def _make_engine(
     return engine, clock
 
 
-def _running_engine(*, min_lap_s: int = 1) -> tuple[RideEngine, _FakeDatetimeClock]:
+def _running_engine(
+    *, min_lap_s: int = 1, hold_short_laps: bool = False
+) -> tuple[RideEngine, _FakeDatetimeClock]:
     """Build an engine already started, ready to record crossings."""
-    engine, clock = _make_engine(min_lap_s=min_lap_s)
+    engine, clock = _make_engine(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
     engine.start()
+    return engine, clock
+
+
+def _solo_only_engine() -> tuple[RideEngine, _FakeDatetimeClock]:
+    """Build a DRAFT engine over one solo entry, entry mode SOLO (R-11).
+
+    The W12 teams-chip visibility test needs an engine whose own
+    config says SOLO -- the console presenter reads the mode from the
+    engine (``config.entry_mode``), the same source commands.py's
+    ``teams_allowed`` gate uses.
+    """
+    roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Rider 12", last_name="", plate="12")
+    engine, clock = _make_engine(
+        roster=roster, config=dataclasses.replace(_config(), entry_mode=EntryMode.SOLO)
+    )
     return engine, clock
 
 
@@ -174,26 +201,45 @@ class FakeConsoleView:
         self.last_flagged: list[FeedRow] = []
         self.last_riders: list[RiderRow] = []
         self.last_hide: bool | None = None
+        # W12: the teams-chip visibility verdict the presenter pushes
+        # at construction (R-11: solo-only rides hide the Teams chip).
+        self.team_visible: bool | None = None
         self.stop_enabled: bool | None = None
         self.entry_locked: bool | None = None
+        # W5 channels: the start/undo button gates, the native warning
+        # seam, and the scripted native-confirm verdict.
+        self.start_enabled: bool | None = None
+        self.undo_enabled: bool | None = None
+        self.last_warning: tuple[str, str] | None = None
+        self.last_confirm: tuple[str, str, str, str] | None = None
+        self.confirm_result: bool = False
+        self._presenter: ConsolePresenter | None = None
         self.focus_count = 0
         self.clear_count = 0
 
     def show_feed(self, rows: list[FeedRow]) -> None:
-        """Record the fed rows."""
+        """Record the fed rows, then re-apply the console gates."""
         self.last_feed = list(rows)
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
 
     def show_counters(self, c: Counters) -> None:
         """Record the counters."""
         self.last_counters = c
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the teams-chip visibility verdict (R-11, W12)."""
+        self.team_visible = visible
 
     def flash_crossing(self, r: FeedRow) -> None:
         """Record the flashed crossing."""
         self.last_flash = r
 
     def set_state(self, status: RideStatus) -> None:
-        """Record the ride state."""
+        """Record the ride state, then re-apply the console gates."""
         self.last_state = status
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
 
     def focus_entry(self) -> None:
         """Record one focus request."""
@@ -227,6 +273,35 @@ class FakeConsoleView:
         """Record the entry-field lock request (R-35)."""
         self.entry_locked = locked
 
+    # W5: the console-button gates and the native-dialog seams the
+    # live presenter now drives (see the Protocol's own additions).
+    # set_state/show_feed mirror MainFrame's render back-call: the
+    # fake re-applies the gates through the linked presenter exactly
+    # like the real view does, so handler tests observe the gates.
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """Record the start button's enablement (W5)."""
+        self.start_enabled = enabled
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """Record the undo button's enablement (W5)."""
+        self.undo_enabled = enabled
+
+    def show_warning(self, title: str, message: str) -> None:
+        """Record the shown warning (W5)."""
+        self.last_warning = (title, message)
+
+    def confirm(  # noqa: PLR0913 -- mirrors std_dialogs.show_confirm's (title, message) + 2 labels
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
+        """Record the confirm and return the scripted verdict (W5)."""
+        self.last_confirm = (title, message, ok_label, cancel_label)
+        return self.confirm_result
+
     # WS-D/WS-H: the gauge clock and review-tab members the live
     # presenter now drives (see the Protocol's own additions).
     def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
@@ -248,9 +323,18 @@ def _make_presenter(
     *,
     mono: _FakeMonotonicClock | None = None,
 ) -> ConsolePresenter:
-    """Build the presenter over a real engine source and a fake view."""
+    """Build the presenter over a real engine source and a fake view.
+
+    Links the view to the presenter exactly as ``wire_console`` +
+    ``set_state`` do on the real ``MainFrame``: the fake's
+    ``set_state``/``show_feed`` re-apply the console gates through the
+    presenter, so handler tests observe W5's button gates without
+    wx.
+    """
     source = EngineDataSource(engine, engine._roster)
-    return ConsolePresenter(view, engine=engine, source=source, now=mono)
+    presenter = ConsolePresenter(view, engine=engine, source=source, now=mono)
+    view._presenter = presenter
+    return presenter
 
 
 def _assert_rejected(  # noqa: PLR0913 -- shared rejection assertion: view + notice/engine + two counts
@@ -309,7 +393,13 @@ def test_empty_data_source_counters_and_status_report_no_ride() -> None:
     source = EmptyDataSource()
 
     assert source.counters() == Counters(
-        crossings=0, cards_dealt=0, on_course=0, shoe_remaining=0, shoe_total=0
+        crossings=0,
+        cards_dealt=0,
+        on_course=0,
+        shoe_remaining=0,
+        shoe_total=0,
+        riders=0,
+        teams=0,
     )
     assert source.ride_status() is RideStatus.DRAFT
 
@@ -372,23 +462,29 @@ def test_engine_data_source_feed_rows_caps_at_thirty_rows(recorded: int, shown: 
     assert [row.lap for row in feed] == list(range(recorded, recorded - shown, -1))
 
 
-def test_engine_data_source_feed_rows_given_flagged_crossing_reports_held_card() -> None:
-    """R-34: a short lap's row is flagged and shows 'held', no card."""
-    engine, clock = _running_engine(min_lap_s=60)
+def test_engine_data_source_feed_rows_given_flagged_crossing_reports_the_held_cards_code() -> None:
+    """W9: a held lap flags AND its row carries the real held code."""
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)  # 5 s < 60 s min lap
     source = EngineDataSource(engine, engine._roster)
+    held = engine.held_crossings()[0]
 
     feed = source.feed_rows()
 
     assert feed[0].flagged is True
-    assert feed[0].card == "held"
+    assert feed[0].card == held.card.code()
+    assert feed[0].card != "held"
 
 
 # ----------------------------------------------------------- counters
 
 
 def test_engine_data_source_counters_reflect_engine_state() -> None:
-    """R-32: crossings/cards/on-course/shoe read from the engine."""
+    """R-32: crossings/cards/on-course/shoe read from the engine.
+
+    W12: the riders/teams chips read from the source's roster -- two
+    solo entries here, so 2 registered riders and no teams.
+    """
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     _record(engine, clock, "12", lap_time_s=100)
@@ -402,18 +498,46 @@ def test_engine_data_source_counters_reflect_engine_state() -> None:
         on_course=0,  # plate 12 has 2 (even) laps
         shoe_remaining=430,  # 8x54 shoe, 2 dealt
         shoe_total=432,
+        riders=2,  # one registered rider per solo entry
+        teams=0,  # no team entries in this roster
     )
 
 
 def test_engine_data_source_counters_exclude_held_cards_from_cards_dealt() -> None:
     """A held card is dealt but not credited (R-34) -- 1124-32."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)
     source = EngineDataSource(engine, engine._roster)
 
     counters = source.counters()
 
     assert (counters.crossings, counters.cards_dealt) == (1, 0)
+
+
+def test_engine_data_source_counters_count_registered_riders_and_teams() -> None:
+    """W12: the riders/teams chips total the roster, csvio's idiom.
+
+    ``riders`` is the sum of every entry's rider count (a solo entry
+    counts 1, a team counts its members); ``teams`` is the number of
+    TEAM-type entries. The fixture roster holds one solo entry and
+    one two-rider team, so 3 riders and 1 team regardless of how many
+    laps have been recorded.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="12")
+    roster.create_team_entry(
+        display_name="Team Alpha",
+        riders=[
+            Rider(first_name="Aya", last_name="Chen", plate="21"),
+            Rider(first_name="Bo", last_name="Lin", plate="22"),
+        ],
+    )
+    engine, _clock = _make_engine(roster=roster)
+    source = EngineDataSource(engine, roster)
+
+    counters = source.counters()
+
+    assert (counters.riders, counters.teams) == (3, 1)
 
 
 # ------------------------------------------------------------ status
@@ -659,6 +783,32 @@ def test_console_presenter_holds_the_view_engine_and_source_it_was_given() -> No
     assert presenter.source is source
 
 
+def test_console_presenter_given_a_mixed_ride_shows_the_teams_chip() -> None:
+    """R-11/W12: a mixed ride's console keeps the Teams chip visible."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+
+    _make_presenter(engine, view)
+
+    assert view.team_visible is True
+
+
+def test_console_presenter_given_a_solo_only_ride_hides_the_teams_chip() -> None:
+    """R-11/W12: a solo-only ride hides the Teams chip entirely.
+
+    The console reads the ride's mode from the engine's own config
+    (``engine.config.entry_mode``) -- the same source commands.py's
+    ``teams_allowed`` gate reads -- so a presenter born onto a
+    solo-only engine tells the view to hide the Teams chip at once.
+    """
+    engine, _clock = _solo_only_engine()
+    view = FakeConsoleView()
+
+    _make_presenter(engine, view)
+
+    assert view.team_visible is False
+
+
 # ------------------------------------------------------- plate entered
 
 
@@ -684,7 +834,7 @@ def test_on_plate_entered_given_accepted_plate_refreshes_feed_flashes_and_plays_
 
 def test_on_plate_entered_given_flagged_crossing_plays_flagged_cue() -> None:
     """R-34: a short-lap crossing's cue is FLAGGED, not RECORDED."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
     clock.advance(5)  # 5 s < 60 s min lap
@@ -905,6 +1055,241 @@ def test_on_start_given_finished_ride_shows_a_notice() -> None:
     assert engine.state is RideStatus.FINISHED
 
 
+# ---------------------------------------- W5 blocked-start warnings
+
+
+def test_on_start_given_empty_roster_shows_warning_with_exact_copy() -> None:
+    """W5: an empty roster's refusal is a warning, never a notice."""
+    engine, _clock = _make_engine(roster=_roster_with_entries())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert view.last_warning == (
+        "Cannot Start Ride",
+        "Cannot start ride: roster has no riders",
+    )
+    assert engine.state is RideStatus.DRAFT
+    assert view.last_notice is None
+
+
+def test_on_start_given_incomplete_setup_shows_warning_with_prefixed_reasons() -> None:
+    """W5: every other blocked-start reason shares the same prefix."""
+    config = dataclasses.replace(_config(), scorer="")
+    engine, _clock = _make_engine(config=config)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert view.last_warning == (
+        "Cannot Start Ride",
+        "Cannot start ride: ride setup is incomplete: scorer is required",
+    )
+    assert engine.state is RideStatus.DRAFT
+
+
+# ------------------------------------------ W5 stop-request flow
+
+
+def test_on_stop_requested_given_running_ride_with_entries_confirms_then_stops() -> None:
+    """W5: a populated RUNNING ride asks the native confirm, then stops.
+
+    The confirm carries the retired ``stop_confirm_dlg``'s frozen copy
+    verbatim, with the same button labels; a confirmed OK runs the
+    unchanged ``on_stop_confirmed`` act-3 flow (engine stop, arm
+    clear, entry lock, notice).
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    view.confirm_result = True
+    presenter = _make_presenter(engine, view)
+    presenter.on_arm_stop(armed=True)
+
+    presenter.on_stop_requested()
+
+    assert view.last_confirm == (
+        "Stop Ride?",
+        (
+            "The clock stops for everyone. Riders still on course keep their laps; "
+            "no cards are dealt after stop. You can continue the ride later "
+            "without losing anything."
+        ),
+        "Stop ride",
+        "Cancel",
+    )
+    assert engine.record_crossing("12").reason == "ride is stopped"
+    assert view.stop_enabled is False  # auto-clear after use
+    assert view.entry_locked is True
+    assert view.last_notice == "Ride stopped — continue to resume"
+
+
+def test_on_stop_requested_given_cancelled_confirm_leaves_the_ride_running() -> None:
+    """W5: a cancelled stop confirm changes nothing (R-35's guard)."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_requested()
+
+    assert engine.stopped is False
+    assert view.entry_locked is None  # never reached the lock step
+    assert view.last_notice is None
+
+
+def test_on_stop_requested_given_empty_roster_warns_and_shows_no_confirm() -> None:
+    """W5: a riderless ride gets a warning, never a Stop dialog."""
+    engine, _clock = _make_engine(roster=_roster_with_entries())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_requested()
+
+    assert view.last_warning == ("Cannot Stop Ride", "Cannot stop ride: roster has no riders")
+    assert view.last_confirm is None
+    assert engine.state is RideStatus.DRAFT
+
+
+def test_on_stop_requested_given_draft_ride_with_entries_refuses_with_notice() -> None:
+    """W5: a not-RUNNING ride never shows the confirm."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_requested()
+
+    assert view.last_confirm is None
+    assert view.last_notice == "Cannot stop: cannot stop a draft ride"
+    assert engine.state is RideStatus.DRAFT
+
+
+# --------------------------------------------- W5 console gates
+
+
+def _engine_gated(
+    state: RideStatus, *, crossings: int, stopped: bool
+) -> tuple[RideEngine, _FakeDatetimeClock]:
+    """Build an engine in *state* with *crossings* laps.
+
+    *stopped* applies to the RUNNING case (stop-as-guard).
+    """
+    engine, clock = _make_engine()
+    if state in (RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED):
+        engine.start()
+    for _index in range(crossings):
+        _record(engine, clock, "12", lap_time_s=100)
+    if stopped:
+        engine.stop()
+    if state is RideStatus.FINISHED:
+        engine.finish()
+    elif state is RideStatus.REOPENED:
+        engine.finish()
+        engine.reopen()
+    return engine, clock
+
+
+_GATE_CASES = (
+    (RideStatus.DRAFT, 0, False, True, False),  # DRAFT: start rides, undo off
+    (RideStatus.RUNNING, 0, False, False, False),  # live: nothing to undo yet
+    (RideStatus.RUNNING, 2, False, False, True),  # live with laps: undo only
+    (RideStatus.RUNNING, 1, True, True, True),  # stopped: start resumes, undo stays
+    (RideStatus.FINISHED, 2, False, False, False),  # finished: both off
+    (RideStatus.REOPENED, 2, False, False, False),  # reopened: corrections only
+)
+_GATE_CASE_IDS = (
+    "draft",
+    "running_without_crossings",
+    "running_with_crossings",
+    "stopped_running",
+    "finished",
+    "reopened",
+)
+
+
+@pytest.mark.parametrize(
+    ("ride_state", "crossings", "stopped", "expected_start", "expected_undo"),
+    _GATE_CASES,
+    ids=_GATE_CASE_IDS,
+)
+def test_refresh_console_gates_matches_start_and_undo_enablement_rules(  # noqa: PLR0913 -- (state, crossings, stopped) + the two expected verdicts
+    ride_state: RideStatus,
+    crossings: int,
+    *,
+    stopped: bool,
+    expected_start: bool,
+    expected_undo: bool,
+) -> None:
+    """W5: start_btn mirrors mi_start_ride; undo_btn the undo row.
+
+    The engine is the source of truth: DRAFT or stopped-RUNNING
+    enables Start (continue-after-stop is the resume mechanism);
+    RUNNING with >= 1 crossing enables Undo. REOPENED's undo stays
+    but is no longer UI-reachable.
+    """
+    engine, _clock = _engine_gated(ride_state, crossings=crossings, stopped=stopped)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.refresh_console_gates()
+
+    assert (view.start_enabled, view.undo_enabled) == (expected_start, expected_undo)
+
+
+def test_on_start_given_draft_ride_disables_start_through_the_state_render() -> None:
+    """W5: the RUNNING render turns Start off (no phantom continue)."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert (view.start_enabled, view.undo_enabled) == (False, False)
+    assert engine.events[-1].action == "start"
+
+
+def test_on_stop_confirmed_given_stopped_ride_enables_start_through_the_state_render() -> None:
+    """W5: a stopped ride's render keeps Start on (resume)."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_confirmed()
+
+    assert view.start_enabled is True
+    assert view.undo_enabled is True  # crossings survive the stop guard
+    assert view.last_notice == "Ride stopped — continue to resume"
+
+
+def test_on_undo_given_last_crossing_disables_undo_through_the_feed_render() -> None:
+    """W5: undoing the only crossing turns Undo off (feed render)."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert len(engine.crossings) == 0
+    assert view.undo_enabled is False
+
+
+def test_on_plate_entered_given_first_crossing_enables_undo_through_the_feed_render() -> None:
+    """W5: the first recorded lap turns Undo on via the feed render."""
+    engine, clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(100)
+
+    presenter.on_plate_entered("12")
+
+    assert view.undo_enabled is True
+    assert view.start_enabled is False
+
+
 # ----------------------------------------------------------- hide times
 
 
@@ -953,12 +1338,80 @@ def test_on_tick_given_draft_ride_shows_a_zeroed_clock() -> None:
     assert view.last_clock_fractions == (0.0, 0.0)
 
 
+# ---------------------------------------------- W6 stopped-clock freeze
+
+
+def test_on_tick_given_stopped_ride_freezes_the_clock_across_ticks() -> None:
+    """W6: a stopped ride's clock freezes at the stop value."""
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.stop()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+    frozen_clock = view.last_clock
+    frozen_fractions = view.last_clock_fractions
+    clock.advance(30)
+    presenter.tick()
+    clock.advance(30)
+    presenter.tick()
+
+    assert frozen_clock == ("0:01:40", "5:58:20")  # 100 s, elapsed at the stop
+    assert frozen_fractions == pytest.approx((100 / 21600, 21500 / 21600))
+    assert view.last_clock == frozen_clock
+    assert view.last_clock_fractions == frozen_fractions
+    assert engine.elapsed() == 160.0  # the engine kept counting underneath
+
+
+def test_on_start_given_stopped_ride_shows_live_elapsed_immediately() -> None:
+    """W6: continue clears the freeze and renders live immediately."""
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.stop()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+    assert view.last_clock == ("0:01:40", "5:58:20")  # frozen at 100 s
+    clock.advance(50)  # engine elapsed is now 150 s
+
+    presenter.on_start()
+
+    assert engine.events[-1].action == "continue"
+    assert view.last_clock == ("0:02:30", "5:57:30")  # live, no tick needed
+    assert view.last_clock_fractions == pytest.approx((150 / 21600, 21450 / 21600))
+
+
+def test_on_tick_given_rebuilt_presenter_while_stopped_recaptures() -> None:
+    """W6: a rebuilt presenter over a stopped engine re-captures.
+
+    The freeze is presenter-local: a fresh presenter (console swap,
+    library open/close) has no stored value, so its first tick
+    re-captures the engine's current elapsed and holds from there.
+    """
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.stop()
+    clock.advance(40)  # engine elapsed is 140 s by the rebuild's first tick
+    rebuilt_view = FakeConsoleView()
+    rebuilt_presenter = _make_presenter(engine, rebuilt_view)
+
+    rebuilt_presenter.tick()
+    first_tick_clock = rebuilt_view.last_clock
+
+    assert first_tick_clock == ("0:02:20", "5:57:40")
+    assert rebuilt_view.last_clock_fractions == pytest.approx((140 / 21600, 21460 / 21600))
+    clock.advance(20)
+    rebuilt_presenter.tick()
+    assert rebuilt_view.last_clock == first_tick_clock
+
+
 # ------------------------------------------- WS-D/WS-H gauge + review
 
 
 def test_on_plate_entered_given_flagged_crossing_lists_it_in_the_flagged_rows() -> None:
     """WS-H: a short-lap crossing lands in the flagged review list."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
     clock.advance(5)  # 5 s < 60 s min lap
@@ -966,12 +1419,12 @@ def test_on_plate_entered_given_flagged_crossing_lists_it_in_the_flagged_rows() 
     presenter.on_plate_entered("12")
 
     assert [row.plate for row in view.last_flagged] == ["12"]
-    assert view.last_flagged[0].card == "held"
+    assert view.last_flagged[0].card == engine.held_crossings()[0].card.code()
 
 
 def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> None:
     """WS-H: undoing a clean lap keeps the still-flagged row listed."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)  # flagged short lap
     _record(engine, clock, "34", lap_time_s=100)  # clean lap, newer
     view = FakeConsoleView()
@@ -984,7 +1437,7 @@ def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> 
 
 def test_on_tick_given_flagged_crossing_refreshes_the_review_lists() -> None:
     """WS-H: the tick refreshes flagged rows and riders too."""
-    engine, clock = _running_engine(min_lap_s=60)
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
     _record(engine, clock, "12", lap_time_s=5)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)

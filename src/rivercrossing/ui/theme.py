@@ -1,14 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Appearance modes: View > Theme wiring for ``wx.App.SetAppearance``.
+"""Appearance modes: the Settings radios drive ``wx.App.SetAppearance``.
 
-R-03/P8-D4: the three View > Theme radios (``mi_theme_system``,
-``mi_theme_light``, ``mi_theme_dark``) apply the OS appearance at
-runtime via ``wx.App.SetAppearance`` -- not merely a Settings-dialog
-mirror, which stays EPIC 8 along with persistence. Per A8, this
-module owns appearance-mode logic only. module-skeletons.md:56
-also plans a light/dark token table for this module; that table
-stays deferred, since it has no custom-drawn consumer yet (EPIC 1
-open item O2).
+R-03: the Settings window's System/Light/Dark appearance radios
+(``appearance_system_radio``, ``appearance_light_radio``,
+``appearance_dark_radio``) apply the OS appearance at runtime via
+``wx.App.SetAppearance`` and persist it through the settings file.
+W13 (testing notes #14) removed the View > Theme radio trio -- the
+Settings radios are the single theme surface, so this module no
+longer maps menu-item ids to modes; :class:`ThemeController` applies
+a :class:`ThemeMode` directly (:meth:`ThemeController.apply_mode`),
+the call the settings OK path makes. Per A8, this module owns
+appearance-mode logic only. module-skeletons.md:56 also plans a
+light/dark token table for this module; that table stays deferred,
+since it has no custom-drawn consumer yet (EPIC 1 open item O2).
 
 Per-OS truth, measured against the wxPython 4.3.1 / wxWidgets 3.3.3
 pin (spec.md / xrc-windows.md footnote (6)):
@@ -27,59 +31,37 @@ pin (spec.md / xrc-windows.md footnote (6)):
   takes effect at the next launch; :func:`notice_for_result` is what
   turns that into the honest status-bar text.
 
-:func:`mode_for_menu_id` is fully wx-free, so it stays importable
-even when wx is broken -- this module's own import line touches no
-wx name at all, mirroring ``app.py``'s convention. Everything past
-that point -- :func:`notice_for_result`, :func:`apply`,
+Everything here reasons about a real ``wx.PyApp.AppearanceResult`` /
+``Appearance`` / ``SystemAppearance`` only at the point wx is first
+needed: this module's own import line touches no wx name at all,
+mirroring ``app.py``'s convention. Everything past that point --
+:func:`notice_for_result`, :func:`apply`,
 :func:`apply_light_mode_panel_bg`, and :class:`ThemeController` --
-reasons about a real ``wx.PyApp.AppearanceResult`` / ``Appearance`` /
-``SystemAppearance`` and calls :func:`~rivercrossing.ui.require_wx`
-at the point wx is first needed, never at import time.
+calls :func:`~rivercrossing.ui.require_wx` at the point wx is first
+needed, never at import time.
 """
 
 from enum import Enum
 from typing import Any
 
-from rivercrossing.ui import ids, require_wx
+from rivercrossing.ui import require_wx
 
 __all__ = [
-    "THEME_MENU_ITEM_IDS",
     "ThemeController",
     "ThemeMode",
-    "UnknownThemeMenuItemError",
     "apply",
     "apply_light_mode_panel_bg",
-    "menu_item_id_for",
-    "mode_for_menu_id",
     "notice_for_result",
 ]
 
 
 class ThemeMode(Enum):
-    """The three View > Theme radio choices, wx-free."""
+    """The three appearance choices (Settings radios), wx-free."""
 
     SYSTEM = "system"
     LIGHT = "light"
     DARK = "dark"
 
-
-class UnknownThemeMenuItemError(LookupError):
-    """Raised when a menu item id maps to no :class:`ThemeMode`."""
-
-
-# main.xrc's own declared order for the theme trio (also §15b's).
-_MODE_BY_MENU_ID: dict[str, ThemeMode] = {
-    ids.MI_THEME_SYSTEM: ThemeMode.SYSTEM,
-    ids.MI_THEME_LIGHT: ThemeMode.LIGHT,
-    ids.MI_THEME_DARK: ThemeMode.DARK,
-}
-# The reverse mapping, for the bootstrap's restored-appearance radio
-# check (E8.1.1). ThemeMode is a closed enum and the dict above maps
-# all three members, so a lookup can never miss.
-_MENU_ID_BY_MODE: dict[ThemeMode, str] = {
-    mode: item_id for item_id, mode in _MODE_BY_MENU_ID.items()
-}
-THEME_MENU_ITEM_IDS: tuple[str, ...] = tuple(_MODE_BY_MENU_ID)
 
 _NEXT_LAUNCH_NOTICE = "Theme change takes effect at next launch"
 
@@ -90,40 +72,6 @@ _NEXT_LAUNCH_NOTICE = "Theme change takes effect at next launch"
 # time; see the module docstring); the wx.Colour is built at call time
 # in apply_light_mode_panel_bg.
 _LIGHT_PANEL_BG: tuple[int, int, int] = (230, 230, 230)
-
-
-def mode_for_menu_id(item_id: str) -> ThemeMode:
-    """Return the :class:`ThemeMode` the theme radio *item_id* selects.
-
-    Args:
-        item_id: One of :data:`THEME_MENU_ITEM_IDS`.
-
-    Returns:
-        The matching :class:`ThemeMode`.
-
-    Raises:
-        UnknownThemeMenuItemError: If *item_id* names no theme radio.
-    """
-    try:
-        return _MODE_BY_MENU_ID[item_id]
-    except KeyError as exc:
-        raise UnknownThemeMenuItemError(f"no theme mapping for menu item id {item_id!r}") from exc
-
-
-def menu_item_id_for(mode: ThemeMode) -> str:
-    """Return the theme radio's XRC name for *mode*.
-
-    The reverse of :func:`mode_for_menu_id`: the bootstrap's restored-
-    appearance radio check (E8.1.1) needs the id for a mode.
-
-    Args:
-        mode: The :class:`ThemeMode` to look up.
-
-    Returns:
-        The matching radio's XRC name (one of
-        :data:`THEME_MENU_ITEM_IDS`).
-    """
-    return _MENU_ID_BY_MODE[mode]
 
 
 def notice_for_result(result: Any) -> str | None:  # noqa: ANN401 -- wx ships no stubs
@@ -227,12 +175,12 @@ def apply(app: Any, mode: ThemeMode) -> Any:  # noqa: ANN401 -- wx ships no stub
 
 
 class ThemeController:
-    """Owns the selected :class:`ThemeMode` and applies it (P8-D4).
+    """Owns the selected :class:`ThemeMode` and applies it (R-03).
 
     Constructed once per app bootstrap and kept alive by the binding
     its own :meth:`on_sys_colour_changed` becomes (mirrors ``app.py``'s
     own note about ``_console``/``_presenter``). Starts at
-    ``ThemeMode.SYSTEM`` -- the checked menu default, spec.md footnote
+    ``ThemeMode.SYSTEM`` -- the default appearance, spec.md footnote
     (8) -- without calling :func:`apply` at construction for System
     (the OS appearance is already System until something asks
     otherwise). A non-System mode passed in (E8.1.1's persisted
@@ -258,21 +206,21 @@ class ThemeController:
         """Return the currently selected mode."""
         return self._mode
 
-    def on_menu(self, item_id: str) -> str | None:
-        """Handle a View > Theme radio click; return an optional notice.
+    def apply_mode(self, mode: ThemeMode) -> str | None:
+        """Apply *mode* live; return an optional notice (W13).
+
+        The single theme surface is the Settings appearance radios, so
+        the settings OK path calls this with the collected mode --
+        there is no View-menu radio any more (the W13 removal of the
+        theme trio, notes #14).
 
         Args:
-            item_id: The radio's own XRC name (one of
-                :data:`THEME_MENU_ITEM_IDS`).
+            mode: The appearance to switch to.
 
         Returns:
             :func:`notice_for_result`'s text, or ``None``.
-
-        Raises:
-            UnknownThemeMenuItemError: If *item_id* names no theme
-                radio -- propagated from :func:`mode_for_menu_id`.
         """
-        self._mode = mode_for_menu_id(item_id)
+        self._mode = mode
         result = apply(self._app, self._mode)
         return notice_for_result(result)
 

@@ -405,3 +405,54 @@ def test_on_convert_solo_given_roster_error_returns_false_and_validates() -> Non
 def test_recording_view_satisfies_the_rider_issues_view_protocol() -> None:
     """The fake implements every RiderIssuesView member."""
     assert isinstance(RecordingRiderIssuesView(), RiderIssuesView)
+
+
+# ============================================================ W8
+# Zero-rider TEAM entries (W8): a W8 empty team is a "team-of-one"
+# issue with size 0, is never convertible (there is no rider to
+# extract), and Convert says why instead of raising.
+
+
+def _zero_rider_team_roster() -> Roster:
+    """Return a pooled mixed roster with one empty team."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_empty_team(display_name="Trail Blazers")
+    return roster
+
+
+def test_presenter_init_given_a_zero_rider_team_reports_team_of_one_with_size_zero() -> None:
+    """An empty team is reported as a team-of-one at size 0."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _zero_rider_team_roster())
+
+    (issue,) = presenter._issues
+    assert issue.kind == "team-of-one"
+    assert issue.message == "team size must be at least 2, got 0"
+    assert ("show_summary", ("1 rider issue(s)",)) in view.calls
+
+
+def test_on_row_selected_given_a_zero_rider_team_disables_convert() -> None:
+    """An empty team has no rider to extract, so Convert stays off."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _zero_rider_team_roster())
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert ("set_convert_solo_enabled", (False,)) in view.calls
+
+
+def test_on_convert_solo_given_a_zero_rider_team_returns_false_and_validates() -> None:
+    """Convert on an empty team refuses, naming why, changing none."""
+    view = RecordingRiderIssuesView()
+    roster = _zero_rider_team_roster()
+    presenter = RiderIssuesPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+    before = roster.audit_log
+
+    converted = presenter.on_convert_solo()
+
+    assert converted is False
+    assert ("show_validation", ("an empty team has no rider to convert to solo",)) in view.calls
+    assert roster.audit_log == before

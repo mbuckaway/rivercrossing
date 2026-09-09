@@ -33,15 +33,20 @@ if TYPE_CHECKING:
 __all__ = [
     "COLUMN_LABELS",
     "COL_DATE",
+    "COL_DATE_WIDTH",
     "COL_ENTRIES",
+    "COL_ENTRIES_WIDTH",
     "COL_NAME",
+    "COL_NAME_WIDTH",
     "COL_STATUS",
+    "COL_STATUS_WIDTH",
     "MIN_SIZE",
     "WX_ID_DELETE",
     "RideLibrary",
     "RidesListModel",
     "RidesSource",
     "format_ride_status",
+    "name_column_width",
 ]
 
 
@@ -85,6 +90,63 @@ COLUMN_LABELS: tuple[str, ...] = ("Ride", "Date", "Status", "Entries")
 # sizer content, not a second canvas number -- see this task's own
 # report for how it was measured.
 MIN_SIZE = (520, 182)
+
+# W10 column-width plan. A DataViewCtrl column never sizes itself to
+# its content, and (measured on 4.3.1 osx-cocoa / wxWidgets 3.3.3)
+# the control stretches only its *last* column to fill the window --
+# the Ride column is first, so the old 80 px default clipped the
+# name at every window size while a widened dialog's slack stranded
+# past Entries. Date/Status/Entries therefore carry compact fixed
+# widths that their short canvas content never exceeds (measured with
+# ``GetFullTextExtent`` on the stock 13 px GUI font: "2026-09-20" =
+# 66 px, "REOPENED" = 59 px, the "Entries" header = 37 px; each width
+# keeps ~150% text-zoom headroom), and the Ride column is elastic:
+# :func:`name_column_width` gives it every pixel the compact columns
+# leave, re-applied on every size event so a widened dialog widens
+# the name column.
+COL_DATE_WIDTH = 110
+COL_STATUS_WIDTH = 110
+COL_ENTRIES_WIDTH = 70
+
+# The Ride column's floor: 208 px is the fill at the dialog's 520 px
+# floor (the list's client measures ~498 px there on 4.3.1 osx-cocoa;
+# 498 - 110 - 110 - 70 = 208) and fits the canvas's own names plus the
+# longest a duplicate creates, "GORBA EPIC 2026 (copy)" (135 px at
+# the stock font).
+COL_NAME_WIDTH = 208
+
+# One width per COLUMN_LABELS entry, in canvas order: the Ride column
+# starts at the elastic floor; the first size event re-fills it from
+# the live client width.
+_COLUMN_WIDTHS: tuple[int, ...] = (
+    COL_NAME_WIDTH,
+    COL_DATE_WIDTH,
+    COL_STATUS_WIDTH,
+    COL_ENTRIES_WIDTH,
+)
+
+
+def name_column_width(client_width: int) -> int:
+    """Return the Ride column's width in a *client_width*-px list.
+
+    The elastic column: the width is every pixel the three compact
+    columns (Date/Status/Entries) leave, so a widened list widens the
+    Ride column rather than stranding the slack past Entries. Floored
+    at :data:`COL_NAME_WIDTH` so a not-yet-laid-out list (whose client
+    width is still a few pixels) keeps the canvas-minimum fill instead
+    of a negative width.
+
+    Args:
+        client_width: ``rides_list``'s own client width in pixels.
+
+    Returns:
+        The Ride column width: *client_width* minus the three compact
+        widths, never below :data:`COL_NAME_WIDTH`.
+    """
+    return max(
+        client_width - (COL_DATE_WIDTH + COL_STATUS_WIDTH + COL_ENTRIES_WIDTH),
+        COL_NAME_WIDTH,
+    )
 
 
 def format_ride_status(status: RideStatus) -> str:
@@ -142,15 +204,18 @@ class RideLibrary:
     name interpolated into ``message_lbl`` and the type-to-confirm
     gate armed; a confirmed Delete invokes the injected ``on_delete``
     callback -- the seam E5.4 wires to ``Store.delete_ride`` (which
-    writes its backup first). E5.4.1 wires the live library's other
-    three buttons the same way: ``wxID_OPEN`` and ``duplicate_btn``
-    are enabled only while a ride row is selected (the "no ride
-    selected" disable rule the store-backed library carries over from
-    Delete), ``wxID_NEW`` is always enabled, and each forwards its
-    selection to the injected ``on_open``/``on_new``/``on_duplicate``
-    callbacks -- the seams ``app.py`` wires to ``Store.load_engine``
-    + console switch, the ride-setup flow, and ``Store.duplicate_ride``
-    + :meth:`refresh`.
+    writes its backup first) -- with the selected ride row, then the
+    view refreshes so the deleted row disappears (W10). E5.4.1 wires
+    the live library's other three buttons the same way: ``wxID_OPEN``
+    and ``duplicate_btn`` are enabled only while a ride row is
+    selected (the "no ride selected" disable rule the store-backed
+    library carries over from Delete), ``wxID_NEW`` is enabled only
+    when an ``on_new`` callback was injected (W10: the no-store
+    library disables New instead of silently no-oping a click), and
+    each forwards its selection to the injected
+    ``on_open``/``on_new``/``on_duplicate`` callbacks -- the seams
+    ``app.py`` wires to ``Store.load_engine`` + console switch, the
+    ride-setup flow, and ``Store.duplicate_ride`` + :meth:`refresh`.
     """
 
     def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the four injected action callbacks
@@ -158,7 +223,7 @@ class RideLibrary:
         dialog: wx.Dialog,
         *,
         data_source: RidesSource,
-        on_delete: Callable[[str], None] | None = None,
+        on_delete: Callable[[RideSummary], None] | None = None,
         on_open: Callable[[RideSummary], None] | None = None,
         on_new: Callable[[], None] | None = None,
         on_duplicate: Callable[[RideSummary], None] | None = None,
@@ -172,16 +237,20 @@ class RideLibrary:
                 ``rides()`` (the :class:`RidesSource` Protocol), so
                 the store-backed source ``app.py`` wires in and the
                 E5.4.2 ``EmptyDataSource`` both apply.
-            on_delete: Called with the selected ride's name when
-                ``delete_ride_dlg`` confirms a Delete; ``None`` leaves
-                the dialog's confirm a no-op (the app threads a
-                store-backed callback when a store is open, E5.3.2's
-                module-docstring resolution).
+            on_delete: Called with the selected ride row when
+                ``delete_ride_dlg`` confirms a Delete -- the row the
+                app side deletes by its ``ride_id``, never by name
+                (W10); ``None`` leaves the dialog's confirm a no-op
+                (the app threads a store-backed callback when a store
+                is open, E5.3.2's module-docstring resolution). The
+                view refreshes its rows after the callback returns so
+                a successful delete disappears immediately.
             on_open: Called with the selected ride when Open is
                 clicked; ``None`` leaves the button a no-op (the empty
                 library, which has no store ride to load).
             on_new: Called when New is clicked (the app opens the ride
-                setup flow); ``None`` leaves it a no-op.
+                setup flow); ``None`` disables the New button (W10 --
+                the no-store library has no setup flow to open).
             on_duplicate: Called with the selected ride when Duplicate
                 is clicked; ``None`` leaves it a no-op. The view
                 refreshes its rows after the callback returns so a
@@ -208,6 +277,8 @@ class RideLibrary:
         self.rides_list.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_selection_changed
         )
+        # W10: the elastic Ride column follows the list's own width.
+        self.rides_list.Bind(wx.EVT_SIZE, self._on_rides_list_resize)
         self.open_button.Bind(wx.EVT_BUTTON, self._on_open_clicked)
         self.new_button.Bind(wx.EVT_BUTTON, self._on_new_clicked)
         self.duplicate_button.Bind(wx.EVT_BUTTON, self._on_duplicate_clicked)
@@ -229,9 +300,44 @@ class RideLibrary:
         return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
-        """Append ``rides_list``'s four columns in canvas order."""
+        """Append ``rides_list``'s four columns in canvas order.
+
+        Each column gets its explicit width from ``_COLUMN_WIDTHS``
+        (W10): a ``wxDataViewCtrl`` column never sizes itself to its
+        content, so the unpinned default clipped the Ride name at
+        every window size (measured on 4.3.1 osx-cocoa: the control
+        stretches only its last column, and the name is first).
+        Date/Status/Entries keep their compact fixed widths; the Ride
+        column starts at the elastic floor and
+        :meth:`_on_rides_list_resize` re-fills it from the live
+        client width on every size event.
+        """
         for col, label in enumerate(COLUMN_LABELS):
-            self.rides_list.AppendTextColumn(label, col)
+            self.rides_list.AppendTextColumn(label, col, width=_COLUMN_WIDTHS[col])
+
+    def _on_rides_list_resize(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Re-fill the Ride column after this resize settles (W10).
+
+        Deferred through ``wx.CallAfter``: the native layout pass for
+        a resize runs after this handler returns, and a synchronous
+        ``SetWidth`` here is overwritten by the control's own
+        last-column stretch. The deferred call runs after that pass,
+        so the pinned widths win and the Ride column takes the exact
+        leftover (measured on 4.3.1 osx-cocoa).
+        """
+        event.Skip()
+        wx.CallAfter(self._stretch_name_column)
+
+    def _stretch_name_column(self) -> None:
+        """Give the Ride column every pixel the compact columns leave.
+
+        Re-pins the Entries column too: the native last-column stretch
+        moves it on every resize, and the Ride column's fill is exact
+        only while the other three widths are the pinned ones.
+        """
+        client_width = self.rides_list.GetClientSize().GetWidth()
+        self.rides_list.GetColumn(COL_ENTRIES).SetWidth(COL_ENTRIES_WIDTH)
+        self.rides_list.GetColumn(COL_NAME).SetWidth(name_column_width(client_width))
 
     def show_rides(self, rows: list[RideSummary]) -> None:
         """Render ``rides_list`` (``LibraryView``).
@@ -289,11 +395,14 @@ class RideLibrary:
         selection-driven action: Open and Duplicate are enabled only
         while a ride row is selected, exactly as Delete is (and Delete
         additionally stays off for a RUNNING ride -- R-18, spec §3).
-        New is never selection-dependent.
+        New is never selection-dependent; it is enabled only when an
+        ``on_new`` callback was injected (W10: the no-store library
+        disables the button rather than silently swallowing a click).
         """
         selected = self._selected
         self.open_button.Enable(selected is not None)
         self.duplicate_button.Enable(selected is not None)
+        self.new_button.Enable(self._on_new is not None)
         self.delete_button.Enable(
             selected is not None and selected.status is not RideStatus.RUNNING
         )
@@ -320,8 +429,9 @@ class RideLibrary:
         """Forward the New click to ``on_new`` (E5.4.1).
 
         The app-side callback ends this modal and opens the ride setup
-        flow (File ▸ New Ride…'s target). Always enabled -- no
-        selection needed.
+        flow (File ▸ New Ride…'s target). No selection needed -- the
+        button is disabled without an injected ``on_new`` (W10), and
+        this guard re-checks anyway.
         """
         event.Skip()
         if self._on_new is not None:
@@ -376,9 +486,12 @@ class RideLibrary:
         §4 -- a blank label is a failed assertion), arms the
         type-to-confirm gate, and on a confirmed ``wxID_DELETE``
         invokes the injected ``on_delete`` callback -- the seam E5.4
-        wires to ``Store.delete_ride``, which writes its backup first.
-        A RUNNING selection (or none) cannot reach here: the button is
-        disabled, and this guard re-checks anyway.
+        wires to ``Store.delete_ride``, which writes its backup first
+        -- with the selected ride row, then refreshes the list so the
+        deleted row disappears immediately (W10, mirroring the
+        duplicate flow's own post-action refresh). A RUNNING selection
+        (or none) cannot reach here: the button is disabled, and this
+        guard re-checks anyway.
         """
         selected = self._selected
         event.Skip()
@@ -417,7 +530,8 @@ class RideLibrary:
             # cover the negative control-lookup path.
             result = dialogs.run_dialog(dialog, opener=self.dialog)
             if result == wx.ID_DELETE and self._on_delete is not None:
-                self._on_delete(selected.name)
+                self._on_delete(selected)
+                self.refresh()
         finally:
             if not dialog.IsBeingDeleted():
                 dialog.Destroy()

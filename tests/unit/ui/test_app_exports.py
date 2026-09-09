@@ -8,6 +8,7 @@ browser seams are monkeypatched, and the no-engine and cancel paths
 post notices instead of failing.
 """
 
+from base64 import b64encode
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -17,10 +18,14 @@ from pypdf import PdfReader
 if TYPE_CHECKING:
     import pytest
 
+import inspect
+
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
+from rivercrossing.roster import EntryMode, Roster
 from rivercrossing.standings import EntryResult, Placed
 from rivercrossing.ui import app as app_module
+from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS, ResultsWindow
 
 
 class _StubConfig:
@@ -243,8 +248,11 @@ def test_handle_export_command_picks_writes_and_records(
         solo: object,
         opts: object,
         watermark: int | None = None,
+        team_logos: object = None,
     ) -> None:
-        app_module._write_export(config, teams, solo, opts, target, path)  # type: ignore[arg-type]
+        app_module._write_export(  # type: ignore[arg-type]
+            config, teams, solo, opts, target, path, team_logos=team_logos
+        )
         ctx.last_export_path = path  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
 
@@ -285,8 +293,11 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
         solo: object,
         opts: object,
         watermark: int | None = None,
+        team_logos: object = None,
     ) -> None:
-        app_module._write_export(config, teams, solo, opts, "export_html", out)  # type: ignore[arg-type]
+        app_module._write_export(  # type: ignore[arg-type]
+            config, teams, solo, opts, "export_html", out, team_logos=team_logos
+        )
         ctx.last_export_path = out  # type: ignore[attr-defined]
         ctx.export_watermark = watermark  # type: ignore[attr-defined]
         captured.append(watermark)
@@ -346,3 +357,133 @@ def test_handle_preview_browser_without_export_notices() -> None:
     app_module._handle_preview_browser(context)
 
     assert context.frame.notices == ["No export yet — generate one first"]
+
+
+# ============================================================ W8
+# Team logos in HTML exports: _write_export forwards the plate -> logo
+# data-URI map into htmlexport.render, and _team_logo_srcs builds that
+# map from the roster's TEAM entries (card assets or stored PNGs).
+
+
+def _team_logo_uri() -> str:
+    """Return a tiny deterministic data URI for the export pins."""
+    return "data:image/png;base64,TEAMLOGO"
+
+
+def test_write_export_html_embeds_team_logos_when_supplied(tmp_path: Path) -> None:
+    """W8: the html writer passes team_logos into the renderer."""
+    out = tmp_path / "results.html"
+    config = _StubConfig()
+    (entry, _) = _snapshot()
+    team_result = EntryResult(
+        entry_id="88",
+        plate="88",
+        name="Moss Ridge Riders",
+        kind="team",
+        laps=entry.laps,
+        total_time=entry.total_time,
+        best_lap=entry.best_lap,
+        cards=entry.cards,
+        hand=entry.hand,
+        dnf=False,
+    )
+    placed = _placed((team_result,))
+    opts = app_module.ExportOptions()
+
+    app_module._write_export(
+        config,
+        placed,
+        (),
+        opts,
+        "export_html",
+        out,
+        team_logos={"88": _team_logo_uri()},
+    )
+
+    html = out.read_text(encoding="utf-8")
+    assert html.count('class="team-logo"') == 2
+    assert html.count('<img src="data:image/png;base64,TEAMLOGO"') == 2
+
+
+def test_write_export_html_without_team_logos_renders_no_logo_images(tmp_path: Path) -> None:
+    """W8: no map, no row images -- the plain page."""
+    out = tmp_path / "results.html"
+    config = _StubConfig()
+    app_module._write_export(config, (), (), app_module.ExportOptions(), "export_html", out)
+
+    assert 'class="team-logo"' not in out.read_text(encoding="utf-8")
+
+
+def test_team_logo_srcs_maps_card_and_image_teams_to_data_uris() -> None:
+    """W8: a card-code team and a PNG team both resolve to data URIs."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    card_team = roster.create_empty_team(display_name="Card Team", logo_card="AS")
+    png_team = roster.create_empty_team(display_name="Png Team", logo_png=b"fake-png-bytes")
+
+    srcs = app_module._team_logo_srcs(roster)
+
+    assert srcs[card_team.plate].startswith("data:image/png;base64,")
+    assert srcs[png_team.plate] == "data:image/png;base64," + b64encode(b"fake-png-bytes").decode()
+
+
+def test_team_logo_srcs_omits_logo_less_and_solo_entries() -> None:
+    """W8: rows without a logo, and non-team entries, never map."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_empty_team(display_name="Plain Team")
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="2")
+
+    srcs = app_module._team_logo_srcs(roster)
+
+    assert srcs == {}
+
+
+# ============================================================ W11
+# F1 (dead-control wiring): the results-frame export buttons were
+# bound through a synthetic EVT_MENU ProcessEvent that never reached
+# the main frame's handlers (the results frame opens parentless), so
+# the buttons silently did nothing. The window now threads an
+# ``on_export(target)`` callback and the app wires it to the same
+# ``_handle_export_command`` routes the menu rows run. These pins keep
+# the view's button table and the app's dispatch table in lockstep
+# headless; the real-button behaviour is functionally pinned in
+# tests/functional/test_results_exports.py.
+
+
+def test_results_window_export_buttons_map_each_button_to_its_route_target() -> None:
+    """W11: the four buttons name the four menu export targets."""
+    assert dict(_EXPORT_BUTTONS) == {
+        "export_html_btn": "export_html",
+        "export_pdf_btn": "export_pdf",
+        "poster_btn": "export_poster",
+        "export_csv_btn": "export_results_csv",
+    }
+
+
+def test_results_window_export_button_targets_all_dispatch_like_the_menu_rows() -> None:
+    """W11: every button target has a real ``_TARGET_ACTIONS`` handler.
+
+    ``_TARGET_ACTIONS`` is the dispatch table ``_make_route_handler``
+    consults for the Results menu rows, so a button target missing
+    here would fire a callback with no route behind it.
+    """
+    for _button_name, target in _EXPORT_BUTTONS:
+        assert target in app_module._EXPORT_SUGGESTED_NAMES
+        assert target in app_module._TARGET_ACTIONS
+
+
+def test_results_window_accepts_an_on_export_callback_seam() -> None:
+    """W11: the decoration-time ``on_export`` seam exists.
+
+    The callback replaces the dead synthetic-menu-event mechanism:
+    each export button fires it with the button's route target, and
+    the app wires it to ``_handle_export_command`` at decoration time
+    (the same seam shape as ``on_reopen``).
+    """
+    # Source pin, not inspect.signature: the view's DataSource
+    # annotation is TYPE_CHECKING-only and lazily evaluated (PEP 649
+    # on 3.14), so resolving the signature raises NameError. The
+    # repo's own wiring pins (test_app_wiring.py) use the same
+    # inspect.getsource form.
+    source = inspect.getsource(ResultsWindow.__init__)
+
+    assert "on_export: Callable[[str], None] | None = None" in source

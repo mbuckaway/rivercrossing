@@ -273,3 +273,16 @@ R-numbers cite the requirements doc's tables; where a band (R-30…36, R-50…54
 ### 8 · Next step — Part 2 task briefs
 
 On approval of this plan, expand per EPIC into agent-ready briefs (one doc per EPIC): Goal · References (exact files/mock ids, read first) · Tests first (named files + concrete cases incl. negative and property-based — the tests are the spec) · Then implement · Done when. Each brief repeats the §2 ground rules, states its entry gate (the prior EPIC's exit criteria), carries the sequencing/parallelization map, and names an owner for every stub or cross-EPIC hand-off. E1's brief is the first to run. **Written:** [Task briefs — all nine EPICs](task-briefs.md) (incl. the numbered review of the set, TB-1…8).
+
+### 9 · v1.0.10 fix-sweep resolutions (2026-09-09)
+
+The topic/fix-v1.0.10-regressions sweep (W2–W15) settled these points;
+each is written back into the requirements, spec or canvas in the
+same sweep.
+
+- **Undo stays engine-legal in REOPENED, but the console UI gates it to RUNNING with ≥ 1 crossing** (W5). The engine's `undo_last` keeps working in REOPENED (corrections are the dialogs' own job there); the console's `undo_btn` and Cards ▸ Undo Last Crossing mirror the mi_undo_crossing rule — enabled only while RUNNING and the engine holds a crossing — with the engine as the single source of truth.
+- **Launch-flow reorder** (W3): the normal launch presents no modal before `frame.Show()`. `build_main_window` shows nothing; `main()` shows the frame, then runs the post-Show `_run_launch_flow` (resume dialog / native No Ride Open alert / nothing). A modal that cannot present before Show previously blocked the launch invisibly.
+- **Clock-freeze product decision** (W6, recorded in R-30): while a ride is stopped, the console clock *display* (elapsed/remaining labels and gauge dials) freezes at the captured value; the engine's wall-clock elapsed keeps running underneath, so Continue unfreezes and jumps the display forward and nothing is lost.
+- **Relay plates must be non-empty** (W7): the csvio-vs-roster docstring contradiction resolved in favour of NON-EMPTY — a `team_relay` plate is any non-empty string, and a blank or whitespace-only plate is refused by every plate entry point (`_require_plate_nonempty`); csvio's module docstring records the same resolution.
+- **Team entries may be created with zero riders** (W8): R-81's amendment landed with W8's `create_empty_team` — the anchor-rider mandate is gone, and nothing invents a rider or a plate. A rider_pooled empty team claims the next free plate provisionally until its first rider joins; a team_relay empty team carries its explicit relay plate from creation.
+- **Native standard dialogs** (W2/W15, R-85): `ui.std_dialogs` (`show_info`/`show_warning`/`show_error`/`show_confirm`) replaces bespoke XRC windows for one-shot alerts and destructive confirms; `stop_confirm_dlg` retired in W5 and `no_ride_dlg` in W15, leaving the 203-name registry of §15b.

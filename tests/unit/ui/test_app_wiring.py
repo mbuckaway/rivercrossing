@@ -201,14 +201,18 @@ def test_app_module_empty_bootstrap_roster_keeps_the_mixed_pooled_default() -> N
         entry_mode=EntryMode.MIXED,
         plate_model=PlateModel.RIDER_POOLED,
         max_team_size=app._SEEDED_MAX_TEAM_SIZE,
+        # W8: the same fixed seed the bootstrap passes, so the pin
+        # mirrors the production call site exactly.
+        team_logo_seed=app._SEEDED_TEAM_LOGO_SEED,
     )
 
     assert (
         empty.entry_mode,
         empty.plate_model,
         empty.max_team_size,
+        empty.team_logo_seed,
         empty.entries,
-    ) == (EntryMode.MIXED, PlateModel.RIDER_POOLED, 4, ())
+    ) == (EntryMode.MIXED, PlateModel.RIDER_POOLED, 4, app._SEEDED_TEAM_LOGO_SEED, ())
 
 
 # --- build_main_window is importable alongside main() --------------
@@ -230,6 +234,48 @@ def test_build_main_window_is_callable() -> None:
 def test_resolve_db_path_given_no_override_and_no_env_returns_none() -> None:
     """No override, no env: default_db_path picks the per-user file."""
     assert app._resolve_db_path(None) is None
+
+
+# --- W3: main() owns the Store and runs the launch flow post-Show ---
+
+
+def test_main_source_opens_the_store_before_it_builds_the_window() -> None:
+    """W3: main() opens the Store itself so a finally always owns it."""
+    source = inspect.getsource(app.main)
+
+    assert "store = Store.open(default_db_path(_resolve_db_path(db_path)))" in source
+    assert source.index("Store.open(") < source.index("_bootstrap_window(app, store=store)")
+
+
+def test_main_source_shows_the_frame_before_running_the_launch_flow() -> None:
+    """Show() precedes the launch flow, which precedes MainLoop.
+
+    A launch modal must never run before the frame is visible.
+    """
+    source = inspect.getsource(app.main)
+
+    assert (
+        source.index("frame.Show()")
+        < source.index("_run_launch_flow(")
+        < source.index("MainLoop()")
+    )
+
+
+def test_main_source_closes_the_store_inside_a_finally() -> None:
+    """W3: a bootstrap raise still closes the Store (crash recovery)."""
+    source = inspect.getsource(app.main)
+    tail = source[source.index("finally:") :]
+
+    assert "store.close()" in tail
+
+
+def test_bootstrap_window_accepts_an_opened_store_and_still_opens_its_own() -> None:
+    """W3: main() passes its Store in; helpers keep the db_path seam."""
+    source = inspect.getsource(app._bootstrap_window)
+
+    assert "store: Store | None = None" in source
+    assert "if store is None:" in source
+    assert "Store.open(default_db_path(db_path))" in source
 
 
 def test_resolve_db_path_given_the_env_var_returns_the_env_path(
@@ -263,3 +309,22 @@ def test_resolve_db_path_given_an_empty_env_value_returns_none(
     monkeypatch.setenv("RIVERCROSSING_DB_PATH", "")
 
     assert app._resolve_db_path(None) is None
+
+
+def test_app_module_source_wires_a_fixed_team_logo_seed_into_the_bootstrap_roster() -> None:
+    """W8: the bootstrap roster carries a fixed team-logo seed.
+
+    Phase 4's Pick card button refused everything while no
+    store-backed ride was open -- the bootstrap roster had no
+    ``team_logo_seed`` at all, so ``next_team_logo_card`` reported
+    "every card logo is already in use by a team" against zero teams.
+    The seed constant beside ``_SEEDED_MAX_TEAM_SIZE`` fixes that;
+    this source pin keeps the bootstrap call honest (the same
+    inspect.getsource pattern this file's other wiring pins use).
+    """
+    assert isinstance(app._SEEDED_TEAM_LOGO_SEED, int)
+    assert app._SEEDED_TEAM_LOGO_SEED > 0
+
+    source = inspect.getsource(app.build_main_window)
+
+    assert "team_logo_seed=_SEEDED_TEAM_LOGO_SEED" in source

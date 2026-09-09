@@ -22,7 +22,10 @@
       wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). The
       canvas minimum of 1100x700 is declared as <size> below and must be
       re-applied code-side with SetMinSize(). (spec.md 13 says 1180x740;
-      the canvas is implementation truth and wins - recorded conflict.)
+      the canvas is implementation truth and wins - recorded conflict.
+      W9 raises the declared size to 1100x780 code-side and here so the
+      full 30-row crossings feed stays visible at 100% zoom; the canvas
+      drawing's own amendment is W15's.)
 
   Code-side per the canvas footnotes: feed columns/rows and bold flagged-row
   attributes, card bitmaps from the imagelist, InfoBar text and show/hide,
@@ -34,7 +37,7 @@
 
   <object class="wxFrame" name="main_frame">
     <title>RiverCrossing</title>
-    <size>1100,700</size>
+    <size>1100,780</size>
 
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
@@ -337,6 +340,50 @@
                     </object>
                   </object>
 
+                  <!--
+                    W12: the two registration chips (riders_count_lbl /
+                    teams_count_lbl) appended after the four live-timing
+                    chips. The roster counts are static per ride, so the
+                    timing readouts stay topmost. The teams chip (its
+                    caption and value) is hidden code-side in solo-only
+                    rides (R-11); the caption carries no frozen name,
+                    like every other chip caption, and is found
+                    structurally by main_frame.set_team_ui_visible.
+                  -->
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>Riders</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="riders_count_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxEXPAND</flag>
+                    <object class="wxBoxSizer">
+                      <orient>wxVERTICAL</orient>
+                      <object class="sizeritem">
+                        <object class="wxStaticText">
+                          <label>Teams</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <object class="wxStaticText" name="teams_count_lbl">
+                          <label></label>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+
                 </object>
               </object>
 
@@ -409,10 +456,14 @@
   </object>
 
   <!--
-    Seven menus, 46 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 7 - Riders 5 - Cards 7 - Results 7 -
-    View 1 row, 11 items - Help 4). File order follows the 15 table
+    Seven menus, 43 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 8 - Ride 6 - Riders 6 - Cards 7 - Results 7 -
+    View 1 row, 8 items - Help 4). File order follows the 15 table
     (Import CSV, Export CSV, Back Up), not 15b's listing order.
+
+    W14: mi_ride_setup left the Ride menu with its spec.md 15 row. The
+    "edit this ride" setup semantics were never built, so File ▸ New
+    Ride… is the single entry point to the ride-setup window.
 
     wxID_PREFERENCES / wxID_EXIT / wxID_ABOUT carry no <label>: the stock id
     supplies the platform-correct text and lets wx relocate them into the
@@ -420,8 +471,9 @@
 
     Radio menu items get no <checked> here: wxWidgets' XRC handler applies
     that property only when kind == wxITEM_CHECK (src/xrc/xh_menu.cpp), so it
-    is a silent no-op on wxITEM_RADIO. Code checks mi_theme_system and
-    mi_zoom_100 - the two documented defaults - after LoadMenuBar.
+    is a silent no-op on wxITEM_RADIO. Code checks mi_zoom_100 - the one
+    documented zoom default - after LoadMenuBar (W13: the theme trio left
+    the View menu; the Settings appearance radios own appearance).
   -->
   <object class="wxMenuBar" name="main_menubar">
 
@@ -470,9 +522,6 @@
       </object>
       <object class="wxMenuItem" name="mi_audit_trail">
         <label>&amp;Audit Trail…</label>
-      </object>
-      <object class="wxMenuItem" name="mi_ride_setup">
-        <label>Ride Set&amp;up…</label>
       </object>
     </object>
 
@@ -551,27 +600,17 @@
     </object>
 
     <!--
-      The theme trio and the zoom ladder are two separate radio groups; wx
-      groups consecutive wxITEM_RADIO entries, so mi_hide_times and the
-      separators around it are what keep them apart. The zoom items carry no
-      mnemonic: seven numeric labels cannot hold unique ones, and the whole
-      ladder is reachable with Alt+V then the arrow keys.
+      W13: the theme trio left this menu (the Settings appearance radios
+      are the single theme surface). The zoom ladder is one radio group;
+      wx groups consecutive wxITEM_RADIO entries, and the checkable
+      mi_hide_times between the menu's start and the ladder keeps the
+      zoom group from ever merging with a neighbouring radio item. The
+      zoom items carry no mnemonic: seven numeric labels cannot hold
+      unique ones, and the whole ladder is reachable with Alt+V then the
+      arrow keys.
     -->
     <object class="wxMenu">
       <label>&amp;View</label>
-      <object class="wxMenuItem" name="mi_theme_system">
-        <label>Theme: &amp;System</label>
-        <radio>1</radio>
-      </object>
-      <object class="wxMenuItem" name="mi_theme_light">
-        <label>Theme: &amp;Light</label>
-        <radio>1</radio>
-      </object>
-      <object class="wxMenuItem" name="mi_theme_dark">
-        <label>Theme: &amp;Dark</label>
-        <radio>1</radio>
-      </object>
-      <object class="separator"/>
       <object class="wxMenuItem" name="mi_hide_times">
         <label>&amp;Hide Times on Console</label>
         <checkable>1</checkable>

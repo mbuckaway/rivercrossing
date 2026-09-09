@@ -4,9 +4,9 @@ RiverCrossing — XRC window designs (implementation truth · retires the Indust
 
 Native wxWidgets controls only, sizer-based, Windows look shown (identical structure on macOS). Every interactive control carries its `xrc_name` annotation — these are the XRC `name` attributes, canonical and frozen; standard buttons use stock IDs (wxID_OK, wxID_CANCEL, wxID_CLOSE, wxID_DELETE, wxID_EXIT, wxID_ABOUT). Naming rules + window↔file map: Spec §15b.
 
-- **Canvas caveats (HTML approximation):** browser form controls stand in for wx natives; exact spacing/fonts come from sizers + system fonts, not these pixels; sizes below are minimums expressed in dialog units at build time. **Global code-side items (not expressible in XRC):** ① DataView columns + row data + per-row attributes (bold flagged rows, red suits) — appended in code, the attributes through a `DataViewIndexListModel` subclass overriding `GetAttrByRow`, since no setter exists; ② card imagelist population (53 card bitmaps @1x/2x); ③ wxInfoBar **construction** + message text + Show/Hide calls, and the console's two custom gauges — the `RaceClock` dials (`elapsed_clock`/`remaining_clock`) and the `StopLight` (`ride_status_light`) — built code-side into main.xrc's `elapsed_clock_panel`/`remaining_clock_panel`/`ride_status_panel` placeholder slots and named with `SetName()`, because XRC cannot author a `wx.Control` subclass (ux-polish); ④ splitter sash position restore from settings; ⑤ menu enable/disable per ride state (§15); ⑥ theme: `wx.App.SetAppearance` on the 4.3.1 / wxWidgets 3.3.3 baseline — all three appearance radios live on both platforms (measured: macOS applies at runtime to existing windows; `Appearance::System` pins the NSAppearance current at the call instead of restoring follow-the-system, so the app re-applies System on `wx.EVT_SYS_COLOUR_CHANGED`, best-effort; MSW on 3.3.3 returns `CannotChange` once a top-level window exists, so a Windows theme change takes effect at next launch and the status bar says so); ⑦ window minimum sizes via `SetMinSize()` (XRC has no window-level minsize); ⑧ radio menu-item defaults `mi_theme_system` and `mi_zoom_100` (`<checked>` is a no-op on radio items). Everything else drawn here is declared in XRC.
+- **Canvas caveats (HTML approximation):** browser form controls stand in for wx natives; exact spacing/fonts come from sizers + system fonts, not these pixels; sizes below are minimums expressed in dialog units at build time. **Global code-side items (not expressible in XRC):** ① DataView columns + row data + per-row attributes (bold flagged rows, red suits) — appended in code, the attributes through a `DataViewIndexListModel` subclass overriding `GetAttrByRow`, since no setter exists; ② card imagelist population (53 card bitmaps @1x/2x); ③ wxInfoBar **construction** + message text + Show/Hide calls, and the console's two custom gauges — the `RaceClock` dials (`elapsed_clock`/`remaining_clock`) and the `StopLight` (`ride_status_light`) — built code-side into main.xrc's `elapsed_clock_panel`/`remaining_clock_panel`/`ride_status_panel` placeholder slots and named with `SetName()`, because XRC cannot author a `wx.Control` subclass (ux-polish); ④ splitter sash position restore from settings; ⑤ menu enable/disable per ride state (§15); ⑥ theme: `wx.App.SetAppearance` on the 4.3.1 / wxWidgets 3.3.3 baseline — all three appearance radios live on both platforms (measured: macOS applies at runtime to existing windows; `Appearance::System` pins the NSAppearance current at the call instead of restoring follow-the-system, so the app re-applies System on `wx.EVT_SYS_COLOUR_CHANGED`, best-effort; MSW on 3.3.3 returns `CannotChange` once a top-level window exists, so a Windows theme change takes effect at next launch and the status bar says so); ⑦ window minimum sizes via `SetMinSize()` (XRC has no window-level minsize); ⑧ the zoom menu-item default `mi_zoom_100` (`<checked>` is a no-op on radio items; W13 removed the View-menu theme trio — the Settings appearance radios are the single theme surface, so the old `mi_theme_system` default went with them). Everything else drawn here is declared in XRC.
 
-- **Three classes cannot be authored in XRC** (measured on 4.3.1 / wxWidgets 3.3.3 — full detail in Spec §15b): **wxInfoBar** yields a generic `wx.Control` and drops its `name`, so all eight code-side info bars (`resume_infobar`/`reopened_infobar`/`finished_infobar` in main_frame, `stale_infobar` in results_frame, `setup_infobar` in ride_setup_dlg, `roster_infobar`/`csv_infobar` in the rider editor, `teams_infobar` in the Teams Editor — §15b) are built in code and named with `SetName()` · **wxDataViewListCtrl**'s handler hard-forces the name `dataviewCtrl`, so every list control below is a **wxDataViewCtrl**, whose name is honoured · **wxMenuBar** drops its name too: `main_menubar` loads via `XmlResource.LoadMenuBar()` and never resolves through `FindWindowByName`. Custom `wx.Control` subclasses are equally un-authorable in XRC: the console's `RaceClock` dials and `StopLight` (views/gauges.py) are built into main.xrc's placeholder panels and named with `SetName()` — the InfoBar rule extended (ux-polish). Also measured: `wxStdDialogButtonSizer` positions only OK/Yes/Save/Apply/No/Cancel/Close/Help, so `wxID_OPEN`, `wxID_NEW`, `wxID_DELETE` and the custom buttons annotated below live in a sibling `wxBoxSizer`; a bare `&` in a label is a mnemonic and is stripped on macOS — author `&&` and read labels with `GetLabelText()`.
+- **Three classes cannot be authored in XRC** (measured on 4.3.1 / wxWidgets 3.3.3 — full detail in Spec §15b): **wxInfoBar** yields a generic `wx.Control` and drops its `name`, so all eleven code-side info bars (`resume_infobar`/`reopened_infobar`/`finished_infobar` in main_frame, `stale_infobar` in results_frame, `setup_infobar` in ride_setup_dlg, `roster_infobar`/`csv_infobar` in the rider editor, `add_rider_infobar` in add_rider_dlg (W7), `issues_infobar` in rider_issues_dlg, `teams_infobar` in team_editor_dlg and `add_team_infobar` in add_team_dlg (W8) — §15b) are built in code and named with `SetName()` · **wxDataViewListCtrl**'s handler hard-forces the name `dataviewCtrl`, so every list control below is a **wxDataViewCtrl**, whose name is honoured · **wxMenuBar** drops its name too: `main_menubar` loads via `XmlResource.LoadMenuBar()` and never resolves through `FindWindowByName`. Custom `wx.Control` subclasses are equally un-authorable in XRC: the console's `RaceClock` dials and `StopLight` (views/gauges.py) are built into main.xrc's placeholder panels and named with `SetName()` — the InfoBar rule extended (ux-polish). Also measured: `wxStdDialogButtonSizer` positions only OK/Yes/Save/Apply/No/Cancel/Close/Help, so `wxID_OPEN`, `wxID_NEW`, `wxID_DELETE` and the custom buttons annotated below live in a sibling `wxBoxSizer`; a bare `&` in a label is a mnemonic and is stripped on macOS — author `&&` and read labels with `GetLabelText()`.
 
 A · Main frame
 
@@ -27,24 +27,24 @@ Elapsed — (dial) — 4:22:41      Remaining — (dial) — 1:37:19
 
 Start ride   Arm   Stop ride…
 
-`start_btn · stop_btn — round green GO / red STOP wxBitmapButtons (ux-polish): the SVG glyphs (gauges.py go_bundle/stop_bundle) are applied code-side, and the labels are re-applied there too ("Start ride"/"Stop ride…"), because the XRC bitmap-button handler ignores <label> — the buttons stay text-named for assistive tech · arm_stop_chk ("Arm", R-35)`
+`start_btn · stop_btn — round green GO / red STOP wxBitmapButtons (ux-polish): the SVG glyphs (gauges.py go_bundle/stop_bundle) are applied code-side, and the labels are re-applied there too ("Start ride"/"Stop ride…"), because the XRC bitmap-button handler ignores <label> — the buttons stay text-named for assistive tech · arm_stop_chk ("Arm", R-35) — engine-gated (W5, the mi_start_ride/mi_stop_ride rules mirrored on the buttons): start_btn is enabled in DRAFT and in stopped-RUNNING (continue-after-stop is the resume mechanism), disabled in live RUNNING, FINISHED and REOPENED; stop_btn is enabled only while arm_stop_chk is ticked (it auto-disarms after 10 s or one use); a riderless-roster stop/start refusal surfaces as a native warning`
 
 Record crossing `(the entry row is framed by a native wxStaticBoxSizer so the operator can always find it — Phase 8)`
 
 Plate`plate_input (focused · larger type via <font><sysfont>wxSYS_DEFAULT_GUI_FONT</sysfont><relativesize>1.5</relativesize></font> — relative so the 90–150% zoom still applies, never an absolute point size · wider DIP <size> · <hint> "Plate number")`
 Record (Enter)`record_btn`
-✓ 123 · Sam Ellis · Lap 4 · 22:41 · dealt 9♥`last_crossing_lbl`
-Undo last (Ctrl+Z)`undo_btn`
+✓ 123 · Sam Ellis · Lap 4 · 22:41 · dealt 9♥`last_crossing_lbl — W9: the dealt card's suit always renders as a glyph (the code is real, held or not) and a held crossing appends " (held)"`
+Undo last (Ctrl+Z)`undo_btn — gated RUNNING with ≥ 1 crossing (W5, the mi_undo_crossing rule mirrored on the button; REOPENED corrections are the dialogs' own job)`
 
-| Time | Plate | Entry | Lap | Lap time | Total | Card |
+| Time | Plate | Name | Card | Lap | Lap time | Total |
 |---|---|---|---|---|---|---|
-| 14:22:41 | 123 | Sam Ellis | 4 | 22:41 | 1:31:04 | 9♥ |
-| 14:22:18 | 77 | Trail Blazers (T) | 9 | 19:55 | 3:02:11 | K♠ |
-| 14:21:59 | 45 | J. Okafor | 6 | 07:12 ⚑ | 2:44:30 | held |
-| 14:21:30 | 212 | M. Chen | 5 | 24:02 | 2:10:44 | JK★ |
-| 14:20:52 | 8 | R. Dubois | 7 | 21:17 | 2:58:03 | 4♦ |
+| 14:22:41 | 123 | Sam Ellis | 9♥ | 4 | 22:41 | 1:31:04 |
+| 14:22:18 | 77 | Trail Blazers (T) | K♠ | 9 | 19:55 | 3:02:11 |
+| 14:21:59 | 45 | J. Okafor | 9♦ | 6 | 07:12 ⚑ | 2:44:30 |
+| 14:21:30 | 212 | M. Chen | JK★ | 5 | 24:02 | 2:10:44 |
+| 14:20:52 | 8 | R. Dubois | 4♦ | 7 | 21:17 | 2:58:03 |
 
-`crossings_list (wxDataViewCtrl · newest first · last 30)`
+`crossings_list (wxDataViewCtrl · newest first · last 30 · columns in the W9 order Time · Plate · Name · Card · Lap · Lap time · Total with one pinned width per column (80, 50, 150, 60, 50, 80, 80 — DataView has no autosize-to-content, so the widths are data), the Lap time/Total pair R-37's hide-times setting removes. The Card column always renders a real dealt code: a held crossing's row carries the held card's own code — never a placeholder — and the row renders bold, the flagged channel (R-34)`
 
 Crossings
 1 124
@@ -58,7 +58,13 @@ On course
 Shoe
 41/108
 
-`crossings_count_lbl · cards_count_lbl · on_course_lbl · shoe_lbl`
+Riders
+180
+
+Teams
+24
+
+`crossings_count_lbl · cards_count_lbl · on_course_lbl · shoe_lbl · riders_count_lbl · teams_count_lbl — the six chips: the four live-timing counts, then the two W12 registration chips (Riders/Teams) appended after them. The roster counts are static per ride; the Teams chip (caption and value) is hidden code-side in solo-only rides (R-11)`
 Needs Review   Riders — `review_notebook (wxNotebook · two tabs — ux-polish; the notebookpage node's own name is dropped by the XRC handler, so the names live on the page children below)`
 
 Plate | Lap | Lap time   `flagged_list (wxDataViewCtrl — the R-34 flag rows, three sortable columns)`
@@ -74,7 +80,7 @@ Shoe cycle 1 · seed 8843
 
 `main_statusbar`
 
-⚠ code-side: feed columns/rows + flagged-row attrs (a DataViewIndexListModel subclass overriding GetAttrByRow — there is no setter); card column bitmaps from imagelist; InfoBar construction + text + show/hide; sash position (main_splitter); state variants — DRAFT: clock 0:00:00, start_btn enabled, plate_input disabled with "start the ride to record" hint (record_btn tracks plate_input's enablement in every state) · FINISHED: entry row hidden, result banner InfoBar (finished_infobar) with Reopen/Results buttons · REOPENED: corrections banner, entry disabled, edited rows highlighted. ux-polish header: the two `RaceClock` dials (`elapsed_clock`/`remaining_clock`) are inserted code-side between each clock column's caption and numeric readout in `elapsed_clock_panel`/`remaining_clock_panel` (fractions over planned duration — elapsed fills toward 1.0, remaining drains toward 0.0, both 0.0 in DRAFT), the `StopLight` (`ride_status_light`) sits above `ride_status_lbl` inside `ride_status_panel` — green RUNNING · amber DRAFT/REOPENED · red FINISHED, `console.stop_light_mode`, and colour is never the sole channel — and `start_btn`/`stop_btn` are `wxBitmapButton`s carrying gauges.py's round green GO / red STOP SVG glyphs with "Start ride"/"Stop ride…" re-applied in code (the XRC handler ignores bitmap-button labels). Review sidebar: a two-tab `review_notebook` wxNotebook — "Needs Review" (index 0: `flagged_list` Plate | Lap | Lap time + `review_btn`) and "Riders" (`console_riders_list` Plate | Name | Team over the live roster, refreshed on the 1 s tick) — and the rider-row activation seam (double-click or Enter) opens `rider_editor_dlg` pre-selected at that rider's plate. Hide-times setting removes Lap time/Total columns + times in last_crossing_lbl; clock stays; clock_elapsed_lbl/clock_remaining_lbl reserve a fixed minimum width and re-layout on update so long elapsed/remaining text never overlaps the Start/Stop controls (R-55). Min frame 1100×700, fits 1366×768 — declared as <size> and re-applied with SetMinSize(); Spec §13 now states the same figure.
+⚠ code-side: feed columns/rows + flagged-row attrs (a DataViewIndexListModel subclass overriding GetAttrByRow — there is no setter); card column bitmaps from imagelist; InfoBar construction + text + show/hide; sash position (main_splitter); state variants — DRAFT: clock 0:00:00, start_btn enabled, plate_input disabled with "start the ride to record" hint (record_btn tracks plate_input's enablement in every state) · FINISHED: entry row hidden, result banner InfoBar (finished_infobar) with Reopen/Results buttons — W11: the two buttons are wx.InfoBar AddButton children, named code-side with SetName (`finished_reopen_btn`/`finished_results_btn`; the InfoBar rule — they never appear in ui/ids.py). The banner message is "Ride finished — results are ready." Reopen runs the mi_reopen_ride confirm flow; View results opens the results frame · REOPENED: corrections banner, entry disabled, edited rows highlighted. ux-polish header: the two `RaceClock` dials (`elapsed_clock`/`remaining_clock`) are inserted code-side between each clock column's caption and numeric readout in `elapsed_clock_panel`/`remaining_clock_panel` (fractions over planned duration — elapsed fills toward 1.0, remaining drains toward 0.0, both 0.0 in DRAFT), the `StopLight` (`ride_status_light`) sits above `ride_status_lbl` inside `ride_status_panel` — green RUNNING · amber DRAFT/REOPENED · red FINISHED, `console.stop_light_mode`, and colour is never the sole channel — and `start_btn`/`stop_btn` are `wxBitmapButton`s carrying gauges.py's round green GO / red STOP SVG glyphs with "Start ride"/"Stop ride…" re-applied in code (the XRC handler ignores bitmap-button labels). Review sidebar: a two-tab `review_notebook` wxNotebook — "Needs Review" (index 0: `flagged_list` Plate | Lap | Lap time + `review_btn`) and "Riders" (`console_riders_list` Plate | Name | Team over the live roster, refreshed on the 1 s tick) — and the rider-row activation seam (double-click or Enter) opens `rider_editor_dlg` pre-selected at that rider's plate. Hide-times setting removes Lap time/Total columns + times in last_crossing_lbl; clock stays; clock_elapsed_lbl/clock_remaining_lbl reserve a fixed minimum width and re-layout on update so long elapsed/remaining text never overlaps the Start/Stop controls (R-55). W6 clock freeze: while the ride is stopped, the elapsed/remaining labels and the gauge dials freeze at a captured value (the first refresh after the stop captures it); Continue unfreezes and re-renders the live wall-clock elapsed immediately — the engine keeps counting underneath, the freeze is display-only. W5 console gates (the engine is the single source of truth): start_btn mirrors the mi_start_ride rule (DRAFT, or stopped-RUNNING for continue), undo_btn mirrors mi_undo_crossing (RUNNING with ≥ 1 crossing). Min frame 1100×780, fits 1366×768 — declared as <size> and re-applied with SetMinSize(); Spec §13 states the same figure (W9 raised the canvas's earlier 1100×700 floor). The feed/list splitter's sash default is 850 px (`DEFAULT_SASH`, W9), applied when no saved position exists.
 
 B · Ride setup & lifecycle dialogs
 
@@ -84,10 +90,14 @@ Name
 DatePlanned start
 VenueLap length km
 OrganizerScorer
-Duration h:mMin lap m:s
+Duration (H:MM)Min lap (M:SS)
+
+Hold short-lap cards for review
+Always deal cards (default)
+
 Logo
 
-`name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · logo_picker`
+`name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · hold_short_radio · always_deal_radio · logo_picker — the W4 short-lap card policy pair sits between the timed-fields grid and the Logo row: Duration and Min lap are text fields that parse "H:MM"/"M:SS" (unparseable or non-positive values refuse on OK, W4), and hold_short_radio ("Hold short-lap cards for review") / always_deal_radio ("Always deal cards") read straight into RideConfig.hold_short_laps — always deal is the checked default (W4), so a fresh ride credits short-lap cards and never flags (R-34)`
 Entries
  Solo riders only
  Solo + teams (default)
@@ -113,7 +123,7 @@ OKCancel
 
 `wxID_OK · wxID_CANCEL (wxStdDialogButtonSizer)`
 
-⚠ code-side: entry/plate-model group locks after start (relay) or stays editable (pooled, R-17); tiebreak_list reorder persisted (its ①②③ numbering here is illustration, not row text); decks_spin's value — the XRC declares none and the presenter supplies **8** (Spec §4; settled by the E3.5 ride-setup work — the canvas's 2 was a mock artifact). ux-polish: the minimum-setup rule — OK (and a DRAFT ride's Start, ride.py's own start gate) refuses a config with a blank name/venue/organizer/scorer or a non-positive lap length (`ride.setup_minimum_violations`), joining every reason into one `setup_infobar` refusal (the code-side wxInfoBar, §15b) and leaving the dialog open; the ride's date, planned start and logo are not part of the minimum rule — a logo is fully optional and the date/time pickers always hold a value, while duration/min-lap keep their own parse-and-positivity validation. All fields plain XRC.
+⚠ code-side: entry/plate-model group locks after start (relay) or stays editable (pooled, R-17); tiebreak_list reorder persisted (its ①②③ numbering here is illustration, not row text); decks_spin's value — the XRC declares none and the presenter supplies **8** (Spec §4; settled by the E3.5 ride-setup work — the canvas's 2 was a mock artifact); lap_km_spin has the same no-declared-value shape and the presenter pushes the canvas's **8.0** on load (`ride.DEFAULT_LAP_KM`, W4 — a fresh dialog would otherwise sit at 0.0 and refuse every submit). ux-polish: the minimum-setup rule — OK (and a DRAFT ride's Start, ride.py's own start gate) refuses a config with a blank name/venue/organizer/scorer or a non-positive lap length (`ride.setup_minimum_violations`), joining every reason into one `setup_infobar` refusal (the code-side wxInfoBar, §15b) and leaving the dialog open; the ride's date, planned start and logo are not part of the minimum rule — a logo is fully optional and the date/time pickers always hold a value, while duration/min-lap keep their own parse-and-positivity validation (W4: a blank or unparseable "H:MM"/"M:SS" field surfaces its message on the dialog instead of failing silently). The short-lap policy radios persist as `RideConfig.hold_short_laps` — the store's first additive migration (v2, W4), never a setup refusal. All fields plain XRC.
 
 Set Start Time`set_start_dlg`✕
 
@@ -125,13 +135,13 @@ Lap-1 times recompute from this moment.
 
 OKCancel
 
-Stop Ride?`stop_confirm_dlg`✕
+~~Stop Ride?~~ `stop_confirm_dlg` ✕ — **RETIRED (W5)**
+
+⚠ Retirement: the Stop flow now asks through the native confirm (`ui.std_dialogs.show_confirm`, R-85) — the same frozen copy below and the same Stop ride / Cancel buttons (Cancel default + focused), shown by the presenter's `on_stop_requested` and driven by both the console Stop button and Ride ▸ Stop Ride…, so row and button cannot drift. The window left dialogs.xrc and the frozen-name registry in W5.
 
 The clock stops for everyone. Riders still on course keep their laps; no cards are dealt after stop. You can continue the ride later without losing anything.
 
 Stop rideCancel
-
-`wxID_OK "Stop ride" · wxID_CANCEL (default + focused)`
 
 Finish Ride?`finish_confirm_dlg`✕
 
@@ -189,46 +199,44 @@ CancelQuit
 
 ⚠ added in EPIC 1 Phase 8: §15 and R-51 originally said "otherwise quits"; amended so the app never exits without confirmation (destructive-confirm pattern per §13/R-76 — Cancel default + focused). Stock IDs only; the message line is static and carries no name. On macOS the window ✕ hides the app (Dock click reopens it), so only ⌘Q / app-menu Quit / File ▸ Exit reach a quit dialog there; on Windows ✕ runs the same confirm flow.
 
-No Ride Open`no_ride_dlg`✕
+~~No Ride Open~~ `no_ride_dlg` ✕ — **RETIRED (W15)**
 
-No ride is open. `message_lbl (the "no ride open" state line)`
-
-Open library…Create new ride…
-
-`open_library_btn ("Open library…" — secondary; Escape's target, wired with dialogs.wire_escape_to, the resume dialog's own non-committal mapping) · create_ride_btn ("Create new ride…" — primary; the app bootstrap calls SetAffirmativeId so Enter creates)`
-
-⚠ ux-polish: the no-ride prompt — shown by the app bootstrap after the console is wired whenever a store-backed launch resumed no ride and deferred no other window (resume_dlg's Open-library outcome sets library_deferred so the prompt never double-asks the same Create/Open choice). "Create new ride…" opens the ride-setup flow, "Open library…" the ride library; both chain through wx.CallAfter (the resume flow's modal-chaining rule). It replaced the retired `continue_or_new_dlg` — starting a stopped ride with data now continues directly, and "archive and start fresh" is gone (a fresh ride is File ▸ New Ride…). Two custom buttons, so no wxStdDialogButtonSizer at all — resume_dlg's own shape. The window lives in dialogs.xrc (§15b).
+⚠ Retirement: the launch's No Ride Open surface is now a native info dialog (`app._show_no_ride_info` → `ui.std_dialogs.show_info`, R-85) — title "No Ride Open", the copy "No ride is loaded. Create a new one or load an existing one." (the retired window's own static line read "No ride is open."). The file menus are the create/open surface — New Ride… and Ride Library — since the ux-polish launch rework, so the window's two buttons had nothing left to do. Shown by the post-Show launch flow when a store-backed launch resumes no ride and opens no ride; a launch that already deferred the same choice to resume_dlg's Open library never double-prompts. The window left dialogs.xrc and the frozen-name registry in W15 (`message_lbl` stays — it is §15b's shared name, still carried by `resume_dlg`, `exit_running_dlg` and `delete_ride_dlg`).
 
 C · Riders, corrections & cards
 
 Rider Editor`rider_editor_dlg`✕
 
+Search`rider_search (wxSearchCtrl — W7: narrows riders_list by name or plate; cleared/blank shows the full list)`
+
 | Plate | Name | Team |
 |---|---|---|
-| 123 | Sam Ellis | — |
+| 123 | Sam Ellis | solo |
 | 77 | A. Roy | Trail Blazers |
 | 78 | K. Singh | Trail Blazers |
-| 212 | M. Chen | — |
+| 212 | M. Chen | solo |
 
-`riders_list (wxDataViewCtrl · Team col hidden in solo-only)`
+`riders_list (wxDataViewCtrl · the list pane takes 3/5 of the dialog width and the form pane 2/5 — sizer options 3:2, W7 rework — Team col hidden in solo-only · a solo rider's Team cell is the word "solo" (W7), never the em dash`
 
-Rider
+DeleteClose
 
-Plate
-First name
-Last name
-Team— solo —Trail Blazers
+`delete_btn · wxID_CLOSE — Delete and Close anchor the list pane's bottom (W7); wxID_CLOSE is the one stock id the wxStdDialogButtonSizer positions`
 
-AddSaveDelete
+Rider — PlateFirst nameLast nameTeam— solo —Trail Blazers
 
-`plate_input (next free) · first_name_input · last_name_input · team_choice — "— solo —" first, then every existing team's display name ("New team…" is gone — teams are created only in the Teams Editor) · add_btn · save_btn · delete_btn`
+Add rider…Save
 
-Import CSV…Export CSV…
+`plate_input (next free — locked once the ride has left DRAFT: W7 plate lock, the roster refuses the change anyway but the disabled field says so up front) · first_name_input · last_name_input · team_choice ("— solo —" first, then every existing team's display name; "New team…" is gone — teams are created only in the Teams Editor) · add_btn ("Add rider…" — W7: opens the dedicated add_rider_dlg form; the in-form add is retired) · save_btn ("Save" — W7: enabled only while the form is dirty)`
 
-`import_btn · export_btn · wxID_CLOSE`
-Close
+⚠ code-side (W7 rework): the dialog draws at 1280×560 — the code-side SetMinSize floor applies width AND height (riders.xrc's header records the XRC-can't-minsize rule); list rows — the Name column renders the rider's full name (first + last, R-23), a solo entry's display name mirrors its rider's full name; team_choice content; plate_input prefills the highest numeric plate + 1 (empty roster → 1); delete_btn disabled until a row is selected and, once the entry has data, forever — post-start is DNF/void only (R-15); save_btn gated on the dirty form (W7); refused edits show on roster_infobar (wxInfoBar, code-side SetName, §15b). With a store-backed ride open, committed changes are written back to the store when the modal ends on either open path (menu route and the console Riders-tab activation seam — app._persist_rider_editor_changes), so edits survive a relaunch; a refused write is a status notice. Teams editable until start (relay) / during ride (pooled). Import/Export Riders CSV live on the File menu only — the editor's own import_btn/export_btn retired in W7.
 
-⚠ code-side: list rows — the riders_list Name column renders the rider's full name (first + last, R-23); a solo entry's display name mirrors its rider's full name; team_choice content ("— solo —" first, then every existing team's display name — the retired "New team…" sentinel is gone (ux-polish): teams are created only in the Teams Editor, never prompted here); plate_input prefills the highest numeric plate + 1 (empty roster → 1); delete disabled once entry has data (post-start = DNF/void only, R-15); refused edits show on roster_infobar (wxInfoBar, code-side SetName, §15b); import_btn/export_btn run the same picker → preview/write flows as File ▸ Import/Export Riders CSV. Teams editable until start (relay) / during ride (pooled).
+Add Rider`add_rider_dlg`✕
+
+Rider — PlateFirst nameLast nameTeam— solo —Trail Blazers
+
+AddCancel
+
+`plate_input · first_name_input · last_name_input · team_choice · wxID_OK "Add" · wxID_CANCEL (wxStdDialogButtonSizer) — the W7 add dialog: the Rider Editor's "Add rider…" (`add_btn` → run_add_rider_flow) opens it with the plate prefilled to next free and the form blank; OK commits through AddRiderPresenter (a blank name, duplicate plate or full team refuses on add_rider_infobar and leaves the dialog open — never a silent non-close), and only a committed add closes it. Same field names as rider_editor_dlg — §15b permits names to repeat across windows · the dialog lives in riders.xrc`
 
 Import Riders — Preview`csv_preview_dlg`✕
 
@@ -247,7 +255,7 @@ ImportCancel
 
 `wxID_OK "Import" (disabled while conflicts > 0) · wxID_CANCEL`
 
-⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). Opened from File ▸ Import Riders CSV… or the editor's import_btn, after the OS-native picker.
+⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). Opened from File ▸ Import Riders CSV… after the OS-native picker (the editor's own import_btn retired with W7's rework — the File menu is the one CSV path).
 
 Teams Editor`team_editor_dlg`✕
 
@@ -262,7 +270,7 @@ Teams Editor`team_editor_dlg`✕
 
 SaveRemoveClose
 
-`save_btn · remove_btn · wxID_CLOSE — the left pane's bottom row (ux-polish: Save replaced the old Add-team slot on this side)`
+`save_btn · remove_btn · wxID_CLOSE — the left pane's bottom row (ux-polish: Save replaced the old Add-team slot on this side). W8 sizes the Close sizer item like Save/Remove (option 1 each), so the stock button stretches to their size instead of rendering smaller`
 
 Team
 
@@ -272,9 +280,9 @@ Notes
 
 `name_input · relay_plate_input (row hidden on a rider_pooled ride) · notes_input (wxTE_MULTILINE; a ≥ 3-text-line minimum height is applied code-side)`
 
-Logo `logo_bmp` Pick card…Image…
+Logo `logo_bmp` Pick card…Image…Remove logo
 
-`logo_bmp (wxStaticBitmap — a real card-asset or PNG bitmap preview sitting directly above the Members box, wx.NullBitmap when blank; renamed from the old logo_preview text control, ux-polish) · pick_card_btn · image_btn`
+`logo_bmp (wxStaticBitmap — a real card-asset or PNG bitmap preview sitting directly above the Members box, wx.NullBitmap when blank; W8 bounds every preview: a photo PNG fits within the 128×128 LOGO_PREVIEW_BOX and a card bitmap scales into the 96×128 CARD_LOGO_BOX, logo_bmp carrying SetMaxSize so no decoded bitmap pushes the rows below it off the dialog) · pick_card_btn · image_btn · remove_logo_btn ("Remove logo", W8 — clears the team's card/image via Roster.clear_team_logo)`
 
 Members (read-only)
 
@@ -283,11 +291,21 @@ Members (read-only)
 
 `members_list (wxDataViewCtrl · read-only — membership is managed in the Rider Editor; bounded height code-side so a long member list scrolls inside it while teams_list takes the extra dialog height)`
 
-Add team
+Add team…
 
-`add_btn — the right pane's bottom anchor (ux-polish): with no team selected the form above IS the Add form`
+`add_btn ("Add team…" — W8: opens the dedicated add_team_dlg window; the in-form Add and its staged-logo state are retired with it)`
 
-⚠ code-side (ux-polish rework): the dialog's two panes share the width (~50/50 — option 1 each), wide enough for three list columns + the record form (MIN_SIZE 940×560); rows for both lists; the Plate (relay) row's team_relay-only visibility — a rider_pooled team's plate is derived from its members (S1), never settable here; the Logo cell's kind text (Card/Image, image wins — an empty cell when neither); logo_bmp's bitmap — a card asset bitmap, the picked PNG's decode, or wx.NullBitmap; add_btn creates the team FROM THE FORM — name and notes read straight off it (no native name prompt): a blank name refuses ("enter a team name") and so does a duplicate name (trimmed, case-insensitive — `a team named "<name>" already exists`), the same guard applying to a rename on Save; a staged logo (Pick card cycles the seeded sequence / Image… loads a PNG — both shown in logo_bmp) is consumed by the next successful Add; a successful Add or Remove resets the blank Add form; selecting a row fills the form with that team's record and discards any staged logo. A team's logo card auto-assigns from the ride's seeded shoe seed (rng_seed → team_logo_seed) at creation — no two auto-assigned teams share. Add/Remove are DRAFT-only (refused via teams_infobar, an wxInfoBar built code-side with SetName like roster_infobar, once the ride has started); refused saves show there too. Teams here are *records*: Add team creates the roster's transient size-1 team (spec S2's floor is start-time), anchored by one rider named from the team's own name — rename/move that rider in the Rider Editor, which owns membership. Opened from Riders ▸ Teams Editor (mi_team_editor), a route enabled only for mixed rides (teams_allowed, R-11); the window lives in teams.xrc (§15b). The `single_member_only_chk` checkbox (R-78) filters `teams_list` to the one-rider teams.
+⚠ code-side (ux-polish rework + W8): the dialog's two panes share the width (~50/50 — option 1 each), wide enough for three list columns + the record form (MIN_SIZE 940×560); rows for both lists; the Plate (relay) row's team_relay-only visibility — a rider_pooled team's plate is derived from its members (S1), never settable here; the Logo cell's kind text (Card/Image, image wins — an empty cell when neither); logo_bmp's bitmap — a card asset bitmap, the picked PNG's decode, or wx.NullBitmap (W8's LOGO_PREVIEW_BOX/CARD_LOGO_BOX bounds above); Save is dirty-gated (W8 — enabled only once the form differs from the selected team's stored record, the mirror of the rider editor's gate); a blank or duplicate team name (trimmed, case-insensitive — `a team named "<name>" already exists`) refuses on Save/Add. A team's logo card auto-assigns from the ride's seeded shoe seed (rng_seed → team_logo_seed) at creation — no two auto-assigned teams share (an image suppresses auto-assignment). Add/Remove are DRAFT-only (refused via teams_infobar, an wxInfoBar built code-side with SetName like roster_infobar, once the ride has started); refused saves show there too. W8 teams are *records with zero riders*: Add team creates an empty TEAM entry — nothing invents a rider or a plate (R-81's amendment). The empty entry's plate follows the ride's plate model: a team_relay team carries its explicit relay plate (next free when left blank) with no riders; a rider_pooled team claims the next free plate provisionally, and the first rider to join through the Rider Editor replaces the claim with their own plate. With a store-backed ride open, committed changes are written back when the modal ends (app._persist_team_editor_changes — the mirror of the rider editor's hook). Opened from Riders ▸ Teams Editor (mi_team_editor), a route enabled only for mixed rides (teams_allowed, R-11); the window lives in teams.xrc (§15b). The `single_member_only_chk` checkbox (R-78) filters `teams_list` to the one-rider teams.
+
+Add Team`add_team_dlg`✕
+
+Team — NamePlate (relay)Notes
+
+Logo `logo_bmp` Pick card…Image…Remove logo
+
+AddCancel
+
+`name_input · relay_plate_input (row hidden on a rider_pooled ride) · notes_input · logo_bmp · pick_card_btn · image_btn · remove_logo_btn · wxID_OK "Add" · wxID_CANCEL (wxStdDialogButtonSizer) — the W8 add dialog: the Teams Editor's "Add team…" (`add_btn` → run_add_team_flow) opens it blank; Add commits through AddTeamPresenter — a blank or duplicate team name refuses on add_team_infobar and leaves the dialog open; the commit creates a zero-rider TEAM entry (W8/R-81) taking the staged logo (card or image) when one was picked. Same field names as team_editor_dlg — §15b permits names to repeat across windows · the window lives in teams.xrc`
 
 Check for Rider Issues — `rider_issues_dlg`✕
 
@@ -300,6 +318,9 @@ Open Editor… Convert to Solo Close
 ⚠ code-side (R-78): issues_list columns/rows; convert_solo_btn enabled only for a pooled DRAFT team-of-one — "Convert to Solo" extracts its lone rider to their own solo entry (extract_rider_to_solo); "Open Editor…" opens the teams editor for a team-of-one, the rider editor otherwise, then re-lists; a refused conversion shows on issues_infobar (an wxInfoBar built code-side with SetName). Opened from Riders ▸ Check for Rider Issues… (mi_check_rider_issues), a ride-open route; the window lives in riders.xrc (§15b).
 
 Entry Detail — 77 Trail Blazers`entry_detail_dlg`✕
+
+Plate:77 ▾
+`plate_choice (wxChoice — the roster's entry plates, the shown entry selected; W11 F2b canvas addition: the six correction actions and the menu correction rows act on the shown entry, so the picker points the dialog at another entry without closing it. Loaded in code from the live roster; the no-store empty state leaves it empty and disabled)`
 
 - **Team · 3 riders · 9 laps · 3:02:11** — A. Roy (77) · K. Singh (78) · L. Marchetti (79) `entry_header_lbl · members_lbl`
 Cards held (9)
@@ -420,7 +441,7 @@ Ride Library`ride_library_dlg`✕
 | GORBA EPIC 2026 | 2026-09-20 | RUNNING | 180 |
 | Club poker night | 2026-06-11 | FINISHED | 24 |
 
-`rides_list (wxDataViewCtrl)`
+`rides_list (wxDataViewCtrl · W10: the Ride column is elastic — the three compact columns pin their widths and the Ride name takes every remaining pixel (recomputed on each size event, floored at the 208 px that fills the dialog's 520 px minimum), because the control stretches only its last column and the canvas's old fixed widths truncated long ride names`
 
 OpenNew…Duplicate…Delete…Close
 
@@ -460,14 +481,16 @@ Appearance
  Light
  Dark
 
-`appearance_system_radio (default) · appearance_light_radio · appearance_dark_radio — all three live on both platforms: the 4.3.1 / wxWidgets 3.3.3 baseline supplies wx.App.SetAppearance, so Dark is never disabled and there is no capability hint`
+`appearance_system_radio (default) · appearance_light_radio · appearance_dark_radio — the single theme surface since W13 (the View-menu theme trio left); all three live on both platforms: the 4.3.1 / wxWidgets 3.3.3 baseline supplies wx.App.SetAppearance, so Dark is never disabled and there is no capability hint`
 
  Sound on crossing (recorded / flagged / error cues)
  Hide times on the console (toggle any time, even mid-ride)
 
-Text zoom Back up now
+Back up now
 
-`sound_chk · hide_times_chk · zoom_choice · backup_now_btn`
+`sound_chk · hide_times_chk · backup_now_btn`
+
+`W13: the text-zoom choice (zoom_choice) left this dialog — View ▸ Zoom is the single zoom surface; the dialog's OK still carries zoom_percent through the settings file unchanged`
 
 OKCancel
 

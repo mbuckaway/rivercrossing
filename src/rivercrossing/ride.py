@@ -147,6 +147,14 @@ DEFAULT_DECK_COUNT = 8
 # recorded here too so RideConfig's own default never drifts from it.
 DEFAULT_JOKERS_PER_DECK = 2
 
+# The canvas's lap_km_spin draws "8.0" (the GORBA reference ride's own
+# 8 km loop, spec.md §6) but XRC declares no <value>, so a fresh
+# dialog would sit at 0.0 and refuse every submit ("lap length must be
+# positive"). W4 binds the presenter to push this default on load --
+# the same decks_spin/DEFAULT_DECK_COUNT seam -- recorded here so the
+# view seam and the dialog never drift from one value.
+DEFAULT_LAP_KM = 8.0
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class RideConfig:
@@ -168,7 +176,12 @@ class RideConfig:
     ride is actually created; ``RideEngine``/EPIC 5's Store supply
     them, never this dialog. ``logo_path`` carries the *picker's* own
     chosen file; converting it to the stored BLOB is EPIC 5's own
-    concern, not this dataclass's.
+    concern, not this dataclass's. ``hold_short_laps`` is the one
+    field that *does* persist (store migration v2, W4): the setup
+    dialog's short-lap card policy, default False = "always deal" --
+    a lap under ``min_lap_s`` credits its card to the hand -- with
+    True restoring R-34's hold-for-review behaviour
+    (:meth:`RideEngine.record_crossing`).
 
     ``event_date``/``planned_start`` both round-trip the ``ride``
     table's own two separate columns (spec §2): ``ride_setup_dlg``
@@ -197,6 +210,7 @@ class RideConfig:
     max_cards: int | None = None
     tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER
     logo_path: Path | None = None
+    hold_short_laps: bool = False
 
     def __post_init__(self) -> None:
         """Validate this config's own spec-defined bounds.
@@ -377,8 +391,11 @@ class CrossingResult:
     entry, ``lap`` is the credited lap number, ``lap_time`` is spec
     §6's derived lap time, ``card`` is the shoe card dealt for this
     lap (R-40) and ``flagged`` is True when the lap fell under
-    ``config.min_lap_s`` -- the card is then *held*
-    (:meth:`RideEngine.held_crossings`), not credited (R-34).
+    ``config.min_lap_s`` *and* ``config.hold_short_laps`` -- the card
+    is then *held* (:meth:`RideEngine.held_crossings`), not credited
+    (R-34). Under W4's default (``hold_short_laps`` False) a short lap
+    never flags for review: the card is credited to the hand and
+    ``flagged`` stays False.
     """
 
     accepted: bool
@@ -469,6 +486,19 @@ class RideEngine:
       held, never by ride state: the review surface stays usable while
       RUNNING, and FINISHED's corrections flow routes through REOPENED
       for timing changes (undo), not card disposition.
+    - **Short-lap policy (W4).** ``RideConfig.hold_short_laps`` gates
+      whether that hold path runs at all. The False default is the W4
+      product decision -- always deal: a short lap's card is credited
+      to the hand like any other and nothing lands in ``_held`` or
+      ``held_crossings()``, so the review surface stays empty and the
+      result's ``flagged`` stays False (flagging *means* "held for
+      review"; the downstream feed derives its flagged rows from the
+      hold queue). ``hold_short_laps`` True preserves the pre-W4
+      R-34 behaviour exactly. The setup dialog's
+      ``always_deal_radio``/``hold_short_radio`` pair owns the value
+      (setup.xrc, W4), and the store persists it per ride
+      (``ride.hold_short_laps``, migration v1->v2) so replay
+      reproduces the same disposition.
     - **Undo.** ``undo_last()`` is a full compensating write (R-33):
       the last crossing's lap is removed, its card returns to the shoe
       front via ``shoe.restitute`` (so the next deal reproduces the
@@ -681,6 +711,20 @@ class RideEngine:
             if entry.status.value == "active" and len(self._laps_for(entry.plate)) % 2 == 1
         )
 
+    @property
+    def entry_count(self) -> int:
+        """Return how many entries the roster holds (W5's stop gate).
+
+        The console Stop flow (``ConsolePresenter.on_stop_requested``)
+        reads this before offering its confirm: a riderless ride --
+        reachable after a store replay against a drifted roster, where
+        ``start``'s own readiness gate no longer applies -- gets a
+        warning instead of a Stop dialog. Read-only and live, like
+        :attr:`on_course`: the shared roster can grow after
+        construction, and the count always reflects it.
+        """
+        return len(self._roster.entries)
+
     # E4.4.1 console read accessors. The console's ``EngineDataSource``
     # (rivercrossing.ui.presenters.data_source) builds its feed and
     # counters from these; each is a read-only projection over state
@@ -832,12 +876,14 @@ class RideEngine:
         plate, or a rider_pooled rider's plate, credits the entry --
         uncapped, R-16), appends one lap with a timestamp, marks the
         entry has_data, and deals one card from the shoe (R-40). A lap
-        under ``config.min_lap_s`` is flagged short: the lap still
-        records but its card is held, not credited (R-34). Refusals
-        come back as ``accepted=False`` results, never raises: not
-        RUNNING, stopped (E4.1.3), or an unknown plate
-        (``reason="unknown_plate"``, E4.2.4 -- the error cue is E4.4's
-        UI concern).
+        under ``config.min_lap_s`` is short; whether it flags depends
+        on the W4 policy: with ``config.hold_short_laps`` True the lap
+        still records but its card is held, not credited (R-34), with
+        the False default (always deal) the card is credited to the
+        hand like any other. Refusals come back as ``accepted=False``
+        results, never raises: not RUNNING, stopped (E4.1.3), or an
+        unknown plate (``reason="unknown_plate"``, E4.2.4 -- the error
+        cue is E4.4's UI concern).
 
         Args:
             plate: The recorded plate.
@@ -864,11 +910,15 @@ class RideEngine:
         self._roster.mark_has_data(entry)
         previous = laps[-1].crossed_at if laps else start
         lap_time = (crossed_at - previous).total_seconds()
-        flagged = lap_time < self._config.min_lap_s
-        if flagged:
+        short = lap_time < self._config.min_lap_s
+        if short and self._config.hold_short_laps:
+            # R-34 (W4 opt-in): the card waits for review, uncredited.
             self._held[crossing] = card
+            flagged = True
         else:
+            # W4 default: always deal -- a short lap still credits.
             self._hand.setdefault(entry.plate, []).append(card)
+            flagged = False
         self._append(
             Event(
                 action="record_crossing",
@@ -901,6 +951,17 @@ class RideEngine:
         return tuple(
             HeldCrossing(crossing=crossing, card=card) for crossing, card in self._held.items()
         )
+
+    def held_card_for(self, crossing: Crossing) -> Card | None:
+        """Return *crossing*'s held card, or ``None`` if not held.
+
+        W9's feed seam: the console feed shows every crossing's dealt
+        card, so a held crossing's row carries the real code of the
+        card in the hold queue, never a placeholder. Returns ``None``
+        for a credited, released or unknown crossing -- exactly the
+        :meth:`held_crossings` membership test, read-only.
+        """
+        return self._held.get(crossing)
 
     def confirm_held(self, crossing: Crossing) -> Event:
         """Release *crossing*'s held card into its entry's hand (R-34).

@@ -41,7 +41,7 @@ import wx
 import wx.dataview
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.ui import feed_model, ids, sound
+from rivercrossing.ui import feed_model, ids, sound, std_dialogs
 from rivercrossing.ui.presenters.console import stop_light_mode
 from rivercrossing.ui.views._support import default_card_images, find_control
 from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_bundle
@@ -60,6 +60,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONSOLE_RIDERS_LIST",
+    "DEFAULT_SASH",
     "ELAPSED_CLOCK",
     "ELAPSED_CLOCK_PANEL",
     "FINISHED_INFOBAR",
@@ -87,14 +88,14 @@ __all__ = [
     "RidersListModel",
 ]
 
-_TEXT_ACCESSORS: tuple[Callable[[FeedRow], str], ...] = (
-    lambda row: row.time,
-    lambda row: row.plate,
-    lambda row: row.entry,
-    lambda row: str(row.lap),
-    lambda row: row.lap_time,
-    lambda row: row.total,
-)
+_TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
+    feed_model.COL_TIME: lambda row: row.time,
+    feed_model.COL_PLATE: lambda row: row.plate,
+    feed_model.COL_NAME: lambda row: row.entry,
+    feed_model.COL_LAP: lambda row: str(row.lap),
+    feed_model.COL_LAP_TIME: lambda row: row.lap_time,
+    feed_model.COL_TOTAL: lambda row: row.total,
+}
 
 # ui/ids.py is generated from the .xrc files (R-05); these three
 # names never appear there since XRC cannot author a wxInfoBar at
@@ -102,6 +103,20 @@ _TEXT_ACCESSORS: tuple[Callable[[FeedRow], str], ...] = (
 RESUME_INFOBAR = "resume_infobar"
 REOPENED_INFOBAR = "reopened_infobar"
 FINISHED_INFOBAR = "finished_infobar"
+
+# W11 F3: the FINISHED banner's two code-side buttons (xrc-windows.md
+# A: "result banner InfoBar (finished_infobar) with Reopen/Results
+# buttons"). They are wx.InfoBar AddButton children, so they never
+# appear in ui/ids.py either; the names are applied with SetName() so
+# tests (and assistive tech) can find them, the same InfoBar rule.
+FINISHED_REOPEN_BTN = "finished_reopen_btn"
+FINISHED_RESULTS_BTN = "finished_results_btn"
+
+# The FINISHED result banner's message (xrc-windows.md A's state
+# variant; the copy is W11's own, no text was frozen). Shown by
+# set_state on FINISHED alongside the two buttons above; dismissed on
+# every other state, so REOPENED's corrections banner takes over.
+FINISHED_BANNER = "Ride finished — results are ready."
 
 # The WS-D gauges' frozen names, applied with SetName() because XRC
 # cannot author a wx.Control subclass either -- the InfoBar rule
@@ -146,9 +161,20 @@ REOPENED_BANNER = (
 )
 
 # xrc-windows.md section A: "Min frame 1100x700, fits 1366x768."
-# XRC has no window-level minsize property (main.xrc's own header) --
-# only <size>, which sets the *initial* size, not the floor.
-MIN_SIZE = (1100, 700)
+# W9 raises the floor to 1100x780 (still 1366x768-safe on macOS and
+# Windows with a taskbar): the extra 80 px of feed-pane height keeps
+# the full 30-row feed (R-32's cap) visible at 100% zoom without
+# scrolling. XRC has no window-level minsize property (main.xrc's own
+# header) -- only <size>, which sets the *initial* size, not the
+# floor. The frozen canvas drawing still shows 1100x700; W15's canvas
+# amendment records the raised size in xrc-windows.md.
+MIN_SIZE = (1100, 780)
+
+# W9: the fresh-launch splitter position (no persisted sash): the
+# canvas draws the review sidebar at ~250 px, so the feed pane takes
+# the rest of the 1100-wide frame. E8.1.1's persisted sash always
+# wins over this default when present.
+DEFAULT_SASH = 850
 
 # How often wire_console's timer drives presenter.tick() (E4.4.1).
 # 1 s keeps the clock, counters and R-35's 10 s arm auto-clear honest
@@ -223,7 +249,13 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return True
 
     def _card_bitmap(self, card: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the dealt card's bitmap, or a blank cell if held."""
+        """Return the dealt card's bitmap, or a blank cell otherwise.
+
+        W9: every feed row's ``card`` is a real dealt code (a held
+        crossing's row carries the held card's own code), so the
+        blank ``wx.NullBitmap`` path is the seam for text that maps
+        to no asset (``""``, corrupt strings), not for held cards.
+        """
         key = feed_model.card_asset_key_or_none(card)
         if key is None:
             return wx.NullBitmap
@@ -318,6 +350,10 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.CARDS_COUNT_LBL,
     ids.ON_COURSE_LBL,
     ids.SHOE_LBL,
+    # W12: the two registration chips beside the four live counters
+    # (riders_count_lbl / teams_count_lbl).
+    ids.RIDERS_COUNT_LBL,
+    ids.TEAMS_COUNT_LBL,
     ids.START_BTN,
     ids.ARM_STOP_CHK,
     ids.STOP_BTN,
@@ -352,6 +388,8 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.CARDS_COUNT_LBL: wx.StaticText,
     ids.ON_COURSE_LBL: wx.StaticText,
     ids.SHOE_LBL: wx.StaticText,
+    ids.RIDERS_COUNT_LBL: wx.StaticText,
+    ids.TEAMS_COUNT_LBL: wx.StaticText,
     ids.START_BTN: wx.BitmapButton,
     ids.ARM_STOP_CHK: wx.CheckBox,
     ids.STOP_BTN: wx.BitmapButton,
@@ -383,13 +421,12 @@ class MainFrame:
     call it after construction.
     """
 
-    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source, card_images, resource) + E4.4.2/E8.1.1 seams + every control it resolves
+    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source, card_images) + E4.4.2/E8.1.1 seams + every control it resolves
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
         card_images: CardImageList | None = None,
-        resource: Any | None = None,  # noqa: ANN401 -- wx ships no stubs
         initial_sash: int | None = None,
         initial_geometry: tuple[int, int, int, int] | None = None,
         on_layout_changed: Callable[[int | None, tuple[int, int, int, int] | None], None]
@@ -409,9 +446,6 @@ class MainFrame:
                 data since E5.4.2).
             card_images: The card bitmaps for the feed's Card column;
                 defaults to the packaged deck at 1x.
-            resource: The loaded ``wx.xrc.XmlResource`` the Stop
-                confirm dialog is loaded from (E4.4.2); ``None`` only
-                in constructions that never open that dialog.
             initial_sash: The persisted splitter sash position to
                 restore at construction (E8.1.1); ``None`` keeps the
                 XRC default.
@@ -426,7 +460,6 @@ class MainFrame:
         self.frame = frame
         self.data_source = data_source
         self.card_images = card_images if card_images is not None else default_card_images()
-        self._stop_confirm_resource = resource
         self._on_layout_changed = on_layout_changed
 
         # Every name resolved below is also in module-level
@@ -444,6 +477,10 @@ class MainFrame:
         self.cards_count_lbl = self._find(ids.CARDS_COUNT_LBL, wx.StaticText)
         self.on_course_lbl = self._find(ids.ON_COURSE_LBL, wx.StaticText)
         self.shoe_lbl = self._find(ids.SHOE_LBL, wx.StaticText)
+        # W12: the two registration chips (riders_count_lbl /
+        # teams_count_lbl), resolved like the four live counters.
+        self.riders_count_lbl = self._find(ids.RIDERS_COUNT_LBL, wx.StaticText)
+        self.teams_count_lbl = self._find(ids.TEAMS_COUNT_LBL, wx.StaticText)
 
         # E4.4.1 lifecycle controls (start/arm/stop/undo + clock).
         self.start_btn = self._find(ids.START_BTN, wx.BitmapButton)
@@ -480,7 +517,11 @@ class MainFrame:
         self.stop_btn.SetLabel("Stop ride…")
         # R-35: Stop is gated on arm_stop_chk -- disabled at rest even
         # if the XRC ever leaves it enabled (test_menu_state pins the
-        # commands-side rule; this pins the actual control).
+        # commands-side rule; this pins the actual control). W5 adds
+        # the RUNNING gate: arm_stop_chk and stop_btn live only while
+        # the ride is RUNNING (set_state composes both from the armed
+        # mirror set_stop_enabled keeps).
+        self._stop_armed = False
         self.stop_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
 
         # WS-H review notebook: the two DataView shells, their
@@ -495,10 +536,15 @@ class MainFrame:
         self._flagged_model: FlaggedListModel | None = None
         self._riders_model: RidersListModel | None = None
         self._on_open_rider: Callable[[str], None] | None = None
+        # W11 F2a: the flagged tab's activation seam (its own slot --
+        # activating a flagged row opens entry detail, not the rider
+        # editor, so the two lists keep separate callbacks).
+        self._on_open_flagged: Callable[[str], None] | None = None
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
         self.console_riders_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_rider_activated
         )
+        self.flagged_list.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_flagged_activated)
 
         # LoadFrame does not honour main.xrc's <size> -- measured: the
         # frame comes back sized to the sizer's own computed minimum
@@ -524,6 +570,11 @@ class MainFrame:
         self.resume_infobar = self._build_infobar(RESUME_INFOBAR)
         self.reopened_infobar = self._build_infobar(REOPENED_INFOBAR)
         self.finished_infobar = self._build_infobar(FINISHED_INFOBAR)
+        # W11 F3: the FINISHED banner's buttons (built once; the bar's
+        # own Show/Dismiss cycle shows or hides them with it).
+        self._add_finished_banner_buttons()
+        self._on_finished_reopen: Callable[[], None] | None = None
+        self._on_finished_view_results: Callable[[], None] | None = None
 
         self._hideable_columns = self._build_columns()
         self._crossings_model: CrossingsFeedModel | None = None
@@ -537,6 +588,10 @@ class MainFrame:
         # of any engine change, not only on a state transition.
         self._status: RideStatus = RideStatus.DRAFT
         self._on_ride_changed: Callable[[RideStatus], None] | None = None
+        # W5: the presenter the render back-calls re-apply the console
+        # gates through (set once wire_console/set_presenter runs;
+        # constructions that never wire a presenter render no gates).
+        self._presenter: ConsolePresenter | None = None
 
         # Reflow now that the size and every sizer item are final, so
         # the splitter has its real client area before a sash position
@@ -604,6 +659,46 @@ class MainFrame:
         self._next_infobar_slot += 1
         return bar
 
+    def _add_finished_banner_buttons(self) -> None:
+        """Add the FINISHED banner's Reopen/Results buttons (W11 F3).
+
+        Measured on wxPython 4.3.1: ``wx.InfoBar.AddButton(id, label)``
+        creates a real ``wx.Button`` child; binding the click on that
+        child (not the bar) is what receives both the synthetic
+        harness click and a real one, and the click never auto-dismisses
+        the bar (the handler's state transition owns dismissal). The
+        buttons carry the frozen-style names the tests find them by.
+        """
+        reopen_id = wx.NewIdRef()
+        self.finished_infobar.AddButton(reopen_id, "Reopen…")
+        reopen_btn = self._finished_button(reopen_id)
+        reopen_btn.SetName(FINISHED_REOPEN_BTN)
+        reopen_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_finished_reopen_clicked())
+
+        results_id = wx.NewIdRef()
+        self.finished_infobar.AddButton(results_id, "View results…")
+        results_btn = self._finished_button(results_id)
+        results_btn.SetName(FINISHED_RESULTS_BTN)
+        results_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_finished_view_results_clicked())
+
+    def _finished_button(self, button_id: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
+        """Return the InfoBar child button that carries *button_id*.
+
+        Raises:
+            LookupError: If no child of ``finished_infobar`` carries
+                *button_id* -- a wx build where AddButton creates no
+                child would break every finished-banner action loudly
+                instead of silently doing nothing.
+        """
+        for child in self.finished_infobar.GetChildren():
+            if child.GetId() == button_id:
+                return child
+        # logic-coverage-exempt: T-5 -- AddButton creates the child
+        # synchronously (measured probe on this wx baseline); a missing
+        # child means the wx build changed, and failing loudly is the
+        # point of the guard, so no negative-path test can drive it.
+        raise LookupError(f"finished_infobar has no button with id {button_id}")
+
     # --------------------------------------------------------- gauges
 
     def _build_clock_dial(self, panel: wx.Panel, name: str) -> RaceClock:
@@ -627,6 +722,12 @@ class MainFrame:
             The hide-times-affected columns (Lap time, Total), in
             column order, for :meth:`set_hide_times` to toggle.
 
+        Each column gets the explicit width from ``feed_model.
+        COLUMN_WIDTHS`` (W9): DataView columns never autosize to
+        their content, so unpinned widths truncate or stretch with
+        the platform default; the widths live in the wx-free module
+        so the values stay headlessly pinned.
+
         The Card column uses an explicit
         ``DataViewBitmapRenderer("wxBitmap")`` rather than
         ``AppendBitmapColumn``'s default: this wx build (4.3.1 /
@@ -638,12 +739,13 @@ class MainFrame:
         """
         hideable = []
         for col, label in enumerate(feed_model.COLUMN_LABELS):
+            width = feed_model.COLUMN_WIDTHS[col]
             if col == feed_model.COL_CARD:
                 renderer = wx.dataview.DataViewBitmapRenderer("wxBitmap")
-                column = wx.dataview.DataViewColumn(label, renderer, col)
+                column = wx.dataview.DataViewColumn(label, renderer, col, width=width)
                 self.crossings_list.AppendColumn(column)
             else:
-                column = self.crossings_list.AppendTextColumn(label, col)
+                column = self.crossings_list.AppendTextColumn(label, col, width=width)
             if col in feed_model.TIME_COLUMNS:
                 hideable.append(column)
         return tuple(hideable)
@@ -671,6 +773,18 @@ class MainFrame:
         """
         self._on_open_rider = callback
 
+    def set_on_open_flagged(self, callback: Callable[[str], None]) -> None:
+        """Register the activation seam of the flagged tab (W11 F2a).
+
+        The app wires this to its open-entry-detail flow; the console
+        itself only fires ``callback(plate)`` when a flagged row is
+        activated (double-click or Enter with the list focused). The
+        flagged tab and the riders tab keep separate seams because the
+        app opens a different dialog for each (entry detail vs the
+        rider editor).
+        """
+        self._on_open_flagged = callback
+
     def focus_review_panel(self) -> None:
         """Focus the review notebook's "Needs Review" tab (WS-H).
 
@@ -692,6 +806,34 @@ class MainFrame:
         """
         self.focus_review_panel()
 
+    def set_finished_actions(
+        self,
+        *,
+        on_reopen: Callable[[], None] | None = None,
+        on_view_results: Callable[[], None] | None = None,
+    ) -> None:
+        """Register the FINISHED banner's two button flows (W11 F3).
+
+        The app wires these to its own flows: ``on_reopen`` is the
+        same ``_handle_reopen_ride_route`` ``mi_reopen_ride`` runs
+        (confirm included), ``on_view_results`` the same results
+        frame the ``mi_standings`` row opens. The console itself only
+        fires them when its banner buttons are clicked; a console the
+        app never wired (test constructions) leaves the buttons inert.
+        """
+        self._on_finished_reopen = on_reopen
+        self._on_finished_view_results = on_view_results
+
+    def _on_finished_reopen_clicked(self) -> None:
+        """Run the app's reopen flow from the FINISHED banner."""
+        if self._on_finished_reopen is not None:
+            self._on_finished_reopen()
+
+    def _on_finished_view_results_clicked(self) -> None:
+        """Open the results frame from the FINISHED banner."""
+        if self._on_finished_view_results is not None:
+            self._on_finished_view_results()
+
     def _on_rider_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Fire the open-rider seam with the activated row's plate."""
         if self._riders_model is None:
@@ -702,6 +844,22 @@ class MainFrame:
         plate = self._riders_model.GetValueByRow(row, RIDERS_COL_PLATE)
         if self._on_open_rider is not None:
             self._on_open_rider(plate)
+
+    def _on_flagged_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Fire the open-flagged seam with the activated row's plate.
+
+        W11 F2a: the mirror of :meth:`_on_rider_activated` for the
+        flagged list -- the flagged row's plate is the entry the
+        app's open-entry-detail flow targets.
+        """
+        if self._flagged_model is None:
+            return
+        row = self._flagged_model.GetRow(event.GetItem())
+        if row == wx.NOT_FOUND:
+            return
+        plate = self._flagged_model.GetValueByRow(row, FLAG_COL_PLATE)
+        if self._on_open_flagged is not None:
+            self._on_open_flagged(plate)
 
     def set_hide_times(self, *, hide: bool) -> None:
         """Toggle the Lap time/Total columns per R-37.
@@ -715,9 +873,16 @@ class MainFrame:
     # -------------------------------------------------------- splitter
 
     def _restore_sash_position(self, initial_sash: int | None) -> None:
-        """Apply the persisted sash position, if saved (E8.1.1)."""
-        if initial_sash is not None:
-            self.main_splitter.SetSashPosition(initial_sash)
+        """Apply the persisted sash position, or the W9 default.
+
+        ``initial_sash`` is E8.1.1's persisted position and always
+        wins when present; ``None`` (no saved layout yet) falls back
+        to :data:`DEFAULT_SASH`, so a fresh launch opens with the
+        feed pane at the pinned width instead of wherever the XRC
+        shell's bare splitter happens to land.
+        """
+        sash = initial_sash if initial_sash is not None else DEFAULT_SASH
+        self.main_splitter.SetSashPosition(sash)
 
     def persist_layout(self) -> None:
         """Report the current sash position and frame geometry (E8.1.1).
@@ -770,11 +935,16 @@ class MainFrame:
 
         Also fires the E7.2.1 menu-binder seam: the feed re-renders on
         every record/undo/tick, so §15 count conditions refresh within
-        a tick of any engine change (see the constructor comment).
+        a tick of any engine change (see the constructor comment), and
+        re-applies the W5 console-button gates through the bound
+        presenter (record/undo/tick are exactly the crossing-count
+        changes the Start/Undo verdicts depend on).
         """
         self._crossings_model = CrossingsFeedModel(rows, self.card_images)
         self.crossings_list.AssociateModel(self._crossings_model)
         self._notify_ride_changed()
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
 
     def show_flagged(self, rows: list[FeedRow]) -> None:
         """Render the review notebook's flagged rows (ConsoleView).
@@ -797,33 +967,59 @@ class MainFrame:
         self.console_riders_list.AssociateModel(self._riders_model)
 
     def show_counters(self, c: Counters) -> None:
-        """Render the four counter chips (ConsoleView)."""
+        """Render the six counter chips (ConsoleView)."""
         self.crossings_count_lbl.SetLabel(_format_count(c.crossings))
         self.cards_count_lbl.SetLabel(_format_count(c.cards_dealt))
         self.on_course_lbl.SetLabel(_format_count(c.on_course))
         self.shoe_lbl.SetLabel(f"{c.shoe_remaining}/{c.shoe_total}")
+        self.riders_count_lbl.SetLabel(_format_count(c.riders))
+        self.teams_count_lbl.SetLabel(_format_count(c.teams))
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Show or hide the Teams chip with its caption (R-11, W12).
+
+        A solo-only ride hides the whole team UI, the sidebar's Teams
+        chip included. The caption carries no frozen name (every chip
+        caption is unnamed), so the view finds it structurally: it is
+        the item immediately before the value inside the chip's own
+        vertical sizer. That is ``rider_editor._set_team_choice_row_
+        visible``'s precedent. The frame re-layouts so the grid row
+        collapses and the notebook keeps its share of the sidebar.
+        """
+        sizer = self.teams_count_lbl.GetContainingSizer()
+        items = list(sizer.GetChildren())
+        index = next(i for i, item in enumerate(items) if item.GetWindow() is self.teams_count_lbl)
+        caption = items[index - 1].GetWindow()
+        self.teams_count_lbl.Show(visible)
+        caption.Show(visible)
+        self.frame.Layout()
 
     def flash_crossing(self, r: FeedRow) -> None:
         """Highlight the just-recorded crossing (ConsoleView)."""
-        self.last_crossing_lbl.SetLabel(
-            f"✓ {r.plate} · {r.entry} · Lap {r.lap} · {r.lap_time} · dealt {r.card}"
-        )
+        self.last_crossing_lbl.SetLabel(feed_model.flash_crossing_label(r))
 
     def set_state(self, status: RideStatus) -> None:
         """Reflect the ride's lifecycle state (ConsoleView).
 
         The status label and record-crossing row enablement (A4:
         ``record_btn`` tracks ``plate_input``, both live only in
-        RUNNING), and the REOPENED corrections banner: REOPENED is a
+        RUNNING), and the two state banners: REOPENED is a
         corrections-only state (spec §3, R-36), so the console shows
         ``reopened_infobar`` to say entry is off and corrections are
-        on (E5.2.2), and dismisses it for every other status.
+        on (E5.2.2); FINISHED shows the result banner
+        (``finished_infobar`` with its Reopen/Results buttons, W11
+        F3). Each banner is dismissed for every other status, so a
+        FINISHED -> REOPENED transition swaps the result banner for
+        the corrections banner.
 
         This is the E7.2.1 menu-binder's "ride-state-change seam":
         every presenter state transition (start/stop/finish/reopen)
         lands here, and the binder re-applies the §15 enablement.
         WS-D adds the status lamp: the same state transition drives
-        the ``StopLight`` through ``console.stop_light_mode``.
+        the ``StopLight`` through ``console.stop_light_mode``. W5 adds
+        the RUNNING gate for the arm checkbox and Stop button
+        (composed with the armed mirror) and the console-button-gate
+        refresh through the bound presenter.
         """
         self.ride_status_lbl.SetLabel(status.value.upper())
         self.ride_status_light.set_mode(stop_light_mode(status))
@@ -834,8 +1030,34 @@ class MainFrame:
             self.reopened_infobar.ShowMessage(REOPENED_BANNER, wx.ICON_INFORMATION)
         else:
             self.reopened_infobar.Dismiss()
+        # W11 F3: FINISHED shows the result banner (Reopen/Results
+        # buttons, xrc-windows.md A); every other state dismisses it,
+        # so leaving FINISHED (REOPENED after a reopen) hands the
+        # console to the corrections banner above.
+        if status is RideStatus.FINISHED:
+            self.finished_infobar.ShowMessage(FINISHED_BANNER, wx.ICON_INFORMATION)
+        else:
+            self.finished_infobar.Dismiss()
         self._status = status
+        self._apply_stop_arm_gate()
         self._notify_ride_changed()
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
+
+    def _apply_stop_arm_gate(self) -> None:
+        """Compose the R-35 arm/Stop controls with the RUNNING gate.
+
+        W5: ``arm_stop_chk`` and ``stop_btn`` are disabled whenever
+        the ride is not RUNNING -- arming only ever guards a live
+        ride. Leaving RUNNING also clears the armed mirror and unticks
+        the checkbox, so a later return to RUNNING starts unarmed.
+        """
+        running = self._status is RideStatus.RUNNING
+        self.arm_stop_chk.Enable(running)
+        if not running:
+            self._stop_armed = False
+            self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.stop_btn.Enable(running and self._stop_armed)
 
     def show_ride_name(self, name: str) -> None:
         """Render the open ride's name (ConsoleView, E9.1.4).
@@ -916,15 +1138,53 @@ class MainFrame:
     def set_stop_enabled(self, *, enabled: bool) -> None:
         """Enable or disable the Stop button (ConsoleView, R-35).
 
-        Disarming also unticks ``arm_stop_chk`` so the checkbox
-        visibly reflects the presenter's auto-clear (after use or
-        timeout); ``SetValue`` fires no ``EVT_CHECKBOX`` (measured
-        harness convention), so this cannot loop back into the
-        presenter.
+        The presenter's armed verdict is stored in the armed mirror
+        and composed with the RUNNING gate (W5): Stop is only ever
+        enabled while the ride is RUNNING *and* armed. Disarming also
+        unticks ``arm_stop_chk`` so the checkbox visibly reflects the
+        presenter's auto-clear (after use or timeout); ``SetValue``
+        fires no ``EVT_CHECKBOX`` (measured harness convention), so
+        this cannot loop back into the presenter.
         """
-        self.stop_btn.Enable(enabled)
+        self._stop_armed = enabled
         if not enabled:
             self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.stop_btn.Enable(enabled and self._status is RideStatus.RUNNING)
+
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable the Start ride button (ConsoleView, W5)."""
+        self.start_btn.Enable(enabled)
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable the Undo last button (ConsoleView, W5)."""
+        self.undo_btn.Enable(enabled)
+
+    def show_warning(self, title: str, message: str) -> None:
+        """Show *message* as a modal warning over this console (W5).
+
+        The presenter's blocked-start / empty-roster-stop alert; the
+        view owns the parent and opens the native dialog, so the
+        presenter stays headless and wx-free.
+        """
+        std_dialogs.show_warning(self.frame, title, message)
+
+    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
+        """Ask a destructive confirm; return whether OK was chosen (W5).
+
+        The native stop confirm behind ``ConsolePresenter.
+        on_stop_requested``: the view owns the parent window and the
+        modal call, returning only the boolean verdict to the
+        presenter.
+        """
+        result = std_dialogs.show_confirm(self.frame, title, message, ok_label, cancel_label)
+        return result == int(wx.ID_OK)
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Render the ride clock's numeric labels (ConsoleView, R-30).
@@ -962,10 +1222,13 @@ class MainFrame:
         """Bind the lifecycle controls and tick timer to *presenter*.
 
         Mirrors :meth:`wire_entry`'s callback idiom: Start Ride,
-        the Arm checkbox, Stop Ride (through the confirm dialog,
-        :meth:`_on_stop_clicked`) and Undo each forward to the
+        the Arm checkbox, Stop Ride and Undo each forward to the
         presenter, and a 1 s ``wx.Timer`` drives ``presenter.tick()``
         (feed/counters/clock refresh + R-35's 10 s arm auto-clear).
+        W5: Stop Ride forwards straight to the presenter's native
+        stop-confirm flow (``on_stop_requested``) -- the view opens
+        no dialog itself; the retired ``stop_confirm_dlg`` load lived
+        here before.
 
         The presenter is stored as :attr:`_presenter` and every
         handler routes through it, so :meth:`set_presenter` can swap
@@ -978,7 +1241,7 @@ class MainFrame:
             wx.EVT_CHECKBOX,
             lambda _event: self._presenter.on_arm_stop(armed=self.arm_stop_chk.GetValue()),
         )
-        self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_stop_clicked())
+        self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_stop_requested())
         self.undo_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_undo())
         self._tick_timer = wx.Timer(self.frame)
         self.frame.Bind(wx.EVT_TIMER, lambda _event: self._presenter.tick(), self._tick_timer)
@@ -1003,39 +1266,6 @@ class MainFrame:
         """
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
-
-    def _on_stop_clicked(self) -> None:
-        """Handle Stop Ride: R-35's confirm, then ``on_stop_confirmed``.
-
-        Loads ``stop_confirm_dlg`` from the constructor's resource and
-        shows it through ``dialogs.run_dialog`` -- the one entry point
-        every dialog in this codebase shows through -- so the default
-        + focused Cancel is honoured (test_dialog_behavior pins it on
-        the raw dialog) and only ``wxID_OK`` ("Stop ride") confirms.
-        A construction with no resource (a screen that never opens the
-        dialog) posts a notice rather than silently stopping.
-
-        # logic-coverage-exempt: T-3 -- the two ``is None`` guards are
-        # defensive for constructions that never open the dialog (the
-        # shared read-only fixtures); every live construction supplies
-        # the resource and the OK/Cancel arms are driven functionally.
-        """
-        from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
-
-        if self._stop_confirm_resource is None:
-            self.show_notice("Stop confirm unavailable")
-            return
-        dialog = self._stop_confirm_resource.LoadDialog(None, ids.STOP_CONFIRM_DLG)
-        if dialog is None:
-            self.show_notice("Stop confirm unavailable")
-            return
-        try:
-            result = dialogs.run_dialog(dialog, opener=self.stop_btn)
-        finally:
-            if not dialog.IsBeingDeleted():
-                dialog.Destroy()
-        if result == wx.ID_OK:
-            self._presenter.on_stop_confirmed()
 
 
 def _format_count(value: int) -> str:

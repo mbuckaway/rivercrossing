@@ -77,6 +77,7 @@ _VALID_KWARGS: dict[str, object] = {
     "planned_start": _START,
     "planned_duration_s": 21600,
     "min_lap_s": 60,  # gaps below 60 s trigger the short-lap hold (R-34)
+    "hold_short_laps": True,  # the walk drives confirm_held/void_held
     "entry_mode": EntryMode.MIXED,
     "plate_model": PlateModel.RIDER_POOLED,
     "deck_count": _DECK_COUNT,

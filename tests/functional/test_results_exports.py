@@ -77,6 +77,7 @@ def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s in
     solo: object,
     opts: object,
     watermark: int | None = None,
+    team_logos: dict[str, str] | None = None,
 ) -> None:
     """Run the export synchronously; record it as completion does.
 
@@ -85,7 +86,9 @@ def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s in
     results window's banner clear (E7.3.2) -- so the walk can assert
     the file AND the stale flag in one call.
     """
-    app_module._write_export(config, teams, solo, opts, target, path)  # type: ignore[arg-type]
+    app_module._write_export(  # type: ignore[arg-type]
+        config, teams, solo, opts, target, path, team_logos=team_logos
+    )
     context.last_export_path = path  # type: ignore[attr-defined]
     context.export_watermark = watermark  # type: ignore[attr-defined]
     if watermark is not None:
@@ -133,6 +136,63 @@ def test_results_preview_browser_opens_the_last_export(
     harness.fire_menu_event(firing_frame, ids.MI_PREVIEW_BROWSER)
 
     assert opened == [out]
+
+
+# ------------------------------------- W11 F1: the results-frame
+# export buttons
+
+# Each results-window button maps to the export target the matching
+# menu row runs (results_win._EXPORT_BUTTONS). The old mechanism -- a
+# synthetic EVT_MENU ProcessEvent forwarded on the results frame's own
+# handler chain -- was dead: the results frame opens parentless
+# (app.py's LoadFrame(None, ...)), so command events never reached the
+# main frame's mi_export_* handlers. These pins click the REAL buttons
+# and assert the same files the menu-row pins above write.
+BUTTON_EXPORT_ROWS = (
+    ("export_html_btn", "results.html", "race-data"),
+    ("export_pdf_btn", "results.pdf", None),
+    ("poster_btn", "podium.pdf", None),
+    ("export_csv_btn", "standings.csv", "place,plate,entry,type,laps,hand"),
+)
+
+
+@pytest.mark.parametrize(
+    ("button_name", "name", "content"),
+    BUTTON_EXPORT_ROWS,
+    ids=[row[0] for row in BUTTON_EXPORT_ROWS],
+)
+def test_results_export_buttons_write_real_files(  # noqa: PLR0913, PLR0917 -- parametrized row + shared fixtures
+    firing_frame: object,
+    tmp_path: object,
+    monkeypatch: pytest.MonkeyPatch,
+    button_name: str,
+    name: str,
+    content: str | None,
+) -> None:
+    """Each results-frame export button writes its file (W11 F1).
+
+    The button fires the app-supplied ``on_export`` closure -- the same
+    ``_handle_export_command`` route the menu row runs -- so the two
+    surfaces cannot drift.
+    """
+    out = pathlib.Path(str(tmp_path)) / name
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _suggested: out)
+    monkeypatch.setattr(app_module, "_run_export_offloop", _sync_offloop)
+
+    harness.fire_menu_event(firing_frame, ids.MI_STANDINGS)
+    results_frame = wx.FindWindowByName(ids.RESULTS_FRAME)
+    if results_frame is None:
+        raise AssertionError("mi_standings opened no results_frame for the button pin")
+    try:
+        harness.click(results_frame, button_name)
+    finally:
+        harness.close_window(results_frame)
+
+    assert out.exists(), f"{button_name} wrote no file at {out}"
+    assert out.stat().st_size > 0
+    if content is not None:
+        text = out.read_text(encoding="utf-8")
+        assert content in text, f"{button_name} file lacks {content!r}"
 
 
 # ------------------------------------------- E7.3.2 stale-export flag
@@ -196,7 +256,7 @@ def _build_live_context(
         frame.Show()
         frame.Layout()
         harness.pump()
-        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        console = MainFrame(frame, data_source=source)
         presenter = ConsolePresenter(console, engine=engine, source=source)
         console.wire_entry(presenter.on_plate_entered)
         console.wire_console(presenter)

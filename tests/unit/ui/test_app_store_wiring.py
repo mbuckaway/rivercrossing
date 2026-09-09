@@ -17,10 +17,15 @@ complete in memory.
 
 import sqlite3
 from datetime import date, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 from rivercrossing.cards import Shoe
-from rivercrossing.ride import Event, RideConfig, RideEngine
+from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
 
 
@@ -126,4 +131,105 @@ def test_wire_store_append_given_a_failing_store_posts_a_notice_and_keeps_the_cr
     engine.record_crossing("12")
 
     assert len(engine.crossings) == 1
+    assert notices == ["Could not save event: database is locked"]
+
+
+# ------------------------- W3: the session lifecycle (start/finish)
+
+
+def test_wire_store_append_start_event_marks_the_ride_active_on_the_session(
+    tmp_path: Path,
+) -> None:
+    """A live ``start`` event sets the open session's running ride.
+
+    W3 moves the R-52 resume marker from ride creation to the audit
+    log: only a ride that actually STARTED names itself on the open
+    session, so a never-started ride never offers "continue" at the
+    next launch.
+    """
+    from conftest import gorba_config  # noqa: PLC0415 -- the shared live-config fixture
+
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(gorba_config())
+        engine = _engine()
+        notices: list[str] = []
+        app_module._wire_store_append(engine, store, ride_id=ride_id, notify=notices.append)
+
+        engine.start()
+
+        row = store._conn.execute(
+            "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["active_ride_id"] == ride_id
+        assert [row.action for row in store.audit_rows(ride_id)] == ["start"]
+        assert notices == []
+    finally:
+        store.close()
+
+
+def test_wire_store_append_finish_event_clears_the_active_ride_marker(
+    tmp_path: Path,
+) -> None:
+    """A live ``finish`` event NULLs the open session's running ride.
+
+    With the marker cleared, a quit after finishing reads CLEAN_QUIT
+    (no resume) at the next launch -- the finished ride is not
+    offered as still running.
+    """
+    from conftest import gorba_config  # noqa: PLC0415 -- the shared live-config fixture
+
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(gorba_config())
+        engine = _engine()
+        notices: list[str] = []
+        app_module._wire_store_append(engine, store, ride_id=ride_id, notify=notices.append)
+        engine.start()
+        engine.finish()
+
+        row = store._conn.execute(
+            "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["active_ride_id"] is None
+        assert {row.action for row in store.audit_rows(ride_id)} == {"start", "finish"}
+        assert notices == []
+    finally:
+        store.close()
+
+
+def test_wire_store_append_refused_start_marker_posts_a_notice_and_keeps_the_mutation() -> None:
+    """A refused lifecycle marker degrades to the notice, never raises.
+
+    The marker write runs inside the sink exactly like the append
+    itself: a locked database must surface through ``notify``, never
+    abort the engine's start mid-way (the same guard the append has).
+    """
+    engine = _engine()
+
+    class _AppendOkMarkerFailsStore:
+        """Append succeeds; the start marker is refused like a lock."""
+
+        def __init__(self) -> None:
+            """Start with an empty append log."""
+            self.appends: list[tuple[int, Event]] = []
+
+        def append(self, ride_id: int, event: Event) -> None:
+            """Record one append call."""
+            self.appends.append((ride_id, event))
+
+        def set_active_ride(self, _ride_id: int) -> None:
+            """Refuse the marker like a locked database."""
+            raise sqlite3.OperationalError("database is locked")
+
+    store = _AppendOkMarkerFailsStore()
+    notices: list[str] = []
+
+    app_module._wire_store_append(engine, store, ride_id=7, notify=notices.append)
+    engine.start()
+
+    assert engine.state is RideStatus.RUNNING
+    assert [event.action for _, event in store.appends] == ["start"]
     assert notices == ["Could not save event: database is locked"]
