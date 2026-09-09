@@ -7,10 +7,12 @@ below are binding, not derived -- grown by the members the live
 presenter actually calls: ``set_stop_enabled`` (R-35's arm gate),
 ``set_hide_times`` (R-37), ``show_clock`` (the tick's elapsed
 display), ``set_entry_locked`` (R-35's "only confirming locks the
-entry field"), and -- WS-D/WS-H -- ``set_clock_fractions`` (the
+entry field"), -- WS-D/WS-H -- ``set_clock_fractions`` (the
 gauge-clock dials), ``show_flagged`` and ``show_riders`` (the review
-notebook's two tabs), the same "add the member once the presenter
-calls it" precedent ``main_frame.py``'s own docstring records.
+notebook's two tabs), and -- W12 -- ``set_team_ui_visible`` (the
+R-11 Teams-chip visibility on the count chips), the same "add the
+member once the presenter calls it" precedent ``main_frame.py``'s
+own docstring records.
 
 Pure Python -- no ``wx`` import may ever land here (R-71). The
 ``Cue`` enum it re-exports lives in ``rivercrossing.ui.sound``
@@ -71,6 +73,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing import hands
 from rivercrossing.ride import IllegalStateError, RideStatus, StartBlockedError
+from rivercrossing.roster import EntryMode
 from rivercrossing.ui.presenters.data_source import format_duration
 from rivercrossing.ui.sound import Cue  # Re-exported; see module docstring
 
@@ -149,7 +152,16 @@ class ConsoleView(Protocol):
         ...
 
     def show_counters(self, c: Counters) -> None:
-        """Render the four counter chips."""
+        """Render the six counter chips."""
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Show or hide the Teams chip (R-11, W12).
+
+        A solo-only ride hides the whole team UI, the console's Teams
+        chip included; the presenter pushes the verdict from the
+        engine's own ``config.entry_mode``, the same source
+        commands.py's ``teams_allowed`` gate reads.
+        """
         ...
 
     def flash_crossing(self, r: FeedRow) -> None:
@@ -257,6 +269,12 @@ class ConsolePresenter:
     view renders. ``now`` is the presenter's own monotonic clock seam
     for R-35's 10 s arm auto-clear -- injected in tests, defaulting to
     ``time.monotonic``.
+
+    W12: the presenter renders the Teams chip's R-11 visibility at
+    construction (:meth:`ConsoleView.set_team_ui_visible` from
+    ``engine.config.entry_mode``) -- one push per presenter, because a
+    ride's entry mode never changes and the app builds one presenter
+    per ride/console-switch.
     """
 
     def __init__(  # noqa: PLR0913 -- S4 API (view, engine, source) + the testable now seam
@@ -267,7 +285,11 @@ class ConsolePresenter:
         *,
         now: Callable[[], float] | None = None,
     ) -> None:
-        """Store the view, engine and data source this presenter drives.
+        """Store the collaborators and render the chip visibility.
+
+        Renders the initial console state the constructor owns (W12:
+        the Teams chip's R-11 visibility from the engine's config
+        mode), mirroring ``AddRiderPresenter``'s render-on-birth.
 
         Args:
             view: The console view to render into.
@@ -284,6 +306,8 @@ class ConsolePresenter:
         # W6: the elapsed value shown while the engine is stopped;
         # None while live, so the first refresh after a stop captures.
         self._frozen_elapsed: float | None = None
+        # W12/R-11: the constructor-owned render (class docstring).
+        self.view.set_team_ui_visible(visible=self.engine.config.entry_mode is EntryMode.MIXED)
 
     def on_plate_entered(self, text: str) -> None:
         """Handle Enter (or Record) with the plate entry's text.
@@ -517,7 +541,7 @@ class ConsolePresenter:
         self.view.show_riders(self.source.riders())
 
     def _refresh_counters(self) -> None:
-        """Re-render the four counter chips from the source."""
+        """Re-render the six counter chips from the source."""
         self.view.show_counters(self.source.counters())
 
     def _refresh_clock(self) -> None:

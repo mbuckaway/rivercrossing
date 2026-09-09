@@ -79,13 +79,24 @@ class FeedRow:
 
 @dataclass(frozen=True, slots=True)
 class Counters:
-    """The four console counter chips (crossings/cards/course/shoe)."""
+    """The console counter chips (crossings/cards/on-course/shoe/reg).
+
+    ``shoe_remaining``/``shoe_total`` render as one Shoe chip
+    ("rem/total"), so the six chips carry seven fields. W12 appends
+    ``riders``/``teams`` -- the event's registered totals, derived
+    from the source's roster, not from the engine -- for the two
+    registration chips; the R-32/xrc-windows.md wording amendment
+    for the new chips is W15's write-back (this class is the
+    code-first truth until then).
+    """
 
     crossings: int
     cards_dealt: int
     on_course: int
     shoe_remaining: int
     shoe_total: int
+    riders: int
+    teams: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,7 +200,11 @@ class DataSource(Protocol):
         ...
 
     def counters(self) -> Counters:
-        """Return the four console counter values."""
+        """Return the six console counter values.
+
+        crossings/cards/on-course/shoe come from the engine;
+        riders/teams are the roster's registered totals.
+        """
         ...
 
     def ride_status(self) -> RideStatus:
@@ -526,15 +541,26 @@ class EngineDataSource:
         return rows
 
     def counters(self) -> Counters:
-        """Return the four console counter values (R-32)."""
+        """Return the six console counter values (R-32, W12).
+
+        The engine supplies crossings/cards/on-course/shoe; the two
+        registration chips derive from the source's roster with
+        csvio.ImportPreview's own idiom (``sum(len(entry.riders))``;
+        ``sum(1 ... if type is TEAM)``), so a solo entry counts one
+        registered rider and a team counts its members -- the roster
+        is the single source of truth for both.
+        """
         engine = self._engine
         held = len(engine.held_crossings())
+        roster = self._roster
         return Counters(
             crossings=len(engine.crossings),
             cards_dealt=len(engine.crossings) - held,
             on_course=engine.on_course,
             shoe_remaining=engine.shoe_remaining,
             shoe_total=engine.shoe_total,
+            riders=sum(len(entry.riders) for entry in roster.entries),
+            teams=sum(1 for entry in roster.entries if entry.type is EntryType.TEAM),
         )
 
     def ride_status(self) -> RideStatus:
@@ -693,8 +719,16 @@ class EmptyDataSource:
         return []
 
     def counters(self) -> Counters:
-        """Return the zero console counters."""
-        return Counters(crossings=0, cards_dealt=0, on_course=0, shoe_remaining=0, shoe_total=0)
+        """Return the zero console counters (six chips, W12)."""
+        return Counters(
+            crossings=0,
+            cards_dealt=0,
+            on_course=0,
+            shoe_remaining=0,
+            shoe_total=0,
+            riders=0,
+            teams=0,
+        )
 
     def ride_status(self) -> RideStatus:
         """Return DRAFT -- no ride is open."""

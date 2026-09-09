@@ -350,6 +350,10 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.CARDS_COUNT_LBL,
     ids.ON_COURSE_LBL,
     ids.SHOE_LBL,
+    # W12: the two registration chips beside the four live counters
+    # (riders_count_lbl / teams_count_lbl).
+    ids.RIDERS_COUNT_LBL,
+    ids.TEAMS_COUNT_LBL,
     ids.START_BTN,
     ids.ARM_STOP_CHK,
     ids.STOP_BTN,
@@ -384,6 +388,8 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.CARDS_COUNT_LBL: wx.StaticText,
     ids.ON_COURSE_LBL: wx.StaticText,
     ids.SHOE_LBL: wx.StaticText,
+    ids.RIDERS_COUNT_LBL: wx.StaticText,
+    ids.TEAMS_COUNT_LBL: wx.StaticText,
     ids.START_BTN: wx.BitmapButton,
     ids.ARM_STOP_CHK: wx.CheckBox,
     ids.STOP_BTN: wx.BitmapButton,
@@ -471,6 +477,10 @@ class MainFrame:
         self.cards_count_lbl = self._find(ids.CARDS_COUNT_LBL, wx.StaticText)
         self.on_course_lbl = self._find(ids.ON_COURSE_LBL, wx.StaticText)
         self.shoe_lbl = self._find(ids.SHOE_LBL, wx.StaticText)
+        # W12: the two registration chips (riders_count_lbl /
+        # teams_count_lbl), resolved like the four live counters.
+        self.riders_count_lbl = self._find(ids.RIDERS_COUNT_LBL, wx.StaticText)
+        self.teams_count_lbl = self._find(ids.TEAMS_COUNT_LBL, wx.StaticText)
 
         # E4.4.1 lifecycle controls (start/arm/stop/undo + clock).
         self.start_btn = self._find(ids.START_BTN, wx.BitmapButton)
@@ -957,11 +967,32 @@ class MainFrame:
         self.console_riders_list.AssociateModel(self._riders_model)
 
     def show_counters(self, c: Counters) -> None:
-        """Render the four counter chips (ConsoleView)."""
+        """Render the six counter chips (ConsoleView)."""
         self.crossings_count_lbl.SetLabel(_format_count(c.crossings))
         self.cards_count_lbl.SetLabel(_format_count(c.cards_dealt))
         self.on_course_lbl.SetLabel(_format_count(c.on_course))
         self.shoe_lbl.SetLabel(f"{c.shoe_remaining}/{c.shoe_total}")
+        self.riders_count_lbl.SetLabel(_format_count(c.riders))
+        self.teams_count_lbl.SetLabel(_format_count(c.teams))
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Show or hide the Teams chip with its caption (R-11, W12).
+
+        A solo-only ride hides the whole team UI, the sidebar's Teams
+        chip included. The caption carries no frozen name (every chip
+        caption is unnamed), so the view finds it structurally: it is
+        the item immediately before the value inside the chip's own
+        vertical sizer. That is ``rider_editor._set_team_choice_row_
+        visible``'s precedent. The frame re-layouts so the grid row
+        collapses and the notebook keeps its share of the sidebar.
+        """
+        sizer = self.teams_count_lbl.GetContainingSizer()
+        items = list(sizer.GetChildren())
+        index = next(i for i, item in enumerate(items) if item.GetWindow() is self.teams_count_lbl)
+        caption = items[index - 1].GetWindow()
+        self.teams_count_lbl.Show(visible)
+        caption.Show(visible)
+        self.frame.Layout()
 
     def flash_crossing(self, r: FeedRow) -> None:
         """Highlight the just-recorded crossing (ConsoleView)."""

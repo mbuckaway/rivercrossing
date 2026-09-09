@@ -101,6 +101,12 @@ _COUNTERS = Counters(
     on_course=42,
     shoe_remaining=41,
     shoe_total=108,
+    # W12: the fixture event's registered roster totals, mirroring
+    # the EPIC design's own field ("180 entries · 262 riders": 98
+    # solo + 82 teams -- xrc-windows.md/retired designs) so the two
+    # registration chips read a coherent mixed ride.
+    riders=262,
+    teams=82,
 )
 
 # ------------------------------------------------------------- rides
@@ -223,7 +229,7 @@ class DemoDataSource:
         return list(_FEED_ROWS)
 
     def counters(self) -> Counters:
-        """Return the four console counter values."""
+        """Return the six console counter values (W12)."""
         return _COUNTERS
 
     def ride_status(self) -> RideStatus:
