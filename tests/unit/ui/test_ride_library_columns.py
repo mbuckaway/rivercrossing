@@ -72,16 +72,16 @@ def test_name_column_width_floor_is_pinned_for_the_canvas_minimum() -> None:
     assert COL_NAME_WIDTH == 208
 
 
-@pytest.mark.parametrize(
-    ("client_width", "expected"),
-    (
-        (497, COL_NAME_WIDTH),  # clamp floor: one px below the exact-fill point
-        (498, COL_NAME_WIDTH),  # exact fill at the 520 px dialog floor
-        (499, 209),  # one px above: every extra px widens the name column
-        (900, 610),
-        (1344, 1054),  # the 1366 px field-laptop floor's list width
-    ),
+_NAME_FILL_CASES = (
+    (497, COL_NAME_WIDTH),  # clamp floor: one px below the exact-fill point
+    (498, COL_NAME_WIDTH),  # exact fill at the 520 px dialog floor
+    (499, 209),  # one px above: every extra px widens the name column
+    (900, 610),
+    (1344, 1054),  # the 1366 px field-laptop floor's list width
 )
+
+
+@pytest.mark.parametrize(("client_width", "expected"), _NAME_FILL_CASES)
 def test_name_column_width_given_client_width_returns_leftover_or_floor(
     client_width: int, expected: int
 ) -> None:
@@ -93,7 +93,7 @@ def test_name_column_width_given_client_width_returns_leftover_or_floor(
 def test_name_column_width_given_a_laid_out_list_takes_every_compact_leftover(
     client_width: int,
 ) -> None:
-    """Property: above the floor, the name column takes the full leftover.
+    """Property: above the floor, the name takes the full leftover.
 
     The exact-fill identity is what makes the column grow with the
     window: widening the dialog by N px widens the Ride column by N px.
