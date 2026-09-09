@@ -711,6 +711,20 @@ class RideEngine:
             if entry.status.value == "active" and len(self._laps_for(entry.plate)) % 2 == 1
         )
 
+    @property
+    def entry_count(self) -> int:
+        """Return how many entries the roster holds (W5's stop gate).
+
+        The console Stop flow (``ConsolePresenter.on_stop_requested``)
+        reads this before offering its confirm: a riderless ride --
+        reachable after a store replay against a drifted roster, where
+        ``start``'s own readiness gate no longer applies -- gets a
+        warning instead of a Stop dialog. Read-only and live, like
+        :attr:`on_course`: the shared roster can grow after
+        construction, and the count always reflects it.
+        """
+        return len(self._roster.entries)
+
     # E4.4.1 console read accessors. The console's ``EngineDataSource``
     # (rivercrossing.ui.presenters.data_source) builds its feed and
     # counters from these; each is a read-only projection over state

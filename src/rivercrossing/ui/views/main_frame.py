@@ -41,7 +41,7 @@ import wx
 import wx.dataview
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.ui import feed_model, ids, sound
+from rivercrossing.ui import feed_model, ids, sound, std_dialogs
 from rivercrossing.ui.presenters.console import stop_light_mode
 from rivercrossing.ui.views._support import default_card_images, find_control
 from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_bundle
@@ -480,7 +480,11 @@ class MainFrame:
         self.stop_btn.SetLabel("Stop ride…")
         # R-35: Stop is gated on arm_stop_chk -- disabled at rest even
         # if the XRC ever leaves it enabled (test_menu_state pins the
-        # commands-side rule; this pins the actual control).
+        # commands-side rule; this pins the actual control). W5 adds
+        # the RUNNING gate: arm_stop_chk and stop_btn live only while
+        # the ride is RUNNING (set_state composes both from the armed
+        # mirror set_stop_enabled keeps).
+        self._stop_armed = False
         self.stop_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
 
         # WS-H review notebook: the two DataView shells, their
@@ -537,6 +541,10 @@ class MainFrame:
         # of any engine change, not only on a state transition.
         self._status: RideStatus = RideStatus.DRAFT
         self._on_ride_changed: Callable[[RideStatus], None] | None = None
+        # W5: the presenter the render back-calls re-apply the console
+        # gates through (set once wire_console/set_presenter runs;
+        # constructions that never wire a presenter render no gates).
+        self._presenter: ConsolePresenter | None = None
 
         # Reflow now that the size and every sizer item are final, so
         # the splitter has its real client area before a sash position
@@ -770,11 +778,16 @@ class MainFrame:
 
         Also fires the E7.2.1 menu-binder seam: the feed re-renders on
         every record/undo/tick, so §15 count conditions refresh within
-        a tick of any engine change (see the constructor comment).
+        a tick of any engine change (see the constructor comment), and
+        re-applies the W5 console-button gates through the bound
+        presenter (record/undo/tick are exactly the crossing-count
+        changes the Start/Undo verdicts depend on).
         """
         self._crossings_model = CrossingsFeedModel(rows, self.card_images)
         self.crossings_list.AssociateModel(self._crossings_model)
         self._notify_ride_changed()
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
 
     def show_flagged(self, rows: list[FeedRow]) -> None:
         """Render the review notebook's flagged rows (ConsoleView).
@@ -823,7 +836,10 @@ class MainFrame:
         every presenter state transition (start/stop/finish/reopen)
         lands here, and the binder re-applies the §15 enablement.
         WS-D adds the status lamp: the same state transition drives
-        the ``StopLight`` through ``console.stop_light_mode``.
+        the ``StopLight`` through ``console.stop_light_mode``. W5 adds
+        the RUNNING gate for the arm checkbox and Stop button
+        (composed with the armed mirror) and the console-button-gate
+        refresh through the bound presenter.
         """
         self.ride_status_lbl.SetLabel(status.value.upper())
         self.ride_status_light.set_mode(stop_light_mode(status))
@@ -835,7 +851,25 @@ class MainFrame:
         else:
             self.reopened_infobar.Dismiss()
         self._status = status
+        self._apply_stop_arm_gate()
         self._notify_ride_changed()
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
+
+    def _apply_stop_arm_gate(self) -> None:
+        """Compose the R-35 arm/Stop controls with the RUNNING gate.
+
+        W5: ``arm_stop_chk`` and ``stop_btn`` are disabled whenever
+        the ride is not RUNNING -- arming only ever guards a live
+        ride. Leaving RUNNING also clears the armed mirror and unticks
+        the checkbox, so a later return to RUNNING starts unarmed.
+        """
+        running = self._status is RideStatus.RUNNING
+        self.arm_stop_chk.Enable(running)
+        if not running:
+            self._stop_armed = False
+            self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.stop_btn.Enable(running and self._stop_armed)
 
     def show_ride_name(self, name: str) -> None:
         """Render the open ride's name (ConsoleView, E9.1.4).
@@ -916,15 +950,45 @@ class MainFrame:
     def set_stop_enabled(self, *, enabled: bool) -> None:
         """Enable or disable the Stop button (ConsoleView, R-35).
 
-        Disarming also unticks ``arm_stop_chk`` so the checkbox
-        visibly reflects the presenter's auto-clear (after use or
-        timeout); ``SetValue`` fires no ``EVT_CHECKBOX`` (measured
-        harness convention), so this cannot loop back into the
-        presenter.
+        The presenter's armed verdict is stored in the armed mirror
+        and composed with the RUNNING gate (W5): Stop is only ever
+        enabled while the ride is RUNNING *and* armed. Disarming also
+        unticks ``arm_stop_chk`` so the checkbox visibly reflects the
+        presenter's auto-clear (after use or timeout); ``SetValue``
+        fires no ``EVT_CHECKBOX`` (measured harness convention), so
+        this cannot loop back into the presenter.
         """
-        self.stop_btn.Enable(enabled)
+        self._stop_armed = enabled
         if not enabled:
             self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.stop_btn.Enable(enabled and self._status is RideStatus.RUNNING)
+
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable the Start ride button (ConsoleView, W5)."""
+        self.start_btn.Enable(enabled)
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable the Undo last button (ConsoleView, W5)."""
+        self.undo_btn.Enable(enabled)
+
+    def show_warning(self, title: str, message: str) -> None:
+        """Show *message* as a modal warning over this console (W5).
+
+        The presenter's blocked-start / empty-roster-stop alert; the
+        view owns the parent and opens the native dialog, so the
+        presenter stays headless and wx-free.
+        """
+        std_dialogs.show_warning(self.frame, title, message)
+
+    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+        """Ask a destructive confirm; return whether OK was chosen (W5).
+
+        The native stop confirm behind ``ConsolePresenter.
+        on_stop_requested``: the view owns the parent window and the
+        modal call, returning only the boolean verdict to the
+        presenter.
+        """
+        return std_dialogs.show_confirm(self.frame, title, message, ok_label, cancel_label) == wx.ID_OK
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Render the ride clock's numeric labels (ConsoleView, R-30).

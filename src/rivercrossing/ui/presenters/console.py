@@ -36,6 +36,23 @@ E4.4.1-E4.4.3 behavior (spec §10/§13, R-31/32/34/35/37):
 - ``FINISH_GATE`` is the E6.4.3 hook: the finish flow consults it
   before finishing; the gate runs the real evaluator self-test
   (``hands.self_test()``) fresh on each finish.
+
+W5 adds the console-button gates and the native-dialog seams:
+
+- ``refresh_console_gates`` re-applies the Start/Undo button
+  enablement from the engine (the mi_start_ride and mi_undo_crossing
+  rules); the view calls it from every ``set_state``/``show_feed``
+  render, so initial paints, console swaps and in-session transitions
+  all land on the same verdicts.
+- ``on_start`` surfaces ``StartBlockedError`` refusals through the
+  view's native warning seam (``show_warning``) instead of the status
+  notice -- a modal "Cannot Start Ride" alert with the engine's
+  reason.
+- ``on_stop_requested`` is the one shared Stop handler for the
+  console Stop button and the Ride ▸ Stop Ride… menu row: a riderless
+  roster gets a native warning (no Stop dialog at all), a RUNNING
+  ride gets the native confirm (``view.confirm``), and a confirmed OK
+  runs the unchanged ``on_stop_confirmed`` act-3 flow.
 """
 
 from time import monotonic
@@ -181,6 +198,37 @@ class ConsoleView(Protocol):
         """Lock or unlock the plate entry row (R-35's stop lock)."""
         ...
 
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable the Start ride button (W5 gate).
+
+        The engine-backed verdict (DRAFT or stopped-RUNNING) comes
+        from the presenter's ``refresh_console_gates``; the view only
+        applies it.
+        """
+        ...
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """Enable or disable the Undo last button (W5 gate).
+
+        The engine-backed verdict (RUNNING with >= 1 crossing) comes
+        from the presenter's ``refresh_console_gates``; the view only
+        applies it.
+        """
+        ...
+
+    def show_warning(self, title: str, message: str) -> None:
+        """Show *message* as a modal warning over this console (W5)."""
+        ...
+
+    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+        """Ask a destructive confirm; return whether OK was chosen.
+
+        The view owns the parent window and opens the native confirm
+        (``ui.std_dialogs.show_confirm``); the presenter reads only
+        the boolean verdict, so the flow stays headless-testable.
+        """
+        ...
+
 
 class ConsolePresenter:
     """Presenter for the main console (main_frame, 1a).
@@ -260,23 +308,76 @@ class ConsolePresenter:
         self.view.show_notice("Last crossing undone")
 
     def on_start(self) -> None:
-        """Handle Start Ride (start_btn).
+        """Handle Start Ride (start_btn / Ride ▸ Start Ride).
 
         ``engine.start()`` covers both DRAFT -> RUNNING and continue-
         after-stop; on success the console reflects RUNNING, unlocks
-        the entry row and posts a notice. Engine refusals (finished
-        ride, roster not ready) surface as notices.
+        the entry row and posts a notice. A start the engine blocks
+        because the ride is not ready (:class:`StartBlockedError`)
+        surfaces as a modal warning naming the reason (W5); a state-
+        machine refusal (finished ride) stays a status notice.
         """
         try:
             self.engine.start()
-        except (IllegalStateError, StartBlockedError) as exc:
+        except IllegalStateError as exc:
             self.view.show_notice(f"Cannot start: {exc}")
+            return
+        except StartBlockedError as exc:
+            self.view.show_warning("Cannot Start Ride", f"Cannot start ride: {exc}")
             return
         self._refresh_feed()
         self._refresh_counters()
         self.view.set_state(self.engine.state)
         self.view.set_entry_locked(locked=False)
         self.view.show_notice("Ride started")
+
+    def on_stop_requested(self) -> None:
+        """Handle a Stop request: stop_btn or Ride ▸ Stop Ride… (W5).
+
+        The one shared handler both entry points reach. A riderless
+        roster (reachable after a replay against a drifted roster)
+        gets a native warning and never a Stop dialog. A RUNNING ride
+        asks the native confirm with the frozen stop copy, and a
+        confirmed OK runs :meth:`on_stop_confirmed` -- the unchanged
+        act-3 flow (engine stop, arm clear, entry lock, notice). A
+        ride that is not RUNNING never shows the confirm; it falls
+        through to the same engine-refusal notice ``on_stop_confirmed``
+        posts (the controls are disabled outside RUNNING, so this arm
+        is defensive).
+        """
+        if self.engine.entry_count == 0:
+            self.view.show_warning("Cannot Stop Ride", "Cannot stop ride: roster has no riders")
+            return
+        if self.engine.state is not RideStatus.RUNNING:
+            self.on_stop_confirmed()
+            return
+        if self.view.confirm(
+            "Stop Ride?",
+            "The clock stops for everyone. Riders still on course keep their laps; "
+            "no cards are dealt after stop. You can continue the ride later "
+            "without losing anything.",
+            ok_label="Stop ride",
+            cancel_label="Cancel",
+        ):
+            self.on_stop_confirmed()
+
+    def refresh_console_gates(self) -> None:
+        """Re-apply the console Start/Undo button gates from the engine.
+
+        W5: ``start_btn`` mirrors the mi_start_ride rule -- enabled in
+        DRAFT and in stopped-RUNNING (continue-after-stop is the
+        resume mechanism), disabled in live RUNNING, FINISHED and
+        REOPENED; ``undo_btn`` mirrors the mi_undo_crossing rule --
+        enabled only in RUNNING with at least one crossing. The view
+        calls this from every ``set_state``/``show_feed`` render
+        (constructor, console swaps and presenter transitions alike),
+        so the engine is the single source of truth for the buttons.
+        """
+        running = self.engine.state is RideStatus.RUNNING
+        self.view.set_start_enabled(
+            enabled=self.engine.state is RideStatus.DRAFT or (running and self.engine.stopped)
+        )
+        self.view.set_undo_enabled(enabled=running and len(self.engine.crossings) >= 1)
 
     def on_arm_stop(self, *, armed: bool) -> None:
         """Handle the arm_stop_chk toggle guarding stop_btn (R-35).
@@ -289,7 +390,7 @@ class ConsolePresenter:
         self.view.set_stop_enabled(enabled=armed)
 
     def on_stop_confirmed(self) -> None:
-        """Handle confirmation from stop_confirm_dlg (R-35, act 3).
+        """Handle a confirmed Stop (R-35, act 3).
 
         ``engine.stop()`` locks plate entry while the ride stays
         RUNNING; the arm auto-clears after use. An illegal stop (not
