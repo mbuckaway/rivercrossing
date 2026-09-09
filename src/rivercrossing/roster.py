@@ -15,6 +15,13 @@ needs to compare -- while a ``team_relay`` plate may be any
 non-empty string (W7: blank plates are refused everywhere;
 ``next_free_plate`` ignores non-numeric plates either way).
 
+W8's empty teams (R-81 amended in that workstream) relax the
+entry's lower bound further: :meth:`Roster.create_empty_team`
+creates a zero-rider TEAM entry whose members arrive later through
+the Rider Editor -- the transient size-1 team of E3.2 and the
+zero-rider team of W8 both stay below R-12's floor until the
+start-time check (:meth:`Roster.validate_for_start`) refuses them.
+
 This module is a store-less, in-memory model of that shape: EPIC 5's
 Store is the persistence layer these dataclasses feed once it lands
 (module-skeletons.md S4's ``schema.py`` names the same ``entries``/
@@ -218,8 +225,11 @@ class Entry:
 
     ``plate`` is always populated: directly, under
     ``PlateModel.TEAM_RELAY``, or derived from ``riders`` under
-    ``PlateModel.RIDER_POOLED`` (S1). ``riders`` holds exactly one
-    member for a solo entry, two or more for a team. ``has_data`` is
+    ``PlateModel.RIDER_POOLED`` (S1) -- a W8 zero-rider pooled team's
+    provisional claim is the one exception, documented on
+    :meth:`Roster.create_empty_team`. ``riders`` holds exactly one
+    member for a solo entry, two or more for a real team, one for a
+    transient E3.2 team and none for a W8 empty team. ``has_data`` is
     E3.1.2's permanent delete guard (R-15): once
     :meth:`Roster.mark_has_data` sets it, ``delete_entry`` refuses in
     every ride state -- DNF or void is the only path from there.
@@ -589,6 +599,67 @@ class Roster:
             for entry in self._entries
             if entry.type is EntryType.TEAM and entry.team_size < MIN_TEAM_SIZE
         ]
+
+    def create_empty_team(  # noqa: PLR0913 -- (display_name, plate, logo_card, logo_png), keyword-only
+        self,
+        *,
+        display_name: str,
+        plate: str | None = None,
+        logo_card: str | None = None,
+        logo_png: bytes | None = None,
+    ) -> Entry:
+        """Create a TEAM entry with zero riders -- members join later.
+
+        W8 amends R-81's anchor-rider mandate: the Teams Editor's Add
+        form creates the team record alone, and its riders arrive
+        through the Rider Editor afterwards. The entry's plate follows
+        this roster's own plate-model rules: a team_relay empty team
+        carries its explicit relay plate (the next free plate when
+        *plate* is ``None``, the editor's own default) with no riders;
+        a rider_pooled empty team has no rider to derive a plate from,
+        so it claims the next free plate as a *provisional* entry
+        plate -- the model still needs one plate per entry, and the
+        claim is exactly what the anchor rider used to occupy. The
+        first rider to join replaces it through
+        :meth:`_recompute_pooled_plate`, freeing the placeholder.
+        *logo_card*/*logo_png* (Phase 4) name the team's logo; an
+        image wins over a card, matching :meth:`set_team_logo_image`
+        (``None`` both ways auto-assigns the next unused seeded card
+        when this roster carries a ``team_logo_seed``).
+
+        Raises:
+            LockedError: the ride has left DRAFT.
+            SoloOnlyRideError: this ride's entry_mode is solo-only.
+            PlateShapeError: *plate* violates the ride's plate_model
+                shape (blank on relay, or any value on rider_pooled,
+                whose plates are derived from riders).
+            DuplicatePlateError: *plate* collides with an existing
+                entry's or rider's plate.
+        """
+        if not can_edit_structure(self._status):
+            msg = f"a new team cannot be started once the ride is {self._status}"
+            raise LockedError(msg)
+        if self._entry_mode is EntryMode.SOLO:
+            msg = "this ride is solo-only; team entries are not allowed"
+            raise SoloOnlyRideError(msg)
+        entry_plate = self._empty_team_plate(plate)
+        # An image wins over a card (set_team_logo_image's rule): it
+        # also suppresses auto-assignment, so no seeded code hides
+        # behind the image.
+        resolved_card = None if logo_png is not None else self._resolved_logo_card(logo_card)
+        entry = Entry(
+            plate=entry_plate,
+            display_name=display_name,
+            type=EntryType.TEAM,
+            logo_card=resolved_card,
+            logo_png=logo_png,
+        )
+        self._entries.append(entry)
+        self._log(
+            "create_empty_team",
+            {"plate": entry.plate, "display_name": display_name, "team_size": 0},
+        )
+        return entry
 
     def create_solo_entry(self, *, first_name: str, last_name: str = "", plate: str) -> Entry:
         """Create a solo entry for *first_name*/*last_name*.
@@ -1036,6 +1107,35 @@ class Roster:
         if not entry.riders:
             self._dissolve_entry(entry)
         return solo
+
+    def _empty_team_plate(self, plate: str | None) -> str:
+        """Return the entry plate of a zero-rider team (W8).
+
+        See :meth:`create_empty_team`'s docstring for the model rule:
+        team_relay carries its explicit relay plate (next free when
+        none is given); rider_pooled claims the next free plate
+        provisionally -- no rider exists to derive one from -- to be
+        replaced by the first joined rider's own plate.
+
+        Raises:
+            PlateShapeError: *plate* is blank on a relay ride, or any
+                value at all on a rider_pooled ride.
+            DuplicatePlateError: *plate* collides with an existing
+                entry's or rider's plate.
+        """
+        if self._plate_model is PlateModel.TEAM_RELAY:
+            if plate is None:
+                return self.next_free_plate()
+            _require_plate_nonempty(plate)
+            self._require_plates_free([plate])
+            return plate
+        if plate is not None:
+            msg = (
+                "a rider_pooled team's plate is derived from its riders; "
+                "an empty team claims the next free plate instead"
+            )
+            raise PlateShapeError(msg)
+        return self.next_free_plate()
 
     def _shape_and_validate(self, riders: Sequence[Rider], plate: str | None) -> str:
         """Resolve riders'/plate's shape; return the entry's plate.

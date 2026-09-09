@@ -12,27 +12,24 @@ card or image -- while membership is read-only here (the read-only
 rows carry the team's rider count (:class:`TeamRow.rider_count`, the
 ``Riders`` column) so the operator sees size at a glance.
 
-**Team creation (Phase 4's one model-imposed shape).** The roster
-cannot hold a member-less team: spec S2 defines an entry as a solo
-rider or a team of riders, and even R-12's deferred floor only
-tolerates the transient size-1 team (:meth:`Roster.
-create_team_entry_of_one`) while DRAFT. The reworked Teams Editor
-form is itself the Add form -- :meth:`TeamsPresenter.on_add` reads
-``name``/``notes`` straight from the form (no native name prompt)
-and validates the name non-blank and not a duplicate of any existing
-team's (trimmed, case-insensitive; the same guard applies to a
-rename on Save). On success it anchors the new team with exactly one
-rider whose name is the team name, takes the entry's next free plate
-on a team_relay ride (the anchor rider's own next free plate on a
-rider_pooled one), and applies the staged logo -- a picked card is
-passed straight to the create, a picked image lands through
+**Team creation (W8's empty-team shape).** R-81's original anchor-rider
+mandate is amended in this workstream: a new team is a zero-rider TEAM
+entry (:meth:`Roster.create_empty_team`) whose members arrive later
+through the Rider Editor -- nothing invents a rider named from the
+team's name. :meth:`TeamsPresenter.on_add` reads ``name``/``notes``
+straight from the form (no native name prompt) and validates the name
+non-blank and not a duplicate of any existing team's (trimmed,
+case-insensitive; the same guard applies to a rename on Save). The
+entry's plate follows the roster's own plate-model rules -- a
+team_relay team carries the next free relay plate, a rider_pooled one
+the provisional next-free claim :meth:`Roster.create_empty_team`
+documents -- and the staged logo applies: a picked card is passed
+straight to the create, a picked image lands through
 :meth:`Roster.set_team_logo_image` (an image wins over a card, so
-either clears the other). The anchor is a real, renameable rider --
-the operator names it via the Rider Editor, whose DRAFT edits
-(rename, replate, move) this phase does not duplicate. Add/Remove
-are DRAFT-only (:func:`~rivercrossing.roster.can_edit_structure`),
-like every other structural roster edit (R-15); the roster's own
-refusals surface via :meth:`TeamsView.show_validation`.
+either clears the other). Add/Remove are DRAFT-only
+(:func:`~rivercrossing.roster.can_edit_structure`), like every other
+structural roster edit (R-15); the roster's own refusals surface via
+:meth:`TeamsView.show_validation`.
 
 **Staged logo picks.** ``on_pick_card``/``on_pick_image`` apply to
 the selected team when one is selected; with nothing selected (the
@@ -52,7 +49,6 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from rivercrossing.roster import (
     EntryType,
     PlateModel,
-    Rider,
     RosterError,
     rider_name_key,
 )
@@ -180,14 +176,16 @@ class TeamsPresenter:
         self._refresh_rows()
 
     def on_add(self, form: TeamFormValues) -> None:
-        """Handle add_btn: create a team from the form, no prompt.
+        """Handle add_btn: create an empty team from the form (W8).
 
         Reads ``name``/``notes`` off the form and applies the staged
-        logo (module docstring). A blank or duplicate name (trimmed,
-        case-insensitive) refuses via :meth:`TeamsView.
-        show_validation`; a roster refusal (solo-only ride, the ride
-        has left DRAFT, ...) shows the same way. Nothing is created
-        on any refusal and the form keeps what the operator typed.
+        logo (module docstring): the created entry carries zero
+        riders, and members arrive later through the Rider Editor. A
+        blank or duplicate name (trimmed, case-insensitive) refuses
+        via :meth:`TeamsView.show_validation`; a roster refusal
+        (solo-only ride, the ride has left DRAFT, ...) shows the same
+        way. Nothing is created on any refusal and the form keeps
+        what the operator typed.
         """
         name = form.name.strip()
         if not name:
@@ -197,11 +195,13 @@ class TeamsPresenter:
             self.view.show_validation(f'a team named "{name}" already exists')
             return
         try:
-            entry = self._create_team(name, logo_card=self._pending_logo_card)
+            entry = self.roster.create_empty_team(
+                display_name=name,
+                logo_card=self._pending_logo_card,
+                logo_png=self._pending_logo_image,
+            )
             if form.notes:
                 self.roster.update_entry(entry, notes=form.notes)
-            if self._pending_logo_image is not None:
-                self.roster.set_team_logo_image(entry, image=self._pending_logo_image)
         except RosterError as exc:
             self.view.show_validation(str(exc))
             return
@@ -403,30 +403,3 @@ class TeamsPresenter:
         self.view.show_form(name="", relay_plate="", notes="")
         self.view.show_logo(card=None, image=None)
         self.view.show_members([])
-
-    def _create_team(self, name: str, *, logo_card: str | None) -> Entry:
-        """Create *name*'s team entry (module docstring's anchor).
-
-        ``create_team_entry_of_one`` shapes the entry to the ride's
-        plate model: a team_relay team takes the next free plate for
-        the entry (its anchor rider is plateless, S1); a rider_pooled
-        team's anchor rider must carry a plate, so it takes the next
-        free one and the entry adopts it. Either way the anchor rider
-        is named from the team's own name -- a DRAFT-only placeholder
-        the Rider Editor's own flows rename as real members arrive.
-        *logo_card* is the staged card (``None`` auto-assigns the
-        next unused seeded code, the roster's own default).
-        """
-        plate = self.roster.next_free_plate()
-        if self.roster.plate_model is PlateModel.TEAM_RELAY:
-            return self.roster.create_team_entry_of_one(
-                display_name=name,
-                rider=Rider(first_name=name),
-                plate=plate,
-                logo_card=logo_card,
-            )
-        return self.roster.create_team_entry_of_one(
-            display_name=name,
-            rider=Rider(first_name=name, plate=plate),
-            logo_card=logo_card,
-        )
