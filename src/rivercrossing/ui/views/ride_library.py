@@ -110,8 +110,9 @@ COL_ENTRIES_WIDTH = 70
 
 # The Ride column's floor: 208 px is the fill at the dialog's 520 px
 # floor (the list's client measures ~498 px there on 4.3.1 osx-cocoa;
-# 498 - 110 - 110 - 70 = 208) and fits the canvas's own longest name,
-# "GORBA EPIC 2026 (copy)" (135 px at the stock font).
+# 498 - 110 - 110 - 70 = 208) and fits the canvas's own names plus the
+# longest a duplicate creates, "GORBA EPIC 2026 (copy)" (135 px at
+# the stock font).
 COL_NAME_WIDTH = 208
 
 # One width per COLUMN_LABELS entry, in canvas order: the Ride column
