@@ -80,6 +80,7 @@ class _FakeMessageDialog:
         self.ok_cancel_labels: tuple[str, str] | None = None
         self.show_modal_count = 0
         self.destroy_count = 0
+        _FAKE_CREATIONS.append(self)
 
     def SetOKCancelLabels(  # noqa: N802 -- wx API method name the SUT calls
         self, ok_label: str, cancel_label: str
