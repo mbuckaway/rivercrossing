@@ -10,9 +10,15 @@ write failure vanishes with zero signal, and worst case the operator
 is told an import succeeded while the roster silently stayed
 unpersisted. Each write route below wraps its store call in
 ``try/except (OSError, sqlite3.Error)`` and posts a status notice,
-the app's own notice idiom (``_handle_backup_database``). This
-module drives every guard headless with a notice-capturing frame
-stub and failing-store fakes -- no wx window is constructed.
+the app's own notice idiom (``_handle_backup_database``). The W10
+delete refusal is the exception: the library is a modal, so its
+status bar is hidden behind it and a refused delete shows an error
+dialog above the library window instead
+(``std_dialogs.show_error``, stubbed here) -- plus ``StoreError`` is
+caught too, so a ``RideRunningError``/``RideNotFoundError`` refusal
+never escapes silently. This module drives every guard headless
+with a notice-capturing frame stub and failing-store fakes -- no wx
+window is constructed.
 """
 
 from __future__ import annotations
@@ -20,16 +26,18 @@ from __future__ import annotations
 import sqlite3
 from typing import TYPE_CHECKING
 
+import pytest
+
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import Roster
+from rivercrossing.store import RideNameMismatchError, RideNotFoundError, RideRunningError
 from rivercrossing.ui import app as app_module
+from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.presenters.data_source import RideSummary
 from rivercrossing.ui.presenters.settings import AppSettings
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 class _NoticeFrame:
@@ -240,6 +248,78 @@ def test_library_delete_callback_given_a_row_without_a_ride_id_is_a_noop() -> No
     callback(_selected_ride(ride_id=None))
 
     assert store.calls == []
+
+
+class _RaisesDeleteStore:
+    """A store whose delete refuses with one pinned exception."""
+
+    def __init__(self, failure: Exception) -> None:
+        """Store the refusal *failure* to raise on delete."""
+        self._failure = failure
+
+    def delete_ride(self, _ride_id: int, _typed_name: str) -> None:
+        """Refuse the write with the pinned failure."""
+        raise self._failure
+
+
+_DELETE_REFUSAL_CASES = (
+    (
+        sqlite3.OperationalError("database is locked"),
+        "Could not delete ride: database is locked",
+    ),
+    (OSError("disk full"), "Could not delete ride: disk full"),
+    (
+        RideRunningError("ride 3 is RUNNING and cannot be deleted"),
+        "The ride is running, so it cannot be deleted. Finish the ride first.",
+    ),
+    (
+        RideNotFoundError("no ride with id 3"),
+        "The ride is no longer in the library.",
+    ),
+    (
+        RideNameMismatchError("typed name 'Ride A' does not match ride 3 name 'Ride B'"),
+        (
+            "The ride's name changed since the library opened."
+            " Close and reopen the library, then try again."
+        ),
+    ),
+)
+
+
+@pytest.mark.parametrize(("failure", "expected_text"), _DELETE_REFUSAL_CASES)
+def test_delete_refusal_text_given_each_refusal_returns_plain_copy(
+    failure: Exception, expected_text: str
+) -> None:
+    """UX-DESKTOP §9: no row ids or stored-status words reach the UI."""
+    assert app_module._delete_refusal_text(failure) == expected_text
+
+
+@pytest.mark.parametrize(("failure", "expected_message"), _DELETE_REFUSAL_CASES)
+def test_library_delete_callback_given_a_refused_delete_shows_an_error_dialog(
+    failure: Exception,
+    expected_message: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused delete surfaces in an error dialog, never silently.
+
+    The callback runs from the library's delete-confirm handler; the
+    refusal shows an error dialog parented to the library window,
+    whose status bar the modal hides -- not an invisible notice.
+    """
+    shown: list[tuple[object, str, str]] = []
+    monkeypatch.setattr(
+        std_dialogs,
+        "show_error",
+        lambda parent, title, message: shown.append((parent, title, message)),
+    )
+    window = _NoticeFrame()
+    context = _context(store=_RaisesDeleteStore(failure))
+
+    callback = app_module._library_delete_callback(context, window=window)
+    assert callback is not None
+    callback(_selected_ride())
+
+    assert shown == [(window, "Could Not Delete Ride", expected_message)]
 
 
 def test_live_library_duplicate_given_a_failed_duplicate_posts_a_notice() -> None:
