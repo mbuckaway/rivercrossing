@@ -286,6 +286,7 @@ TEAM_EDITOR_DLG = WindowSpec(
         ids.LOGO_BMP,
         ids.PICK_CARD_BTN,
         ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
         ids.MEMBERS_LIST,
         ids.SAVE_BTN,
         ids.REMOVE_BTN,
@@ -298,6 +299,7 @@ TEAM_EDITOR_DLG = WindowSpec(
         ids.ADD_BTN,
         ids.PICK_CARD_BTN,
         ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
         WX_ID_CLOSE,
     ),
 )
@@ -319,10 +321,17 @@ ADD_TEAM_DLG = WindowSpec(
         ids.LOGO_BMP,
         ids.PICK_CARD_BTN,
         ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
         WX_ID_OK,
         WX_ID_CANCEL,
     ),
-    buttons=(WX_ID_OK, WX_ID_CANCEL, ids.PICK_CARD_BTN, ids.IMAGE_BTN),
+    buttons=(
+        WX_ID_OK,
+        WX_ID_CANCEL,
+        ids.PICK_CARD_BTN,
+        ids.IMAGE_BTN,
+        ids.REMOVE_LOGO_BTN,
+    ),
 )
 
 ENTRY_DETAIL_DLG = WindowSpec(

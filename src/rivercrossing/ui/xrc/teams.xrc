@@ -218,6 +218,13 @@
                   <label>Image…</label>
                 </object>
               </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
+                <border>6</border>
+                <object class="wxButton" name="remove_logo_btn">
+                  <label>Remove logo</label>
+                </object>
+              </object>
             </object>
           </object>
 
@@ -246,7 +253,7 @@
               <orient>wxHORIZONTAL</orient>
               <!-- Add team anchors the right pane's bottom (rework):
                    the form above it is the selected team's record
-                   editor -- W8 relabelled the button and made it open
+                   editor. W8 relabelled the button and made it open
                    add_team_dlg (its own Add dialog) instead of
                    adding from this form. -->
               <object class="spacer">
@@ -375,6 +382,13 @@
                 <flag>wxALIGN_CENTRE_VERTICAL</flag>
                 <object class="wxButton" name="image_btn">
                   <label>Image…</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
+                <border>6</border>
+                <object class="wxButton" name="remove_logo_btn">
+                  <label>Remove logo</label>
                 </object>
               </object>
             </object>

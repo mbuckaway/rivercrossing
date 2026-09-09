@@ -2782,3 +2782,56 @@ def test_roster_exposes_no_team_logo_seed_when_unseeded() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED)
 
     assert roster.team_logo_seed is None
+
+
+# ----------------------------------------------------- clear_team_logo
+
+
+def test_roster_clear_team_logo_clears_card_and_image_and_audits() -> None:
+    """clear_team_logo removes both logo forms at once and audits."""
+    roster = _seeded_mixed_roster()
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+        logo_card="AS",
+    )
+    entry.logo_png = b"png-bytes"  # both set at once; the setter pair never does
+
+    roster.clear_team_logo(entry)
+
+    assert (entry.logo_card, entry.logo_png) == (None, None)
+    assert roster.audit_log[-1] == AuditEvent(
+        action="clear_team_logo", payload={"plate": entry.plate}
+    )
+
+
+def test_roster_clear_team_logo_on_a_logo_less_entry_is_a_noop() -> None:
+    """Clearing a team that already carries no logo changes nothing."""
+    roster = _seeded_mixed_roster()
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    before = roster.audit_log
+
+    roster.clear_team_logo(entry)
+
+    assert (entry.logo_card, entry.logo_png) == (None, None)
+    assert roster.audit_log[-1] == AuditEvent(
+        action="clear_team_logo", payload={"plate": entry.plate}
+    )
+    assert len(roster.audit_log) == len(before) + 1
+
+
+def test_roster_clear_team_logo_on_a_foreign_entry_raises_entry_not_found_error() -> None:
+    """A clear on an entry this roster does not own is refused."""
+    roster = _seeded_mixed_roster()
+
+    with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
+        roster.clear_team_logo(Entry(plate="999", display_name="Ghost", type=EntryType.TEAM))

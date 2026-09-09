@@ -38,7 +38,12 @@ from rivercrossing.ui.presenters.teams import (
     TeamRow,
     TeamsPresenter,
 )
-from rivercrossing.ui.views.team_editor import CARD_TEXT, IMAGE_TEXT, format_logo
+from rivercrossing.ui.views.team_editor import (
+    CARD_TEXT,
+    IMAGE_TEXT,
+    format_logo,
+    logo_fit_size,
+)
 
 _SEED = 8843
 
@@ -878,3 +883,104 @@ def test_format_logo_given_any_logo_state_returns_only_the_three_kind_texts(
     assert (text == IMAGE_TEXT) == has_image
     assert (text == CARD_TEXT) == (card is not None and not has_image)
 
+
+
+# ============================================================ W8 slice D
+# Logo preview sizing + Remove logo: the preview bitmaps fit a bounded
+# box (card 3:4, photos 128 max), and remove_logo_btn clears both logo
+# forms at once in the editor and the Add dialog.
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "within", "upscale", "expected"),
+    [
+        pytest.param(400, 300, (128, 128), False, (128, 96), id="wide_photo_shrinks_to_box"),
+        pytest.param(100, 300, (128, 128), False, (43, 128), id="tall_photo_shrinks_to_box"),
+        pytest.param(64, 64, (128, 128), False, (64, 64), id="small_photo_stays_natural"),
+        pytest.param(96, 128, (128, 128), False, (96, 128), id="box_sized_photo_stays"),
+        pytest.param(24, 32, (96, 128), True, (96, 128), id="card_1x_upscales_to_card_box"),
+        pytest.param(48, 64, (96, 128), True, (96, 128), id="card_2x_upscales_to_card_box"),
+    ],
+)
+def test_logo_fit_size_scales_into_the_bounded_box_preserving_aspect(
+    width: int,
+    height: int,
+    within: tuple[int, int],
+    upscale: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
+    expected: tuple[int, int],
+) -> None:
+    """The pure fit rule: shrink (or grow) only as far as *within*."""
+    assert logo_fit_size(width, height, within=within, upscale=upscale) == expected
+
+
+@given(width=st.integers(1, 4000), height=st.integers(1, 4000))
+def test_logo_fit_size_never_exceeds_the_box_and_keeps_aspect(
+    width: int,
+    height: int,
+) -> None:
+    """A fitted logo always fits *within* and never distorts."""
+    fitted_w, fitted_h = logo_fit_size(width, height, within=(128, 128))
+
+    assert (fitted_w, fitted_h) <= (128, 128)
+    # Aspect preserved up to one rounding pixel per side.
+    assert abs(fitted_w * height - fitted_h * width) <= max(width, height)
+
+
+def test_teams_presenter_remove_logo_clears_the_selected_teams_logo() -> None:
+    """Remove logo on a selected team clears both forms and refreshes."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+    team = _teams(roster)[0]
+
+    presenter.on_row_selected(0)
+    presenter.on_pick_image(b"team-logo-png")
+    presenter.on_remove_logo()
+
+    assert (team.logo_card, team.logo_png) == (None, None)
+    assert view.logo == {"card": None, "image": None}
+    assert view.teams[0] == TeamRow(
+        name="Trail Blazers", rider_count=2, logo_card=None, has_image=False
+    )
+    assert presenter.roster_changed is True
+
+
+def test_teams_presenter_remove_logo_with_no_selection_is_a_no_op() -> None:
+    """Nothing selected, nothing cleared."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+    before = roster.audit_log
+
+    presenter.on_remove_logo()
+
+    assert roster.audit_log == before
+    assert presenter.roster_changed is False
+
+
+def test_add_team_presenter_remove_logo_clears_a_staged_card() -> None:
+    """Remove logo in the dialog drops the pending card pick."""
+    view = RecordingAddTeamView()
+    roster = _draft_pooled_roster()
+    presenter = AddTeamPresenter(view, roster)
+
+    presenter.on_pick_card()
+    presenter.on_remove_logo()
+    presenter.on_submit(_new_form("Dirt Dynamos"))
+
+    assert view.logo == {"card": None, "image": None}
+    created = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
+    assert created.logo_card == seeded_card_codes(_SEED)[1]  # the auto code, no staging
+    assert created.logo_png is None
+
+
+def test_add_team_presenter_remove_logo_clears_a_staged_image() -> None:
+    """Remove logo in the dialog drops the pending image pick."""
+    view = RecordingAddTeamView()
+    roster = _draft_pooled_roster()
+    presenter = AddTeamPresenter(view, roster)
+
+    presenter.on_pick_image(b"team-logo-png")
+    presenter.on_remove_logo()
+
+    assert view.logo == {"card": None, "image": None}
