@@ -38,11 +38,13 @@ __all__ = [
 ]
 
 # The documented zoom ladder: the same 90/100/110/120/130/140/150 rungs
-# the XRC zoom_choice and the mi_zoom_* menu carry (settings.xrc,
-# spec.md 13 / R-04). Only these are valid.
+# the View menu's mi_zoom_* radios carry (main.xrc, spec.md 13 / R-04;
+# W13 removed the settings dialog's zoom_choice, so the menu is the
+# ladder's single carrier). Only these are valid.
 ZOOM_LADDER: tuple[int, ...] = (90, 100, 110, 120, 130, 140, 150)
 
-# The menu default app.py's _check_default_menu_radios ticks.
+# The documented menu default; app.py ticks mi_zoom_100 at startup via
+# _check_loaded_zoom_radio (the loaded default when no file exists).
 DEFAULT_ZOOM_PERCENT = 100
 
 # The three ThemeMode spellings, as a tuple for membership tests.

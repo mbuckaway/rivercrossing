@@ -524,16 +524,17 @@ def _check_loaded_hide_times(menubar: Any, *, hide: bool) -> None:  # noqa: ANN4
 
 
 def _check_loaded_zoom_radio(menubar: Any, percent: int) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Tick the zoom radio for *percent* (E8.1.4, startup + mirror).
+    """Tick the zoom radio for *percent* (E8.1.4, startup).
 
     ``wxMenuBar.Check`` also unchecks the zoom group's other six
     members (measured, ``_handle_view_row``'s own note), so ticking the
     percent's radio alone restores the selection. Called at startup
     with the loaded percent (ticking 100 -- the default when no file
     exists -- is the documented ``mi_zoom_100`` default the XRC cannot
-    declare: ``<checked>`` is a no-op on ``wxITEM_RADIO``) and
-    whenever the settings dialog applies a new zoom (the mirror),
-    where the previously checked radio must be reverted too.
+    declare: ``<checked>`` is a no-op on ``wxITEM_RADIO``). W13 removed
+    the settings dialog's zoom choice (notes #12), so this is no longer
+    a Settings mirror call: zoom changes only through the View-menu
+    radios, which tick themselves.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -944,15 +945,14 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
     paths -- appearance through the live theme controller (W13: the
     Settings appearance radios are the single theme surface, so the
     mode is applied directly, with no View-menu radio to re-check),
-    sound through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
-    through the console presenter's ``on_hide_times`` (when a
-    presenter is threaded) with the View-menu check item synced
-    (``_check_loaded_hide_times``), and zoom through
-    :func:`~rivercrossing.ui.zoom.set_percent` when the choice changed
-    (E8.1.4), with the View-menu zoom radio synced
-    (``_check_loaded_zoom_radio``).
+    sound through :func:`~rivercrossing.ui.sound.set_muted`, and
+    hide-times through the console presenter's ``on_hide_times`` (when
+    a presenter is threaded) with the View-menu check item synced
+    (``_check_loaded_hide_times``). ``zoom_percent`` is carried through
+    untouched: W13 removed the dialog's zoom choice (notes #12), so
+    zoom applies only at startup from the persisted file and through
+    the View-menu radios (``_handle_view_row``).
     """
-    zoom_changed = settings.zoom_percent != context.settings.zoom_percent
     try:
         settings_store.save_settings(settings, context.settings_path)
     except OSError as exc:
@@ -967,13 +967,10 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
     if notice is not None:
         context.frame.SetStatusText(notice)
     _check_loaded_hide_times(context.frame.GetMenuBar(), hide=settings.hide_times)
-    _check_loaded_zoom_radio(context.frame.GetMenuBar(), settings.zoom_percent)
     sound.set_muted(muted=not settings.sound_on)
     presenter = context.presenter
     if presenter is not None:
         presenter.on_hide_times(hide=settings.hide_times)
-    if zoom_changed:
-        zoom.set_percent(settings.zoom_percent)
 
 
 def _save_layout_settings(
@@ -2340,9 +2337,10 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         # E8.1.4: every window opened later inherits the current zoom.
         # Applied BEFORE decoration so a view's value-setting runs last:
         # the recursive SetFont walk resets a wxChoice's selection to -1
-        # on this pin (measured in the VM: settings_dlg's zoom_choice),
-        # and the view's show_settings re-sets it. Base fonts come from
-        # the fresh XRC load, scaled once (never compounded).
+        # on this pin (measured in the VM on settings_dlg's zoom_choice
+        # before W13 removed that control), and the view's
+        # show_settings re-sets every value afterwards. Base fonts come
+        # from the fresh XRC load, scaled once (never compounded).
         zoom.apply_to(window)
         view = _decorate(context, window, route)
         _apply_dialog_defaults(window, route)
