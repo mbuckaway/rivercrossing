@@ -25,14 +25,14 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import FeedRow
 
 __all__ = [
-    "COLUMN_LABELS",
     "COL_CARD",
-    "COL_ENTRY",
     "COL_LAP",
     "COL_LAP_TIME",
+    "COL_NAME",
     "COL_PLATE",
     "COL_TIME",
     "COL_TOTAL",
+    "COLUMN_LABELS",
     "TIME_COLUMNS",
     "card_asset_key_or_none",
     "edited_row_indexes",
@@ -41,15 +41,16 @@ __all__ = [
 
 COL_TIME = 0
 COL_PLATE = 1
-COL_ENTRY = 2
-COL_LAP = 3
-COL_LAP_TIME = 4
-COL_TOTAL = 5
-COL_CARD = 6
+COL_NAME = 2  # the entry's display name (W9: header "Name", not "Entry")
+COL_CARD = 3
+COL_LAP = 4
+COL_LAP_TIME = 5
+COL_TOTAL = 6
 
-# xrc-windows.md section A's exact column order: "Time | Plate |
-# Entry | Lap | Lap time | Total | Card".
-COLUMN_LABELS: tuple[str, ...] = ("Time", "Plate", "Entry", "Lap", "Lap time", "Total", "Card")
+# W9 feed order -- Time | Plate | Name | Card | Lap | Lap time |
+# Total (the frozen canvas drawing still reads "Entry" and puts Card
+# last; W15's canvas amendment records this change in xrc-windows.md).
+COLUMN_LABELS: tuple[str, ...] = ("Time", "Plate", "Name", "Card", "Lap", "Lap time", "Total")
 
 # R-37: the two columns hide-times removes; the clock stays untouched.
 TIME_COLUMNS: tuple[int, ...] = (COL_LAP_TIME, COL_TOTAL)

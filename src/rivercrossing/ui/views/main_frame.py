@@ -87,14 +87,14 @@ __all__ = [
     "RidersListModel",
 ]
 
-_TEXT_ACCESSORS: tuple[Callable[[FeedRow], str], ...] = (
-    lambda row: row.time,
-    lambda row: row.plate,
-    lambda row: row.entry,
-    lambda row: str(row.lap),
-    lambda row: row.lap_time,
-    lambda row: row.total,
-)
+_TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
+    feed_model.COL_TIME: lambda row: row.time,
+    feed_model.COL_PLATE: lambda row: row.plate,
+    feed_model.COL_NAME: lambda row: row.entry,
+    feed_model.COL_LAP: lambda row: str(row.lap),
+    feed_model.COL_LAP_TIME: lambda row: row.lap_time,
+    feed_model.COL_TOTAL: lambda row: row.total,
+}
 
 # ui/ids.py is generated from the .xrc files (R-05); these three
 # names never appear there since XRC cannot author a wxInfoBar at
@@ -206,7 +206,6 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         if col == feed_model.COL_CARD:
             return self._card_bitmap(feed_row.card)
         return _TEXT_ACCESSORS[col](feed_row)
-
     def GetAttrByRow(self, row: int, col: int, attr: Any) -> bool:  # noqa: ANN401, ARG002
         """Bold the whole row when its crossing is flagged or edited.
 
