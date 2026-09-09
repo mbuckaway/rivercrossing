@@ -2617,6 +2617,27 @@ def _wire_flagged_open_seam(context: _RouteContext) -> None:
     console_view.set_on_open_flagged(lambda plate: _open_entry_detail_for(context, plate))
 
 
+def _wire_finished_banner_actions(context: _RouteContext) -> None:
+    """Wire the FINISHED banner's two buttons to the menu's flows.
+
+    W11 F3: the console's ``finished_infobar`` (shown by
+    :meth:`MainFrame.set_state` on FINISHED) carries a Reopen button
+    and a View results button; the view is passive, so this is the
+    app's half that points them at the same flows the menu rows run:
+    ``on_reopen`` fires the same ``_handle_reopen_ride_route``
+    ``mi_reopen_ride`` runs (confirm included), ``on_view_results``
+    opens the same results frame the ``mi_standings`` row opens. A
+    console-less route-level context has nothing to wire.
+    """
+    console_view = context.console_view
+    if console_view is None:
+        return
+    console_view.set_finished_actions(
+        on_reopen=lambda: _handle_reopen_ride_route(context),
+        on_view_results=lambda: _open_target(context, commands.route_for_id("mi_standings")),
+    )
+
+
 def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     """Run the quit-confirm dialog for the ride's current status.
 
@@ -3326,10 +3347,11 @@ def build_main_window(
 
     ux-polish adds one post-wiring step: the console Riders tab's
     double-click seam is wired to the rider editor
-    (:func:`_wire_rider_open_seam`); W11 F2a adds the flagged tab's
-    activation seam the same way
-    (:func:`_wire_flagged_open_seam` -> live entry detail at the
-    flagged plate). W3 retired every launch modal
+    (:func:`_wire_rider_open_seam`); W11 adds the flagged tab's
+    activation seam the same way (:func:`_wire_flagged_open_seam` ->
+    live entry detail at the flagged plate) and the FINISHED banner's
+    two buttons (:func:`_wire_finished_banner_actions` -> the reopen
+    and results flows). W3 retired every launch modal
     from this function -- ``resume_dlg``, the no-ride prompt and the
     R-44 self-test all ran here, before the frame was shown, where a
     modal that cannot be presented blocks the launch invisibly (the
@@ -3476,6 +3498,7 @@ def build_main_window(
     _bind_routes(context)
     _wire_rider_open_seam(context)
     _wire_flagged_open_seam(context)
+    _wire_finished_banner_actions(context)
     _bind_process_quit_paths(context)
     _bind_theme(context)
     # E7.2.1: the live menu-enablement binder (E1.4.2's missing half).

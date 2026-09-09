@@ -104,6 +104,20 @@ RESUME_INFOBAR = "resume_infobar"
 REOPENED_INFOBAR = "reopened_infobar"
 FINISHED_INFOBAR = "finished_infobar"
 
+# W11 F3: the FINISHED banner's two code-side buttons (xrc-windows.md
+# A: "result banner InfoBar (finished_infobar) with Reopen/Results
+# buttons"). They are wx.InfoBar AddButton children, so they never
+# appear in ui/ids.py either; the names are applied with SetName() so
+# tests (and assistive tech) can find them, the same InfoBar rule.
+FINISHED_REOPEN_BTN = "finished_reopen_btn"
+FINISHED_RESULTS_BTN = "finished_results_btn"
+
+# The FINISHED result banner's message (xrc-windows.md A's state
+# variant; the copy is W11's own, no text was frozen). Shown by
+# set_state on FINISHED alongside the two buttons above; dismissed on
+# every other state, so REOPENED's corrections banner takes over.
+FINISHED_BANNER = "Ride finished — results are ready."
+
 # The WS-D gauges' frozen names, applied with SetName() because XRC
 # cannot author a wx.Control subclass either -- the InfoBar rule
 # above extended to RaceClock and StopLight (main.xrc's header).
@@ -546,6 +560,11 @@ class MainFrame:
         self.resume_infobar = self._build_infobar(RESUME_INFOBAR)
         self.reopened_infobar = self._build_infobar(REOPENED_INFOBAR)
         self.finished_infobar = self._build_infobar(FINISHED_INFOBAR)
+        # W11 F3: the FINISHED banner's buttons (built once; the bar's
+        # own Show/Dismiss cycle shows or hides them with it).
+        self._add_finished_banner_buttons()
+        self._on_finished_reopen: Callable[[], None] | None = None
+        self._on_finished_view_results: Callable[[], None] | None = None
 
         self._hideable_columns = self._build_columns()
         self._crossings_model: CrossingsFeedModel | None = None
@@ -629,6 +648,42 @@ class MainFrame:
         self.frame.GetSizer().Insert(self._next_infobar_slot, bar, 0, wx.EXPAND)
         self._next_infobar_slot += 1
         return bar
+
+    def _add_finished_banner_buttons(self) -> None:
+        """Add the FINISHED banner's Reopen/Results buttons (W11 F3).
+
+        Measured on wxPython 4.3.1: ``wx.InfoBar.AddButton(id, label)``
+        creates a real ``wx.Button`` child; binding the click on that
+        child (not the bar) is what receives both the synthetic
+        harness click and a real one, and the click never auto-dismisses
+        the bar (the handler's state transition owns dismissal). The
+        buttons carry the frozen-style names the tests find them by.
+        """
+        reopen_id = wx.NewIdRef()
+        self.finished_infobar.AddButton(reopen_id, "Reopen…")
+        reopen_btn = self._finished_button(reopen_id)
+        reopen_btn.SetName(FINISHED_REOPEN_BTN)
+        reopen_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_finished_reopen_clicked())
+
+        results_id = wx.NewIdRef()
+        self.finished_infobar.AddButton(results_id, "View results…")
+        results_btn = self._finished_button(results_id)
+        results_btn.SetName(FINISHED_RESULTS_BTN)
+        results_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_finished_view_results_clicked())
+
+    def _finished_button(self, button_id: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
+        """Return the InfoBar child button that carries *button_id*.
+
+        Raises:
+            LookupError: If no child of ``finished_infobar`` carries
+                *button_id* -- a wx build where AddButton creates no
+                child would break every finished-banner action loudly
+                instead of silently doing nothing.
+        """
+        for child in self.finished_infobar.GetChildren():
+            if child.GetId() == button_id:
+                return child
+        raise LookupError(f"finished_infobar has no button with id {button_id}")
 
     # --------------------------------------------------------- gauges
 
@@ -736,6 +791,34 @@ class MainFrame:
         (WS-H).
         """
         self.focus_review_panel()
+
+    def set_finished_actions(
+        self,
+        *,
+        on_reopen: Callable[[], None] | None = None,
+        on_view_results: Callable[[], None] | None = None,
+    ) -> None:
+        """Register the FINISHED banner's two button flows (W11 F3).
+
+        The app wires these to its own flows: ``on_reopen`` is the
+        same ``_handle_reopen_ride_route`` ``mi_reopen_ride`` runs
+        (confirm included), ``on_view_results`` the same results
+        frame the ``mi_standings`` row opens. The console itself only
+        fires them when its banner buttons are clicked; a console the
+        app never wired (test constructions) leaves the buttons inert.
+        """
+        self._on_finished_reopen = on_reopen
+        self._on_finished_view_results = on_view_results
+
+    def _on_finished_reopen_clicked(self) -> None:
+        """Run the app's reopen flow from the FINISHED banner."""
+        if self._on_finished_reopen is not None:
+            self._on_finished_reopen()
+
+    def _on_finished_view_results_clicked(self) -> None:
+        """Open the results frame from the FINISHED banner."""
+        if self._on_finished_view_results is not None:
+            self._on_finished_view_results()
 
     def _on_rider_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Fire the open-rider seam with the activated row's plate."""
@@ -885,10 +968,14 @@ class MainFrame:
 
         The status label and record-crossing row enablement (A4:
         ``record_btn`` tracks ``plate_input``, both live only in
-        RUNNING), and the REOPENED corrections banner: REOPENED is a
+        RUNNING), and the two state banners: REOPENED is a
         corrections-only state (spec §3, R-36), so the console shows
         ``reopened_infobar`` to say entry is off and corrections are
-        on (E5.2.2), and dismisses it for every other status.
+        on (E5.2.2); FINISHED shows the result banner
+        (``finished_infobar`` with its Reopen/Results buttons, W11
+        F3). Each banner is dismissed for every other status, so a
+        FINISHED -> REOPENED transition swaps the result banner for
+        the corrections banner.
 
         This is the E7.2.1 menu-binder's "ride-state-change seam":
         every presenter state transition (start/stop/finish/reopen)
@@ -908,6 +995,14 @@ class MainFrame:
             self.reopened_infobar.ShowMessage(REOPENED_BANNER, wx.ICON_INFORMATION)
         else:
             self.reopened_infobar.Dismiss()
+        # W11 F3: FINISHED shows the result banner (Reopen/Results
+        # buttons, xrc-windows.md A); every other state dismisses it,
+        # so leaving FINISHED (REOPENED after a reopen) hands the
+        # console to the corrections banner above.
+        if status is RideStatus.FINISHED:
+            self.finished_infobar.ShowMessage(FINISHED_BANNER, wx.ICON_INFORMATION)
+        else:
+            self.finished_infobar.Dismiss()
         self._status = status
         self._apply_stop_arm_gate()
         self._notify_ride_changed()
