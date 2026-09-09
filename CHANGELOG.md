@@ -6,6 +6,8 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-09-09
+
 ### Added
 
 - **Native standard-dialog functions** — `ui.std_dialogs` (`show_info`, `show_warning`, `show_error`, `show_confirm`) render the app's alerts and confirms through native `wx.MessageDialog`s instead of bespoke XRC windows (W2).
