@@ -4,12 +4,14 @@
 Everything here runs without ``wx`` and without a display:
 ``ui/feed_model.py`` never imports it. The wx-facing half --
 ``CrossingsFeedModel``, a ``wx.dataview.DataViewIndexListModel``
-subclass that delegates to the two functions tested here -- lives in
+subclass that delegates to the pure functions tested here -- lives in
 ``views/main_frame.py`` and is proven by the real-toolkit suite,
 ``tests/functional/test_console_demo.py`` (``cards_imagelist``'s own
 split between ``tests/unit/`` and ``tests/functional/`` is the
 precedent this mirrors).
 """
+
+import re
 
 import pytest
 from hypothesis import given
@@ -30,6 +32,7 @@ from rivercrossing.ui.feed_model import (
     TIME_COLUMNS,
     card_asset_key_or_none,
     edited_row_indexes,
+    flash_crossing_label,
     flagged_row_indexes,
 )
 from rivercrossing.ui.presenters.data_source import FeedRow
@@ -251,3 +254,79 @@ def test_edited_row_indexes_given_arbitrary_edits_agrees_with_each_rows_own_bit(
 
     agrees = all((index in indexes) == rows[index].edited for index in range(len(rows)))
     assert agrees is True
+
+
+# --- flash_crossing_label (W9: dealt code glyphs + held suffix) -----
+
+
+def _flash_row(*, card: str = "9H", flagged: bool = False) -> FeedRow:
+    """Build the just-recorded crossing row ``flash_crossing`` shows."""
+    return FeedRow(
+        time="10:00:05",
+        plate="12",
+        entry="Rider 12",
+        lap=3,
+        lap_time="1:40",
+        total="0:05:00",
+        card=card,
+        flagged=flagged,
+    )
+
+
+@pytest.mark.parametrize(
+    ("card", "display"),
+    [
+        ("9H", "9♥"),
+        ("KS", "K♠"),
+        ("4D", "4♦"),
+        ("7C", "7♣"),
+        ("TD", "T♦"),
+        ("JK", "JK★"),
+    ],
+    ids=["hearts", "spades", "diamonds", "clubs", "ten_keeps_t", "joker_star"],
+)
+def test_flash_crossing_label_given_a_dealt_code_spells_its_suit_glyph(
+    card: str, display: str
+) -> None:
+    """W9 glyph polish: the flash reads ``dealt 9♥``, not ``dealt 9H``."""
+    label = flash_crossing_label(_flash_row(card=card))
+
+    assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt {display}"
+
+
+@pytest.mark.parametrize(
+    ("card", "display"),
+    [("9H", "9♥"), ("QH", "Q♥"), ("JK", "JK★")],
+    ids=["held_natural", "held_queen", "held_joker"],
+)
+def test_flash_crossing_label_given_a_flagged_row_appends_the_held_marker(
+    card: str, display: str
+) -> None:
+    """W9: a held crossing's flash names the card and says ``(held)``."""
+    label = flash_crossing_label(_flash_row(card=card, flagged=True))
+
+    assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt {display} (held)"
+
+
+def test_flash_crossing_label_given_an_unknown_suit_letter_raises_key_error() -> None:
+    """Fail loud on a corrupt code, like results_win.format_card."""
+    with pytest.raises(KeyError, match=re.escape("X")):
+        flash_crossing_label(_flash_row(card="9X"))
+
+
+@given(
+    st.text(alphabet="23456789TJQKA", min_size=1, max_size=1),
+    st.sampled_from("SHDC"),
+    st.booleans(),
+)
+def test_flash_crossing_label_given_any_natural_code_renders_the_matching_glyph(
+    rank: str, suit: str, flagged: bool
+) -> None:
+    """Property: rank+glyph pairing is exact for every natural card."""
+    glyphs = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
+
+    label = flash_crossing_label(_flash_row(card=f"{rank}{suit}", flagged=flagged))
+
+    suffix = " (held)" if flagged else ""
+    assert label.endswith(f"dealt {rank}{glyphs[suit]}{suffix}")
+    assert label.startswith("✓ ")
