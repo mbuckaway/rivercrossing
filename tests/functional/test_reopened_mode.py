@@ -52,9 +52,6 @@ from rivercrossing.ui.views.main_frame import REOPENED_INFOBAR
 
 pytestmark = pytest.mark.functional
 
-# Bound for the modal dismissers' event-driven re-arm (see _drive).
-_DISMISS_ATTEMPTS = 100
-
 # The seeded shoe this scenario is deterministic on: crossing #1 deals
 # 8C (plate 12), #2 deals TH (plate 34), #3 deals QD (plate 12) -- the
 # mini-acceptance provenance (test_mini_acceptance.py's module
@@ -121,31 +118,42 @@ def _build_ride_console(
     source = EngineDataSource(engine, roster)
 
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-    window.SetMenuBar(menubar)
-    console = MainFrame(window, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    console.focus_entry()
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+        window.SetMenuBar(menubar)
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        console.focus_entry()
 
-    context = app_module._RouteContext(
-        frame=window,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx.GetApp(),
-        theme_controller=theme.ThemeController(wx.GetApp()),
-        presenter=presenter,
-        console_view=console,
-        detail_plate="12",
-    )
-    app_module._bind_routes(context)
-    app_module._apply_menu_state(context, engine.state)
-    return window, console, presenter, engine, source
+        context = app_module._RouteContext(
+            frame=window,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx.GetApp(),
+            theme_controller=theme.ThemeController(wx.GetApp()),
+            presenter=presenter,
+            console_view=console,
+            detail_plate="12",
+        )
+        app_module._bind_routes(context)
+        app_module._apply_menu_state(context, engine.state)
+    except BaseException:
+        # Fault A (the E7.2.2 leak): the builder owns the window from
+        # the moment load_window_verified returns it. A raise after
+        # Show() -- MainFrame.__init__ failing a concrete _find -- must
+        # release the window before propagating, or the shown frame
+        # survives the session-end sweep (the builder runs before the
+        # test's try:).
+        harness.release_main_window(wx.GetApp(), window)
+        raise
+    else:
+        return window, console, presenter, engine, source
 
 
 def _menu_item_enabled(window: Any, item_id: str) -> bool:  # noqa: ANN401
@@ -273,33 +281,19 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
             consulted.append(True)
             return original_gate()
 
-        def _drive(attempts_left: int = _DISMISS_ATTEMPTS) -> None:
-            dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-            if dialog is None or not dialog.IsShown():
-                if attempts_left <= 0:
-                    # Never leave the modal open: a leaked dialog hangs
-                    # the close path past the pass budget (measured).
-                    fresh = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                    if fresh is not None and fresh.IsShown():
-                        fresh.EndModal(wx.ID_OK)
-                    return
-                # Narrow race: the callback can outrun the dialog's
-                # first show inside the modal loop; retry event-driven.
-                wx.CallLater(25, _drive, attempts_left - 1)
-                return
+        def _drive_and_capture(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             captured["title"] = dialog.GetTitle()
             ok_button = wx.Window.FindWindowById(wx.ID_OK, dialog)
             captured["ok_label"] = ok_button.GetLabel() if ok_button is not None else None
-            try:
-                harness.click(dialog, "wxID_OK")
-            except Exception:  # noqa: BLE001 -- probe failures re-arm
-                # Address-reuse poison (LookupError) or a dead C++
-                # object (RuntimeError) on the click's own find.
-                wx.CallLater(25, _drive, attempts_left - 1)
+            harness.click(dialog, "wxID_OK")
 
         console_module.FINISH_GATE = _recording_gate
         try:
-            wx.CallAfter(_drive)
+            harness.dismiss_modal(
+                ids.FINISH_CONFIRM_DLG,
+                dismiss_with=wx.ID_OK,
+                drive=_drive_and_capture,
+            )
             harness.fire_menu_event(window, ids.MI_FINISH_RIDE)
         finally:
             console_module.FINISH_GATE = original_gate

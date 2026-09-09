@@ -324,30 +324,36 @@ def live_context(
     engine.record_crossing("12", at=datetime(2026, 9, 20, 12, 1))  # noqa: DTZ001
     source = EngineDataSource(engine, roster)
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-    frame.SetMenuBar(menubar)
-    frame.Show()
-    harness.pump()
-    console = MainFrame(frame, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    context = app_module._RouteContext(
-        frame=frame,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx_app,
-        theme_controller=theme.ThemeController(wx_app),
-        presenter=presenter,
-        console_view=console,
-    )
-    # The menu-route tests fire real EVT_MENU events at this frame: bind
-    # the §15 routes (and apply the live binder) exactly like
-    # test_corrections' _build_live_context does, or the fired event has
-    # no handler and the route silently does nothing.
-    app_module._bind_routes(context)
-    app_module._apply_menu_state(context, engine.state)
+    try:
+        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+        frame.SetMenuBar(menubar)
+        frame.Show()
+        harness.pump()
+        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        context = app_module._RouteContext(
+            frame=frame,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx_app,
+            theme_controller=theme.ThemeController(wx_app),
+            presenter=presenter,
+            console_view=console,
+        )
+        # The menu-route tests fire real EVT_MENU events at this frame:
+        # bind the §15 routes (and apply the live binder) exactly like
+        # test_corrections' _build_live_context does, or the fired event
+        # has no handler and the route silently does nothing.
+        app_module._bind_routes(context)
+        app_module._apply_menu_state(context, engine.state)
+    except BaseException:
+        # Fault A (the E7.2.2 leak): a wire-up raise after Show() must
+        # not leak the shown frame the fixture's finally never runs for.
+        harness.release_main_window(wx_app, frame)
+        raise
     try:
         yield context, engine
     finally:

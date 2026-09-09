@@ -73,10 +73,6 @@ from rivercrossing.ui.views import MainFrame
 
 pytestmark = pytest.mark.functional
 
-# Bound for the modal dismissers' event-driven re-arm (see
-# _click_finish_cancel).
-_DISMISS_ATTEMPTS = 100
-
 # The shoe seed the whole race (and its standings) is deterministic on.
 MINI_ACCEPTANCE_SEED = 20260920
 
@@ -248,26 +244,33 @@ def _build_mini_console(
     source = EngineDataSource(engine, roster)
 
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    window.Show()
-    window.Layout()
-    harness.pump()
-    console = MainFrame(window, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    console.focus_entry()
+    try:
+        window.Show()
+        window.Layout()
+        harness.pump()
+        console = MainFrame(window, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        console.focus_entry()
 
-    context = app_module._RouteContext(
-        frame=window,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx.GetApp(),
-        theme_controller=theme.ThemeController(wx.GetApp()),
-        presenter=presenter,
-    )
-    app_module._bind_routes(context)
-    return window, console, presenter, engine, source, clock
+        context = app_module._RouteContext(
+            frame=window,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx.GetApp(),
+            theme_controller=theme.ThemeController(wx.GetApp()),
+            presenter=presenter,
+        )
+        app_module._bind_routes(context)
+    except BaseException:
+        # Fault A (the E7.2.2 leak): a wire-up raise after Show() must
+        # not leak the shown frame the caller's finally never sees.
+        harness.release_main_window(wx.GetApp(), window)
+        raise
+    else:
+        return window, console, presenter, engine, source, clock
 
 
 def _post_text_enter(control: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -448,25 +451,11 @@ def test_mini_acceptance_scripted_race_runs_through_the_real_console(  # noqa: P
 
         console_module.FINISH_GATE = _recording_gate
         try:
-
-            def _click_finish_ok(attempts_left: int = _DISMISS_ATTEMPTS) -> None:
-                dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                if dialog is None or not dialog.IsShown():
-                    if attempts_left <= 0:
-                        fresh = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                        if fresh is not None and fresh.IsShown():
-                            fresh.EndModal(wx.ID_OK)
-                        return
-                    wx.CallLater(25, _click_finish_ok, attempts_left - 1)
-                    return
-                try:
-                    harness.click(dialog, "wxID_OK")
-                except Exception:  # noqa: BLE001 -- probe failures re-arm
-                    # Address-reuse poison (LookupError) or a dead C++
-                    # object (RuntimeError) on the click's own find.
-                    wx.CallLater(25, _click_finish_ok, attempts_left - 1)
-
-            wx.CallAfter(_click_finish_ok)
+            harness.dismiss_modal(
+                ids.FINISH_CONFIRM_DLG,
+                dismiss_with=wx.ID_OK,
+                drive=lambda dialog: harness.click(dialog, "wxID_OK"),
+            )
             harness.fire_menu_event(window, "mi_finish_ride")
         finally:
             console_module.FINISH_GATE = original_gate
@@ -513,31 +502,11 @@ def test_mini_acceptance_finish_confirm_cancel_leaves_ride_running(xrc_resource:
 
         console_module.FINISH_GATE = _recording_gate
         try:
-
-            def _click_finish_cancel(attempts_left: int = _DISMISS_ATTEMPTS) -> None:
-                dialog = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                if dialog is None or not dialog.IsShown():
-                    if attempts_left <= 0:
-                        # Never leave the modal open: a leaked dialog
-                        # hangs the close path past the pass budget.
-                        fresh = wx.Window.FindWindowByName(ids.FINISH_CONFIRM_DLG)
-                        if fresh is not None and fresh.IsShown():
-                            fresh.EndModal(wx.ID_CANCEL)
-                        return
-                    # Narrow race: the callback can outrun the dialog's
-                    # first show inside the modal loop; retry instead
-                    # of raising inside CallAfter (wx swallows it and
-                    # the modal would hang past the pass budget).
-                    wx.CallLater(25, _click_finish_cancel, attempts_left - 1)
-                    return
-                try:
-                    harness.click(dialog, "wxID_CANCEL")
-                except Exception:  # noqa: BLE001 -- probe failures re-arm
-                    # Address-reuse poison (LookupError) or a dead C++
-                    # object (RuntimeError) on the click's own find.
-                    wx.CallLater(25, _click_finish_cancel, attempts_left - 1)
-
-            wx.CallAfter(_click_finish_cancel)
+            harness.dismiss_modal(
+                ids.FINISH_CONFIRM_DLG,
+                dismiss_with=wx.ID_CANCEL,
+                drive=lambda dialog: harness.click(dialog, "wxID_CANCEL"),
+            )
             harness.fire_menu_event(window, "mi_finish_ride")
         finally:
             console_module.FINISH_GATE = original_gate

@@ -330,40 +330,6 @@ def test_screenshot_given_an_unwritable_destination_raises_naming_it(
 # resource, and otherwise fails loud with the child inventory.)
 
 
-def _broken_results_frame() -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Build a results_frame missing its two deep checkbox controls.
-
-    Hand-built, not XRC-loaded-with-Destroy()ed-children: ``Destroy()``
-    is deferred, so a destroyed control still answers
-    ``FindWindowByName`` (measured -- ``harness.close_window``'s
-    docstring) and reading its name afterwards crashes the interpreter
-    (E1's reaped-object rule). Fault B's real symptom is a
-    *never-built* subtree -- an empty staticbox -- which is exactly
-    what this frame reproduces: the first-level children exist, the
-    two nested checkboxes never do. The caller owns the returned
-    frame and may destroy it safely.
-    """
-    import wx  # noqa: PLC0415 -- plain `import wx` is not a top-level import here
-
-    frame = wx.Frame(None, name=ids.RESULTS_FRAME)
-    for child_name in (
-        ids.TIEBREAK_LIST,
-        ids.REOPEN_BTN,
-        ids.STANDINGS_LIST,
-        ids.EXPORT_HTML_BTN,
-        ids.EXPORT_PDF_BTN,
-        ids.POSTER_BTN,
-        ids.EXPORT_CSV_BTN,
-    ):
-        wx.Window(frame, name=child_name)
-    # The empty staticbox the CI inventory showed as the unnamed
-    # ('-1') child -- present, holding none of the five checkboxes
-    # (results.xrc nests show_times_chk/time_board_chk two levels
-    # deep inside it).
-    wx.StaticBox(frame, label="")
-    return frame
-
-
 def test_load_window_returns_exactly_what_load_frame_constructed(
     xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
 ) -> None:
@@ -385,23 +351,35 @@ def test_load_window_returns_exactly_what_load_frame_constructed(
 
 
 def test_load_window_verified_retries_once_when_the_first_frame_misses_deep_controls(
-    xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
+    xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Fault B: a whole-subtree gap must not be returned silently.
 
     ``load_window_verified`` detects the gap against
     ``pages.WINDOWS``' control contract and rebuilds once from a
-    fresh private resource (``test_bundle_smoke.py``'s ``bundled_xrc``
-    isolation pattern). The first load is forced broken here so the
-    retry is exercised deterministically.
+    fresh private resource. The first load is forced degraded here --
+    its two deep checkboxes never resolve -- by patching
+    ``FindWindowByName`` (the same idiom the Fault-B gate tests use),
+    so the retry is exercised deterministically without pre-building a
+    real same-named frame (which the entry guard now refuses).
     """
-    broken = _broken_results_frame()
-    broken_resource = types.SimpleNamespace(
-        LoadFrame=lambda _parent, _name: broken,
-        LoadDialog=lambda _parent, _name: None,
-    )
+    real_find = harness.wx.Window.FindWindowByName
+    degraded_handles: list[Any] = []
 
-    window = harness.load_window_verified(broken_resource, ids.RESULTS_FRAME, frame=True)
+    def _find(name: str, parent: object = None) -> object:
+        if parent is not None and not degraded_handles:
+            degraded_handles.append(parent.GetHandle())
+        if parent is not None and parent.GetHandle() == degraded_handles[0]:
+            if name in (ids.SHOW_TIMES_CHK, ids.TIME_BOARD_CHK):
+                return None
+            return real_find(name, parent)
+        return real_find(name, parent)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(harness.wx.Window, "FindWindowByName", _find)
+        window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+
     try:
         deep = harness.find_control(window, ids.SHOW_TIMES_CHK)
         other = harness.find_control(window, ids.TIME_BOARD_CHK)
@@ -412,7 +390,7 @@ def test_load_window_verified_retries_once_when_the_first_frame_misses_deep_cont
 
 
 def test_load_window_verified_raises_with_the_child_inventory_when_the_retry_also_fails(
-    xrc_resource: object,  # noqa: ARG001 -- ordering only, see conftest
+    xrc_resource: object,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Fault B: a retry that is broken too fails loudly.
@@ -421,25 +399,24 @@ def test_load_window_verified_raises_with_the_child_inventory_when_the_retry_als
     incomplete frame, ``load_window_verified`` raises with the
     first-level-child inventory ``ui.views._support.find_control``
     already produces, and neither incomplete frame is left alive for
-    the session-end sweep.
+    the session-end sweep. Both loads are forced degraded here by
+    patching ``FindWindowByName`` so the deep checkboxes never
+    resolve (the entry guard precludes pre-building a real same-named
+    frame).
     """
+    real_find = harness.wx.Window.FindWindowByName
 
-    def _broken_resource() -> types.SimpleNamespace:
-        return types.SimpleNamespace(
-            LoadFrame=lambda _parent, _name: _broken_results_frame(),
-            LoadDialog=lambda _parent, _name: None,
-        )
+    def _find(name: str, parent: object = None) -> object:
+        if name in (ids.SHOW_TIMES_CHK, ids.TIME_BOARD_CHK):
+            return None
+        return real_find(name, parent)
 
-    monkeypatch.setattr(harness, "_fresh_resource", _broken_resource)
+    monkeypatch.setattr(harness.wx.Window, "FindWindowByName", _find)
 
     with pytest.raises(
         harness.ControlNotFoundError,
         match=re.escape("results_frame has no control named 'show_times_chk'"),
     ):
-        harness.load_window_verified(
-            _broken_resource(),
-            ids.RESULTS_FRAME,
-            frame=True,
-        )
+        harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
 
     assert harness.wx.Window.FindWindowByName(ids.RESULTS_FRAME) is None

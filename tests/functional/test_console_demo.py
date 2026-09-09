@@ -131,7 +131,12 @@ def empty_console(xrc_resource: object) -> MainFrame:
     zero crossings, so the feed is empty and the counters read
     zero/full-shoe.
     """
-    window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
+    # load_window, not load_window_verified: this second module-scoped
+    # console coexists with the shared_console fixture's same-named
+    # ``main_frame`` (set up earlier in the module), so the verified
+    # loader's entry guard would refuse the coexistence (Fault B /
+    # PR #45); access is reference-scoped, never name-based.
+    window = harness.load_window(xrc_resource, ids.MAIN_FRAME, frame=True)
     try:
         window.Show()
         window.Layout()

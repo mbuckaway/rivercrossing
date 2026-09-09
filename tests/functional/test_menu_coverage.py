@@ -224,18 +224,59 @@ def _fire_menu_event(frame: Any, item_id: str) -> None:  # noqa: ANN401 -- wx sh
     harness.fire_menu_event(frame, item_id)
 
 
-@pytest.fixture(scope="module")
+def _reap_main_frames() -> None:
+    """Close and reap every leaked ``main_frame`` top-level.
+
+    ``build_main_window``'s verify now type-checks each control and
+    rebuilds a degraded load from a fresh private resource, so the
+    earlier false-fast (a stale wrong-typed wrapper passing a name-only
+    check) is fixed at the source. A genuinely double-degraded load --
+    the process-global singleton AND the fresh rebuild both skip a
+    subtree -- still raises ``LookupError`` from
+    ``_load_frame_verified``; this reaps that leak so the retry starts
+    from a clean registry.
+    """
+    for window in list(wx.GetTopLevelWindows()):
+        if window.GetName() == ids.MAIN_FRAME:
+            harness.close_window(window)
+
+
+@pytest.fixture
 def app_frame(wx_app: object) -> Any:  # noqa: ANN401 -- ordering only, see docstring
-    """One store-less ``build_main_window`` frame the wired tests share.
+    """One store-less ``build_main_window`` frame per wired test.
 
     The bootstrap console is DRAFT over an empty roster (E5.4.2) --
     the state Start Ride's gate refuses and Review Held Cards focuses
     from -- and there is no store, which is what Back Up Database…'s
     guard notices. Firing the three events here never opens a modal
-    (both refuse/notice paths return), so one module-scoped instance
-    serves every test.
+    (both refuse/notice paths return).
+
+    Function-scoped (not module-scoped) deliberately:
+    ``frame_with_menubar`` and ``_build_live_console`` also load a
+    ``main_frame``, and ``load_window_verified``'s entry guard refuses
+    a same-named top-level already in ``wx.GetTopLevelWindows()``. A
+    module-scoped frame would stay alive across those other fixtures
+    and trip the guard on legitimate coexistence (Fault B / PR #45).
+
+    ``build_main_window`` type-checks its own verify and rebuilds a
+    degraded load once, so the wrong-typed-wrapper false-fast is fixed
+    at the source. The retry remains for a genuinely double-degraded
+    load: when the singleton AND the fresh rebuild both skip a subtree,
+    ``_load_frame_verified`` raises a ``LookupError`` and the whole
+    build is retried once (the same ``_build_live_console``
+    retry-and-reap pattern), with the leaked frame reaped first.
     """
-    frame = app_module.build_main_window(wx_app)
+    frame: Any = None
+    last_error: LookupError | None = None
+    for _attempt in range(_LIVE_CONSOLE_BUILD_ATTEMPTS):
+        try:
+            frame = app_module.build_main_window(wx_app)
+            break
+        except LookupError as exc:
+            last_error = exc
+            _reap_main_frames()
+    else:
+        raise last_error  # type: ignore[misc] -- the loop bound guarantees a set value
     try:
         yield frame
     finally:

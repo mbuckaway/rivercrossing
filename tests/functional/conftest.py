@@ -101,6 +101,7 @@ def _assert_no_surviving_windows(wx_app: Any) -> Any:  # noqa: ANN401
     survivors = wx.GetTopLevelWindows()
     assert not survivors, (
         f"functional session ended with {len(survivors)} top-level wx "
-        f"window(s) still alive: {[w.GetName() for w in survivors]!r} -- "
+        f"window(s) still alive: "
+        f"{[(w.GetName(), w.GetHandle()) for w in survivors]!r} -- "
         "a load+construct path leaked (Fault A); fix the leak, never waive it"
     )

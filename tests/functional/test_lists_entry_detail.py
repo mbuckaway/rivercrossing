@@ -167,7 +167,10 @@ def test_entry_detail_card_images_defaults_to_the_shared_support_cache(
 
 def test_entry_detail_given_an_unknown_plate_raises_naming_it(xrc_resource: object) -> None:
     """T-5: ``DemoDataSource.entry_detail``'s only ``raise``."""
-    window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
+    # load_window, not load_window_verified: this test's own dialog
+    # coexists with the module-scoped shared_entry_detail fixture's
+    # same-named window (Fault B / PR #45); access is reference-scoped.
+    window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -228,7 +231,10 @@ def test_entry_detail_show_entry_repaints_both_dataviews_after_associating_model
     ``show_entry`` associates two separate models (cards_list,
     laps_list) in one call -- both must repaint.
     """
-    window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
+    # load_window, not load_window_verified: this test's own dialog
+    # coexists with the module-scoped shared_entry_detail fixture's
+    # same-named window (Fault B / PR #45); access is reference-scoped.
+    window = harness.load_window(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
     try:
         window.Show()
         harness.pump()

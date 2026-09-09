@@ -39,10 +39,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.functional
 
-# Bound for the modal dismissers' event-driven re-arm (see
-# _confirm_duplicate).
-_DISMISS_ATTEMPTS = 100
-
 wx = harness.wx
 
 
@@ -226,32 +222,17 @@ def test_ride_library_duplicate_forwards_the_selected_ride(xrc_resource: object)
     window, _ = _library_for_rows(xrc_resource, [_draft_row()], on_duplicate=duplicated.append)
     found: dict[str, Any] = {}
 
-    def _confirm_duplicate(attempts_left: int = _DISMISS_ATTEMPTS) -> None:
-        dialog = wx.Window.FindWindowByName(ids.DUPLICATE_RIDE_DLG)
-        if dialog is None or not dialog.IsShown():
-            if attempts_left <= 0:
-                # Never leave the modal open: a leaked dialog hangs the
-                # close path past the pass budget (measured).
-                fresh = wx.Window.FindWindowByName(ids.DUPLICATE_RIDE_DLG)
-                if fresh is not None and fresh.IsShown():
-                    fresh.EndModal(wx.ID_OK)
-                return
-            # Narrow race: the callback can outrun the dialog's first
-            # show inside the modal loop; retry event-driven instead
-            # of recording the miss (the assert below fails loudly).
-            wx.CallLater(25, _confirm_duplicate, attempts_left - 1)
-            return
+    def _confirm_duplicate(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         found["dialog_shown"] = True
-        try:
-            harness.click(dialog, pages.WX_ID_OK)
-        except Exception:  # noqa: BLE001 -- probe failures re-arm
-            # Address-reuse poison (LookupError) or a dead C++ object
-            # (RuntimeError) on the click's own find.
-            wx.CallLater(25, _confirm_duplicate, attempts_left - 1)
+        harness.click(dialog, pages.WX_ID_OK)
 
     try:
         harness.select_row(window, ids.RIDES_LIST, 0)
-        wx.CallAfter(_confirm_duplicate)
+        harness.dismiss_modal(
+            ids.DUPLICATE_RIDE_DLG,
+            dismiss_with=wx.ID_OK,
+            drive=_confirm_duplicate,
+        )
         harness.click(window, ids.DUPLICATE_BTN)
     finally:
         harness.close_window(window)

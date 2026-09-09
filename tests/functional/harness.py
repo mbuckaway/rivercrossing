@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 import rivercrossing.ui as ui_package
 from rivercrossing.ui import require_wx
@@ -70,9 +70,11 @@ __all__ = [
     "ControlNotFoundError",
     "ScreenshotError",
     "WindowLoadError",
+    "WindowNameConflictError",
     "WindowStillResolvingError",
     "click",
     "close_window",
+    "dismiss_modal",
     "find_control",
     "fire_menu_event",
     "flush_deferred_deletions",
@@ -96,17 +98,29 @@ class WindowLoadError(LookupError):
     """Raised when an XRC resource name has no matching window."""
 
 
+class WindowNameConflictError(LookupError):
+    """A leaked top-level window already owns the requested frozen name.
+
+    Raised at the entry of :func:`load_window_verified` when
+    ``wx.GetTopLevelWindows()`` already contains a window whose name
+    matches the requested one: a leaked same-named window would shadow
+    every subsequent name-scoped assertion, so the load fails loudly
+    instead of proceeding. The message names the requested name and the
+    stale window's native handle.
+    """
+
+
 class ControlNotFoundError(LookupError):
     """A frozen control name did not resolve in its window."""
 
 
 class WindowStillResolvingError(LookupError):
-    """``close_window(strict=True)`` could not prove the window gone.
+    """``close_window(strict=True)`` could not prove the window reaped.
 
-    Raised when the closed window's name still resolves after the
-    close settle loop: either the same window unreaped past the
-    attempt bound, or a different, leaked window now answering the
-    name. The message names which case and the native handles.
+    Raised when the closed window's own native handle is still present
+    in ``wx.GetTopLevelWindows()`` after the close settle loop exhausts
+    :data:`_CLOSE_SETTLE_ATTEMPTS` -- its deferred destruction never
+    completed. The message names the closed window and its handle.
     """
 
 
@@ -386,7 +400,21 @@ def load_window_verified(resource: Any, name: str, *, frame: bool) -> Any:  # no
     degradation hides in. Healthy builds cost one extra name-walk and
     nothing else.
 
+    Entry-only guard: before the first load, a top-level window that
+    already owns *name* in ``wx.GetTopLevelWindows()`` raises
+    :class:`WindowNameConflictError`. ``FindWindowByName`` with
+    ``parent=None`` searches every top-level window in creation order,
+    so a leaked same-named window would shadow every later name-scoped
+    assertion in an order-dependent way -- a loud failure, never a
+    silent contaminant. The guard is entry-only by design: the rebuild
+    path's two same-named frames (degraded + fresh) coexist
+    deliberately, and the rebuild calls ``fresh.LoadFrame`` directly,
+    never re-entering this function.
+
     Raises:
+        WindowNameConflictError: If a top-level window already owns
+            *name* (a leaked same-named window); names the requested
+            name and the stale window's handle.
         WindowLoadError: If no window named *name* can be loaded.
         ControlNotFoundError: If both the first load and the fresh
             rebuild are incomplete; the message carries the rebuilt
@@ -397,6 +425,16 @@ def load_window_verified(resource: Any, name: str, *, frame: bool) -> Any:  # no
     :func:`recent_wx_log`, so a degraded build's "Creating %s failed"
     line is queryable even when the rebuild path runs.
     """
+    stale = next(
+        (w for w in wx.GetTopLevelWindows() if w.GetName() == name),
+        None,
+    )
+    if stale is not None:
+        raise WindowNameConflictError(
+            f"load_window_verified({name!r}): a top-level window already owns "
+            f"that name (stale handle {stale.GetHandle()!r}); a leaked same-named "
+            f"window would shadow the new load"
+        )
     with _wx_log_capture():
         window = load_window(resource, name, frame=frame)
         if _expected_controls_resolve(window, name):
@@ -455,38 +493,89 @@ def _expected_controls_for(name: str) -> tuple[str, ...]:
     return ()
 
 
+def _expected_control_class(name: str) -> type:
+    """Return the concrete wx class *name* must resolve to.
+
+    Falls back to ``wx.Window`` for every non-``main_frame`` control.
+    The single source of truth is ``MainFrame``'s own
+    ``REQUIRED_CONTROL_CLASSES`` (``src/rivercrossing/ui/views/
+    main_frame.py``): the name->concrete-class contract the ctor
+    demands and ``ui.app._load_frame_verified`` verifies. Imported here
+    (function scope), not at module scope, mirroring the ``pages``
+    cycle note below: this test-infrastructure module must not drag the
+    view layer in at import time, before ``require_wx`` has run.
+    ``pages.WINDOWS`` carries frozen *names* only -- no concrete
+    classes -- so every other window's spec'd controls return
+    ``wx.Window``: no code-side view class authors a concrete class
+    for them in ``pages``, so the generic
+    ``isinstance(control, wx.Window)`` check is the strongest available
+    contract for those.
+    """
+    from rivercrossing.ui.views.main_frame import (  # noqa: PLC0415 -- mirror the pages cycle note above
+        REQUIRED_CONTROL_CLASSES,
+    )
+
+    return REQUIRED_CONTROL_CLASSES.get(name, wx.Window)
+
+
+def _control_resolves(window: Any, control_name: str) -> bool:  # noqa: ANN401 -- wx ships no stubs
+    """Return whether *control_name* resolves to its concrete class.
+
+    *window* is the parent scope. Mirrors the settle idiom
+    ``ui.views._support.find_control`` uses
+    for the identical wx/SIP wrapper-cache hazard: a lookup can answer
+    a stale wrapper whose Python type is wrong for the live control
+    (the address-reuse signature), and the remedy is reference hygiene
+    -- ``del control; gc.collect()`` evicts the stale wrapper's SIP
+    pointer->wrapper entry -- then re-query, bounded. Unlike
+    :func:`find_control`'s settle, this does NOT ``SafeYield``:
+    yielding during verification is exactly the event processing the
+    Fault-B degradation hides in (``load_window_verified``'s own
+    docstring). A wrong-typed wrapper that persists past the bound
+    fails the walk, sending ``load_window_verified`` down the
+    fresh-rebuild path.
+    """
+    expected = _expected_control_class(control_name)
+    control = wx.Window.FindWindowByName(control_name, window)
+    attempts = 0
+    while not isinstance(control, expected) and attempts < _FIND_SETTLE_ATTEMPTS:
+        del control
+        gc.collect()
+        control = wx.Window.FindWindowByName(control_name, window)
+        attempts += 1
+    return isinstance(control, expected)
+
+
 def _expected_controls_resolve(window: Any, name: str) -> bool:  # noqa: ANN401 -- wx ships no stubs
     """Return whether every spec'd control of *name* resolves in it.
 
-    The check is the same ``isinstance(control, wx.Window)`` type
-    check :func:`find_control`'s settle uses, not a bare name
-    lookup: under the wx/SIP wrapper-cache corruption
-    ``ui.views._support.find_control``'s docstring documents,
-    ``FindWindowByName`` can answer a stale wrapper whose Python
-    class is not ``wx.Window`` for a name that otherwise resolves --
-    the SIP address-reuse signature, where the wrapper's own class is
-    wrong while name-based queries still report the name. A name-only
-    check green-lights such a degraded load, the false-fast pass this
-    gate exists to refuse; the ``isinstance`` check fails it and
-    sends :func:`load_window_verified` down the fresh-rebuild path.
+    Each spec'd control is checked against its CONCRETE expected class
+    (``MainFrame.__init__``'s demands) rather than the generic
+    ``isinstance(control, wx.Window)``: a stale wrapper whose Python
+    class is a *different* ``wx.Window`` subclass passes the generic
+    check yet fails the ctor's ``_find(name, ConcreteClass)`` after
+    ``Show()`` -- the wrong-typed-wrapper leak (E7.2.2) this gate
+    closes. A transiently-stale lookup retries (``del control;
+    gc.collect()``, bounded); a wrong-typed wrapper that persists
+    fails the walk and sends :func:`load_window_verified` down the
+    fresh-rebuild path.
     """
     return all(
-        isinstance(wx.Window.FindWindowByName(control_name, window), wx.Window)
-        for control_name in _expected_controls_for(name)
+        _control_resolves(window, control_name) for control_name in _expected_controls_for(name)
     )
 
 
 def _first_missing_control(window: Any, name: str) -> str:  # noqa: ANN401 -- wx ships no stubs
     """Return *name*'s first spec'd control missing from *window*.
 
-    "Missing" applies the same ``isinstance`` test
-    :func:`_expected_controls_resolve` uses, so a stale non-
-    ``wx.Window`` wrapper is reported as the missing control -- the
-    name the error message needs -- rather than falling through to
-    the empty string when every name resolves but one is stale.
+    "Missing" applies the same concrete-class test
+    :func:`_expected_controls_resolve` uses, so a stale wrong-typed
+    wrapper is reported as the missing control -- the name the error
+    message needs -- rather than falling through to the empty string
+    when every name resolves but one is stale.
     """
     for control_name in _expected_controls_for(name):
-        if not isinstance(wx.Window.FindWindowByName(control_name, window), wx.Window):
+        if not _control_resolves(window, control_name):
             return control_name
     return ""
 
@@ -758,6 +847,101 @@ def run_modal(dialog: Any, *, dismiss_with: int) -> int:  # noqa: ANN401
     return dialog.ShowModal()
 
 
+# Bound for dismiss_modal's event-driven re-arm (the per-file modal
+# dismissers this helper consolidates all used 100 attempts).
+_DISMISS_ATTEMPTS = 100
+_DISMISS_WAIT_MS = 25
+
+
+def dismiss_modal(  # noqa: PLR0913 -- name/id/drive are the shape; attempts/wait_ms are the re-arm knobs
+    dialog_name: str,
+    *,
+    dismiss_with: int,
+    drive: Callable[[Any], None] | None = None,
+    attempts: int = _DISMISS_ATTEMPTS,
+    wait_ms: int = _DISMISS_WAIT_MS,
+) -> None:
+    """Schedule an event-driven dismissal of the modal *dialog_name*.
+
+    The hardened form of :func:`run_modal` for a dialog that does not
+    exist yet when the dismissal is armed: the caller schedules this
+    right before firing a route whose handler opens the modal, and the
+    dismissal then runs inside that modal's own event loop.
+
+    Three failures the per-file copies each handled by hand, unified
+    here (measured throughout, e.g. PR #8's runs and the 2026-09-07 /
+    2026-09-08 flakes):
+
+    * **Not yet shown.** A one-shot ``wx.CallAfter`` can be dispatched
+      mid-decoration, before ``ShowModal`` shows the dialog. Re-arm on
+      a timer so the synchronous decoration can unwind between attempts;
+      a same-drain ``CallAfter`` re-queue would spin instead.
+    * **A probe that raises.** ``harness.click``'s own find can trip the
+      address-reuse poison (a stale wrapper raising ``LookupError``) or
+      hit a dead C++ object (``RuntimeError``). The exception is caught
+      here and re-armed -- an exception that escapes a ``CallAfter``
+      callback is swallowed at the loop boundary
+      (``wxApp::OnExceptionInMainLoop``), which would skip the
+      dismissal and hang ``ShowModal`` with no user present.
+    * **The leak-guard.** Once *attempts* exhausts, fire a final
+      ``EndModal`` on a freshly re-found, still-shown dialog so the
+      modal never stays open past the bound -- a leaked dialog hangs the
+      caller's close path.
+
+    Args:
+        dialog_name: The frozen XRC name of the modal to dismiss.
+        dismiss_with: The id ``EndModal`` is called with -- both for a
+            default dismissal (when *drive* is ``None``) and for the
+            leak-guard at the attempts bound.
+        drive: Optional probe run once the dialog is shown. It should
+            end the modal (typically ``harness.click`` on an OK/Cancel/
+            Close button); a probe that raises is retried. ``None``
+            ends the modal directly with *dismiss_with*.
+        attempts: Bound on re-arms before the leak-guard fires.
+        wait_ms: Delay between re-arm attempts, in milliseconds.
+
+    Returns:
+        ``None`` -- the dismissal runs inside the modal loop; the caller
+        then blocks in ``ShowModal`` (or the route that opens the modal)
+        and observes its return value.
+    """
+
+    def _dismiss(attempts_left: int) -> None:
+        dialog = wx.Window.FindWindowByName(dialog_name)
+        if dialog is None or not dialog.IsShown():
+            if attempts_left <= 0:
+                _end_modal_leak_guard(dialog_name, dismiss_with)
+                return
+            wx.CallLater(wait_ms, _dismiss, attempts_left - 1)
+            return
+        try:
+            if drive is None:
+                dialog.EndModal(dismiss_with)
+            else:
+                drive(dialog)
+        except Exception:  # noqa: BLE001 -- probe failures re-arm
+            if attempts_left <= 0:
+                _end_modal_leak_guard(dialog_name, dismiss_with)
+                return
+            wx.CallLater(wait_ms, _dismiss, attempts_left - 1)
+
+    wx.CallAfter(_dismiss, attempts)
+
+
+def _end_modal_leak_guard(dialog_name: str, dismiss_with: int) -> None:
+    """Fire the leak-guard ``EndModal`` on a freshly re-found dialog.
+
+    Re-finds by name rather than touching the wrapper the probe last
+    saw: ``EndModal`` on a destroyed wrapper is undefined behaviour (a
+    segfault, measured -- :func:`close_window`'s own warning), so the
+    guard must resolve a live wrapper. Checks ``IsShown()`` first so a
+    never-shown or already-gone dialog is left alone.
+    """
+    fresh = wx.Window.FindWindowByName(dialog_name)
+    if fresh is not None and fresh.IsShown():
+        fresh.EndModal(dismiss_with)
+
+
 def screenshot(window: Any, destination: Path) -> Path:  # noqa: ANN401
     """Save a PNG of *window*'s client area to *destination*.
 
@@ -785,58 +969,76 @@ def screenshot(window: Any, destination: Path) -> Path:  # noqa: ANN401
 _CLOSE_SETTLE_ATTEMPTS = 100
 
 
+def _closed_window_still_registered(handle: Any, name: str) -> bool:  # noqa: ANN401
+    """Return whether the closed window is still an unreaped top-level.
+
+    The reap signal is the native handle leaving
+    ``wx.GetTopLevelWindows()``: a ``Destroy()``d *top-level* window
+    stays in that registry -- appended to ``wxPendingDelete``, still
+    findable by name -- until its destructor runs during idle
+    processing, which is what actually removes it. Comparing handles
+    (not names, not wrapper identity) is the only sound signal: on
+    macOS ``IsBeingDeleted()`` stays ``False`` until the destructor
+    runs, and a same-named sibling would otherwise be mistaken for the
+    closed window.
+
+    When *handle* is falsy (a never-created window whose ``GetHandle()``
+    returned 0/``None`` before destruction) there is no handle to
+    compare, so the settle falls back to the name-based signal -- the
+    window is reaped when ``FindWindowByName(name)`` answers ``None``.
+    Acceptable only for that null-handle edge case.
+    """
+    if not handle:
+        return wx.Window.FindWindowByName(name) is not None
+    return any(w.GetHandle() == handle for w in wx.GetTopLevelWindows())
+
+
 def close_window(window: Any, *, strict: bool = False) -> bool:  # noqa: ANN401
-    """Close and destroy *window*, then wait for it to actually reap.
+    """Close and destroy *window*, then wait for its handle to reap.
 
     A dialog's default ``Close()`` only ``Hide()``s it -- unlike a
     frame, whose default handler destroys it outright (measured) --
     so both cases are covered by checking ``IsBeingDeleted()`` before
     an explicit ``Destroy()``.
 
-    Measured (hosted macOS CI, near-every run at this suite's full
-    761-test size on a 3-core runner -- the 4-CPU Tart VM this
-    project's own local runs use stays green): a single pump right
+    The reap signal is the native handle leaving
+    ``wx.GetTopLevelWindows()``. A ``Destroy()``d *top-level* window
+    is deferred: it stays in that registry -- still findable by name,
+    ``IsBeingDeleted()`` still ``False`` on macOS -- until its
+    destructor runs during idle processing, which is what actually
+    removes it. Measured (hosted macOS CI, near-every run at this
+    suite's full 761-test size on a 3-core runner -- the 4-CPU Tart VM
+    this project's own local runs use stays green): a single pump right
     after ``Destroy()`` is not always enough idle time under load for
-    the deferred deletion to actually complete, so a later
-    ``FindWindowByName`` for the same name can still resolve the
-    about-to-be-destroyed window -- the identical address-reuse risk
-    ``ui.views._support.find_control``'s own ``FIND_SETTLE_ATTEMPTS``
-    retry documents, applied here to closing instead of looking up.
-
-    An earlier revision of this loop exited on
-    ``wx.Window.FindWindowByName(name) is window`` -- a Python
-    *wrapper* identity check -- and that turned out to be the
-    early-exit hole: PR #8's CI (runs 31390187217/31390190295) still
-    found a residual control after that loop returned. ``GetHandle()``
-    is compared instead: it reports the *native* handle the live C++
-    object itself owns, not something the Python binding's own
-    wrapper cache can misreport under the address-reuse churn
-    ``find_control``'s docstring already documents. No new window is
-    constructed while this loop runs, so *found*'s handle can only
-    stay equal to *handle* (``window``'s own C++ object, deletion
-    still pending) or genuinely differ (some other, already-existing
-    window now answering the same name) -- handle reuse cannot happen
-    inside the loop itself. The loop now calls
+    the deferred deletion to complete, so the settle loop drives
     :func:`flush_deferred_deletions` -- proven to drain a hosted
-    runner's idle queue, superseding the bare ``wx.SafeYield()`` this
-    used before -- bounded by :data:`_CLOSE_SETTLE_ATTEMPTS`, never a
-    sleep, until *found* is ``None`` or its handle no longer matches
-    *handle* (both captured before ``Close``/``Destroy``). If *handle*
-    itself came back falsy before destruction, the handle comparison
-    is skipped and only ``found is None`` decides the exit. By
-    default it always returns rather than hang, even if still
-    unreaped when the bound is exhausted; with *strict* set, the two
-    unresolved exits below raise :class:`WindowStillResolvingError`
-    instead (see Raises), so a caller that must KNOW the name is free
-    again gets a failure, not a silent return.
+    runner's idle queue -- bounded by :data:`_CLOSE_SETTLE_ATTEMPTS`,
+    never a sleep, until the captured *handle* is no longer present.
+
+    An earlier revision of this loop resolved the window by name
+    (``wx.Window.FindWindowByName(name)``) and broke when the resolved
+    handle no longer matched -- treating "a different, same-named
+    window answers the name" as the reap and leaving the closed
+    window's own reap unconfirmed (PR #45's defect). Same-named
+    top-levels are real in this suite (``plate_input`` exists in four
+    windows), so a stranger answering the name must not count as
+    success. Keying on the handle makes a same-named sibling harmless:
+    the loop exits only when *handle* itself is gone. The registry is
+    enumerated fresh each iteration and only those live wrappers'
+    ``GetHandle()`` is called; *window* is never touched again after
+    ``Destroy()``.
+
+    No new window is constructed while this loop runs, so no other
+    window can acquire *handle* mid-settle -- strict mode's attribution
+    (below) depends on that invariant.
 
     The caller must not touch *window* again after this returns: once
     its deletion completes, the underlying C++ object is gone, and any
     further method call on it -- even a harmless-looking query --
     segfaults the interpreter (measured). *name* and *handle* are
     captured before ``Destroy()`` runs and neither reads from *window*
-    again afterwards; every later query in the loop is against
-    *found*, a freshly resolved, live wrapper.
+    again afterwards; every later query in the loop is against freshly
+    enumerated registry wrappers.
 
     Returns:
         ``Close()``'s return value. ``False`` would mean a bound
@@ -863,49 +1065,47 @@ def close_window(window: Any, *, strict: bool = False) -> bool:  # noqa: ANN401
 
     Raises:
         WindowStillResolvingError: Only when *strict* is set. Raised
-            in either unresolved exit, after the settle loop: the
-            closed window's name still resolves to itself past
-            :data:`_CLOSE_SETTLE_ATTEMPTS` (the deletion never
-            reaped), or it resolves to a different window (a leaked
-            same-named window answers the name). The message names
-            the case and both native handles.
+            after the settle loop exhausts
+            :data:`_CLOSE_SETTLE_ATTEMPTS` with the closed window's own
+            handle still present in ``wx.GetTopLevelWindows()`` -- its
+            deferred deletion never reaped. The message names the
+            closed window and its handle.
     """
     name = window.GetName()
     handle = window.GetHandle()
     closed = window.Close()
-    if not window.IsBeingDeleted():
+    was_deleting = window.IsBeingDeleted()
+    if not was_deleting:
         window.Destroy()
     attempts = 0
-    found = wx.Window.FindWindowByName(name)
     while attempts < _CLOSE_SETTLE_ATTEMPTS:
-        if found is None or (handle and found.GetHandle() != handle):
+        if not _closed_window_still_registered(handle, name):
             break
         flush_deferred_deletions()
-        found = wx.Window.FindWindowByName(name)
         attempts += 1
-    if os.environ.get("RIVERCROSSING_CLOSE_DEBUG") and found is not None:
+    still_registered = _closed_window_still_registered(handle, name)
+    if os.environ.get("RIVERCROSSING_CLOSE_DEBUG") and still_registered:
+        survivors = [w.GetHandle() for w in wx.GetTopLevelWindows()]
         print(  # noqa: T201 -- env-gated diagnostic, off by default
-            f"CLOSE-DEBUG: {name!r} still resolves after {attempts} attempts "
-            f"(closed={closed}, was_deleting={window.IsBeingDeleted()}, "
-            f"handle={handle!r}, found_handle={found.GetHandle()!r})",
+            f"CLOSE-DEBUG: {name!r} still registered after {attempts} attempts "
+            f"(closed={closed}, was_deleting={was_deleting}, handle={handle!r}, "
+            f"top_level_handles={survivors!r})",
             file=sys.stderr,
             flush=True,
         )
-    if strict and found is not None:
-        # Decided here, before pump(): *found* is a fresh post-flush
-        # wrapper and still safe to query; after pump() its deletion
-        # may have completed and any further method call segfaults.
-        if handle and found.GetHandle() != handle:
+    if strict and still_registered:
+        if not handle:
+            # Falsy handle: never-created window; the name is the only
+            # signal, so the message names it rather than a handle.
             raise WindowStillResolvingError(
-                f"close_window(strict=True): {name!r} now resolves to a "
-                f"different window (closed handle {handle!r}, found handle "
-                f"{found.GetHandle()!r}) -- a leaked same-named window "
-                f"answers the name"
+                f"close_window(strict=True): {name!r} still resolves after "
+                f"{_CLOSE_SETTLE_ATTEMPTS} settle attempts -- the closed "
+                f"window's name never stopped resolving"
             )
         raise WindowStillResolvingError(
-            f"close_window(strict=True): {name!r} still resolves after "
-            f"{_CLOSE_SETTLE_ATTEMPTS} settle attempts -- the closed "
-            f"window's deletion never reaped (handle {handle!r})"
+            f"close_window(strict=True): {name!r} still registered after "
+            f"{_CLOSE_SETTLE_ATTEMPTS} settle attempts -- the closed window's "
+            f"native handle {handle!r} never left wx.GetTopLevelWindows()"
         )
     pump()
     if closed:
@@ -933,7 +1133,7 @@ def release_main_window(app: Any, frame: Any) -> None:  # noqa: ANN401 -- wx shi
        destroy *frame* immediately instead -- the same forced-close
        mechanism :func:`_handle_exit_route` relies on.
     2. Calls :func:`close_window` to destroy *frame* and wait for its
-       name to stop resolving.
+       native handle to leave ``wx.GetTopLevelWindows()``.
     3. If ``app.main_frame is frame``, clears it to ``None``.
        ``app.py``'s ``_bind_process_quit_paths`` hands the app the
        frame reference ``RiverCrossingApp.MacReopenApp`` restores;
@@ -969,6 +1169,7 @@ def release_main_window(app: Any, frame: Any) -> None:  # noqa: ANN401 -- wx shi
     confirm dialog (the subprocess exemplar is safe only because its
     app dies with the process).
     """
+    name = frame.GetName()
     previous = getattr(app, "really_quitting", False)
     app.really_quitting = True
     close_window(frame)
@@ -979,6 +1180,22 @@ def release_main_window(app: Any, frame: Any) -> None:  # noqa: ANN401 -- wx shi
         app.main_frame = None
     app.Unbind(wx.EVT_QUERY_END_SESSION)
     app.really_quitting = previous
+    # Reap any same-named pending-delete leftover (Fault B / PR #45):
+    # app._load_frame_verified's rebuild path destroys the degraded
+    # frame with a plain Destroy() and no reap, so in a no-MainLoop
+    # test process that pending-delete frame lingers in the registry
+    # under the frame's name and poisons the next load_window_verified
+    # entry guard. close_window reaps by native handle -- the frame's
+    # own -- so a same-named sibling pending-delete is left behind;
+    # drive the flush until the name is gone. A genuinely-live leaked
+    # frame is not pending-delete, so this bounded best-effort loop
+    # leaves it for the session-end sweep to catch.
+    attempts = 0
+    while attempts < _CLOSE_SETTLE_ATTEMPTS:
+        if not any(w.GetName() == name for w in wx.GetTopLevelWindows()):
+            break
+        flush_deferred_deletions()
+        attempts += 1
 
 
 _MENU_EVENT_SETTLE_ATTEMPTS = 10

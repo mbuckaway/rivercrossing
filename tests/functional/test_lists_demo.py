@@ -134,7 +134,12 @@ def test_ride_library_given_a_different_source_shows_its_rows_not_the_demo(
                 )
             ]
 
-    window = harness.load_window_verified(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    # load_window, not load_window_verified: this test's own dialog
+    # coexists with the module-scoped shared_library fixture's
+    # same-named window, so the verified loader's entry guard would
+    # refuse the coexistence (Fault B / PR #45); access is
+    # reference-scoped, never name-based.
+    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -198,7 +203,10 @@ def test_rider_editor_team_column_is_hidden_for_a_solo_only_roster(
     roster.create_solo_entry(first_name="Solo", last_name="One", plate="1")
     roster.create_solo_entry(first_name="Solo", last_name="Two", plate="2")
 
-    window = harness.load_window_verified(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
+    # load_window, not load_window_verified: this test's own editor
+    # coexists with the module-scoped shared_rider_editor fixture's
+    # same-named window (Fault B / PR #45); access is reference-scoped.
+    window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -251,7 +259,10 @@ def test_ride_library_show_rides_repaints_the_list_after_associating_its_model(
     xrc_resource: object,
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
-    window = harness.load_window_verified(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
+    # load_window, not load_window_verified: this test's own dialog
+    # coexists with the module-scoped shared_library fixture's
+    # same-named window (Fault B / PR #45); access is reference-scoped.
+    window = harness.load_window(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
     try:
         window.Show()
         harness.pump()
@@ -272,7 +283,10 @@ def test_rider_editor_show_riders_repaints_the_list_after_associating_its_model(
     xrc_resource: object,
 ) -> None:
     """Unverified remedy; see ``associate_model``'s docstring."""
-    window = harness.load_window_verified(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
+    # load_window, not load_window_verified: this test's own editor
+    # coexists with the module-scoped shared_rider_editor fixture's
+    # same-named window (Fault B / PR #45); access is reference-scoped.
+    window = harness.load_window(xrc_resource, ids.RIDER_EDITOR_DLG, frame=False)
     try:
         window.Show()
         harness.pump()

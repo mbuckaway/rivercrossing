@@ -104,17 +104,24 @@ def _live_entry_detail(
     """Build a live entry detail for *plate* over a real engine."""
     engine, source = _build_engine(roster=roster)
     window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
-    window.Show()
-    harness.pump()
-    view = EntryDetailDialog(
-        window,
-        plate,
-        data_source=source,
-        engine=engine,
-        roster=roster,
-        resource=xrc_resource,
-    )
-    return view, engine
+    try:
+        window.Show()
+        harness.pump()
+        view = EntryDetailDialog(
+            window,
+            plate,
+            data_source=source,
+            engine=engine,
+            roster=roster,
+            resource=xrc_resource,
+        )
+    except BaseException:
+        # Fault A (the E7.2.2 leak shape, dialog variant): a view ctor
+        # raise after Show() must not leak the shown dialog.
+        harness.close_window(window)
+        raise
+    else:
+        return view, engine
 
 
 # ---------------------------- the six action buttons resolve
@@ -171,27 +178,34 @@ def live_context(xrc_resource: object, wx_app: object) -> Iterator[tuple[Any, Ri
     roster.create_solo_entry(first_name="Rider", last_name="34", plate="34")
     engine, source = _build_engine(roster=roster)
     frame = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
-    menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
-    frame.SetMenuBar(menubar)
-    frame.Show()
-    harness.pump()
-    console = MainFrame(frame, data_source=source, resource=xrc_resource)
-    presenter = ConsolePresenter(console, engine=engine, source=source)
-    console.wire_entry(presenter.on_plate_entered)
-    console.wire_console(presenter)
-    console.set_state(source.ride_status())
-    context = app_module._RouteContext(
-        frame=frame,
-        resource=xrc_resource,
-        roster=roster,
-        app=wx_app,
-        theme_controller=theme.ThemeController(wx_app),
-        presenter=presenter,
-        console_view=console,
-    )
-    app_module._bind_routes(context)
-    # the seam the bootstrap wires; a state change re-applies the binder
-    console.set_on_ride_changed(lambda status: app_module._apply_menu_state(context, status))
+    try:
+        menubar = harness.load_menubar(xrc_resource, ids.MAIN_MENUBAR)
+        frame.SetMenuBar(menubar)
+        frame.Show()
+        harness.pump()
+        console = MainFrame(frame, data_source=source, resource=xrc_resource)
+        presenter = ConsolePresenter(console, engine=engine, source=source)
+        console.wire_entry(presenter.on_plate_entered)
+        console.wire_console(presenter)
+        console.set_state(source.ride_status())
+        context = app_module._RouteContext(
+            frame=frame,
+            resource=xrc_resource,
+            roster=roster,
+            app=wx_app,
+            theme_controller=theme.ThemeController(wx_app),
+            presenter=presenter,
+            console_view=console,
+        )
+        app_module._bind_routes(context)
+        # the seam the bootstrap wires; a state change re-applies the
+        # binder
+        console.set_on_ride_changed(lambda status: app_module._apply_menu_state(context, status))
+    except BaseException:
+        # Fault A (the E7.2.2 leak): a wire-up raise after Show() must
+        # not leak the shown frame the fixture's finally never runs for.
+        harness.release_main_window(wx_app, frame)
+        raise
     try:
         yield context, engine
     finally:
