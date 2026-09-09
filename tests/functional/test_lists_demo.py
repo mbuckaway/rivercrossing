@@ -221,10 +221,17 @@ def test_rider_editor_team_column_is_hidden_for_a_solo_only_roster(
 def test_rider_editor_applies_the_canvas_minimum_size(
     shared_rider_editor: RiderEditor,
 ) -> None:
-    """W7 rework: the canvas redraws this dialog at 1280x560."""
+    """W7 rework: the 1280x560 floor is applied in both dimensions.
+
+    Width lands exactly on the canvas redraw (the dialog's content
+    fits at that width); height is at least the floor -- Fit() can
+    only grow a dialog past its minimum, never below it, and the
+    sibling fit pin below caps the top end.
+    """
     size = shared_rider_editor.dialog.GetSize()
 
-    assert (size.width, size.height) == rider_editor.MIN_SIZE
+    assert size.width == rider_editor.MIN_SIZE[0]
+    assert size.height >= rider_editor.MIN_SIZE[1]
 
 
 def test_rider_editor_fits_within_1366x768(shared_rider_editor: RiderEditor) -> None:
