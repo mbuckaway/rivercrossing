@@ -203,6 +203,9 @@ class FakeRidersView:
     def set_save_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
 
+    def set_plate_enabled(self, *, enabled: bool) -> None:
+        """No-op fake."""
+
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """No-op fake."""
 

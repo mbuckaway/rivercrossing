@@ -83,6 +83,10 @@ class RecordingRidersView:
         """Record save_btn's enabled state (W7 dirty gating)."""
         self.calls.append(("set_save_enabled", (enabled,)))
 
+    def set_plate_enabled(self, *, enabled: bool) -> None:
+        """Record plate_input's enabled state (W7 plate lock)."""
+        self.calls.append(("set_plate_enabled", (enabled,)))
+
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """Record the rendered CSV preview (unused by this suite)."""
         self.calls.append(("show_csv_preview", (preview,)))
@@ -187,6 +191,7 @@ def test_riders_presenter_init_given_mixed_roster_calls_view_in_order() -> None:
         ("show_form", ("79", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
         ("set_save_enabled", (False,)),
+        ("set_plate_enabled", (True,)),
     ]
 
 
@@ -1501,6 +1506,83 @@ def test_visible_pairs_given_no_filters_preserves_the_roster_order() -> None:
     visible = _visible_pairs(roster, _rider_pairs(roster), "", None, True)
 
     assert [pair[1].plate for pair in visible] == ["123", "2", "77"]
+
+
+# -------------------------------- W7 plate lock + change tracking
+
+
+def test_riders_presenter_init_given_a_draft_ride_enables_the_plate_field() -> None:
+    """DRAFT leaves plate_input editable (spec S3:46, W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+
+    assert ("set_plate_enabled", (True,)) in view.calls
+
+
+def test_riders_presenter_init_given_a_started_ride_disables_the_plate_field() -> None:
+    """Once the ride has left DRAFT, plate_input is locked (W7)."""
+    roster = _draft_solo_roster()
+    roster.status = RideStatus.RUNNING
+    view = RecordingRidersView()
+
+    RidersPresenter(view, roster)
+
+    assert ("set_plate_enabled", (False,)) in view.calls
+
+
+def test_riders_presenter_roster_changed_starts_false() -> None:
+    """A fresh presenter has nothing to persist yet (W7)."""
+    presenter = RidersPresenter(RecordingRidersView(), _draft_solo_roster())
+
+    assert presenter.roster_changed is False
+
+
+def test_on_save_given_a_commit_marks_the_roster_changed() -> None:
+    """A successful save flags this session's roster for persist (W7)."""
+    presenter = RidersPresenter(RecordingRidersView(), _draft_solo_roster())
+    presenter.on_row_selected(0)
+
+    presenter.on_save(
+        RiderFormValues(plate="123", first_name="Samuel", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert presenter.roster_changed is True
+
+
+def test_on_save_given_a_refusal_leaves_the_roster_unchanged_flag_alone() -> None:
+    """A refused save must not flag a persist (W7)."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_solo_entry(first_name="Alex", last_name="Roy", plate="77")
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter.on_row_selected(0)
+
+    presenter.on_save(
+        RiderFormValues(plate="77", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert presenter.roster_changed is False
+
+
+def test_on_delete_given_a_commit_marks_the_roster_changed() -> None:
+    """A successful delete flags this session's roster for persist."""
+    presenter = RidersPresenter(RecordingRidersView(), _draft_solo_roster())
+    presenter.on_row_selected(0)
+
+    presenter.on_delete()
+
+    assert presenter.roster_changed is True
+
+
+def test_on_add_committed_marks_the_roster_changed() -> None:
+    """An Add-dialog commit flags this session's roster for persist."""
+    roster = _draft_solo_roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    roster.create_solo_entry(first_name="New", last_name="Rider", plate="124")
+
+    presenter.on_add_committed()
+
+    assert presenter.roster_changed is True
 
 
 # -------------------------------------------------- property test T-7

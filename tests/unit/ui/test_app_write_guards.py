@@ -371,3 +371,217 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
 
     assert context.frame.notices == ["Could not save settings: disk full"]
     assert context.settings is new_settings
+
+
+# ------------------------ W7: rider editor close persists its changes
+
+
+class _EditorPresenterStub:
+    """A presenter-shaped stub: only the change flag the save reads."""
+
+    def __init__(self, *, roster_changed: bool) -> None:
+        """Store the flag the editor's close-save consults."""
+        self.roster_changed = roster_changed
+
+
+class _EditorViewStub:
+    """A RiderEditor-shaped stub answering the close-save's queries."""
+
+    def __init__(self, *, roster_changed: bool) -> None:
+        """Hold a presenter stub carrying *roster_changed*."""
+        self.presenter = _EditorPresenterStub(roster_changed=roster_changed)
+
+    def select_rider_by_plate(self, plate: str) -> None:  # noqa: ARG002 -- console-seam no-op
+        """No-op: the route-level test never drives a real list."""
+
+
+class _FakeWindow:
+    """A wx-window-shaped stub: loadable, closable, nothing else."""
+
+    def IsBeingDeleted(self) -> bool:  # noqa: N802 -- wx API name
+        """Report this stub is never mid-delete."""
+        return False
+
+    def Destroy(self) -> None:  # noqa: N802 -- wx API name
+        """No-op: there is no real window to destroy."""
+
+
+class _FakeResource:
+    """A resource-shaped stub returning the one fake window."""
+
+    def __init__(self, window: _FakeWindow) -> None:
+        """Store the window every LoadDialog call returns."""
+        self.window = window
+
+    def LoadDialog(self, _parent: object, _name: object) -> _FakeWindow:  # noqa: N802 -- wx API name
+        """Return the one fake window."""
+        return self.window
+
+
+class _SaveRecorderStore:
+    """A store recording roster saves instead of writing them."""
+
+    def __init__(self) -> None:
+        """Start with no saved rides."""
+        self.saved: list[tuple[int, object]] = []
+
+    def save_roster(self, ride_id: int, roster: object) -> None:
+        """Record one save call."""
+        self.saved.append((ride_id, roster))
+
+
+class _SaveMustNotRunStore:
+    """A store that fails loudly if save_roster is ever called."""
+
+    def save_roster(self, _ride_id: int, _roster: object) -> None:
+        """Raise: an unchanged editor must never persist."""
+        raise AssertionError("save_roster must not run without a change")
+
+
+def test_persist_rider_editor_changes_given_a_failed_save_posts_a_notice() -> None:
+    """The editor close-save refuses like every other roster save."""
+    context = _context(store=_SaveRosterFailsStore())
+    context.active_ride_id = 5
+    roster = Roster()
+    context.roster = roster
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert context.frame.notices == ["Could not save riders: disk full"]
+
+
+def test_persist_rider_editor_changes_given_no_change_is_a_silent_no_op() -> None:
+    """A clean editor session never touches the store (W7)."""
+    context = _context(store=_SaveMustNotRunStore())
+    context.active_ride_id = 5
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=False))
+
+    assert context.frame.notices == []
+
+
+def test_persist_rider_editor_changes_given_no_store_is_a_silent_no_op() -> None:
+    """A bootstrap (store-less) editor session never touches a store."""
+    context = _context(store=None)
+    context.active_ride_id = None
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert context.frame.notices == []
+
+
+def test_open_target_given_rider_editor_close_with_changes_saves_the_roster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The menu route persists a changed editor when its modal ends."""
+    store = _SaveRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster = Roster()
+    context.roster = roster
+    window = _FakeWindow()
+    context.resource = _FakeResource(window)
+    changed_view = _EditorViewStub(roster_changed=True)
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(app_module, "_decorate", lambda _ctx, _w, _route: changed_view)
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+
+    app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
+
+    assert store.saved == [(5, roster)]
+
+
+def test_open_target_given_rider_editor_close_without_changes_skips_the_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unchanged menu-route editor session saves nothing (W7)."""
+    context = _context(store=_SaveMustNotRunStore())
+    context.active_ride_id = 5
+    context.roster = Roster()
+    context.resource = _FakeResource(_FakeWindow())
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(
+        app_module, "_decorate", lambda _ctx, _w, _route: _EditorViewStub(roster_changed=False)
+    )
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+
+    app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
+
+    assert context.frame.notices == []
+
+
+def test_open_target_given_rider_editor_close_and_a_failed_save_posts_a_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A refused close-save surfaces on the status bar, never raises."""
+    context = _context(store=_SaveRosterFailsStore())
+    context.active_ride_id = 5
+    context.roster = Roster()
+    context.resource = _FakeResource(_FakeWindow())
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(
+        app_module, "_decorate", lambda _ctx, _w, _route: _EditorViewStub(roster_changed=True)
+    )
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+
+    app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
+
+    assert context.frame.notices == ["Could not save riders: disk full"]
+
+
+def test_open_rider_editor_for_close_with_changes_saves_the_roster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The console Riders-tab path persists a changed editor too (W7)."""
+    from rivercrossing.ui.views import rider_editor  # noqa: PLC0415 -- the patched view class
+
+    store = _SaveRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster = Roster()
+    context.roster = roster
+    context.resource = _FakeResource(_FakeWindow())
+    changed_view = _EditorViewStub(roster_changed=True)
+    monkeypatch.setattr(rider_editor, "RiderEditor", lambda _window, *, roster: changed_view)
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+
+    app_module._open_rider_editor_for(context, "77")
+
+    assert store.saved == [(5, roster)]
+
+
+def test_open_rider_editor_for_close_without_changes_skips_the_save(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unchanged console-path editor session saves nothing (W7)."""
+    from rivercrossing.ui.views import rider_editor  # noqa: PLC0415 -- the patched view class
+
+    context = _context(store=_SaveMustNotRunStore())
+    context.active_ride_id = 5
+    context.roster = Roster()
+    context.resource = _FakeResource(_FakeWindow())
+    monkeypatch.setattr(
+        rider_editor, "RiderEditor", lambda _window, *, roster: _EditorViewStub(roster_changed=False)
+    )
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+
+    app_module._open_rider_editor_for(context, "77")
+
+    assert context.frame.notices == []
