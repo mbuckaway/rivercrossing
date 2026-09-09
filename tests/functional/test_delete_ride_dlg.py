@@ -159,18 +159,24 @@ def test_delete_ride_dlg_message_never_blank_for_any_ride_name() -> None:
 # ------------------------------- library Delete enablement (RUNNING)
 
 
-def _library_for_rows(
+def _library_for_rows(  # noqa: PLR0913 -- (xrc_resource, rows) + the injected delete/new callbacks
     xrc_resource: object,
     rows: list[RideSummary],
     *,
     on_delete: Callable[[RideSummary], None] | None = None,
+    on_new: Callable[[], None] | None = None,
 ) -> tuple[Any, Any]:
     """Build one shown ``RideLibrary`` over *rows*."""
     window = harness.load_window_verified(xrc_resource, ids.RIDE_LIBRARY_DLG, frame=False)
     window.Show()
     harness.pump()
     try:
-        view = RideLibrary(window, data_source=_RideSource(rows), on_delete=on_delete)
+        view = RideLibrary(
+            window,
+            data_source=_RideSource(rows),
+            on_delete=on_delete,
+            on_new=on_new,
+        )
     except Exception:
         harness.close_window(window)
         raise
@@ -218,6 +224,39 @@ def test_ride_library_delete_enabled_for_draft_selected_ride(
     try:
         harness.select_row(window, ids.RIDES_LIST, 0)
         enabled = harness.find_control(window, pages.WX_ID_DELETE).IsEnabled()
+    finally:
+        harness.close_window(window)
+
+    assert enabled is True
+
+
+def test_ride_library_new_disabled_when_no_new_callback_injected(
+    xrc_resource: object,
+) -> None:
+    """W10: no New flow injected -- the button is off, never a no-op.
+
+    The no-store library has no ride-setup flow to open (``on_new`` is
+    ``None`` there), so New is disabled instead of silently swallowing
+    the click the way the old handler did.
+    """
+    window, _ = _library_for_rows(xrc_resource, [_draft_row()])
+
+    try:
+        enabled = harness.find_control(window, pages.WX_ID_NEW).IsEnabled()
+    finally:
+        harness.close_window(window)
+
+    assert enabled is False
+
+
+def test_ride_library_new_enabled_when_a_new_callback_is_injected(
+    xrc_resource: object,
+) -> None:
+    """With ``on_new`` injected the store-backed New stays enabled."""
+    window, _ = _library_for_rows(xrc_resource, [_draft_row()], on_new=lambda: None)
+
+    try:
+        enabled = harness.find_control(window, pages.WX_ID_NEW).IsEnabled()
     finally:
         harness.close_window(window)
 
