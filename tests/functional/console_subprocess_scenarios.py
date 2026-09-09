@@ -142,7 +142,6 @@ from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
 from rivercrossing.ui.presenters.settings import (
-    ZOOM_LADDER,
     AppSettings,
     load_settings,
     save_settings,
@@ -2893,8 +2892,11 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
 
     Pre-saves a full settings set (light / sound off / hide-times on /
     zoom 130), builds the app, opens settings_dlg through the File ▸
-    Settings… route, and reads the rendered control states. Closes via
-    Cancel: rendering must itself change nothing.
+    Settings… route, and reads the rendered control states. The saved
+    zoom_percent rides the file unchanged (the View menu owns zoom;
+    W13 removed the dialog's zoom_choice, so the render probe also
+    confirms the control is gone). Closes via Cancel: rendering must
+    itself change nothing.
     """
     with tempfile.TemporaryDirectory(prefix="rc-settings-dlg-") as tmp:
         settings_path = Path(tmp) / "settings.json"
@@ -2930,9 +2932,9 @@ def _settings_dialog_renders_persisted_values() -> dict[str, Any]:
             found["rendered_hide_times"] = harness.find_control(
                 dialog, ids.HIDE_TIMES_CHK
             ).GetValue()
-            found["rendered_zoom_selection"] = harness.find_control(
-                dialog, ids.ZOOM_CHOICE
-            ).GetSelection()
+            # W13: no text-zoom control lives in the dialog any more --
+            # the choice was the duplicated surface notes #12 removed.
+            found["no_zoom_choice"] = dialog.FindWindowByName("zoom_choice") is None
             harness.click(dialog, pages.WX_ID_CANCEL)
 
         try:
@@ -3246,16 +3248,16 @@ def _zoom_view_menu_applies_live_and_boundaries() -> dict[str, Any]:
         return found
 
 
-def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
-    """Mirror the View radio in the Settings choice; dialogs scale.
+def _zoom_dialog_scales_after_view_menu_zoom() -> dict[str, Any]:
+    """Open a dialog after a menu zoom; read its scaled control fonts.
 
-    E8.1.4's mirror + dialog half. Opens Settings at 100% to capture
-    the zoom_choice's base font; zooms to 120 via the View menu; opens
-    Settings again (the choice shows 120 and its font is scaled),
-    changes the choice to 130, OK -- the console scales to 130 and the
-    View radio re-checks to 130.
+    E8.1.4's dialog half. Opens Settings at 100% to capture a
+    control's base font; zooms to 120 via the View menu (the single
+    zoom surface -- W13 removed the settings zoom_choice this scenario
+    used to drive); opens Settings again, and reads the same control's
+    scaled font. Cancel, never OK: the dialog must not alter anything.
     """
-    with tempfile.TemporaryDirectory(prefix="rc-zoom-mirror-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="rc-zoom-dialog-") as tmp:
         settings_path = Path(tmp) / "settings.json"
         save_settings(
             AppSettings(
@@ -3274,10 +3276,10 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
         harness.pump()
         found: dict[str, Any] = {}
 
-        def _read_choice_base(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        def _read_control_base(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
             found["dlg_shown"] = dialog is not None
-            found["choice_base_pt"] = (
-                harness.find_control(dialog, ids.ZOOM_CHOICE).GetFont().GetPointSize()
+            found["control_base_pt"] = (
+                harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO).GetFont().GetPointSize()
             )
             harness.click(dialog, pages.WX_ID_CANCEL)
 
@@ -3285,7 +3287,7 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
             status_lbl = harness.find_control(frame, ids.RIDE_STATUS_LBL)
             found["base_pt"] = status_lbl.GetFont().GetPointSize()
 
-            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _read_choice_base)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _read_control_base)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
 
@@ -3293,22 +3295,18 @@ def _zoom_settings_mirror_and_dialog() -> dict[str, Any]:
             found["pt_after_menu_120"] = status_lbl.GetFont().GetPointSize()
             found["radio_120_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_120)
 
-            def _drive_settings_130(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+            def _read_scaled_control(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
                 found["dlg_shown_2"] = dialog is not None
-                found["choice_selection_at_120"] = harness.find_control(
-                    dialog, ids.ZOOM_CHOICE
-                ).GetSelection()
-                found["choice_pt_at_120"] = (
-                    harness.find_control(dialog, ids.ZOOM_CHOICE).GetFont().GetPointSize()
+                found["control_pt_at_120"] = (
+                    harness.find_control(dialog, ids.APPEARANCE_SYSTEM_RADIO)
+                    .GetFont()
+                    .GetPointSize()
                 )
-                harness.find_control(dialog, ids.ZOOM_CHOICE).SetSelection(ZOOM_LADDER.index(130))
-                harness.click(dialog, pages.WX_ID_OK)
+                harness.click(dialog, pages.WX_ID_CANCEL)
 
-            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _drive_settings_130)
+            wx.CallAfter(_drive_when_shown, ids.SETTINGS_DLG, _read_scaled_control)
             harness.fire_menu_event(frame, "wxID_PREFERENCES")
             harness.pump()
-            found["pt_after_settings_130"] = status_lbl.GetFont().GetPointSize()
-            found["radio_130_checked"] = _menu_item_checked(frame, ids.MI_ZOOM_130)
             found["saved_zoom"] = load_settings(settings_path).zoom_percent
         finally:
             _close_without_prompt(frame)
@@ -3649,7 +3647,7 @@ _SCENARIOS: dict[str, Callable[[], dict[str, Any]]] = {
     "settings_dialog_cancel_applies_nothing": _settings_dialog_cancel_applies_nothing,
     "hide_times_view_menu_mirror_round_trip": _hide_times_view_menu_mirror_round_trip,
     "zoom_view_menu_applies_live_and_boundaries": _zoom_view_menu_applies_live_and_boundaries,
-    "zoom_settings_mirror_and_dialog": _zoom_settings_mirror_and_dialog,
+    "zoom_dialog_scales_after_view_menu_zoom": _zoom_dialog_scales_after_view_menu_zoom,
     "zoom_survives_relaunch": _zoom_survives_relaunch,
     "shortcuts_dialog_route_shows_the_accelerator_table": (
         _shortcuts_dialog_route_shows_the_accelerator_table

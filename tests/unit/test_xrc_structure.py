@@ -21,7 +21,7 @@ import pytest
 
 XRC_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" / "xrc"
 
-XRC_FILES = ("main.xrc", "setup.xrc")
+XRC_FILES = ("main.xrc", "setup.xrc", "settings.xrc")
 
 # xrc-windows.md section A. main_menubar is the *menubar* resource's
 # own name, so it is not one of the frame's controls. resume_infobar,
@@ -395,7 +395,7 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
 
 
 def test_main_menubar_declares_forty_four_menu_item_names() -> None:
-    """spec.md 15b names 44 ``mi_*`` items across the seven menus (W13)."""
+    """spec.md 15b names 44 ``mi_*`` items across the menus (W13)."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
@@ -444,6 +444,22 @@ def test_view_menu_hide_times_item_declares_the_check_kind() -> None:
     item = _objects_by_name(_window("main_menubar"))["mi_hide_times"]
 
     assert _param(item, "checkable") == "1"
+
+
+def test_settings_dialog_declares_no_text_zoom_control() -> None:
+    """W13: View ▸ Zoom is the single zoom surface (settings.xrc E).
+
+    The settings dialog used to carry ``zoom_choice`` -- the text-zoom
+    surface testing notes #12 removed. Its removal is structural here
+    (no ``zoom_choice`` object and no ``wxChoice`` at all in the
+    dialog), and behavioural in the functional suite (pages.py's
+    SETTINGS_DLG spec and the renders scenario's raw-name probe).
+    """
+    names = _control_names_in(_top_level_windows("settings.xrc")["settings_dlg"])
+    classes = [obj.attrib["class"] for obj in _parse("settings.xrc").iter("object")]
+
+    assert "zoom_choice" not in names
+    assert classes.count("wxChoice") == 0
 
 
 @pytest.mark.parametrize("radio_name", SELECTED_RADIOS)

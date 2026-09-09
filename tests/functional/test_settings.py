@@ -27,7 +27,6 @@ import pytest
 import scenario_runner
 
 from rivercrossing.ui import feed_model
-from rivercrossing.ui.presenters.settings import ZOOM_LADDER
 
 pytestmark = pytest.mark.functional
 
@@ -92,11 +91,14 @@ def test_settings_persistence_applies_and_round_trips_every_control_through_a_re
 
 
 def test_settings_dialog_renders_the_persisted_values() -> None:
-    """Open Settings: radios/checkboxes/choice reflect the saved file.
+    """Open Settings: radios/checkboxes reflect the saved file.
 
     The dialog must render what the app loaded -- light appearance,
-    sound off, hide-times on, zoom 130 -- and rendering must itself
-    change nothing (closed via Cancel).
+    sound off, hide-times on -- and rendering must itself change
+    nothing (closed via Cancel). The saved zoom_percent rides the file
+    unchanged: W13 removed the dialog's zoom_choice (View ▸ Zoom is
+    the single zoom surface), so the probe also confirms the control
+    is gone.
     """
     result = scenario_runner.run_scenario("settings_dialog_renders_persisted_values")
 
@@ -108,7 +110,7 @@ def test_settings_dialog_renders_the_persisted_values() -> None:
     assert data["rendered_dark"] is False, result["context"]
     assert data["rendered_sound"] is False, result["context"]
     assert data["rendered_hide_times"] is True, result["context"]
-    assert data["rendered_zoom_selection"] == ZOOM_LADDER.index(130), result["context"]
+    assert data["no_zoom_choice"] is True, result["context"]
 
 
 @_DARWIN_ONLY
@@ -214,7 +216,7 @@ def test_hide_times_view_menu_toggles_live_mirrors_settings_and_survives_relaunc
     assert data["relaunch_menu_checked"] is True, result["context"]
 
 
-# --- E8.1.4: zoom (View menu, Settings mirror, dialogs, relaunch) ---
+# --- E8.1.4: zoom (View menu, dialogs, relaunch) --------------------
 
 
 def test_zoom_view_menu_scales_console_fonts_and_bounds_the_ladder() -> None:
@@ -257,29 +259,28 @@ def test_zoom_view_menu_posts_no_stub_notice_and_persists() -> None:
     assert data["zoom_percent_after"] == 110, result["context"]
 
 
-def test_zoom_settings_choice_mirrors_the_view_radio_and_dialogs_scale() -> None:
-    """The zoom_choice mirrors the menu radio; dialogs opened scale.
+def test_zoom_dialogs_opened_after_a_menu_zoom_scale() -> None:
+    """Dialogs opened after View-menu zoom 120 carry scaled fonts.
 
-    The dialog-scaling half proves the base-font capture: the
-    ``zoom_choice`` control opened after zoom 120 reads
-    ``round(choice_base * 120 / 100)``, where ``choice_base`` was
-    captured by opening the same dialog at 100% first.
+    The dialog-scaling half of E8.1.4 proves the base-font capture:
+    the settings dialog opened after zoom 120 reads
+    ``round(control_base * 120 / 100)``, where ``control_base`` was
+    captured by opening the same dialog at 100% first. W13 removed the
+    settings zoom_choice this scenario used to drive -- the View menu
+    is the single zoom surface -- so the re-opened dialog only proves
+    the scaling; zoom persistence is proven by the sibling scenarios.
     """
-    result = scenario_runner.run_scenario("zoom_settings_mirror_and_dialog")
+    result = scenario_runner.run_scenario("zoom_dialog_scales_after_view_menu_zoom")
 
     assert result["ok"], result["context"]
     data = result["data"]
     base = data["base_pt"]
-    choice_base = data["choice_base_pt"]
+    control_base = data["control_base_pt"]
     assert data["dlg_shown"] is True, result["context"]
     assert data["pt_after_menu_120"] == round(base * 120 / 100), result["context"]
     assert data["radio_120_checked"] is True, result["context"]
     assert data["dlg_shown_2"] is True, result["context"]
-    assert data["choice_selection_at_120"] == ZOOM_LADDER.index(120), result["context"]
-    assert data["choice_pt_at_120"] == round(choice_base * 120 / 100), result["context"]
-    assert data["pt_after_settings_130"] == round(base * 130 / 100), result["context"]
-    assert data["radio_130_checked"] is True, result["context"]
-    assert data["saved_zoom"] == 130, result["context"]
+    assert data["control_pt_at_120"] == round(control_base * 120 / 100), result["context"]
 
 
 def test_zoom_survives_a_relaunch() -> None:

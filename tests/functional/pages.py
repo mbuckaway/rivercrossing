@@ -471,7 +471,6 @@ SETTINGS_DLG = WindowSpec(
         ids.APPEARANCE_DARK_RADIO,
         ids.SOUND_CHK,
         ids.HIDE_TIMES_CHK,
-        ids.ZOOM_CHOICE,
         ids.BACKUP_NOW_BTN,
         WX_ID_OK,
         WX_ID_CANCEL,
