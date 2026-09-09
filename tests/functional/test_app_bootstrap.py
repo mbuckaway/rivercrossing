@@ -472,15 +472,17 @@ def test_store_backed_bootstrap_with_no_ride_launches_prompt_free_and_library_ro
             harness.release_main_window(wx_app, frame)
 
 
-def test_store_backed_bootstrap_no_ride_launch_routes_mi_ride_setup_to_the_setup_dialog(
+def test_store_backed_bootstrap_no_ride_launch_routes_new_ride_to_the_setup_dialog(
     wx_app: object,
     tmp_path: object,
 ) -> None:
-    """W3: fresh store -> no launch modal; New Ride setup route works.
+    """W3/W14: fresh store -> no launch modal; New Ride opens setup.
 
     The launch flow's No Ride Open alert copy points the operator at
-    creating a new ride; firing the real ``mi_ride_setup`` route opens
-    the setup dialog, which is cancelled here.
+    creating a new ride; firing the real ``mi_new_ride`` route opens
+    the setup dialog, which is cancelled here. W14: the duplicate
+    Ride ▸ Ride Setup… row left the menu, so ``mi_new_ride`` is the
+    single entry point to the setup window.
     """
     store = Store.open(Path(str(tmp_path)) / "rides.db")
     frame = None
@@ -503,7 +505,7 @@ def test_store_backed_bootstrap_no_ride_launch_routes_mi_ride_setup_to_the_setup
             wait_ms=_NO_RIDE_DRIVE_WAIT_MS,
             attempts=_NO_RIDE_DRIVE_ATTEMPTS,
         )
-        harness.fire_menu_event(frame, "mi_ride_setup")
+        harness.fire_menu_event(frame, "mi_new_ride")
         harness.pump()
         assert observed == {"prompt_free": True, "setup_shown": True}
     finally:

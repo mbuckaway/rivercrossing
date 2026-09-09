@@ -1410,9 +1410,11 @@ def _new_ride_writes_a_ride_row() -> dict[str, Any]:
     database resumes nothing. W3: the launch flow would show the
     native No Ride Open alert (measured 2026-09-09: not
     programmatically dismissible), so the scenario fires the
-    ``mi_ride_setup`` route the alert's copy points the operator at,
-    which opens the setup dialog. The scenario fills the required
-    fields and clicks OK, and the app's on-submitted wiring calls
+    ``mi_new_ride`` route the alert's copy points the operator at --
+    File ▸ New Ride…, the single entry point to the setup window
+    since W14 retired the duplicate Ride ▸ Ride Setup… row -- which
+    opens the setup dialog. The scenario fills the required fields
+    and clicks OK, and the app's on-submitted wiring calls
     ``Store.create_ride`` + ``Store.save_roster``. The library summary
     then lists exactly the new ride -- the write path no production
     code had before.
@@ -1442,11 +1444,12 @@ def _new_ride_writes_a_ride_row() -> dict[str, Any]:
         harness.pump()
         # W3: the launch flow would show the native No Ride Open alert
         # here (measured: not programmatically dismissible), so the
-        # scenario fires the mi_ride_setup route the alert's copy
-        # points the operator at -- never a second mi_new_ride fire
-        # (which would stack a second modal).
+        # scenario fires the route the alert's copy points the operator
+        # at -- File ▸ New Ride…, the single entry point to the setup
+        # window since W14 retired the duplicate Ride ▸ Ride Setup…
+        # row.
         wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _fill_and_submit)
-        harness.fire_menu_event(frame, "mi_ride_setup")
+        harness.fire_menu_event(frame, "mi_new_ride")
         harness.pump()
         rides = store.rides()
         found["ride_count"] = len(rides)
@@ -1520,13 +1523,14 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
 
     W3: the launch over the fresh database would show the native No
     Ride Open alert (measured 2026-09-09: not programmatically
-    dismissible), so the scenario fires the ``mi_ride_setup`` route
-    the alert's copy points the operator at, and cancels that first
-    form -- creating the ride now would freeze the empty bootstrap
-    roster into it, but E9.1.4's ordering needs the rider added to
-    the roster BEFORE the ride is created (the submit persists
-    ``context.roster``) -- then runs the rider editor and the
-    ``mi_new_ride`` submit as before.
+    dismissible), so the scenario fires the ``mi_new_ride`` route the
+    alert's copy points the operator at -- the single entry point to
+    the setup window since W14 retired the duplicate Ride ▸ Ride
+    Setup… row -- and cancels that first form: creating the ride now
+    would freeze the empty bootstrap roster into it, but E9.1.4's
+    ordering needs the rider added to the roster BEFORE the ride is
+    created (the submit persists ``context.roster``) -- then runs the
+    rider editor and the ``mi_new_ride`` submit as before.
     """
     db_path = _resume_db_path("rc-new-ride-switch-")
     store = Store.open(db_path)
@@ -1571,12 +1575,13 @@ def _new_ride_switches_console_and_accepts_crossings() -> dict[str, Any]:  # noq
         harness.pump()
         # W3: the launch flow would show the native No Ride Open alert
         # here (measured: not programmatically dismissible), so the
-        # scenario fires the mi_ride_setup route the alert's copy
-        # points the operator at, and cancels that first form --
-        # creating now would freeze the empty bootstrap roster into
-        # the ride.
+        # scenario fires the route the alert's copy points the operator
+        # at -- File ▸ New Ride…, the single setup entry since W14
+        # retired the duplicate Ride ▸ Ride Setup… row -- and cancels
+        # that first form: creating now would freeze the empty
+        # bootstrap roster into the ride.
         wx.CallAfter(_drive_when_shown, ids.RIDE_SETUP_DLG, _cancel_setup)
-        harness.fire_menu_event(frame, "mi_ride_setup")
+        harness.fire_menu_event(frame, "mi_new_ride")
         harness.pump()
 
         wx.CallAfter(_drive_when_shown, ids.RIDER_EDITOR_DLG, _add_rider_and_close)

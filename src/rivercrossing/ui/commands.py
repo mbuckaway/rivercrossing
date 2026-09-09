@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 40 menu rows reaches ("Opens / does"), and when it is allowed to
+the 39 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 40 :class:`MenuRoute` rows
+once, so both jobs read off the same 39 :class:`MenuRoute` rows
 instead of two tables that could drift apart.
 
 No wx import lands here (R-71 does not require it, since nothing
@@ -216,7 +216,11 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="exit_or_quit",
         enabled_when=ALWAYS,  # "always"
     ),
-    # --- Ride: 7 rows ---
+    # --- Ride: 6 rows ---
+    # W14: the Ride Setup… row left the menu with mi_ride_setup -- its
+    # "edit this ride" semantics were never built, so File ▸ New Ride…
+    # is the single entry point to the setup window (both rows always
+    # dispatched to the identical RIDE_SETUP_DLG New-Ride branch).
     MenuRoute(
         menu="Ride",
         label="Start Ride",
@@ -279,15 +283,6 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         enabled_when=Enablement(
             requires_ride_open=True, min_audit_rows=1
         ),  # "ride open, ≥1 audit row"
-    ),
-    MenuRoute(
-        menu="Ride",
-        label="Ride Setup…",
-        ids=("mi_ride_setup",),
-        kind=TargetKind.WINDOW,
-        target=ids.RIDE_SETUP_DLG,
-        # spec.md §15: ride open (locks tighten after start)
-        enabled_when=Enablement(requires_ride_open=True),
     ),
     # --- Riders: 6 rows ---
     MenuRoute(
