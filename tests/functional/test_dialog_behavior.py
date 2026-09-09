@@ -762,9 +762,9 @@ def test_run_dialog_returns_result_and_restores_opener_focus(
 _ALL_DIALOG_SPECS = tuple(spec for spec in pages.WINDOWS if not spec.is_frame)
 
 
-def test_all_dialogs_declare_exactly_twenty_seven_rows() -> None:
+def test_all_dialogs_declare_exactly_twenty_six_rows() -> None:
     """A dialog disappearing from ``pages.WINDOWS`` must shrink this."""
-    assert len(_ALL_DIALOG_SPECS) == 27
+    assert len(_ALL_DIALOG_SPECS) == 26
 
 
 @pytest.mark.parametrize("spec", _ALL_DIALOG_SPECS, ids=lambda s: s.name)
@@ -777,7 +777,7 @@ def test_dialog_is_a_real_wx_dialog_so_tab_stays_trapped(
     harness can inject would prove containment either way (the
     same ``UIActionSimulator`` limitation as Esc/Enter), so this
     asserts the one precondition that makes the OS trap Tab in the
-    first place -- every one of the 21 rows really is a
+    first place -- every one of the 26 rows really is a
     ``wx.Dialog``, never a ``wx.Frame``.
     """
     window = harness.load_window_verified(xrc_resource, spec.name, frame=False)

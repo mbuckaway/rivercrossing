@@ -3178,13 +3178,12 @@ _NO_RIDE_MESSAGE = "No ride is loaded. Create a new one or load an existing one.
 def _show_no_ride_info(parent: Any) -> None:  # noqa: ANN401 -- wx Window; wx ships no stubs
     """Show the launch's No Ride Open alert over *parent* (W3).
 
-    Replaces the retired ``no_ride_dlg`` window (its Create/Open-
-    library choice is the File menus' own job): a store-backed launch
-    that resumes no ride and opens no ride gets this one information
-    alert instead of an unexplained empty console, then nothing -- the
-    console is visible and the operator uses the menus. ``no_ride_dlg``
-    stays authored in dialogs.xrc until W15 removes the window itself;
-    this is the code that no longer loads it.
+    Replaces ``no_ride_dlg``, the XRC window this code stopped loading
+    in W3 and W15 removed from dialogs.xrc: a store-backed launch that
+    resumes no ride and opens no ride gets this one information alert
+    instead of an unexplained empty console, then nothing -- the
+    console is visible and the operator uses the menus. The retired
+    window's Create/Open-library choice is the File menus' own job.
     """
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 

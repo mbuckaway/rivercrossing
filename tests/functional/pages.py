@@ -190,18 +190,11 @@ EXIT_CONFIRM_DLG = WindowSpec(
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
-# ux-polish: the no-ride prompt that replaced continue_or_new_dlg at
-# the store-backed bootstrap. Like resume_dlg it has two custom
-# buttons and no std sizer: open_library_btn is the secondary (and
-# Escape's target, via dialogs.wire_escape_to) and create_ride_btn
-# the primary; the app bootstrap wires both.
-NO_RIDE_DLG = WindowSpec(
-    name=ids.NO_RIDE_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(ids.MESSAGE_LBL, ids.OPEN_LIBRARY_BTN, ids.CREATE_RIDE_BTN),
-    buttons=(ids.OPEN_LIBRARY_BTN, ids.CREATE_RIDE_BTN),
-)
+# ux-polish W3: no_ride_dlg, the no-ride prompt that replaced
+# continue_or_new_dlg at the store-backed bootstrap, was removed in
+# W15 — the launch shows the native info dialog (app.py
+# _show_no_ride_info) and the create/open choice lives in the File
+# menus, so this registry no longer lists the window.
 
 # --- xrc-windows section C: riders, corrections & cards ---------------
 
@@ -502,10 +495,11 @@ SELFTEST_DLG = WindowSpec(
     buttons=(ids.RERUN_BTN, WX_ID_CLOSE),
 )
 
-# xrc-windows's own A-E order: 1 console + 9 setup/lifecycle dialogs
-# (stop_confirm_dlg retired W5) + 10 rider/card dialogs (add_rider_dlg
-# and team_editor_dlg are W7/Phase 4 section-C members) + 4
-# results/library/audit + 4 system/help = 28.
+# xrc-windows's own A-E order: 1 console + 8 setup/lifecycle dialogs
+# (stop_confirm_dlg retired W5, no_ride_dlg retired W15) + 11
+# rider/card dialogs (add_rider_dlg, add_team_dlg and team_editor_dlg
+# are W7/Phase 4 section-C members) + 4 results/library/audit + 4
+# system/help = 28.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
@@ -516,7 +510,6 @@ WINDOWS: tuple[WindowSpec, ...] = (
     RESUME_DLG,
     EXIT_RUNNING_DLG,
     EXIT_CONFIRM_DLG,
-    NO_RIDE_DLG,
     RIDER_EDITOR_DLG,
     ADD_RIDER_DLG,
     CSV_PREVIEW_DLG,
