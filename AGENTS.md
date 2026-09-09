@@ -16,7 +16,7 @@ survives crashes, accidental stops and restarts without losing a keystroke.
 
 ## `design/` is the contract
 
-`design/` is the complete build contract — 49 numbered requirements, a §1–§15b engineering spec, 23
+`design/` is the complete build contract — numbered requirements (through R-85), a §1–§15b engineering spec, 30
 frozen window designs, the repo layout, a nine-EPIC plan and ~60 agent-ready task briefs. A developer
 or agent who was not part of the design conversation should be able to build v1.0 from it alone.
 
@@ -24,7 +24,7 @@ or agent who was not part of the design conversation should be able to build v1.
 |---|---|
 | `design/docs-md/requirements.md` | Numbered **R-ids** — the acceptance authority |
 | `design/docs-md/spec.md` | §1–§15b engineering spec (§14 CI stages, §15 menu map, §15b frozen name registry) |
-| `design/docs-md/xrc-windows.md` | All 23 windows with frozen control names — **implementation truth for UI** |
+| `design/docs-md/xrc-windows.md` | All 30 windows with frozen control names — **implementation truth for UI** |
 | `design/docs-md/module-skeletons.md` | Repo layout, module public APIs, build order |
 | `design/docs-md/project-plan.md` · `task-briefs.md` | EPIC plan and per-task briefs (the named tests **are** the spec) |
 | `design/templates/` | Production Jinja2 templates — **ship verbatim** |
