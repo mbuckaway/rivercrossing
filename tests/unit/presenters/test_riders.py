@@ -29,6 +29,7 @@ import string
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -45,9 +46,6 @@ from rivercrossing.ui.presenters.riders import (
     _rider_rows,
     _team_choices,
 )
-
-if TYPE_CHECKING:
-    import pytest
 
 # tests/unit/fixtures/csv/ is test_csvio.py's own fixture home (its
 # module docstring); reused here rather than re-derived, per E3.4's
@@ -75,6 +73,10 @@ class RecordingRidersView:
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Record delete_btn's enabled state."""
         self.calls.append(("set_delete_enabled", (enabled,)))
+
+    def set_save_enabled(self, *, enabled: bool) -> None:
+        """Record save_btn's enabled state (W7 dirty gating)."""
+        self.calls.append(("set_save_enabled", (enabled,)))
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """Record the rendered CSV preview (unused by this suite)."""
@@ -179,6 +181,7 @@ def test_riders_presenter_init_given_mixed_roster_calls_view_in_order() -> None:
         ("set_team_ui_visible", (True,)),
         ("show_form", ("79", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
+        ("set_save_enabled", (False,)),
     ]
 
 
@@ -308,6 +311,7 @@ def test_on_add_given_a_solo_form_refreshes_rows_and_prefills_the_next_plate() -
         ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
         ("show_form", ("2", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
+        ("set_save_enabled", (False,)),
     ]
 
 
@@ -318,7 +322,7 @@ def test_on_add_given_a_duplicate_plate_shows_validation_and_does_not_crash() ->
     view.calls.clear()
 
     presenter.on_add(
-        RiderFormValues(plate="123", first_name="Dupe", last_name="", team=SOLO_TEAM_CHOICE)
+        RiderFormValues(plate="123", first_name="Dupe", last_name="Rider", team=SOLO_TEAM_CHOICE)
     )
 
     assert view.calls == [("show_validation", ("plate '123' is already in use",))]
@@ -330,7 +334,7 @@ def test_on_add_given_a_duplicate_plate_leaves_the_roster_unchanged() -> None:
     presenter = RidersPresenter(RecordingRidersView(), roster)
 
     presenter.on_add(
-        RiderFormValues(plate="123", first_name="Dupe", last_name="", team=SOLO_TEAM_CHOICE)
+        RiderFormValues(plate="123", first_name="Dupe", last_name="Rider", team=SOLO_TEAM_CHOICE)
     )
 
     assert [entry.display_name for entry in roster.entries] == ["Sam Ellis"]
@@ -666,6 +670,11 @@ def test_on_save_given_the_same_relay_plate_stays_a_silent_no_op() -> None:
             ),
         ),
         ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers"],)),
+        # W7: the record's form is re-shown after the refresh so
+        # team_choice's selection survives show_team_choices' Set().
+        ("show_form", ("77", "Alex", "Roy", "Trail Blazers")),
+        ("set_delete_enabled", (True,)),
+        ("set_save_enabled", (False,)),
     ]
 
 
@@ -683,6 +692,11 @@ def test_on_save_refreshes_the_rows_after_renaming() -> None:
     assert view.calls == [
         ("show_riders", ([RiderRow(plate="123", name="Samuel Ellis", team=None)],)),
         ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
+        # W7: the renamed record's form is re-shown, so the form and
+        # save_btn always agree with the row just saved.
+        ("show_form", ("123", "Samuel", "Ellis", SOLO_TEAM_CHOICE)),
+        ("set_delete_enabled", (True,)),
+        ("set_save_enabled", (False,)),
     ]
 
 
@@ -769,6 +783,433 @@ def test_on_delete_prefills_the_next_free_plate_after_deleting() -> None:
     presenter.on_delete()
 
     assert ("show_form", ("1", "", "", SOLO_TEAM_CHOICE)) in view.calls
+
+
+# ----------------------------- W7 dirty gating / form-changed seam
+
+
+def _solo_and_team_roster() -> Roster:
+    """Return a pooled DRAFT roster with a solo and one 2-rider team."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    return roster
+
+
+def _two_team_roster() -> Roster:
+    """Return a pooled DRAFT roster with two 2-rider teams."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    roster.create_team_entry(
+        display_name="Moss Ridge",
+        riders=[
+            Rider(first_name="Bo", last_name="Lindqvist", plate="80"),
+            Rider(first_name="Cy", last_name="Nguyen", plate="81"),
+        ],
+    )
+    return roster
+
+
+def _relay_solo_and_team_roster() -> Roster:
+    """Return a relay DRAFT roster with a solo and one 2-rider team."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="9")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy"),
+            Rider(first_name="K.", last_name="Singh"),
+        ],
+        plate="77",
+    )
+    return roster
+
+
+def test_on_row_selected_given_a_selection_starts_with_save_disabled() -> None:
+    """A freshly selected row's own values are never "dirty" (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert view.calls[-1] == ("set_save_enabled", (False,))
+
+
+def test_on_form_changed_given_the_selected_records_own_values_disables_save() -> None:
+    """A form equal to the selected record is clean (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_form_changed(
+        RiderFormValues(plate="123", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("set_save_enabled", (False,))]
+
+
+def test_on_form_changed_given_an_edited_plate_enables_save() -> None:
+    """Editing the plate away from the record dirties the form (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_form_changed(
+        RiderFormValues(plate="200", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("set_save_enabled", (True,))]
+
+
+def test_on_form_changed_given_an_edited_first_name_enables_save() -> None:
+    """Editing the first name away from the record dirties (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_form_changed(
+        RiderFormValues(plate="123", first_name="Samuel", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("set_save_enabled", (True,))]
+
+
+def test_on_form_changed_given_an_edited_last_name_enables_save() -> None:
+    """Editing the last name away from the record dirties (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_form_changed(
+        RiderFormValues(plate="123", first_name="Sam", last_name="Ellis-Smith", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("set_save_enabled", (True,))]
+
+
+def test_on_form_changed_given_an_edited_team_enables_save() -> None:
+    """Changing team_choice away from the record dirties (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_mixed_roster())
+    presenter.on_row_selected(0)  # A. Roy, on Trail Blazers
+    view.calls.clear()
+
+    presenter.on_form_changed(
+        RiderFormValues(plate="77", first_name="A.", last_name="Roy", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("set_save_enabled", (True,))]
+
+
+def test_on_form_changed_given_nothing_selected_keeps_save_disabled() -> None:
+    """The add form (no selection) never offers a save (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+    view.calls.clear()
+
+    presenter.on_form_changed(
+        RiderFormValues(plate="200", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("set_save_enabled", (False,))]
+
+
+def test_on_form_changed_given_a_reverted_edit_disables_save_again() -> None:
+    """Reverting a dirty form back to the record re-cleans it (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _draft_solo_roster())
+    presenter.on_row_selected(0)
+    presenter.on_form_changed(
+        RiderFormValues(plate="200", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+    view.calls.clear()
+
+    presenter.on_form_changed(
+        RiderFormValues(plate="123", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("set_save_enabled", (False,))]
+
+
+# -------------------------------------- W7 add requires both names
+
+
+@pytest.mark.parametrize(
+    ("first_name", "last_name"),
+    [
+        ("", "Ellis"),
+        ("Sam", ""),
+        ("   ", "Ellis"),
+        ("Sam", "   "),
+    ],
+    ids=["blank_first", "blank_last", "blankish_first", "blankish_last"],
+)
+def test_on_add_given_a_blank_name_shows_the_required_names_message(
+    first_name: str,
+    last_name: str,
+) -> None:
+    """Add with a blank first or last name refuses up front (W7)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster())
+    view.calls.clear()
+
+    presenter.on_add(RiderFormValues(plate="1", first_name=first_name, last_name=last_name, team=SOLO_TEAM_CHOICE))
+
+    assert view.calls == [("show_validation", ("First name and last name are required",))]
+
+
+@pytest.mark.parametrize(
+    ("first_name", "last_name"),
+    [("", ""), (" ", " ")],
+    ids=["both_blank", "both_blankish"],
+)
+def test_on_add_given_blank_names_leaves_the_roster_unchanged(
+    first_name: str, last_name: str
+) -> None:
+    """A refused add mutates nothing (a state, not a call, check)."""
+    roster = Roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+
+    presenter.on_add(
+        RiderFormValues(plate="1", first_name=first_name, last_name=last_name, team=SOLO_TEAM_CHOICE)
+    )
+
+    assert roster.entries == ()
+
+
+# ------------------------------------------- W7 team assignment on save
+
+
+def test_on_save_given_a_solo_selection_joins_the_chosen_team() -> None:
+    """Save with a team chosen folds the solo rider onto that team."""
+    roster = _solo_and_team_roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter.on_row_selected(0)  # Sam Ellis, solo, plate 123
+
+    presenter.on_save(
+        RiderFormValues(plate="123", first_name="Sam", last_name="Ellis", team="Trail Blazers")
+    )
+
+    team = roster.entries[0]
+    assert [entry.type for entry in roster.entries] == [EntryType.TEAM]
+    assert [r.full_name for r in team.riders] == ["A. Roy", "K. Singh", "Sam Ellis"]
+    assert team.riders[-1].plate == "123"
+    assert team.plate == "77"
+
+
+def test_on_save_given_a_solo_join_refused_by_a_full_team_leaves_the_roster_unchanged() -> None:
+    """A full destination team refuses the join before any delete."""
+    roster = Roster(entry_mode=EntryMode.MIXED, max_team_size=2)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_save(
+        RiderFormValues(plate="123", first_name="Sam", last_name="Ellis", team="Trail Blazers")
+    )
+
+    assert view.calls == [
+        ("show_validation", ("team size must be at most 2, got 3",))
+    ]
+    assert [e.type for e in roster.entries] == [EntryType.SOLO, EntryType.TEAM]
+
+
+def test_on_save_given_a_solo_join_after_start_shows_validation_not_crash() -> None:
+    """A post-start solo join refuses via the roster's delete gate."""
+    roster = _solo_and_team_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    roster.status = RideStatus.RUNNING
+    view.calls.clear()
+
+    presenter.on_save(
+        RiderFormValues(plate="123", first_name="Sam", last_name="Ellis", team="Trail Blazers")
+    )
+
+    assert view.calls == [
+        (
+            "show_validation",
+            ("entries can no longer be deleted once the ride is running",),
+        )
+    ]
+    assert roster.entries[0].type is EntryType.SOLO
+
+
+def test_on_save_given_a_solo_selection_joining_a_relay_team_ignores_the_form_plate() -> None:
+    """A relay join frees the solo's plate; the team plate never moves."""
+    roster = _relay_solo_and_team_roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter.on_row_selected(0)  # Sam Ellis, solo entry plate 9
+
+    presenter.on_save(
+        RiderFormValues(plate="9", first_name="Sam", last_name="Ellis", team="Trail Blazers")
+    )
+
+    team = roster.entries[0]
+    assert [e.type for e in roster.entries] == [EntryType.TEAM]
+    assert [r.full_name for r in team.riders] == ["A. Roy", "K. Singh", "Sam Ellis"]
+    assert [r.plate for r in team.riders] == [None, None, None]
+    assert team.plate == "77"
+
+
+def test_on_save_given_a_team_selection_moves_to_the_chosen_team() -> None:
+    """Save with another team chosen moves the rider between teams."""
+    roster = _two_team_roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter.on_row_selected(0)  # A. Roy, Trail Blazers, plate 77
+
+    presenter.on_save(
+        RiderFormValues(plate="77", first_name="A.", last_name="Roy", team="Moss Ridge")
+    )
+
+    trail, moss = roster.entries
+    assert [r.full_name for r in trail.riders] == ["K. Singh"]
+    assert [r.full_name for r in moss.riders] == ["Bo Lindqvist", "Cy Nguyen", "A. Roy"]
+    assert (trail.plate, moss.plate) == ("78", "77")
+
+
+def test_on_save_given_a_team_selection_leaves_to_solo() -> None:
+    """Save with the solo sentinel extracts a pooled member to solo."""
+    roster = _draft_mixed_roster()
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter.on_row_selected(0)  # A. Roy, plate 77
+
+    presenter.on_save(
+        RiderFormValues(plate="77", first_name="A.", last_name="Roy", team=SOLO_TEAM_CHOICE)
+    )
+
+    team, solo = roster.entries
+    assert [r.full_name for r in team.riders] == ["K. Singh"]
+    assert team.plate == "78"
+    assert (solo.display_name, solo.plate, solo.riders[0].plate) == ("A. Roy", "77", "77")
+
+
+def test_on_save_given_a_relay_team_member_leaving_to_solo_shows_validation() -> None:
+    """A relay member has no solo conversion; the roster refuses."""
+    roster = _draft_relay_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_save(
+        RiderFormValues(plate="77", first_name="A.", last_name="Roy", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [
+        (
+            "show_validation",
+            ("extract_rider_to_solo requires a rider_pooled team member",),
+        )
+    ]
+    assert len(roster.entries[0].riders) == 2
+
+
+def test_on_save_given_a_pooled_member_leaving_to_solo_after_start_shows_validation() -> None:
+    """extract_rider_to_solo is DRAFT-only; a running ride refuses."""
+    roster = _draft_mixed_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    roster.status = RideStatus.RUNNING
+    view.calls.clear()
+
+    presenter.on_save(
+        RiderFormValues(plate="77", first_name="A.", last_name="Roy", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [
+        (
+            "show_validation",
+            ("a rider cannot be extracted to solo once the ride is running",),
+        )
+    ]
+    assert len(roster.entries[0].riders) == 2
+
+
+def test_on_save_given_a_relay_member_moving_teams_ignores_the_form_plate() -> None:
+    """A relay move never rewrites the destination team's plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[Rider(first_name="A.", last_name="Roy"), Rider(first_name="K.", last_name="Singh")],
+        plate="77",
+    )
+    roster.create_team_entry(
+        display_name="Moss Ridge",
+        riders=[Rider(first_name="Bo", last_name="Lindqvist"), Rider(first_name="Cy", last_name="Nguyen")],
+        plate="80",
+    )
+    presenter = RidersPresenter(RecordingRidersView(), roster)
+    presenter.on_row_selected(0)  # A. Roy on Trail Blazers (plate 77 shown)
+
+    presenter.on_save(
+        RiderFormValues(plate="77", first_name="A.", last_name="Roy", team="Moss Ridge")
+    )
+
+    trail, moss = roster.entries
+    assert [r.full_name for r in trail.riders] == ["K. Singh"]
+    assert "A. Roy" in [r.full_name for r in moss.riders]
+    assert (trail.plate, moss.plate) == ("77", "80")
+
+
+def test_on_save_given_a_blank_plate_shows_validation_not_crash() -> None:
+    """A blanked plate refuses via the roster's non-empty guard (W7)."""
+    roster = _draft_relay_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_save(
+        RiderFormValues(plate="   ", first_name="A.", last_name="Roy", team="Trail Blazers")
+    )
+
+    assert view.calls == [("show_validation", ("plate '   ' must not be empty",))]
+    assert roster.entries[0].plate == "77"
+
+
+def test_on_save_given_a_blank_solo_plate_shows_validation_not_crash() -> None:
+    """A blanked solo plate refuses too (both plate models) (W7)."""
+    roster = _draft_solo_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_save(
+        RiderFormValues(plate="", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE)
+    )
+
+    assert view.calls == [("show_validation", ("plate '' must not be empty",))]
+    assert roster.entries[0].plate == "123"
 
 
 # -------------------------------------------------- property test T-7

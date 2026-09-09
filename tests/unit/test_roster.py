@@ -2485,3 +2485,87 @@ def test_add_rider_to_team_pooled_non_numeric_plate_raises_and_keeps_the_team() 
         roster.add_rider_to_team(stranger, to_entry=entry)
 
     assert [rider.plate for rider in entry.riders] == ["1", "2"]
+
+
+# ------------- W7: plates must be non-empty (relay-blank hole closed)
+
+
+def test_create_solo_entry_relay_blank_plate_raises_plate_shape_error() -> None:
+    """team_relay: a solo entry's plate must be a non-empty string."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '' must not be empty")):
+        roster.create_solo_entry(first_name="Alex", last_name="", plate="")
+
+    assert roster.entries == ()
+
+
+def test_create_team_entry_relay_blankish_plate_raises_plate_shape_error() -> None:
+    """team_relay: whitespace-only plates are refused as blank."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '   ' must not be empty")):
+        roster.create_team_entry(
+            display_name="Team A",
+            riders=[
+                Rider(first_name="Alex", last_name=""),
+                Rider(first_name="Bo", last_name=""),
+            ],
+            plate="   ",
+        )
+
+    assert roster.entries == ()
+
+
+def test_change_team_plate_blank_raises_and_changes_nothing() -> None:
+    """team_relay: change_team_plate refuses a blanked plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Team A",
+        riders=[
+            Rider(first_name="Alex", last_name=""),
+            Rider(first_name="Bo", last_name=""),
+        ],
+        plate="77",
+    )
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '' must not be empty")):
+        roster.change_team_plate(entry, plate="")
+
+    assert entry.plate == "77"
+
+
+def test_change_solo_plate_relay_blank_raises_and_changes_nothing() -> None:
+    """team_relay: change_solo_plate refuses a blanked plate too."""
+    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="9")
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '  ' must not be empty")):
+        roster.change_solo_plate(entry, plate="  ")
+
+    assert (entry.plate, entry.riders[0].plate) == ("9", None)
+
+
+def test_change_solo_plate_pooled_blank_raises_plate_shape_error() -> None:
+    """rider_pooled: a blanked solo plate is refused as empty, not whole."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '' must not be empty")):
+        roster.change_solo_plate(entry, plate="")
+
+    assert entry.plate == "1"
+
+
+def test_change_pooled_rider_plate_blank_raises_and_changes_nothing() -> None:
+    """rider_pooled: a blanked member plate is refused as empty."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="3")
+    entry = roster.create_team_entry(
+        display_name="Team A", riders=[alex, Rider(first_name="Bo", last_name="", plate="9")]
+    )
+
+    with pytest.raises(PlateShapeError, match=re.escape("plate '   ' must not be empty")):
+        roster.change_pooled_rider_plate(alex, plate="   ")
+
+    assert (alex.plate, entry.plate) == ("3", "3")
