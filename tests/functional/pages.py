@@ -339,6 +339,7 @@ ENTRY_DETAIL_DLG = WindowSpec(
     xrc_file="detail.xrc",
     is_frame=False,
     controls=(
+        ids.PLATE_CHOICE,
         ids.ENTRY_HEADER_LBL,
         ids.MEMBERS_LBL,
         ids.CARDS_LIST,
