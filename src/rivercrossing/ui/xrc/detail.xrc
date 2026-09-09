@@ -36,6 +36,36 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
+      <!-- W11 F2b: the plate picker row: which entry this detail
+           shows (a canvas addition, recorded in xrc-windows.md C).
+           The roster's plates load in code; the empty state (no
+           roster) leaves the choice empty and disabled. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxStaticText">
+              <label>Plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxChoice" name="plate_choice"/>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Corrections act on the shown entry</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
       <!-- One line on the canvas: the entry summary, then its riders. -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>

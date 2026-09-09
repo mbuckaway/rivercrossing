@@ -53,6 +53,15 @@ successful correction so the app bootstrap can refresh its menu
 enablement. The pre-E7 contract is preserved: constructing with a
 plate no entry owns raises ``LookupError`` (R-38's loud failure,
 pinned by ``test_lists_entry_detail``).
+
+W11 F2b adds the plate picker: ``plate_choice`` (a canvas addition,
+recorded in xrc-windows.md section C) lists the live roster's entry
+plates when a roster is threaded, and picking one retargets the
+dialog -- the presenter re-renders the picked entry and reports the
+pick through the optional ``on_plate_picked`` seam, which the app
+wires to its current-entry context so the menu correction routes act
+on the picked entry. The empty state (no roster) leaves the choice
+empty and disabled.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -201,7 +210,7 @@ class EntryDetailDialog:
     ``RideSetup``/``ResultsWindow`` precedent.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, plate, data_source) + the four optional E7 seams
+    def __init__(  # noqa: PLR0913 -- (dialog, plate, data_source) + the five optional E7/W11 seams
         self,
         dialog: wx.Dialog,
         plate: str,
@@ -212,6 +221,7 @@ class EntryDetailDialog:
         resource: Any | None = None,  # noqa: ANN401 -- wx ships no stubs
         notify: Callable[[str], None] | None = None,
         on_corrected: Callable[[], None] | None = None,
+        on_plate_picked: Callable[[str], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``entry_detail_dlg`` window.
 
@@ -227,8 +237,9 @@ class EntryDetailDialog:
                 threaded to the presenter; ``None`` in the E5.4.2
                 empty state, where the correction buttons post a
                 notice instead of acting.
-            roster: The live roster (the pooled-move write side and
-                the entry-label source); ``None`` in the empty state.
+            roster: The live roster (the pooled-move write side, the
+                entry-label source, and the plate picker's plate
+                list); ``None`` in the empty state.
             resource: The loaded ``wx.xrc.XmlResource`` the correction
                 sub-dialogs load from; ``None`` only in constructions
                 that never open one.
@@ -236,6 +247,9 @@ class EntryDetailDialog:
                 the bootstrap); ``None`` in direct constructions.
             on_corrected: Fires after a successful correction so the
                 bootstrap can refresh its menu enablement.
+            on_plate_picked: Fires after the operator picks a
+                different entry in ``plate_choice`` (W11 F2b); the
+                bootstrap records the pick as the current entry.
 
         Raises:
             LookupError: If no entry owns *plate* -- R-38's loud
@@ -254,6 +268,7 @@ class EntryDetailDialog:
         self.members_lbl = self._find(ids.MEMBERS_LBL, wx.StaticText)
         self.cards_list = self._find(ids.CARDS_LIST, wx.dataview.DataViewCtrl)
         self.laps_list = self._find(ids.LAPS_LIST, wx.dataview.DataViewCtrl)
+        self.plate_choice = self._find(ids.PLATE_CHOICE, wx.Choice)
         self._build_cards_column()
         self._build_laps_columns()
         self._cards_model: CardsHeldModel | None = None
@@ -279,8 +294,10 @@ class EntryDetailDialog:
             engine=engine,
             roster=roster,
             on_corrected=on_corrected,
+            on_plate_picked=on_plate_picked,
         )
         self._bind_actions()
+        self._bind_plate_choice()
 
         # Render once: an unknown plate raises here (R-38), preserving
         # the pre-E7 construction contract.
@@ -317,6 +334,34 @@ class EntryDetailDialog:
                 self.laps_list.AppendColumn(column)
             else:
                 self.laps_list.AppendTextColumn(label, col, width=width)
+
+    def _bind_plate_choice(self) -> None:
+        """Fill ``plate_choice`` with the roster's entry plates (F2b).
+
+        Only a live construction has a roster to list; the empty state
+        leaves the choice empty and disabled. The choice's items are
+        the entry plates themselves (the domain's own namespace, the
+        same plates the operator types and the corrections act on).
+        """
+        roster = self._roster
+        if roster is None:
+            self.plate_choice.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+            return
+        self.plate_choice.SetItems([entry.plate for entry in roster.entries])
+        index = self.plate_choice.FindString(self.plate)
+        if index != wx.NOT_FOUND:
+            self.plate_choice.SetSelection(index)
+        self.dialog.Bind(wx.EVT_CHOICE, lambda _event: self._on_plate_picked(), self.plate_choice)
+
+    def _on_plate_picked(self) -> None:
+        """Retarget the dialog to the entry the operator picked.
+
+        The presenter re-renders the picked entry and reports the pick
+        through its app seam (``_RouteContext.detail_plate``), so the
+        menu correction routes act on the picked entry once this
+        modal ends.
+        """
+        self.presenter.on_plate_picked(self.plate_choice.GetStringSelection())
 
     def show_entry(self, detail: EntryDetail) -> None:
         """Render header, members, held cards and laps rows.

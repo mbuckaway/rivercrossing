@@ -1105,6 +1105,9 @@ def _open_entry_detail_dialog(context: _RouteContext, window: Any, plate: str) -
             resource=context.resource,
             notify=context.frame.SetStatusText,
             on_corrected=lambda: _apply_menu_state(context, engine.state),
+            # W11 F2b: a plate_choice pick retargets the dialog AND
+            # becomes the current entry the correction routes target.
+            on_plate_picked=lambda plate: setattr(context, "detail_plate", plate),
         )
     else:
         EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)

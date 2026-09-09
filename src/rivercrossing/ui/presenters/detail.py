@@ -224,6 +224,7 @@ class DetailPresenter:
         roster: Roster | None = None,
         clock: Callable[[], datetime] | None = None,
         on_corrected: Callable[[], None] | None = None,
+        on_plate_picked: Callable[[str], None] | None = None,
     ) -> None:
         """Store the view, data source and seams this presenter drives.
 
@@ -242,6 +243,9 @@ class DetailPresenter:
                 defaults to ``datetime.now``.
             on_corrected: Optional hook fired after each successful
                 engine/roster command (the app wires its menu binder).
+            on_plate_picked: Optional hook fired after the operator
+                picks a different entry in ``plate_choice`` (W11 F2b);
+                the app records the pick as the current entry.
         """
         self.view = view
         self.data_source = data_source
@@ -250,6 +254,7 @@ class DetailPresenter:
         self.roster = roster
         self._clock = clock if clock is not None else datetime.now
         self._on_corrected = on_corrected
+        self._on_plate_picked = on_plate_picked
 
     # ------------------------------------------------------- helpers
 
@@ -301,6 +306,23 @@ class DetailPresenter:
         self.refresh()
         if self._on_corrected is not None:
             self._on_corrected()
+
+    def on_plate_picked(self, plate: str) -> None:
+        """Retarget this dialog to *plate*; report the pick (W11 F2b).
+
+        The plate_choice picker calls this with the newly chosen
+        entry: every correction action that follows targets *plate*
+        (``self.plate``), the dialog re-renders that entry (the same
+        ``refresh`` a successful correction runs), and the optional
+        ``on_plate_picked`` hook fires so the app can record the pick
+        as the current entry (``_RouteContext.detail_plate``). A plate
+        the source can no longer resolve falls back to the empty
+        render, exactly like a dissolved entry after a move.
+        """
+        self.plate = plate
+        self.refresh()
+        if self._on_plate_picked is not None:
+            self._on_plate_picked(plate)
 
     # ------------------------------------------------------- actions
 
