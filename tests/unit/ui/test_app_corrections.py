@@ -211,3 +211,152 @@ def test_make_route_handler_given_mi_stop_ride_without_presenter_posts_the_stub(
     bound(None)
 
     assert notices == [f"{route.label} — not yet implemented"]
+
+
+# ============================================================ W11
+# F2a (dead-control wiring): the console's flagged list had no
+# activation binding, so a scorer could never open Entry Detail from a
+# flagged crossing -- and ``_RouteContext.detail_plate`` was only ever
+# self-assigned, so the menu correction routes refused. The app now
+# wires a ``set_on_open_flagged`` seam (mirroring the Riders tab's
+# ``set_on_open_rider``) whose handler opens the live entry detail at
+# the flagged plate and records it as the current entry.
+
+
+class _OpenFlaggedConsole:
+    """A console-view stand-in recording the flagged-open callback."""
+
+    def __init__(self) -> None:
+        """Start with no registered callback."""
+        self._on_open_flagged: object | None = None
+
+    def set_on_open_flagged(self, callback: object) -> None:
+        """Record the callback the app wired."""
+        self._on_open_flagged = callback
+
+
+class _EntryDialogSpy:
+    """EntryDetailDialog stand-in recording its constructor inputs."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """Store the constructor inputs for later assertions."""
+        self.args = args
+        self.kwargs = kwargs
+
+
+class _RouteStub:
+    """The route-context surface the W11 seam helpers read."""
+
+    def __init__(  # noqa: PLR0913 -- mirrors the live _RouteContext fields the seams touch
+        self,
+        *,
+        frame: object = None,
+        roster: object = None,
+        presenter: object = None,
+        console_view: object = None,
+        resource: object = None,
+    ) -> None:
+        """Store the threaded surfaces."""
+        self.frame = frame
+        self.roster = roster
+        self.presenter = presenter
+        self.console_view = console_view
+        self.resource = resource
+        self.detail_plate: str | None = None
+
+
+def test_wire_flagged_open_seam_opens_the_entry_detail_at_the_flagged_plate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F2a: the wired seam opens the live detail for the activated row.
+
+    ``_open_entry_detail_for`` is the app-side opener; this pins the
+    wiring half (the console only fires ``callback(plate)``).
+    """
+    opened: list[tuple[object, str]] = []
+    monkeypatch.setattr(
+        app_module,
+        "_open_entry_detail_for",
+        lambda context, plate: opened.append((context, plate)),
+    )
+    console = _OpenFlaggedConsole()
+    context = _RouteStub(console_view=console)
+
+    app_module._wire_flagged_open_seam(context)  # type: ignore[arg-type]
+    console._on_open_flagged("77")  # type: ignore[attr-defined]
+
+    assert opened == [(context, "77")]
+
+
+def test_wire_flagged_open_seam_without_a_console_view_is_a_no_op(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A console-less route-level context has nothing to wire."""
+    called: list[object] = []
+    monkeypatch.setattr(
+        app_module, "_open_entry_detail_for", lambda _context, _plate: called.append(1)
+    )
+
+    app_module._wire_flagged_open_seam(_RouteStub(console_view=None))  # type: ignore[arg-type]
+
+    assert called == []
+
+
+def test_open_entry_detail_dialog_live_branch_records_and_builds_the_live_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F2a: the live branch records ``detail_plate`` and builds live.
+
+    With a live presenter and a concrete plate the dialog opens over
+    the console's engine/source/roster/resource -- the six action
+    buttons act on real data -- and the plate becomes the current
+    entry the menu correction routes target.
+    """
+    import rivercrossing.ui.views.entry_detail as entry_detail_module  # noqa: PLC0415 -- deferred-import spy target
+
+    engine = object()
+    source = object()
+    roster = object()
+    built: list[_EntryDialogSpy] = []
+    monkeypatch.setattr(
+        entry_detail_module,
+        "EntryDetailDialog",
+        lambda *args, **kwargs: built.append(_EntryDialogSpy(*args, **kwargs)) or built[-1],
+    )
+    presenter = type("_Presenter", (), {"engine": engine, "source": source})()
+    context = _RouteStub(frame=_NoticeFrame([]), roster=roster, presenter=presenter)
+
+    app_module._open_entry_detail_dialog(context, object(), "77")  # type: ignore[arg-type]
+
+    assert context.detail_plate == "77"
+    assert len(built) == 1
+    assert built[0].kwargs["engine"] is engine
+    assert built[0].kwargs["data_source"] is source
+    assert built[0].kwargs["roster"] is roster
+
+
+def test_open_entry_detail_dialog_empty_branch_opens_the_empty_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F2a: no live selection keeps the E5.4.2 empty state.
+
+    The empty branch must not record a plate: a correction menu route
+    after this dialog closes still refuses, which is the honest
+    reading of "open an entry first".
+    """
+    import rivercrossing.ui.views.entry_detail as entry_detail_module  # noqa: PLC0415 -- deferred-import spy target
+
+    built: list[_EntryDialogSpy] = []
+    monkeypatch.setattr(
+        entry_detail_module,
+        "EntryDetailDialog",
+        lambda *args, **kwargs: built.append(_EntryDialogSpy(*args, **kwargs)) or built[-1],
+    )
+    context = _RouteStub(presenter=None)
+
+    app_module._open_entry_detail_dialog(context, object(), "")  # type: ignore[arg-type]
+
+    assert context.detail_plate is None
+    assert len(built) == 1
+    assert built[0].args[1] == app_module._ENTRY_DETAIL_DEFAULT_PLATE
+    assert built[0].kwargs["data_source"] is app_module._EMPTY_SOURCE

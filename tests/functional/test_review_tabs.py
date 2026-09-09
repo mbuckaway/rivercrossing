@@ -349,3 +349,117 @@ def test_review_riders_activation_opens_the_editor_preselected_at_the_plate(  # 
     harness.pump()
 
     assert opened == {"dialog": ids.RIDER_EDITOR_DLG, "plate": "77"}
+
+
+# --- W11 F2a: the flagged tab's open-entry-detail seam --------------
+#
+# The flagged list had no activation binding, so a scorer could never
+# open Entry Detail from a flagged crossing. F2a mirrors the Riders
+# tab's seam shape: ``set_on_open_flagged`` fires ``callback(plate)``
+# on activation, and the app's ``_wire_flagged_open_seam`` opens the
+# live Entry Detail dialog at that plate, recording it as the current
+# entry (``context.detail_plate``) so the correction menu routes stop
+# refusing. Rows here run after the riders block; ``set_on_open_rider``
+# registrations do not affect the flagged seam, so the no-op pin below
+# still sees the console's initial unwired flagged state.
+
+
+def test_review_flagged_activation_without_a_registered_callback_is_a_no_op(
+    review_console: MainFrame,
+) -> None:
+    """F2a: an unwired flagged seam ignores activation without crashing.
+
+    Runs before any test registers a callback: ``review_console`` is
+    module-scoped and ``set_on_open_flagged`` never clears, so this
+    pin needs the console's initial unwired state.
+    """
+    flagged_list = harness.find_control(review_console.frame, ids.FLAGGED_LIST)
+    model = flagged_list.GetModel()
+    item = model.GetItem(0)
+    event = wx.dataview.DataViewEvent(
+        wx.dataview.wxEVT_DATAVIEW_ITEM_ACTIVATED, flagged_list, item
+    )
+
+    flagged_list.GetEventHandler().ProcessEvent(event)
+    harness.pump()
+
+    assert review_console._on_open_flagged is None
+
+
+def test_review_flagged_activation_fires_the_open_flagged_callback_with_the_plate(
+    review_console: MainFrame,
+) -> None:
+    """F2a: activating a flagged row fires ``set_on_open_flagged``.
+
+    The activation event is posted directly (the harness's one working
+    mechanism); the console itself opens nothing -- the app wires the
+    open-entry-detail flow to this seam.
+    """
+    flagged_list = harness.find_control(review_console.frame, ids.FLAGGED_LIST)
+    opened: list[str] = []
+    review_console.set_on_open_flagged(opened.append)
+    model = flagged_list.GetModel()
+    item = model.GetItem(0)  # plate 12's short-lap crossing
+    event = wx.dataview.DataViewEvent(
+        wx.dataview.wxEVT_DATAVIEW_ITEM_ACTIVATED, flagged_list, item
+    )
+
+    flagged_list.GetEventHandler().ProcessEvent(event)
+    harness.pump()
+
+    assert opened == ["12"]
+
+
+def test_review_flagged_activation_opens_live_entry_detail_and_records_the_entry(  # noqa: PLR0913, PLR0917 -- (review_console, xrc_resource, wx_app, monkeypatch): the four fixture seams
+    review_console: MainFrame,
+    xrc_resource: object,
+    wx_app: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F2a: the wired seam opens live detail at the flagged plate.
+
+    End-to-end proof of the flagged-tab open flow
+    (``app._wire_flagged_open_seam`` -> ``_open_entry_detail_for``): a
+    double-click on a live console's flagged row opens the LIVE entry
+    detail at that plate -- the dialog renders the engine's entry (not
+    the empty state) -- and records ``context.detail_plate`` so the
+    menu correction routes act on the flagged entry. ``run_dialog`` is
+    monkeypatched (the suite's standard seam) and reads the dialog
+    before returning.
+    """
+    roster = _fixture_roster()
+    context = app_module._RouteContext(
+        frame=review_console.frame,
+        resource=xrc_resource,
+        roster=roster,
+        app=wx_app,
+        theme_controller=theme.ThemeController(wx_app),
+        presenter=review_console._presenter,
+        console_view=review_console,
+    )
+    app_module._wire_flagged_open_seam(context)
+    opened: dict[str, str] = {}
+
+    def _capture_and_close(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
+        opened["dialog"] = dialog.GetName()
+        header = harness.find_control(dialog, ids.ENTRY_HEADER_LBL)
+        opened["header"] = header.GetLabelText()
+        return wx.ID_CANCEL
+
+    monkeypatch.setattr(dialogs, "run_dialog", _capture_and_close)
+    flagged_list = harness.find_control(review_console.frame, ids.FLAGGED_LIST)
+    model = flagged_list.GetModel()
+    item = model.GetItem(0)  # plate 12's short-lap crossing
+    event = wx.dataview.DataViewEvent(
+        wx.dataview.wxEVT_DATAVIEW_ITEM_ACTIVATED, flagged_list, item
+    )
+
+    flagged_list.GetEventHandler().ProcessEvent(event)
+    harness.pump()
+
+    assert opened["dialog"] == ids.ENTRY_DETAIL_DLG
+    assert context.detail_plate == "12"
+    # Live render, not the empty state: the header carries plate 12's
+    # recorded lap count.
+    assert "1 laps" in opened["header"]
+    assert opened["header"].startswith("Solo")
