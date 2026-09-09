@@ -1069,7 +1069,48 @@ def _save_layout_settings(
     context.settings = updated
 
 
-def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target; each binds a different view class
+def _open_entry_detail_dialog(context: _RouteContext, window: Any, plate: str) -> None:  # noqa: ANN401
+    """Decorate *window* as the entry detail for *plate* (E7.2.1).
+
+    The entry-detail decoration both the ``mi_entry_detail`` menu route
+    (via :func:`_decorate`) and the W11 F2a flagged-tab seam
+    (:func:`_open_entry_detail_for`) perform: with a live console
+    threaded AND a concrete entry (``context.detail_plate``, recorded
+    when entry detail opened), entry detail opens that entry over the
+    live engine/roster/resource, so the six action buttons act on real
+    data; with no selection the E5.4.2 empty state stays (a live
+    engine with an unset plate would raise LookupError from
+    ``entry_detail("")`` -- R-38's loud failure is for a deep-linked
+    plate, not the menu's no-selection default).
+
+    Args:
+        context: The route context whose live seams to thread.
+        window: The already-loaded ``entry_detail_dlg`` to decorate.
+        plate: The plate to open; ``""`` keeps the empty state.
+    """
+    from rivercrossing.ui.views.entry_detail import (  # noqa: PLC0415 -- deferred, see module docstring
+        EntryDetailDialog,
+    )
+
+    presenter = context.presenter
+    if presenter is not None and plate:
+        context.detail_plate = plate
+        engine = presenter.engine
+        EntryDetailDialog(
+            window,
+            plate,
+            data_source=presenter.source,
+            engine=engine,
+            roster=context.roster,
+            resource=context.resource,
+            notify=context.frame.SetStatusText,
+            on_corrected=lambda: _apply_menu_state(context, engine.state),
+        )
+    else:
+        EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
+
+
+def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each binds a different view class
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs
     route: commands.MenuRoute,
@@ -1094,7 +1135,6 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
     """
     from rivercrossing.ui.views.about import AboutDialog  # noqa: PLC0415
     from rivercrossing.ui.views.audit import AuditDialog  # noqa: PLC0415
-    from rivercrossing.ui.views.entry_detail import EntryDetailDialog  # noqa: PLC0415
     from rivercrossing.ui.views.results_win import ResultsWindow  # noqa: PLC0415
     from rivercrossing.ui.views.ride_library import RideLibrary  # noqa: PLC0415
     from rivercrossing.ui.views.ride_setup import RideSetup  # noqa: PLC0415
@@ -1153,31 +1193,11 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
             on_submitted=lambda config: _persist_created_ride(context, config),
         )
     elif route.target == ids.ENTRY_DETAIL_DLG:
-        # E7.2.1: with a live console threaded AND a concrete entry
-        # selected (context.detail_plate, recorded when entry detail
-        # opened), entry detail opens that entry over the live
-        # engine/roster/resource, so the six action buttons act on
-        # real data; with no selection the E5.4.2 empty state stays
-        # (a live engine with an unset plate would raise LookupError
-        # from entry_detail("") -- R-38's loud failure is for a
-        # deep-linked plate, not the menu's no-selection default).
-        presenter = context.presenter
-        plate = context.detail_plate or ""
-        if presenter is not None and plate:
-            context.detail_plate = plate
-            engine = presenter.engine
-            EntryDetailDialog(
-                window,
-                plate,
-                data_source=presenter.source,
-                engine=engine,
-                roster=context.roster,
-                resource=context.resource,
-                notify=context.frame.SetStatusText,
-                on_corrected=lambda: _apply_menu_state(context, engine.state),
-            )
-        else:
-            EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
+        # E7.2.1 (shared with the W11 F2a flagged seam): the live
+        # branch opens the selected entry over the live seams; the
+        # empty branch keeps the E5.4.2 empty state. See
+        # _open_entry_detail_dialog's own docstring.
+        _open_entry_detail_dialog(context, window, context.detail_plate or "")
     elif route.target == ids.RESULTS_FRAME:
         # E6.4.1 (D10): with a live console threaded, results render
         # the real placed rows from the console's EngineDataSource
@@ -2548,6 +2568,52 @@ def _wire_rider_open_seam(context: _RouteContext) -> None:
     console_view.set_on_open_rider(lambda plate: _open_rider_editor_for(context, plate))
 
 
+def _open_entry_detail_for(context: _RouteContext, plate: str) -> None:
+    """Open ``entry_detail_dlg`` at *plate* (the W11 F2a flagged seam).
+
+    The flagged-tab activation flow: wired as
+    :meth:`MainFrame.set_on_open_flagged`'s callback
+    (:func:`_wire_flagged_open_seam`), so a double-click (or Enter) on
+    a flagged row opens the LIVE entry detail at the flagged entry's
+    plate -- the same decoration :func:`_open_target` performs for the
+    ``mi_entry_detail`` route (:func:`_open_entry_detail_dialog`,
+    which also records ``context.detail_plate`` so the correction menu
+    routes act on the flagged entry). The dialog path mirrors
+    :func:`_open_rider_editor_for`'s own: zoom applied before
+    decoration, shown through ``dialogs.run_dialog``, destroyed in a
+    ``finally`` (Fault A: a decoration raise must not leak it).
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    window = context.resource.LoadDialog(None, ids.ENTRY_DETAIL_DLG)
+    if window is None:
+        context.frame.SetStatusText("Entry Detail — no window authored yet")
+        return
+    try:
+        zoom.apply_to(window)
+        _open_entry_detail_dialog(context, window, plate)
+        _apply_dialog_defaults(window, commands.route_for_id("mi_entry_detail"))
+        dialogs.run_dialog(window, opener=context.frame)
+    finally:
+        if not window.IsBeingDeleted():
+            window.Destroy()
+
+
+def _wire_flagged_open_seam(context: _RouteContext) -> None:
+    """Wire the console flagged tab's activation to entry detail.
+
+    W11 F2a: :meth:`MainFrame.set_on_open_flagged` is the view's pure
+    seam (it only fires ``callback(plate)``); this is the app's half
+    that opens the live entry detail at the activated flagged row's
+    plate, recording it as the current entry. A console-less
+    route-level context has nothing to wire.
+    """
+    console_view = context.console_view
+    if console_view is None:
+        return
+    console_view.set_on_open_flagged(lambda plate: _open_entry_detail_for(context, plate))
+
+
 def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     """Run the quit-confirm dialog for the ride's current status.
 
@@ -3257,7 +3323,10 @@ def build_main_window(
 
     ux-polish adds one post-wiring step: the console Riders tab's
     double-click seam is wired to the rider editor
-    (:func:`_wire_rider_open_seam`). W3 retired every launch modal
+    (:func:`_wire_rider_open_seam`); W11 F2a adds the flagged tab's
+    activation seam the same way
+    (:func:`_wire_flagged_open_seam` -> live entry detail at the
+    flagged plate). W3 retired every launch modal
     from this function -- ``resume_dlg``, the no-ride prompt and the
     R-44 self-test all ran here, before the frame was shown, where a
     modal that cannot be presented blocks the launch invisibly (the
@@ -3403,6 +3472,7 @@ def build_main_window(
     )
     _bind_routes(context)
     _wire_rider_open_seam(context)
+    _wire_flagged_open_seam(context)
     _bind_process_quit_paths(context)
     _bind_theme(context)
     # E7.2.1: the live menu-enablement binder (E1.4.2's missing half).

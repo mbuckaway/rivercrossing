@@ -512,10 +512,15 @@ class MainFrame:
         self._flagged_model: FlaggedListModel | None = None
         self._riders_model: RidersListModel | None = None
         self._on_open_rider: Callable[[str], None] | None = None
+        # W11 F2a: the flagged tab's activation seam (its own slot --
+        # activating a flagged row opens entry detail, not the rider
+        # editor, so the two lists keep separate callbacks).
+        self._on_open_flagged: Callable[[str], None] | None = None
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
         self.console_riders_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_rider_activated
         )
+        self.flagged_list.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_flagged_activated)
 
         # LoadFrame does not honour main.xrc's <size> -- measured: the
         # frame comes back sized to the sizer's own computed minimum
@@ -699,6 +704,18 @@ class MainFrame:
         """
         self._on_open_rider = callback
 
+    def set_on_open_flagged(self, callback: Callable[[str], None]) -> None:
+        """Register the activation seam of the flagged tab (W11 F2a).
+
+        The app wires this to its open-entry-detail flow; the console
+        itself only fires ``callback(plate)`` when a flagged row is
+        activated (double-click or Enter with the list focused). The
+        flagged tab and the riders tab keep separate seams because the
+        app opens a different dialog for each (entry detail vs the
+        rider editor).
+        """
+        self._on_open_flagged = callback
+
     def focus_review_panel(self) -> None:
         """Focus the review notebook's "Needs Review" tab (WS-H).
 
@@ -730,6 +747,22 @@ class MainFrame:
         plate = self._riders_model.GetValueByRow(row, RIDERS_COL_PLATE)
         if self._on_open_rider is not None:
             self._on_open_rider(plate)
+
+    def _on_flagged_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Fire the open-flagged seam with the activated row's plate.
+
+        W11 F2a: the mirror of :meth:`_on_rider_activated` for the
+        flagged list -- the flagged row's plate is the entry the
+        app's open-entry-detail flow targets.
+        """
+        if self._flagged_model is None:
+            return
+        row = self._flagged_model.GetRow(event.GetItem())
+        if row == wx.NOT_FOUND:
+            return
+        plate = self._flagged_model.GetValueByRow(row, FLAG_COL_PLATE)
+        if self._on_open_flagged is not None:
+            self._on_open_flagged(plate)
 
     def set_hide_times(self, *, hide: bool) -> None:
         """Toggle the Lap time/Total columns per R-37.
