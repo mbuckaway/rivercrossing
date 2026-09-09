@@ -8,9 +8,14 @@ the editor reads and writes the roster itself rather than a
 display-only projection of it. This replaces the earlier no-op
 ``(view, data_source)`` shape (E1.2.3) for this presenter only.
 
-Add folds a new rider onto an existing team via
-:meth:`~rivercrossing.roster.Roster.create_team_entry_of_one` (a
-transient size-1 team, DRAFT-only, R-12's floor deferred to start
+W7 retires the editor's in-form add: ``rider_editor_dlg``'s own
+``add_btn`` now opens the dedicated ``add_rider_dlg`` window
+(``ui/views/rider_editor.run_add_rider_flow``) instead of adding from
+the editor's form. The dialog pairs with a *second* presenter class,
+:class:`AddRiderPresenter`, which owns the create logic the editor's
+own ``on_add`` used to run -- Add folds a new rider onto an existing
+team via :meth:`~rivercrossing.roster.Roster.create_team_entry_of_one`
+(a transient size-1 team, DRAFT-only, R-12's floor deferred to start
 time) followed by :meth:`~rivercrossing.roster.Roster.move_rider` --
 not ``create_solo_entry`` + ``move_rider`` as first proposed:
 ``move_rider`` rejects a solo entry on either side unconditionally
@@ -21,7 +26,9 @@ refused join rolls the transient team back with ``delete_entry`` so
 the roster stays truly unchanged. The 2026-09-06 ux-polish follow-on
 retired the "New team…" sentinel from this editor entirely:
 ``team_choice`` now offers solo or an existing team, and naming a
-brand-new team happens in the Teams editor, never here.
+brand-new team happens in the Teams editor, never here. A successful
+Add closes the dialog; the editor's own ``RidersPresenter`` then
+re-renders through :meth:`RidersPresenter.on_add_committed`.
 
 E3.4 extends the same class with csv_preview_dlg's own three entry
 points (``on_pick_csv_import``/``on_confirm_csv_import``/
@@ -62,6 +69,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SOLO_TEAM_CHOICE",
+    "AddRiderPresenter",
+    "AddRiderView",
     "CsvConflict",
     "CsvPreview",
     "RiderFormValues",
@@ -185,6 +194,120 @@ def _team_choices(roster: Roster) -> list[str]:
     return [SOLO_TEAM_CHOICE, *names]
 
 
+def _find_team_entry(roster: Roster, display_name: str) -> Entry:
+    """Return the TEAM entry named *display_name*.
+
+    Shared by the Add dialog's join and the editor's save-time team
+    change; a display name with no entry is a stale-choice
+    ``StopIteration`` the caller's own ``RosterError`` guard does not
+    catch, mirroring the pre-W7 add flow's identical assumption that
+    team_choice's content tracks the roster it was built from.
+    """
+    return next(
+        entry
+        for entry in roster.entries
+        if entry.type is EntryType.TEAM and entry.display_name == display_name
+    )
+
+
+@runtime_checkable
+class AddRiderView(Protocol):
+    """View surface for the Add Rider dialog (add_rider_dlg, W7)."""
+
+    def show_team_choices(self, names: list[str]) -> None:
+        """Replace team_choice's content with *names*, in order."""
+        ...
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Show/hide the Team row (R-11: solo-only rides have none)."""
+        ...
+
+    def show_form(self, *, plate: str, team: str) -> None:
+        """Pre-fill the plate/team fields; names start blank."""
+        ...
+
+    def show_validation(self, message: str) -> None:
+        """Show a refused-add message on the dialog's infobar."""
+        ...
+
+
+class AddRiderPresenter:
+    """Presenter for the Add Rider dialog (add_rider_dlg, W7).
+
+    Owns the create logic the editor's in-form Add used to run (see
+    the module docstring): a solo choice creates a solo entry, a team
+    choice folds a fresh rider onto that existing team through the
+    shipped primitives. ``on_submit`` reports success as a bool so
+    the view can close only on a real commit -- a refusal (blank
+    name, duplicate plate, full team, ...) leaves the dialog open,
+    showing why on its own infobar, and never mutates the roster.
+    """
+
+    def __init__(self, view: AddRiderView, roster: Roster) -> None:
+        """Store the collaborators and render the dialog's start state.
+
+        Args:
+            view: The add_rider_dlg view driving this roster.
+            roster: The in-memory roster this presenter reads/writes.
+        """
+        self.view = view
+        self.roster = roster
+        self.view.show_team_choices(_team_choices(self.roster))
+        self.view.set_team_ui_visible(visible=self.roster.entry_mode is EntryMode.MIXED)
+        self.view.show_form(plate=self.roster.next_free_plate(), team=SOLO_TEAM_CHOICE)
+
+    def on_submit(self, form: RiderFormValues) -> bool:
+        """Create *form*'s entry, or refuse with a message.
+
+        W7 requires both names: a blank first or last name refuses
+        before any plate or team rule runs. A roster refusal
+        (duplicate plate, a team at max size, ...) shows via
+        :meth:`AddRiderView.show_validation` and leaves the roster
+        unchanged, never raising past this handler.
+
+        Returns:
+            True only once the entry actually exists.
+        """
+        if not form.first_name.strip() or not form.last_name.strip():
+            self.view.show_validation("First name and last name are required")
+            return False
+        try:
+            self._create_entry(form)
+        except RosterError as exc:
+            self.view.show_validation(str(exc))
+            return False
+        return True
+
+    def _create_entry(self, form: RiderFormValues) -> None:
+        """Create *form*'s entry: solo, or folded onto a team."""
+        if form.team == SOLO_TEAM_CHOICE:
+            self.roster.create_solo_entry(
+                first_name=form.first_name, last_name=form.last_name, plate=form.plate
+            )
+            return
+        self._join_existing_team(form)
+
+    def _join_existing_team(self, form: RiderFormValues) -> None:
+        """Fold a new rider onto the existing team named *form.team*.
+
+        Composed from shipped Roster primitives: a transient size-1
+        team is created, then folded in via move_rider (see the
+        module docstring). A refused fold-in rolls the transient
+        back so the roster stays unchanged.
+        """
+        target = _find_team_entry(self.roster, form.team)
+        rider = Rider(first_name=form.first_name, last_name=form.last_name, plate=form.plate)
+        entry_plate = form.plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
+        transient = self.roster.create_team_entry_of_one(
+            display_name=form.team, rider=rider, plate=entry_plate
+        )
+        try:
+            self.roster.move_rider(rider, to_entry=target)
+        except RosterError:
+            self.roster.delete_entry(transient)
+            raise
+
+
 class RidersPresenter:
     """Presenter for the rider editor (rider_editor_dlg, R-11/15/20).
 
@@ -193,6 +316,9 @@ class RidersPresenter:
     team member's plate change on Save routes through
     ``_apply_plate_change`` → ``Roster.change_team_plate`` (covered by
     ``test_on_save_given_a_relay_team_member_changes_the_teams_plate``).
+    W7: this presenter no longer adds -- the Add dialog's own
+    :class:`AddRiderPresenter` does, and this one re-renders after it
+    through :meth:`on_add_committed`.
     """
 
     def __init__(self, view: RidersView, roster: Roster, *, load: bool = True) -> None:
@@ -239,23 +365,14 @@ class RidersPresenter:
         """
         self.view.set_save_enabled(enabled=self._is_dirty(form))
 
-    def on_add(self, form: RiderFormValues) -> None:
-        """Handle add_btn: create an entry from the form's values.
+    def on_add_committed(self) -> None:
+        """Re-render after the Add dialog committed into this roster.
 
-        W7 refuses a blank first or last name up front (both are
-        required) before any plate or team rule runs. A later refusal
-        (duplicate plate, a team already at max size, ...) shows via
-        :meth:`RidersView.show_validation` and leaves the roster
-        unchanged, never raising past this handler.
+        W7: ``add_rider_dlg``'s own :class:`AddRiderPresenter` did the
+        creating; this editor only catches its rows/form up -- refresh
+        both list and team_choice, then reset to the no-selection add
+        form (next free plate now one higher).
         """
-        if not form.first_name.strip() or not form.last_name.strip():
-            self.view.show_validation("First name and last name are required")
-            return
-        try:
-            self._create_entry(form)
-        except RosterError as exc:
-            self.view.show_validation(str(exc))
-            return
         self._refresh_rows()
         self._show_add_form()
 
@@ -401,56 +518,6 @@ class RidersPresenter:
         """Export this roster to *path* as CSV (E3.4, R-21)."""
         csvio.export(self.roster, path)
 
-    def refresh(self) -> None:
-        """Re-render riders_list/team_choice from the roster (E3.4).
-
-        A public counterpart to :meth:`_refresh_rows`: the one entry
-        point a caller outside this presenter uses to catch this
-        view up with a roster change it never itself made --
-        ``RiderEditor``'s own ``import_btn`` handler calls this after
-        a *different* ``RidersPresenter`` instance (``csv_preview_
-        dlg``'s own, ``load=False``) commits a CSV import into the
-        same roster.
-        """
-        self._refresh_rows()
-
-    def _create_entry(self, form: RiderFormValues) -> None:
-        """Create *form*'s entry: solo, or folded onto a team."""
-        if form.team == SOLO_TEAM_CHOICE:
-            self.roster.create_solo_entry(
-                first_name=form.first_name, last_name=form.last_name, plate=form.plate
-            )
-            return
-        self._join_existing_team(form)
-
-    def _join_existing_team(self, form: RiderFormValues) -> None:
-        """Fold a new rider onto the existing team named *form.team*.
-
-        Composed from shipped Roster primitives: a transient size-1
-        team is created, then folded in via move_rider (see the
-        module docstring). A refused fold-in rolls the transient
-        back so the roster stays unchanged.
-        """
-        target = self._find_team_entry(form.team)
-        rider = Rider(first_name=form.first_name, last_name=form.last_name, plate=form.plate)
-        entry_plate = form.plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
-        transient = self.roster.create_team_entry_of_one(
-            display_name=form.team, rider=rider, plate=entry_plate
-        )
-        try:
-            self.roster.move_rider(rider, to_entry=target)
-        except RosterError:
-            self.roster.delete_entry(transient)
-            raise
-
-    def _find_team_entry(self, display_name: str) -> Entry:
-        """Return the TEAM entry named *display_name* (on_add join)."""
-        return next(
-            entry
-            for entry in self.roster.entries
-            if entry.type is EntryType.TEAM and entry.display_name == display_name
-        )
-
     def _apply_plate_change(self, entry: Entry, rider: Rider, plate: str) -> None:
         """Change *entry*/*rider*'s plate to *plate*, if it differs.
 
@@ -547,7 +614,7 @@ class RidersPresenter:
             if entry.type is EntryType.SOLO:
                 return entry
             return self.roster.extract_rider_to_solo(rider)
-        target = self._find_team_entry(chosen)
+        target = _find_team_entry(self.roster, chosen)
         if entry.type is EntryType.TEAM:
             if entry is not target:
                 self.roster.move_rider(rider, to_entry=target)

@@ -37,19 +37,20 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   caller-supplied *opener*, whichever way the dialog ends.
 
 ``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``,
-``entry_detail_dlg``, Phase 4's ``team_editor_dlg`` and R-76's
-``rider_issues_dlg`` carry no ``<default>`` button at all in their
-already-authored XRC, so "Enter activates the marked default button"
-has nothing to activate for these six --
+``entry_detail_dlg``, W7's ``add_rider_dlg``, Phase 4's
+``team_editor_dlg`` and R-76's ``rider_issues_dlg`` carry no
+``<default>`` button at all in their already-authored XRC, so "Enter
+activates the marked default button" has nothing to activate for
+these seven --
 :data:`DEFAULT_BUTTON_DECISIONS` is the per-dialog product call
 (E1.5.3) that fills the gap, and :data:`FORM_FIRST_FIELDS` is
 spec.md §13's matching initial-focus decision for every form dialog,
-``rider_editor_dlg`` and ``team_editor_dlg`` included. Both
-are the one place these decisions are recorded -- ``app.py``'s
-``_apply_dialog_defaults`` applies them when a real menu route opens
-the dialog, and ``tests/functional/test_dialog_behavior.py`` asserts
-them directly against a raw XRC-loaded dialog; neither copies the
-other's table.
+``rider_editor_dlg``, ``add_rider_dlg`` and ``team_editor_dlg``
+included. Both are the one place these decisions are recorded --
+``app.py``'s ``_apply_dialog_defaults`` applies them when a real
+menu route opens the dialog, and
+``tests/functional/test_dialog_behavior.py`` asserts them directly
+against a raw XRC-loaded dialog; neither copies the other's table.
 """
 
 import gc
@@ -99,6 +100,7 @@ WX_ID_CLOSE = "wxID_CLOSE"
 DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
     (ids.RIDE_SETUP_DLG, WX_ID_OK),
     (ids.CSV_PREVIEW_DLG, WX_ID_OK),
+    (ids.ADD_RIDER_DLG, WX_ID_OK),
     (ids.ENTRY_DETAIL_DLG, WX_ID_CLOSE),
     (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
     (ids.TEAM_EDITOR_DLG, ids.SAVE_BTN),
@@ -107,7 +109,8 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
 
 # spec.md §13's initial-focus decision for every form dialog: the
 # first input field, never the default button (set_initial_focus's
-# own docstring).
+# own docstring). add_rider_dlg (W7) starts on its plate field, the
+# same first input the editor itself opens on.
 FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.SET_START_DLG, ids.START_DATE_PICKER),
     (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
@@ -115,6 +118,7 @@ FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.MANUAL_DEAL_DLG, ids.PLATE_INPUT),
     (ids.RIDE_SETUP_DLG, ids.NAME_INPUT),
     (ids.RIDER_EDITOR_DLG, ids.PLATE_INPUT),
+    (ids.ADD_RIDER_DLG, ids.PLATE_INPUT),
     (ids.TEAM_EDITOR_DLG, ids.NAME_INPUT),
 )
 

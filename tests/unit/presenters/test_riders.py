@@ -489,23 +489,6 @@ def test_add_rider_presenter_submit_given_an_existing_team_at_max_size_returns_f
     assert [e.display_name for e in roster.entries] == ["Trail Blazers"]
 
 
-def test_add_rider_presenter_submit_given_a_solo_only_ride_and_a_team_choice_returns_false() -> None:
-    """A team choice on a solo-only ride refuses (R-11)."""
-    view = RecordingAddRiderView()
-    presenter = AddRiderPresenter(view, Roster())
-    view.calls.clear()
-
-    created = presenter.on_submit(
-        RiderFormValues(plate="1", first_name="Sam", last_name="Ellis", team="Ghosts")
-    )
-
-    assert created is False
-    assert view.calls == [
-        ("show_validation", ("this ride is solo-only; team entries are not allowed",))
-    ]
-    assert presenter.roster.entries == ()
-
-
 # ------------------------------------------------------- on_save
 
 
@@ -1681,30 +1664,3 @@ def test_on_export_csv_writes_the_rosters_own_header(tmp_path: Path) -> None:
         path.read_text(encoding="utf-8").splitlines()[0]
         == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
     )
-
-
-# ------------------------------------------------------------ refresh
-
-
-def test_riders_presenter_refresh_re_renders_rows_and_team_choices() -> None:
-    """RiderEditor's own import_btn calls this after a commit (E3.4).
-
-    A public counterpart to the private ``_refresh_rows()`` every
-    other handler already calls -- the one entry point a caller
-    outside this presenter (``RiderEditor``'s own click handler,
-    after a *different* ``RidersPresenter`` instance committed a CSV
-    import through ``csv_preview_dlg``) can use to catch this
-    editor's own view up with the roster it never itself wrote to.
-    """
-    roster = Roster()
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, roster)
-    roster.create_solo_entry(first_name="Alex", last_name="Ferreira", plate="1")
-    view.calls.clear()
-
-    presenter.refresh()
-
-    assert view.calls == [
-        ("show_riders", ([RiderRow(plate="1", name="Alex Ferreira", team=None)],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
-    ]

@@ -172,7 +172,7 @@
                     <flag>wxRIGHT</flag>
                     <border>6</border>
                     <object class="wxButton" name="add_btn">
-                      <label>Add</label>
+                      <label>Add rider…</label>
                     </object>
                   </object>
                   <object class="sizeritem">
@@ -186,6 +186,107 @@
             </object>
           </object>
 
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- W7: the dedicated Add Rider dialog. The editor's in-form add
+       controls became edit-only; add_btn on rider_editor_dlg opens
+       this window instead. Control names reuse the editor's own
+       (plate_input etc.: each top-level window is its own name
+       namespace, tools/gen_ids.py's rule), so the ids constants stay
+       shared. The Team row's visibility follows entry_mode like the
+       editor's (code-side); refusals show on a code-side infobar
+       (add_rider_infobar, wxInfoBar: XRC cannot author one). -->
+  <object class="wxDialog" name="add_rider_dlg">
+    <title>Add Rider</title>
+    <style>wxDEFAULT_DIALOG_STYLE</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticBoxSizer">
+          <label>Rider</label>
+          <orient>wxVERTICAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>8</border>
+            <object class="wxFlexGridSizer">
+              <cols>2</cols>
+              <vgap>6</vgap>
+              <hgap>8</hgap>
+              <growablecols>1</growablecols>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Plate</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="plate_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>First name</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="first_name_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Last name</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxTextCtrl" name="last_name_input"/>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Team</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxChoice" name="team_choice"/>
+              </object>
+
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <!-- wxID_OK carries the "Add" label; the stock id keeps the
+           button on the platform-correct side and Enter safe. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Add</label>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL"/>
+          </object>
         </object>
       </object>
 
