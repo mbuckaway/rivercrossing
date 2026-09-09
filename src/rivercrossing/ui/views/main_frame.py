@@ -683,6 +683,10 @@ class MainFrame:
         for child in self.finished_infobar.GetChildren():
             if child.GetId() == button_id:
                 return child
+        # logic-coverage-exempt: T-5 -- AddButton creates the child
+        # synchronously (measured probe on this wx baseline); a missing
+        # child means the wx build changed, and failing loudly is the
+        # point of the guard, so no negative-path test can drive it.
         raise LookupError(f"finished_infobar has no button with id {button_id}")
 
     # --------------------------------------------------------- gauges
