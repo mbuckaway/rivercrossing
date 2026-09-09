@@ -432,3 +432,60 @@ def test_team_logo_srcs_omits_logo_less_and_solo_entries() -> None:
     srcs = app_module._team_logo_srcs(roster)
 
     assert srcs == {}
+
+
+# ============================================================ W11
+# F1 (dead-control wiring): the results-frame export buttons were
+# bound through a synthetic EVT_MENU ProcessEvent that never reached
+# the main frame's handlers (the results frame opens parentless), so
+# the buttons silently did nothing. The window now threads an
+# ``on_export(target)`` callback and the app wires it to the same
+# ``_handle_export_command`` routes the menu rows run. These pins keep
+# the view's button table and the app's dispatch table in lockstep
+# headless; the real-button behaviour is functionally pinned in
+# tests/functional/test_results_exports.py.
+
+
+def test_results_window_export_buttons_map_each_button_to_its_route_target() -> None:
+    """W11: the four buttons name the four menu export targets."""
+    from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS
+
+    assert dict(_EXPORT_BUTTONS) == {
+        "export_html_btn": "export_html",
+        "export_pdf_btn": "export_pdf",
+        "poster_btn": "export_poster",
+        "export_csv_btn": "export_results_csv",
+    }
+
+
+def test_results_window_export_button_targets_all_dispatch_like_the_menu_rows() -> None:
+    """W11: every button target has a real ``_TARGET_ACTIONS`` handler.
+
+    ``_TARGET_ACTIONS`` is the dispatch table ``_make_route_handler``
+    consults for the Results menu rows, so a button target missing
+    here would fire a callback with no route behind it.
+    """
+    from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS
+
+    for _button_name, target in _EXPORT_BUTTONS:
+        assert target in app_module._EXPORT_SUGGESTED_NAMES
+        assert target in app_module._TARGET_ACTIONS
+
+
+def test_results_window_accepts_an_on_export_callback_seam() -> None:
+    """W11: the decoration-time ``on_export`` seam exists.
+
+    The callback replaces the dead synthetic-menu-event mechanism:
+    each export button fires it with the button's route target, and
+    the app wires it to ``_handle_export_command`` at decoration time
+    (the same seam shape as ``on_reopen``).
+    """
+    import inspect
+
+    from rivercrossing.ui.views.results_win import ResultsWindow
+
+    # eval_str=False: DataSource is TYPE_CHECKING-only in the view
+    # module, so its PEP 649 annotation is a lazy string at runtime.
+    parameters = inspect.signature(ResultsWindow.__init__, eval_str=False).parameters
+
+    assert "on_export" in parameters
