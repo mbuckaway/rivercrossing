@@ -1197,6 +1197,42 @@ def test_store_set_active_ride_marks_the_open_session(tmp_path: Path) -> None:
     assert row["active_ride_id"] == ride_id
 
 
+def test_store_clear_active_ride_clears_the_open_sessions_ride(tmp_path: Path) -> None:
+    """Finish / launch-failure NULLs the current session's ride (W3)."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _created_ride_id(db_path)
+    store = Store.open(db_path)
+    try:
+        store.set_active_ride(ride_id)
+
+        store.clear_active_ride()
+    finally:
+        store.close()
+
+    row = _fetch_latest_session(db_path)
+    assert row["active_ride_id"] is None
+
+
+def test_store_clear_active_ride_with_no_session_row_is_a_noop(tmp_path: Path) -> None:
+    """An empty app_session table updates nothing and raises nothing."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        with store._conn:
+            store._conn.execute("DELETE FROM app_session")
+
+        store.clear_active_ride()
+    finally:
+        store.close()
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        count = conn.execute("SELECT COUNT(*) FROM app_session").fetchone()[0]
+    finally:
+        conn.close()
+    assert count == 0
+
+
 def test_store_roster_for_returns_empty_roster_with_the_rides_shape(tmp_path: Path) -> None:
     """load_engine's roster shell carries the ride's mode/team size."""
     db_path = tmp_path / "rides.db"

@@ -9,8 +9,8 @@ instead of the new ride. This module proves the two seams that fix
 it, headless with a real Store and a recording fake console view:
 
 - :func:`rivercrossing.ui.app._persist_created_ride` creates the
-  ride row, persists the roster, marks the ride active on the open
-  session, and schedules the console switch.
+  ride row, persists the roster, and schedules the console switch
+  (the R-52 session marker is W3's start-event sink, not creation).
 - :func:`rivercrossing.ui.app._switch_console_to_ride` loads the ride
   from the store, renders its name and DRAFT state onto the view, and
   wires the store's append as the engine's event sink.
@@ -99,10 +99,18 @@ def _context(*, store: Store, view: _FakeConsoleView, roster: Roster) -> app_mod
     )
 
 
-def test_persist_created_ride_sets_active_and_schedules_console_switch(
+def test_persist_created_ride_persists_roster_and_schedules_console_switch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """New Ride submit persists, marks active, schedules the switch."""
+    """New Ride submit persists the ride and roster; no session marker.
+
+    W3 moved the R-52 resume marker from ride creation to the audit
+    log: ``set_active_ride`` now runs when the ride's ``start`` event
+    is appended (the ``_wire_store_append`` sink), so a never-started
+    ride never offers "continue" at the next launch. Creation itself
+    leaves ``app_session.active_ride_id`` NULL and still schedules the
+    console switch.
+    """
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     try:
@@ -120,7 +128,7 @@ def test_persist_created_ride_sets_active_and_schedules_console_switch(
         session = store._conn.execute(
             "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
         ).fetchone()
-        assert session["active_ride_id"] == ride_id
+        assert session["active_ride_id"] is None
         assert fake_wx.calls == [(app_module._switch_console_to_ride, (context, ride_id))]
     finally:
         store.close()

@@ -232,6 +232,44 @@ def test_resolve_db_path_given_no_override_and_no_env_returns_none() -> None:
     assert app._resolve_db_path(None) is None
 
 
+# --- W3: main() owns the Store and runs the launch flow post-Show ---
+
+
+def test_main_source_opens_the_store_before_it_builds_the_window() -> None:
+    """W3: main() opens the Store itself so a finally always owns it."""
+    source = inspect.getsource(app.main)
+
+    assert "Store.open(" in source
+    assert source.index("Store.open(") < source.index("build_main_window")
+
+
+def test_main_source_shows_the_frame_before_running_the_launch_flow() -> None:
+    """W3: Show() then the launch flow then MainLoop -- never a modal first."""
+    source = inspect.getsource(app.main)
+
+    assert (
+        source.index("frame.Show()")
+        < source.index("_run_launch_flow(")
+        < source.index("MainLoop()")
+    )
+
+
+def test_main_source_closes_the_store_inside_a_finally() -> None:
+    """W3: a bootstrap raise still closes the Store (crash recovery)."""
+    source = inspect.getsource(app.main)
+    tail = source[source.index("finally:") :]
+
+    assert "store.close()" in tail
+
+
+def test_bootstrap_window_accepts_an_opened_store_and_still_opens_its_own() -> None:
+    """W3: main() passes its Store in; helpers keep the db_path seam."""
+    parameters = inspect.signature(app._bootstrap_window).parameters
+
+    assert tuple(parameters) == ("app", "db_path", "store", "clock", "settings_path")
+    assert parameters["store"].default is None
+
+
 def test_resolve_db_path_given_the_env_var_returns_the_env_path(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
