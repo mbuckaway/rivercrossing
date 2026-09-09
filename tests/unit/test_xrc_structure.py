@@ -104,7 +104,6 @@ RESULTS_MENU_ITEMS = (
     "mi_preview_browser",
     "mi_tiebreak_order",
 )
-THEME_MENU_ITEMS = ("mi_theme_system", "mi_theme_light", "mi_theme_dark")
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
     "mi_zoom_100",
@@ -114,7 +113,10 @@ ZOOM_MENU_ITEMS = (
     "mi_zoom_140",
     "mi_zoom_150",
 )
-VIEW_MENU_ITEMS = (*THEME_MENU_ITEMS, "mi_hide_times", *ZOOM_MENU_ITEMS)
+# W13 (testing notes #14): the theme trio left the View menu -- the
+# Settings appearance radios are the single theme surface -- so the
+# View row is hide-times plus the seven zoom radios.
+VIEW_MENU_ITEMS = ("mi_hide_times", *ZOOM_MENU_ITEMS)
 HELP_MENU_ITEMS = ("mi_user_guide", "mi_shortcuts", "mi_selftest", "wxID_ABOUT")
 
 MAIN_MENUBAR_CONTROLS = (
@@ -175,15 +177,16 @@ NAME_CASES = tuple(
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
 # spec.md section 15 has 40 rows: File 8, Ride 7, Riders 6, Cards 7,
-# Results 7, View 1, Help 4. The single View row expands into the 11
-# items section 15b names for it.
+# Results 7, View 1, Help 4. The single View row expands into the 8
+# items section 15b names for it (W13: hide-times + the seven zoom
+# radios; the theme trio left the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 7),
     ("Ri&ders", 6),
     ("&Cards", 7),
     ("Re&sults", 7),
-    ("&View", 11),
+    ("&View", 8),
     ("&Help", 4),
 )
 
@@ -194,7 +197,7 @@ ACCELERATOR_CASES = (
 )
 ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
-RADIO_MENU_ITEMS = (*THEME_MENU_ITEMS, *ZOOM_MENU_ITEMS)
+RADIO_MENU_ITEMS = ZOOM_MENU_ITEMS
 
 # Canvas defaults, and the first member of each of the dialog's four
 # radio groups (short-lap policy, entry mode, plate model, jokers per
@@ -391,13 +394,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_seven_menu_item_names() -> None:
-    """spec.md 15b names 47 ``mi_*`` items across the seven menus."""
+def test_main_menubar_declares_forty_four_menu_item_names() -> None:
+    """spec.md 15b names 44 ``mi_*`` items across the seven menus (W13)."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 47
+    assert len(menu_item_names) == 44
 
 
 def test_file_menu_declares_the_spec_15_row_order() -> None:
@@ -430,7 +433,7 @@ def test_only_the_documented_menu_items_declare_an_accelerator() -> None:
 
 @pytest.mark.parametrize("item_name", RADIO_MENU_ITEMS)
 def test_view_menu_radio_item_declares_the_radio_kind(item_name: str) -> None:
-    """The theme trio and the seven zoom steps are radio items."""
+    """The seven zoom steps are radio items (the View row's radios)."""
     item = _objects_by_name(_window("main_menubar"))[item_name]
 
     assert _param(item, "radio") == "1"

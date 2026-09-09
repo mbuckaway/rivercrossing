@@ -1,10 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless tests for the theme mode mapping and notice text (Phase 8).
+"""Headless tests for the appearance mode controller and notice text.
 
-``theme.mode_for_menu_id`` is fully wx-free (module docstring), so its
-three-way mapping and its negative path are exactly the kind of logic
-R-71's >=90% branch-coverage gate is meant to cover -- mirrors
-``test_quit_flow.py``'s own split for ``dialog_for_status``.
+``theme`` is wx-free up to the point wx is first needed (its module
+docstring): :class:`ThemeMode`'s spellings, :class:`ThemeController`'s
+mode state, and :func:`notice_for_result`'s text matrix are exactly
+the logic R-71's >=90% branch-coverage gate is meant to cover --
+mirrors ``test_quit_flow.py``'s own split for ``dialog_for_status``.
+
+W13 (testing notes #14) removed the View-menu theme trio -- the
+Settings appearance radios are the single theme surface -- so the
+menu-id mapping (``mode_for_menu_id`` / ``menu_item_id_for`` /
+``THEME_MENU_ITEM_IDS``) is gone and the controller applies a
+:class:`ThemeMode` directly (:meth:`ThemeController.apply_mode`).
 
 ``theme.notice_for_result`` reasons about a real
 ``wx.PyApp.AppearanceResult`` enum member, so this module imports
@@ -28,56 +35,10 @@ Light appearance -- lives in the spawned-subprocess scenarios in
 ``tests/functional/test_theme.py``.
 """
 
-import re
-
 import pytest
 import wx
-from hypothesis import given
-from hypothesis import strategies as st
 
-from rivercrossing.ui import ids, theme
-
-# --- mode_for_menu_id: all three theme ids (T-3/T-13) ---------------
-
-MODE_FOR_MENU_ID_CASES = (
-    (ids.MI_THEME_SYSTEM, theme.ThemeMode.SYSTEM),
-    (ids.MI_THEME_LIGHT, theme.ThemeMode.LIGHT),
-    (ids.MI_THEME_DARK, theme.ThemeMode.DARK),
-)
-
-
-@pytest.mark.parametrize(("item_id", "expected_mode"), MODE_FOR_MENU_ID_CASES)
-def test_mode_for_menu_id_given_each_theme_radio_returns_its_mode(
-    item_id: str, expected_mode: theme.ThemeMode
-) -> None:
-    """Each of the three theme radios maps to its own distinct mode."""
-    result = theme.mode_for_menu_id(item_id)
-
-    assert result is expected_mode
-
-
-def test_mode_for_menu_id_given_an_unknown_id_raises_naming_it() -> None:
-    """T-5: the negative path for an id outside the theme trio."""
-    fake_id = "mi_totally_fake_probe_id_not_a_theme_radio"
-
-    with pytest.raises(theme.UnknownThemeMenuItemError, match=re.escape(fake_id)):
-        theme.mode_for_menu_id(fake_id)
-
-
-def test_theme_menu_item_ids_declares_exactly_the_three_theme_radios() -> None:
-    """The public id tuple is the trio, nothing more, nothing fewer."""
-    result = theme.THEME_MENU_ITEM_IDS
-
-    assert set(result) == {ids.MI_THEME_SYSTEM, ids.MI_THEME_LIGHT, ids.MI_THEME_DARK}
-
-
-@given(st.sampled_from(theme.THEME_MENU_ITEM_IDS))
-def test_mode_for_menu_id_given_any_declared_id_never_raises(item_id: str) -> None:
-    """Property: every id this module itself declares round-trips."""
-    result = theme.mode_for_menu_id(item_id)
-
-    assert isinstance(result, theme.ThemeMode)
-
+from rivercrossing.ui import theme
 
 # --- notice_for_result: the AppearanceResult matrix (T-3/T-13) ------
 
@@ -96,35 +57,6 @@ def test_notice_for_result_given_each_appearance_result_matches_expected_notice(
     notice = theme.notice_for_result(result)
 
     assert notice == expected_notice
-
-
-# --- menu_item_id_for: the reverse mapping (E8.1.1) -----------------
-
-MENU_ITEM_ID_FOR_CASES = (
-    (theme.ThemeMode.SYSTEM, ids.MI_THEME_SYSTEM),
-    (theme.ThemeMode.LIGHT, ids.MI_THEME_LIGHT),
-    (theme.ThemeMode.DARK, ids.MI_THEME_DARK),
-)
-
-
-@pytest.mark.parametrize(("mode", "expected_item_id"), MENU_ITEM_ID_FOR_CASES)
-def test_menu_item_id_for_given_each_mode_returns_its_radio(
-    mode: theme.ThemeMode, expected_item_id: str
-) -> None:
-    """The reverse mapping: each mode names its own theme radio."""
-    result = theme.menu_item_id_for(mode)
-
-    assert result == expected_item_id
-
-
-@pytest.mark.parametrize("item_id", theme.THEME_MENU_ITEM_IDS)
-def test_menu_item_id_for_inverts_mode_for_menu_id_given_each_declared_id(
-    item_id: str,
-) -> None:
-    """The two mappings round-trip over every declared theme radio."""
-    result = theme.menu_item_id_for(theme.mode_for_menu_id(item_id))
-
-    assert result == item_id
 
 
 # --- ThemeController: the E8.1.1 persisted-mode constructor ---------
@@ -163,7 +95,7 @@ def test_theme_controller_constructed_with_system_mode_applies_nothing() -> None
     assert fake.appearances == []
 
 
-# --- ThemeController: on_menu and the sys-colour re-apply -----------
+# --- ThemeController: apply_mode and the sys-colour re-apply --------
 
 
 class _RecordingThemeApp:
@@ -180,23 +112,20 @@ class _RecordingThemeApp:
         return self.result
 
 
-ON_MENU_CASES = (
+APPLY_MODE_CASES = (
     (
-        ids.MI_THEME_DARK,
         theme.ThemeMode.DARK,
         wx.PyApp.AppearanceResult.Ok,
         wx.PyApp.Appearance.Dark,
         None,
     ),
     (
-        ids.MI_THEME_LIGHT,
         theme.ThemeMode.LIGHT,
         wx.PyApp.AppearanceResult.CannotChange,
         wx.PyApp.Appearance.Light,
         "Theme change takes effect at next launch",
     ),
     (
-        ids.MI_THEME_SYSTEM,
         theme.ThemeMode.SYSTEM,
         wx.PyApp.AppearanceResult.Failure,
         wx.PyApp.Appearance.System,
@@ -205,18 +134,18 @@ ON_MENU_CASES = (
 )
 
 
-@pytest.mark.parametrize("case", ON_MENU_CASES)
-def test_theme_controller_on_menu_applies_the_mode_and_returns_its_notice(
-    case: tuple[str, theme.ThemeMode, object, object, str | None],
+@pytest.mark.parametrize("case", APPLY_MODE_CASES)
+def test_theme_controller_apply_mode_applies_the_mode_and_returns_its_notice(
+    case: tuple[theme.ThemeMode, object, object, str | None],
 ) -> None:
-    """A View > Theme click applies the mode and words the result."""
-    item_id, expected_mode, result, expected_appearance, expected_notice = case
+    """Applying a mode (Settings OK, W13) applies it and words the result."""
+    mode, result, expected_appearance, expected_notice = case
     fake = _RecordingThemeApp(result)
     controller = theme.ThemeController(fake)  # System construction: silent
 
-    notice = controller.on_menu(item_id)
+    notice = controller.apply_mode(mode)
 
-    assert controller.mode is expected_mode
+    assert controller.mode is mode
     assert fake.appearances == [expected_appearance]
     assert notice == expected_notice
 
