@@ -180,6 +180,20 @@ def _duplicate_team_entry(roster: Roster, name: str, *, exclude: Entry | None = 
     )
 
 
+def _logo_pick_refusal(roster: Roster) -> str:
+    """Return why *roster* offered no next logo card (W8).
+
+    ``next_team_logo_card`` returns ``None`` for two different causes
+    and the pick sites must tell them apart: no ``team_logo_seed``
+    means no card deck exists for this ride at all, while a seeded
+    roster that has returned ``None`` has every one of its 52 codes
+    claimed by a team.
+    """
+    if roster.team_logo_seed is None:
+        return "no card deck is available for this ride"
+    return "every card logo is already in use by a team"
+
+
 class AddTeamPresenter:
     """Presenter for the Add Team dialog (add_team_dlg, W8).
 
@@ -254,13 +268,14 @@ class AddTeamPresenter:
 
         Each click walks the deck past the previously staged card
         (module docstring). A staged card wins over a staged image,
-        matching the roster's own either-or rule. When every one of
-        the 52 codes is already claimed (or the roster has no seed),
-        says so instead of silently doing nothing.
+        matching the roster's own either-or rule. When no next code
+        exists, says why instead of silently doing nothing: no card
+        deck at all when the roster has no seed, every card in use
+        when the deck is genuinely exhausted (:func:`_logo_pick_refusal`).
         """
         code = self.roster.next_team_logo_card(after=self._pending_logo_card)
         if code is None:
-            self.view.show_validation("every card logo is already in use by a team")
+            self.view.show_validation(_logo_pick_refusal(self.roster))
             return
         self._pending_logo_image = None
         self._pending_logo_card = code
@@ -401,16 +416,17 @@ class TeamsPresenter:
 
         Each click advances to the next unused code in the roster's
         seeded sequence (skipping every other team's card), clearing
-        any logo image -- a picked card wins. When every one of the
-        52 codes is already claimed (or the roster has no seed), says
-        so instead of silently doing nothing.
+        any logo image -- a picked card wins. When no next code
+        exists, says why instead of silently doing nothing: no card
+        deck at all when the roster has no seed, every card in use
+        when the deck is genuinely exhausted (:func:`_logo_pick_refusal`).
         """
         entry = self._selected
         if entry is None:
             return
         code = self.roster.next_team_logo_card(after=entry.logo_card)
         if code is None:
-            self.view.show_validation("every card logo is already in use by a team")
+            self.view.show_validation(_logo_pick_refusal(self.roster))
             return
         self.roster.set_team_logo_card(entry, code=code)
         self._roster_changed = True

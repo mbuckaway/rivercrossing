@@ -114,6 +114,14 @@ __all__ = ["build_app", "build_main_window", "main"]
 # the same shape.
 _SEEDED_MAX_TEAM_SIZE = 4
 
+# W8's fixed team-logo seed for that same bootstrap roster: with no
+# store-backed ride open the roster carries no ride-owned rng_seed at
+# all, so Pick card used to refuse with the "every card logo is
+# already in use" message against zero teams. A fixed deck here makes
+# the empty state's card picks work; a ride the library opens swaps in
+# the store roster seeded with the ride's own rng_seed.
+_SEEDED_TEAM_LOGO_SEED = 20260906
+
 # The empty-state DataSource the windows E6/E7 have not wired to real
 # data yet read (E5.4.2): with no store-backed ride open, entry detail,
 # results and the no-store library render zero rows rather than demo
@@ -3167,11 +3175,13 @@ def build_main_window(
     # E5.4.2: no store-backed ride is open at bootstrap, so the roster
     # is empty (rider_editor_dlg shows the empty state; the library
     # Open / resume flow replaces it with the store's roster). The
-    # mixed/pooled mode keeps the E3.2 default shape.
+    # mixed/pooled mode keeps the E3.2 default shape; W8 adds the
+    # fixed team-logo seed so Pick card works before any ride opens.
     roster = Roster(
         entry_mode=EntryMode.MIXED,
         plate_model=PlateModel.RIDER_POOLED,
         max_team_size=_SEEDED_MAX_TEAM_SIZE,
+        team_logo_seed=_SEEDED_TEAM_LOGO_SEED,
     )
     theme_controller = theme.ThemeController(app, mode=loaded_mode)
     context = _RouteContext(

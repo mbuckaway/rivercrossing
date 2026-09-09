@@ -434,6 +434,7 @@ class Roster:
         self._status = RideStatus.DRAFT
         self._entries: list[Entry] = []
         self._audit_log: list[AuditEvent] = []
+        self._team_logo_seed = team_logo_seed
         self._team_logo_codes = (
             seeded_card_codes(team_logo_seed) if team_logo_seed is not None else None
         )
@@ -452,6 +453,16 @@ class Roster:
     def plate_model(self) -> PlateModel:
         """Return this ride's plate policy (R-16)."""
         return self._plate_model
+
+    @property
+    def team_logo_seed(self) -> int | None:
+        """Return this ride's team-logo shuffle seed, if it has one.
+
+        ``None`` means no card deck backs the Pick card flow -- the
+        cause of a ``next_team_logo_card`` ``None`` the pick sites
+        distinguish from a genuinely exhausted deck (W8).
+        """
+        return self._team_logo_seed
 
     @property
     def status(self) -> RideStatus:
