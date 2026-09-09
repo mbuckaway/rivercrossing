@@ -291,6 +291,17 @@ class AddTeamPresenter:
         self._pending_logo_image = image
         self.view.show_logo(card=None, image=image)
 
+    def on_remove_logo(self) -> None:
+        """Handle remove_logo_btn: drop any staged logo (W8).
+
+        The dialog only ever holds a *pending* pick, so removal clears
+        the two pending slots and the preview; nothing touches the
+        roster until Add commits.
+        """
+        self._pending_logo_card = None
+        self._pending_logo_image = None
+        self.view.show_logo(card=None, image=None)
+
 
 class TeamsPresenter:
     """Presenter for the teams editor (team_editor_dlg, Phase 4).
@@ -443,6 +454,21 @@ class TeamsPresenter:
         if entry is None:
             return
         self.roster.set_team_logo_image(entry, image=image)
+        self._roster_changed = True
+        self._refresh_rows()
+        self._show_entry(entry)
+
+    def on_remove_logo(self) -> None:
+        """Handle remove_logo_btn: clear the selected team's logo.
+
+        ``clear_team_logo`` removes both logo forms at once (the one
+        removal path the setter pair never offered). A no-op if
+        nothing is selected.
+        """
+        entry = self._selected
+        if entry is None:
+            return
+        self.roster.clear_team_logo(entry)
         self._roster_changed = True
         self._refresh_rows()
         self._show_entry(entry)

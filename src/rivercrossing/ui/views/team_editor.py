@@ -57,6 +57,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADD_TEAM_INFOBAR",
+    "CARD_LOGO_BOX",
     "CARD_TEXT",
     "COLUMN_LABELS",
     "COL_LOGO",
@@ -64,6 +65,7 @@ __all__ = [
     "COL_NAME",
     "COL_RIDERS",
     "IMAGE_TEXT",
+    "LOGO_PREVIEW_BOX",
     "MEMBERS_COLUMN_LABELS",
     "MEMBERS_MIN_HEIGHT",
     "MIN_SIZE",
@@ -74,6 +76,7 @@ __all__ = [
     "TeamEditor",
     "TeamsListModel",
     "format_logo",
+    "logo_fit_size",
     "pick_logo_image_path",
     "run_add_team_flow",
 ]
@@ -102,6 +105,15 @@ TEAMS_INFOBAR = "teams_infobar"
 # add_team_dlg's own code-side infobar (W8), the same wxInfoBar
 # exception.
 ADD_TEAM_INFOBAR = "add_team_infobar"
+
+# W8 logo-preview bounds (px): photo logos fit within a 128x128 box
+# (shrunk to fit, never enlarged); card logos render at the card's
+# 3:4 ratio scaled into a 96x128 box. logo_bmp itself carries
+# SetMaxSize(LOGO_PREVIEW_BOX) so no decoded bitmap -- however large
+# the picked PNG -- can ever push the members list or the Add row off
+# the dialog.
+LOGO_PREVIEW_BOX = (128, 128)
+CARD_LOGO_BOX = (96, 128)
 
 # The Notes box's code-side floor (teams.xrc declares the style):
 # wxTE_MULTILINE plus a minimum tall enough for three text lines, so
@@ -213,22 +225,70 @@ def _bitmap_from_png(image_bytes: bytes) -> Any:  # noqa: ANN401 -- wx ships no 
     return wx.Bitmap(image)
 
 
-def _logo_bitmap(card: str | None, image: bytes | None) -> Any:  # noqa: ANN401
-    """Return the bitmap *card*/*image* render (or NullBitmap).
+def logo_fit_size(
+    width: int,
+    height: int,
+    *,
+    within: tuple[int, int],
+    upscale: bool = False,
+) -> tuple[int, int]:
+    """Return *width*/*height* scaled into the *within* box.
 
-    The image wins when set (the roster never carries both); the
-    card's asset key resolves the same way ``main_frame``'s crossings
-    feed resolves one -- unknown codes render blank. Shared by
-    ``team_editor_dlg``'s and ``add_team_dlg``'s own previews.
+    The pure fit rule behind the logo previews (W8): photo logos
+    shrink to fit ``within`` and never enlarge (``upscale`` False --
+    a small picked image keeps its natural size); card bitmaps render
+    into their fixed 3:4 box with ``upscale`` True, so the packaged
+    24x32/48x64 faces both land at the same preview size. The aspect
+    ratio survives, up to one rounding pixel per side.
+    """
+    box_w, box_h = within
+    if not upscale and width <= box_w and height <= box_h:
+        return (width, height)
+    scale = min(box_w / width, box_h / height)
+    return (max(1, round(width * scale)), max(1, round(height * scale)))
+
+
+def _scaled_bitmap(
+    bitmap: Any,  # noqa: ANN401 -- wx ships no stubs
+    *,
+    within: tuple[int, int],
+    upscale: bool,
+) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return *bitmap* scaled into *within* (see :func:`logo_fit_size`).
+
+    A bitmap already at or under the box (and not asked to upscale)
+    is returned as-is; anything else rescales through ``wx.Image``
+    with the high-quality filter so the preview never distorts.
+    """
+    image = wx.Image(bitmap)
+    width, height = image.GetWidth(), image.GetHeight()
+    fitted = logo_fit_size(width, height, within=within, upscale=upscale)
+    if fitted == (width, height):
+        return bitmap
+    return wx.Bitmap(image.Rescale(*fitted, wx.IMAGE_QUALITY_HIGH))
+
+
+def _logo_bitmap(card: str | None, image: bytes | None) -> Any:  # noqa: ANN401
+    """Return the bounded preview bitmap for *card*/*image*.
+
+    The image wins when set (the roster never carries both): its
+    decoded PNG fits within :data:`LOGO_PREVIEW_BOX`, shrunk to fit,
+    never enlarged. A card code draws its packaged card bitmap scaled
+    into :data:`CARD_LOGO_BOX` -- the card's 3:4 ratio -- resolved the
+    same way ``main_frame``'s crossings feed resolves one; unknown
+    codes render blank. Shared by ``team_editor_dlg``'s and
+    ``add_team_dlg``'s own previews.
     """
     if image is not None:
         bitmap = _bitmap_from_png(image)
         if bitmap is not None:
-            return bitmap
+            return _scaled_bitmap(bitmap, within=LOGO_PREVIEW_BOX, upscale=False)
     if card is not None:
         key = card_asset_key_or_none(card)
         if key is not None:
-            return default_card_images().bitmap(key)
+            return _scaled_bitmap(
+                default_card_images().bitmap(key), within=CARD_LOGO_BOX, upscale=True
+            )
     return wx.NullBitmap
 
 
@@ -326,9 +386,13 @@ class TeamEditor:
         self._apply_notes_min_height()
         self.pick_card_btn = self._find(ids.PICK_CARD_BTN, wx.Button)
         self.image_btn = self._find(ids.IMAGE_BTN, wx.Button)
+        self.remove_logo_btn = self._find(ids.REMOVE_LOGO_BTN, wx.Button)
         # The rework's preview bitmap, resolved through the generated
         # ui/ids.py registry (logo_bmp is XRC-authored in teams.xrc).
+        # W8 bounds it so no decoded PNG can push the members/Add rows
+        # off the dialog (team_editor's own module docstring).
         self.logo_bmp = self._find(ids.LOGO_BMP, wx.StaticBitmap)
+        self.logo_bmp.SetMaxSize(wx.Size(*LOGO_PREVIEW_BOX))
         self.members_list = self._find(ids.MEMBERS_LIST, wx.dataview.DataViewCtrl)
         self._build_member_columns()
         self.members_list.SetMinSize(wx.Size(-1, MEMBERS_MIN_HEIGHT))
@@ -388,6 +452,7 @@ class TeamEditor:
         self.dialog.Bind(wx.EVT_BUTTON, self._on_save, self.save_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_pick_card, self.pick_card_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_image_click, self.image_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_remove_logo, self.remove_logo_btn)
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.teams_list
         )
@@ -443,6 +508,11 @@ class TeamEditor:
         if path is None:
             return
         self.presenter.on_pick_image(path.read_bytes())
+
+    def _on_remove_logo(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``remove_logo_btn``: forward to the presenter."""
+        event.Skip()
+        self.presenter.on_remove_logo()
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``teams_list`` selection: forward its row index.
@@ -559,8 +629,10 @@ class AddTeamDialog:
         self.notes_input = self._find(ids.NOTES_INPUT, wx.TextCtrl)
         _floor_notes_min_height(self.notes_input)
         self.logo_bmp = self._find(ids.LOGO_BMP, wx.StaticBitmap)
+        self.logo_bmp.SetMaxSize(wx.Size(*LOGO_PREVIEW_BOX))
         self.pick_card_btn = self._find(ids.PICK_CARD_BTN, wx.Button)
         self.image_btn = self._find(ids.IMAGE_BTN, wx.Button)
+        self.remove_logo_btn = self._find(ids.REMOVE_LOGO_BTN, wx.Button)
         self.ok_btn = self._find("wxID_OK", wx.Button)
 
         self.add_team_infobar = _build_infobar(self.dialog, ADD_TEAM_INFOBAR)
@@ -587,6 +659,7 @@ class AddTeamDialog:
         self.dialog.Bind(wx.EVT_BUTTON, self._on_add, self.ok_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_pick_card, self.pick_card_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_image_click, self.image_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_remove_logo, self.remove_logo_btn)
 
     def _on_add(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
         """Handle ``wxID_OK`` ("Add"): commit, then close if it did.
@@ -629,6 +702,11 @@ class AddTeamDialog:
         if path is None:
             return
         self.presenter.on_pick_image(path.read_bytes())
+
+    def _on_remove_logo(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``remove_logo_btn``: forward to the presenter."""
+        event.Skip()
+        self.presenter.on_remove_logo()
 
     # ---------------------------------------------------- AddTeamView
 

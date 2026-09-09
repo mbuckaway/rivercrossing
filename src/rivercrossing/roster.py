@@ -561,6 +561,24 @@ class Roster:
         entry.logo_card = None
         self._log("set_team_logo_image", {"plate": entry.plate})
 
+    def clear_team_logo(self, entry: Entry) -> None:
+        """Remove *entry*'s logo entirely: card and image both (W8).
+
+        The one removal path the Remove logo button needs -- the two
+        ``set_team_logo_*`` methods each clear the *other* form, but
+        neither clears both, and a logo-less entry is a valid state.
+        A no-op on an entry that already carries no logo, apart from
+        the audit event.
+
+        Raises:
+            EntryNotFoundError: *entry* is not a member of this
+                roster.
+        """
+        self._require_known_entry(entry)
+        entry.logo_card = None
+        entry.logo_png = None
+        self._log("clear_team_logo", {"plate": entry.plate})
+
     def next_free_plate(self) -> str:
         """Return one past the highest numeric plate in use (R-20).
 
