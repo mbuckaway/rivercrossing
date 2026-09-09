@@ -24,6 +24,7 @@ newest-first, cap 30), the counters, and the non-console methods
 for E5/E6 to replace.
 """
 
+import dataclasses
 import re
 from datetime import datetime, timedelta
 from typing import Any
@@ -120,11 +121,16 @@ def _roster_with_entries(*plates: str) -> Roster:
 def _make_engine(
     *,
     roster: Roster | None = None,
+    config: RideConfig | None = None,
     min_lap_s: int = 1,
     hold_short_laps: bool = False,
 ) -> tuple[RideEngine, _FakeDatetimeClock]:
     """Build a DRAFT engine over a valid config, shoe and roster."""
-    config = _config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
+    config = (
+        config
+        if config is not None
+        else _config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
+    )
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     clock = _FakeDatetimeClock(config.planned_start)
     roster = roster if roster is not None else _roster_with_entries("12", "34")
@@ -179,12 +185,22 @@ class FakeConsoleView:
         self.last_hide: bool | None = None
         self.stop_enabled: bool | None = None
         self.entry_locked: bool | None = None
+        # W5 channels: the start/undo button gates, the native warning
+        # seam, and the scripted native-confirm verdict.
+        self.start_enabled: bool | None = None
+        self.undo_enabled: bool | None = None
+        self.last_warning: tuple[str, str] | None = None
+        self.last_confirm: tuple[str, str, str, str] | None = None
+        self.confirm_result: bool = False
+        self._presenter: ConsolePresenter | None = None
         self.focus_count = 0
         self.clear_count = 0
 
     def show_feed(self, rows: list[FeedRow]) -> None:
-        """Record the fed rows."""
+        """Record the fed rows, then re-apply the console gates."""
         self.last_feed = list(rows)
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
 
     def show_counters(self, c: Counters) -> None:
         """Record the counters."""
@@ -195,8 +211,10 @@ class FakeConsoleView:
         self.last_flash = r
 
     def set_state(self, status: RideStatus) -> None:
-        """Record the ride state."""
+        """Record the ride state, then re-apply the console gates."""
         self.last_state = status
+        if self._presenter is not None:
+            self._presenter.refresh_console_gates()
 
     def focus_entry(self) -> None:
         """Record one focus request."""
@@ -230,6 +248,28 @@ class FakeConsoleView:
         """Record the entry-field lock request (R-35)."""
         self.entry_locked = locked
 
+    # W5: the console-button gates and the native-dialog seams the
+    # live presenter now drives (see the Protocol's own additions).
+    # set_state/show_feed mirror MainFrame's render back-call: the
+    # fake re-applies the gates through the linked presenter exactly
+    # like the real view does, so handler tests observe the gates.
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """Record the start button's enablement (W5)."""
+        self.start_enabled = enabled
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """Record the undo button's enablement (W5)."""
+        self.undo_enabled = enabled
+
+    def show_warning(self, title: str, message: str) -> None:
+        """Record the shown warning (W5)."""
+        self.last_warning = (title, message)
+
+    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+        """Record the confirm and return the scripted verdict (W5)."""
+        self.last_confirm = (title, message, ok_label, cancel_label)
+        return self.confirm_result
+
     # WS-D/WS-H: the gauge clock and review-tab members the live
     # presenter now drives (see the Protocol's own additions).
     def set_clock_fractions(self, *, elapsed_frac: float, remaining_frac: float) -> None:
@@ -251,9 +291,18 @@ def _make_presenter(
     *,
     mono: _FakeMonotonicClock | None = None,
 ) -> ConsolePresenter:
-    """Build the presenter over a real engine source and a fake view."""
+    """Build the presenter over a real engine source and a fake view.
+
+    Links the view to the presenter exactly as ``wire_console`` +
+    ``set_state`` do on the real ``MainFrame``: the fake's
+    ``set_state``/``show_feed`` re-apply the console gates through the
+    presenter, so handler tests observe W5's button gates without
+    wx.
+    """
     source = EngineDataSource(engine, engine._roster)
-    return ConsolePresenter(view, engine=engine, source=source, now=mono)
+    presenter = ConsolePresenter(view, engine=engine, source=source, now=mono)
+    view._presenter = presenter
+    return presenter
 
 
 def _assert_rejected(  # noqa: PLR0913 -- shared rejection assertion: view + notice/engine + two counts
@@ -906,6 +955,236 @@ def test_on_start_given_finished_ride_shows_a_notice() -> None:
 
     assert view.last_notice == "Cannot start: cannot start from finished"
     assert engine.state is RideStatus.FINISHED
+
+
+# ---------------------------------------- W5 blocked-start warnings
+
+
+def test_on_start_given_empty_roster_shows_warning_with_exact_copy() -> None:
+    """W5: an empty roster's refusal is a warning, never a notice."""
+    engine, _clock = _make_engine(roster=_roster_with_entries())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert view.last_warning == (
+        "Cannot Start Ride",
+        "Cannot start ride: roster has no riders",
+    )
+    assert engine.state is RideStatus.DRAFT
+    assert view.last_notice is None
+
+
+def test_on_start_given_incomplete_setup_shows_warning_with_prefixed_reasons() -> None:
+    """W5: every other blocked-start reason shares the same prefix."""
+    config = dataclasses.replace(_config(), scorer="")
+    engine, _clock = _make_engine(config=config)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert view.last_warning == (
+        "Cannot Start Ride",
+        "Cannot start ride: ride setup is incomplete: scorer is required",
+    )
+    assert engine.state is RideStatus.DRAFT
+
+
+# ------------------------------------------ W5 stop-request flow
+
+
+def test_on_stop_requested_given_running_ride_with_entries_confirms_then_stops() -> None:
+    """W5: a populated RUNNING ride asks the native confirm, then stops.
+
+    The confirm carries the retired ``stop_confirm_dlg``'s frozen copy
+    verbatim, with the same button labels; a confirmed OK runs the
+    unchanged ``on_stop_confirmed`` act-3 flow (engine stop, arm
+    clear, entry lock, notice).
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    view.confirm_result = True
+    presenter = _make_presenter(engine, view)
+    presenter.on_arm_stop(armed=True)
+
+    presenter.on_stop_requested()
+
+    assert view.last_confirm == (
+        "Stop Ride?",
+        "The clock stops for everyone. Riders still on course keep their laps; "
+        "no cards are dealt after stop. You can continue the ride later "
+        "without losing anything.",
+        "Stop ride",
+        "Cancel",
+    )
+    assert engine.record_crossing("12").reason == "ride is stopped"
+    assert view.stop_enabled is False  # auto-clear after use
+    assert view.entry_locked is True
+    assert view.last_notice == "Ride stopped — continue to resume"
+
+
+def test_on_stop_requested_given_cancelled_confirm_leaves_the_ride_running() -> None:
+    """W5: a cancelled stop confirm changes nothing (R-35's guard)."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_requested()
+
+    assert engine.stopped is False
+    assert view.entry_locked is None  # never reached the lock step
+    assert view.last_notice is None
+
+
+def test_on_stop_requested_given_empty_roster_warns_and_shows_no_confirm() -> None:
+    """W5: a riderless ride gets a warning, never a Stop dialog."""
+    engine, _clock = _make_engine(roster=_roster_with_entries())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_requested()
+
+    assert view.last_warning == ("Cannot Stop Ride", "Cannot stop ride: roster has no riders")
+    assert view.last_confirm is None
+    assert engine.state is RideStatus.DRAFT
+
+
+def test_on_stop_requested_given_draft_ride_with_entries_refuses_with_notice() -> None:
+    """W5: a not-RUNNING ride never shows the confirm (UI-unreachable)."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_requested()
+
+    assert view.last_confirm is None
+    assert view.last_notice == "Cannot stop: cannot stop a draft ride"
+    assert engine.state is RideStatus.DRAFT
+
+
+# --------------------------------------------- W5 console gates
+
+
+def _engine_gated(
+    state: RideStatus, *, crossings: int, stopped: bool
+) -> tuple[RideEngine, _FakeDatetimeClock]:
+    """Build an engine in *state* with *crossings* laps, optionally stopped."""
+    engine, clock = _make_engine()
+    if state in (RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED):
+        engine.start()
+    for _index in range(crossings):
+        _record(engine, clock, "12", lap_time_s=100)
+    if stopped:
+        engine.stop()
+    if state is RideStatus.FINISHED:
+        engine.finish()
+    elif state is RideStatus.REOPENED:
+        engine.finish()
+        engine.reopen()
+    return engine, clock
+
+
+_GATE_CASES = (
+    (RideStatus.DRAFT, 0, False, True, False),  # DRAFT: start rides, undo off
+    (RideStatus.RUNNING, 0, False, False, False),  # live: nothing to undo yet
+    (RideStatus.RUNNING, 2, False, False, True),  # live with laps: undo only
+    (RideStatus.RUNNING, 1, True, True, True),  # stopped: start resumes, undo stays
+    (RideStatus.FINISHED, 2, False, False, False),  # finished: both off
+    (RideStatus.REOPENED, 2, False, False, False),  # reopened: corrections only
+)
+_GATE_CASE_IDS = (
+    "draft",
+    "running_without_crossings",
+    "running_with_crossings",
+    "stopped_running",
+    "finished",
+    "reopened",
+)
+
+
+@pytest.mark.parametrize(
+    ("ride_state", "crossings", "stopped", "expected_start", "expected_undo"),
+    _GATE_CASES,
+    ids=_GATE_CASE_IDS,
+)
+def test_refresh_console_gates_matches_start_and_undo_enablement_rules(  # noqa: PLR0913 -- (state, crossings, stopped) + the two expected verdicts
+    ride_state: RideStatus,
+    crossings: int,
+    *,
+    stopped: bool,
+    expected_start: bool,
+    expected_undo: bool,
+) -> None:
+    """W5: start_btn mirrors mi_start_ride; undo_btn mirrors the undo row.
+
+    The engine state is the single source of truth: DRAFT or
+    stopped-RUNNING enables Start (continue-after-stop is the resume
+    mechanism); RUNNING with >= 1 crossing enables Undo. REOPENED's
+    engine-level undo stays but is no longer UI-reachable.
+    """
+    engine, _clock = _engine_gated(ride_state, crossings=crossings, stopped=stopped)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.refresh_console_gates()
+
+    assert (view.start_enabled, view.undo_enabled) == (expected_start, expected_undo)
+
+
+def test_on_start_given_draft_ride_disables_start_through_the_state_render() -> None:
+    """W5: the RUNNING state render turns Start off (no phantom continue)."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert (view.start_enabled, view.undo_enabled) == (False, False)
+    assert engine.events[-1].action == "start"
+
+
+def test_on_stop_confirmed_given_stopped_ride_enables_start_through_the_state_render() -> None:
+    """W5: a stopped ride's render keeps Start on -- continue-to-resume."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_stop_confirmed()
+
+    assert view.start_enabled is True
+    assert view.undo_enabled is True  # crossings survive the stop guard
+    assert view.last_notice == "Ride stopped — continue to resume"
+
+
+def test_on_undo_given_last_crossing_disables_undo_through_the_feed_render() -> None:
+    """W5: undoing the only crossing turns Undo off via the feed render."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert len(engine.crossings) == 0
+    assert view.undo_enabled is False
+
+
+def test_on_plate_entered_given_first_crossing_enables_undo_through_the_feed_render() -> None:
+    """W5: the first recorded lap turns Undo on via the feed render."""
+    engine, clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(100)
+
+    presenter.on_plate_entered("12")
+
+    assert view.undo_enabled is True
+    assert view.start_enabled is False
 
 
 # ----------------------------------------------------------- hide times

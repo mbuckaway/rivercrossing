@@ -907,6 +907,34 @@ def test_on_course_counts_active_entries_with_odd_lap_counts() -> None:
     assert engine.on_course == 1
 
 
+def test_entry_count_given_empty_roster_returns_zero() -> None:
+    """W5: the stop flow reads a zero-entry roster as no riders."""
+    engine, _ = _make_engine(roster=_roster_with_entries())
+
+    assert engine.entry_count == 0
+
+
+def test_entry_count_given_two_entries_returns_two() -> None:
+    """W5: the count matches the roster the engine was built over."""
+    engine, _ = _make_engine(roster=_roster_with_entries("12", "34"))
+
+    assert engine.entry_count == 2
+
+
+def test_entry_count_tracks_entries_added_after_construction() -> None:
+    """W5: the count is a live roster read, never a construction copy.
+
+    The roster the engine holds is shared and mutable, so an entry
+    added after ``RideEngine`` construction must appear in the count
+    (mirrors ``on_course``'s own live read).
+    """
+    roster = _roster_with_entries("12")
+    engine, _ = _make_engine(roster=roster)
+    roster.create_solo_entry(first_name="Rider 34", last_name="", plate="34")
+
+    assert engine.entry_count == 2
+
+
 # ============================================ E4.2 crossings + dealing
 
 

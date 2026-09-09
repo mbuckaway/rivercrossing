@@ -126,6 +126,23 @@ class FakeConsoleView:
     def set_entry_locked(self, *, locked: bool) -> None:
         """Record the entry-lock request (unused here)."""
 
+    # W5: the Protocol grew the console-button gates and the native
+    # dialog seams the live presenter drives (same "add the member
+    # once the presenter calls it" precedent). Behavioral coverage
+    # lives in tests/unit/presenters/test_console.py; these stay no-ops.
+    def set_start_enabled(self, *, enabled: bool) -> None:
+        """Record the start-button enablement (unused here)."""
+
+    def set_undo_enabled(self, *, enabled: bool) -> None:
+        """Record the undo-button enablement (unused here)."""
+
+    def show_warning(self, title: str, message: str) -> None:
+        """Record the shown warning (unused here)."""
+
+    def confirm(self, title: str, message: str, *, ok_label: str, cancel_label: str) -> bool:
+        """Return the scripted confirm verdict (unused here)."""
+        return False
+
     # WS-D/WS-H: the Protocol grew the gauge-clock and review-tab
     # members the live presenter drives (see the "add the member once
     # the presenter calls it" precedent above). Behavioral coverage
