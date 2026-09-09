@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless W7 pins for ``views/rider_editor.py``'s pure helpers.
+"""Headless W7 pins for views/rider_editor pure helpers.
 
 The W7 rider-editor rework changes two pure facts before any window
 opens: the canvas minimum becomes 1280x560 with both dimensions
@@ -21,10 +21,9 @@ def test_format_team_given_a_solo_row_renders_the_word_solo() -> None:
 
 
 def test_format_team_given_a_team_row_renders_the_team_display_name() -> None:
-    """A team rider's Team cell is the team's display name, unchanged."""
+    """A team rider keeps their team's display name as the cell."""
     assert (
-        format_team(RiderRow(plate="77", name="A. Roy", team="Trail Blazers"))
-        == "Trail Blazers"
+        format_team(RiderRow(plate="77", name="A. Roy", team="Trail Blazers")) == "Trail Blazers"
     )
 
 

@@ -2547,7 +2547,7 @@ def test_change_solo_plate_relay_blank_raises_and_changes_nothing() -> None:
 
 
 def test_change_solo_plate_pooled_blank_raises_plate_shape_error() -> None:
-    """rider_pooled: a blanked solo plate is refused as empty, not whole."""
+    """A blanked pooled solo plate is refused as empty, not whole."""
     roster = Roster()
     entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
 

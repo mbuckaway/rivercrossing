@@ -283,7 +283,7 @@ class RiderEditor:
         """
         return find_control(self.dialog, name, expected_type)
 
-    def _build_columns(self) -> list[Any]:  # noqa: ANN401 -- wx ships no stubs
+    def _build_columns(self) -> list[Any]:
         """Append ``riders_list``'s three columns in canvas order.
 
         Returns:
@@ -326,12 +326,8 @@ class RiderEditor:
         self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.last_name_input)
         self.dialog.Bind(wx.EVT_CHOICE, self._on_form_changed, self.team_choice)
         self.dialog.Bind(wx.EVT_TEXT, self._on_search_text, self.rider_search)
-        self.dialog.Bind(
-            wx.EVT_SEARCHCTRL_SEARCH_BTN, self._on_search_text, self.rider_search
-        )
-        self.dialog.Bind(
-            wx.EVT_SEARCHCTRL_CANCEL_BTN, self._on_search_text, self.rider_search
-        )
+        self.dialog.Bind(wx.EVT_SEARCHCTRL_SEARCH_BTN, self._on_search_text, self.rider_search)
+        self.dialog.Bind(wx.EVT_SEARCHCTRL_CANCEL_BTN, self._on_search_text, self.rider_search)
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.riders_list
         )
@@ -638,12 +634,12 @@ class AddRiderDialog:
         self.team_choice.SetStringSelection(team)
 
     def show_validation(self, message: str) -> None:
-        """Show *message* on :data:`ADD_RIDER_INFOBAR` (``AddRiderView``).
+        """Show *message* on :data:`ADD_RIDER_INFOBAR`.
 
-        Non-modal, mirroring the editor's own refusal surface: it
-        stays up until the next successful Add re-renders (or the
-        dialog closes), never blocking the operator from correcting
-        the form.
+        ``AddRiderView`` member: non-modal, mirroring the editor's
+        own refusal surface -- it stays up until the next successful
+        Add re-renders (or the dialog closes), never blocking the
+        operator from correcting the form.
         """
         self.add_infobar.ShowMessage(message, wx.ICON_WARNING)
         self.dialog.Layout()

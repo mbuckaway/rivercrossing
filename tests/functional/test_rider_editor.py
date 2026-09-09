@@ -21,6 +21,7 @@ CLAUDE.md's removable-seam note) even though ``ui.views``/
 """
 
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import harness
@@ -33,7 +34,7 @@ from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.riders import SOLO_TEAM_CHOICE, CsvPreview
-from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.views import dialogs, rider_editor
 from rivercrossing.ui.views.rider_editor import (
     ADD_RIDER_INFOBAR,
     COL_TEAM,
@@ -336,7 +337,7 @@ def test_rider_editor_dlg_add_btn_duplicate_plate_refuses_on_the_add_dialogs_inf
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A colliding plate refuses inside the dialog; the editor is whole."""
+    """A colliding plate refuses inside the dialog, editor untouched."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
     found: dict[str, object] = {}
@@ -366,7 +367,7 @@ def test_rider_editor_dlg_successful_add_via_the_dialog_dismisses_a_prior_infoba
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The next successful action clears a prior editor warning (E3.2)."""
+    """The next successful action clears a prior editor warning."""
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
@@ -692,6 +693,7 @@ def test_rider_editor_dlg_team_ui_visibility_matches_entry_mode(
 
 # --------------------------------------------------- csv_preview_dlg
 # (E3.4's own scope; these members exist only to satisfy RidersView.)
+
 
 def test_rider_editor_dlg_show_csv_preview_raises_not_implemented_naming_e3_4(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs

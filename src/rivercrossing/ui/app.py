@@ -1183,6 +1183,7 @@ def _decorate(  # noqa: PLR0912, C901, PLR0915 -- one elif per decorated target;
             )
         else:
             AuditDialog(window, data_source=_EMPTY_SOURCE, roster=context.roster)
+    return None
 
 
 def _apply_dialog_defaults(window: Any, route: commands.MenuRoute) -> None:  # noqa: ANN401

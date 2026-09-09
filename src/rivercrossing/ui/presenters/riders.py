@@ -46,7 +46,8 @@ of ``RiderEditor``'s own E3.2-era CSV stubs.
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
 
-from collections.abc import Callable
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
@@ -65,6 +66,7 @@ from rivercrossing.roster import (
 from rivercrossing.ui.presenters.data_source import RiderRow
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
     from pathlib import Path
 
     from rivercrossing.roster import Entry, Roster
@@ -210,9 +212,10 @@ def _plate_order_key(plate: str) -> tuple[int, int] | tuple[int, str]:
     return (1, plate)
 
 
-def _visible_pairs(
+def _visible_pairs(  # noqa: PLR0913 -- the filter/order state bundle (text, column, direction)
     roster: Roster,
     pairs: Sequence[tuple[Entry, Rider]],
+    *,
     search_text: str,
     column: int | None,
     ascending: bool,
@@ -243,7 +246,9 @@ def _visible_pairs(
     return sorted(visible, key=key, reverse=not ascending)
 
 
-def _column_sort_key(roster: Roster, column: int) -> Callable[[tuple[Entry, Rider]], object]:
+def _column_sort_key(
+    roster: Roster, column: int
+) -> Callable[[tuple[Entry, Rider]], tuple[int, int] | tuple[int, str] | str]:
     """Return the sort-key callable for riders_list *column* (W7).
 
     Columns are the view's Plate | Name | Team order (0..2); the key
@@ -500,7 +505,7 @@ class RidersPresenter:
         self._show_add_form()
 
     def on_save(self, form: RiderFormValues) -> None:
-        """Handle save_btn: rename, replate and/or re-team the selection.
+        """Handle save_btn: rename, replate and re-team the selection.
 
         W7 adds the form's Team field to the save. The chosen team is
         applied through the roster's shipped primitives, each
@@ -692,9 +697,9 @@ class RidersPresenter:
         self._visible = _visible_pairs(
             self.roster,
             _rider_pairs(self.roster),
-            self._search_text,
-            self._sort_column,
-            self._sort_ascending,
+            search_text=self._search_text,
+            column=self._sort_column,
+            ascending=self._sort_ascending,
         )
         self.view.show_riders(_pair_rows(self.roster, self._visible))
         self.view.show_team_choices(_team_choices(self.roster))
@@ -715,7 +720,7 @@ class RidersPresenter:
         return SOLO_TEAM_CHOICE
 
     def _is_dirty(self, form: RiderFormValues) -> bool:
-        """Return whether *form* differs from the selected record (W7)."""
+        """Return whether *form* differs from the selected record."""
         if self._selected is None:
             return False
         entry, rider = self._selected

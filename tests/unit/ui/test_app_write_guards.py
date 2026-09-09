@@ -391,7 +391,7 @@ class _EditorViewStub:
         """Hold a presenter stub carrying *roster_changed*."""
         self.presenter = _EditorPresenterStub(roster_changed=roster_changed)
 
-    def select_rider_by_plate(self, plate: str) -> None:  # noqa: ARG002 -- console-seam no-op
+    def select_rider_by_plate(self, _plate: str) -> None:
         """No-op: the route-level test never drives a real list."""
 
 
@@ -487,7 +487,7 @@ def test_open_target_given_rider_editor_close_with_changes_saves_the_roster(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
 
@@ -497,7 +497,7 @@ def test_open_target_given_rider_editor_close_with_changes_saves_the_roster(
 def test_open_target_given_rider_editor_close_without_changes_skips_the_save(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An unchanged menu-route editor session saves nothing (W7)."""
+    """An unchanged menu-route editor session saves nothing."""
     context = _context(store=_SaveMustNotRunStore())
     context.active_ride_id = 5
     context.roster = Roster()
@@ -509,7 +509,7 @@ def test_open_target_given_rider_editor_close_without_changes_skips_the_save(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
 
@@ -531,7 +531,7 @@ def test_open_target_given_rider_editor_close_and_a_failed_save_posts_a_notice(
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
 
     app_module._open_target(context, app_module.commands.route_for_id("mi_rider_editor"))
 
@@ -541,7 +541,7 @@ def test_open_target_given_rider_editor_close_and_a_failed_save_posts_a_notice(
 def test_open_rider_editor_for_close_with_changes_saves_the_roster(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The console Riders-tab path persists a changed editor too (W7)."""
+    """The console Riders-tab path persists a changed editor too."""
     from rivercrossing.ui.views import rider_editor  # noqa: PLC0415 -- the patched view class
 
     store = _SaveRecorderStore()
@@ -551,12 +551,16 @@ def test_open_rider_editor_for_close_with_changes_saves_the_roster(
     context.roster = roster
     context.resource = _FakeResource(_FakeWindow())
     changed_view = _EditorViewStub(roster_changed=True)
-    monkeypatch.setattr(rider_editor, "RiderEditor", lambda _window, *, roster: changed_view)
+    monkeypatch.setattr(
+        rider_editor,
+        "RiderEditor",
+        lambda _window, *, roster: changed_view,  # noqa: ARG005 -- the SUT calls roster=; the stub ignores it
+    )
     monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
 
     app_module._open_rider_editor_for(context, "77")
 
@@ -574,13 +578,17 @@ def test_open_rider_editor_for_close_without_changes_skips_the_save(
     context.roster = Roster()
     context.resource = _FakeResource(_FakeWindow())
     monkeypatch.setattr(
-        rider_editor, "RiderEditor", lambda _window, *, roster: _EditorViewStub(roster_changed=False)
+        rider_editor,
+        "RiderEditor",
+        lambda _window, *, roster: _EditorViewStub(  # noqa: ARG005 -- the SUT calls roster=; the stub ignores it
+            roster_changed=False
+        ),
     )
     monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
 
-    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
 
     app_module._open_rider_editor_for(context, "77")
 
