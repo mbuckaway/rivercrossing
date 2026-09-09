@@ -42,10 +42,10 @@ that first needs it, each behind its own :func:`require_wx` call.
 E3.4's Import/Export Riders CSV… routes (``_handle_import_csv``/
 ``_handle_export_csv``) are two more such deferred names: both
 delegate straight to ``rivercrossing.ui.views.rider_editor``'s own
-shared flow functions, the one place that route and
-``rider_editor_dlg``'s own import_btn/export_btn both run the picker
--> preview/write flow through (that module's own banner comment
-explains why it is hosted there, not here).
+shared flow functions -- W7 removed ``rider_editor_dlg``'s own
+import_btn/export_btn, so the File-menu routes are now their only
+callers (that module's own banner comment explains why it is hosted
+there, not here).
 """
 
 import gc
@@ -1259,10 +1259,11 @@ def _handle_import_csv(context: _RouteContext) -> None:
 
     The route's own target stays ``csv_preview_dlg`` (commands.py
     unchanged) -- :func:`~rivercrossing.ui.views.rider_editor.
-    run_csv_import_flow` is the one place this route handler and
-    ``rider_editor_dlg``'s own ``import_btn`` both run the picker ->
-    preview -> commit flow through (that module's own banner comment
-    explains why it is hosted there, not here).
+    run_csv_import_flow` is the one place this route handler runs the
+    picker -> preview -> commit flow through (that module's own
+    banner comment explains why it is hosted there, not here; W7
+    removed the editor's own import_btn, so the File-menu route is
+    the only caller left).
 
     R-74: a committed import into a store-backed ride persists the
     in-memory roster to the active ride (``Store.save_roster``), so

@@ -98,9 +98,10 @@ COL_PROBLEM = 1
 # xrc-windows.md C's csv_preview_dlg mock: "Row | Problem".
 CONFLICT_COLUMN_LABELS: tuple[str, ...] = ("Row", "Problem")
 
-# The canvas's own dash for a solo rider's Team cell
-# ("123 Sam Ellis —").
-SOLO_TEAM_TEXT = "—"
+# The canvas's own word for a solo rider's Team cell
+# ("123 Sam Ellis solo" -- W7 rework; the user copy is the literal
+# word "solo", never the old em dash).
+SOLO_TEAM_TEXT = "solo"
 
 # ui/ids.py is generated from the .xrc files (R-05); these two names
 # never appear there since XRC cannot author a wxInfoBar at all
@@ -108,11 +109,12 @@ SOLO_TEAM_TEXT = "—"
 ROSTER_INFOBAR = "roster_infobar"
 CSV_INFOBAR = "csv_infobar"
 
-# D16: the canvas draws this dialog at 640px; XRC has no window-level
-# minsize (riders.xrc's own header notes this and defers to code).
-# Height is Fit()'s own measurement of the real sizer content -- see
-# this task's own report for how it was measured.
-MIN_SIZE = (640, 281)
+# W7 rework: the canvas redraws this dialog at 1280x560 with the
+# riders_list pane dominant (riders.xrc's own 3:2 sizer options);
+# XRC has no window-level minsize (riders.xrc's header notes this and
+# defers to code), so _apply_min_size enforces the floor in code,
+# width AND height.
+MIN_SIZE = (1280, 560)
 
 # The two NotImplementedError messages each view class's own "wrong
 # half" of RidersView raises (module docstring) -- each keeps "E3.4"
@@ -129,8 +131,8 @@ _RIDER_EDITOR_NOT_IMPLEMENTED = (
 def format_team(row: RiderRow) -> str:
     """Return *row*'s ``riders_list`` Team cell text.
 
-    ``RiderRow.team`` is ``None`` for a solo rider; the canvas draws
-    an em dash rather than a blank cell.
+    ``RiderRow.team`` is ``None`` for a solo rider; W7 renders the
+    word "solo" (``SOLO_TEAM_TEXT``) rather than a blank cell.
     """
     return row.team if row.team is not None else SOLO_TEAM_TEXT
 
@@ -206,8 +208,6 @@ class RiderEditor:
         self.add_btn = self._find(ids.ADD_BTN, wx.Button)
         self.save_btn = self._find(ids.SAVE_BTN, wx.Button)
         self.delete_btn = self._find(ids.DELETE_BTN, wx.Button)
-        self.import_btn = self._find(ids.IMPORT_BTN, wx.Button)
-        self.export_btn = self._find(ids.EXPORT_BTN, wx.Button)
 
         self.roster_infobar = self._build_infobar()
 
@@ -273,8 +273,6 @@ class RiderEditor:
         self.dialog.Bind(wx.EVT_BUTTON, self._on_add, self.add_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_save, self.save_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_delete, self.delete_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_import_click, self.import_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_export_click, self.export_btn)
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.riders_list
         )
@@ -307,36 +305,6 @@ class RiderEditor:
         """Handle ``delete_btn``: forward to the presenter."""
         event.Skip()
         self.presenter.on_delete()
-
-    def _on_import_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``import_btn``: the identical flow as mi_import_csv.
-
-        On an actual commit, refreshes this still-open editor's own
-        rows/team_choice via :meth:`RidersPresenter.refresh` --
-        :func:`run_csv_import_flow` commits through ``csv_preview_
-        dlg``'s own, *different* ``RidersPresenter`` instance
-        (module docstring's mirror-image split), so nothing else
-        would tell this open editor the roster changed underneath it.
-        """
-        event.Skip()
-        if run_csv_import_flow(self.dialog, self.presenter.roster):
-            self.presenter.refresh()
-
-    def _on_export_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``export_btn``: the same flow as mi_export_csv.
-
-        A failed write surfaces on this dialog's own ``roster_infobar``
-        through :meth:`show_validation` (the flow's ``on_error`` seam)
-        instead of an unguarded raise into this wx handler, which wx
-        swallows (the measured ``docs/EPIC3-SESSION-SUMMARY.md`` note)
-        -- the operator would otherwise believe the export succeeded.
-        """
-        event.Skip()
-        run_csv_export_flow(
-            self.dialog,
-            self.presenter.roster,
-            on_error=self.show_validation,
-        )
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``riders_list`` selection: forward its row index.
@@ -459,13 +427,16 @@ class RiderEditor:
         self.dialog.Layout()
 
     def _apply_min_size(self) -> None:
-        """Force the canvas's 640px floor, then Fit() the rest (D16).
+        """Force the W7 1280x560 floor, then Fit() the rest (D16).
 
         See :meth:`ride_library.RideLibrary._apply_min_size`'s
         docstring for the measured ``SetMinSize`` + ``Fit()``
-        reasoning this mirrors.
+        reasoning this mirrors. W7 applies BOTH dimensions -- the
+        old width-only ``-1`` height left the reworked two-pane
+        layout free to collapse -- so the dialog opens at the
+        canvas redraw's exact 1280x560.
         """
-        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
+        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], MIN_SIZE[1]))
         self.dialog.Fit()
 
 
@@ -665,18 +636,19 @@ class CsvPreviewDialog:
 
 # ---------------------------------------------------- shared csv flows
 #
-# The one place both ``ui.app``'s own mi_import_csv/mi_export_csv
-# route handlers and RiderEditor's own import_btn/export_btn run
-# their picker -> preview/write flow through (E3.4's own follow-on
-# "one source of truth" design constraint). Hosted here, not
-# ``ui.app`` -- the obvious home, since the route handlers already
-# lived there -- because a view importing ``ui.app`` back would create
-# a views->app dependency cycle (the layering contract the import-
-# linter's wx contract enforces); the original reason the comment
-# recorded -- ``ui.app`` importing ``rivercrossing.demo``, which would
-# leak through that back-import -- was retired with the seam itself in
-# E5.4.2. Not the presenter either: ``RidersPresenter`` may never
-# import wx (R-71), and loading/showing ``csv_preview_dlg`` is
+# The one place ``ui.app``'s own mi_import_csv/mi_export_csv route
+# handlers run their picker -> preview/write flow through (E3.4's
+# own follow-on "one source of truth" design constraint). Hosted
+# here, not ``ui.app`` -- the obvious home, since the route handlers
+# already lived there -- because a view importing ``ui.app`` back
+# would create a views->app dependency cycle (the layering contract
+# the import-linter's wx contract enforces); the original reason the
+# comment recorded -- ``ui.app`` importing ``rivercrossing.demo``,
+# which would leak through that back-import -- was retired with the
+# seam itself in E5.4.2. W7 removes the editor's own import_btn/
+# export_btn (riders.xrc), so these two flows now serve the File-menu
+# routes alone. Not the presenter either: ``RidersPresenter`` may
+# never import wx (R-71), and loading/showing ``csv_preview_dlg`` is
 # unavoidably wx-touching. ``ui.app`` keeps calling these two
 # functions with a deferred, function-scoped import -- the same way it
 # already reaches every other view class in this package.
@@ -735,8 +707,7 @@ def run_csv_import_flow(parent: wx.Window, roster: Roster) -> bool:
 
     Returns:
         Whether an import actually committed -- a caller with its
-        own rows to refresh (:class:`RiderEditor`'s own
-        ``import_btn``) uses this to know whether to.
+        own rows to refresh uses this to know whether to.
     """
     path = _pick_import_path(parent)
     if path is None:
@@ -784,9 +755,8 @@ def run_csv_export_flow(
         parent: The window to parent the native save picker on.
         roster: The roster to write.
         on_error: Where a failed write's ``Export failed: {exc}``
-            notice goes -- the caller's own surface (the main frame's
-            status bar from ``ui.app``; the roster editor's infobar
-            from its own ``export_btn``).
+            notice goes -- the caller's own surface (the main
+            frame's status bar from ``ui.app``).
 
     Returns:
         The path written, or ``None`` when the picker was cancelled
