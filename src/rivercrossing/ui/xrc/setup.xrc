@@ -372,7 +372,14 @@
         <border>10</border>
         <object class="wxStdDialogButtonSizer">
           <object class="button">
-            <object class="wxButton" name="wxID_OK"/>
+            <!-- D2: the stock id stays wxID_OK so wx keeps its
+                 platform button order and default handling; only the
+                 visible text changes, and it changes for both modes
+                 (New Ride commits a new ride, Edit Ride saves an
+                 existing one: both are a save). -->
+            <object class="wxButton" name="wxID_OK">
+              <label>Save</label>
+            </object>
           </object>
           <object class="button">
             <object class="wxButton" name="wxID_CANCEL"/>

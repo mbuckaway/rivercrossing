@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 39 menu rows reaches ("Opens / does"), and when it is allowed to
+the 40 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 39 :class:`MenuRoute` rows
+once, so both jobs read off the same 40 :class:`MenuRoute` rows
 instead of two tables that could drift apart.
 
 No wx import lands here (R-71 does not require it, since nothing
@@ -34,7 +34,6 @@ __all__ = [
     "TargetKind",
     "UnroutedMenuItemError",
     "is_route_enabled",
-    "is_stop_button_enabled",
     "route_for_id",
 ]
 
@@ -59,7 +58,7 @@ class TargetKind(Enum):
 _RUNNING = frozenset({RideStatus.RUNNING})
 _RUNNING_REOPENED = frozenset({RideStatus.RUNNING, RideStatus.REOPENED})
 _FINISHED = frozenset({RideStatus.FINISHED})
-_DRAFT_OR_RUNNING = frozenset({RideStatus.DRAFT, RideStatus.RUNNING})
+_DRAFT_RUNNING_REOPENED = frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.REOPENED})
 
 
 @dataclass(frozen=True)
@@ -134,15 +133,10 @@ class MenuRoute:
 
 
 ROUTE_TABLE: tuple[MenuRoute, ...] = (
-    # --- File: 8 rows ---
-    MenuRoute(
-        menu="File",
-        label="New Ride…",
-        ids=("mi_new_ride",),
-        kind=TargetKind.WINDOW,
-        target=ids.RIDE_SETUP_DLG,
-        enabled_when=ALWAYS,  # "always"
-    ),
+    # --- File: 7 rows ---
+    # D1: New Ride… left the File menu for the Ride menu (the ride
+    # lifecycle lives on one surface); the remaining seven rows keep
+    # spec.md 15's own order.
     MenuRoute(
         menu="File",
         label="Ride Library",
@@ -155,11 +149,12 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="File",
         label="Duplicate Ride…",
         ids=("mi_duplicate_ride",),
-        # E5.4.1 mock-first: duplicate_ride_dlg authored and its names
-        # registered in spec.md 15b before this route resolved to it
-        # (the E1.4.1 sentinel is retired for this row).
-        kind=TargetKind.DIALOG,
-        target=ids.DUPLICATE_RIDE_DLG,
+        # E5.4.1 mock-first; Phase 11 H2 replaced the authored dialog
+        # with the native std_dialogs.show_prompt, so the row is now a
+        # COMMAND (the confirm -> action flow lives in app.py's
+        # "duplicate_ride" route target).
+        kind=TargetKind.COMMAND,
+        target="duplicate_ride",
         enabled_when=Enablement(requires_ride_open=True),  # "a ride is open"
     ),
     MenuRoute(
@@ -205,9 +200,10 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         label="Exit",
         ids=("wxID_EXIT",),
         # Branches on ride state via quit_flow.dialog_for_status
-        # (RUNNING -> exit_running_dlg; otherwise -> exit_confirm_dlg)
-        # rather than reaching one fixed target, so this is the flow
-        # itself, not a single window/dialog. Phase 8 (P8-D1/R-51):
+        # (RUNNING -> exit_running_dlg; otherwise -> None, the native
+        # std_dialogs.show_confirm -- Phase 11 H2) rather than reaching
+        # one fixed target, so this is the flow itself, not a single
+        # window/dialog. Phase 8 (P8-D1/R-51):
         # the app never exits without confirmation -- app.py's own
         # "exit_or_quit" special-case in _make_route_handler is what
         # runs that flow; this table only records that the row has
@@ -216,11 +212,33 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="exit_or_quit",
         enabled_when=ALWAYS,  # "always"
     ),
-    # --- Ride: 6 rows ---
-    # W14: the Ride Setup… row left the menu with mi_ride_setup -- its
-    # "edit this ride" semantics were never built, so File ▸ New Ride…
-    # is the single entry point to the setup window (both rows always
-    # dispatched to the identical RIDE_SETUP_DLG New-Ride branch).
+    # --- Ride: 9 rows ---
+    # W14 left this menu at six rows because the "edit this ride"
+    # semantics behind mi_ride_setup were never built. D1/D2 build
+    # them: New Ride… moves here, Edit Ride… opens the same setup
+    # window PRELOADED with the live config, and Clear Ride… resets
+    # the open ride to a fresh DRAFT.
+    MenuRoute(
+        menu="Ride",
+        label="New Ride…",
+        ids=("mi_new_ride",),
+        kind=TargetKind.WINDOW,
+        target=ids.RIDE_SETUP_DLG,
+        enabled_when=ALWAYS,  # "always"
+    ),
+    MenuRoute(
+        menu="Ride",
+        label="Edit Ride…",
+        ids=("mi_edit_ride",),
+        # The same dialog as New Ride… in its preload mode; app.py's
+        # _decorate distinguishes them by the row's own id (the
+        # mi_add_crossing_at/mi_edit_crossing precedent). Only the
+        # ride-open gate applies -- the structural fields are locked
+        # inside the dialog for any ride past DRAFT (D2).
+        kind=TargetKind.WINDOW,
+        target=ids.RIDE_SETUP_DLG,
+        enabled_when=Enablement(requires_ride_open=True),  # "a ride is open"
+    ),
     MenuRoute(
         menu="Ride",
         label="Start Ride",
@@ -231,9 +249,12 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # former continue_or_new_dlg branch retired with that dialog.
         kind=TargetKind.COMMAND,
         target="start_ride",
+        # C2: REOPENED joins the startable set (Start continues riding
+        # out of the corrections state); the stopped clause still only
+        # gates a RUNNING ride, so DRAFT/REOPENED need no stop state.
         enabled_when=Enablement(
-            allowed_states=_DRAFT_OR_RUNNING, requires_ride_stopped=True
-        ),  # "DRAFT, or stopped RUNNING"
+            allowed_states=_DRAFT_RUNNING_REOPENED, requires_ride_stopped=True
+        ),  # "DRAFT, or stopped RUNNING, or REOPENED"
     ),
     MenuRoute(
         menu="Ride",
@@ -259,19 +280,22 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         menu="Ride",
         label="Finish Ride…",
         ids=("mi_finish_ride",),
-        kind=TargetKind.DIALOG,
-        target=ids.FINISH_CONFIRM_DLG,
+        # Phase 11 H2: finish_confirm_dlg retired for the native
+        # std_dialogs.show_danger confirm, so the row is a COMMAND
+        # dispatched to app.py's "finish_ride" route target.
+        kind=TargetKind.COMMAND,
+        target="finish_ride",
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
     MenuRoute(
         menu="Ride",
         label="Reopen Ride",
         ids=("mi_reopen_ride",),
-        # E5.4.1 mock-first: reopen_ride_dlg authored and its names
-        # registered in spec.md 15b before this route resolved to it
-        # (the E1.4.1 sentinel is retired for this row).
-        kind=TargetKind.DIALOG,
-        target=ids.REOPEN_RIDE_DLG,
+        # E5.4.1 mock-first; Phase 11 H2 replaced the authored dialog
+        # with the native std_dialogs.show_prompt, so the row is now a
+        # COMMAND (app.py's "reopen_ride" route target).
+        kind=TargetKind.COMMAND,
+        target="reopen_ride",
         enabled_when=Enablement(allowed_states=_FINISHED),  # "FINISHED"
     ),
     MenuRoute(
@@ -284,7 +308,23 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
             requires_ride_open=True, min_audit_rows=1
         ),  # "ride open, ≥1 audit row"
     ),
-    # --- Riders: 6 rows ---
+    MenuRoute(
+        menu="Ride",
+        label="Clear Ride…",
+        ids=("mi_clear_ride",),
+        # D3: a confirmed native danger dialog, then an in-place reset
+        # -- no XRC window, so a COMMAND target like Stop Ride…'s.
+        kind=TargetKind.COMMAND,
+        target="clear_ride",
+        # DRAFT, or stopped RUNNING, or FINISHED -- REOPENED is not
+        # clearable (finish it first) and a live RUNNING ride must
+        # stop first; the stopped clause only gates a RUNNING ride.
+        enabled_when=Enablement(
+            allowed_states=frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}),
+            requires_ride_stopped=True,
+        ),
+    ),
+    # --- Riders: 5 rows ---
     MenuRoute(
         menu="Riders",
         label="Rider Editor",
@@ -312,14 +352,8 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.RIDER_ISSUES_DLG,
         enabled_when=Enablement(requires_ride_open=True),  # "ride open"
     ),
-    MenuRoute(
-        menu="Riders",
-        label="Add Rider/Entry…",
-        ids=("mi_add_entry",),
-        kind=TargetKind.WINDOW,
-        target=ids.RIDER_EDITOR_DLG,
-        enabled_when=Enablement(requires_ride_open=True),  # "ride open (new plates any time)"
-    ),
+    # D4: Add Rider/Entry… retired -- the Rider Editor row above is
+    # the single entry point for adding riders.
     MenuRoute(
         menu="Riders",
         label="Mark DNF…",
@@ -594,14 +628,3 @@ def is_route_enabled(route: MenuRoute, state: RideState) -> bool:
         and state.held_cards >= rule.min_held_cards
         and state.audit_rows >= rule.min_audit_rows
     )
-
-
-def is_stop_button_enabled(*, armed: bool) -> bool:
-    """Return whether the console Stop button is enabled (R-35).
-
-    ``stop_btn`` is a button, not a menu item, and R-35 gates it on
-    nothing but the ``arm_stop_chk`` checkbox beside it -- a separate
-    rule from any :class:`MenuRoute`, kept here because it is the
-    same enablement-binder concern this module owns.
-    """
-    return armed

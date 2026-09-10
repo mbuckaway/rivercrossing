@@ -8,13 +8,14 @@ read-only ``EngineDataSource`` serves feed/counters/status, and the
 view is a recording fake. These tests drive the presenter's event
 handlers against a real ``RideEngine``/``Roster``/``Shoe`` (never wx),
 asserting the cue fired (spec §10), the feed/counters refreshed, the
-field cleared or kept (R-31), the arm/stop flow (R-35) with a fake
-monotonic tick, hide-times forwarding (R-37), tick refresh, and the
-E6.4.3 finish-gate hook consulted before finishing. WS-D/WS-H grow
-the console with the gauge-clock channel (dial fractions from
-``planned_duration_s``, the stop-light mode mapping) and the review
-tabs (the flagged feed subset and the riders rows, both refreshed in
-``tick``).
+field cleared or kept (R-31), the Stop guard flow (R-35), hide-times
+forwarding (R-37), tick refresh, and the E6.4.3 finish-gate hook
+consulted before finishing. WS-D/WS-H grow the console with the
+gauge-clock channel (dial fractions from ``planned_duration_s``, the
+stop-light mode mapping) and the review tabs (the flagged feed subset
+and the riders rows, both refreshed in ``tick``). C2 makes
+``refresh_console_gates`` the single source for Start/Stop/Undo and
+C3 freezes the clock for a closed (FINISHED/REOPENED) ride.
 
 ``EngineDataSource`` is the first real ``DataSource`` implementation
 over ``(engine, roster)``; its mapping tests pin the feed shape (R-32:
@@ -94,22 +95,6 @@ class _FakeDatetimeClock:
     def advance(self, seconds: float) -> None:
         """Move the fake clock forward by *seconds*."""
         self._now = self._now + timedelta(seconds=seconds)
-
-
-class _FakeMonotonicClock:
-    """Monotonic clock the presenter's 10 s arm timeout reads (R-35)."""
-
-    def __init__(self, start: float = 0.0) -> None:
-        """Start the fake monotonic clock at *start*."""
-        self._now = start
-
-    def __call__(self) -> float:
-        """Return the current fake monotonic time."""
-        return self._now
-
-    def advance(self, seconds: float) -> None:
-        """Move the fake monotonic clock forward by *seconds*."""
-        self._now += seconds
 
 
 def _roster_with_entries(*plates: str) -> Roster:
@@ -320,8 +305,6 @@ class FakeConsoleView:
 def _make_presenter(
     engine: RideEngine,
     view: FakeConsoleView,
-    *,
-    mono: _FakeMonotonicClock | None = None,
 ) -> ConsolePresenter:
     """Build the presenter over a real engine source and a fake view.
 
@@ -332,7 +315,7 @@ def _make_presenter(
     wx.
     """
     source = EngineDataSource(engine, engine._roster)
-    presenter = ConsolePresenter(view, engine=engine, source=source, now=mono)
+    presenter = ConsolePresenter(view, engine=engine, source=source)
     view._presenter = presenter
     return presenter
 
@@ -927,86 +910,24 @@ def test_on_undo_given_no_crossings_shows_a_notice_and_keeps_state() -> None:
     assert len(engine.crossings) == 0
 
 
-# ----------------------------------------------------------- arm/stop
+# --------------------------------------------------------------- stop
+# C2: the Arm checkbox is gone -- Stop is always available while the
+# ride is RUNNING and not stopped, and the state render alone drives
+# its enablement (refresh_console_gates).
 
 
-def test_on_arm_stop_given_armed_enables_the_stop_button() -> None:
-    """R-35 act 1: ticking Arm is what enables Stop."""
-    engine, _clock = _running_engine()
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-
-    presenter.on_arm_stop(armed=True)
-
-    assert view.stop_enabled is True
-
-
-def test_on_arm_stop_given_disarmed_disables_the_stop_button() -> None:
-    """Unticking Arm disables Stop again immediately."""
-    engine, _clock = _running_engine()
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-    presenter.on_arm_stop(armed=True)
-
-    presenter.on_arm_stop(armed=False)
-
-    assert view.stop_enabled is False
-
-
-def test_arm_stop_auto_clears_after_ten_seconds_via_tick() -> None:
-    """R-35: 10 s untouched -- the next tick disarms."""
-    engine, _clock = _running_engine()
-    view = FakeConsoleView()
-    mono = _FakeMonotonicClock(0.0)
-    presenter = _make_presenter(engine, view, mono=mono)
-    presenter.on_arm_stop(armed=True)
-
-    mono.advance(11.0)
-    presenter.tick()
-
-    assert view.stop_enabled is False
-
-
-def test_arm_stop_within_ten_seconds_stays_armed_through_ticks() -> None:
-    """R-35 boundary: 5 s in, a tick must not disarm yet."""
-    engine, _clock = _running_engine()
-    view = FakeConsoleView()
-    mono = _FakeMonotonicClock(0.0)
-    presenter = _make_presenter(engine, view, mono=mono)
-    presenter.on_arm_stop(armed=True)
-
-    mono.advance(5.0)
-    presenter.tick()
-
-    assert view.stop_enabled is True
-
-
-def test_arm_stop_at_exactly_ten_seconds_disarms_on_the_next_tick() -> None:
-    """R-35 boundary: at exactly 10.0 s the >= comparison disarms."""
-    engine, _clock = _running_engine()
-    view = FakeConsoleView()
-    mono = _FakeMonotonicClock(0.0)
-    presenter = _make_presenter(engine, view, mono=mono)
-    presenter.on_arm_stop(armed=True)
-
-    mono.advance(10.0)
-    presenter.tick()
-
-    assert view.stop_enabled is False
-
-
-def test_on_stop_confirmed_given_running_ride_stops_disarms_and_locks_entry() -> None:
-    """R-35 acts 2-3: confirming Stop locks the entry and disarms."""
+def test_on_stop_confirmed_given_running_ride_stops_locks_entry_and_disables_stop() -> None:
+    """C2/R-35: confirming Stop locks the entry and turns Stop off."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
-    presenter.on_arm_stop(armed=True)
 
     presenter.on_stop_confirmed()
 
     assert engine.record_crossing("12").reason == "ride is stopped"
-    assert view.stop_enabled is False  # auto-clear after use
+    assert view.stop_enabled is False  # the state render's gate
+    assert view.start_enabled is True  # continue-after-stop stays offered
     assert view.entry_locked is True
     assert view.last_state is RideStatus.RUNNING  # stop is a guard, not a state
     assert view.last_notice == "Ride stopped — continue to resume"
@@ -1040,6 +961,24 @@ def test_on_start_given_draft_ride_starts_and_enables_entry() -> None:
     assert view.entry_locked is False
     assert view.last_notice == "Ride started"
     assert engine.events[-1].action == "start"
+
+
+def test_on_start_given_reopened_ride_continues_riding() -> None:
+    """C2: Start on a REOPENED ride returns the console to RUNNING."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert engine.state is RideStatus.RUNNING
+    assert engine.stopped is False
+    assert view.last_state is RideStatus.RUNNING
+    assert view.entry_locked is False
+    assert view.last_notice == "Ride started"
 
 
 def test_on_start_given_finished_ride_shows_a_notice() -> None:
@@ -1098,15 +1037,14 @@ def test_on_stop_requested_given_running_ride_with_entries_confirms_then_stops()
 
     The confirm carries the retired ``stop_confirm_dlg``'s frozen copy
     verbatim, with the same button labels; a confirmed OK runs the
-    unchanged ``on_stop_confirmed`` act-3 flow (engine stop, arm
-    clear, entry lock, notice).
+    unchanged ``on_stop_confirmed`` act-3 flow (engine stop, entry
+    lock, notice).
     """
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     view = FakeConsoleView()
     view.confirm_result = True
     presenter = _make_presenter(engine, view)
-    presenter.on_arm_stop(armed=True)
 
     presenter.on_stop_requested()
 
@@ -1121,7 +1059,7 @@ def test_on_stop_requested_given_running_ride_with_entries_confirms_then_stops()
         "Cancel",
     )
     assert engine.record_crossing("12").reason == "ride is stopped"
-    assert view.stop_enabled is False  # auto-clear after use
+    assert view.stop_enabled is False  # the state render's gate
     assert view.entry_locked is True
     assert view.last_notice == "Ride stopped — continue to resume"
 
@@ -1191,13 +1129,17 @@ def _engine_gated(
     return engine, clock
 
 
+# C2: every state's Start/Stop/Undo verdicts, transcribed from the
+# single-source rule the presenter now applies -- Start is on in DRAFT,
+# REOPENED or stopped RUNNING; Stop is on only in a live RUNNING ride;
+# Undo needs RUNNING with at least one crossing.
 _GATE_CASES = (
-    (RideStatus.DRAFT, 0, False, True, False),  # DRAFT: start rides, undo off
-    (RideStatus.RUNNING, 0, False, False, False),  # live: nothing to undo yet
-    (RideStatus.RUNNING, 2, False, False, True),  # live with laps: undo only
-    (RideStatus.RUNNING, 1, True, True, True),  # stopped: start resumes, undo stays
-    (RideStatus.FINISHED, 2, False, False, False),  # finished: both off
-    (RideStatus.REOPENED, 2, False, False, False),  # reopened: corrections only
+    (RideStatus.DRAFT, 0, False, True, False, False),  # DRAFT: start rides
+    (RideStatus.RUNNING, 0, False, False, True, False),  # live: Stop on, no undo yet
+    (RideStatus.RUNNING, 2, False, False, True, True),  # live with laps: undo on
+    (RideStatus.RUNNING, 1, True, True, False, True),  # stopped: start resumes, Stop off
+    (RideStatus.FINISHED, 2, False, False, False, False),  # finished: all off
+    (RideStatus.REOPENED, 2, False, True, False, False),  # reopened: start continues
 )
 _GATE_CASE_IDS = (
     "draft",
@@ -1210,24 +1152,25 @@ _GATE_CASE_IDS = (
 
 
 @pytest.mark.parametrize(
-    ("ride_state", "crossings", "stopped", "expected_start", "expected_undo"),
+    ("ride_state", "crossings", "stopped", "expected_start", "expected_stop", "expected_undo"),
     _GATE_CASES,
     ids=_GATE_CASE_IDS,
 )
-def test_refresh_console_gates_matches_start_and_undo_enablement_rules(  # noqa: PLR0913 -- (state, crossings, stopped) + the two expected verdicts
+def test_refresh_console_gates_matches_start_stop_and_undo_enablement_rules(  # noqa: PLR0913 -- (state, crossings, stopped) + the three expected verdicts
     ride_state: RideStatus,
     crossings: int,
     *,
     stopped: bool,
     expected_start: bool,
+    expected_stop: bool,
     expected_undo: bool,
 ) -> None:
-    """W5: start_btn mirrors mi_start_ride; undo_btn the undo row.
+    """C2: the one source for Start/Stop/Undo, per ride state.
 
-    The engine is the source of truth: DRAFT or stopped-RUNNING
-    enables Start (continue-after-stop is the resume mechanism);
-    RUNNING with >= 1 crossing enables Undo. REOPENED's undo stays
-    but is no longer UI-reachable.
+    Start is enabled in DRAFT, in REOPENED (continue riding), and in
+    stopped-RUNNING (continue-after-stop); Stop is enabled only in a
+    live RUNNING ride (not stopped); Undo needs RUNNING with at least
+    one crossing. REOPENED's undo is not UI-reachable.
     """
     engine, _clock = _engine_gated(ride_state, crossings=crossings, stopped=stopped)
     view = FakeConsoleView()
@@ -1235,7 +1178,11 @@ def test_refresh_console_gates_matches_start_and_undo_enablement_rules(  # noqa:
 
     presenter.refresh_console_gates()
 
-    assert (view.start_enabled, view.undo_enabled) == (expected_start, expected_undo)
+    assert (view.start_enabled, view.stop_enabled, view.undo_enabled) == (
+        expected_start,
+        expected_stop,
+        expected_undo,
+    )
 
 
 def test_on_start_given_draft_ride_disables_start_through_the_state_render() -> None:
@@ -1404,6 +1351,53 @@ def test_on_tick_given_rebuilt_presenter_while_stopped_recaptures() -> None:
     clock.advance(20)
     rebuilt_presenter.tick()
     assert rebuilt_view.last_clock == first_tick_clock
+
+
+# ------------------------------------------- C3 closed-ride clock
+# The reported "clocks start on reopen" bug: a FINISHED or REOPENED
+# ride's clock must stay frozen at the recorded finish, never call the
+# live ``engine.elapsed()`` that advances on every tick.
+
+
+def test_on_tick_given_finished_ride_freezes_the_clock_at_the_final_elapsed() -> None:
+    """C3: FINISHED renders the recorded final elapsed, then holds."""
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.finish()  # finished_at = +100 s
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+    finished_clock = view.last_clock
+    finished_fractions = view.last_clock_fractions
+    clock.advance(500)
+    presenter.tick()
+
+    assert finished_clock == ("0:01:40", "5:58:20")
+    assert finished_fractions == pytest.approx((100 / 21600, 21500 / 21600))
+    assert view.last_clock == finished_clock
+    assert view.last_clock_fractions == finished_fractions
+
+
+def test_on_tick_given_reopened_ride_freezes_the_clock_at_the_final_elapsed() -> None:
+    """C3 regression: REOPENED must not restart the clock."""
+    engine, clock = _running_engine()
+    clock.advance(100)
+    engine.finish()
+    engine.reopen()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+    reopened_clock = view.last_clock
+    reopened_fractions = view.last_clock_fractions
+    clock.advance(500)
+    presenter.tick()
+
+    assert reopened_clock == ("0:01:40", "5:58:20")
+    assert reopened_fractions == pytest.approx((100 / 21600, 21500 / 21600))
+    assert view.last_clock == reopened_clock
+    assert view.last_clock_fractions == reopened_fractions
 
 
 # ------------------------------------------- WS-D/WS-H gauge + review
@@ -1760,8 +1754,10 @@ _REOPENED_ENABLED_ROWS = (
     ids.MI_VOID_CARD,
     ids.MI_MARK_DNF,
     ids.MI_FINISH_RIDE,
+    # C2: Start Ride continues a REOPENED ride (REOPENED -> RUNNING).
+    ids.MI_START_RIDE,
 )
-_REOPENED_DISABLED_ROWS = (ids.MI_START_RIDE, ids.MI_STOP_RIDE, ids.MI_REOPEN_RIDE)
+_REOPENED_DISABLED_ROWS = (ids.MI_STOP_RIDE, ids.MI_REOPEN_RIDE)
 
 
 def test_on_reopen_given_finished_ride_disables_live_entry() -> None:
@@ -1788,7 +1784,7 @@ def test_on_reopen_given_finished_ride_disables_live_entry() -> None:
 
 @pytest.mark.parametrize("item_id", _REOPENED_ENABLED_ROWS, ids=lambda value: value)
 def test_commands_given_reopened_state_keeps_correction_row_enabled(item_id: str) -> None:
-    """The six correction rows + Finish Ride stay enabled here."""
+    """Stays enabled: the six correction rows, Finish and Start."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     engine.finish()
@@ -1798,8 +1794,8 @@ def test_commands_given_reopened_state_keeps_correction_row_enabled(item_id: str
 
 
 @pytest.mark.parametrize("item_id", _REOPENED_DISABLED_ROWS, ids=lambda value: value)
-def test_commands_given_reopened_state_disables_start_stop_and_reopen(item_id: str) -> None:
-    """Start/Stop/Reopen stay off: REOPENED is neither live nor done."""
+def test_commands_given_reopened_state_disables_stop_and_reopen(item_id: str) -> None:
+    """Stop/Reopen stay off: REOPENED is neither live nor done."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     engine.finish()

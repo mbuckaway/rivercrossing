@@ -18,9 +18,11 @@ good as what it compares):
 - ``snapshot()`` -- per-entry laps, derived times, credited cards and
   best hand, equal list for list.
 - ``events`` -- same count and same action sequence. Payload bytes are
-  NOT compared: ``stop``/``finish``/``reopen`` re-stamp their payload
-  timestamps from the replay engine's own clock, so those three audit
-  fields differ by design (see :meth:`RideEngine.apply`'s docstring).
+  NOT compared: ``stop`` re-stamps its payload timestamp from the
+  replay engine's own clock, so that audit field differs by design
+  (see :meth:`RideEngine.apply`'s docstring); ``finish``/``reopen``
+  re-apply their persisted instant instead (C3), so a replayed old
+  ride keeps its recorded finish time.
 - shoe state -- ``dealt``/``cycle``/``remaining`` equal, plus the
   shoe's open/closed state (``Shoe.is_closed``). The fresh shoe built
   from the stored ``rng_seed`` reproduces every deal, and the deal
@@ -50,7 +52,7 @@ from typing import TYPE_CHECKING
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from rivercrossing.cards import Card, Shoe
+from rivercrossing.cards import Card, Shoe, seeded_card_codes
 from rivercrossing.ride import CrossingResult, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import Store
@@ -509,3 +511,42 @@ def test_store_replay_equivalence_deterministic_fixture(tmp_path: Path) -> None:
         "dnf",
         "void_card",
     }
+
+
+_LOGO_SEED = 8843
+
+
+@given(code=st.sampled_from(seeded_card_codes(_LOGO_SEED)))
+def test_store_saved_team_logo_card_round_trips_through_the_entry_table(code: str) -> None:
+    """Every seeded logo card survives save -> load (Phase 3).
+
+    The team logo *image* column is gone as of v3, so the card code is
+    the whole persisted logo. This pins that the one remaining field
+    round-trips for every code in the deck, through the real file.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
+        logo_card=code,
+    )
+    with tempfile.TemporaryDirectory() as tmp:
+        db_path = Path(tmp) / "logo_round_trip.db"
+        store = Store.open(db_path)
+        try:
+            ride_id = store.create_ride(_config())
+            store.save_roster(ride_id, roster)
+            loaded = store.roster_for(ride_id)
+        finally:
+            store.close()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(entry)")}
+        finally:
+            conn.close()
+
+    assert [entry.logo_card for entry in loaded.entries] == [code]
+    assert "logo_png" not in columns

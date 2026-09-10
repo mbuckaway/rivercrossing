@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
   Teams editor (spec.md 15b file map, xrc-windows.md section C),
-  reworked: three Team | Riders | Logo columns, a real-bitmap logo
-  preview above the members list, a multi-line Notes box, ~50/50
-  panes, and the action buttons at each pane's bottom (Add team on
-  the right pane's bottom, Save/Remove/Close on the left pane's).
+  reworked: two Team | Riders columns, a read-only record form, a
+  multi-line Notes box, ~50/50 panes, and the action buttons at each
+  pane's bottom (Add team on the right pane's bottom, Edit/Remove/
+  Close on the left pane's).
   Control names are frozen; tests find them with FindWindowByName and
   tools/gen_ids.py turns them into ui/ids.py (R-05, R-73).
 
@@ -15,8 +15,8 @@
       members_list are wxDataViewCtrl, whose name IS honoured;
       columns and rows are appended in code with a
       DataViewIndexListModel subclass (canvas code-side item 1).
-      teams_list's Team | Riders | Logo headers and the rider-count
-      cells live there, never in this file.
+      teams_list's Team | Riders headers, their sortable flag and the
+      rider-count cells live there, never in this file.
     * wxInfoBar cannot be authored here either (the handler yields a
       generic wx.Control and drops the name), so teams_infobar is
       built code-side with SetName(), mirroring rider_editor_dlg's
@@ -27,19 +27,21 @@
       applies SetSizeHints(); code re-applies SetMinSize() with the
       editor's own MIN_SIZE floor (the same rider_editor_dlg shape).
 
-  Code-side per the canvas footnotes and the rework: teams_list/
-  members_list rows and columns; the Plate (relay) row's
-  team_relay-only visibility (hidden on a rider_pooled ride, whose
-  teams derive their plate from their members); logo_bmp's bitmap
-  (a card asset bitmap or the picked PNG's decode; a blank state is
-  wx.NullBitmap). The wxStaticBitmap shell is declared here with no
-  <bitmap>, like about_logo_bmp; notes_input's three-line minimum
-  height (this file authors only its wxTE_MULTILINE style; the
-  pixel floor is font-metric and lives code-side);
-  members_list's bounded height (SetMinSize code-side: the Members
-  box below does not grow with the dialog, so a long member list
-  scrolls inside it while teams_list takes the extra height);
-  pick_card_btn/image_btn handlers.
+  Phase 3's rework makes the editor a read-only record display: the
+  name/relay-plate/notes inputs are wxTE_READONLY (their values are
+  rendered from the selected team, never typed into), the Logo column,
+  the logo_bmp preview and the Pick card / Image / Remove logo buttons
+  are gone, and Save left the left pane for the Add/Edit Team dialog
+  (edit_btn opens it on the selected team; add_btn opens it blank).
+  Code-side per the canvas footnotes: teams_list/members_list rows and
+  columns; the Plate (relay) row's team_relay-only visibility (hidden
+  on a rider_pooled ride, whose teams derive their plate from their
+  members); notes_input's three-line minimum height (this file authors
+  only its wxTE_MULTILINE style; the pixel floor is font-metric and
+  lives code-side); members_list's bounded height (SetMinSize
+  code-side: the Members box below does not grow with the dialog, so a
+  long member list scrolls inside it while teams_list takes the extra
+  height).
 -->
 <resource>
 
@@ -50,8 +52,8 @@
     <object class="wxBoxSizer">
       <orient>wxHORIZONTAL</orient>
 
-      <!-- Left pane: the teams list + Save/Remove/Close row. The two
-           panes share the width (option 1 each) so the three list
+      <!-- Left pane: the teams list + Edit/Remove/Close row. The two
+           panes share the width (option 1 each) so the two list
            columns get their ~half of the dialog. -->
       <object class="sizeritem">
         <option>1</option>
@@ -79,18 +81,20 @@
             <flag>wxEXPAND</flag>
             <object class="wxBoxSizer">
               <orient>wxHORIZONTAL</orient>
-              <!-- Save/Remove/Close sit bottom-left (rework): Save
-                   replaces the old Add team slot, Remove keeps its
-                   own, and wxID_CLOSE follows in its stock sizer.
-                   W8 gives the Close sizer item the same option=1 as
-                   Save/Remove so the stock button stretches to their
-                   size (Close previously rendered smaller). -->
+              <!-- Edit/Remove/Close sit bottom-left: edit_btn is
+                   enabled only while a team is selected (its own
+                   record is edited in add_team_dlg, so the editor
+                   has no in-place Save), Remove keeps its own slot,
+                   and wxID_CLOSE follows in its stock sizer. The
+                   Close sizer item shares the same option=1 as
+                   Edit/Remove so the stock button stretches to their
+                   size. -->
               <object class="sizeritem">
                 <option>1</option>
                 <flag>wxEXPAND|wxRIGHT</flag>
                 <border>6</border>
-                <object class="wxButton" name="save_btn">
-                  <label>Save</label>
+                <object class="wxButton" name="edit_btn">
+                  <label>Edit…</label>
                 </object>
               </object>
               <object class="sizeritem">
@@ -116,8 +120,8 @@
         </object>
       </object>
 
-      <!-- Right pane: the record/Add form, the logo preview above the
-           members list, and Add team at the pane's bottom. -->
+      <!-- Right pane: the read-only record form, the members list and
+           Add team at the pane's bottom. -->
       <object class="sizeritem">
         <option>1</option>
         <flag>wxEXPAND|wxTOP|wxRIGHT|wxBOTTOM</flag>
@@ -149,7 +153,9 @@
                   </object>
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
-                    <object class="wxTextCtrl" name="name_input"/>
+                    <object class="wxTextCtrl" name="name_input">
+                      <style>wxTE_READONLY</style>
+                    </object>
                   </object>
 
                   <object class="sizeritem">
@@ -160,7 +166,9 @@
                   </object>
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
-                    <object class="wxTextCtrl" name="relay_plate_input"/>
+                    <object class="wxTextCtrl" name="relay_plate_input">
+                      <style>wxTE_READONLY</style>
+                    </object>
                   </object>
 
                   <object class="sizeritem">
@@ -172,61 +180,13 @@
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
                     <object class="wxTextCtrl" name="notes_input">
-                      <style>wxTE_MULTILINE</style>
+                      <style>wxTE_MULTILINE|wxTE_READONLY</style>
                     </object>
                   </object>
 
                 </object>
               </object>
 
-            </object>
-          </object>
-
-          <!-- Logo preview row: the bitmap (logo_bmp) is supplied in
-               code - a card asset bitmap, the picked PNG's decode,
-               or wx.NullBitmap for a blank state. It sits directly
-               above the members list (rework). -->
-          <object class="sizeritem">
-            <flag>wxEXPAND|wxBOTTOM</flag>
-            <border>8</border>
-            <object class="wxBoxSizer">
-              <orient>wxHORIZONTAL</orient>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>8</border>
-                <object class="wxStaticText">
-                  <label>Logo</label>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>6</border>
-                <object class="wxStaticBitmap" name="logo_bmp"/>
-              </object>
-              <object class="spacer">
-                <option>1</option>
-                <size>0,0</size>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>6</border>
-                <object class="wxButton" name="pick_card_btn">
-                  <label>Pick card…</label>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxButton" name="image_btn">
-                  <label>Image…</label>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
-                <border>6</border>
-                <object class="wxButton" name="remove_logo_btn">
-                  <label>Remove logo</label>
-                </object>
-              </object>
             </object>
           </object>
 
@@ -253,11 +213,9 @@
             <flag>wxEXPAND</flag>
             <object class="wxBoxSizer">
               <orient>wxHORIZONTAL</orient>
-              <!-- Add team anchors the right pane's bottom (rework):
-                   the form above it is the selected team's record
-                   editor. W8 relabelled the button and made it open
+              <!-- Add team anchors the right pane's bottom: it opens
                    add_team_dlg (its own Add dialog) instead of
-                   adding from this form. -->
+                   adding from this form, which is read-only now. -->
               <object class="spacer">
                 <option>1</option>
                 <size>0,0</size>
@@ -277,16 +235,18 @@
     </object>
   </object>
 
-  <!-- W8: the dedicated Add Team dialog. The editor's add_btn opens
-       this window instead of adding from the editor's own form (the
-       W7 add_rider_dlg shape): a zero-rider team entry is created
-       and its riders join later through the Rider Editor. Control
+  <!-- The dedicated Add/Edit Team dialog. The editor's add_btn opens
+       it blank and edit_btn (or a row double-click) opens it on the
+       selected team (the W7 add_rider_dlg shape): a zero-rider team
+       entry is created and its riders join later through the Rider
+       Editor, while the edit route writes the record back. Control
        names reuse the editor's own (name_input, notes_input,
-       relay_plate_input, logo_bmp, pick_card_btn, image_btn: each
-       top-level window is its own name namespace, tools/gen_ids.py's
-       rule), so the ids constants stay shared. The Plate (relay)
-       row's visibility follows plate_model like the editor's
-       (code-side); refusals show on a code-side infobar
+       relay_plate_input, logo_bmp, pick_card_btn: each top-level
+       window is its own name namespace, tools/gen_ids.py's rule), so
+       the ids constants stay shared. The two modes' caption and
+       button label are set code-side (Add Team/Add, Edit Team/Save);
+       the Plate (relay) row's visibility follows plate_model like the
+       editor's (code-side); refusals show on a code-side infobar
        (add_team_infobar, wxInfoBar: XRC cannot author one). -->
   <object class="wxDialog" name="add_team_dlg">
     <title>Add Team</title>
@@ -349,10 +309,9 @@
             </object>
           </object>
 
-          <!-- Logo row: pick the new team's card or image logo before
-               Add. logo_bmp's bitmap is supplied in code (a card
-               asset bitmap, the picked PNG's decode, or wx.NullBitmap
-               for a blank state), the same seam the editor uses. -->
+          <!-- Logo row: pick the team's card logo before Add/Save.
+               logo_bmp's bitmap is supplied in code (a card asset
+               bitmap, or wx.NullBitmap for a blank state). -->
           <object class="sizeritem">
             <flag>wxEXPAND</flag>
             <object class="wxBoxSizer">
@@ -374,23 +333,9 @@
                 <size>0,0</size>
               </object>
               <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>6</border>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
                 <object class="wxButton" name="pick_card_btn">
                   <label>Pick card…</label>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxButton" name="image_btn">
-                  <label>Image…</label>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
-                <border>6</border>
-                <object class="wxButton" name="remove_logo_btn">
-                  <label>Remove logo</label>
                 </object>
               </object>
             </object>
@@ -400,7 +345,8 @@
       </object>
 
       <!-- wxID_OK carries the "Add" label; the stock id keeps the
-           button on the platform-correct side and Enter safe. -->
+           button on the platform-correct side and Enter safe (the
+           edit route relabels it "Save" code-side). -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxALL</flag>
         <border>10</border>

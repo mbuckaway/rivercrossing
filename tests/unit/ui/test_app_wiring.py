@@ -247,18 +247,19 @@ def test_main_source_opens_the_store_before_it_builds_the_window() -> None:
     assert source.index("Store.open(") < source.index("_bootstrap_window(app, store=store)")
 
 
-def test_main_source_shows_the_frame_before_running_the_launch_flow() -> None:
-    """Show() precedes the launch flow, which precedes MainLoop.
+def test_main_source_defers_the_launch_flow_after_showing_the_frame() -> None:
+    """G: Show() precedes the deferred flow, which precedes MainLoop.
 
-    A launch modal must never run before the frame is visible.
+    A launch modal must never run before the frame is visible, and --
+    since G -- the flow itself runs on the running event loop (after
+    the menubar and routes are live), so main() must schedule it
+    through ``wx.CallAfter`` rather than call it inline.
     """
     source = inspect.getsource(app.main)
+    scheduled = "wx.CallAfter(_run_launch_flow, app.launch_context, store)"
 
-    assert (
-        source.index("frame.Show()")
-        < source.index("_run_launch_flow(")
-        < source.index("MainLoop()")
-    )
+    assert scheduled in source
+    assert source.index("frame.Show()") < source.index(scheduled) < source.index("MainLoop()")
 
 
 def test_main_source_closes_the_store_inside_a_finally() -> None:

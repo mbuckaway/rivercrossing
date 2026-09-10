@@ -58,6 +58,8 @@ from rivercrossing.ui.presenters import (
 )
 
 if TYPE_CHECKING:
+    from datetime import date, time
+
     from rivercrossing.roster import EntryMode, PlateModel
 
 from rivercrossing.htmlexport import ExportOptions
@@ -187,6 +189,48 @@ class FakeSetupView:
     ) -> None:
         """No-op fake."""
 
+    def show_name(self, name: str) -> None:
+        """No-op fake."""
+
+    def show_date(self, event_date: date) -> None:
+        """No-op fake."""
+
+    def show_start_time(self, start_time: time) -> None:
+        """No-op fake."""
+
+    def show_venue(self, venue: str) -> None:
+        """No-op fake."""
+
+    def show_organizer(self, organizer: str) -> None:
+        """No-op fake."""
+
+    def show_scorer(self, scorer: str) -> None:
+        """No-op fake."""
+
+    def show_duration(self, seconds: int) -> None:
+        """No-op fake."""
+
+    def show_min_lap(self, seconds: int) -> None:
+        """No-op fake."""
+
+    def show_short_lap_policy(self, *, hold_short_laps: bool) -> None:
+        """No-op fake."""
+
+    def show_jokers_per_deck(self, count: int) -> None:
+        """No-op fake."""
+
+    def show_card_cap(self, max_cards: int | None) -> None:
+        """No-op fake."""
+
+    def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
+        """No-op fake."""
+
+    def show_logo(self, logo_path: Path | None) -> None:
+        """No-op fake."""
+
+    def set_structure_enabled(self, *, enabled: bool) -> None:
+        """No-op fake."""
+
     def show_validation(self, message: str) -> None:
         """No-op fake."""
 
@@ -208,6 +252,17 @@ class FakeRidersView:
 
     def set_plate_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
+
+    def confirm(  # noqa: PLR0913 -- mirrors RidersView.confirm's own signature
+        self,
+        title: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+        message: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+        *,
+        ok_label: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+        cancel_label: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+    ) -> bool:
+        """No-op fake (1.0.12 B3: the delete confirm's verdict)."""
+        return True
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """No-op fake."""
@@ -487,8 +542,8 @@ def test_presenter_holds_the_view_and_data_source_it_was_given(
 # ConsolePresenter behavior moved to test_console.py (E4.4.1):
 # it holds (view, engine, source) and drives a real
 # RideEngine -- every event handler (on_plate_entered/on_undo/
-# on_arm_stop/on_stop_confirmed/on_start/on_hide_times/tick/on_finish)
-# is covered there against a recording fake view and real engine
+# on_stop_confirmed/on_start/on_hide_times/tick/on_finish) is covered
+# there against a recording fake view and real engine
 # fixtures. What remains here is Protocol conformance (FakeConsoleView
 # above) and the wx-free import probe below.
 

@@ -45,7 +45,7 @@ class _FakeControl:
 
 
 def test_required_controls_lists_exactly_the_init_find_controls() -> None:
-    """The verify tuple is the single source for __init__'s 26 finds.
+    """The verify tuple is the single source for __init__'s 27 finds.
 
     Pins the contract so the guard can never silently drift from
     ``MainFrame.__init__``: if a control is added/removed there without
@@ -57,7 +57,10 @@ def test_required_controls_lists_exactly_the_init_find_controls() -> None:
         ids.PLATE_INPUT,
         ids.RECORD_BTN,
         ids.LAST_CROSSING_LBL,
+        # C1: the ride-identity block -- name, logo, detail line.
         ids.RIDE_NAME_LBL,
+        ids.RIDE_LOGO_BMP,
+        ids.RIDE_DETAILS_LBL,
         ids.RIDE_STATUS_LBL,
         ids.CROSSINGS_COUNT_LBL,
         ids.CARDS_COUNT_LBL,
@@ -67,7 +70,6 @@ def test_required_controls_lists_exactly_the_init_find_controls() -> None:
         ids.RIDERS_COUNT_LBL,
         ids.TEAMS_COUNT_LBL,
         ids.START_BTN,
-        ids.ARM_STOP_CHK,
         ids.STOP_BTN,
         ids.UNDO_BTN,
         # WS-D/WS-H (ux-polish): the code-side gauge slots, the
@@ -98,6 +100,8 @@ def test_required_control_classes_transcribe_the_init_find_calls() -> None:
         ids.RECORD_BTN: wx.Button,
         ids.LAST_CROSSING_LBL: wx.StaticText,
         ids.RIDE_NAME_LBL: wx.StaticText,
+        ids.RIDE_LOGO_BMP: wx.StaticBitmap,
+        ids.RIDE_DETAILS_LBL: wx.StaticText,
         ids.RIDE_STATUS_LBL: wx.StaticText,
         ids.CROSSINGS_COUNT_LBL: wx.StaticText,
         ids.CARDS_COUNT_LBL: wx.StaticText,
@@ -106,7 +110,6 @@ def test_required_control_classes_transcribe_the_init_find_calls() -> None:
         ids.RIDERS_COUNT_LBL: wx.StaticText,
         ids.TEAMS_COUNT_LBL: wx.StaticText,
         ids.START_BTN: wx.BitmapButton,
-        ids.ARM_STOP_CHK: wx.CheckBox,
         ids.STOP_BTN: wx.BitmapButton,
         ids.UNDO_BTN: wx.Button,
         ids.ELAPSED_CLOCK_PANEL: wx.Panel,

@@ -35,13 +35,14 @@ from rivercrossing.ui.presenters.settings import (
 )
 from rivercrossing.ui.theme import ThemeMode
 
-_SIX_FIELDS = {
+_SEVEN_FIELDS = {
     "appearance",
     "sound_on",
     "hide_times",
     "zoom_percent",
     "splitter_sash",
     "window_geometry",
+    "verbose_logging",
 }
 
 # The 90-150 zoom ladder, as the JSON-safe rung list files carry.
@@ -52,7 +53,7 @@ _ZOOM_RUNGS = list(ZOOM_LADDER)
 
 
 def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
-    """All six fields survive save_settings -> load_settings intact."""
+    """All seven fields survive a save/load round trip intact."""
     path = tmp_path / "settings.json"
     original = AppSettings(
         appearance="dark",
@@ -61,6 +62,7 @@ def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
         zoom_percent=140,
         splitter_sash=320,
         window_geometry=(40, 60, 1200, 800),
+        verbose_logging=False,
     )
 
     save_settings(original, path)
@@ -74,6 +76,11 @@ def test_load_settings_missing_file_returns_defaults(tmp_path: Path) -> None:
     loaded = load_settings(tmp_path / "no-such-settings.json")
 
     assert loaded == default_settings()
+
+
+def test_default_settings_enable_verbose_logging() -> None:
+    """F1: verbose logging is on until the operator unticks it."""
+    assert default_settings().verbose_logging is True
 
 
 def test_load_settings_corrupt_json_returns_defaults_without_raising(
@@ -116,6 +123,7 @@ def test_load_settings_missing_keys_use_defaults_for_each_field(
         zoom_percent=100,
         splitter_sash=None,
         window_geometry=None,
+        verbose_logging=True,
     )
 
 
@@ -133,6 +141,7 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
                 "zoom_percent": "140",
                 "splitter_sash": "320",
                 "window_geometry": [1, 2],
+                "verbose_logging": "yes",
             }
         ),
         encoding="utf-8",
@@ -205,7 +214,7 @@ def test_save_settings_creates_missing_parent_directories(tmp_path: Path) -> Non
     assert load_settings(path) == default_settings()
 
 
-def test_save_settings_writes_json_with_all_six_fields(tmp_path: Path) -> None:
+def test_save_settings_writes_json_with_all_seven_fields(tmp_path: Path) -> None:
     """The file is JSON carrying every AppSettings field by name."""
     path = tmp_path / "settings.json"
     save_settings(
@@ -216,14 +225,16 @@ def test_save_settings_writes_json_with_all_six_fields(tmp_path: Path) -> None:
             zoom_percent=120,
             splitter_sash=250,
             window_geometry=(10, 20, 30, 40),
+            verbose_logging=False,
         ),
         path,
     )
 
     raw = json.loads(path.read_text(encoding="utf-8"))
 
-    assert set(raw) == _SIX_FIELDS
+    assert set(raw) == _SEVEN_FIELDS
     assert raw["window_geometry"] == [10, 20, 30, 40]
+    assert raw["verbose_logging"] is False
 
 
 # --- default-path wiring (path=None branches) ----------------------
@@ -298,6 +309,7 @@ _SETTINGS_STRATEGY = st.builds(
         st.integers(min_value=100, max_value=5000),
         st.integers(min_value=100, max_value=5000),
     ),
+    verbose_logging=st.booleans(),
 )
 
 

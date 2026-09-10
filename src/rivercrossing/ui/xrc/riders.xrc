@@ -32,6 +32,16 @@
   Riders CSV routes stay the one CSV path (W7 removed this editor's
   import_btn/export_btn; their shared flows still live code-side in
   ui/views/rider_editor.py for those routes).
+
+  1.0.12: rider_editor_dlg's Rider box is a read-only display now -
+  plate_input/first_name_input/last_name_input carry wxTE_READONLY
+  and team_choice is a wxChoice (selectable, never free-typed), so
+  the pane shows the selected record while all writing happens in
+  add_rider_dlg. That dialog carries both modes: XRC titles it "Add
+  Rider" and labels its wxID_OK "Save", and the view retitles it
+  "Edit Rider" for the Edit mode (one window, one primary button).
+  Its wxID_OK width floor and the editor's 1280x560 floor are
+  code-side (a window has no XRC minsize).
 -->
 <resource>
 
@@ -148,7 +158,9 @@
                   </object>
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
-                    <object class="wxTextCtrl" name="plate_input"/>
+                    <object class="wxTextCtrl" name="plate_input">
+                      <style>wxTE_READONLY</style>
+                    </object>
                   </object>
 
                   <object class="sizeritem">
@@ -159,7 +171,9 @@
                   </object>
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
-                    <object class="wxTextCtrl" name="first_name_input"/>
+                    <object class="wxTextCtrl" name="first_name_input">
+                      <style>wxTE_READONLY</style>
+                    </object>
                   </object>
 
                   <object class="sizeritem">
@@ -170,7 +184,9 @@
                   </object>
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
-                    <object class="wxTextCtrl" name="last_name_input"/>
+                    <object class="wxTextCtrl" name="last_name_input">
+                      <style>wxTE_READONLY</style>
+                    </object>
                   </object>
 
                   <object class="sizeritem">
@@ -187,25 +203,34 @@
                 </object>
               </object>
 
+            </object>
+          </object>
+
+          <!-- 1.0.12: the Rider box above is display-only, so the
+               pane's two buttons anchor its bottom-right: Edit
+               Rider… acts on the record shown above them, Add
+               rider… opens the blank dialog. Both use plain custom
+               ids (never wxID_OK), so wx never auto-closes on a
+               click and dialogs.run_dialog's stock-id wiring leaves
+               them alone. -->
+          <object class="sizeritem">
+            <flag>wxALIGN_RIGHT|wxTOP</flag>
+            <border>8</border>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
               <object class="sizeritem">
-                <flag>wxALIGN_RIGHT</flag>
-                <object class="wxBoxSizer">
-                  <orient>wxHORIZONTAL</orient>
-                  <object class="sizeritem">
-                    <flag>wxRIGHT</flag>
-                    <border>6</border>
-                    <object class="wxButton" name="add_btn">
-                      <label>Add rider…</label>
-                    </object>
-                  </object>
-                  <object class="sizeritem">
-                    <object class="wxButton" name="save_btn">
-                      <label>Save</label>
-                    </object>
-                  </object>
+                <flag>wxRIGHT|wxALIGN_CENTRE_VERTICAL</flag>
+                <border>6</border>
+                <object class="wxButton" name="edit_btn">
+                  <label>Edit Rider…</label>
                 </object>
               </object>
-
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxButton" name="add_btn">
+                  <label>Add rider…</label>
+                </object>
+              </object>
             </object>
           </object>
 
@@ -215,14 +240,18 @@
     </object>
   </object>
 
-  <!-- W7: the dedicated Add Rider dialog. The editor's in-form add
-       controls became edit-only; add_btn on rider_editor_dlg opens
-       this window instead. Control names reuse the editor's own
-       (plate_input etc.: each top-level window is its own name
-       namespace, tools/gen_ids.py's rule), so the ids constants stay
-       shared. The Team row's visibility follows entry_mode like the
-       editor's (code-side); refusals show on a code-side infobar
-       (add_rider_infobar, wxInfoBar: XRC cannot author one). -->
+  <!-- W7/1.0.12: the dedicated Add Rider dialog, which the editor's
+       add_btn opens in this, its blank, mode. The editor's own form
+       became a read-only display, so edit_btn opens the very same
+       window in its Edit Rider… mode: the view retitles it and pairs
+       EditRiderPresenter with it (the title here is the Add default).
+       Control names reuse the editor's own (plate_input etc.: each
+       top-level window is its own name namespace, tools/gen_ids.py's
+       rule), so the ids constants stay shared; the read-only styles
+       do NOT: this dialog is where the operator types. The Team row's
+       visibility follows entry_mode like the editor's (code-side);
+       refusals show on a code-side infobar (add_rider_infobar,
+       wxInfoBar: XRC cannot author one). -->
   <object class="wxDialog" name="add_rider_dlg">
     <title>Add Rider</title>
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
@@ -296,15 +325,18 @@
         </object>
       </object>
 
-      <!-- wxID_OK carries the "Add" label; the stock id keeps the
-           button on the platform-correct side and Enter safe. -->
+      <!-- wxID_OK carries the "Save" label, one label for both modes
+           since the same click commits either an add or an edit. The
+           stock id keeps the button on the platform-correct side and
+           Enter safe; the view floors its width in code, 3x the
+           label's own best width (XRC has no window minsize). -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxALL</flag>
         <border>10</border>
         <object class="wxStdDialogButtonSizer">
           <object class="button">
             <object class="wxButton" name="wxID_OK">
-              <label>Add</label>
+              <label>Save</label>
             </object>
           </object>
           <object class="button">

@@ -143,9 +143,11 @@ class ResultRow:
     dnf: bool = False
     cards: tuple[CardPair, ...] = ()
     drawn: tuple[CardPair, ...] = ()
-    # W8: the entry's logo as a data URI (a card bitmap or the team's
-    # image), mirroring the org logo's own logo_src mechanism. Sparse
-    # in the record -- absent rows have no logo and render nothing.
+    # The entry's logo *card* as a data URI (the team's packaged card
+    # bitmap, resolved by the caller), mirroring the org logo's own
+    # logo_src mechanism. Sparse in the record -- absent rows have no
+    # logo and render nothing. Phase 3 retired the logo image, so the
+    # card is the whole logo.
     logo: str | None = None
 
     @property
@@ -663,7 +665,7 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     to a transparent 1x1 PNG when absent (D8); ``logo_path`` is the
     alternative raw-file form, base64-encoded when *logo_src* is
     None. ``team_logos`` (W8) maps a placed entry's plate to its logo
-    data URI (card bitmap or team image), rendered as a small image
+    data URI (the team's card bitmap), rendered as a small image
     in the team's Top ten and Full field rows; absent entries render
     nothing.
 

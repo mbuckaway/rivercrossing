@@ -15,7 +15,8 @@ database is a no-op, which is what makes re-open idempotent.
 The ledger table itself is bootstrapped here (``CREATE TABLE IF NOT
 EXISTS``) before the version read, so a v0 database -- empty, no
 ledger -- reads as version 0 and upgrades to the latest version
-(v1, then v2 as of the W4 short-lap policy) on first open.
+(v1, then v2 as of the W4 short-lap policy, then v3 as of Phase 3's
+team-logo-image retirement) on first open.
 
 The store's error types live here, not in the package root, to keep
 this module free of a circular import: ``rivercrossing.store`` imports
@@ -82,12 +83,27 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     conn.execute("ALTER TABLE ride ADD COLUMN hold_short_laps INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Drop the retired team logo-image column from the entry table.
+
+    Phase 3 removes the team IMAGE logo: a team's logo is its card
+    code alone, so ``entry.logo_png`` has no reader left. The v1
+    baseline DDL in ``schema.py`` keeps declaring the column (an
+    applied CREATE is immutable -- see that module's docstring), and
+    this DROP is what takes it off a shipped v2 database. The ride's
+    own ``ride.logo_png`` organisation logo is a different column and
+    is deliberately untouched.
+    """
+    conn.execute("ALTER TABLE entry DROP COLUMN logo_png")
+
+
 # Migration timeline, oldest first. Append the next migration here and
 # LATEST_SCHEMA_VERSION advances by one; never renumber or edit an
 # applied migration -- the ledger records what ran.
 MIGRATIONS: tuple[Callable[[sqlite3.Connection], None], ...] = (
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
+    _migrate_v2_to_v3,
 )
 
 LATEST_SCHEMA_VERSION: int = len(MIGRATIONS)

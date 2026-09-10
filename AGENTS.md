@@ -16,7 +16,7 @@ survives crashes, accidental stops and restarts without losing a keystroke.
 
 ## `design/` is the contract
 
-`design/` is the complete build contract — numbered requirements (through R-85), a §1–§15b engineering spec, 30
+`design/` is the complete build contract — numbered requirements (through R-85), a §1–§15b engineering spec, 26
 frozen window designs, the repo layout, a nine-EPIC plan and ~60 agent-ready task briefs. A developer
 or agent who was not part of the design conversation should be able to build v1.0 from it alone.
 
@@ -24,7 +24,7 @@ or agent who was not part of the design conversation should be able to build v1.
 |---|---|
 | `design/docs-md/requirements.md` | Numbered **R-ids** — the acceptance authority |
 | `design/docs-md/spec.md` | §1–§15b engineering spec (§14 CI stages, §15 menu map, §15b frozen name registry) |
-| `design/docs-md/xrc-windows.md` | All 30 windows with frozen control names — **implementation truth for UI** |
+| `design/docs-md/xrc-windows.md` | All 26 windows with frozen control names — **implementation truth for UI** |
 | `design/docs-md/module-skeletons.md` | Repo layout, module public APIs, build order |
 | `design/docs-md/project-plan.md` · `task-briefs.md` | EPIC plan and per-task briefs (the named tests **are** the spec) |
 | `design/templates/` | Production Jinja2 templates — **ship verbatim** |
@@ -144,6 +144,12 @@ nox -s unit                                   # CI stage 2 — unit + coverage g
 nox -s functional                              # CI stage 3 — real wx windows
 nox -s bundle smoke                            # CI stage 5 — build, then smoke the binary
 ```
+
+**The CSS sessions need Node.** `gen_css` and `css_drift` compile the vendored CSS with the pinned
+Tailwind CLI, which lives in the gitignored `node_modules`. Both nox sessions run the lockfile's
+`npm ci` automatically when `node_modules` is missing, so a fresh clone or `git worktree` works with
+no manual step. When invoking `tools/gen_css.py` directly, or wiring a new CI job, run `npm ci` at
+the repo root first — a missing CLI is a hard error, never silent drift.
 
 **Both platforms gate.** `windows-latest` and `macos-latest` run the same blocking stages (R-75 /
 spec §14). The EPIC 1 deviation that made macOS the only gate was reversed in Phase 10, after every

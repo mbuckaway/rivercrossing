@@ -6,6 +6,39 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Edit Ride… and Clear Ride…** — the Ride menu gains Edit Ride… (opens Ride Setup preloaded with the open ride's settings, titled "Edit Ride", and writes them back to the ride and the database) and Clear Ride… (resets the open ride to a fresh DRAFT in place — riders, crossings, cards and audit rows removed, setup and library entry kept — after a danger confirm) (D2/D3).
+- **Ride identity in the console header** — the header now shows the ride's own logo beside its name, with a `date · start · type` line standing in when the ride has no logo (C1).
+- **Verbose logging setting** — Settings gains a "Verbose logging" checkbox, on by default, that writes an NDJSON diagnostic log (`rivercrossing-verbose.log`) beside the always-on crash log (F1).
+- **Finish publishes its own results** — Ride ▸ Finish Ride… writes the ride's HTML and PDF results into the per-user `exports` folder, so a finished ride always leaves its results behind instead of waiting for the Results menu (E2).
+- **Native `show_danger` and `show_prompt` dialogs** — `ui.std_dialogs` grows the two confirm shapes the finish/clear and duplicate/reopen questions need (H2).
+
+### Changed
+
+- **Stop is one act, not three** — the console's Arm checkbox is gone; Stop is enabled whenever the ride is live-RUNNING and asks through the native confirm (C2).
+- **Start continues a reopened ride** — Start (and Ride ▸ Start Ride) returns a REOPENED ride to RUNNING with its original start time kept (C2).
+- **A closed ride's clock stops at its finish** — FINISHED and REOPENED render the recorded finish elapsed, so a reopened ride's clock never starts running again (C3).
+- **The Rider and Teams editors are read-only record displays** — the selected rider's or team's record renders in the panel, and a new Edit button (`edit_btn`) opens the record's own dialog to change it (Phase 3).
+- **Add Rider and Add Team commit on "Save"** — one dialog and one primary button for both the add and the edit (Phase 3).
+- **Team list is Team | Riders, sortable** — the Logo column is gone and the header arrows sort rows natively; Pick Card deals a random unassigned card, so every click visibly changes the preview (Phase 3).
+- **Ride ▸ New Ride…** — New Ride… moved from the File menu to Ride, which now owns the whole ride lifecycle (D1); Ride Setup's primary button reads "Save" in both its modes (D2).
+- **Remove and Delete ask a native warning confirm** — the Teams editor's Remove and the Rider editor's Delete confirm through `ui.std_dialogs.show_confirm` (B3).
+- **Dialogs open centred over the console** — every XRC dialog is re-parented to the main frame and centred there, instead of being placed by the platform and possibly hiding behind the console (H1).
+
+### Removed
+
+- **The Arm checkbox (`arm_stop_chk`)** — Stop's separate arming act is retired (C2).
+- **The editors' Save buttons (`save_btn`)** — both editors are read-only displays; their Edit buttons open the record's own dialog (Phase 3).
+- **The team logo image** — a team's logo is its card code alone; the Teams editor's Image…/Remove logo buttons (`image_btn`, `remove_logo_btn`) go with it, and database migration v2→v3 drops `entry.logo_png` (Phase 3).
+- **Riders ▸ Add Rider/Entry… (`mi_add_entry`)** — the Rider Editor is the one entry point for adding riders (D4).
+- **Four XRC confirm dialogs** — `finish_confirm_dlg`, `exit_confirm_dlg`, `duplicate_ride_dlg` and `reopen_ride_dlg` are replaced by the native confirms (`show_danger`, `show_confirm`, `show_prompt`), with the quit question's copy moved into `quit_flow` (H2).
+
+### Notes
+
+- **Store migration v2→v3** — opening an existing database drops the retired `entry.logo_png` column; the ride's own organisation logo column is deliberately untouched (Phase 3).
+- **Verbose log format** — `rivercrossing-verbose.log` is NDJSON, one JSON object per line (`ts`, `level`, `file`, `line`, `func`, `msg`), so a support session can filter it with `jq` or a spreadsheet (F1).
+
 ## [1.0.11] - 2026-09-09
 
 ### Added

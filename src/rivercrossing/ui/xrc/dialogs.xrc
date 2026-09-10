@@ -1,11 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The fifteen small dialogs of spec.md 15b's dialogs.xrc entry:
-  set_start_dlg, finish_confirm_dlg,
-  resume_dlg, exit_running_dlg, exit_confirm_dlg
-  (xrc-windows.md section B; exit_confirm_dlg added Phase 8, P8-D1),
-  duplicate_ride_dlg and reopen_ride_dlg (section B, E5.4.1 mock-first —
-  the two §15 rows that had no frozen window until then),
+  The ten small dialogs of spec.md 15b's dialogs.xrc entry:
+  set_start_dlg, resume_dlg, exit_running_dlg
+  (xrc-windows.md section B),
   edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg,
   void_card_confirm_dlg (section C), about_dlg, selftest_dlg,
   shortcuts_dlg (section E).
@@ -16,6 +13,11 @@
   resumes nothing and opens nothing shows the native info dialog
   (ui.std_dialogs.show_info) instead; the create/open choice is the
   File menus' own job.
+  Phase 11 (H2) retired four more section-B dialogs for native
+  std_dialogs: finish_confirm_dlg (show_danger, with the REOPENED
+  "Finish again" label), duplicate_ride_dlg and reopen_ride_dlg
+  (show_prompt), and exit_confirm_dlg (show_confirm). Their copy
+  moved to views/dialogs.py and quit_flow.py respectively.
   Control names are frozen; tests find them with
   FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
   (R-05, R-73). Names repeat across these windows on purpose -
@@ -157,150 +159,6 @@
     </object>
   </object>
 
-  <object class="wxDialog" name="finish_confirm_dlg">
-    <title>Finish Ride?</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText">
-          <label>Locks entry and computes final standings (evaluator self-test must be green). You can reopen later for corrections.</label>
-          <wrap>420</wrap>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
-            <object class="wxButton" name="wxID_OK">
-              <label>Finish ride</label>
-            </object>
-          </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL">
-              <default>1</default>
-              <focused>1</focused>
-            </object>
-          </object>
-        </object>
-      </object>
-
-    </object>
-  </object>
-
-  <!-- E5.4.1 mock-first (task-brief E5.4.1): File ▸ Duplicate Ride…
-       previously one of the three §15 rows with no frozen window
-       (commands.py's _UNAUTHORED_DIALOG sentinel). Authored mock-first:
-       the control names are registered in spec.md §15b BEFORE any UI
-       wiring, replacing the E1.4.1 sentinel. Duplicate copies setup +
-       roster with no timing data (R-15), so it is a NON-destructive
-       confirm: OK is both the default and the initially focused
-       control, and a reflex Enter is safe (spec.md 13). The ride being
-       duplicated is interpolated into message_lbl by the presenter
-       (UX-DESKTOP §4 names the object). -->
-  <object class="wxDialog" name="duplicate_ride_dlg">
-    <title>Duplicate Ride</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <!-- "Duplicate "<ride name>" as a new DRAFT ride?" Written by
-           the presenter; a blank label is a failed assertion. -->
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText" name="message_lbl">
-          <label></label>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText">
-          <label>Copies the ride's setup and full rider list — no timing data.</label>
-          <wrap>420</wrap>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
-            <object class="wxButton" name="wxID_OK">
-              <label>Duplicate</label>
-              <default>1</default>
-              <focused>1</focused>
-            </object>
-          </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL"/>
-          </object>
-        </object>
-      </object>
-
-    </object>
-  </object>
-
-  <!-- E5.4.1 mock-first (task-brief E5.4.1): Ride ▸ Reopen Ride — the
-       second §15 row that previously had no frozen window. Reopen
-       moves a FINISHED ride to REOPENED for corrections (spec §3),
-       which loses nothing, so this is a NON-destructive confirm: OK
-       is the default and the initially focused control (spec.md 13). -->
-  <object class="wxDialog" name="reopen_ride_dlg">
-    <title>Reopen Ride</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <!-- "Reopen "<ride name>" for corrections?" Written by the
-           presenter; a blank label is a failed assertion. -->
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText" name="message_lbl">
-          <label></label>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText">
-          <label>Reopen for corrections? Standings recompute on export.</label>
-          <wrap>420</wrap>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
-            <object class="wxButton" name="wxID_OK">
-              <label>Reopen</label>
-              <default>1</default>
-              <focused>1</focused>
-            </object>
-          </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL"/>
-          </object>
-        </object>
-      </object>
-
-    </object>
-  </object>
-
   <!-- Two buttons, neither of which is an id wxStdDialogButtonSizer
        places, so this dialog has no std sizer at all: library_btn is
        the secondary and continue_btn the primary, ordered left to
@@ -427,47 +285,6 @@
             </object>
           </object>
 
-        </object>
-      </object>
-
-    </object>
-  </object>
-
-  <!-- Phase 8 amendment (P8-D1/R-51/R-76): the app never exits without
-       confirmation. Quitting with no ride running shows this destructive
-       confirm instead of quitting outright; Cancel is both the default
-       and the initially focused control, so a reflex Enter is safe. -->
-  <object class="wxDialog" name="exit_confirm_dlg">
-    <title>Quit RiverCrossing?</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText">
-          <label>Are you sure you want to quit? No ride is running.</label>
-          <wrap>420</wrap>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
-            <object class="wxButton" name="wxID_OK">
-              <label>Quit</label>
-            </object>
-          </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL">
-              <default>1</default>
-              <focused>1</focused>
-            </object>
-          </object>
         </object>
       </object>
 

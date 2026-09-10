@@ -4,7 +4,7 @@
 ``ConsoleView``/``ConsolePresenter`` are module-skeletons.md's
 verbatim contract (ui.presenters section) -- names and signatures
 below are binding, not derived -- grown by the members the live
-presenter actually calls: ``set_stop_enabled`` (R-35's arm gate),
+presenter actually calls: ``set_stop_enabled`` (the Stop gate),
 ``set_hide_times`` (R-37), ``show_clock`` (the tick's elapsed
 display), ``set_entry_locked`` (R-35's "only confirming locks the
 entry field"), -- WS-D/WS-H -- ``set_clock_fractions`` (the
@@ -32,20 +32,19 @@ E4.4.1-E4.4.3 behavior (spec §10/§13, R-31/32/34/35/37):
 - ``on_undo``/``on_stop_confirmed``/``on_start``/``on_finish`` drive
   the engine's write side; engine refusals surface as notices, never
   crashes.
-- The arm/stop flow (R-35) owns the 10 s auto-clear through the
-  presenter's own monotonic clock seam (``now``), driven by ``tick``
-  -- testable with a fake tick, no bare sleeps.
 - ``FINISH_GATE`` is the E6.4.3 hook: the finish flow consults it
   before finishing; the gate runs the real evaluator self-test
   (``hands.self_test()``) fresh on each finish.
 
-W5 adds the console-button gates and the native-dialog seams:
+W5 adds the console-button gates and the native-dialog seams; C2
+makes them the single source for Start/Stop/Undo (the Arm checkbox is
+gone):
 
-- ``refresh_console_gates`` re-applies the Start/Undo button
-  enablement from the engine (the mi_start_ride and mi_undo_crossing
-  rules); the view calls it from every ``set_state``/``show_feed``
-  render, so initial paints, console swaps and in-session transitions
-  all land on the same verdicts.
+- ``refresh_console_gates`` re-applies the Start/Stop/Undo button
+  enablement from the engine (the mi_start_ride, mi_stop_ride and
+  mi_undo_crossing rules); the view calls it from every
+  ``set_state``/``show_feed`` render, so initial paints, console swaps
+  and in-session transitions all land on the same verdicts.
 - ``on_start`` surfaces ``StartBlockedError`` refusals through the
   view's native warning seam (``show_warning``) instead of the status
   notice -- a modal "Cannot Start Ride" alert with the engine's
@@ -56,7 +55,8 @@ W5 adds the console-button gates and the native-dialog seams:
   ride gets the native confirm (``view.confirm``), and a confirmed OK
   runs the unchanged ``on_stop_confirmed`` act-3 flow.
 
-W6 adds the stopped-clock display freeze:
+W6 adds the stopped-clock display freeze; C3 extends it to closed
+rides:
 
 - ``_refresh_clock`` freezes the elapsed/remaining labels and the
   gauge dials while the engine is stopped (R-35's guard, state still
@@ -64,11 +64,14 @@ W6 adds the stopped-clock display freeze:
   observes the stop, so a console rebuild while stopped re-captures
   on its next tick. The engine keeps spec.md's wall-clock elapsed
   (spec.md:38), so continue jumps the display forward and nothing is
-  lost. The freeze is a display product decision; the design
-  write-back lands in W15.
+  lost.
+- A FINISHED or REOPENED ride's clock is frozen at the recorded final
+  elapsed (``engine.closed_elapsed()``), never ``engine.elapsed()``:
+  the live reading would make a reopened ride's clock start running
+  again, the bug C3 fixes. The freeze is a display product decision;
+  the design write-back lands in W15.
 """
 
-from time import monotonic
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing import hands
@@ -84,17 +87,12 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import Counters, DataSource, FeedRow, RiderRow
 
 __all__ = [
-    "ARM_TIMEOUT_S",
     "FINISH_GATE",
     "ConsolePresenter",
     "ConsoleView",
     "Cue",
     "stop_light_mode",
 ]
-
-# R-35: "Arm auto-clears after use or 10 s." The presenter's tick()
-# disarms once this many seconds have passed since arming.
-ARM_TIMEOUT_S = 10.0
 
 
 def _finish_gate_clear() -> bool:
@@ -189,7 +187,12 @@ class ConsoleView(Protocol):
         ...
 
     def set_stop_enabled(self, *, enabled: bool) -> None:
-        """Enable or disable the Stop button (R-35 arm gate)."""
+        """Enable or disable the Stop button (C2 gate).
+
+        The engine-backed verdict (RUNNING and not stopped) comes from
+        the presenter's ``refresh_console_gates``; the view only
+        applies it.
+        """
         ...
 
     def set_hide_times(self, *, hide: bool) -> None:
@@ -222,11 +225,11 @@ class ConsoleView(Protocol):
         ...
 
     def set_start_enabled(self, *, enabled: bool) -> None:
-        """Enable or disable the Start ride button (W5 gate).
+        """Enable or disable the Start ride button (W5/C2 gate).
 
-        The engine-backed verdict (DRAFT or stopped-RUNNING) comes
-        from the presenter's ``refresh_console_gates``; the view only
-        applies it.
+        The engine-backed verdict (DRAFT, REOPENED or stopped-RUNNING)
+        comes from the presenter's ``refresh_console_gates``; the view
+        only applies it.
         """
         ...
 
@@ -266,9 +269,7 @@ class ConsolePresenter:
     Holds ``(view, engine, source)``: the engine owns the write side
     (``record_crossing``/``undo_last``/``start``/``stop``/``finish``),
     the read-only ``DataSource`` serves feed/counters/status, and the
-    view renders. ``now`` is the presenter's own monotonic clock seam
-    for R-35's 10 s arm auto-clear -- injected in tests, defaulting to
-    ``time.monotonic``.
+    view renders.
 
     W12: the presenter renders the Teams chip's R-11 visibility at
     construction (:meth:`ConsoleView.set_team_ui_visible` from
@@ -277,13 +278,11 @@ class ConsolePresenter:
     per ride/console-switch.
     """
 
-    def __init__(  # noqa: PLR0913 -- S4 API (view, engine, source) + the testable now seam
+    def __init__(
         self,
         view: ConsoleView,
         engine: RideEngine,
         source: DataSource,
-        *,
-        now: Callable[[], float] | None = None,
     ) -> None:
         """Store the collaborators and render the chip visibility.
 
@@ -295,14 +294,10 @@ class ConsolePresenter:
             view: The console view to render into.
             engine: The ride engine (the write side).
             source: The read-only display-data seam.
-            now: Monotonic clock for the arm timeout; defaults to
-                ``time.monotonic``.
         """
         self.view = view
         self.engine = engine
         self.source = source
-        self._now = now if now is not None else monotonic
-        self._armed_at: float | None = None
         # W6: the elapsed value shown while the engine is stopped;
         # None while live, so the first refresh after a stop captures.
         self._frozen_elapsed: float | None = None
@@ -411,38 +406,39 @@ class ConsolePresenter:
             self.on_stop_confirmed()
 
     def refresh_console_gates(self) -> None:
-        """Re-apply the console Start/Undo button gates from the engine.
+        """Re-apply the console Start/Stop/Undo button gates (C2).
 
-        W5: ``start_btn`` mirrors the mi_start_ride rule -- enabled in
-        DRAFT and in stopped-RUNNING (continue-after-stop is the
-        resume mechanism), disabled in live RUNNING, FINISHED and
-        REOPENED; ``undo_btn`` mirrors the mi_undo_crossing rule --
-        enabled only in RUNNING with at least one crossing. The view
-        calls this from every ``set_state``/``show_feed`` render
-        (constructor, console swaps and presenter transitions alike),
-        so the engine is the single source of truth for the buttons.
+        The single source for the three buttons, from the engine:
+
+        - ``start_btn`` mirrors the mi_start_ride rule -- enabled in
+          DRAFT, in REOPENED (continue riding out of the corrections
+          state) and in stopped-RUNNING (continue-after-stop is the
+          resume mechanism); disabled in live RUNNING and FINISHED.
+        - ``stop_btn`` is enabled only in a live RUNNING ride (not
+          stopped) -- the Arm checkbox is gone.
+        - ``undo_btn`` mirrors the mi_undo_crossing rule -- enabled
+          only in RUNNING with at least one crossing.
+
+        The view calls this from every ``set_state``/``show_feed``
+        render (constructor, console swaps and presenter transitions
+        alike), so the engine is the single source of truth.
         """
         running = self.engine.state is RideStatus.RUNNING
+        stopped = running and self.engine.stopped
         self.view.set_start_enabled(
-            enabled=self.engine.state is RideStatus.DRAFT or (running and self.engine.stopped)
+            enabled=self.engine.state is RideStatus.DRAFT
+            or self.engine.state is RideStatus.REOPENED
+            or stopped
         )
+        self.view.set_stop_enabled(enabled=running and not stopped)
         self.view.set_undo_enabled(enabled=running and len(self.engine.crossings) >= 1)
 
-    def on_arm_stop(self, *, armed: bool) -> None:
-        """Handle the arm_stop_chk toggle guarding stop_btn (R-35).
-
-        Arming records the monotonic instant so ``tick`` can disarm
-        after :data:`ARM_TIMEOUT_S`; the Stop button is enabled only
-        while armed.
-        """
-        self._armed_at = self._now() if armed else None
-        self.view.set_stop_enabled(enabled=armed)
-
     def on_stop_confirmed(self) -> None:
-        """Handle a confirmed Stop (R-35, act 3).
+        """Handle a confirmed Stop (R-35).
 
         ``engine.stop()`` locks plate entry while the ride stays
-        RUNNING; the arm auto-clears after use. An illegal stop (not
+        RUNNING; the state render that follows re-applies the gates,
+        turning Stop off and Start on (continue). An illegal stop (not
         RUNNING, already stopped) is caught and surfaced as a notice.
         """
         try:
@@ -450,8 +446,6 @@ class ConsolePresenter:
         except IllegalStateError as exc:
             self.view.show_notice(f"Cannot stop: {exc}")
             return
-        self._armed_at = None
-        self.view.set_stop_enabled(enabled=False)
         self.view.set_state(self.engine.state)
         self.view.set_entry_locked(locked=True)
         self.view.show_notice("Ride stopped — continue to resume")
@@ -508,15 +502,14 @@ class ConsolePresenter:
         """Handle a periodic clock/feed refresh tick.
 
         Refreshes the feed, review tabs, counters and clock from the
-        source/engine (R-32/R-30, WS-D/WS-H), then expires the arm if
-        its 10 s window lapsed (R-35) -- the presenter's own clock
-        seam, no bare sleeps.
+        source/engine (R-32/R-30, WS-D/WS-H). The tick is the only
+        driver of the live clock, so C3's closed-ride freeze lives in
+        :meth:`_refresh_clock`.
         """
         self._refresh_feed()
         self._refresh_riders()
         self._refresh_counters()
         self._refresh_clock()
-        self._expire_arm()
 
     def _refresh_feed(self) -> None:
         """Re-render the crossings feed and its flagged subset.
@@ -564,18 +557,28 @@ class ConsolePresenter:
         and presenter-local: a console rebuild over the same stopped
         engine re-captures on its first refresh, so library
         open/close round-trips land on the engine's live elapsed and
-        then hold. The freeze is a display product decision that
-        overrides the spec's wall-clock display rule (spec.md:38);
-        the engine keeps counting underneath (R-30), so continue
-        jumps the display forward and nothing is lost. The design
-        write-back lands in W15 -- no engine change was wanted or
-        made.
+        then hold. The engine keeps counting underneath (R-30), so
+        continue jumps the display forward and nothing is lost.
+
+        C3: FINISHED and REOPENED render the recorded final elapsed
+        from ``engine.closed_elapsed()`` -- never the live
+        ``engine.elapsed()``, which would make a reopened ride's clock
+        start advancing again (the reported bug). The clock closes at
+        the recorded finish instant and stays there, corrections and
+        finish-again included. The freeze is a display product
+        decision that overrides the spec's wall-clock display rule
+        (spec.md:38); the design write-back lands in W15.
         """
-        if self.engine.state is RideStatus.DRAFT:
+        state = self.engine.state
+        if state is RideStatus.DRAFT:
             self.view.show_clock("0:00:00", "0:00:00")
             self.view.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
             return
-        if self.engine.stopped:
+        total = float(self.engine.config.planned_duration_s)
+        if state in (RideStatus.FINISHED, RideStatus.REOPENED):
+            elapsed = self.engine.closed_elapsed()
+            remaining = max(0.0, total - elapsed)
+        elif self.engine.stopped:
             frozen = self._frozen_elapsed
             if frozen is None:
                 # First refresh that observes the stop: capture once,
@@ -583,34 +586,16 @@ class ConsolePresenter:
                 frozen = self.engine.elapsed()
                 self._frozen_elapsed = frozen
             elapsed = frozen
-            remaining = max(0.0, float(self.engine.config.planned_duration_s) - elapsed)
+            remaining = max(0.0, total - elapsed)
         else:
             self._frozen_elapsed = None
-            try:
-                elapsed = self.engine.elapsed()
-                remaining = self.engine.remaining()
-            except IllegalStateError:
-                # logic-coverage-exempt: T-3 -- the engine state machine
-                # makes this arm unreachable: a started ride always
-                # has an actual_start, and DRAFT (the only state
-                # without one) returns above. Kept as the
-                # pre-existing defensive twin of the DRAFT branch.
-                self.view.show_clock("0:00:00", "0:00:00")
-                self.view.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
-                return
-            remaining = max(0.0, remaining)
-        total = float(self.engine.config.planned_duration_s)
+            elapsed = self.engine.elapsed()
+            remaining = max(0.0, self.engine.remaining())
         self.view.show_clock(format_duration(elapsed), format_duration(remaining))
         self.view.set_clock_fractions(
             elapsed_frac=_clock_fraction(elapsed, total),
             remaining_frac=_clock_fraction(remaining, total),
         )
-
-    def _expire_arm(self) -> None:
-        """Disarm the stop arm once its 10 s window lapsed (R-35)."""
-        if self._armed_at is not None and self._now() - self._armed_at >= ARM_TIMEOUT_S:
-            self._armed_at = None
-            self.view.set_stop_enabled(enabled=False)
 
 
 def _rejection_notice(plate: str, reason: str | None) -> str:

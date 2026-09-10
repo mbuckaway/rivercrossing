@@ -11,20 +11,25 @@ post notices instead of failing.
 from base64 import b64encode
 from datetime import date
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
+import pytest
 from pypdf import PdfReader
 
 if TYPE_CHECKING:
-    import pytest
+    from collections.abc import Callable
 
 import inspect
 
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
-from rivercrossing.roster import EntryMode, Roster
+from rivercrossing.ride import RideStatus
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import EntryResult, Placed
 from rivercrossing.ui import app as app_module
+from rivercrossing.ui import std_dialogs
+from rivercrossing.ui.cards_imagelist import SCALE_2X, asset_filename, asset_key, cards_dir
 from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS, ResultsWindow
 
 
@@ -362,7 +367,8 @@ def test_handle_preview_browser_without_export_notices() -> None:
 # ============================================================ W8
 # Team logos in HTML exports: _write_export forwards the plate -> logo
 # data-URI map into htmlexport.render, and _team_logo_srcs builds that
-# map from the roster's TEAM entries (card assets or stored PNGs).
+# map from the roster's TEAM entries (card logos only -- the stored
+# image column went with A7's team-logo rework).
 
 
 def _team_logo_uri() -> str:
@@ -414,16 +420,16 @@ def test_write_export_html_without_team_logos_renders_no_logo_images(tmp_path: P
     assert 'class="team-logo"' not in out.read_text(encoding="utf-8")
 
 
-def test_team_logo_srcs_maps_card_and_image_teams_to_data_uris() -> None:
-    """W8: a card-code team and a PNG team both resolve to data URIs."""
+def test_team_logo_srcs_maps_card_logo_teams_to_their_asset_data_uri() -> None:
+    """W8/A7: a card-code team resolves to its packaged 2x asset."""
     roster = Roster(entry_mode=EntryMode.MIXED)
     card_team = roster.create_empty_team(display_name="Card Team", logo_card="AS")
-    png_team = roster.create_empty_team(display_name="Png Team", logo_png=b"fake-png-bytes")
+    asset_png = (cards_dir() / asset_filename(asset_key("AS"), SCALE_2X)).read_bytes()
 
     srcs = app_module._team_logo_srcs(roster)
 
-    assert srcs[card_team.plate].startswith("data:image/png;base64,")
-    assert srcs[png_team.plate] == "data:image/png;base64," + b64encode(b"fake-png-bytes").decode()
+    expected = {card_team.plate: "data:image/png;base64," + b64encode(asset_png).decode("ascii")}
+    assert srcs == expected
 
 
 def test_team_logo_srcs_omits_logo_less_and_solo_entries() -> None:
@@ -431,6 +437,23 @@ def test_team_logo_srcs_omits_logo_less_and_solo_entries() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED)
     roster.create_empty_team(display_name="Plain Team")
     roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="2")
+
+    srcs = app_module._team_logo_srcs(roster)
+
+    assert srcs == {}
+
+
+def test_team_logo_srcs_without_a_roster_maps_no_logos() -> None:
+    """W8: no ride threaded -- the map is empty, never an error."""
+    srcs = app_module._team_logo_srcs(None)
+
+    assert srcs == {}
+
+
+def test_team_logo_srcs_omits_a_card_code_with_no_asset_behind_it() -> None:
+    """W8: an unknown card code is skipped, never raised."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.create_empty_team(display_name="Odd Team", logo_card="ZZ")
 
     srcs = app_module._team_logo_srcs(roster)
 
@@ -487,3 +510,329 @@ def test_results_window_accepts_an_on_export_callback_seam() -> None:
     source = inspect.getsource(ResultsWindow.__init__)
 
     assert "on_export: Callable[[str], None] | None = None" in source
+
+
+# ============================================================ E2
+# Ride ▸ Finish Ride… (and the quit flow's Finish First) now
+# publishes the finished ride's HTML and PDF results itself, into a
+# deterministic per-user directory instead of through the save
+# dialog, so a finished ride always leaves its results behind.
+
+
+class _FinishPresenter:
+    """A presenter double whose on_finish leaves the staged state."""
+
+    def __init__(self, engine: object) -> None:
+        """Hold the engine the finish route reads and finishes."""
+        self.engine = engine
+        self.finish_calls = 0
+
+    def on_finish(self) -> None:
+        """Record the finish request; the test stages the state."""
+        self.finish_calls += 1
+
+
+def _export_roster() -> Roster:
+    """Build the one-entry roster the export inputs read."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="12")
+    return roster
+
+
+def _finish_context(*, engine: object) -> app_module._RouteContext:
+    """Build a route context whose presenter exposes *engine*."""
+    return app_module._RouteContext(
+        frame=_StubFrame(),
+        resource=None,
+        roster=_export_roster(),
+        app=None,
+        theme_controller=None,
+        presenter=_FinishPresenter(engine),  # type: ignore[arg-type]
+    )
+
+
+def _stub_confirmed_finish(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer the native finish confirm with OK (T-10: wx boundary)."""
+    import wx  # noqa: PLC0415 -- only the confirm's id needs it
+
+    monkeypatch.setattr(std_dialogs, "show_danger", lambda *_a, **_k: wx.ID_OK)
+
+
+def _sync_offloop(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
+    """Run the off-loop export inline; record each (target, path)."""
+    written: list[tuple[str, Path]] = []
+
+    def _write(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
+        context: app_module._RouteContext,
+        target: str,
+        path: Path,
+        *,
+        config: object,
+        teams: object,
+        solo: object,
+        opts: object,
+        watermark: int,
+        team_logos: object = None,
+        record_path: bool = True,
+    ) -> None:
+        app_module._write_export(  # type: ignore[arg-type]
+            config, teams, solo, opts, target, path, team_logos=team_logos
+        )
+        written.append((target, path))
+        if record_path:
+            context.last_export_path = path
+            context.export_watermark = watermark
+
+    monkeypatch.setattr(app_module, "_run_export_offloop", _write)
+    return written
+
+
+def test_handle_finish_route_given_a_finished_engine_exports_html_and_pdf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2: finishing publishes both results files with no save dialog.
+
+    The two exports land in ``<user_data_dir>/exports`` named from the
+    ride slug, and the context records the HTML path -- not the PDF
+    scheduled after it -- so Preview in Browser opens the HTML page.
+    """
+    engine, _source = app_module._build_console_engine(_export_roster())
+    engine.start()
+    engine.finish()
+    context = _finish_context(engine=engine)
+    _stub_confirmed_finish(monkeypatch)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(app_module, "user_data_dir", lambda _appname: str(data_dir))
+    written = _sync_offloop(monkeypatch)
+
+    app_module._handle_finish_route(context)
+
+    exports = data_dir / "exports"
+    html = exports / "gorba-epic-2026-results.html"
+    pdf = exports / "gorba-epic-2026-results.pdf"
+    assert written == [("export_html", html), ("export_pdf", pdf)]
+    assert "race-data" in html.read_text(encoding="utf-8")
+    assert len(PdfReader(str(pdf)).pages) >= 1
+    assert context.last_export_path == html
+
+
+def test_handle_finish_route_given_a_running_engine_exports_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2: a finish that did not land in FINISHED publishes nothing.
+
+    The export gate is the engine's own FINISHED state, so a refused
+    finish (still RUNNING here) never writes results and never creates
+    the exports directory.
+    """
+    engine, _source = app_module._build_console_engine(_export_roster())
+    engine.start()
+    context = _finish_context(engine=engine)
+    _stub_confirmed_finish(monkeypatch)
+    monkeypatch.setattr(app_module, "user_data_dir", lambda _appname: str(tmp_path / "data"))
+    written = _sync_offloop(monkeypatch)
+
+    app_module._handle_finish_route(context)
+
+    assert engine.state is RideStatus.RUNNING
+    assert written == []
+    assert context.last_export_path is None
+    assert not (tmp_path / "data" / "exports").exists()
+
+
+# --------------------------------------- E2 race: the HTML path wins
+# The auto-export schedules HTML first and PDF second, but the two
+# workers finish in whatever order the OS grants them: both writebacks
+# reach ``last_export_path`` through ``wx.CallAfter``, so a PDF that
+# lands last used to clobber the explicit HTML assignment and Preview
+# in Browser opened the PDF. The HTML path is now authoritative -- the
+# PDF schedules with ``record_path=False`` -- independent of either
+# worker's completion order.
+
+
+class _DeferredExport:
+    """A fake off-loop seam whose completions flush on demand.
+
+    Mirrors ``_run_export_offloop``'s keyword inputs -- including the
+    new ``record_path`` gate -- but defers each completion instead of
+    running it on a worker thread, so a test can force the PDF
+    writeback to land after the HTML one (:meth:`flush`).
+    """
+
+    def __init__(self) -> None:
+        """Start with nothing scheduled."""
+        self.scheduled: list[tuple[str, Path]] = []
+        self._completions: list[Callable[[], None]] = []
+
+    def __call__(
+        self,
+        context: app_module._RouteContext,
+        target: str,
+        path: Path,
+        **captured: object,
+    ) -> None:
+        """Record the schedule; defer this export's writeback."""
+        self.scheduled.append((target, path))
+
+        def complete() -> None:
+            if captured.get("record_path", True):
+                context.last_export_path = path
+                context.export_watermark = captured["watermark"]  # type: ignore[assignment]
+
+        self._completions.append(complete)
+
+    def flush(self) -> None:
+        """Run every pending writeback in scheduling order."""
+        for complete in self._completions:
+            complete()
+        self._completions.clear()
+
+
+def test_handle_finish_route_given_a_pdf_worker_landing_last_keeps_the_html_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2 race: a late PDF worker never clobbers the HTML path.
+
+    Both completions are forced to run after ``_handle_finish_route``
+    returns, HTML first and PDF last -- the interleaving that made
+    Preview in Browser open the PDF. The recorded path must still be
+    the HTML page.
+    """
+    engine, _source = app_module._build_console_engine(_export_roster())
+    engine.start()
+    engine.finish()
+    context = _finish_context(engine=engine)
+    _stub_confirmed_finish(monkeypatch)
+    data_dir = tmp_path / "data"
+    monkeypatch.setattr(app_module, "user_data_dir", lambda _appname: str(data_dir))
+    offloop = _DeferredExport()
+    monkeypatch.setattr(app_module, "_run_export_offloop", offloop)
+
+    app_module._handle_finish_route(context)
+    offloop.flush()
+
+    exports = data_dir / "exports"
+    html = exports / "gorba-epic-2026-results.html"
+    pdf = exports / "gorba-epic-2026-results.pdf"
+    assert offloop.scheduled == [("export_html", html), ("export_pdf", pdf)]
+    assert context.last_export_path == html
+
+
+class _InlineThread:
+    """Run a worker target inline, for deterministic off-loop tests."""
+
+    def __init__(self, *, target: Callable[[], None], **_wx_kwargs: object) -> None:
+        """Hold *target*; wx's extra kwargs (daemon) are accepted."""
+        self._target = target
+
+    def start(self) -> None:
+        """Run the worker body now, on the calling thread."""
+        self._target()
+
+
+class _ImmediateWx:
+    """A wx seam that runs ``CallAfter`` inline and finds no window."""
+
+    def CallAfter(  # noqa: N802 -- wx API name
+        self, callable_: Callable[..., None], *args: object
+    ) -> None:
+        """Run one deferred call immediately."""
+        callable_(*args)
+
+    def GetApp(self) -> None:  # noqa: N802 -- wx API name
+        """Report no running app, so the export options default."""
+
+    def FindWindowByName(self, _name: str) -> None:  # noqa: N802 -- wx API name
+        """Report no results window open."""
+
+
+def _inline_offloop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drive the real off-loop writer inline (thread + wx seams)."""
+    monkeypatch.setattr(app_module, "require_wx", _ImmediateWx)
+    monkeypatch.setattr(app_module, "threading", SimpleNamespace(Thread=_InlineThread))
+
+
+@pytest.mark.parametrize(
+    ("record_path", "records"),
+    [(True, True), (False, False)],
+)
+def test_run_export_offloop_record_path_gates_the_path_writeback(  # noqa: PLR0913, PLR0917
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    record_path: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+    records: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+) -> None:
+    """E2: ``record_path=False`` suppresses the export writeback.
+
+    The HTML auto-export records the path so Preview opens it; the PDF
+    schedules with ``record_path=False`` and must not clobber it. The
+    success notice posts in both cases.
+    """
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "results.html"
+    monkeypatch.setattr(app_module, "_write_export", lambda *_a, **_k: None)
+    _inline_offloop(monkeypatch)
+
+    app_module._run_export_offloop(
+        context,
+        "export_html",
+        out,
+        config=_StubConfig(),
+        teams=(),
+        solo=(),
+        opts=app_module.ExportOptions(),
+        watermark=7,
+        record_path=record_path,
+    )
+
+    assert (context.last_export_path, context.export_watermark) == (
+        out if records else None,
+        7 if records else None,
+    )
+    assert context.frame.notices == ["Exported results.html"]
+
+
+def test_run_export_offloop_given_a_failed_write_posts_the_failure_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2: a failed export notices; it records no path or watermark."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "results.html"
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(app_module, "_write_export", _boom)
+    _inline_offloop(monkeypatch)
+
+    app_module._run_export_offloop(
+        context,
+        "export_html",
+        out,
+        config=_StubConfig(),
+        teams=(),
+        solo=(),
+        opts=app_module.ExportOptions(),
+        watermark=7,
+    )
+
+    assert context.frame.notices == ["Export failed: disk full"]
+    assert (context.last_export_path, context.export_watermark) == (None, None)
+
+
+def test_handle_export_command_records_the_path_through_the_default_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """E2: the manual export still records its path (the default flag).
+
+    ``_handle_export_command`` omits the flag, so the standalone
+    Results-menu exports keep recording the picked path for Preview.
+    """
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "results.html"
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
+    _inline_offloop(monkeypatch)
+
+    app_module._handle_export_command(context, "export_html")
+
+    assert (context.last_export_path, context.export_watermark) == (out, 0)

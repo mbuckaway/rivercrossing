@@ -93,6 +93,7 @@ _SOLO_TO_TEAM_LOCKED_PROBLEM = "converting a solo rider into a team member requi
 _NON_DIGIT_PLATE_PROBLEM = "plate '77A' must be a whole number"
 _NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
 _CSV_MALFORMED_PREFIX = "malformed CSV data:"
+_SOLO_ONLY_TEAM_PROBLEM = "team entries are not allowed on a solo-only ride"
 
 _UNIFIED_HEADER = "firstname,lastname,type,teamname,number,notes"
 _CANONICAL_HEADER = "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
@@ -462,6 +463,118 @@ def test_commit_relay_one_rider_team_uses_create_team_entry_of_one(tmp_path: Pat
     )
     assert [rider.plate for rider in team.riders] == [None]
     assert [event.action for event in report.audit_events] == ["create_team_entry_of_one"]
+
+
+# ========================================== solo-only ride team rows
+
+
+def _solo_only_roster() -> Roster:
+    """Build a solo-only roster for preview()'s *ride* param (R-11)."""
+    return Roster(entry_mode=EntryMode.SOLO)
+
+
+def test_preview_solo_only_ride_team_rows_report_one_conflict_per_row(tmp_path: Path) -> None:
+    """A solo-only ride: each team row is one conflict (R-11)."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", last="Roy", type_="team", team="Trail Blazers", number="77"),
+            _Row(first="Kai", last="Singh", type_="team", team="Trail Blazers", number="78"),
+        ],
+    )
+
+    result = preview(path, _solo_only_roster())
+
+    assert result.conflicts == (
+        ImportConflict(row=2, problem=_SOLO_ONLY_TEAM_PROBLEM),
+        ImportConflict(row=3, problem=_SOLO_ONLY_TEAM_PROBLEM),
+    )
+
+
+def test_preview_solo_only_ride_lone_team_row_reports_one_conflict(tmp_path: Path) -> None:
+    """T-4 boundary: one team row is still a conflict, not an entry."""
+    path = _unified_file(
+        tmp_path,
+        [_Row(first="Alex", last="Roy", type_="team", team="Trail Blazers", number="77")],
+    )
+    result = preview(path, _solo_only_roster())
+
+    assert result.conflicts == (ImportConflict(row=2, problem=_SOLO_ONLY_TEAM_PROBLEM),)
+
+
+def test_preview_solo_only_ride_solo_rows_report_no_conflicts(tmp_path: Path) -> None:
+    """T-4 boundary: no team rows means nothing to reject (R-11)."""
+    path = _unified_file(tmp_path, [_Row(first="Sam", last="Ellis", type_="solo", number="1")])
+    result = preview(path, _solo_only_roster())
+
+    assert result.conflicts == ()
+
+
+def test_preview_solo_only_ride_team_rows_contribute_no_team_entry(tmp_path: Path) -> None:
+    """A rejected team row adds a conflict, never an entry."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", last="Roy", type_="team", team="Trail Blazers", number="77"),
+            _Row(first="Kai", last="Singh", type_="team", team="Trail Blazers", number="78"),
+        ],
+    )
+    result = preview(path, _solo_only_roster())
+
+    assert (result.entries, result.team_count) == ((), 0)
+
+
+def test_commit_solo_only_ride_with_team_rows_raises_conflicts_present_error(
+    tmp_path: Path,
+) -> None:
+    """The conflict blocks commit before any roster mutation (R-21)."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", last="Roy", type_="team", team="Trail Blazers", number="77"),
+            _Row(first="Kai", last="Singh", type_="team", team="Trail Blazers", number="78"),
+        ],
+    )
+    roster = _solo_only_roster()
+    result = preview(path, roster)
+
+    with pytest.raises(
+        ImportConflictsPresentError,
+        match=re.escape("must be resolved before importing"),
+    ):
+        commit(result)
+    assert roster.entries == ()
+
+
+def test_preview_mixed_ride_team_rows_still_report_no_conflicts(tmp_path: Path) -> None:
+    """A MIXED ride keeps importing team rows cleanly (R-11)."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", last="Roy", type_="team", team="Trail Blazers", number="77"),
+            _Row(first="Kai", last="Singh", type_="team", team="Trail Blazers", number="78"),
+        ],
+    )
+
+    result = preview(path, _pooled_roster())
+
+    assert (result.conflicts, result.team_count) == ((), 1)
+
+
+def test_commit_mixed_ride_team_rows_still_creates_the_team(tmp_path: Path) -> None:
+    """The rejection is solo-only: MIXED still commits the team."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", last="Roy", type_="team", team="Trail Blazers", number="77"),
+            _Row(first="Kai", last="Singh", type_="team", team="Trail Blazers", number="78"),
+        ],
+    )
+    roster = _pooled_roster()
+
+    report = commit(preview(path, roster))
+
+    assert (report.inserted_count, roster.entries[0].type) == (1, EntryType.TEAM)
 
 
 # =============================================== duplicate rider names

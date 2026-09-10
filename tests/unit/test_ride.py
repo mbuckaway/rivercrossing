@@ -530,11 +530,83 @@ def test_finish_again_from_reopened_transitions_to_finished() -> None:
     assert engine.events[-1].action == "finish"
 
 
+# ---------------------------------------------- C2 REOPENED -> RUNNING
+# Continue riding from the corrections state: the console's Start
+# button/row is enabled in REOPENED (C2), so the engine must accept it
+# -- keep the recorded actual_start, clear the stop guard, move the
+# roster back to RUNNING and append a ``continue`` audit row.
+
+
+def test_start_from_reopened_continues_the_ride_and_keeps_actual_start() -> None:
+    """C2: Start on REOPENED rides on (continue), never a new gun."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(600)
+    engine.finish()
+    engine.reopen()
+
+    event = engine.start()
+
+    assert engine.state is RideStatus.RUNNING
+    assert event.action == "continue"
+    assert event.payload == {"actual_start": "2026-09-20T10:00:00"}
+    assert engine._roster.status is RideStatus.RUNNING
+    assert engine.stopped is False
+
+
+def test_start_from_reopened_discards_the_closed_finish_instant() -> None:
+    """C2: continuing reopens the clock -- closed_elapsed is zero."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(600)
+    engine.finish()
+    engine.reopen()
+
+    engine.start()
+
+    assert engine.closed_elapsed() == 0.0
+
+
+# ------------------------------------------- C3 closed-ride elapsed
+# FINISHED and REOPENED show a frozen final time: the engine records
+# the finish instant (``finish()``), preserves it through ``reopen()``
+# and replay (``apply``), and exposes it as ``closed_elapsed()`` so the
+# console never advances a closed ride's clock.
+
+
+def test_closed_elapsed_given_a_finished_ride_reports_the_recorded_finish() -> None:
+    """C3: closed_elapsed() is finished_at - actual_start."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(1234)
+    engine.finish()
+
+    assert engine.closed_elapsed() == pytest.approx(1234.0)
+
+
+def test_closed_elapsed_given_a_reopened_ride_keeps_the_finish_elapsed() -> None:
+    """C3: reopen preserves the finish instant -- clock stays closed."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(500)
+    engine.finish()
+    clock.advance(9999)
+    engine.reopen()
+
+    assert engine.closed_elapsed() == pytest.approx(500.0)
+
+
+def test_closed_elapsed_given_a_never_started_ride_returns_zero() -> None:
+    """C3 boundary: no actual_start means no elapsed to close."""
+    engine, _ = _make_engine()
+
+    assert engine.closed_elapsed() == 0.0
+
+
 @pytest.mark.parametrize(
     ("start_state", "method", "match"),
     [
         ("finished", "start", "cannot start"),
-        ("reopened", "start", "cannot start"),
         ("draft", "finish", "cannot finish"),
         ("finished", "finish", "cannot finish"),
         ("draft", "reopen", "cannot reopen"),
@@ -984,6 +1056,30 @@ def test_record_crossing_short_lap_given_always_deal_default_credits_the_card() 
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].laps == 1
     assert results["12"].cards == (result.card,)
+
+
+def test_record_crossing_given_always_deal_credits_every_accepted_lap() -> None:
+    """E1 regression: Always Deal credits a card on every crossing.
+
+    With ``hold_short_laps=False`` (the W4 default) neither the lap
+    count nor a short lap time may park a card: the short-lap policy
+    gate is the only thing that ever holds one, so five crossings --
+    a very short opener, then laps one second under, exactly at, one
+    second over ``min_lap_s``, and a long one -- credit all five cards
+    and leave the hold queue empty.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=False, min_lap_s=600))
+    engine.start()
+    times = [_dt(10, 0, 5), _dt(10, 10, 4), _dt(10, 20, 4), _dt(10, 30, 5), _dt(11, 30, 5)]
+
+    results = [engine.record_crossing("12", at=at) for at in times]
+
+    results_by_plate = {entry.plate: entry for entry in engine.snapshot()}
+    assert [result.accepted for result in results] == [True] * len(times)
+    assert [result.flagged for result in results] == [False] * len(times)
+    assert results_by_plate["12"].laps == len(times)
+    assert results_by_plate["12"].cards == tuple(result.card for result in results)
+    assert engine.held_crossings() == ()
 
 
 def test_record_crossing_min_lap_exact_equal_is_not_flagged() -> None:
@@ -1963,6 +2059,39 @@ def test_apply_reopen_event_returns_finished_ride_to_reopened() -> None:
     assert engine._shoe.is_closed is False
 
 
+def test_apply_finish_event_re_applies_the_recorded_finish_instant() -> None:
+    """C3: replay reads the persisted finished_at, not replay time.
+
+    An old ride replayed today must show its own recorded finish, so
+    ``closed_elapsed()`` uses the payload timestamp and the re-appended
+    event keeps that payload.
+    """
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(3600)  # the replay clock is nowhere near the finish instant
+    event = Event(action="finish", payload={"finished_at": "2026-09-20T10:30:00"})
+
+    engine.apply(event)
+
+    assert engine.closed_elapsed() == pytest.approx(1800.0)
+    assert engine.events[-1] == event
+
+
+def test_apply_reopen_event_re_applies_the_recorded_reopened_instant() -> None:
+    """C3: replay keeps the recorded reopen payload and finish."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(3600)
+    engine.apply(Event(action="finish", payload={"finished_at": "2026-09-20T10:01:40"}))
+    event = Event(action="reopen", payload={"reopened_at": "2026-09-20T11:00:00"})
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.REOPENED
+    assert engine.events[-1] == event
+    assert engine.closed_elapsed() == pytest.approx(100.0)
+
+
 def test_apply_replay_finish_reopen_deal_manual_is_equivalent() -> None:
     """Replaying finish/reopen/deal_manual reproduces the live state.
 
@@ -2030,3 +2159,41 @@ def test_apply_confirm_held_for_an_unrecorded_crossing_raises_clear_error() -> N
 
     with pytest.raises(RideEngineError, match=re.escape("no crossing")):
         engine.apply(event)
+
+
+# ============================================================ D2
+# Edit Ride: the engine's config is the live ride's own settings, so an
+# edit replaces it in place -- the ride, its shoe and its event log are
+# untouched.
+
+
+def test_engine_clock_returns_the_injected_clock_source() -> None:
+    """The console-rebuild seam carries an injected clock (R-74)."""
+    engine, clock = _make_engine()
+
+    assert engine.clock is clock
+
+
+def test_engine_update_config_replaces_the_live_config() -> None:
+    """D2: an edited ride's settings become the engine's own config."""
+    engine, _clock = _make_engine()
+    edited = _config(name="Renamed Ride", venue="New Venue", lap_km=6.5)
+
+    engine.update_config(edited)
+
+    assert engine.config == edited
+
+
+def test_engine_update_config_keeps_the_ride_state_and_its_events() -> None:
+    """D2: editing setup settings never rewinds a started ride."""
+    engine, _clock = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=engine.config.planned_start + timedelta(seconds=60))
+    events_before = engine.events
+    crossings_before = engine.crossings
+
+    engine.update_config(_config(name="Renamed Ride"))
+
+    assert engine.state is RideStatus.RUNNING
+    assert engine.events == events_before
+    assert engine.crossings == crossings_before

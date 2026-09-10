@@ -42,6 +42,18 @@ enforces -- by joining every reason into one
 the config is still built first so :class:`~rivercrossing.ride.
 RideConfig`'s own bound errors keep their refusal path unchanged.
 
+D2 gives that same dialog a second mode. Passed a
+:class:`~rivercrossing.ride.RideConfig` it opens on that ride's own
+values instead of the defaults (Ride ▸ Edit Ride…), which is what the
+view's ``show_*`` preload seams below are for; every field the ride
+record carries is pushed once, at load. The ride-*shape* controls
+(entry mode, plate model, decks, jokers, card cap and tie-break order)
+are gated on the ride's own state -- editable while it is DRAFT, read
+only after that, since a started ride's format is fixed (R-15/R-17's
+own DRAFT-only rule, extended here to the setup dialog). Name, date,
+planned start, venue, organizer and scorer stay editable in every
+state: those are facts about the event, not about its structure.
+
 The entry/plate-model lock (R-17) is a static fact about the roster
 setup opened on -- a ride's status never changes while this dialog is
 open -- so :meth:`SetupPresenter._load` computes and pushes it once;
@@ -158,6 +170,70 @@ class SetupView(Protocol):
         """Render the roster's entry_mode/max_team_size/plate_model."""
         ...
 
+    def show_name(self, name: str) -> None:
+        """Render name_input from the ride record (D2 preload)."""
+        ...
+
+    def show_date(self, event_date: date) -> None:
+        """Render date_picker from the ride record (D2 preload)."""
+        ...
+
+    def show_start_time(self, start_time: time) -> None:
+        """Render start_time_picker from the ride record (D2)."""
+        ...
+
+    def show_venue(self, venue: str) -> None:
+        """Render venue_input from the ride record (D2 preload)."""
+        ...
+
+    def show_organizer(self, organizer: str) -> None:
+        """Render organizer_input from the ride record (D2 preload)."""
+        ...
+
+    def show_scorer(self, scorer: str) -> None:
+        """Render scorer_input from the ride record (D2 preload)."""
+        ...
+
+    def show_duration(self, seconds: int) -> None:
+        """Render duration_input's "H:MM" text from the ride record."""
+        ...
+
+    def show_min_lap(self, seconds: int) -> None:
+        """Render min_lap_input's "M:SS" text from the ride record."""
+        ...
+
+    def show_short_lap_policy(self, *, hold_short_laps: bool) -> None:
+        """Check hold_short_radio or always_deal_radio (D2 preload)."""
+        ...
+
+    def show_jokers_per_deck(self, count: int) -> None:
+        """Check jokers_0/2/4_radio from the record (D2)."""
+        ...
+
+    def show_card_cap(self, max_cards: int | None) -> None:
+        """Render cap_chk/cap_spin (``None`` = uncapped, D2 preload)."""
+        ...
+
+    def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
+        """Render tiebreak_list's rows from the record (D2)."""
+        ...
+
+    def show_logo(self, logo_path: Path | None) -> None:
+        """Render logo_picker from the ride record (D2 preload)."""
+        ...
+
+    def set_structure_enabled(self, *, enabled: bool) -> None:
+        """Enable the D2 structural group (DRAFT-only edits).
+
+        The entry-mode radios, the plate-model radios, decks_spin,
+        the jokers radios, cap_chk/cap_spin and tiebreak_list: the
+        ride-shape fields a started ride may no longer change. The
+        name/date/start/venue/organizer/scorer fields stay editable in
+        every state, and :meth:`set_entry_locked`'s relay lock is
+        unchanged -- this is the *other* half of the D2 gate.
+        """
+        ...
+
     def show_validation(self, message: str) -> None:
         """Show a refused-submit message on the view's setup infobar."""
         ...
@@ -185,6 +261,29 @@ def _parse_duration(text: str) -> int:
         raise ValueError(msg) from exc
 
 
+def _format_duration(seconds: int) -> str:
+    """Render whole *seconds* as ``duration_input``'s "H:MM" (D2).
+
+    :func:`_parse_duration`'s inverse for a stored ride's
+    ``planned_duration_s``: the field has no seconds column, so any
+    remainder is dropped exactly as the parser's own "H:MM" shape
+    implies (21600 -> "6:00").
+    """
+    hours, remainder = divmod(seconds, 3600)
+    return f"{hours}:{remainder // 60:02d}"
+
+
+def _format_min_lap(seconds: int) -> str:
+    """Render whole *seconds* as ``min_lap_input``'s "M:SS" (D2).
+
+    :func:`_parse_min_lap`'s inverse for a stored ride's ``min_lap_s``
+    (1080 -> "18:00"). Minutes are never folded into hours: the field
+    is a lap's own duration, not a clock time (spec §6).
+    """
+    minutes, remainder = divmod(seconds, 60)
+    return f"{minutes}:{remainder:02d}"
+
+
 def _parse_min_lap(text: str) -> int:
     """Parse ``min_lap_input``'s "M:SS" into whole seconds (spec §6).
 
@@ -209,21 +308,33 @@ def _parse_min_lap(text: str) -> int:
 class SetupPresenter:
     """Presenter for the ride setup dialog (ride_setup_dlg, R-17)."""
 
-    def __init__(self, view: SetupView, roster: Roster) -> None:
-        """Store the view and roster this presenter drives, and load.
+    def __init__(self, view: SetupView, roster: Roster, config: RideConfig | None = None) -> None:
+        """Store the view, roster and ride config this presenter drives.
 
         Args:
             view: The setup view driving this roster.
             roster: The in-memory roster whose current entry_mode/
                 max_team_size/plate_model/status this dialog reads
                 (module docstring) -- never written back to directly.
+            config: The ride being edited (D2's Edit Ride…), or
+                ``None`` for a New Ride. When given, every field is
+                preloaded from it and the structural group is gated on
+                the ride's own state; when ``None`` the dialog opens on
+                the E3.5 defaults.
         """
         self.view = view
         self.roster = roster
+        self.config = config
         self._load()
 
     def _load(self) -> None:
         """Render ride_setup_dlg's initial state (module docstring).
+
+        Two modes, one dialog: a New Ride loads the E3.5 defaults
+        (decks/lap_km from the presenter, entry settings from the
+        roster), an Edit Ride (D2) preloads every field from the ride
+        record instead -- xrc-windows.md's own "field values are loaded
+        from the ride record" footnote, now with a ride record to read.
 
         ``set_team_fields_enabled``'s own argument folds in *locked*
         too (measured bug, fixed here): ``relay_radio``/
@@ -231,7 +342,23 @@ class SetupPresenter:
         exclusive scope, never ``set_entry_locked``'s -- calling both
         independently, in either order, let whichever ran last
         silently undo the other's effect on those two controls.
+        ``set_structure_enabled`` is the independent D2 gate over the
+        ride-*shape* controls (entry mode, plate model, cards).
         """
+        config = self.config
+        if config is None:
+            self._load_defaults()
+            entry_mode, plate_model = self.roster.entry_mode, self.roster.plate_model
+        else:
+            self._load_from_config(config)
+            entry_mode, plate_model = config.entry_mode, config.plate_model
+        locked = self._entry_locked(plate_model)
+        self.view.set_team_fields_enabled(enabled=entry_mode is EntryMode.MIXED and not locked)
+        self.view.set_entry_locked(locked=locked)
+        self.view.set_structure_enabled(enabled=can_edit_structure(self.roster.status))
+
+    def _load_defaults(self) -> None:
+        """Render a New Ride's own defaults (E3.5, W4)."""
         self.view.show_deck_count(DEFAULT_DECK_COUNT)
         self.view.show_lap_km(DEFAULT_LAP_KM)
         self.view.show_entry_settings(
@@ -239,22 +366,40 @@ class SetupPresenter:
             max_team_size=self.roster.max_team_size,
             plate_model=self.roster.plate_model,
         )
-        locked = self._entry_locked()
-        self.view.set_team_fields_enabled(
-            enabled=self.roster.entry_mode is EntryMode.MIXED and not locked
-        )
-        self.view.set_entry_locked(locked=locked)
 
-    def _entry_locked(self) -> bool:
+    def _load_from_config(self, config: RideConfig) -> None:
+        """Render every field of the ride being edited (D2 preload)."""
+        self.view.show_name(config.name)
+        self.view.show_date(config.event_date)
+        self.view.show_start_time(config.planned_start.time())
+        self.view.show_venue(config.venue)
+        self.view.show_organizer(config.organizer)
+        self.view.show_scorer(config.scorer)
+        self.view.show_lap_km(config.lap_km)
+        self.view.show_duration(config.planned_duration_s)
+        self.view.show_min_lap(config.min_lap_s)
+        self.view.show_short_lap_policy(hold_short_laps=config.hold_short_laps)
+        self.view.show_entry_settings(
+            entry_mode=config.entry_mode,
+            max_team_size=config.max_team_size,
+            plate_model=config.plate_model,
+        )
+        self.view.show_deck_count(config.deck_count)
+        self.view.show_jokers_per_deck(config.jokers_per_deck)
+        self.view.show_card_cap(config.max_cards)
+        self.view.show_tiebreak_order(config.tiebreak_order)
+        self.view.show_logo(config.logo_path)
+
+    def _entry_locked(self, plate_model: PlateModel) -> bool:
         """Return whether the entry/plate-model group should lock.
 
         R-17: locks once the ride has left DRAFT, for a relay ride
         only -- a pooled ride's plate model stays editable in every
-        state (xrc-windows.md's own ride_setup_dlg footnote).
+        state (xrc-windows.md's own ride_setup_dlg footnote). The
+        plate model comes from the config when one is edited, so the
+        lock never disagrees with the value the dialog submits back.
         """
-        return not can_edit_structure(self.roster.status) and self.roster.plate_model is (
-            PlateModel.TEAM_RELAY
-        )
+        return not can_edit_structure(self.roster.status) and plate_model is PlateModel.TEAM_RELAY
 
     def on_entry_mode_changed(self, entry_mode: EntryMode) -> None:
         """Handle a live solo_radio/mixed_radio selection change."""

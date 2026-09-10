@@ -75,19 +75,47 @@
             <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxBoxSizer">
-              <orient>wxVERTICAL</orient>
+              <orient>wxHORIZONTAL</orient>
+
+              <!--
+                C1: the ride-identity block. ride_logo_bmp carries the
+                ride's own logo when it has one (main_frame's
+                show_ride_header sets the bitmap and hides the detail
+                line); ride_details_lbl is the "date · start · type"
+                fallback. The control is authored with no <bitmap>:
+                measured on wxPython 4.3.1, XRC yields a real
+                wxStaticBitmap that keeps its name and accepts
+                SetBitmap later (about_logo_bmp's own authored shape).
+              -->
               <object class="sizeritem">
-                <object class="wxStaticText" name="ride_name_lbl">
-                  <label></label>
-                </object>
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>8</border>
+                <object class="wxStaticBitmap" name="ride_logo_bmp"/>
               </object>
+
               <object class="sizeritem">
-                <object class="wxPanel" name="ride_status_panel">
-                  <object class="wxBoxSizer">
-                    <orient>wxVERTICAL</orient>
-                    <object class="sizeritem">
-                      <object class="wxStaticText" name="ride_status_lbl">
-                        <label></label>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxBoxSizer">
+                  <orient>wxVERTICAL</orient>
+                  <object class="sizeritem">
+                    <object class="wxStaticText" name="ride_name_lbl">
+                      <label></label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <object class="wxStaticText" name="ride_details_lbl">
+                      <label></label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <object class="wxPanel" name="ride_status_panel">
+                      <object class="wxBoxSizer">
+                        <orient>wxVERTICAL</orient>
+                        <object class="sizeritem">
+                          <object class="wxStaticText" name="ride_status_lbl">
+                            <label></label>
+                          </object>
+                        </object>
                       </object>
                     </object>
                   </object>
@@ -163,13 +191,6 @@
                 <flag>wxALIGN_RIGHT</flag>
                 <object class="wxBoxSizer">
                   <orient>wxHORIZONTAL</orient>
-                  <object class="sizeritem">
-                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                    <border>6</border>
-                    <object class="wxCheckBox" name="arm_stop_chk">
-                      <label>Arm</label>
-                    </object>
-                  </object>
                   <object class="sizeritem">
                     <object class="wxBitmapButton" name="stop_btn">
                       <label>Stop ride…</label>
@@ -456,14 +477,21 @@
   </object>
 
   <!--
-    Seven menus, 43 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 6 - Riders 6 - Cards 7 - Results 7 -
+    Seven menus, 44 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 7 - Ride 9 - Riders 5 - Cards 7 - Results 7 -
     View 1 row, 8 items - Help 4). File order follows the 15 table
     (Import CSV, Export CSV, Back Up), not 15b's listing order.
 
-    W14: mi_ride_setup left the Ride menu with its spec.md 15 row. The
-    "edit this ride" setup semantics were never built, so File ▸ New
-    Ride… is the single entry point to the ride-setup window.
+    W14: mi_ride_setup left the Ride menu with its spec.md 15 row; the
+    "edit this ride" setup semantics it implied were never built.
+
+    D1/D2/D3 build them, on one surface: mi_new_ride moved off File
+    into the Ride menu (which owns the whole ride lifecycle),
+    mi_edit_ride opens the same ride_setup_dlg preloaded with the live
+    ride's config, and mi_clear_ride (after a separator, being the
+    menu's one destructive row) resets the open ride to a fresh
+    DRAFT. D4 retires mi_add_entry from the Riders menu: the Rider
+    Editor row is the single entry point for adding riders.
 
     wxID_PREFERENCES / wxID_EXIT / wxID_ABOUT carry no <label>: the stock id
     supplies the platform-correct text and lets wx relocate them into the
@@ -479,9 +507,6 @@
 
     <object class="wxMenu">
       <label>&amp;File</label>
-      <object class="wxMenuItem" name="mi_new_ride">
-        <label>&amp;New Ride…</label>
-      </object>
       <object class="wxMenuItem" name="mi_open_library">
         <label>Ride &amp;Library</label>
       </object>
@@ -505,6 +530,12 @@
 
     <object class="wxMenu">
       <label>&amp;Ride</label>
+      <object class="wxMenuItem" name="mi_new_ride">
+        <label>&amp;New Ride…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_edit_ride">
+        <label>&amp;Edit Ride…</label>
+      </object>
       <object class="wxMenuItem" name="mi_start_ride">
         <label>&amp;Start Ride</label>
       </object>
@@ -523,6 +554,10 @@
       <object class="wxMenuItem" name="mi_audit_trail">
         <label>&amp;Audit Trail…</label>
       </object>
+      <object class="separator"/>
+      <object class="wxMenuItem" name="mi_clear_ride">
+        <label>&amp;Clear Ride…</label>
+      </object>
     </object>
 
     <object class="wxMenu">
@@ -535,9 +570,6 @@
       </object>
       <object class="wxMenuItem" name="mi_check_rider_issues">
         <label>Check for Rider &amp;Issues…</label>
-      </object>
-      <object class="wxMenuItem" name="mi_add_entry">
-        <label>&amp;Add Rider/Entry…</label>
       </object>
       <object class="wxMenuItem" name="mi_mark_dnf">
         <label>&amp;Mark DNF…</label>

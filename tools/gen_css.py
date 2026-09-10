@@ -69,6 +69,45 @@ def _tailwind_executable() -> Path:
     return _TAILWIND_CLI
 
 
+def _missing_tailwind_cli_message() -> str:
+    """Return the CLI-missing error text that names the install fix."""
+    return (
+        f"pinned Tailwind CLI not found at {_tailwind_executable()} -- "
+        f"run `npm install` first (pins @tailwindcss/cli {_TAILWIND_VERSION})"
+    )
+
+
+def _ensure_tailwind_cli() -> None:
+    """Install the pinned Tailwind CLI when it is missing.
+
+    ``node_modules`` is gitignored, so a fresh clone or ``git
+    worktree`` has no CLI and the CSS build dies with a bare "run npm
+    install first". Install it from the lockfile with ``npm ci`` at the
+    repo root so the tool self-heals; a no-op once the CLI exists.
+
+    Raises:
+        TailwindCliMissingError: npm is not on ``PATH``, ``npm ci``
+            exited non-zero, or the CLI is still absent afterwards.
+    """
+    if _tailwind_executable().is_file():
+        return
+    npm = shutil.which("npm")
+    if npm is None:
+        raise TailwindCliMissingError(_missing_tailwind_cli_message())
+    print(f"Tailwind CLI missing at {_tailwind_executable()} -- running `npm ci`")
+    try:
+        subprocess.run(  # noqa: S603 -- absolute path from which(), fixed argv list, no shell
+            [npm, "ci"],
+            cwd=_ROOT,
+            capture_output=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise TailwindCliMissingError(_missing_tailwind_cli_message()) from exc
+    if not _tailwind_executable().is_file():
+        raise TailwindCliMissingError(_missing_tailwind_cli_message())
+
+
 # The wrapper is what makes theme.css a valid Tailwind v4 input: a
 # bare @theme file has no `@import "tailwindcss";`, so Tailwind would
 # not treat it as a stylesheet entry point.
@@ -165,17 +204,12 @@ def _run_tailwind_cli(argv: Sequence[str]) -> bytes:
     substitute the binary without Node being installed.
 
     Raises:
-        TailwindCliMissingError: The pinned CLI is not installed.
+        TailwindCliMissingError: The pinned CLI is not installed and
+            could not be bootstrapped with ``npm ci``.
         TailwindCompileError: The CLI exited non-zero.
         TailwindTimeoutError: The CLI did not finish within 120s.
     """
-    if not _tailwind_executable().is_file():
-        msg = (
-            f"pinned Tailwind CLI not found at {_tailwind_executable()} -- "
-            f"run `npm install` first (pins @tailwindcss/cli "
-            f"{_TAILWIND_VERSION})"
-        )
-        raise TailwindCliMissingError(msg)
+    _ensure_tailwind_cli()
     try:
         proc = subprocess.run(  # noqa: S603 -- absolute path, fixed argv list, no shell
             [str(_tailwind_executable()), *argv],

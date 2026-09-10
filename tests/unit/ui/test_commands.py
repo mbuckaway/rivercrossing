@@ -2,9 +2,9 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 39-row route table,
-its ``route_for_id`` dispatch, and its ``is_route_enabled`` /
-``is_stop_button_enabled`` rules are pure Python -- exactly the kind
+``commands.py`` imports no ``wx`` at all, so its 40-row route table,
+its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
+pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
 exactly why it belongs here rather than only in the functional suite
 (``cards_imagelist``'s split between ``tests/unit/`` and
@@ -43,9 +43,9 @@ from rivercrossing.ui import commands, ids
 # --- route table shape (E1.4.1) ---------------------------------------
 
 ROUTE_COUNTS_BY_MENU = (
-    ("File", 8),
-    ("Ride", 6),  # W14: Ride Setup… left the Ride menu with mi_ride_setup
-    ("Riders", 6),
+    ("File", 7),  # D1: New Ride… moved to the Ride menu
+    ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
+    ("Riders", 5),  # D4: mi_add_entry retired
     ("Cards", 7),
     ("Results", 7),
     ("View", 1),
@@ -61,24 +61,25 @@ ROUTE_COUNTS_BY_MENU = (
 # target string (an OS-native picker or an external browser has no
 # XRC name), so their expected target is None and is not asserted.
 ROUTE_TARGETS = (
-    (commands.TargetKind.WINDOW, ids.RIDE_SETUP_DLG),  # New Ride...
     (commands.TargetKind.WINDOW, ids.RIDE_LIBRARY_DLG),  # Ride Library
-    (commands.TargetKind.DIALOG, ids.DUPLICATE_RIDE_DLG),  # Duplicate Ride... (E5.4.1)
+    (commands.TargetKind.COMMAND, None),  # Duplicate Ride...: native prompt (H2)
     (commands.TargetKind.DIALOG, ids.CSV_PREVIEW_DLG),  # Import Riders CSV...
     (commands.TargetKind.COMMAND, None),  # Export Riders CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Back Up Database...: OS-native save dialog
     (commands.TargetKind.WINDOW, ids.SETTINGS_DLG),  # Settings...
     (commands.TargetKind.COMMAND, None),  # Exit: branches, no single fixed target
+    (commands.TargetKind.WINDOW, ids.RIDE_SETUP_DLG),  # Ride > New Ride...
+    (commands.TargetKind.WINDOW, ids.RIDE_SETUP_DLG),  # Ride > Edit Ride... (D2, same dialog)
     (commands.TargetKind.COMMAND, None),  # Start Ride: branches, no single fixed target
     (commands.TargetKind.COMMAND, None),  # Stop Ride...: native confirm (W5), no XRC dialog
     (commands.TargetKind.DIALOG, ids.SET_START_DLG),  # Set Start Time...
-    (commands.TargetKind.DIALOG, ids.FINISH_CONFIRM_DLG),  # Finish Ride...
-    (commands.TargetKind.DIALOG, ids.REOPEN_RIDE_DLG),  # Reopen Ride (E5.4.1)
+    (commands.TargetKind.COMMAND, None),  # Finish Ride...: native danger confirm (H2)
+    (commands.TargetKind.COMMAND, None),  # Reopen Ride: native prompt (H2)
     (commands.TargetKind.WINDOW, ids.AUDIT_DLG),  # Audit Trail...
+    (commands.TargetKind.COMMAND, None),  # Clear Ride...: confirm + in-place reset (D3)
     (commands.TargetKind.WINDOW, ids.RIDER_EDITOR_DLG),  # Rider Editor
     (commands.TargetKind.WINDOW, ids.TEAM_EDITOR_DLG),  # Teams Editor (Phase 4: mixed rides)
     (commands.TargetKind.WINDOW, ids.RIDER_ISSUES_DLG),  # Check for Rider Issues...
-    (commands.TargetKind.WINDOW, ids.RIDER_EDITOR_DLG),  # Add Rider/Entry...
     (commands.TargetKind.DIALOG, ids.DNF_CONFIRM_DLG),  # Mark DNF...
     (commands.TargetKind.WINDOW, ids.ENTRY_DETAIL_DLG),  # Entry Detail...
     (commands.TargetKind.COMMAND, None),  # Undo Last Crossing: "no dialog"
@@ -112,25 +113,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_forty_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 39
+    assert len(commands.ROUTE_TABLE) == 40
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 6, Riders 6, Cards 7, Results 7, View 1, Help 4."""
+    """File 7, Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_six_real_menu_item_ids_once_each() -> None:
-    """43 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_forty_seven_real_menu_item_ids_once_each() -> None:
+    """44 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 46
-    assert len(set(flat_ids)) == 46
+    assert len(flat_ids) == 47
+    assert len(set(flat_ids)) == 47
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -157,6 +158,62 @@ def test_route_for_id_given_an_unrouted_fake_id_raises() -> None:
         commands.route_for_id(fake_id)
 
 
+def test_route_for_id_given_the_retired_add_entry_id_raises_after_d4() -> None:
+    """D4: mi_add_entry left the Riders menu and the route table."""
+    with pytest.raises(commands.UnroutedMenuItemError, match=re.escape("mi_add_entry")):
+        commands.route_for_id("mi_add_entry")
+
+
+def test_edit_ride_route_declares_the_setup_dialog_and_a_ride_open_gate() -> None:
+    """D2: Edit Ride opens ride_setup_dlg, gated on an open ride."""
+    route = commands.route_for_id(ids.MI_EDIT_RIDE)
+
+    assert (route.menu, route.target) == ("Ride", ids.RIDE_SETUP_DLG)
+    assert route.enabled_when.requires_ride_open is True
+
+
+def test_new_ride_route_now_lives_in_the_ride_menu_after_d1() -> None:
+    """D1: File ▸ New Ride… retired; the Ride menu owns the row."""
+    route = commands.route_for_id(ids.MI_NEW_RIDE)
+
+    assert route.menu == "Ride"
+
+
+def test_clear_ride_route_declares_the_d3_enablement_rule() -> None:
+    """D3: the Clear Ride… row's own "Enabled when" cell, structured."""
+    rule = commands.route_for_id(ids.MI_CLEAR_RIDE).enabled_when
+
+    assert rule.allowed_states == frozenset(
+        {RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}
+    )
+    assert rule.requires_ride_stopped is True
+
+
+# H2: the three ride-lifecycle confirms retired their XRC dialogs for
+# the native std_dialogs prompts, so each row becomes a COMMAND with a
+# symbolic action target rather than a frozen XRC dialog name.
+PHASE_11_COMMAND_ROUTES = (
+    (ids.MI_DUPLICATE_RIDE, "duplicate_ride"),
+    (ids.MI_FINISH_RIDE, "finish_ride"),
+    (ids.MI_REOPEN_RIDE, "reopen_ride"),
+)
+PHASE_11_COMMAND_ROUTE_IDS = ("mi_duplicate_ride", "mi_finish_ride", "mi_reopen_ride")
+
+
+@pytest.mark.parametrize(
+    ("item_id", "expected_target"),
+    PHASE_11_COMMAND_ROUTES,
+    ids=PHASE_11_COMMAND_ROUTE_IDS,
+)
+def test_phase_11_ride_confirm_route_is_a_native_command(
+    item_id: str, expected_target: str
+) -> None:
+    """H2: no XRC dialog target remains for the three confirms."""
+    route = commands.route_for_id(item_id)
+
+    assert (route.kind, route.target) == (commands.TargetKind.COMMAND, expected_target)
+
+
 @given(st.sampled_from(ALL_ROUTE_IDS))
 def test_route_for_id_given_any_registered_id_returns_a_route_that_declares_it(
     item_id: str,
@@ -179,7 +236,6 @@ STATUS_STRATEGY = st.sampled_from(STATUSES)
 # None means the row does not gate on RideStatus at all (either
 # "always", or a condition-only rule such as Review Held Cards').
 ALLOWED_STATES = (
-    None,  # File > New Ride...: "always"
     None,  # File > Ride Library: "always"
     None,  # File > Duplicate Ride...: "a ride is open"
     None,  # File > Import Riders CSV...: "ride open (DRAFT-only edits)"
@@ -187,17 +243,23 @@ ALLOWED_STATES = (
     None,  # File > Back Up Database...: "always"
     None,  # File > Settings...: "always"
     None,  # File > Exit: "always"
-    frozenset({RideStatus.DRAFT, RideStatus.RUNNING}),  # Start Ride: "or stopped RUNNING"
+    None,  # Ride > New Ride...: "always"
+    None,  # Ride > Edit Ride...: "ride open" -- condition-only, any state (D2)
+    # Start Ride (C2): DRAFT / RUNNING / REOPENED
+    frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.REOPENED}),
     frozenset({RideStatus.RUNNING}),  # Ride > Stop Ride...: "RUNNING"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Ride > Set Start Time...
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Ride > Finish Ride...
     frozenset({RideStatus.FINISHED}),  # Ride > Reopen Ride: "FINISHED"
     None,  # Ride > Audit Trail...: "ride open, >=1 audit row"
+    # Clear Ride... (D3): DRAFT / stopped RUNNING / FINISHED.
+    # REOPENED is not clearable -- finish it first; the stop clause
+    # only ever gates a RUNNING ride.
+    frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}),
     None,  # Riders > Rider Editor: "ride open"
     None,  # Riders > Teams Editor: "ride open, mixed (teams allowed)" -- teams_allowed is a
     # condition-only gate, never a RideStatus membership rule
     None,  # Riders > Check for Rider Issues...: "ride open"
-    None,  # Riders > Add Rider/Entry...: "ride open (new plates any time)"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Riders > Mark DNF...
     None,  # Riders > Entry Detail...: "ride open"
     frozenset({RideStatus.RUNNING}),  # Cards > Undo Last Crossing: "RUNNING, >=1 crossing"
@@ -265,6 +327,8 @@ AUDIT_TRAIL_ROUTE = _ROUTES_BY_LABEL["Audit Trail…"]
 VOID_CARD_ROUTE = _ROUTES_BY_LABEL["Void Card…"]
 PREVIEW_ROUTE = _ROUTES_BY_LABEL["Preview in Browser"]
 START_RIDE_ROUTE = _ROUTES_BY_LABEL["Start Ride"]
+EDIT_RIDE_ROUTE = _ROUTES_BY_LABEL["Edit Ride…"]
+CLEAR_RIDE_ROUTE = _ROUTES_BY_LABEL["Clear Ride…"]
 
 RIDE_OPEN_CASES = (True, False)
 RIDE_OPEN_CASE_IDS = ("ride_open", "no_ride_open")
@@ -274,14 +338,17 @@ HELD_CARDS_BOUNDARY_CASES = (0, 1, 2)
 AUDIT_ROWS_BOUNDARY_CASES = (0, 1, 2)
 ENTRY_HAS_CARDS_CASES = ((False, False), (True, True))
 EXPORT_EXISTS_CASES = ((False, False), (True, True))
-ARMED_CASES = ((False, False), (True, True))
+# C2: Start Ride enables in DRAFT, in REOPENED (continue riding) and in
+# stopped-RUNNING (continue-after-stop); live RUNNING and FINISHED stay
+# off. The stopped clause only applies while the status is RUNNING.
 START_RIDE_CASES = (
     (RideStatus.DRAFT, False, True),
     (RideStatus.DRAFT, True, True),
     (RideStatus.RUNNING, False, False),
     (RideStatus.RUNNING, True, True),
     (RideStatus.FINISHED, True, False),
-    (RideStatus.REOPENED, True, False),
+    (RideStatus.REOPENED, False, True),
+    (RideStatus.REOPENED, True, True),
 )
 
 
@@ -398,12 +465,56 @@ def test_is_route_enabled_given_export_exists_condition_matches_preview_in_brows
 def test_is_route_enabled_given_start_ride_stopped_condition_matches_spec(
     status: RideStatus, *, ride_stopped: bool, expected_enabled: bool
 ) -> None:
-    """Start Ride: DRAFT, or stopped RUNNING -- a state/condition OR."""
+    """C2 Start Ride: DRAFT / REOPENED / stopped RUNNING.
+
+    REOPENED joins the enabled set (continue riding out of the
+    corrections state); the stopped clause still only gates a RUNNING
+    ride -- FINISHED is refused by state alone.
+    """
     state = dataclasses.replace(_baseline_state(status), ride_stopped=ride_stopped)
 
     result = commands.is_route_enabled(START_RIDE_ROUTE, state)
 
     assert result is expected_enabled
+
+
+# D2/D3: the two rows the 1.0.12 ride-menu work adds.
+# Clear Ride… enables in DRAFT, in stopped RUNNING and in FINISHED; a
+# live RUNNING ride and a REOPENED (corrections) ride do not.
+CLEAR_RIDE_CASES = (
+    (RideStatus.DRAFT, False, True),
+    (RideStatus.DRAFT, True, True),
+    (RideStatus.RUNNING, False, False),
+    (RideStatus.RUNNING, True, True),
+    (RideStatus.FINISHED, False, True),
+    (RideStatus.FINISHED, True, True),
+    (RideStatus.REOPENED, True, False),
+)
+
+
+@pytest.mark.parametrize(("status", "ride_stopped", "expected_enabled"), CLEAR_RIDE_CASES)
+def test_is_route_enabled_given_clear_ride_matches_spec_d3(
+    status: RideStatus, *, ride_stopped: bool, expected_enabled: bool
+) -> None:
+    """T-13: all four states x the stop clause for Clear Ride…."""
+    state = dataclasses.replace(_baseline_state(status), ride_stopped=ride_stopped)
+
+    result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
+
+    assert result is expected_enabled
+
+
+@pytest.mark.parametrize("ride_open", [False, True], ids=["no_ride_open", "ride_open"])
+@pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
+def test_is_route_enabled_given_edit_ride_follows_ride_open_in_every_state(
+    status: RideStatus, *, ride_open: bool
+) -> None:
+    """D2: Edit Ride is open-ride-gated, never state-gated."""
+    state = dataclasses.replace(_baseline_state(status), ride_open=ride_open)
+
+    result = commands.is_route_enabled(EDIT_RIDE_ROUTE, state)
+
+    assert result is ride_open
 
 
 # --- E7.2.1: the live binder's enable/disable table for the -----------
@@ -461,16 +572,6 @@ def test_is_route_enabled_given_correction_route_matches_the_live_binder_table( 
     result = commands.is_route_enabled(route, state)
 
     assert result is expected
-
-
-@pytest.mark.parametrize(("armed", "expected_enabled"), ARMED_CASES)
-def test_is_stop_button_enabled_given_arm_checkbox_state_matches_r35(
-    *, armed: bool, expected_enabled: bool
-) -> None:
-    """R-35: the console Stop button is gated on nothing but Arm."""
-    result = commands.is_stop_button_enabled(armed=armed)
-
-    assert result is expected_enabled
 
 
 def _ride_states_with(*, ride_open: bool) -> st.SearchStrategy[commands.RideState]:

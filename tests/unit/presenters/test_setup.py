@@ -27,10 +27,12 @@ from rivercrossing.ride import (
     RideConfig,
     RideStatus,
 )
-from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.roster import EntryMode, PlateModel, Roster, can_edit_structure
 from rivercrossing.ui.presenters.setup import (
     SetupFormValues,
     SetupPresenter,
+    _format_duration,
+    _format_min_lap,
     _parse_duration,
     _parse_min_lap,
 )
@@ -66,6 +68,62 @@ class RecordingSetupView:
     ) -> None:
         """Record the roster-sourced entry/team-size/plate-model."""
         self.calls.append(("show_entry_settings", (entry_mode, max_team_size, plate_model)))
+
+    def show_name(self, name: str) -> None:
+        """Record name_input's rendered value (D2 preload)."""
+        self.calls.append(("show_name", (name,)))
+
+    def show_date(self, event_date: date) -> None:
+        """Record date_picker's rendered value (D2 preload)."""
+        self.calls.append(("show_date", (event_date,)))
+
+    def show_start_time(self, start_time: time) -> None:
+        """Record start_time_picker's rendered value (D2 preload)."""
+        self.calls.append(("show_start_time", (start_time,)))
+
+    def show_venue(self, venue: str) -> None:
+        """Record venue_input's rendered value (D2 preload)."""
+        self.calls.append(("show_venue", (venue,)))
+
+    def show_organizer(self, organizer: str) -> None:
+        """Record organizer_input's rendered value (D2 preload)."""
+        self.calls.append(("show_organizer", (organizer,)))
+
+    def show_scorer(self, scorer: str) -> None:
+        """Record scorer_input's rendered value (D2 preload)."""
+        self.calls.append(("show_scorer", (scorer,)))
+
+    def show_duration(self, seconds: int) -> None:
+        """Record duration_input's rendered "H:MM" text (D2 preload)."""
+        self.calls.append(("show_duration", (seconds,)))
+
+    def show_min_lap(self, seconds: int) -> None:
+        """Record min_lap_input's rendered "M:SS" text (D2 preload)."""
+        self.calls.append(("show_min_lap", (seconds,)))
+
+    def show_short_lap_policy(self, *, hold_short_laps: bool) -> None:
+        """Record the W4 radio pair's rendered policy (D2 preload)."""
+        self.calls.append(("show_short_lap_policy", (hold_short_laps,)))
+
+    def show_jokers_per_deck(self, count: int) -> None:
+        """Record the jokers group's rendered value (D2)."""
+        self.calls.append(("show_jokers_per_deck", (count,)))
+
+    def show_card_cap(self, max_cards: int | None) -> None:
+        """Record cap_chk/cap_spin's rendered cap (D2 preload)."""
+        self.calls.append(("show_card_cap", (max_cards,)))
+
+    def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
+        """Record tiebreak_list's rendered row order (D2 preload)."""
+        self.calls.append(("show_tiebreak_order", (order,)))
+
+    def show_logo(self, logo_path: Path | None) -> None:
+        """Record logo_picker's rendered path (D2 preload)."""
+        self.calls.append(("show_logo", (logo_path,)))
+
+    def set_structure_enabled(self, *, enabled: bool) -> None:
+        """Record the D2 structural-field gate."""
+        self.calls.append(("set_structure_enabled", (enabled,)))
 
     def show_validation(self, message: str) -> None:
         """Record a refused-submit message."""
@@ -122,6 +180,64 @@ _VALID_FORM_KWARGS: dict[str, object] = {
 def _form(**overrides: object) -> SetupFormValues:
     """Build a valid SetupFormValues, overriding what a test names."""
     return SetupFormValues(**{**_VALID_FORM_KWARGS, **overrides})  # type: ignore[arg-type]
+
+
+# The stored ride an Edit Ride dialog (D2) opens onto. Every field is
+# deliberately different from a New Ride's defaults (DEFAULT_DECK_COUNT
+# / DEFAULT_LAP_KM / the XRC radio defaults), so a preload that quietly
+# fell back to the defaults would disagree with it.
+def _stored_config(**overrides: object) -> RideConfig:
+    """Build the ride config an Edit Ride dialog preloads from."""
+    kwargs: dict[str, object] = {
+        "name": "GORBA EPIC 2026",
+        "event_date": date(2026, 9, 20),
+        "venue": "Sea to Sky Gondola",
+        "lap_km": 6.5,
+        "organizer": "GORBA",
+        "scorer": "K. Singh",
+        "planned_start": datetime(2026, 9, 20, 10, 30),  # noqa: DTZ001 -- naive by design
+        "planned_duration_s": 7200,
+        "min_lap_s": 90,
+        "entry_mode": EntryMode.MIXED,
+        "plate_model": PlateModel.TEAM_RELAY,
+        "max_team_size": 6,
+        "deck_count": 2,
+        "jokers_per_deck": 4,
+        "max_cards": 5,
+        "tiebreak_order": ("high_card", "laps", "total_time"),
+        "hold_short_laps": True,
+        **overrides,
+    }
+    return RideConfig(**kwargs)  # type: ignore[arg-type]
+
+
+# One (seam, arguments) row per field SetupPresenter._load renders from
+# a stored config, transcribed from the ride record's own columns (not
+# from the module under test).
+_PRELOAD_CALLS: tuple[tuple[str, tuple[object, ...]], ...] = (
+    ("show_name", ("GORBA EPIC 2026",)),
+    ("show_date", (date(2026, 9, 20),)),
+    ("show_start_time", (time(10, 30),)),
+    ("show_venue", ("Sea to Sky Gondola",)),
+    ("show_organizer", ("GORBA",)),
+    ("show_scorer", ("K. Singh",)),
+    ("show_duration", (7200,)),
+    ("show_min_lap", (90,)),
+    ("show_lap_km", (6.5,)),
+    ("show_short_lap_policy", (True,)),
+    ("show_entry_settings", (EntryMode.MIXED, 6, PlateModel.TEAM_RELAY)),
+    ("show_deck_count", (2,)),
+    ("show_jokers_per_deck", (4,)),
+    ("show_card_cap", (5,)),
+    ("show_tiebreak_order", (("high_card", "laps", "total_time"),)),
+    ("show_logo", (None,)),
+)
+_PRELOAD_SEAMS = tuple(name for name, _args in _PRELOAD_CALLS)
+
+# The three seams a New Ride's load ALSO pushes (its own deck/lap
+# defaults and the roster's entry settings) -- so only the other
+# thirteen are config-preload-only.
+_DEFAULTS_LOAD_SEAMS = frozenset({"show_deck_count", "show_lap_km", "show_entry_settings"})
 
 
 # ------------------------------------------------------ construction
@@ -204,6 +320,116 @@ def test_setup_presenter_init_given_locked_relay_also_disables_team_fields() -> 
     SetupPresenter(view, _mixed_relay_roster(RideStatus.RUNNING))
 
     assert ("set_team_fields_enabled", (False,)) in view.calls
+
+
+# ------------------------------------------- D2: Edit Ride preload
+
+
+@pytest.mark.parametrize(("seam", "expected_args"), _PRELOAD_CALLS, ids=_PRELOAD_SEAMS)
+def test_setup_presenter_init_given_a_stored_config_preloads_the_field(
+    seam: str, expected_args: tuple[object, ...]
+) -> None:
+    """D2: Edit Ride opens PRELOADED with the ride's own config."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, _mixed_relay_roster(RideStatus.DRAFT), _stored_config())
+
+    assert (seam, expected_args) in view.calls
+
+
+def test_setup_presenter_init_given_a_stored_config_skips_the_new_ride_defaults() -> None:
+    """D2: the defaults never overwrite the stored ride's own."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, _mixed_pooled_roster(), _stored_config())
+
+    assert ("show_deck_count", (DEFAULT_DECK_COUNT,)) not in view.calls
+    assert ("show_lap_km", (DEFAULT_LAP_KM,)) not in view.calls
+
+
+def test_setup_presenter_init_given_no_config_leaves_the_preload_seams_uncalled() -> None:
+    """A New Ride has no ride record to preload from (D2)."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, _mixed_pooled_roster())
+
+    config_only = [
+        name
+        for name, _args in view.calls
+        if name in _PRELOAD_SEAMS and name not in _DEFAULTS_LOAD_SEAMS
+    ]
+    assert config_only == []
+
+
+def test_setup_presenter_init_given_a_stored_logo_preloads_its_path() -> None:
+    """D2: logo_picker opens on the ride's own logo, when it has one."""
+    view = RecordingSetupView()
+    logo = Path("/tmp/gorba-logo.png")  # noqa: S108 -- a stored value, never opened here
+
+    SetupPresenter(view, _mixed_relay_roster(RideStatus.DRAFT), _stored_config(logo_path=logo))
+
+    assert ("show_logo", (logo,)) in view.calls
+
+
+def test_setup_presenter_init_given_an_uncapped_stored_config_preloads_none() -> None:
+    """D2 nullable: an uncapped ride (max_cards NULL) preloads None."""
+    view = RecordingSetupView()
+
+    SetupPresenter(
+        view,
+        _mixed_relay_roster(RideStatus.DRAFT),
+        _stored_config(max_cards=None),
+    )
+
+    assert ("show_card_cap", (None,)) in view.calls
+
+
+def test_setup_presenter_init_given_no_config_keeps_structure_editing_enabled() -> None:
+    """A New Ride is always DRAFT: structure stays editable (D2)."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, _mixed_pooled_roster())
+
+    assert ("set_structure_enabled", (True,)) in view.calls
+
+
+@pytest.mark.parametrize(
+    "status",
+    [RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED],
+)
+def test_setup_presenter_init_gates_structure_editing_on_the_ride_state(
+    status: RideStatus,
+) -> None:
+    """D2: only a DRAFT ride's structure may be edited."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, _mixed_pooled_roster_at(status), _stored_config())
+
+    assert ("set_structure_enabled", (can_edit_structure(status),)) in view.calls
+
+
+def test_setup_presenter_init_given_a_stored_relay_ride_locks_from_its_own_plate_model() -> None:
+    """D2: the lock reads the CONFIG's plate model, not the roster's.
+
+    A stored relay ride left DRAFT locks the entry/plate group; the
+    preloaded config is the authoritative shape it locks against.
+    """
+    view = RecordingSetupView()
+    running_relay = _mixed_relay_roster(RideStatus.RUNNING)
+
+    SetupPresenter(view, running_relay, _stored_config())
+
+    assert ("set_entry_locked", (True,)) in view.calls
+
+
+def test_on_submit_given_a_preloaded_config_still_builds_from_the_form() -> None:
+    """D2: an edit submit rebuilds the config from the form."""
+    presenter = SetupPresenter(RecordingSetupView(), _mixed_pooled_roster(), _stored_config())
+
+    config = presenter.on_submit(_form(name="Renamed Ride"))
+
+    assert config is not None
+    assert config.name == "Renamed Ride"
 
 
 # --- entry/plate-model lock: status x plate_model (E3.5's own matrix) -
@@ -565,3 +791,51 @@ def test_parse_min_lap_round_trips_every_m_ss_shape(minutes: int, seconds: int) 
     text = f"{minutes}:{seconds:02d}"
 
     assert _parse_min_lap(text) == minutes * 60 + seconds
+
+
+# ------------------------- D2 preload formatting: "H:MM" / "M:SS"
+# The inverse of the parsers above: a stored ride's whole-second
+# planned_duration_s/min_lap_s must render into the same text fields
+# the operator would have typed.
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(0, "0:00"), (59, "0:00"), (60, "0:01"), (21600, "6:00"), (45000, "12:30")],
+    ids=["zero", "sub_minute", "one_minute", "six_hours", "twelve_thirty"],
+)
+def test_format_duration_given_seconds_returns_h_mm(seconds: int, expected: str) -> None:
+    """duration_input's preloaded text is whole H:MM (spec §2)."""
+    assert _format_duration(seconds) == expected
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [(0, "0:00"), (59, "0:59"), (60, "1:00"), (125, "2:05"), (1080, "18:00")],
+    ids=["zero", "sub_minute", "one_minute", "two_oh_five", "eighteen_minutes"],
+)
+def test_format_min_lap_given_seconds_returns_m_ss(seconds: int, expected: str) -> None:
+    """min_lap_input's preloaded text is whole M:SS (spec §6)."""
+    assert _format_min_lap(seconds) == expected
+
+
+@given(
+    hours=st.integers(min_value=0, max_value=23),
+    minutes=st.integers(min_value=0, max_value=59),
+)
+def test_format_duration_round_trips_every_h_mm_shape(hours: int, minutes: int) -> None:
+    """T-7 invariant: format(parse("H:MM")) is the identical text."""
+    text = f"{hours}:{minutes:02d}"
+
+    assert _format_duration(_parse_duration(text)) == text
+
+
+@given(
+    minutes=st.integers(min_value=0, max_value=59),
+    seconds=st.integers(min_value=0, max_value=59),
+)
+def test_format_min_lap_round_trips_every_m_ss_shape(minutes: int, seconds: int) -> None:
+    """T-7 invariant: format(parse("M:SS")) is the identical text."""
+    text = f"{minutes}:{seconds:02d}"
+
+    assert _format_min_lap(_parse_min_lap(text)) == text

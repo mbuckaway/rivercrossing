@@ -48,7 +48,10 @@ from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from datetime import date, datetime
+    from pathlib import Path
 
+    from rivercrossing.roster import EntryMode
     from rivercrossing.ui.cards_imagelist import CardImageList
     from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import (
@@ -344,7 +347,11 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.PLATE_INPUT,
     ids.RECORD_BTN,
     ids.LAST_CROSSING_LBL,
+    # C1: the ride-identity block -- name, logo, and the date/start/
+    # type detail line the logo replaces when a ride has one.
     ids.RIDE_NAME_LBL,
+    ids.RIDE_LOGO_BMP,
+    ids.RIDE_DETAILS_LBL,
     ids.RIDE_STATUS_LBL,
     ids.CROSSINGS_COUNT_LBL,
     ids.CARDS_COUNT_LBL,
@@ -355,7 +362,6 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.RIDERS_COUNT_LBL,
     ids.TEAMS_COUNT_LBL,
     ids.START_BTN,
-    ids.ARM_STOP_CHK,
     ids.STOP_BTN,
     ids.UNDO_BTN,
     ELAPSED_CLOCK_PANEL,
@@ -383,6 +389,8 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.RECORD_BTN: wx.Button,
     ids.LAST_CROSSING_LBL: wx.StaticText,
     ids.RIDE_NAME_LBL: wx.StaticText,
+    ids.RIDE_LOGO_BMP: wx.StaticBitmap,
+    ids.RIDE_DETAILS_LBL: wx.StaticText,
     ids.RIDE_STATUS_LBL: wx.StaticText,
     ids.CROSSINGS_COUNT_LBL: wx.StaticText,
     ids.CARDS_COUNT_LBL: wx.StaticText,
@@ -391,7 +399,6 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.RIDERS_COUNT_LBL: wx.StaticText,
     ids.TEAMS_COUNT_LBL: wx.StaticText,
     ids.START_BTN: wx.BitmapButton,
-    ids.ARM_STOP_CHK: wx.CheckBox,
     ids.STOP_BTN: wx.BitmapButton,
     ids.UNDO_BTN: wx.Button,
     ELAPSED_CLOCK_PANEL: wx.Panel,
@@ -415,8 +422,8 @@ class MainFrame:
     ``set_hide_times``, ``show_clock``, ``set_entry_locked``) -- the
     "add the member once the presenter calls it" precedent this
     class's own earlier docstring recorded for ``set_hide_times``.
-    :meth:`wire_console` binds the lifecycle controls (start/arm/
-    stop/undo) and the tick timer, mirroring :meth:`wire_entry`'s
+    :meth:`wire_console` binds the lifecycle controls (start/stop/
+    undo) and the tick timer, mirroring :meth:`wire_entry`'s
     callback idiom; the app bootstrap (and the live-console harness)
     call it after construction.
     """
@@ -472,6 +479,9 @@ class MainFrame:
         self.record_btn = self._find(ids.RECORD_BTN, wx.Button)
         self.last_crossing_lbl = self._find(ids.LAST_CROSSING_LBL, wx.StaticText)
         self.ride_name_lbl = self._find(ids.RIDE_NAME_LBL, wx.StaticText)
+        # C1: the ride logo and its date/start/type fallback line.
+        self.ride_logo_bmp = self._find(ids.RIDE_LOGO_BMP, wx.StaticBitmap)
+        self.ride_details_lbl = self._find(ids.RIDE_DETAILS_LBL, wx.StaticText)
         self.ride_status_lbl = self._find(ids.RIDE_STATUS_LBL, wx.StaticText)
         self.crossings_count_lbl = self._find(ids.CROSSINGS_COUNT_LBL, wx.StaticText)
         self.cards_count_lbl = self._find(ids.CARDS_COUNT_LBL, wx.StaticText)
@@ -482,9 +492,8 @@ class MainFrame:
         self.riders_count_lbl = self._find(ids.RIDERS_COUNT_LBL, wx.StaticText)
         self.teams_count_lbl = self._find(ids.TEAMS_COUNT_LBL, wx.StaticText)
 
-        # E4.4.1 lifecycle controls (start/arm/stop/undo + clock).
+        # E4.4.1 lifecycle controls (start/stop/undo + clock).
         self.start_btn = self._find(ids.START_BTN, wx.BitmapButton)
-        self.arm_stop_chk = self._find(ids.ARM_STOP_CHK, wx.CheckBox)
         self.stop_btn = self._find(ids.STOP_BTN, wx.BitmapButton)
         self.undo_btn = self._find(ids.UNDO_BTN, wx.Button)
         # WS-D gauge slots: the dials and the status lamp are built
@@ -515,13 +524,10 @@ class MainFrame:
         self.start_btn.SetLabel("Start ride")
         self.stop_btn.SetBitmap(stop_bundle().GetBitmapFor(self.stop_btn))
         self.stop_btn.SetLabel("Stop ride…")
-        # R-35: Stop is gated on arm_stop_chk -- disabled at rest even
-        # if the XRC ever leaves it enabled (test_menu_state pins the
-        # commands-side rule; this pins the actual control). W5 adds
-        # the RUNNING gate: arm_stop_chk and stop_btn live only while
-        # the ride is RUNNING (set_state composes both from the armed
-        # mirror set_stop_enabled keeps).
-        self._stop_armed = False
+        # C2: Stop is disabled at rest even if the XRC ever leaves it
+        # enabled; the presenter's refresh_console_gates (called from
+        # every set_state/show_feed render) is the real source, this
+        # just avoids a flash before the first render.
         self.stop_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
 
         # WS-H review notebook: the two DataView shells, their
@@ -1016,10 +1022,9 @@ class MainFrame:
         every presenter state transition (start/stop/finish/reopen)
         lands here, and the binder re-applies the §15 enablement.
         WS-D adds the status lamp: the same state transition drives
-        the ``StopLight`` through ``console.stop_light_mode``. W5 adds
-        the RUNNING gate for the arm checkbox and Stop button
-        (composed with the armed mirror) and the console-button-gate
-        refresh through the bound presenter.
+        the ``StopLight`` through ``console.stop_light_mode``. C2
+        refreshes the Start/Stop/Undo button gates through the bound
+        presenter (the single source for all three).
         """
         self.ride_status_lbl.SetLabel(status.value.upper())
         self.ride_status_light.set_mode(stop_light_mode(status))
@@ -1039,35 +1044,47 @@ class MainFrame:
         else:
             self.finished_infobar.Dismiss()
         self._status = status
-        self._apply_stop_arm_gate()
         self._notify_ride_changed()
         if self._presenter is not None:
             self._presenter.refresh_console_gates()
 
-    def _apply_stop_arm_gate(self) -> None:
-        """Compose the R-35 arm/Stop controls with the RUNNING gate.
-
-        W5: ``arm_stop_chk`` and ``stop_btn`` are disabled whenever
-        the ride is not RUNNING -- arming only ever guards a live
-        ride. Leaving RUNNING also clears the armed mirror and unticks
-        the checkbox, so a later return to RUNNING starts unarmed.
-        """
-        running = self._status is RideStatus.RUNNING
-        self.arm_stop_chk.Enable(running)
-        if not running:
-            self._stop_armed = False
-            self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.stop_btn.Enable(running and self._stop_armed)
-
-    def show_ride_name(self, name: str) -> None:
-        """Render the open ride's name (ConsoleView, E9.1.4).
+    def show_ride_header(  # noqa: PLR0913 -- the identity block's five facts
+        self,
+        *,
+        name: str,
+        logo: Path | None,
+        event_date: date,
+        planned_start: datetime,
+        entry_mode: EntryMode,
+    ) -> None:
+        """Render the open ride's identity block (ConsoleView, C1).
 
         ``ride_name_lbl`` is the frozen design's ride-identity line
-        (xrc-windows.md section A); every console switch onto a
-        store ride renders the ride's name here -- the library Open
-        and the New Ride flow alike.
+        (xrc-windows.md section A); every console switch onto a ride
+        renders the ride's name, plus either the ride's own logo
+        (``ride_logo_bmp``) or, when it has none, the
+        ``ride_details_lbl`` fallback line -- the library Open, the
+        New Ride flow and Edit Ride alike.
+
+        A logo that is absent, missing on disk or undecodable degrades
+        to the detail line rather than blanking the header (the same
+        "never blank the canvas" rule ``views.about`` follows).
         """
         self.ride_name_lbl.SetLabel(name)
+        self.ride_details_lbl.SetLabel(_ride_details_label(event_date, planned_start, entry_mode))
+        self._show_ride_logo(logo)
+        self.frame.Layout()
+
+    def _show_ride_logo(self, logo: Path | None) -> None:
+        """Show the ride logo, or the detail line in its place (C1)."""
+        bitmap = _ride_logo_bitmap(logo)
+        if bitmap is None:
+            self.ride_logo_bmp.Hide()
+            self.ride_details_lbl.Show()
+            return
+        self.ride_logo_bmp.SetBitmap(bitmap)
+        self.ride_logo_bmp.Show()
+        self.ride_details_lbl.Hide()
 
     def set_on_ride_changed(self, callback: Callable[[RideStatus], None]) -> None:
         """Register the menu-binder callback fired on ride changes.
@@ -1136,20 +1153,12 @@ class MainFrame:
         sound.play(cue)
 
     def set_stop_enabled(self, *, enabled: bool) -> None:
-        """Enable or disable the Stop button (ConsoleView, R-35).
+        """Enable or disable the Stop button (ConsoleView, C2).
 
-        The presenter's armed verdict is stored in the armed mirror
-        and composed with the RUNNING gate (W5): Stop is only ever
-        enabled while the ride is RUNNING *and* armed. Disarming also
-        unticks ``arm_stop_chk`` so the checkbox visibly reflects the
-        presenter's auto-clear (after use or timeout); ``SetValue``
-        fires no ``EVT_CHECKBOX`` (measured harness convention), so
-        this cannot loop back into the presenter.
+        The presenter's ``refresh_console_gates`` owns the verdict
+        (RUNNING and not stopped); the view only applies it.
         """
-        self._stop_armed = enabled
-        if not enabled:
-            self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.stop_btn.Enable(enabled and self._status is RideStatus.RUNNING)
+        self.stop_btn.Enable(enabled)
 
     def set_start_enabled(self, *, enabled: bool) -> None:
         """Enable or disable the Start ride button (ConsoleView, W5)."""
@@ -1221,14 +1230,14 @@ class MainFrame:
     def wire_console(self, presenter: ConsolePresenter) -> None:
         """Bind the lifecycle controls and tick timer to *presenter*.
 
-        Mirrors :meth:`wire_entry`'s callback idiom: Start Ride,
-        the Arm checkbox, Stop Ride and Undo each forward to the
-        presenter, and a 1 s ``wx.Timer`` drives ``presenter.tick()``
-        (feed/counters/clock refresh + R-35's 10 s arm auto-clear).
-        W5: Stop Ride forwards straight to the presenter's native
-        stop-confirm flow (``on_stop_requested``) -- the view opens
-        no dialog itself; the retired ``stop_confirm_dlg`` load lived
-        here before.
+        Mirrors :meth:`wire_entry`'s callback idiom: Start Ride, Stop
+        Ride and Undo each forward to the presenter, and a 1 s
+        ``wx.Timer`` drives ``presenter.tick()`` (feed/counters/clock
+        refresh -- the sole live-clock driver, so C3's closed-ride
+        freeze lives in the presenter). W5: Stop Ride forwards
+        straight to the presenter's native stop-confirm flow
+        (``on_stop_requested``) -- the view opens no dialog itself;
+        the retired ``stop_confirm_dlg`` load lived here before.
 
         The presenter is stored as :attr:`_presenter` and every
         handler routes through it, so :meth:`set_presenter` can swap
@@ -1237,10 +1246,6 @@ class MainFrame:
         """
         self._presenter = presenter
         self.start_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_start())
-        self.arm_stop_chk.Bind(
-            wx.EVT_CHECKBOX,
-            lambda _event: self._presenter.on_arm_stop(armed=self.arm_stop_chk.GetValue()),
-        )
         self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_stop_requested())
         self.undo_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_undo())
         self._tick_timer = wx.Timer(self.frame)
@@ -1266,6 +1271,42 @@ class MainFrame:
         """
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
+
+
+def _ride_details_label(event_date: date, planned_start: datetime, entry_mode: EntryMode) -> str:
+    """Render the header's ride detail line (C1).
+
+    The fallback shown beside the ride name when the ride has no logo:
+    the event date (ISO, ``event_date``'s own storage shape), the
+    planned start's local wall time, and the ride type -- the same
+    "stored UTC, displayed local" rule every other console timestamp
+    follows (spec §13). ``planned_start`` is RideConfig's own naive
+    local value, shown exactly as stored.
+
+    Returns:
+        ``"<YYYY-MM-DD> · <HH:MM> · <Solo|Mixed>"``.
+    """
+    day = event_date.isoformat()
+    start = planned_start.strftime("%H:%M")
+    return f"{day} · {start} · {entry_mode.value.title()}"
+
+
+def _ride_logo_bitmap(logo: Path | None) -> Any | None:  # noqa: ANN401 -- wx ships no stubs
+    """Return *logo*'s decoded PNG bitmap, or ``None`` (C1).
+
+    ``None`` (no logo chosen) is the header's detail-line case; a path
+    that names no file, or bytes wx cannot decode, decodes to a
+    not-OK ``wx.Bitmap`` and is treated the same way -- measured on
+    wxPython 4.3.1: ``wx.Bitmap(path, wx.BITMAP_TYPE_PNG)`` returns a
+    not-OK bitmap for both, rather than raising.
+
+    Returns:
+        A valid ``wx.Bitmap`` for a decodable file, else ``None``.
+    """
+    if logo is None:
+        return None
+    bitmap = wx.Bitmap(str(logo), wx.BITMAP_TYPE_PNG)
+    return bitmap if bitmap.IsOk() else None
 
 
 def _format_count(value: int) -> str:

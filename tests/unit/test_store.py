@@ -292,6 +292,71 @@ def test_store_open_upgrades_a_v1_database_adding_hold_short_laps_defaulted_to_z
         assert column[4] == "0"  # DEFAULT 0, so later inserts may omit it
 
 
+def test_store_open_upgrades_a_v2_database_dropping_entry_logo_png(tmp_path: Path) -> None:
+    """A shipped v2 file loses entry.logo_png in place (Phase 3).
+
+    The team logo image is retired: the v1 baseline DDL still declares
+    the column (it is immutable), so ``_migrate_v2_to_v3`` is what
+    takes it off a real database. The entry's own logo *card* -- and
+    the ride's separate ``logo_png`` organisation-logo column -- must
+    survive untouched.
+    """
+    db_path = tmp_path / "v2.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
+            conn.execute(statement)
+        conn.execute("ALTER TABLE ride ADD COLUMN hold_short_laps INTEGER NOT NULL DEFAULT 0")
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 2)")
+        conn.execute(
+            """
+            INSERT INTO ride (
+                name, event_date, venue, course_name, lap_km, organizer, scorer,
+                logo_png, planned_start, planned_duration_s, actual_start,
+                finished_at, status, entry_mode, max_team_size, plate_model,
+                min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
+                rng_seed, created_at, updated_at
+            ) VALUES (
+                'GORBA EPIC 2026', '2026-09-20', 'Sea to Sky Gondola',
+                'Sea to Sky Gondola', 8.0, 'GORBA', 'K. Singh', X'0102',
+                1789898400, 21600, NULL, NULL, 'draft', 'mixed', 4,
+                'rider_pooled', 1080, 8, 2, NULL, '["laps","total_time","high_card"]',
+                20260920, 1789898400, 1789898400
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO entry (
+                ride_id, plate, display_name, type, team_size, status, dnf_at,
+                notes, logo_card, logo_png
+            ) VALUES (1, '9', 'Dirt Dynamos', 'team', 0, 'active', NULL, '', 'AS', X'0304')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = Store.open(db_path)
+    try:
+        roster = store.roster_for(1)
+    finally:
+        store.close()
+
+    assert [entry.logo_card for entry in roster.entries] == ["AS"]
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        assert (
+            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
+            == LATEST_SCHEMA_VERSION
+        )
+        assert LATEST_SCHEMA_VERSION == 3
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(entry)")}
+        assert "logo_png" not in columns
+        assert "logo_card" in columns
+        ride = conn.execute("SELECT name, logo_png FROM ride WHERE id = 1").fetchone()
+        assert (ride[0], bytes(ride[1])) == ("GORBA EPIC 2026", b"\x01\x02")
+
+
 def test_store_open_future_schema_version_refuses_with_version_named(
     tmp_path: Path,
 ) -> None:
@@ -1789,13 +1854,13 @@ def test_store_save_roster_round_trips_two_part_rider_names(tmp_path: Path) -> N
     ]
 
 
-def test_store_save_roster_writes_null_logo_columns_on_every_entry(tmp_path: Path) -> None:
-    """Entries with no logo still store NULL in both logo columns.
+def test_store_save_roster_writes_a_null_logo_card_on_every_entry(tmp_path: Path) -> None:
+    """Entries with no logo still store NULL in the logo column.
 
     Phase 4 added the real write path (``test_store_save_roster_
-    round_trips_a_teams_logo_card``/``_image``); this pins the other
-    half -- an unseeded in-memory roster carries no logo, and its
-    rows must stay NULL, never an empty string or empty blob.
+    round_trips_a_teams_logo_card``); this pins the other half -- an
+    unseeded in-memory roster carries no logo, and its rows must stay
+    NULL, never an empty string.
     """
     db_path = tmp_path / "rides.db"
     ride_id = _save_roster_ride(
@@ -1806,11 +1871,9 @@ def test_store_save_roster_writes_null_logo_columns_on_every_entry(tmp_path: Pat
     )
 
     with closing(sqlite3.connect(str(db_path))) as conn:
-        rows = conn.execute(
-            "SELECT logo_card, logo_png FROM entry WHERE ride_id = ?", (ride_id,)
-        ).fetchall()
+        rows = conn.execute("SELECT logo_card FROM entry WHERE ride_id = ?", (ride_id,)).fetchall()
 
-    assert rows == [(None, None), (None, None)]
+    assert rows == [(None,), (None,)]
 
 
 def test_store_save_roster_pooled_team_round_trips_rider_plates(
@@ -2206,17 +2269,16 @@ def test_store_duplicate_ride_copies_first_and_last_name_columns(tmp_path: Path)
     assert [tuple(row) for row in copied] == [("Alice", ""), ("A.", "Roy"), ("K.", "Singh")]
 
 
-def test_store_duplicate_ride_copies_the_entry_logo_columns(tmp_path: Path) -> None:
-    """R-15: an entry's logo_card/logo_png copy over with the roster."""
+def test_store_duplicate_ride_copies_the_entry_logo_card(tmp_path: Path) -> None:
+    """R-15: an entry's logo_card copies over with the roster."""
     db_path = tmp_path / "rides.db"
     source_id = _source_ride_with_timing_data(db_path, _solo_roster())
-    logo_bytes = base64.b64decode(_TINY_PNG_B64)
     store = Store.open(db_path)
     try:
         with store._conn:
             store._conn.execute(
-                "UPDATE entry SET logo_card = ?, logo_png = ? WHERE ride_id = ?",
-                ("club-logo", logo_bytes, source_id),
+                "UPDATE entry SET logo_card = ? WHERE ride_id = ?",
+                ("club-logo", source_id),
             )
         copy_id = store.duplicate_ride(source_id)
     finally:
@@ -2225,19 +2287,15 @@ def test_store_duplicate_ride_copies_the_entry_logo_columns(tmp_path: Path) -> N
     with closing(sqlite3.connect(str(db_path))) as conn:
         conn.row_factory = sqlite3.Row
         source_row = conn.execute(
-            "SELECT logo_card, logo_png FROM entry WHERE ride_id = ?", (source_id,)
+            "SELECT logo_card FROM entry WHERE ride_id = ?", (source_id,)
         ).fetchone()
         copy_row = conn.execute(
-            "SELECT logo_card, logo_png FROM entry WHERE ride_id = ?", (copy_id,)
+            "SELECT logo_card FROM entry WHERE ride_id = ?", (copy_id,)
         ).fetchone()
     assert source_row is not None
     assert copy_row is not None
-    assert (copy_row["logo_card"], copy_row["logo_png"]) == (
-        source_row["logo_card"],
-        source_row["logo_png"],
-    )
+    assert copy_row["logo_card"] == source_row["logo_card"]
     assert copy_row["logo_card"] == "club-logo"
-    assert copy_row["logo_png"] == logo_bytes
 
 
 def test_store_duplicate_ride_unknown_ride_raises_naming_it(
@@ -2443,10 +2501,11 @@ def test_default_db_path_given_none_returns_the_default() -> None:
 
 
 # ------------------------------------------------ Phase 4 team logos
-# (A team's logo_card/logo_png now round-trip through the entry
-# table's Phase-1 columns instead of always storing NULL, and the
-# rebuilt roster inherits the ride's rng_seed as its team_logo_seed
-# so new teams auto-assign logo cards deterministically.)
+# (A team's logo_card round-trips through the entry table's Phase-1
+# column instead of always storing NULL, and the rebuilt roster
+# inherits the ride's rng_seed as its team_logo_seed so new teams
+# auto-assign logo cards deterministically. Phase 3 retired the logo
+# image column, so the card is the whole logo.)
 
 
 def _team_of(roster: Roster) -> Entry:
@@ -2469,25 +2528,6 @@ def test_store_save_roster_round_trips_a_teams_logo_card(tmp_path: Path) -> None
     reloaded = _round_trip_roster(db_path, ride_id)
 
     assert _team_of(reloaded).logo_card == "AS"
-    assert _team_of(reloaded).logo_png is None
-
-
-def test_store_save_roster_round_trips_a_teams_logo_image(tmp_path: Path) -> None:
-    """Phase 4: logo_png bytes are written and rebuilt, not NULLed."""
-    db_path = tmp_path / "rides.db"
-    roster = _pooled_roster()
-    _team_of(roster).logo_png = b"team-logo-png"
-    ride_id = _save_roster_ride(
-        db_path,
-        roster,
-        entry_mode=EntryMode.MIXED,
-        plate_model=PlateModel.RIDER_POOLED,
-    )
-
-    reloaded = _round_trip_roster(db_path, ride_id)
-
-    assert _team_of(reloaded).logo_png == b"team-logo-png"
-    assert _team_of(reloaded).logo_card is None
 
 
 # ------------------------------------------------ coverage-gap close
@@ -2669,3 +2709,321 @@ def test_store_save_roster_zero_rider_relay_team_keeps_its_relay_plate(tmp_path:
     (entry,) = reloaded.entries
     assert entry.plate == "RC 88"
     assert entry.riders == []
+
+
+# ============================================================ C1/D3
+# The ride-logo re-materialization (C1) and the Clear Ride reset (D3).
+
+
+def test_store_load_engine_rematerializes_the_stored_ride_logo(tmp_path: Path) -> None:
+    """C1: a reloaded ride's logo BLOB becomes a renderable file path.
+
+    ``ride.logo_png`` is stored as a BLOB (spec §2) but every logo
+    surface renders from a file, so loading a ride writes the bytes
+    back out and hands the header a path.
+    """
+    db_path = tmp_path / "rides.db"
+    logo_path = tmp_path / "logo.png"
+    logo_path.write_bytes(base64.b64decode(_TINY_PNG_B64))
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(logo_path=logo_path))
+
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    materialized = engine.config.logo_path
+    assert materialized is not None
+    assert materialized.read_bytes() == base64.b64decode(_TINY_PNG_B64)
+
+
+@pytest.mark.parametrize("logo_bytes", [None, b""], ids=["null", "empty"])
+def test_store_load_engine_given_no_logo_bytes_leaves_logo_path_none(
+    tmp_path: Path, logo_bytes: bytes | None
+) -> None:
+    """T-4 nullable: NULL and empty BLOBs both mean "no logo"."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        with store._conn:
+            store._conn.execute("UPDATE ride SET logo_png = ? WHERE id = ?", (logo_bytes, ride_id))
+
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    assert engine.config.logo_path is None
+
+
+def _stage_ride_with_data(db_path: Path, *, name: str = "Clearable") -> int:
+    """Stage one ride with an entry, a crossing, a card and audit rows.
+
+    The shape Clear Ride… must wipe: two audit rows (start + crossing),
+    one entry with its rider and crossing, one dealt card and the
+    session's active-ride marker.
+
+    Returns:
+        The staged ride's id.
+    """
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name=name))
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        with store._conn:
+            entry_id = store._conn.execute(
+                "INSERT INTO entry (ride_id, plate, display_name, type, team_size, status)"
+                " VALUES (?, '12', 'Alice', 'solo', 1, 'active')",
+                (ride_id,),
+            ).lastrowid
+            rider_id = store._conn.execute(
+                "INSERT INTO rider (entry_id, first_name, last_name, plate, sort_order)"
+                " VALUES (?, 'Alice', '', '12', 1)",
+                (entry_id,),
+            ).lastrowid
+            crossing_id = store._conn.execute(
+                "INSERT INTO crossing (ride_id, entry_id, rider_id, seq, crossed_at, lap_s, flag)"
+                " VALUES (?, ?, ?, 1, 100, 50, 'none')",
+                (ride_id, entry_id, rider_id),
+            ).lastrowid
+            store._conn.execute(
+                "INSERT INTO card"
+                " (ride_id, entry_id, crossing_id, shoe_index, rank, suit, state, dealt_at)"
+                " VALUES (?, ?, ?, 0, 14, 's', 'dealt', 100)",
+                (ride_id, entry_id, crossing_id),
+            )
+            store._conn.execute(
+                "UPDATE ride SET status = 'running', actual_start = 100 WHERE id = ?",
+                (ride_id,),
+            )
+        store.set_active_ride(ride_id)
+    finally:
+        store.close()
+    return ride_id
+
+
+def test_store_clear_ride_wipes_its_data_and_returns_it_to_draft(tmp_path: Path) -> None:
+    """D3: Clear Ride empties the ride and leaves it a fresh DRAFT."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _stage_ride_with_data(db_path)
+
+    store = Store.open(db_path)
+    try:
+        store.clear_ride(ride_id)
+
+        engine = store.load_engine(ride_id, _replay_roster())
+        assert engine.state is RideStatus.DRAFT
+        assert engine.events == ()
+        assert engine.crossings == ()
+        assert store.roster_for(ride_id).entries == ()
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        entry_rows = conn.execute(
+            "SELECT COUNT(*) FROM entry WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        crossing_rows = conn.execute(
+            "SELECT COUNT(*) FROM crossing WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        card_rows = conn.execute(
+            "SELECT COUNT(*) FROM card WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        audit_rows = conn.execute(
+            "SELECT COUNT(*) FROM audit WHERE ride_id = ?", (ride_id,)
+        ).fetchone()[0]
+        status = conn.execute("SELECT status FROM ride WHERE id = ?", (ride_id,)).fetchone()[0]
+        active = conn.execute(
+            "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+
+    assert (entry_rows, crossing_rows, card_rows, audit_rows) == (0, 0, 0, 0)
+    assert status == "draft"
+    assert active is None
+
+
+def test_store_clear_ride_keeps_the_ride_row_and_its_setup(tmp_path: Path) -> None:
+    """D3: clearing resets the ride; Delete (R-18) removes it."""
+    db_path = tmp_path / "rides.db"
+    ride_id = _stage_ride_with_data(db_path, name="Club poker night")
+
+    store = Store.open(db_path)
+    try:
+        store.clear_ride(ride_id)
+        rides = store.rides()
+    finally:
+        store.close()
+
+    assert [(ride.id, ride.name) for ride in rides] == [(ride_id, "Club poker night")]
+
+
+def test_store_clear_ride_keeps_a_sibling_ride_untouched(tmp_path: Path) -> None:
+    """D3: a sibling ride's rows survive a clear."""
+    db_path = tmp_path / "rides.db"
+    doomed = _stage_ride_with_data(db_path, name="Doomed")
+    store = Store.open(db_path)
+    try:
+        keeper = store.create_ride(_config(name="Keeper"))
+        store.append(
+            keeper, Event(action="start", payload={"actual_start": "2026-09-20T11:00:00"})
+        )
+        store.clear_ride(doomed)
+    finally:
+        store.close()
+
+    store = Store.open(db_path)
+    try:
+        assert [row.action for row in store.audit_rows(keeper)] == ["start"]
+        assert store.audit_rows(doomed) == []
+    finally:
+        store.close()
+
+
+def test_store_clear_ride_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
+    """T-5: clearing a ride id that never existed fails loudly."""
+    db_path = tmp_path / "rides.db"
+    Store.open(db_path).close()
+
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.clear_ride(999)
+    finally:
+        store.close()
+
+
+# --------------------------------------- D2: updating a stored ride
+
+
+def test_store_update_ride_config_rewrites_the_editable_columns(tmp_path: Path) -> None:
+    """D2: an edited ride's own settings land back on the ride row."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Before"))
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+
+        store.update_ride_config(
+            ride_id,
+            _config(
+                name="After",
+                venue="New Venue",
+                lap_km=6.5,
+                organizer="Org 2",
+                scorer="Scorer 2",
+                planned_duration_s=7200,
+                min_lap_s=90,
+                max_team_size=6,
+                deck_count=2,
+                jokers_per_deck=0,
+                max_cards=5,
+                tiebreak_order=("high_card", "laps", "total_time"),
+            ),
+        )
+        engine = store.load_engine(ride_id, _replay_roster())
+    finally:
+        store.close()
+
+    config = engine.config
+    assert (
+        config.name,
+        config.venue,
+        config.lap_km,
+        config.organizer,
+        config.scorer,
+        config.planned_duration_s,
+        config.min_lap_s,
+        config.max_team_size,
+        config.deck_count,
+        config.jokers_per_deck,
+        config.max_cards,
+        config.tiebreak_order,
+    ) == (
+        "After",
+        "New Venue",
+        6.5,
+        "Org 2",
+        "Scorer 2",
+        7200,
+        90,
+        6,
+        2,
+        0,
+        5,
+        ("high_card", "laps", "total_time"),
+    )
+    # The audit log is the live ride, not a setting: an edit never
+    # rewrites it, so the ride stays RUNNING after its setup changes.
+    assert engine.state is RideStatus.RUNNING
+
+
+def test_store_update_ride_config_keeps_the_stored_logo_when_none_is_given(
+    tmp_path: Path,
+) -> None:
+    """D2: an edit that picks no logo does not wipe the stored one."""
+    db_path = tmp_path / "rides.db"
+    logo_path = tmp_path / "logo.png"
+    logo_path.write_bytes(base64.b64decode(_TINY_PNG_B64))
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(logo_path=logo_path))
+
+        store.update_ride_config(ride_id, _config(name="Renamed"))
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        stored = conn.execute("SELECT logo_png FROM ride WHERE id = ?", (ride_id,)).fetchone()[0]
+
+    assert stored == base64.b64decode(_TINY_PNG_B64)
+
+
+def test_store_update_ride_config_given_a_logo_path_rewrites_the_blob(
+    tmp_path: Path,
+) -> None:
+    """D2: a logo picked in Edit Ride replaces the stored BLOB."""
+    db_path = tmp_path / "rides.db"
+    logo_path = tmp_path / "new-logo.png"
+    logo_path.write_bytes(base64.b64decode(_TINY_PNG_B64))
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(name="Before"))
+
+        store.update_ride_config(ride_id, _config(name="After", logo_path=logo_path))
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        stored = conn.execute("SELECT logo_png FROM ride WHERE id = ?", (ride_id,)).fetchone()[0]
+
+    assert stored == base64.b64decode(_TINY_PNG_B64)
+
+
+def test_store_update_ride_config_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
+    """T-5: editing a ride id that never existed fails loudly."""
+    db_path = tmp_path / "rides.db"
+    Store.open(db_path).close()
+
+    store = Store.open(db_path)
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.update_ride_config(999, _config())
+    finally:
+        store.close()

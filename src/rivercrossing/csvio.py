@@ -131,6 +131,7 @@ from rivercrossing.roster import (
     MIN_TEAM_SIZE,
     AuditEvent,
     Entry,
+    EntryMode,
     EntryType,
     PlateModel,
     Rider,
@@ -163,6 +164,7 @@ _HEADER_PROBLEM = "missing or malformed header: no first or last name column"
 _FINISHED_COLUMNS = ("laps", "cards", "best_hand", "total_time")
 _MISSING_NAME_PROBLEM = "missing name"
 _NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
+_SOLO_ONLY_TEAM_PROBLEM = "team entries are not allowed on a solo-only ride"
 _UNIFIED_COLUMNS = ("FIRSTNAME", "LASTNAME", "TYPE", "TEAMNAME", "NUMBER", "NOTES")
 
 _TEAM_NAME_PATTERN = re.compile(r"team\s*name", re.IGNORECASE)
@@ -375,6 +377,12 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
     example) is one file-level conflict at row 1 -- the file reads as
     neither header nor data, so nothing is parsed.
 
+    A team row on a solo-only ride (``entry_mode`` SOLO) is a conflict
+    too (R-11): the roster's own team constructors refuse a team there
+    (``SoloOnlyRideError``), so reporting the row up front keeps that
+    refusal inside this module's conflict contract instead of escaping
+    :func:`commit` as an uncaught error. A MIXED ride is unaffected.
+
     Args:
         path: The CSV file to read. Never written to.
         ride: The roster this import would apply to; its
@@ -404,10 +412,18 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
             return _whole_file_conflict(path, ride, _NOT_UTF8_PROBLEM)
         except csv.Error as exc:
             return _whole_file_conflict(path, ride, f"malformed CSV data: {exc}")
-    entries, entry_conflicts, entry_warnings = _assemble(rows, ride)
-    conflicts = sorted((*row_conflicts, *entry_conflicts), key=lambda conflict: conflict.row)
+    accepted_rows, solo_only_conflicts = _reject_team_rows(rows, ride)
+    entries, entry_conflicts, entry_warnings = _assemble(accepted_rows, ride)
+    conflicts = sorted(
+        (*row_conflicts, *solo_only_conflicts, *entry_conflicts),
+        key=lambda conflict: conflict.row,
+    )
     warnings = sorted(
-        (*entry_warnings, *_duplicate_rider_warnings(rows), *_near_duplicate_team_warnings(rows)),
+        (
+            *entry_warnings,
+            *_duplicate_rider_warnings(accepted_rows),
+            *_near_duplicate_team_warnings(accepted_rows),
+        ),
         key=lambda warning: warning.row,
     )
     return ImportPreview(
@@ -651,6 +667,26 @@ def _classify_row(type_field: str, team_name: str) -> str:
     if lowered == "":
         return "team" if team_name else "solo"
     return f"unknown entry type {type_field!r}"
+
+
+def _reject_team_rows(
+    rows: Sequence[_DataRow], ride: Roster
+) -> tuple[list[_DataRow], list[ImportConflict]]:
+    """Return *rows* without team rows, plus one conflict each.
+
+    A solo-only ride has no team concept at all (R-11): its roster's
+    own team constructors refuse a team with ``SoloOnlyRideError``, so
+    accepting a team row here would let that error escape
+    :func:`commit` instead of surfacing as a preview conflict. Every
+    team row is therefore reported and excluded; a MIXED ride is
+    returned unchanged, in order.
+    """
+    if ride.entry_mode is not EntryMode.SOLO:
+        return list(rows), []
+    conflicts = [
+        ImportConflict(row=row.row, problem=_SOLO_ONLY_TEAM_PROBLEM) for row in rows if row.is_team
+    ]
+    return [row for row in rows if not row.is_team], conflicts
 
 
 def _assemble(

@@ -29,6 +29,13 @@ file upgrades in place with existing rows defaulting to 0 (always
 deal). From here on, schema change means "append a migration", not
 "edit this DDL".
 
+**v3 drops ``entry.logo_png`` (Phase 3).** The team logo image is
+retired, so ``_migrate_v2_to_v3`` alters the v1 table above with
+``ALTER TABLE entry DROP COLUMN logo_png``; the CREATE keeps the
+column because an applied baseline is never rewritten. The ride's own
+``ride.logo_png`` organisation logo is a different column and stays.
+A fresh file therefore chains v0 -> v1 -> v2 -> v3.
+
 Two schema decisions are recorded here because the spec is silent:
 
 - ``event_date`` is stored as ISO-8601 ``TEXT`` (``YYYY-MM-DD``), not

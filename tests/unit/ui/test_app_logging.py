@@ -1,0 +1,412 @@
+# SPDX-License-Identifier: GPL-3.0-only
+"""Headless tests for the app's verbose-log wiring (F3/F4).
+
+``ui.logging.VerboseLog`` owns the NDJSON file; this module pins the
+three seams ``app.py`` owns that feed it, all headless (no window is
+constructed):
+
+- **F3 menu logging.** :func:`~rivercrossing.ui.app._bind_routes`
+  wraps every bound ``EVT_MENU`` handler so the selection is recorded
+  with its id, menu and label before the route dispatches -- which
+  also covers accelerator-triggered menu events.
+- **F3 settings toggle.**
+  :func:`~rivercrossing.ui.app._apply_settings_live` applies the
+  dialog's ``verbose_logging`` checkbox to the live log.
+- **F4 control logging.**
+  :func:`~rivercrossing.ui.app._make_verbose_event_filter` records the
+  whitelisted control events and skips everything else, and never
+  swallows an event.
+- **F4 modeless frames.** :func:`~rivercrossing.ui.app._open_target`
+  records the results frame it opens modeless (modal dialogs are
+  logged by ``views.dialogs.run_dialog`` instead).
+
+A real :class:`~rivercrossing.ui.logging.VerboseLog` over ``tmp_path``
+is the assertion surface, so each test checks the record that would
+reach a support session rather than that a mock was called.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+import pytest
+import wx
+import wx.xrc
+
+from rivercrossing.roster import Roster
+from rivercrossing.ui import app as app_module
+from rivercrossing.ui import commands
+from rivercrossing.ui.logging import VERBOSE_LOG_NAME, VerboseLog
+from rivercrossing.ui.presenters.settings import AppSettings
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+class _NoticeFrame:
+    """A frame double recording status notices and menu bindings."""
+
+    def __init__(self) -> None:
+        """Start with empty notice and binding logs."""
+        self.notices: list[str] = []
+        self.binds: list[tuple[object, object]] = []
+
+    def SetStatusText(self, text: str) -> None:  # noqa: N802 -- wx API name
+        """Record one status-bar notice."""
+        self.notices.append(text)
+
+    def Bind(self, _event: object, handler: object, id: object = None) -> None:  # noqa: N802, A002 -- wx API names
+        """Record one bound handler under its resolved id."""
+        self.binds.append((id, handler))
+
+
+class _AppWithLog:
+    """A minimal live-app double carrying the verbose log."""
+
+    def __init__(self, log: VerboseLog | None) -> None:
+        """Store the app's verbose log (``None`` when un-wired)."""
+        self.verbose_log = log
+
+
+def _records(path: Path) -> list[dict[str, object]]:
+    """Return the NDJSON records at *path* (none when it is absent)."""
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines() if line]
+
+
+def _messages(path: Path) -> list[object]:
+    """Return the ``msg`` field of every record at *path*, in order."""
+    return [record["msg"] for record in _records(path)]
+
+
+def _context(
+    *,
+    frame: object,
+    log: VerboseLog | None,
+    resource: object = None,
+) -> app_module._RouteContext:
+    """Build a route context over *frame* carrying *log* (or none)."""
+    return app_module._RouteContext(
+        frame=frame,
+        resource=resource,
+        roster=Roster(),
+        app=_AppWithLog(log),
+        theme_controller=None,
+    )
+
+
+# ------------------------------------------------- F3: menu logging
+
+
+def _bound_handler(frame: _NoticeFrame, item_id: str) -> object:
+    """Return the handler bound for *item_id*'s resolved wx id."""
+    return dict(frame.binds)[wx.xrc.XRCID(item_id)]
+
+
+def test_bind_routes_given_a_verbose_log_records_the_menu_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F3: the wrapper logs id/menu/label before the dispatch."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
+    frame = _NoticeFrame()
+    context = _context(frame=frame, log=log)
+    opened: list[object] = []
+    monkeypatch.setattr(app_module, "_open_target", lambda _ctx, route: opened.append(route))
+
+    app_module._bind_routes(context)
+    route = commands.route_for_id("mi_open_library")
+    _bound_handler(frame, "mi_open_library")(object())
+
+    assert opened == [route]
+    assert _messages(tmp_path / VERBOSE_LOG_NAME) == [
+        f"menu {route.menu}: {route.label} (id={wx.xrc.XRCID('mi_open_library')})"
+    ]
+
+
+def test_bind_routes_without_a_verbose_log_still_dispatches_the_route(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F3: an app with no log bound still fires its routes unchanged."""
+    frame = _NoticeFrame()
+    context = _context(frame=frame, log=None)
+    opened: list[object] = []
+    monkeypatch.setattr(app_module, "_open_target", lambda _ctx, route: opened.append(route))
+
+    app_module._bind_routes(context)
+    _bound_handler(frame, "mi_open_library")(object())
+
+    assert opened == [commands.route_for_id("mi_open_library")]
+
+
+# ------------------------------------------- F3: the settings toggle
+
+
+class _SettingsFrame(_NoticeFrame):
+    """A frame double answering the settings apply's menubar sync."""
+
+    def __init__(self) -> None:
+        """Start with an empty check log."""
+        super().__init__()
+        self.checks: list[tuple[int, bool]] = []
+
+    def GetMenuBar(self) -> _SettingsFrame:  # noqa: N802 -- wx API name
+        """Return this frame as the menubar double."""
+        return self
+
+    def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- wx API name, positional bool
+        """Record one menu check sync."""
+        self.checks.append((item_id, checked))
+
+
+class _FakeThemeController:
+    """A theme controller reporting no notice."""
+
+    def apply_mode(self, _mode: object) -> None:
+        """Apply nothing and report no notice."""
+
+
+def _settings(*, verbose_logging: bool) -> AppSettings:
+    """Build settings with only the verbose flag under test varied."""
+    return AppSettings(
+        appearance="system",
+        sound_on=True,
+        hide_times=False,
+        zoom_percent=100,
+        verbose_logging=verbose_logging,
+    )
+
+
+@pytest.mark.parametrize("verbose_logging", [True, False])
+def test_apply_settings_live_given_the_verbose_flag_applies_it_to_the_log(
+    tmp_path: Path, *, verbose_logging: bool
+) -> None:
+    """F3: the settings dialog's checkbox drives the live log."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME, enabled=not verbose_logging)
+    context = app_module._RouteContext(
+        frame=_SettingsFrame(),
+        resource=None,
+        roster=Roster(),
+        app=_AppWithLog(log),
+        theme_controller=_FakeThemeController(),
+    )
+    context.settings_path = tmp_path / "settings.json"
+
+    app_module._apply_settings_live(context, _settings(verbose_logging=verbose_logging))
+
+    assert log.enabled is verbose_logging
+
+
+def test_apply_settings_live_without_a_log_applies_the_rest(
+    tmp_path: Path,
+) -> None:
+    """F3: an app carrying no log still applies every other setting."""
+    frame = _SettingsFrame()
+    context = app_module._RouteContext(
+        frame=frame,
+        resource=None,
+        roster=Roster(),
+        app=_AppWithLog(None),
+        theme_controller=_FakeThemeController(),
+    )
+    context.settings_path = tmp_path / "settings.json"
+
+    app_module._apply_settings_live(context, _settings(verbose_logging=False))
+
+    assert context.settings.verbose_logging is False
+
+
+# ---------------------------------------------- F4: the event filter
+
+
+class _FakeControl:
+    """A control double exposing the two names the filter reads."""
+
+    def __init__(self, name: str, label: str = "") -> None:
+        """Store the frozen name and visible label."""
+        self._name = name
+        self._label = label
+
+    def GetName(self) -> str:  # noqa: N802 -- wx API name
+        """Return the control's frozen name."""
+        return self._name
+
+    def GetLabel(self) -> str:  # noqa: N802 -- wx API name
+        """Return the control's visible label."""
+        return self._label
+
+
+class _FakeCommandEvent:
+    """A command-event double exposing type and event object."""
+
+    def __init__(self, event_type: int, control: object = None) -> None:
+        """Store the event type id and its originating control."""
+        self._event_type = event_type
+        self._control = control
+
+    def GetEventType(self) -> int:  # noqa: N802 -- wx API name
+        """Return the numeric event type."""
+        return self._event_type
+
+    def GetEventObject(self) -> object:  # noqa: N802 -- wx API name
+        """Return the control the event names, if any."""
+        return self._control
+
+
+def test_verbose_event_filter_given_a_button_event_logs_the_button(tmp_path: Path) -> None:
+    """F4: a button activation records its frozen name and label."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
+    event_filter = app_module._make_verbose_event_filter(log)
+    event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("backup_now_btn", "Back up now"))
+
+    result = event_filter.FilterEvent(event)
+
+    assert result == wx.EventFilter.Event_Skip
+    assert _messages(tmp_path / VERBOSE_LOG_NAME) == ["button backup_now_btn: Back up now"]
+
+
+@pytest.mark.parametrize(
+    ("event_type", "kind"),
+    [
+        (wx.EVT_CHECKBOX.typeId, "CheckBox"),
+        (wx.EVT_RADIOBUTTON.typeId, "RadioButton"),
+        (wx.EVT_CHOICE.typeId, "Choice"),
+        (wx.EVT_TEXT.typeId, "TextCtrl"),
+    ],
+    ids=["checkbox", "radiobutton", "choice", "text"],
+)
+def test_verbose_event_filter_given_a_whitelisted_control_logs_its_kind(
+    tmp_path: Path,
+    event_type: int,
+    kind: str,
+) -> None:
+    """F4: each other whitelisted control logs its frozen name/kind."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
+    event_filter = app_module._make_verbose_event_filter(log)
+
+    result = event_filter.FilterEvent(_FakeCommandEvent(event_type, _FakeControl("sound_chk")))
+
+    assert result == wx.EventFilter.Event_Skip
+    assert _messages(tmp_path / VERBOSE_LOG_NAME) == [f"control sound_chk: {kind}"]
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [wx.EVT_PAINT.typeId, wx.EVT_MOTION.typeId, wx.EVT_TIMER.typeId, wx.EVT_IDLE.typeId],
+    ids=["paint", "motion", "timer", "idle"],
+)
+def test_verbose_event_filter_given_a_noise_event_writes_nothing(
+    tmp_path: Path,
+    event_type: int,
+) -> None:
+    """F4: paint/mouse/timer/idle traffic never reaches the log."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
+    event_filter = app_module._make_verbose_event_filter(log)
+    event = _FakeCommandEvent(event_type, _FakeControl("plate_input"))
+
+    result = event_filter.FilterEvent(event)
+
+    assert result == wx.EventFilter.Event_Skip
+    assert _messages(tmp_path / VERBOSE_LOG_NAME) == []
+
+
+def test_verbose_event_filter_given_a_disabled_log_writes_nothing(tmp_path: Path) -> None:
+    """F4: an opted-out log skips before touching the control."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME, enabled=False)
+    event_filter = app_module._make_verbose_event_filter(log)
+    event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("backup_now_btn", "Back up now"))
+
+    result = event_filter.FilterEvent(event)
+
+    assert result == wx.EventFilter.Event_Skip
+    assert _messages(tmp_path / VERBOSE_LOG_NAME) == []
+
+
+def test_verbose_event_filter_given_a_whitelisted_type_with_no_object_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """F4: an event naming no control is skipped, never raised on."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
+    event_filter = app_module._make_verbose_event_filter(log)
+
+    result = event_filter.FilterEvent(_FakeCommandEvent(wx.EVT_BUTTON.typeId))
+
+    assert result == wx.EventFilter.Event_Skip
+    assert _messages(tmp_path / VERBOSE_LOG_NAME) == []
+
+
+# ------------------------------------------ F4: modeless frame opens
+
+
+class _ModelessWindow:
+    """A modeless-frame double recording its show calls."""
+
+    def __init__(self) -> None:
+        """Start unshown and uncentred."""
+        self.centred = 0
+        self.shown = False
+        self.raised = 0
+
+    def CentreOnParent(self) -> None:  # noqa: N802 -- wx API name
+        """Record one centring."""
+        self.centred += 1
+
+    def Show(self) -> None:  # noqa: N802 -- wx API name
+        """Record the show."""
+        self.shown = True
+
+    def Raise(self) -> None:  # noqa: N802 -- wx API name
+        """Record one raise."""
+        self.raised += 1
+
+
+class _FakeResource:
+    """A resource double whose LoadFrame hands back one window."""
+
+    def __init__(self, window: _ModelessWindow) -> None:
+        """Store the frame this resource loads."""
+        self._window = window
+
+    def LoadFrame(self, _parent: object, _name: str) -> _ModelessWindow:  # noqa: N802 -- wx API name
+        """Return the staged modeless frame."""
+        return self._window
+
+
+def test_open_target_given_a_modeless_frame_logs_the_dialog_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4: the modeless results frame records its name and opener."""
+    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
+    window = _ModelessWindow()
+    context = _context(frame=_NoticeFrame(), log=log, resource=_FakeResource(window))
+    route = commands.route_for_id("mi_standings")
+    monkeypatch.setattr(app_module, "_decorate", lambda _ctx, _win, _route: None)
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _win, _route: None)
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _win: None)
+    monkeypatch.setattr(app_module.theme, "apply_light_mode_panel_bg", lambda _win: None)
+
+    app_module._open_target(context, route)
+
+    assert (window.shown, window.raised) == (True, 1)
+    assert _messages(tmp_path / VERBOSE_LOG_NAME) == [
+        f"dialog {route.target} (from {route.label})"
+    ]
+
+
+def test_open_target_given_a_modeless_frame_without_a_log_still_opens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F4: a log-less app still opens the frame, with no crash."""
+    window = _ModelessWindow()
+    context = _context(frame=_NoticeFrame(), log=None, resource=_FakeResource(window))
+    route = commands.route_for_id("mi_standings")
+    monkeypatch.setattr(app_module, "_decorate", lambda _ctx, _win, _route: None)
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _win, _route: None)
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _win: None)
+    monkeypatch.setattr(app_module.theme, "apply_light_mode_panel_bg", lambda _win: None)
+
+    app_module._open_target(context, route)
+
+    assert (window.shown, window.raised) == (True, 1)

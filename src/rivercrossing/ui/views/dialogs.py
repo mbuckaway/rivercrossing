@@ -35,6 +35,10 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   :func:`run_dialog` is the one entry point every other view wires a
   dialog's ``ShowModal`` through; it always restores focus to the
   caller-supplied *opener*, whichever way the dialog ends.
+* **The dialog sits over the console.** H1: that same entry point
+  re-parents the dialog to *opener*'s top-level window and centres it
+  there, so a dialog XRC loaded parentless does not land wherever the
+  platform put it (top-left on MSW) or behind the main window.
 
 ``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``,
 ``entry_detail_dlg``, W7's ``add_rider_dlg``, Phase 4's
@@ -54,10 +58,13 @@ against a raw XRC-loaded dialog; neither copies the other's table.
 """
 
 import gc
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from rivercrossing.ui import ids, require_wx, theme
 from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS
+
+if TYPE_CHECKING:
+    from rivercrossing.ui.logging import VerboseLog
 
 wx = require_wx()
 
@@ -73,6 +80,7 @@ __all__ = [
     "dnf_message",
     "duplicate_ride_message",
     "finish_again_labels",
+    "finish_ride_message",
     "first_field_for",
     "reassign_message",
     "reopen_ride_message",
@@ -92,9 +100,9 @@ WX_ID_CLOSE = "wxID_CLOSE"
 
 # E1.5.3's product decision: the already-authored dialogs with no XRC
 # <default> each get one (module docstring). rider_editor_dlg's own
-# choice -- Save, not Close or Add -- is explained in
+# choice -- Edit, not Close or Add -- is explained in
 # set_default_button's docstring; Phase 4's team_editor_dlg carries
-# the same shape (Save, not Close or Add/Remove) and joins the list;
+# the same shape (Edit, not Close or Add/Remove) and joins the list;
 # rider_issues_dlg is a report dialog whose only button is Close, so
 # Enter closes it (R-76).
 DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
@@ -103,8 +111,8 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
     (ids.ADD_RIDER_DLG, WX_ID_OK),
     (ids.ADD_TEAM_DLG, WX_ID_OK),
     (ids.ENTRY_DETAIL_DLG, WX_ID_CLOSE),
-    (ids.RIDER_EDITOR_DLG, ids.SAVE_BTN),
-    (ids.TEAM_EDITOR_DLG, ids.SAVE_BTN),
+    (ids.RIDER_EDITOR_DLG, ids.EDIT_BTN),
+    (ids.TEAM_EDITOR_DLG, ids.EDIT_BTN),
     (ids.RIDER_ISSUES_DLG, WX_ID_CLOSE),
 )
 
@@ -238,10 +246,11 @@ def set_default_button(dialog: Any, control_name: str) -> None:  # noqa: ANN401
     :data:`DEFAULT_BUTTON_DECISIONS` -- so Enter did nothing in them,
     measured via ``GetDefaultItem()``, a breach of R-76's "Enter =
     default". Set here rather than in the .xrc files so the choice
-    sits next to the reasoning: the rider editor defaults to Save
-    because Enter after typing into Plate/Name/Team should commit the
-    edit, not create a duplicate entry (Add) or silently discard it
-    (Close).
+    sits next to the reasoning: both editors are read-only record
+    displays, so Enter's affirmative action is opening the selected
+    record's own dialog (Edit), never creating a blank record (Add)
+    or discarding the pane (Close); the team editor's Remove is
+    destructive and never a default.
 
     Resolves through :func:`_control` with ``wx.Button`` as the
     expected type, so the address-reuse hazard (a stale wrapper
@@ -293,35 +302,56 @@ def delete_ride_message(ride_name: str) -> str:
 
 
 def duplicate_ride_message(ride_name: str) -> str:
-    """Return ``duplicate_ride_dlg``'s ``message_lbl`` copy (E5.4.1).
+    """Return the Duplicate Ride prompt's message text (E5.4.1).
 
-    Names the ride being duplicated (UX-DESKTOP §4), matching
-    dialogs.xrc's data-bearing sentence. Non-destructive, so the
-    confirm is Enter-safe; the copy's derived name is the Store's
-    concern, not this line's.
+    Names the ride being duplicated (UX-DESKTOP §4), then repeats the
+    retired ``duplicate_ride_dlg``'s own explanatory line: the copy is
+    setup + roster only (R-15), and the derived name is the Store's
+    concern, not this line's. Phase 11 H2 answers this through the
+    native ``std_dialogs.show_prompt``, so the two lines arrive as one
+    native message body.
     """
-    return f'Duplicate "{ride_name}" as a new DRAFT ride?'
+    return (
+        f'Duplicate "{ride_name}" as a new DRAFT ride?\n\n'
+        "Copies the ride's setup and full rider list — no timing data."
+    )
 
 
 def reopen_ride_message(ride_name: str) -> str:
-    """Return ``reopen_ride_dlg``'s ``message_lbl`` copy (E5.4.1).
+    """Return the Reopen Ride prompt's message text (E5.4.1).
 
-    Names the ride being reopened (UX-DESKTOP §4), matching
-    dialogs.xrc's data-bearing sentence and spec §3's "reopen for
-    corrections" wording.
+    Names the ride being reopened (UX-DESKTOP §4) with spec §3's
+    "reopen for corrections" wording, plus the retired
+    ``reopen_ride_dlg``'s own note that standings recompute on export.
+    Phase 11 H2 answers this through the native
+    ``std_dialogs.show_prompt``.
     """
-    return f'Reopen "{ride_name}" for corrections?'
+    return f'Reopen "{ride_name}" for corrections?\n\nStandings recompute on export.'
+
+
+def finish_ride_message() -> str:
+    """Return the Finish Ride confirm's message text (E4.4.4).
+
+    Phase 11 H2 retired ``finish_confirm_dlg`` for the native
+    ``std_dialogs.show_danger``; this is that XRC window's own
+    explanatory line, kept verbatim so the confirm still says what
+    finishing does and that reopening for corrections stays possible.
+    """
+    return (
+        "Locks entry and computes final standings (evaluator self-test must be "
+        "green). You can reopen later for corrections."
+    )
 
 
 def finish_again_labels() -> tuple[str, str]:
     """Return the REOPENED finish confirm's ``(title, ok_label)`` copy.
 
     E7.2.2's single primary "Finish again" (spec §3 design 8c; §15's
-    "Finish Ride… (Finish again from REOPENED)"): the same
-    ``finish_confirm_dlg`` the RUNNING finish route shows, re-labelled
-    when the ride is REOPENED -- title and primary button name the
-    re-lock, never blank (UX-DESKTOP §4). The first-finish copy stays
-    the XRC-authored "Finish Ride?" / "Finish ride".
+    "Finish Ride… (Finish again from REOPENED)"): the same finish
+    confirm the RUNNING finish route shows, re-labelled when the ride
+    is REOPENED -- title and primary button name the re-lock, never
+    blank (UX-DESKTOP §4). The first-finish copy stays
+    :func:`finish_ride_message` / "Finish ride".
     """
     return "Finish again?", "Finish again"
 
@@ -379,6 +409,17 @@ def reassign_message(crossing_time: str, entry: str) -> str:
     return f"Crossing {crossing_time} · lap credited to {entry}"
 
 
+def _active_verbose_log() -> VerboseLog | None:
+    """Return the launch's verbose log from the live app, if any (F4).
+
+    ``main`` builds the log and hangs it on the app
+    (``app.verbose_log``); an app that predates F1 -- a functional
+    harness's own ``wx.App``, or no app at all -- has none, so the
+    dialog seam logs nothing rather than raising.
+    """
+    return getattr(wx.GetApp(), "verbose_log", None)
+
+
 def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
     """Show *dialog* modally, always returning focus to *opener* after.
 
@@ -389,6 +430,14 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
     then shows *dialog* and restores focus to *opener* in a
     ``finally`` block so it happens whichever way the dialog ends
     (spec.md §13's last dialog rule).
+
+    H1: before showing, the dialog is re-parented to *opener*'s own
+    top-level window and centred on it. Every XRC dialog is loaded
+    with no parent, so without this it would be placed by the
+    platform (top-left on MSW) and could sit behind the main window;
+    re-parenting gives it the console as its owner and
+    ``CentreOnParent`` puts it over the window the operator is
+    looking at.
 
     Args:
         dialog: A loaded, not-yet-shown ``wx.Dialog``.
@@ -405,6 +454,16 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
     # can ever be needed mid-show (theme.apply_light_mode_panel_bg's
     # own docstring records the modeless-frame exception).
     theme.apply_light_mode_panel_bg(dialog)
+    # H1: every XRC dialog loads parentless, so it would be placed by
+    # the platform (top-left on MSW) and could hide behind the console.
+    # Own it to the opener's top-level window and centre it there.
+    dialog.Reparent(opener.GetTopLevelParent())
+    dialog.CentreOnParent()
+    # F4: the one seam every XRC dialog shows through records the open
+    # (the dialog's frozen name and what opened it) for the verbose log.
+    log = _active_verbose_log()
+    if log is not None:
+        log.dialog(dialog.GetName(), opener.GetName())
     try:
         return int(dialog.ShowModal())
     finally:

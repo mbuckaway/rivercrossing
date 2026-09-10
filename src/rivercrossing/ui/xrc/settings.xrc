@@ -2,9 +2,9 @@
 <!--
   Settings dialog (spec.md 15b file map, xrc-windows.md section E) - the
   six frozen controls the canvas annotates plus the stock wxID_OK /
-  wxID_CANCEL row. Control names are frozen; tests find them with
-  FindWindowByName and tools/gen_ids.py turns them into ui/ids.py
-  (R-05, R-73).
+  wxID_CANCEL row, and F1's verbose_log_chk. Control names are frozen;
+  tests find them with FindWindowByName and tools/gen_ids.py turns
+  them into ui/ids.py (R-05, R-73).
 
   Measured on wxPython 4.3.1 / wxWidgets 3.3.3:
 
@@ -20,9 +20,15 @@
 
   Only the radio group declares a default. spec.md 13 requires that a
   radio group is never left unselected, so "System" is structural and
-  belongs here. sound_chk and hide_times_chk are stored settings: the
-  presenter loads them when the dialog opens, so no <checked> is
-  declared for them.
+  belongs here. sound_chk, hide_times_chk and verbose_log_chk are
+  stored settings: the presenter loads them when the dialog opens, so
+  no <checked> is declared for them.
+
+  F1 (verbose logging): verbose_log_chk is a stored setting like
+  sound_chk - AppSettings.verbose_logging, rendered at open and
+  collected on OK. The app feeds it to ui.logging.VerboseLog, the
+  opt-out NDJSON trace (rivercrossing-verbose.log) that mirrors the
+  always-on plain-text crash log (rivercrossing.log).
 
   W13 (testing notes #12): the text-zoom choice (zoom_choice) left
   this dialog - View > Zoom is the single zoom surface, its seven
@@ -104,6 +110,14 @@
         <border>10</border>
         <object class="wxCheckBox" name="hide_times_chk">
           <label>Hide times on the console (toggle any time, even mid-ride)</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="verbose_log_chk">
+          <label>Verbose logging (write a diagnostic log for support)</label>
         </object>
       </object>
 
