@@ -24,7 +24,9 @@ and every heavy collaborator -- ``build_app``, ``Store``,
 
 from __future__ import annotations
 
+import gc
 import json
+import weakref
 from typing import TYPE_CHECKING
 
 from rivercrossing.ui import app as app_module
@@ -288,3 +290,30 @@ def test_main_installs_the_control_event_filter_after_building_the_app(
 
     assert len(bootstrap.wx.filters) == 1
     assert isinstance(bootstrap.wx.filters[0], _FakeEventFilter)
+
+
+def test_main_retains_the_installed_event_filter_on_the_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F4: the app keeps the filter wx only holds a raw pointer to.
+
+    ``wx.App.AddFilter`` (``wxEvtHandler.AddFilter``) stores a raw C++
+    pointer, not a Python reference, so a filter the app never names is
+    collected and wx then dispatches the first event into freed memory
+    -- the launch SIGSEGV the frozen bundle hit. The exact object handed
+    to ``AddFilter`` must therefore stay strongly referenced by the app
+    for its whole lifetime, surviving a collection.
+    """
+    bootstrap = _install_fakes(monkeypatch, tmp_path, verbose_logging=True)
+
+    app_module.main()
+    # Drop the recording double's own Python reference: from here the
+    # app's own attribute is the only thing that can keep the filter
+    # alive, exactly as ``wx.App.AddFilter``'s raw pointer leaves it.
+    installed = bootstrap.wx.filters[0]
+    bootstrap.wx.filters.clear()
+    reference = weakref.ref(installed)
+    del installed
+    gc.collect()
+
+    assert reference() is bootstrap.app.verbose_event_filter

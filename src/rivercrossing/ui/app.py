@@ -4120,7 +4120,13 @@ def main(db_path: Path | None = None) -> int:
     )
     app.verbose_log = log
     log.start("RiverCrossing launching")
-    wx.App.AddFilter(_make_verbose_event_filter(log))
+    # ``wx.App.AddFilter`` is ``wxEvtHandler.AddFilter``: it keeps a raw
+    # C++ pointer, not a Python reference, so the filter has to stay
+    # bound to the app -- a throwaway reference is collected and wx then
+    # dispatches the first event into freed memory (the frozen bundle's
+    # launch SIGSEGV). The app already retains its log the same way.
+    app.verbose_event_filter = _make_verbose_event_filter(log)
+    wx.App.AddFilter(app.verbose_event_filter)
     # Route unhandled exceptions (bootstrap and main-loop alike) to
     # the per-user crash log before anything can raise.
     _install_crash_excepthook(app)
