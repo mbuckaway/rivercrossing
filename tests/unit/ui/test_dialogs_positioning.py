@@ -2,12 +2,15 @@
 """Headless tests for Phase 11 H1/H2's dialog seam and copy.
 
 ``views.dialogs.run_dialog`` is the one seam every XRC dialog shows
-through. H1 makes it re-parent the loaded dialog to the opener's own
-top-level window and centre it there before ``ShowModal``, so every
-modal lands over the console rather than wherever the platform put
-it. Real ``wx.Dialog`` windows need a desktop (and would block on
-``ShowModal``), so the tests drive a recording fake and stub only the
-two wx-touching collaborators the seam also calls --
+through. It centres the loaded dialog over the opener's own top-level
+window -- the screen when there is none -- before ``ShowModal``, so
+every modal lands over the console rather than wherever the platform
+put it, and it never re-parents: a ``wx.Dialog`` must stay a
+top-level window, and re-parenting it to the frame renders its
+controls inside the frame on Cocoa (the measured H1 regression this
+suite pins). Real ``wx.Dialog`` windows need a desktop (and would
+block on ``ShowModal``), so the tests drive a recording fake and
+stub only the two wx-touching collaborators the seam also calls --
 ``wire_close_button`` and the light-mode panel tint -- exactly the
 way ``test_std_dialogs.py`` swaps ``wx.MessageDialog``.
 
@@ -21,6 +24,7 @@ import string
 from typing import TYPE_CHECKING
 
 import pytest
+import wx
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -31,28 +35,42 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _SCRIPTED_MODAL_RESULT = 40001  # a stand-in modal id, no real wx stock id
+_DEFAULT_WINDOW_RECT = (100, 50, 800, 600)  # x, y, width, height
 
 
 class _FakeDialog:
     """Record the positioning calls; report a scripted modal result."""
 
     def __init__(
-        self, modal_result: int = _SCRIPTED_MODAL_RESULT, name: str = "settings_dlg"
+        self,
+        modal_result: int = _SCRIPTED_MODAL_RESULT,
+        name: str = "settings_dlg",
+        size: tuple[int, int] = (200, 100),
     ) -> None:
-        """Start empty; report *modal_result* from ShowModal."""
+        """Start empty; report *modal_result* against *size*."""
         self.modal_result = modal_result
         self.name = name
-        self.reparented_to: object = "NOT_REPARENTED"
+        self.size = wx.Size(*size)
+        self.reparent_calls = 0
         self.centre_on_parent_calls = 0
         self.show_modal_calls = 0
+        self.set_position_calls: list[tuple[int, int]] = []
 
     def GetName(self) -> str:  # noqa: N802 -- wx API name the SUT calls
         """Report the dialog's frozen XRC name."""
         return self.name
 
-    def Reparent(self, parent: object) -> None:  # noqa: N802 -- wx API name the SUT calls
-        """Record the re-parent target."""
-        self.reparented_to = parent
+    def GetSize(self) -> wx.Size:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted dialog size the seam centres with."""
+        return self.size
+
+    def SetPosition(self, position: wx.Point) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the seam's computed centre-over-window position."""
+        self.set_position_calls.append((position.x, position.y))
+
+    def Reparent(self, _parent: object) -> None:  # noqa: N802 -- wx API name the SUT must not call
+        """Record a re-parent attempt; the seam must never make one."""
+        self.reparent_calls += 1
 
     def CentreOnParent(self) -> None:  # noqa: N802 -- wx API name the SUT calls
         """Record one centring call."""
@@ -64,11 +82,23 @@ class _FakeDialog:
         return self.modal_result
 
 
-class _FakeOpener:
-    """A window double whose top-level ancestor is scripted."""
+class _FakeTopLevel:
+    """A top-level window double with a scripted screen rect."""
 
-    def __init__(self, top_level: object, name: str = "mi_settings") -> None:
-        """Return *top_level* from GetTopLevelParent."""
+    def __init__(self, rect: tuple[int, int, int, int] = _DEFAULT_WINDOW_RECT) -> None:
+        """Return *rect* (x, y, width, height) from GetScreenRect."""
+        self._rect = wx.Rect(*rect)
+
+    def GetScreenRect(self) -> wx.Rect:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted top-level window's screen rectangle."""
+        return self._rect
+
+
+class _FakeOpener:
+    """A window double answering name, focus and top-level calls."""
+
+    def __init__(self, top_level: object | None = None, name: str = "mi_settings") -> None:
+        """Return *top_level*, or ``None`` when there is none."""
         self._top_level = top_level
         self.name = name
         self.focus_calls = 0
@@ -77,8 +107,8 @@ class _FakeOpener:
         """Report the opener's frozen name."""
         return self.name
 
-    def GetTopLevelParent(self) -> object:  # noqa: N802 -- wx API name the SUT calls
-        """Report the scripted top-level window."""
+    def GetTopLevelParent(self) -> object | None:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted top-level window, or ``None``."""
         return self._top_level
 
     def SetFocus(self) -> None:  # noqa: N802 -- wx API name the SUT calls
@@ -104,27 +134,50 @@ def tinted_dialogs(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     return tinted
 
 
-def test_run_dialog_reparents_the_dialog_to_the_openers_top_level_window(
+def test_run_dialog_never_reparents_the_dialog(
     tinted_dialogs: list[object],  # noqa: ARG001 -- the seam fixture only stubs wx
 ) -> None:
-    """H1: the opener's top-level window becomes the dialog's parent."""
-    top_level = object()
+    """A wx.Dialog stays top-level; the seam must not Reparent."""
     dialog = _FakeDialog()
 
-    dialogs.run_dialog(dialog, _FakeOpener(top_level))
+    dialogs.run_dialog(dialog, _FakeOpener())
 
-    assert dialog.reparented_to is top_level
+    assert dialog.reparent_calls == 0
 
 
-def test_run_dialog_centres_the_dialog_on_its_parent_before_showing_it(
+@pytest.mark.parametrize(
+    "case",
+    [
+        ((100, 50, 800, 600), (200, 100), (400, 300)),
+        ((0, 0, 801, 601), (200, 100), (300, 250)),
+    ],
+    ids=["even-deltas", "odd-deltas"],
+)
+def test_run_dialog_centres_the_dialog_over_the_openers_top_level_window(
+    tinted_dialogs: list[object],  # noqa: ARG001 -- the seam fixture only stubs wx
+    case: tuple[tuple[int, int, int, int], tuple[int, int], tuple[int, int]],
+) -> None:
+    """The dialog's top-left lands at the window's centre."""
+    rect, size, expected_position = case
+    dialog = _FakeDialog(size=size)
+
+    dialogs.run_dialog(dialog, _FakeOpener(_FakeTopLevel(rect)))
+
+    assert (dialog.set_position_calls, dialog.centre_on_parent_calls) == (
+        [expected_position],
+        0,
+    )
+
+
+def test_run_dialog_without_a_top_level_parent_falls_back_to_screen_centring(
     tinted_dialogs: list[object],  # noqa: ARG001 -- the seam fixture only stubs wx
 ) -> None:
-    """H1: one CentreOnParent per show, so the modal lands on top."""
+    """A parentless opener keeps the screen-centring fallback."""
     dialog = _FakeDialog()
 
-    dialogs.run_dialog(dialog, _FakeOpener(object()))
+    dialogs.run_dialog(dialog, _FakeOpener())
 
-    assert (dialog.centre_on_parent_calls, dialog.show_modal_calls) == (1, 1)
+    assert (dialog.centre_on_parent_calls, dialog.set_position_calls) == (1, [])
 
 
 def test_run_dialog_returns_the_modal_result(
@@ -133,7 +186,7 @@ def test_run_dialog_returns_the_modal_result(
     """The caller sees ShowModal's id, unchanged."""
     dialog = _FakeDialog(modal_result=-7)
 
-    result = dialogs.run_dialog(dialog, _FakeOpener(object()))
+    result = dialogs.run_dialog(dialog, _FakeOpener())
 
     assert result == -7
 
@@ -141,8 +194,8 @@ def test_run_dialog_returns_the_modal_result(
 def test_run_dialog_restores_focus_to_the_opener_after_the_modal(
     tinted_dialogs: list[object],  # noqa: ARG001 -- the seam fixture only stubs wx
 ) -> None:
-    """spec.md §13's last dialog rule still runs after H1."""
-    opener = _FakeOpener(object())
+    """spec.md §13's last dialog rule still runs."""
+    opener = _FakeOpener()
 
     dialogs.run_dialog(_FakeDialog(), opener)
 
@@ -152,10 +205,10 @@ def test_run_dialog_restores_focus_to_the_opener_after_the_modal(
 def test_run_dialog_applies_the_light_mode_tint_before_showing(
     tinted_dialogs: list[object],
 ) -> None:
-    """H1 left the ux-polish tint in place: tinted once."""
+    """The ux-polish tint is applied once, before ShowModal."""
     dialog = _FakeDialog()
 
-    dialogs.run_dialog(dialog, _FakeOpener(object()))
+    dialogs.run_dialog(dialog, _FakeOpener())
 
     assert tinted_dialogs == [dialog]
 
@@ -172,7 +225,7 @@ def test_run_dialog_given_a_verbose_log_records_the_dialog_open(
     log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
     monkeypatch.setattr(dialogs, "_active_verbose_log", lambda: log)
 
-    dialogs.run_dialog(_FakeDialog(name="settings_dlg"), _FakeOpener(object(), name="mi_settings"))
+    dialogs.run_dialog(_FakeDialog(name="settings_dlg"), _FakeOpener(name="mi_settings"))
 
     records = [
         json.loads(line)
@@ -188,7 +241,7 @@ def test_run_dialog_without_a_verbose_log_still_shows_the_dialog(
     """F4: an app with no log shows the dialog unchanged."""
     dialog = _FakeDialog()
 
-    result = dialogs.run_dialog(dialog, _FakeOpener(object()))
+    result = dialogs.run_dialog(dialog, _FakeOpener())
 
     assert (result, dialog.show_modal_calls) == (_SCRIPTED_MODAL_RESULT, 1)
 

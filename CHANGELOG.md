@@ -24,7 +24,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - **Team list is Team | Riders, sortable** — the Logo column is gone and the header arrows sort rows natively; Pick Card deals a random unassigned card, so every click visibly changes the preview (Phase 3).
 - **Ride ▸ New Ride…** — New Ride… moved from the File menu to Ride, which now owns the whole ride lifecycle (D1); Ride Setup's primary button reads "Save" in both its modes (D2).
 - **Remove and Delete ask a native warning confirm** — the Teams editor's Remove and the Rider editor's Delete confirm through `ui.std_dialogs.show_confirm` (B3).
-- **Dialogs open centred over the console** — every XRC dialog is re-parented to the main frame and centred there, instead of being placed by the platform and possibly hiding behind the console (H1).
+- **Dialogs open centred over the console** — every XRC dialog is centred over the opener's own top-level window (screen-centred when there is none) before it is shown, instead of being placed by the platform and possibly hiding behind the console (H1). A dialog is never re-parented: a `wx.Dialog` must stay a top-level window, and re-parenting one to the frame renders its controls inside the frame on Cocoa.
 
 ### Removed
 

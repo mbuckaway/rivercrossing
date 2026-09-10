@@ -35,10 +35,15 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   :func:`run_dialog` is the one entry point every other view wires a
   dialog's ``ShowModal`` through; it always restores focus to the
   caller-supplied *opener*, whichever way the dialog ends.
-* **The dialog sits over the console.** H1: that same entry point
-  re-parents the dialog to *opener*'s top-level window and centres it
-  there, so a dialog XRC loaded parentless does not land wherever the
-  platform put it (top-left on MSW) or behind the main window.
+* **The dialog sits over the console.** That same entry point centres
+  the dialog over *opener*'s own top-level window -- measured, a
+  parentless dialog's ``CentreOnParent`` centres on the screen, not
+  over the console -- so a dialog XRC loaded parentless does not land
+  wherever the platform put it (top-left on MSW) or behind the main
+  window. The dialog is deliberately never re-parented: a
+  ``wx.Dialog`` must stay a top-level window, and re-parenting one to
+  the frame renders its controls inside the frame on Cocoa instead of
+  a dialog of its own.
 
 ``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``,
 ``entry_detail_dlg``, W7's ``add_rider_dlg``, Phase 4's
@@ -431,13 +436,21 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
     ``finally`` block so it happens whichever way the dialog ends
     (spec.md §13's last dialog rule).
 
-    H1: before showing, the dialog is re-parented to *opener*'s own
-    top-level window and centred on it. Every XRC dialog is loaded
-    with no parent, so without this it would be placed by the
-    platform (top-left on MSW) and could sit behind the main window;
-    re-parenting gives it the console as its owner and
-    ``CentreOnParent`` puts it over the window the operator is
-    looking at.
+    Before showing, the dialog is centred over *opener*'s top-level
+    window: measured, ``CentreOnParent`` centres a parentless dialog
+    on the *screen* rather than over the app window, so the position
+    is computed from that window's ``GetScreenRect()`` instead. An
+    opener with no top-level window falls back to ``CentreOnParent``
+    -- screen-centring is then exactly right. Without either, an XRC
+    dialog would be placed by the platform (top-left on MSW) and
+    could sit behind the main window.
+
+    The dialog is deliberately never re-parented. A ``wx.Dialog`` must
+    stay a top-level window: re-parenting it to the frame makes Cocoa
+    render the dialog's controls inside the frame instead of a dialog
+    of its own -- an apparently empty dialog -- so the seam leaves the
+    XRC-loaded parentage exactly as authored (H1's measured
+    regression).
 
     Args:
         dialog: A loaded, not-yet-shown ``wx.Dialog``.
@@ -454,11 +467,27 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
     # can ever be needed mid-show (theme.apply_light_mode_panel_bg's
     # own docstring records the modeless-frame exception).
     theme.apply_light_mode_panel_bg(dialog)
-    # H1: every XRC dialog loads parentless, so it would be placed by
-    # the platform (top-left on MSW) and could hide behind the console.
-    # Own it to the opener's top-level window and centre it there.
-    dialog.Reparent(opener.GetTopLevelParent())
-    dialog.CentreOnParent()
+    # Every XRC dialog loads parentless, so it would be placed by the
+    # platform (top-left on MSW) and could hide behind the console.
+    # Centre over the opener's own top-level window: measured,
+    # CentreOnParent centres a parentless dialog on the *screen*, not
+    # over the console, so the position is computed explicitly.
+    # Deliberately no Reparent here: a wx.Dialog must stay a top-level
+    # window, and re-parenting it to the frame renders its controls
+    # inside the frame on Cocoa -- an empty-looking dialog.
+    top = opener.GetTopLevelParent()
+    if top is not None:
+        area = top.GetScreenRect()
+        size = dialog.GetSize()
+        dialog.SetPosition(
+            wx.Point(
+                area.x + (area.width - size.width) // 2,
+                area.y + (area.height - size.height) // 2,
+            )
+        )
+    else:
+        # No top-level window to centre over: screen-centring fallback.
+        dialog.CentreOnParent()
     # F4: the one seam every XRC dialog shows through records the open
     # (the dialog's frozen name and what opened it) for the verbose log.
     log = _active_verbose_log()
