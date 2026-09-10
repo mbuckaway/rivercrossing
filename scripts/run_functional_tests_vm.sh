@@ -33,8 +33,14 @@
 #     RIVERCROSSING_VM_TEST_PATHS="tests/acceptance" scripts/run_functional_tests_vm.sh
 #
 # Usage: scripts/run_functional_tests_vm.sh
+#
+# DISABLED (2026-09-10): the functional suite is broken and is being
+# rewritten from scratch. This wrapper refuses to run until then.
 
 set -uo pipefail
+
+echo "FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM" >&2
+exit 1
 
 readonly TEMPLATE_NAME="rivercrossing-func-template"
 readonly CLONE_NAME="rivercrossing-func-$$"

@@ -159,7 +159,12 @@ def functional(session):
 
     --forked would be the wrong tool on macOS: forking a process that
     has already initialised NSApplication is not safe.
+
+    DISABLED (2026-09-10): the suite is broken and is being rewritten
+    from scratch, so this session refuses to run.
     """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
+
     sys.path.insert(0, str(ROOT))
     from tools.functional_gate import host_functional_run_allowed  # noqa: PLC0415
 
@@ -260,12 +265,13 @@ def bundle(session):
 
 @nox.session(python=PYTHON)
 def smoke(session):
-    """Launch the built bundle and smoke-test it (CI stage 5)."""
-    if not BUNDLE_SMOKE.exists():
-        session.log("bundle smoke test not authored yet")
-        return
-    session.install(DEV)
-    session.run("pytest", str(BUNDLE_SMOKE), "--no-cov", *session.posargs)
+    """Launch the built bundle and smoke-test it (CI stage 5).
+
+    DISABLED (2026-09-10): this test lives in ``tests/functional``,
+    whose suite is broken and is being rewritten from scratch. CI no
+    longer runs it.
+    """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
 
 
 def _project_version() -> str:
@@ -312,12 +318,13 @@ def dmg(session):
 
 @nox.session(python=PYTHON)
 def dmg_smoke(session):
-    """Mount the built DMG and smoke-test it (CI stage 5, P8-D7)."""
-    if not DMG_SMOKE.exists():
-        session.log("DMG smoke test not authored yet")
-        return
-    session.install(DEV)
-    session.run("pytest", str(DMG_SMOKE), "--no-cov", *session.posargs)
+    """Mount the built DMG and smoke-test it (CI stage 5, P8-D7).
+
+    DISABLED (2026-09-10): this test lives in ``tests/functional``,
+    whose suite is broken and is being rewritten from scratch. CI no
+    longer runs it.
+    """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
 
 
 # Homebrew's makensis 3.12 (arm64) crashes with std::bad_alloc when
@@ -408,9 +415,10 @@ def winsetup(session):
 
 @nox.session(python=PYTHON)
 def winsetup_smoke(session):
-    """Run the Windows installer smoke tests (CI stage 5, Phase 9)."""
-    if not WINSETUP_SMOKE.exists():
-        session.log("Windows installer smoke test not authored yet")
-        return
-    session.install(DEV)
-    session.run("pytest", str(WINSETUP_SMOKE), "--no-cov", *session.posargs)
+    """Run the Windows installer smoke tests (CI stage 5, Phase 9).
+
+    DISABLED (2026-09-10): these tests live in ``tests/functional``,
+    whose suite is broken and is being rewritten from scratch. CI no
+    longer runs them.
+    """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")

@@ -18,6 +18,13 @@ import pytest
 
 from rivercrossing.ui import require_wx
 
+# The functional suite is broken and is being rewritten from scratch;
+# the scripts/ wrappers and `nox -s functional` refuse it the same way.
+# Exit here so a bare `pytest tests/functional` dies at collection and
+# can never take over the desktop. The fixtures below are kept for the
+# rewrite.
+pytest.exit("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM", returncode=1)
+
 # How many pump+flush+collect rounds the session-end Fault-A sweep
 # runs before asserting, so a mid-deletion frame (Close()/Destroy()
 # already done) gets reaped instead of false-failing the worker.
