@@ -109,18 +109,42 @@ def test_column_value_given_a_row_returns_its_canvas_cell_text(
 
 CARD_CELL_CASES = (
     ((), ""),  # T-4 collection boundary: empty
-    (("AS",), "AS"),  # T-4 collection boundary: single
-    (("AS", "KH", "TD"), "AS KH TD"),  # T-4 collection boundary: many
+    (("AS",), "A♠"),  # T-4 collection boundary: single
+    (("AS", "KH", "TD"), "A♠ K♥ T♦"),  # T-4 collection boundary: many
+    (("9H", "KD"), "9♥ K♦"),  # the goal's own example
+    (("JK",), "JK★"),  # the joker marker
 )
 
 
 @pytest.mark.parametrize(("cards", "expected"), CARD_CELL_CASES)
-def test_cards_column_value_given_a_hand_returns_the_space_joined_codes(
+def test_cards_column_value_given_a_hand_returns_the_space_joined_glyph_text(
     cards: tuple[str, ...],
     expected: str,
 ) -> None:
-    """The console Cards cell is the dealt codes, space-joined."""
+    """The console Cards cell is the dealt codes as glyphs."""
     assert _column("Cards").value(_row(cards=cards)) == expected
+
+
+_VALID_RANKS = tuple("23456789TJQKA")
+_VALID_SUITS = tuple("SHDC")
+
+
+def _card_code(rank: str, suit: str) -> str:
+    """Build one stored card code from a rank and a suit letter."""
+    return f"{rank}{suit}"
+
+
+_VALID_CARD_CODE = st.builds(
+    _card_code, st.sampled_from(_VALID_RANKS), st.sampled_from(_VALID_SUITS)
+)
+
+
+@given(cards=st.lists(_VALID_CARD_CODE, min_size=1, max_size=6))
+def test_cards_column_value_given_any_hand_preserves_its_card_count(cards: list[str]) -> None:
+    """Property (T-7): one display token per dealt card."""
+    text = _column("Cards").value(_row(cards=tuple(cards)))
+
+    assert len(text.split(" ")) == len(cards)
 
 
 # --------------------------------------------------------- sort keys

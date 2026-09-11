@@ -12,13 +12,16 @@ click-to-sort direction rule the two presenters share.
 Pure Python -- no ``wx`` import may ever land here (R-71). Both the
 presenters (``ui.presenters.riders``, ordering rows) and the views
 (``ui.views._support``, building columns and cells) import it, so it
-must stay importable headless.
+must stay importable headless. The Cards cell's text comes from
+``ui.card_text``, the one formatter all three call sites share.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+
+from rivercrossing.ui.card_text import format_card
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -94,8 +97,8 @@ def _sex_cell(row: RiderRow) -> str:
 
 
 def _cards_cell(row: RiderRow) -> str:
-    """Return the Cards cell: the rider's dealt codes, space-joined."""
-    return " ".join(row.cards)
+    """Return the Cards cell: the dealt codes as canvas suit glyphs."""
+    return " ".join(format_card(code) for code in row.cards)
 
 
 def _plate_sort_key(row: RiderRow) -> tuple[int, int] | tuple[int, str]:
@@ -123,7 +126,13 @@ def _sex_sort_key(row: RiderRow) -> int:
 
 
 def _cards_sort_key(row: RiderRow) -> str:
-    """Return the Cards sort key: the space-joined card codes."""
+    """Return the Cards sort key: the space-joined raw card codes.
+
+    Deliberately the stored codes, not the displayed glyphs: the
+    column then orders by the deck's own code order -- a rank's card
+    by rank's card -- instead of by the suit-glyph block's code
+    points.
+    """
     return " ".join(row.cards)
 
 

@@ -66,6 +66,7 @@ import gc
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.ui import ids, require_wx, theme
+from rivercrossing.ui.card_text import format_card
 from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS
 
 if TYPE_CHECKING:
@@ -361,25 +362,13 @@ def finish_again_labels() -> tuple[str, str]:
     return "Finish again?", "Finish again"
 
 
-_SUIT_SYMBOLS = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
-_CARD_JOKER_CODE = "JK"
-_CARD_JOKER_DISPLAY = "JK★"
-
-
 def _format_card_code(code: str) -> str:
-    """Render one stored card code's canvas display text.
+    """Return one stored card code's canvas display text.
 
-    ``"9H"`` -> ``"9♥"``; the joker -> ``"JK★"``. The rank character
-    is already in its display form (``Card.code()``'s stored form uses
-    "T" for ten), so only the suit letter needs converting to a glyph
-    -- the same two-line mapping ``results_win.format_card`` owns,
-    duplicated here so the confirm dialogs never depend on the
-    results window's module (SIMPLECODE Rule 3's second copy).
+    Delegates to the one shared formatter (``ui.card_text``), which
+    replaced this module's own copy of the suit map.
     """
-    if code == _CARD_JOKER_CODE:
-        return _CARD_JOKER_DISPLAY
-    rank, suit = code[:-1], code[-1]
-    return f"{rank}{_SUIT_SYMBOLS[suit]}"
+    return format_card(code)
 
 
 def void_card_message(card_code: str, entry: str) -> str:

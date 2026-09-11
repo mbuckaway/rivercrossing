@@ -433,12 +433,12 @@ def test_show_riders_given_rows_builds_the_five_shared_columns() -> None:
         (main_frame.RIDERS_COL_NAME, "Sam Ellis"),
         (main_frame.RIDERS_COL_TEAM, SOLO_TEAM_TEXT),
         (3, "F"),
-        (4, "AS KH"),
+        (4, "A♠ K♥"),
     ],
     ids=["plate", "name", "team_solo", "sex", "cards"],
 )
 def test_show_riders_given_a_row_renders_its_shared_cells(column: int, expected: str) -> None:
-    """A solo row renders "solo", its sex, and its card codes."""
+    """A solo row renders "solo", its sex, and its card glyphs."""
     control = _Control()
     shell = _Shell(control=control)
 

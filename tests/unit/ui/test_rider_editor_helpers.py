@@ -117,7 +117,7 @@ CONSOLE_CELL_CASES = (
     (1, "Sam Ellis"),
     (2, "solo"),
     (3, "F"),
-    (4, "AS KH"),
+    (4, "A♠ K♥"),
 )
 
 
