@@ -121,11 +121,19 @@ class RiderRow:
 
     ``team`` is ``None`` for a solo rider; the Team column is hidden
     entirely in solo-only rides (a view concern, not this row's).
+    ``sex`` is the rider's ``"M"``/``"F"``, or ``None`` when unknown,
+    and ``cards`` holds the rider's dealt card codes -- both are only
+    drawn by the lists that carry those columns (the console's
+    ``console_riders_list`` adds Cards; the editor stops at Sex), so
+    both default to the empty value a list without the column leaves
+    them at.
     """
 
     plate: str
     name: str
     team: str | None = None
+    sex: str | None = None
+    cards: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -580,20 +588,42 @@ class EngineDataSource:
         ]
 
     def riders(self) -> list[RiderRow]:
-        """Return the rider editor rows for the active ride."""
+        """Return the rider editor rows for the active ride.
+
+        Phase 4: every row carries the rider's own ``sex`` and the
+        entry's credited card codes -- the console's own rider list
+        draws Sex and Cards columns (``ui.rider_columns``) on top of
+        the editor's four. Cards belong to the *entry*, not the rider
+        (``RideEngine.credited_cards``), so a pooled team's member
+        rows all carry the same codes; a held (unconfirmed) card is
+        never credited and so never shows. A solo entry's row takes
+        the one rider's sex -- the roster always gives a solo entry
+        exactly one rider.
+        """
+        engine = self._engine
         rows: list[RiderRow] = []
         for entry in self._roster.entries:
+            cards = tuple(card.code() for card in engine.credited_cards(entry.plate))
             if entry.type is EntryType.TEAM:
                 rows.extend(
                     RiderRow(
                         plate=rider.plate if rider.plate is not None else entry.plate,
                         name=rider.full_name,
                         team=entry.display_name,
+                        sex=rider.sex,
+                        cards=cards,
                     )
                     for rider in entry.riders
                 )
             else:
-                rows.append(RiderRow(plate=entry.plate, name=entry.display_name))
+                rows.append(
+                    RiderRow(
+                        plate=entry.plate,
+                        name=entry.display_name,
+                        sex=entry.riders[0].sex,
+                        cards=cards,
+                    )
+                )
         return rows
 
     def entry_detail(self, plate: str) -> EntryDetail:

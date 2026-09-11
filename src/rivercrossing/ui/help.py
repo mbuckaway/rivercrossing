@@ -64,14 +64,8 @@ ANCHOR_BY_WINDOW: dict[str, str] = {
     # The lifecycle dialogs land on Stopping, quitting & recovery.
     ids.RESUME_DLG: "stopping-quitting-recovery",
     ids.EXIT_RUNNING_DLG: "stopping-quitting-recovery",
-    ids.EXIT_CONFIRM_DLG: "stopping-quitting-recovery",
     ids.DELETE_RIDE_DLG: "stopping-quitting-recovery",
     ids.SET_START_DLG: "stopping-quitting-recovery",
-    # Finishing & standings: the finish confirm and the two mock-first
-    # confirms that act on a finished ride.
-    ids.FINISH_CONFIRM_DLG: "finishing-standings",
-    ids.DUPLICATE_RIDE_DLG: "finishing-standings",
-    ids.REOPEN_RIDE_DLG: "finishing-standings",
 }
 
 

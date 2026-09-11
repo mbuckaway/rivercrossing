@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for ui.std_dialogs' native message-dialog helpers.
 
-The four ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
+The six ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
 construct with a fixed style, optionally override the OK/Cancel
 labels, show modally, destroy, and return the modal id. Real dialogs
 need a desktop and would block on ``ShowModal``, so every test swaps
@@ -12,8 +12,12 @@ file never creates a window and never builds a ``wx.App``.
 Expected style constants below are recomputed from real wx flags, so
 the bitwise-equality assertions pin each dialog's exact documented
 flag set: ``wx.ICON_INFORMATION`` / ``wx.ICON_WARNING`` /
-``wx.ICON_ERROR`` with ``wx.CENTRE`` on every dialog, and ``wx.CANCEL``
-plus ``wx.CANCEL_DEFAULT`` on the destructive confirm only.
+``wx.ICON_ERROR`` with ``wx.CENTRE`` on every dialog. The two
+destructive confirms (``show_confirm`` warns, ``show_danger`` errors)
+also carry ``wx.CANCEL`` + ``wx.CANCEL_DEFAULT``, while the
+non-destructive ``show_prompt`` carries ``wx.CANCEL`` but leaves OK
+as the default button -- a reflex Enter must never destroy data, and
+must never block a safe action either.
 """
 
 from functools import partial
@@ -35,10 +39,14 @@ _INFO_STYLE = wx.OK | wx.CENTRE | wx.ICON_INFORMATION
 _WARNING_STYLE = wx.OK | wx.CENTRE | wx.ICON_WARNING
 _ERROR_STYLE = wx.OK | wx.CENTRE | wx.ICON_ERROR
 _CONFIRM_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_WARNING | wx.CANCEL_DEFAULT
+_DANGER_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_ERROR | wx.CANCEL_DEFAULT
+_PROMPT_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_INFORMATION
 
 _OK_LABEL = "Delete ride"
 _CANCEL_LABEL = "Keep ride"
 _CONFIRM_ACT = partial(std_dialogs.show_confirm, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
+_DANGER_ACT = partial(std_dialogs.show_danger, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
+_PROMPT_ACT = partial(std_dialogs.show_prompt, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
 
 # Rows align with _SHOW_CASE_IDS by index: (act, expected style).
 _SHOW_CASES = (
@@ -46,10 +54,35 @@ _SHOW_CASES = (
     (std_dialogs.show_warning, _WARNING_STYLE),
     (std_dialogs.show_error, _ERROR_STYLE),
     (_CONFIRM_ACT, _CONFIRM_STYLE),
+    (_DANGER_ACT, _DANGER_STYLE),
+    (_PROMPT_ACT, _PROMPT_STYLE),
 )
-_SHOW_CASE_IDS = ("show_info", "show_warning", "show_error", "show_confirm")
+_SHOW_CASE_IDS = (
+    "show_info",
+    "show_warning",
+    "show_error",
+    "show_confirm",
+    "show_danger",
+    "show_prompt",
+)
 _ALERT_CASES = _SHOW_CASES[:3]
 _ALERT_CASE_IDS = _SHOW_CASE_IDS[:3]
+# The three confirms name their own buttons; the three alerts keep wx's.
+_LABELLED_CONFIRM_CASES = (
+    (_CONFIRM_ACT, _CONFIRM_STYLE),
+    (_DANGER_ACT, _DANGER_STYLE),
+    (_PROMPT_ACT, _PROMPT_STYLE),
+)
+_LABELLED_CONFIRM_CASE_IDS = ("show_confirm", "show_danger", "show_prompt")
+
+# Phase 11 H2: the icon and the default button are what separate the
+# three confirms -- (act, expected icon, whether Cancel is the default).
+_CONFIRM_ICON_AND_DEFAULT_CASES = (
+    (_CONFIRM_ACT, wx.ICON_WARNING, True),
+    (_DANGER_ACT, wx.ICON_ERROR, True),
+    (_PROMPT_ACT, wx.ICON_INFORMATION, False),
+)
+_CONFIRM_ICON_AND_DEFAULT_CASE_IDS = ("show_confirm", "show_danger", "show_prompt")
 
 _PARENT = object()  # a stand-in owning window; real windows never exist here
 _TITLE = "Delete the ride?"
@@ -143,17 +176,56 @@ def test_show_function_forwards_parent_title_and_message_verbatim(
     assert created_dialogs[0].caption == _TITLE
 
 
-def test_show_confirm_sets_dialog_button_labels_from_arguments(
+@pytest.mark.parametrize(
+    ("act", "expected_style"),
+    _LABELLED_CONFIRM_CASES,
+    ids=_LABELLED_CONFIRM_CASE_IDS,
+)
+def test_confirm_family_sets_dialog_button_labels_from_arguments(
     created_dialogs: list[_FakeMessageDialog],
+    act: Callable[[object, str, str], int],
+    expected_style: int,  # noqa: ARG001 -- one shared case table
 ) -> None:
-    """The confirm names both buttons from the given label text.
+    """Every confirm names its buttons from the given label text.
 
     Affirmative label first, cancel label second, both verbatim.
     """
-    _CONFIRM_ACT(_PARENT, _TITLE, _MESSAGE)
+    act(_PARENT, _TITLE, _MESSAGE)
 
     assert len(created_dialogs) == 1
     assert created_dialogs[0].ok_cancel_labels == (_OK_LABEL, _CANCEL_LABEL)
+
+
+@pytest.mark.parametrize(
+    ("act", "expected_icon", "cancel_is_default"),
+    _CONFIRM_ICON_AND_DEFAULT_CASES,
+    ids=_CONFIRM_ICON_AND_DEFAULT_CASE_IDS,
+)
+def test_confirm_family_sets_icon_and_default_button_per_destructiveness(  # noqa: PLR0913
+    created_dialogs: list[_FakeMessageDialog],
+    act: Callable[[object, str, str], int],
+    expected_icon: int,
+    *,
+    cancel_is_default: bool,
+) -> None:
+    """H2: warnings/errors default to Cancel; the prompt to OK."""
+    act(_PARENT, _TITLE, _MESSAGE)
+
+    style = created_dialogs[0].style
+    assert style & expected_icon == expected_icon
+    assert bool(style & wx.CANCEL_DEFAULT) is cancel_is_default
+
+
+def test_show_danger_differs_from_show_confirm_only_in_its_icon(
+    created_dialogs: list[_FakeMessageDialog],
+) -> None:
+    """D3: Clear Ride's confirm reads as an error, not a warning."""
+    _DANGER_ACT(_PARENT, _TITLE, _MESSAGE)
+
+    style = created_dialogs[0].style
+    assert style & wx.ICON_ERROR == wx.ICON_ERROR
+    assert style & wx.ICON_WARNING == 0
+    assert style & wx.CANCEL_DEFAULT == wx.CANCEL_DEFAULT
 
 
 @pytest.mark.parametrize(("act", "expected_style"), _ALERT_CASES, ids=_ALERT_CASE_IDS)

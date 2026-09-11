@@ -531,18 +531,19 @@ def _html_standings(path: Path) -> tuple[tuple[int, str, int, str], ...]:
 def _csv_standings(path: Path) -> tuple[tuple[int, str, int, str], ...]:
     """Read the standings CSV rows as ``(place, plate, laps, hand)``.
 
-    Phase 3's ``type`` column (``team``/``solo``) sits between entry
-    and laps; the projection ignores it, so teams-then-solo rows
-    compare to the HTML record and the child's flattened standings.
+    Phase 3's ``type`` column (``team``/``solo``) and the E7 ``sex``
+    column (``M``/``F``, blank for a team) sit between entry and laps;
+    the projection ignores both, so teams-then-solo rows compare to
+    the HTML record and the child's flattened standings.
 
     Raises:
         ValueError: *path*'s header row is not the standings header.
     """
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.reader(handle))
-    if rows[0] != ["place", "plate", "entry", "type", "laps", "hand"]:
+    if rows[0] != ["place", "plate", "entry", "type", "sex", "laps", "hand"]:
         raise ValueError(f"unexpected standings CSV header in {path}")
-    return tuple((int(row[0]), row[1], int(row[4]), row[5]) for row in rows[1:])
+    return tuple((int(row[0]), row[1], int(row[5]), row[6]) for row in rows[1:])
 
 
 def _pdf_text(path: Path) -> str:

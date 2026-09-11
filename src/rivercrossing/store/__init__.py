@@ -4,8 +4,10 @@
 :class:`Store` is the public entry point to the
 ``rivercrossing.store`` package. It opens one SQLite file per
 database, applies the spec §2 PRAGMAs (WAL, synchronous NORMAL,
-foreign_keys ON) to every connection, runs the linear migrations, and
-exposes the ride surface E5.1.1/E5.1.2 own: :meth:`Store.create_ride`
+foreign_keys ON) to every connection, ensures the schema is the one
+flattened v1 baseline (``store/schema.py``; a file stamped with any
+other version is refused), and exposes the ride surface E5.1.1/E5.1.2
+own: :meth:`Store.create_ride`
 and :meth:`Store.rides` (E5.1.1) and the event log --
 :meth:`Store.append` persists one :class:`~rivercrossing.ride.Event`
 as one ``audit`` row and :meth:`Store.load_engine` rebuilds a
@@ -40,10 +42,10 @@ them open and later EPICs will build on them:
   fresh seed with ``secrets.randbits`` -- never taken from the config.
 - **transaction shape**: the connection runs in sqlite3's default
   (legacy) mode. Each operator action is one committed transaction --
-  ``create_ride`` wraps its insert in ``with conn``; ``migrate``
-  wraps each migration's DDL plus its version record in an explicit
-  BEGIN/COMMIT, because DDL alone autocommits and the two must stay
-  atomic (see ``migrations.py``).
+  ``create_ride`` wraps its insert in ``with conn``;
+  ``schema.ensure_schema`` wraps the whole v1 CREATE plus its version
+  record in an explicit BEGIN/COMMIT, because DDL alone autocommits
+  and the two must stay atomic (see ``schema.py``).
 - **audit at column (E5.1.2)**: ``append`` derives ``audit.at`` from
   the event's own payload timestamp when it carries one
   (``actual_start``/``crossed_at``/``stopped_at``/``finished_at``/
@@ -61,10 +63,10 @@ them open and later EPICs will build on them:
 - **hold_short_laps (W4)**: the setup dialog's short-lap card policy
   is one of the config columns the facade writes and reads
   (``_INSERT_RIDE_SQL``/``create_ride``/``duplicate_ride``/
-  ``load_engine``, migration v2). Stored as INTEGER 0/1 and rebuilt
-  as ``bool``, so event replay reproduces each ride's own hold
-  disposition. A v1 file upgraded in place back-fills 0 (always
-  deal, the W4 default) onto every existing ride.
+  ``load_engine``). Stored as INTEGER 0/1 and rebuilt as ``bool``, so
+  event replay reproduces each ride's own hold disposition. The column
+  is part of the v1 baseline with a NOT NULL DEFAULT 0 (always deal,
+  the W4 default), so a row written without it reads as "never hold".
 - **roster boundary (E5.1.2)**: :meth:`Store.load_engine` took the
   roster from the caller -- the engine needs plate->entry resolution,
   and full roster-from-DB reconstruction was E5.4.1's job.
@@ -168,6 +170,7 @@ view-model deferred to E5.4.1.
 import json
 import secrets
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
@@ -189,12 +192,12 @@ from rivercrossing.roster import (
     Roster,
 )
 from rivercrossing.store.backup import run as _backup_run
-from rivercrossing.store.migrations import (
-    FutureSchemaVersionError,
+from rivercrossing.store.schema import (
+    SchemaVersionMismatchError,
     StoreError,
-    migrate,
+    apply_pragmas,
+    ensure_schema,
 )
-from rivercrossing.store.schema import apply_pragmas
 from rivercrossing.ui.presenters.data_source import AuditRow
 
 # Windows-measured: a hard-killed writer (TerminateProcess) can leave
@@ -226,12 +229,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
 
 __all__ = [
-    "FutureSchemaVersionError",
     "PreviousSession",
     "RideNameMismatchError",
     "RideNotFoundError",
     "RideRow",
     "RideRunningError",
+    "SchemaVersionMismatchError",
     "SessionState",
     "Store",
     "StoreError",
@@ -271,6 +274,19 @@ _INSERT_RIDE_SQL = """
     )
 """
 
+# D2's Edit Ride: every setup column create_ride writes for a config's
+# own fields. logo_png is deliberately absent -- an edit with no logo
+# picked keeps the stored one, which a NULL assignment could not say.
+_UPDATE_RIDE_SQL = """
+    UPDATE ride SET
+        name = ?, event_date = ?, venue = ?, course_name = ?, lap_km = ?,
+        organizer = ?, scorer = ?, planned_start = ?, planned_duration_s = ?,
+        entry_mode = ?, max_team_size = ?, plate_model = ?, min_lap_s = ?,
+        deck_count = ?, jokers_per_deck = ?, max_cards = ?, tiebreak_order = ?,
+        hold_short_laps = ?, updated_at = ?
+    WHERE id = ?
+"""
+
 _INSERT_SESSION_SQL = """
     INSERT INTO app_session (opened_at, closed_at, active_ride_id, heartbeat_at)
     VALUES (?, NULL, ?, NULL)
@@ -306,6 +322,32 @@ def _require_rowid(cursor: sqlite3.Cursor) -> int:
     if rowid is None:
         raise RuntimeError("INSERT returned no rowid")
     return rowid
+
+
+def _materialize_ride_logo(ride_id: int, logo_png: bytes | None) -> Path | None:
+    """Write a stored ride-logo BLOB out and return its path (C1).
+
+    The ``ride`` table keeps the logo as a BLOB (spec §2) but every
+    logo surface renders from a file (``views.about``'s ride logo, the
+    console header's ``ride_logo_bmp``), so loading a ride re-writes
+    the bytes to one deterministic per-ride file in the process temp
+    directory. Re-loading the same ride overwrites the same path, so
+    repeated loads never accumulate files.
+
+    Args:
+        ride_id: The ride the logo belongs to (its file name).
+        logo_png: The stored PNG bytes, or ``None``.
+
+    Returns:
+        The materialized file's path, or ``None`` when the ride has no
+        logo (a NULL column, or the empty BLOB ``create_ride`` writes
+        for an empty picked file).
+    """
+    if not logo_png:
+        return None
+    path = Path(tempfile.gettempdir()) / f"rivercrossing-ride-{ride_id}-logo.png"
+    path.write_bytes(logo_png)
+    return path
 
 
 def _to_epoch(value: datetime) -> int:
@@ -380,9 +422,9 @@ class RideNotFoundError(StoreError):
     """``Store.load_engine()`` could not find the named ride.
 
     Raised for a ``ride_id`` no ``ride`` row matches. Defined in the
-    package root, unlike the schema-era errors in ``migrations.py``:
-    this one has no circular-import pressure, and the facade is its
-    only raiser.
+    package root, unlike the schema-era errors in ``schema.py``: this
+    one has no circular-import pressure, and the facade is its only
+    raiser.
     """
 
 
@@ -472,7 +514,7 @@ class Store:
     """Facade over one SQLite database file (WAL, foreign keys ON).
 
     Create with :meth:`open`, which opens the file (creating it when
-    absent), applies the PRAGMAs, runs migrations, and closes the
+    absent), applies the PRAGMAs, ensures the v1 schema, and closes the
     connection cleanly on any failure.
     """
 
@@ -494,9 +536,9 @@ class Store:
 
     @classmethod
     def open(cls, path: str | Path, *, active_ride_id: int | None = None) -> Store:
-        """Open (or create) the database at ``path`` and migrate it.
+        """Open (or create) the database at ``path``; ensure its schema.
 
-        After migrations, records the new app session (E5.2.1): one
+        After the schema gate, records the new app session (E5.2.1): one
         ``app_session`` row with ``opened_at`` = now epoch and
         ``closed_at`` NULL (the clean-quit vs crash signal R-52 words
         the resume dialog from), plus ``active_ride_id`` when a ride is
@@ -518,8 +560,9 @@ class Store:
             A ready Store with the connection open until :meth:`close`.
 
         Raises:
-            FutureSchemaVersionError: If the database was written by a
-                newer build than this one.
+            SchemaVersionMismatchError: If the database is stamped with
+                a schema version this build does not support (any value
+                but 1 and the empty/0 case).
             sqlite3.IntegrityError: If *active_ride_id* names no ride
                 row (the ``REFERENCES ride(id)`` foreign key).
             sqlite3.OperationalError: A persistent transient-class
@@ -542,7 +585,7 @@ class Store:
             conn.row_factory = sqlite3.Row
             try:
                 apply_pragmas(conn)
-                migrate(conn)
+                ensure_schema(conn)
                 _insert_session(conn, active_ride_id)
                 return cls(conn, path=path)
             except sqlite3.OperationalError as exc:
@@ -745,7 +788,7 @@ class Store:
         )
         entries: list[Entry] = []
         for entry_row in self._conn.execute(
-            "SELECT id, plate, display_name, type, status, notes, logo_card, logo_png"
+            "SELECT id, plate, display_name, type, status, notes, logo_card"
             " FROM entry WHERE ride_id = ? ORDER BY id",
             (ride_id,),
         ).fetchall():
@@ -754,10 +797,11 @@ class Store:
                     first_name=rider_row["first_name"],
                     last_name=rider_row["last_name"],
                     plate=rider_row["plate"],
+                    sex=rider_row["sex"],
                     sort_order=rider_row["sort_order"],
                 )
                 for rider_row in self._conn.execute(
-                    "SELECT first_name, last_name, plate, sort_order FROM rider"
+                    "SELECT first_name, last_name, plate, sex, sort_order FROM rider"
                     " WHERE entry_id = ? ORDER BY sort_order, id",
                     (entry_row["id"],),
                 ).fetchall()
@@ -777,7 +821,6 @@ class Store:
                 status=EntryStatus(entry_row["status"]),
                 notes=entry_row["notes"] or "",
                 logo_card=entry_row["logo_card"],
-                logo_png=entry_row["logo_png"],
             )
             entry.has_data = has_data
             entries.append(entry)
@@ -789,9 +832,8 @@ class Store:
 
         E5.4.1's roster persistence into spec §2's entry/rider tables:
         every entry (plate, display_name, type, team_size, status,
-        notes, plus the Phase 1 logo_card/logo_png columns -- Phase 4
-        writes the real values now, NULL only when the entry carries
-        no logo) and every rider (first_name, last_name, plate,
+        notes, logo_card -- NULL only when the entry carries no logo)
+        and every rider (first_name, last_name, plate, sex,
         sort_order) is written in one transaction, after removing any
         previously saved rows -- a save is a snapshot of the live
         roster, never an append (the replace semantics the rider
@@ -821,8 +863,8 @@ class Store:
                 cursor = self._conn.execute(
                     "INSERT INTO entry"
                     " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
-                    " logo_card, logo_png)"
-                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                    " logo_card)"
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                     (
                         ride_id,
                         entry.plate,
@@ -832,21 +874,21 @@ class Store:
                         entry.status.value,
                         entry.notes,
                         entry.logo_card,
-                        entry.logo_png,
                     ),
                 )
                 entry_id = _require_rowid(cursor)
                 for rider in entry.riders:
                     self._conn.execute(
                         "INSERT INTO rider"
-                        " (entry_id, first_name, last_name, plate, sort_order,"
+                        " (entry_id, first_name, last_name, plate, sex, sort_order,"
                         " emergency_contact, waiver_signed, ccn_reg_id)"
-                        " VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)",
+                        " VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
                         (
                             entry_id,
                             rider.first_name,
                             rider.last_name,
                             rider.plate,
+                            rider.sex,
                             rider.sort_order,
                         ),
                     )
@@ -1028,6 +1070,112 @@ class Store:
             )
             self._conn.execute("DELETE FROM ride WHERE id = ?", (ride_id,))
 
+    # -------------------------------- D3 Clear Ride reset
+
+    def clear_ride(self, ride_id: int) -> None:
+        """Reset one ride to an empty DRAFT, keeping its own setup (D3).
+
+        Ride ▸ Clear Ride…'s store half: the dependents ``delete_ride``
+        removes are removed here too, in the same FK-safe order (cards,
+        crossings, riders, entries, audit rows), and
+        ``app_session.active_ride_id`` is NULLed -- but the ``ride``
+        row itself stays, with its setup columns untouched and its
+        lifecycle rewound: ``status`` back to DRAFT and
+        ``actual_start``/``finished_at`` cleared, so a replay of the
+        now-empty audit log rebuilds a DRAFT engine.
+
+        No state guard: the §15 enablement rule (DRAFT, or stopped
+        RUNNING, or FINISHED) is the menu binder's, and a
+        store-level "RUNNING is not clearable" rule would duplicate it.
+
+        Args:
+            ride_id: The ride to reset.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+        """
+        row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
+        if row is None:
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        now = int(datetime.now(UTC).timestamp())
+        with self._conn:
+            self._conn.execute("DELETE FROM card WHERE ride_id = ?", (ride_id,))
+            self._conn.execute("DELETE FROM crossing WHERE ride_id = ?", (ride_id,))
+            self._conn.execute(
+                "DELETE FROM rider WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?)",
+                (ride_id,),
+            )
+            self._conn.execute("DELETE FROM entry WHERE ride_id = ?", (ride_id,))
+            self._conn.execute("DELETE FROM audit WHERE ride_id = ?", (ride_id,))
+            self._conn.execute(
+                "UPDATE app_session SET active_ride_id = NULL WHERE active_ride_id = ?",
+                (ride_id,),
+            )
+            self._conn.execute(
+                "UPDATE ride SET status = ?, actual_start = NULL, finished_at = NULL,"
+                " updated_at = ? WHERE id = ?",
+                (RideStatus.DRAFT, now, ride_id),
+            )
+
+    def update_ride_config(self, ride_id: int, config: RideConfig) -> None:
+        """Rewrite one ride's setup columns from *config* (D2).
+
+        Edit Ride…'s store half: the same columns :meth:`create_ride`
+        writes for the config's own fields, updated in place. The
+        lifecycle columns (``status``, ``actual_start``,
+        ``finished_at``), the ride's ``rng_seed`` and its event log
+        are never touched -- an edit is not a restart.
+
+        ``logo_png`` follows the config's ``logo_path`` when one is
+        given, and is left exactly as stored when it is ``None``: an
+        Edit Ride that picks no logo means "keep the ride's own", not
+        "remove it" (``views.ride_setup`` loads the picker with the
+        ride's materialized logo, so a ride that has one always
+        submits its path back).
+
+        Args:
+            ride_id: The ride to update.
+            config: The edited configuration.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+            FileNotFoundError: ``config.logo_path`` names a file that
+                does not exist.
+        """
+        row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
+        if row is None:
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        now = int(datetime.now(UTC).timestamp())
+        params: tuple[object, ...] = (
+            config.name,
+            config.event_date.isoformat(),
+            config.venue,
+            config.venue,  # course_name: venue doubles until a dialog owns it
+            config.lap_km,
+            config.organizer,
+            config.scorer,
+            _to_epoch(config.planned_start),
+            config.planned_duration_s,
+            config.entry_mode.value,
+            config.max_team_size,
+            config.plate_model.value,
+            config.min_lap_s,
+            config.deck_count,
+            config.jokers_per_deck,
+            config.max_cards,
+            json.dumps(list(config.tiebreak_order)),
+            int(config.hold_short_laps),
+            now,
+            ride_id,
+        )
+        with self._conn:
+            self._conn.execute(_UPDATE_RIDE_SQL, params)
+            if config.logo_path is not None:
+                self._conn.execute(
+                    "UPDATE ride SET logo_png = ? WHERE id = ?",
+                    (config.logo_path.read_bytes(), ride_id),
+                )
+
     # ------------------------------------- E5.1.2 event log (replay)
 
     def append(self, ride_id: int, event: Event) -> None:
@@ -1064,8 +1212,11 @@ class Store:
         Reads the ride row and reconstructs its :class:`RideConfig`
         from the columns ``create_ride`` wrote (``planned_start`` back
         to a local naive datetime, ``tiebreak_order`` from JSON,
-        ``logo_path`` to None -- the BLOB is stored, never
-        re-materialized as a file), builds a fresh shoe from the stored
+        ``logo_path`` from the ``logo_png`` BLOB, re-materialized into
+        one deterministic temp file per ride by
+        :func:`_materialize_ride_logo` -- every logo surface renders
+        from a path, and the console header is one (C1); a NULL or
+        empty BLOB stays ``None``), builds a fresh shoe from the stored
         ``rng_seed`` (spec §4: replaying the seed reproduces every
         deal, so no ``Shoe.replay`` is needed), and applies every
         persisted event in append (insert-id) order via
@@ -1112,7 +1263,7 @@ class Store:
             jokers_per_deck=row["jokers_per_deck"],
             max_cards=row["max_cards"],
             tiebreak_order=cast("tuple[str, str, str]", tuple(json.loads(row["tiebreak_order"]))),
-            logo_path=None,
+            logo_path=_materialize_ride_logo(ride_id, row["logo_png"]),
             hold_short_laps=bool(row["hold_short_laps"]),
         )
         engine = RideEngine(
@@ -1248,14 +1399,14 @@ class Store:
             new_id = _require_rowid(cursor)
             for source_entry in self._conn.execute(
                 "SELECT id, plate, display_name, type, team_size, status, notes,"
-                " logo_card, logo_png FROM entry WHERE ride_id = ? ORDER BY id",
+                " logo_card FROM entry WHERE ride_id = ? ORDER BY id",
                 (ride_id,),
             ).fetchall():
                 entry_cursor = self._conn.execute(
                     "INSERT INTO entry"
                     " (ride_id, plate, display_name, type, team_size, status, dnf_at, notes,"
-                    " logo_card, logo_png)"
-                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)",
+                    " logo_card)"
+                    " VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
                     (
                         new_id,
                         source_entry["plate"],
@@ -1265,25 +1416,25 @@ class Store:
                         source_entry["status"],
                         source_entry["notes"],
                         source_entry["logo_card"],
-                        source_entry["logo_png"],
                     ),
                 )
                 new_entry_id = _require_rowid(entry_cursor)
                 for rider in self._conn.execute(
-                    "SELECT first_name, last_name, plate, sort_order FROM rider"
+                    "SELECT first_name, last_name, plate, sex, sort_order FROM rider"
                     " WHERE entry_id = ? ORDER BY sort_order, id",
                     (source_entry["id"],),
                 ).fetchall():
                     self._conn.execute(
                         "INSERT INTO rider"
-                        " (entry_id, first_name, last_name, plate, sort_order,"
+                        " (entry_id, first_name, last_name, plate, sex, sort_order,"
                         " emergency_contact, waiver_signed, ccn_reg_id)"
-                        " VALUES (?, ?, ?, ?, ?, NULL, NULL, NULL)",
+                        " VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)",
                         (
                             new_entry_id,
                             rider["first_name"],
                             rider["last_name"],
                             rider["plate"],
+                            rider["sex"],
                             rider["sort_order"],
                         ),
                     )

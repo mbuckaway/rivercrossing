@@ -1,4 +1,7 @@
 #!/bin/bash
+# shellcheck disable=SC2317,SC2329
+# Everything below the early refusal is deliberately-kept dead code awaiting
+# the functional-suite rewrite; the unreachability is intended, not a defect.
 #
 # Run RiverCrossing's functional test suite (23 real wx windows) inside
 # a disposable Tart macOS VM cloned from the rivercrossing-func-template
@@ -33,8 +36,14 @@
 #     RIVERCROSSING_VM_TEST_PATHS="tests/acceptance" scripts/run_functional_tests_vm.sh
 #
 # Usage: scripts/run_functional_tests_vm.sh
+#
+# DISABLED (2026-09-10): the functional suite is broken and is being
+# rewritten from scratch. This wrapper refuses to run until then.
 
 set -uo pipefail
+
+echo "FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM" >&2
+exit 1
 
 readonly TEMPLATE_NAME="rivercrossing-func-template"
 readonly CLONE_NAME="rivercrossing-func-$$"

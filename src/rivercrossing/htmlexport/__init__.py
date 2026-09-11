@@ -124,8 +124,10 @@ class ResultRow:
 
     ``total``/``best_lap`` are the only fields whose presence in
     ``to_record()`` depends on ``ExportOptions.show_times`` (R-63).
-    ``tie``/``dnf`` are sparse -- emitted only when true, never as a
-    ``false`` key, matching the golden pages' shape exactly. The
+    ``tie``/``dnf``/``logo``/``sex`` are sparse -- emitted only when
+    set, never as a ``false``/``null`` key, matching the golden pages'
+    shape exactly. ``sex`` is a solo rider's ``"M"``/``"F"`` and None
+    for a team (no single sex), so a team row renders no marker. The
     field is named ``entry_type`` rather than ``type`` to avoid
     shadowing the builtin; it maps to the JSON key ``"type"``, and
     the templates read it through the :attr:`type` alias (D6).
@@ -139,13 +141,18 @@ class ResultRow:
     hand: str
     total: str | None = None
     best_lap: str | None = None
+    # The solo rider's sex ("M"/"F"); None for a team, whose members
+    # need not share one. Sparse in the record, like tie/dnf/logo.
+    sex: str | None = None
     tie: bool = False
     dnf: bool = False
     cards: tuple[CardPair, ...] = ()
     drawn: tuple[CardPair, ...] = ()
-    # W8: the entry's logo as a data URI (a card bitmap or the team's
-    # image), mirroring the org logo's own logo_src mechanism. Sparse
-    # in the record -- absent rows have no logo and render nothing.
+    # The entry's logo *card* as a data URI (the team's packaged card
+    # bitmap, resolved by the caller), mirroring the org logo's own
+    # logo_src mechanism. Sparse in the record -- absent rows have no
+    # logo and render nothing. Phase 3 retired the logo image, so the
+    # card is the whole logo.
     logo: str | None = None
 
     @property
@@ -157,15 +164,17 @@ class ResultRow:
         """Return the JSON-record view for one results row.
 
         ``total``/``bestLap`` are included only when ``show_times``;
-        ``tie``/``dnf`` are included only when true.
+        ``sex``/``tie``/``dnf`` are included only when set.
         """
         record: dict[str, object] = {
             "place": self.place,
             "plate": self.plate,
             "entry": self.entry,
             "type": self.entry_type,
-            "laps": self.laps,
         }
+        if self.sex is not None:
+            record["sex"] = self.sex
+        record["laps"] = self.laps
         if show_times:
             record["total"] = self.total
             record["bestLap"] = self.best_lap
@@ -524,7 +533,8 @@ def _result_row_from_placed(placed: Placed, *, logo: str | None = None) -> Resul
     "TEAM by 4") is a display form ``EntryResult`` does not carry, so
     it is not reproduced (documented seam). *logo* (W8) is the row's
     logo data URI, resolved by the caller from the roster entry that
-    holds the placed plate -- ``None`` renders no logo image.
+    holds the placed plate -- ``None`` renders no logo image. ``sex``
+    (E7) is the solo rider's "M"/"F", None for a team.
     """
     result = placed.result
     return ResultRow(
@@ -536,6 +546,7 @@ def _result_row_from_placed(placed: Placed, *, logo: str | None = None) -> Resul
         hand=_hand_label(result.hand),
         total=_format_duration(result.total_time),
         best_lap=_format_duration(result.best_lap),
+        sex=result.sex,
         tie=placed.draw_required,
         dnf=result.dnf,
         cards=tuple(_card_pair(card) for card in result.hand.best5),
@@ -663,7 +674,7 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     to a transparent 1x1 PNG when absent (D8); ``logo_path`` is the
     alternative raw-file form, base64-encoded when *logo_src* is
     None. ``team_logos`` (W8) maps a placed entry's plate to its logo
-    data URI (card bitmap or team image), rendered as a small image
+    data URI (the team's card bitmap), rendered as a small image
     in the team's Top ten and Full field rows; absent entries render
     nothing.
 
@@ -730,6 +741,7 @@ def _result_row_from_record(row: Mapping[str, object]) -> ResultRow:
         hand=cast("str", row["hand"]),
         total=cast("str | None", row.get("total")),
         best_lap=cast("str | None", row.get("bestLap")),
+        sex=cast("str | None", row.get("sex")),
         tie=cast("bool", row.get("tie", False)),
         dnf=cast("bool", row.get("dnf", False)),
         cards=_card_pairs(row.get("cards", [])),

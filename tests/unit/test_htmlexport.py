@@ -711,3 +711,66 @@ def test_render_public_team_logo_round_trips_through_the_embedded_record() -> No
     (team_row,) = [row for row in record["results"] if row["plate"] == 88]
 
     assert team_row["logo"] == _TEAM_LOGO_URI
+
+
+# ============================================================ E7
+# Sex on the results page: ResultRow carries a solo rider's "M"/"F"
+# (None for a team, which has no single sex), the record emits it
+# sparsely like tie/dnf/logo, and the podium card and full-field row
+# render it as a small muted suffix on solo rows only.
+
+
+@pytest.mark.parametrize("sex", ["M", "F"])
+def test_result_row_to_record_emits_the_sex_letter_when_set(sex: str) -> None:
+    """A solo row's "M"/"F" becomes the record's ``sex`` value."""
+    row = ResultRow(
+        place=2, plate=7, entry="Luca Ferrari", entry_type="SOLO", laps=10, hand="Pair", sex=sex
+    )
+
+    record = row.to_record(show_times=False)
+
+    assert record["sex"] == sex
+
+
+def test_result_row_to_record_omits_sex_when_unset() -> None:
+    """A team row carries no ``sex`` key at all, never a null."""
+    row = ResultRow(
+        place=1, plate=88, entry="Moss Ridge Riders", entry_type="TEAM", laps=11, hand="Pair"
+    )
+
+    record = row.to_record(show_times=False)
+
+    assert "sex" not in record
+
+
+def test_render_public_marks_the_solo_rows_sex_and_leaves_the_team_row_blank() -> None:
+    """Mixed field: markup and record carry sex on the solo row only."""
+    placed = (
+        Placed(
+            place=1,
+            result=_sample_entry("88", "Moss Ridge Riders", 11, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        Placed(
+            place=2,
+            result=replace(_sample_entry("7", "Luca Ferrari", 10), sex="F"),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    html = render(_StubRide(), placed, ExportOptions())
+
+    record = json.loads(race_data_block(html))
+    assert [(row["type"], row.get("sex")) for row in record["results"]] == [
+        ("TEAM", None),
+        ("SOLO", "F"),
+    ]
+    assert html.count(" · F</span>") == 2  # the podium card and the full-field row
+
+
+def test_render_payload_golden_renders_both_sex_letters(rendered_times: str) -> None:
+    """The frozen golden carries a sex marker for M and F solo rows."""
+    assert " · M</span>" in rendered_times
+    assert " · F</span>" in rendered_times

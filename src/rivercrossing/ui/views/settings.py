@@ -3,8 +3,8 @@
 
 E8.1.2 finishes the dialog E8.1.1's presenter stubbed: this thin view
 renders the current :class:`AppSettings` into the appearance radios
-and the sound/hide-times checkboxes, and OK collects a fresh
-:class:`AppSettings` for the app's ``on_save`` callback (which
+and the sound/hide-times/verbose-log checkboxes, and OK collects a
+fresh :class:`AppSettings` for the app's ``on_save`` callback (which
 persists + applies it). W13 (notes #12): the text-zoom choice left
 the dialog -- View ▸ Zoom is the single zoom surface -- so
 ``zoom_percent`` carries through OK unchanged, like the layout
@@ -41,7 +41,8 @@ class SettingsDialog:
     ``on_save``, and ``backup_now_btn`` fires the app's
     ``on_backup_now`` seam (ux-polish: the R-54 manual backup File ▸
     Back Up Database… runs; the dialog stays open so the operator can
-    keep editing).
+    keep editing). F1's ``verbose_log_chk`` is rendered and collected
+    exactly like ``sound_chk``.
     """
 
     def __init__(  # noqa: PLR0913 -- (dialog, settings, on_save, on_backup_now): the view's four construction seams
@@ -76,6 +77,7 @@ class SettingsDialog:
         self.dark_radio = self._find(ids.APPEARANCE_DARK_RADIO, wx.RadioButton)
         self.sound_chk = self._find(ids.SOUND_CHK, wx.CheckBox)
         self.hide_times_chk = self._find(ids.HIDE_TIMES_CHK, wx.CheckBox)
+        self.verbose_log_chk = self._find(ids.VERBOSE_LOG_CHK, wx.CheckBox)
         self.backup_now_btn = self._find(ids.BACKUP_NOW_BTN, wx.Button)
 
         self.show_settings(settings)
@@ -104,6 +106,7 @@ class SettingsDialog:
         self.dark_radio.SetValue(settings.appearance == ThemeMode.DARK.value)
         self.sound_chk.SetValue(settings.sound_on)
         self.hide_times_chk.SetValue(settings.hide_times)
+        self.verbose_log_chk.SetValue(settings.verbose_logging)
 
     def collect_settings(self) -> AppSettings:
         """Read the controls into a fresh :class:`AppSettings`.
@@ -119,6 +122,7 @@ class SettingsDialog:
             ),
             sound_on=bool(self.sound_chk.GetValue()),
             hide_times=bool(self.hide_times_chk.GetValue()),
+            verbose_logging=bool(self.verbose_log_chk.GetValue()),
             zoom_percent=self._settings.zoom_percent,
             splitter_sash=self._settings.splitter_sash,
             window_geometry=self._settings.window_geometry,

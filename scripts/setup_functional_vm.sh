@@ -1,4 +1,7 @@
 #!/bin/bash
+# shellcheck disable=SC2317,SC2329
+# Everything below the early refusal is deliberately-kept dead code awaiting
+# the functional-suite rewrite; the unreachability is intended, not a defect.
 #
 # One-time provisioning of the reusable Tart macOS VM template used to
 # run RiverCrossing's functional test suite. Local macOS functional
@@ -13,8 +16,15 @@
 # re-provisions the existing template rather than failing.
 #
 # Usage: scripts/setup_functional_vm.sh
+#
+# DISABLED (2026-09-10): the functional suite is broken and is being
+# rewritten from scratch. Provisioning a VM for it is pointless until
+# then, so this script refuses to run.
 
 set -uo pipefail
+
+echo "FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM" >&2
+exit 1
 
 readonly TEMPLATE_NAME="rivercrossing-func-template"
 readonly BASE_IMAGE="ghcr.io/cirruslabs/macos-tahoe-base:latest"

@@ -109,9 +109,9 @@ def _resolve_logo_bitmap(logo_path: str | Path | None, window: Any) -> Any:  # n
         # the VM -- wx's PNG decoder is stricter than PIL's).
     # logic-coverage-exempt: T-3 -- the missing-file/undecodable-file
     # arms of the guard above are unreachable through the route: the
-    # store never restores logo_path on load (store's load_engine sets
-    # it to None), so the only live input is None or an existing,
-    # decodable file; the arms are defensive only.
+    # only live inputs are None and a path the store itself just wrote
+    # (load_engine's re-materialized ride logo), so the file always
+    # exists and decodes; the arms are defensive only.
     return _fallback_logo_bitmap(window)
 
 

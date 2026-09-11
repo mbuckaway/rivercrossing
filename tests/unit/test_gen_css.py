@@ -33,7 +33,7 @@ from collections.abc import (  # noqa: TC003 -- used at runtime as return types 
 )
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import pytest
 from hypothesis import given
@@ -97,6 +97,20 @@ def _fixture_templates_dir(fixture_root: Path) -> Path:
     fixture = fixture_root / "templates"
     shutil.copytree(_COMMITTED_TEMPLATES_DIR, fixture)
     return fixture
+
+
+def _point_cli_at_missing_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Point the CLI constant at a missing node_modules shim."""
+    missing = tmp_path / "node_modules" / ".bin" / "tailwindcss"
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", missing)
+    return missing
+
+
+def _fake_npm_on_path(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Make ``shutil.which`` resolve to a fake absolute npm path."""
+    npm_path = "/usr/local/bin/npm"
+    monkeypatch.setattr(gen_css.shutil, "which", lambda _name: npm_path)
+    return npm_path
 
 
 # ------------------------------------------- the honest regeneration
@@ -232,6 +246,28 @@ def test_main_check_flag_returns_zero_when_artifacts_match(
 
 
 @pytest.mark.usefixtures("fake_tailwind_cli")
+@pytest.mark.parametrize("name", ["compiled_css", "fonts_css"])
+def test_main_check_flag_leaves_artifact_unchanged(tmp_path: Path, name: str) -> None:
+    """``--check`` never rewrites the artifact.
+
+    Only ``--write`` regenerates the committed files; a check that
+    wrote (even byte-identical bytes) would bump the artifact's mtime.
+    """
+    fixture = _fixture_templates_dir(tmp_path / "templates")
+    out_dir = tmp_path / "out"
+    gen_css.main(["--write", "--templates-dir", str(fixture), "--out-dir", str(out_dir)])
+    artifact = out_dir / name
+    before = (artifact.read_bytes(), artifact.stat().st_mtime_ns)
+
+    exit_code = gen_css.main(
+        ["--check", "--templates-dir", str(fixture), "--out-dir", str(out_dir)]
+    )
+
+    assert exit_code == 0
+    assert (artifact.read_bytes(), artifact.stat().st_mtime_ns) == before
+
+
+@pytest.mark.usefixtures("fake_tailwind_cli")
 def test_main_check_flag_returns_one_with_drift_line_when_compiled_css_modified(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -313,11 +349,12 @@ def test_main_check_flag_returns_two_when_tailwind_cli_missing(
     """A missing pinned CLI is a hard error naming the fix, not drift.
 
     The check must not confuse "tooling absent" with "artifact stale".
+    ``shutil.which`` is forced to ``None`` so the self-install seam is
+    never exercised -- this test must not shell out to a real npm.
     """
     fixture = _fixture_templates_dir(tmp_path / "templates")
-    monkeypatch.setattr(
-        gen_css, "_TAILWIND_CLI", tmp_path / "node_modules" / ".bin" / "tailwindcss"
-    )
+    _point_cli_at_missing_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(gen_css.shutil, "which", lambda _name: None)
 
     exit_code = gen_css.main(
         ["--check", "--templates-dir", str(fixture), "--out-dir", str(tmp_path / "out")]
@@ -352,10 +389,123 @@ def test_main_check_flag_returns_two_when_tailwind_cli_fails(
 def test_run_tailwind_cli_missing_cli_raises_tailwind_cli_missing_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The seam's own guard names the install fix (T-5 direct raise)."""
-    monkeypatch.setattr(
-        gen_css, "_TAILWIND_CLI", tmp_path / "node_modules" / ".bin" / "tailwindcss"
+    """The seam's own guard names the install fix (T-5 direct raise).
+
+    ``shutil.which`` is forced to ``None`` so the self-install seam is
+    never exercised -- this test must not shell out to a real npm.
+    """
+    _point_cli_at_missing_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(gen_css.shutil, "which", lambda _name: None)
+
+    with pytest.raises(gen_css.TailwindCliMissingError, match=re.escape("npm install")):
+        gen_css._run_tailwind_cli([])
+
+
+# ----------------------------------- Tailwind CLI self-install (E6.2.1)
+
+
+def test_run_tailwind_cli_present_cli_skips_the_npm_install(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installed CLI skips the npm lookup and install entirely."""
+    cli = tmp_path / "tailwindcss"
+    cli.write_text("#!/bin/sh\n", encoding="utf-8")
+    monkeypatch.setattr(gen_css, "_TAILWIND_CLI", cli)
+    which = Mock(return_value="/usr/local/bin/npm")
+    monkeypatch.setattr(gen_css.shutil, "which", which)
+    mock_run = Mock(return_value=Mock(stdout=b"cli-out"))
+    monkeypatch.setattr(gen_css.subprocess, "run", mock_run)
+
+    result = gen_css._run_tailwind_cli([])
+
+    assert result == b"cli-out"
+    which.assert_not_called()
+    mock_run.assert_called_once_with(
+        [str(cli)], cwd=gen_css._ROOT, capture_output=True, check=True, timeout=120
     )
+
+
+def test_run_tailwind_cli_missing_cli_with_npm_installs_then_runs_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing CLI is bootstrapped with ``npm ci``, then runs."""
+    missing = _point_cli_at_missing_path(monkeypatch, tmp_path)
+    npm = _fake_npm_on_path(monkeypatch)
+
+    def _install(*_args: object, **_kwargs: object) -> Mock:
+        missing.parent.mkdir(parents=True, exist_ok=True)
+        missing.write_text("#!/bin/sh\n", encoding="utf-8")
+        return Mock(stdout=b"")
+
+    def _compile(*_args: object, **_kwargs: object) -> Mock:
+        return Mock(stdout=b"compiled-out")
+
+    responses = {npm: _install, str(missing): _compile}
+
+    def _dispatch(argv: Sequence[str], **kwargs: object) -> Mock:
+        return responses[argv[0]](*argv, **kwargs)
+
+    mock_run = Mock(side_effect=_dispatch)
+    monkeypatch.setattr(gen_css.subprocess, "run", mock_run)
+
+    result = gen_css._run_tailwind_cli([])
+
+    assert result == b"compiled-out"
+    assert mock_run.call_args_list == [
+        call([npm, "ci"], cwd=gen_css._ROOT, capture_output=True, check=True),
+        call(
+            [str(missing)],
+            cwd=gen_css._ROOT,
+            capture_output=True,
+            check=True,
+            timeout=120,
+        ),
+    ]
+
+
+def test_run_tailwind_cli_missing_cli_and_missing_npm_raises_missing_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Missing npm on PATH fails before any subprocess."""
+    _point_cli_at_missing_path(monkeypatch, tmp_path)
+    monkeypatch.setattr(gen_css.shutil, "which", lambda _name: None)
+    mock_run = Mock(return_value=Mock())
+    monkeypatch.setattr(gen_css.subprocess, "run", mock_run)
+
+    with pytest.raises(gen_css.TailwindCliMissingError, match=re.escape("npm install")):
+        gen_css._run_tailwind_cli([])
+
+    mock_run.assert_not_called()
+
+
+def test_run_tailwind_cli_install_leaves_cli_absent_raises_missing_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An install that leaves no CLI is a hard error."""
+    _point_cli_at_missing_path(monkeypatch, tmp_path)
+    npm = _fake_npm_on_path(monkeypatch)
+    mock_run = Mock(return_value=Mock(stdout=b""))
+    monkeypatch.setattr(gen_css.subprocess, "run", mock_run)
+
+    with pytest.raises(gen_css.TailwindCliMissingError, match=re.escape("npm install")):
+        gen_css._run_tailwind_cli([])
+
+    mock_run.assert_called_once_with(
+        [npm, "ci"], cwd=gen_css._ROOT, capture_output=True, check=True
+    )
+
+
+def test_run_tailwind_cli_npm_ci_failure_raises_missing_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed ``npm ci`` surfaces as the CLI-missing error."""
+    _point_cli_at_missing_path(monkeypatch, tmp_path)
+    _fake_npm_on_path(monkeypatch)
+
+    def _npm_fails(*_args: object, **_kwargs: object) -> Mock:
+        raise subprocess.CalledProcessError(1, "npm ci", stderr=b"registry unreachable")
+
+    monkeypatch.setattr(gen_css.subprocess, "run", _npm_fails)
 
     with pytest.raises(gen_css.TailwindCliMissingError, match=re.escape("npm install")):
         gen_css._run_tailwind_cli([])

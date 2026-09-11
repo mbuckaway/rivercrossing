@@ -2174,11 +2174,11 @@ def test_move_rider_audit_payload_rider_name_is_the_full_name() -> None:
 
 
 # ------------------------------------------------------- team logos
-# (Phase 4: an Entry carries a logo -- one natural card code and/or
-# image bytes; a Roster constructed with team_logo_seed auto-assigns
-# each new team the next unused code from cards.seeded_card_codes, so
-# no two auto-assigned teams share -- xrc-windows.md section C's
-# Team | Logo column.)
+# (An Entry carries a logo -- one natural card code; a Roster
+# constructed with team_logo_seed auto-assigns each new team the next
+# unused code from cards.seeded_card_codes, so no two auto-assigned
+# teams share. Phase 3 retired the logo image and added
+# random_team_card for the Add/Edit dialog's Pick card.)
 
 
 def _seeded_mixed_roster(seed: int = 8843) -> Roster:
@@ -2189,10 +2189,10 @@ def _seeded_mixed_roster(seed: int = 8843) -> Roster:
 
 
 def test_roster_bare_entry_carries_no_logo() -> None:
-    """A hand-built Entry defaults to card-less and image-less."""
+    """A hand-built Entry defaults to card-less."""
     entry = Entry(plate="88", display_name="Moss Ridge", type=EntryType.TEAM)
 
-    assert (entry.logo_card, entry.logo_png) == (None, None)
+    assert entry.logo_card is None
 
 
 def test_roster_create_team_entry_without_a_seed_assigns_no_logo() -> None:
@@ -2208,7 +2208,6 @@ def test_roster_create_team_entry_without_a_seed_assigns_no_logo() -> None:
     )
 
     assert entry.logo_card is None
-    assert entry.logo_png is None
 
 
 def test_roster_create_team_entry_auto_assigns_the_first_seeded_card() -> None:
@@ -2365,8 +2364,8 @@ def test_roster_next_team_logo_card_returns_none_without_a_seed() -> None:
     assert roster.next_team_logo_card() is None
 
 
-def test_roster_set_team_logo_card_replaces_any_image_and_audits() -> None:
-    """A picked card wins over an image: logo_png clears, log grows."""
+def test_roster_set_team_logo_card_replaces_the_card_and_audits() -> None:
+    """A picked card replaces the team's own and audits it."""
     roster = _seeded_mixed_roster()
     entry = roster.create_team_entry(
         display_name="Trail Blazers",
@@ -2375,35 +2374,31 @@ def test_roster_set_team_logo_card_replaces_any_image_and_audits() -> None:
             Rider(first_name="K.", last_name="Singh", plate="78"),
         ],
     )
-    roster.set_team_logo_image(entry, image=b"png-bytes")
 
     roster.set_team_logo_card(entry, code="AS")
 
     assert entry.logo_card == "AS"
-    assert entry.logo_png is None
     assert roster.audit_log[-1] == AuditEvent(
         action="set_team_logo_card", payload={"plate": entry.plate, "code": "AS"}
     )
 
 
-def test_roster_set_team_logo_image_wins_over_a_card_and_audits() -> None:
-    """An image replaces any card: logo_card clears, log grows."""
+def test_roster_random_team_card_never_repeats_the_excluded_code() -> None:
+    """random_team_card excludes the staged card (repeat changes)."""
     roster = _seeded_mixed_roster()
-    entry = roster.create_team_entry(
-        display_name="Trail Blazers",
-        riders=[
-            Rider(first_name="A.", last_name="Roy", plate="77"),
-            Rider(first_name="K.", last_name="Singh", plate="78"),
-        ],
-    )
+    staged = seeded_card_codes(8843)[0]
 
-    roster.set_team_logo_image(entry, image=b"png-bytes")
+    code = roster.random_team_card(exclude=staged)
 
-    assert entry.logo_png == b"png-bytes"
-    assert entry.logo_card is None
-    assert roster.audit_log[-1] == AuditEvent(
-        action="set_team_logo_image", payload={"plate": entry.plate}
-    )
+    assert code is not None
+    assert code != staged
+
+
+def test_roster_random_team_card_given_no_seed_returns_none() -> None:
+    """An unseeded roster has no deck to draw from."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+
+    assert roster.random_team_card() is None
 
 
 def test_roster_set_team_logo_card_unknown_entry_raises_naming_it() -> None:
@@ -2684,7 +2679,6 @@ def test_roster_create_empty_team_auto_assigns_the_next_seeded_logo_card() -> No
     entry = roster.create_empty_team(display_name="Dirt Dynamos")
 
     assert entry.logo_card == seeded[0]
-    assert entry.logo_png is None
 
 
 def test_roster_create_empty_team_keeps_a_supplied_logo_card_verbatim() -> None:
@@ -2702,18 +2696,6 @@ def test_roster_create_empty_team_unseeded_carries_no_auto_logo() -> None:
 
     entry = roster.create_empty_team(display_name="Dirt Dynamos")
 
-    assert entry.logo_card is None
-
-
-def test_roster_create_empty_team_logo_image_wins_over_a_supplied_card() -> None:
-    """logo_png given with a logo_card: image wins, card clears."""
-    roster = Roster(entry_mode=EntryMode.MIXED)
-
-    entry = roster.create_empty_team(
-        display_name="Dirt Dynamos", logo_card="AS", logo_png=b"team-logo-png"
-    )
-
-    assert entry.logo_png == b"team-logo-png"
     assert entry.logo_card is None
 
 
@@ -2786,54 +2768,57 @@ def test_roster_exposes_no_team_logo_seed_when_unseeded() -> None:
     assert roster.team_logo_seed is None
 
 
-# ----------------------------------------------------- clear_team_logo
+# ------------------------------------------------------ rider sex field
 
 
-def test_roster_clear_team_logo_clears_card_and_image_and_audits() -> None:
-    """clear_team_logo removes both logo forms at once and audits."""
-    roster = _seeded_mixed_roster()
-    entry = roster.create_team_entry(
-        display_name="Trail Blazers",
-        riders=[
-            Rider(first_name="A.", last_name="Roy", plate="77"),
-            Rider(first_name="K.", last_name="Singh", plate="78"),
-        ],
-        logo_card="AS",
-    )
-    entry.logo_png = b"png-bytes"  # both set at once; the setter pair never does
+def test_rider_sex_defaults_to_none_when_not_given() -> None:
+    """A rider built without a sex is unknown, not guessed."""
+    rider = Rider(first_name="Alex")
 
-    roster.clear_team_logo(entry)
-
-    assert (entry.logo_card, entry.logo_png) == (None, None)
-    assert roster.audit_log[-1] == AuditEvent(
-        action="clear_team_logo", payload={"plate": entry.plate}
-    )
+    assert rider.sex is None
 
 
-def test_roster_clear_team_logo_on_a_logo_less_entry_is_a_noop() -> None:
-    """Clearing a team that already carries no logo changes nothing."""
-    roster = _seeded_mixed_roster()
-    entry = roster.create_team_entry(
-        display_name="Trail Blazers",
-        riders=[
-            Rider(first_name="A.", last_name="Roy", plate="77"),
-            Rider(first_name="K.", last_name="Singh", plate="78"),
-        ],
-    )
-    before = roster.audit_log
+@pytest.mark.parametrize("sex", ["M", "F"])
+def test_rider_sex_carries_the_supplied_value(sex: str) -> None:
+    """A rider built with a sex keeps exactly that value."""
+    rider = Rider(first_name="Alex", sex=sex)
 
-    roster.clear_team_logo(entry)
-
-    assert (entry.logo_card, entry.logo_png) == (None, None)
-    assert roster.audit_log[-1] == AuditEvent(
-        action="clear_team_logo", payload={"plate": entry.plate}
-    )
-    assert len(roster.audit_log) == len(before) + 1
+    assert rider.sex == sex
 
 
-def test_roster_clear_team_logo_on_a_foreign_entry_raises_entry_not_found_error() -> None:
-    """A clear on an entry this roster does not own is refused."""
-    roster = _seeded_mixed_roster()
+def test_rider_sex_is_mutable_like_the_rest_of_the_rider() -> None:
+    """Rider stays a mutable dataclass; a sex edit sticks."""
+    rider = Rider(first_name="Alex", sex="M")
 
-    with pytest.raises(EntryNotFoundError, match=re.escape("not a member")):
-        roster.clear_team_logo(Entry(plate="999", display_name="Ghost", type=EntryType.TEAM))
+    rider.sex = "F"
+
+    assert rider.sex == "F"
+
+
+def test_create_solo_entry_defaults_rider_sex_to_none() -> None:
+    """A solo entry built without a sex leaves the rider unknown."""
+    roster = Roster()
+
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert entry.riders[0].sex is None
+
+
+@pytest.mark.parametrize("sex", ["M", "F"])
+def test_create_solo_entry_stores_the_supplied_rider_sex(sex: str) -> None:
+    """create_solo_entry threads its sex kwarg onto the rider."""
+    roster = Roster()
+
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="12", sex=sex)
+
+    assert entry.riders[0].sex == sex
+
+
+def test_create_team_entry_of_one_keeps_the_callers_rider_sex() -> None:
+    """A transient team-of-one keeps the caller's rider and sex."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    rider = Rider(first_name="Alex", last_name="Roy", plate="9", sex="F")
+
+    entry = roster.create_team_entry_of_one(display_name="Solo Act", rider=rider, plate="9")
+
+    assert entry.riders[0].sex == "F"

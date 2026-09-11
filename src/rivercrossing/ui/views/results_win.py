@@ -60,6 +60,7 @@ import wx.dataview
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER
 from rivercrossing.ui import ids
+from rivercrossing.ui.card_text import JOKER_CODE, JOKER_DISPLAY, format_card
 from rivercrossing.ui.presenters.results import ResultsPresenter
 from rivercrossing.ui.views._support import associate_model, find_control
 
@@ -77,6 +78,7 @@ __all__ = [
     "COL_PLACE",
     "COL_PLATE",
     "COL_TOTAL",
+    "JOKER_CODE",
     "JOKER_DISPLAY",
     "MIN_SIZE",
     "STALE_INFOBAR",
@@ -98,10 +100,6 @@ COL_HAND = 6
 
 # xrc-windows.md D's exact column order.
 COLUMN_LABELS: tuple[str, ...] = ("Place", "Plate", "Entry", "Laps", "Total", "Best 5", "Hand")
-
-_SUIT_SYMBOLS = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
-JOKER_CODE = "JK"
-JOKER_DISPLAY = "JK★"
 
 # E6.4.1: the R-43 "draw required" badge (xrc-windows.md D's code-side
 # footnote), rendered as a leading glyph in the Place cell (module
@@ -133,20 +131,6 @@ _EXPORT_BUTTONS: tuple[tuple[str, str], ...] = (
     ("poster_btn", "export_poster"),
     ("export_csv_btn", "export_results_csv"),
 )
-
-
-def format_card(code: str) -> str:
-    """Return one stored card code's canvas display text.
-
-    ``"KS"`` -> ``"K♠"``; the joker -> ``"JK★"``. The rank character
-    is already in its display form (``Card.code()``'s stored form
-    uses "T" for ten, module-skeletons.md S4), so only the suit
-    letter needs converting to a glyph.
-    """
-    if code == JOKER_CODE:
-        return JOKER_DISPLAY
-    rank, suit = code[:-1], code[-1]
-    return f"{rank}{_SUIT_SYMBOLS[suit]}"
 
 
 def format_best5(cards: Sequence[str]) -> str:

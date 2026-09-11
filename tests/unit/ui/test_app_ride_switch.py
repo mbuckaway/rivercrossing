@@ -12,14 +12,19 @@ it, headless with a real Store and a recording fake console view:
   ride row, persists the roster, and schedules the console switch
   (the R-52 session marker is W3's start-event sink, not creation).
 - :func:`rivercrossing.ui.app._switch_console_to_ride` loads the ride
-  from the store, renders its name and DRAFT state onto the view, and
-  wires the store's append as the engine's event sink.
+  from the store, renders its identity header (C1: name, logo, date,
+  start, entry mode) and DRAFT state onto the view, and wires the
+  store's append as the engine's event sink.
 
 The wx boundary is the one mocked thing: ``require_wx`` is replaced
 with a recorder so the deferred ``wx.CallAfter`` switch is observed
 without constructing any GUI (T-10: wx is the GUI I/O boundary).
 """
 
+import base64
+from dataclasses import replace
+from datetime import date, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from conftest import gorba_config
@@ -30,9 +35,14 @@ from rivercrossing.ui import app as app_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import pytest
+
+# A canonical 1x1 transparent PNG (67 bytes) -- the ride-logo BLOB the
+# store writes and this module re-materializes, not a placeholder.
+_TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQ"
+    "AAAABJRU5ErkJggg=="
+)
 
 
 class _FakeConsoleView:
@@ -46,9 +56,9 @@ class _FakeConsoleView:
         """Record the swapped presenter."""
         self.calls.append(("set_presenter", presenter))
 
-    def show_ride_name(self, name: str) -> None:
-        """Record the rendered ride name."""
-        self.calls.append(("show_ride_name", name))
+    def show_ride_header(self, **fields: object) -> None:
+        """Record the rendered ride-identity header (C1)."""
+        self.calls.append(("show_ride_header", fields))
 
     def set_state(self, status: RideStatus) -> None:
         """Record the rendered lifecycle state."""
@@ -157,7 +167,7 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
         assert [name for name, _arg in view.calls] == [
             "set_team_ui_visible",
             "set_presenter",
-            "show_ride_name",
+            "show_ride_header",
             "set_state",
             "show_feed",
             "show_counters",
@@ -166,7 +176,16 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
         swapped = next(arg for name, arg in view.calls if name == "set_presenter")
         assert isinstance(swapped, ConsolePresenter)
         assert swapped.engine.state is RideStatus.DRAFT
-        assert ("show_ride_name", "GORBA EPIC 2026") in view.calls
+        assert (
+            "show_ride_header",
+            {
+                "name": "GORBA EPIC 2026",
+                "logo": None,
+                "event_date": date(2026, 9, 20),
+                "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, by design
+                "entry_mode": EntryMode.MIXED,
+            },
+        ) in view.calls
         assert ("set_state", RideStatus.DRAFT) in view.calls
         # W12/R-11: the presenter pushes the teams-chip verdict on
         # birth -- this mixed roster keeps the Teams chip visible.
@@ -176,5 +195,34 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
             Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
         )
         assert [row.action for row in store.audit_rows(ride_id)] == ["start"]
+    finally:
+        store.close()
+
+
+def test_switch_console_to_ride_rematerializes_the_stored_ride_logo(
+    tmp_path: Path,
+) -> None:
+    """C1: a store ride's logo BLOB reaches the header as a file path.
+
+    ``Store.load_engine`` used to drop the ride-level ``ride.logo_png``
+    BLOB (``logo_path=None``), so a reloaded ride could never render
+    its own logo. The header now receives that file's path.
+    """
+    db_path = tmp_path / "rides.db"
+    logo = tmp_path / "logo.png"
+    logo.write_bytes(_TINY_PNG)
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(replace(gorba_config(), logo_path=logo))
+        store.save_roster(ride_id, _roster())
+        view = _FakeConsoleView()
+        context = _context(store=store, view=view, roster=_roster())
+
+        app_module._switch_console_to_ride(context, ride_id)
+
+        header = next(arg for name, arg in view.calls if name == "show_ride_header")
+        rendered_logo = header["logo"]
+        assert isinstance(rendered_logo, Path)
+        assert rendered_logo.read_bytes() == _TINY_PNG
     finally:
         store.close()

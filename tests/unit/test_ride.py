@@ -37,6 +37,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
@@ -530,11 +532,83 @@ def test_finish_again_from_reopened_transitions_to_finished() -> None:
     assert engine.events[-1].action == "finish"
 
 
+# ---------------------------------------------- C2 REOPENED -> RUNNING
+# Continue riding from the corrections state: the console's Start
+# button/row is enabled in REOPENED (C2), so the engine must accept it
+# -- keep the recorded actual_start, clear the stop guard, move the
+# roster back to RUNNING and append a ``continue`` audit row.
+
+
+def test_start_from_reopened_continues_the_ride_and_keeps_actual_start() -> None:
+    """C2: Start on REOPENED rides on (continue), never a new gun."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(600)
+    engine.finish()
+    engine.reopen()
+
+    event = engine.start()
+
+    assert engine.state is RideStatus.RUNNING
+    assert event.action == "continue"
+    assert event.payload == {"actual_start": "2026-09-20T10:00:00"}
+    assert engine._roster.status is RideStatus.RUNNING
+    assert engine.stopped is False
+
+
+def test_start_from_reopened_discards_the_closed_finish_instant() -> None:
+    """C2: continuing reopens the clock -- closed_elapsed is zero."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(600)
+    engine.finish()
+    engine.reopen()
+
+    engine.start()
+
+    assert engine.closed_elapsed() == 0.0
+
+
+# ------------------------------------------- C3 closed-ride elapsed
+# FINISHED and REOPENED show a frozen final time: the engine records
+# the finish instant (``finish()``), preserves it through ``reopen()``
+# and replay (``apply``), and exposes it as ``closed_elapsed()`` so the
+# console never advances a closed ride's clock.
+
+
+def test_closed_elapsed_given_a_finished_ride_reports_the_recorded_finish() -> None:
+    """C3: closed_elapsed() is finished_at - actual_start."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(1234)
+    engine.finish()
+
+    assert engine.closed_elapsed() == pytest.approx(1234.0)
+
+
+def test_closed_elapsed_given_a_reopened_ride_keeps_the_finish_elapsed() -> None:
+    """C3: reopen preserves the finish instant -- clock stays closed."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(500)
+    engine.finish()
+    clock.advance(9999)
+    engine.reopen()
+
+    assert engine.closed_elapsed() == pytest.approx(500.0)
+
+
+def test_closed_elapsed_given_a_never_started_ride_returns_zero() -> None:
+    """C3 boundary: no actual_start means no elapsed to close."""
+    engine, _ = _make_engine()
+
+    assert engine.closed_elapsed() == 0.0
+
+
 @pytest.mark.parametrize(
     ("start_state", "method", "match"),
     [
         ("finished", "start", "cannot start"),
-        ("reopened", "start", "cannot start"),
         ("draft", "finish", "cannot finish"),
         ("finished", "finish", "cannot finish"),
         ("draft", "reopen", "cannot reopen"),
@@ -737,6 +811,85 @@ def test_start_with_multiple_missing_setup_fields_joins_every_reason() -> None:
     assert engine.events == ()
 
 
+# ------------------------------ start gate: structured reasons
+
+
+def test_start_with_empty_roster_reports_the_single_reason_in_reasons() -> None:
+    """A blocked start carries its one reason structured (Phase 5)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    engine, _ = _make_engine(roster=roster)
+
+    with pytest.raises(StartBlockedError, match=re.escape("roster has no riders")) as excinfo:
+        engine.start()
+
+    assert excinfo.value.reasons == ("roster has no riders",)
+    assert str(excinfo.value) == "roster has no riders"
+
+
+def test_start_with_setup_violations_reports_each_field_in_reasons() -> None:
+    """Every setup violation lands in ``reasons``, one entry each."""
+    engine, _ = _make_engine(config=_config(name="", venue="", lap_km=0.0))
+
+    with pytest.raises(
+        StartBlockedError,
+        match=re.escape("name is required; venue is required; lap length must be positive"),
+    ) as excinfo:
+        engine.start()
+
+    assert excinfo.value.reasons == (
+        "name is required",
+        "venue is required",
+        "lap length must be positive",
+    )
+    assert str(excinfo.value) == (
+        "ride setup is incomplete: name is required; venue is required; "
+        "lap length must be positive"
+    )
+
+
+def test_start_with_roster_violations_reports_plate_prefixed_reasons() -> None:
+    """Each roster violation lands in ``reasons`` as "plate: reason"."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry_of_one(
+        display_name="Half Team", rider=Rider(first_name="Bo", last_name="", plate="7")
+    )
+    engine, _ = _make_engine(roster=roster)
+
+    with pytest.raises(
+        StartBlockedError,
+        match=re.escape("7: team size must be at least 2, got 1"),
+    ) as excinfo:
+        engine.start()
+
+    assert excinfo.value.reasons == ("7: team size must be at least 2, got 1",)
+    assert str(excinfo.value) == (
+        "roster is not ready to start: 7: team size must be at least 2, got 1"
+    )
+
+
+def test_start_blocked_error_given_no_reasons_raises_type_error() -> None:
+    """``reasons`` is required keyword-only, never defaulted."""
+    with pytest.raises(TypeError, match="reasons"):
+        StartBlockedError("roster has no riders")
+
+
+@given(message=st.text(min_size=1), reasons=st.lists(st.text(), max_size=5))
+def test_start_blocked_error_structured_reasons_never_change_the_message(
+    message: str, reasons: list[str]
+) -> None:
+    """The joined message survives whatever ``reasons`` carries.
+
+    Round-trip invariant for Phase 5's wiring: every pre-Phase-5 caller
+    reads ``str(exc)``, so adding structured reasons must leave it --
+    and ``args`` -- byte-for-byte the message it was raised with.
+    """
+    exc = StartBlockedError(message, reasons=tuple(reasons))
+
+    assert str(exc) == message
+    assert exc.args == (message,)
+    assert exc.reasons == tuple(reasons)
+
+
 # -------------------------------------------------- record_crossing
 
 
@@ -888,6 +1041,45 @@ def test_snapshot_includes_dnf_entries_with_dnf_flag() -> None:
     assert results[1].dnf is False
 
 
+def test_snapshot_sets_a_solo_entries_sex_from_its_lone_rider() -> None:
+    """A solo snapshot carries its rider's "M"/"F" (E7)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Luca", last_name="Ferrari", plate="12", sex="M")
+    engine, _ = _make_engine(roster=roster)
+
+    results = engine.snapshot()
+
+    assert [result.sex for result in results] == ["M"]
+
+
+def test_snapshot_leaves_a_solo_entries_sex_none_when_the_rider_has_none() -> None:
+    """An unknown rider sex stays None; exports render it blank."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Luca", last_name="Ferrari", plate="12")
+    engine, _ = _make_engine(roster=roster)
+
+    results = engine.snapshot()
+
+    assert [result.sex for result in results] == [None]
+
+
+def test_snapshot_leaves_a_team_entries_sex_none_even_when_its_riders_have_one() -> None:
+    """A team has no single sex, so its row never carries one."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45", sex="F"),
+            Rider(first_name="Bo", last_name="", plate="9", sex="M"),
+        ],
+    )
+    engine, _ = _make_engine(roster=roster)
+
+    results = engine.snapshot()
+
+    assert [result.sex for result in results] == [None]
+
+
 def test_lap_times_empty_for_entry_without_laps() -> None:
     """An entry with no crossings reports no lap times."""
     engine, _ = _make_engine()
@@ -984,6 +1176,30 @@ def test_record_crossing_short_lap_given_always_deal_default_credits_the_card() 
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].laps == 1
     assert results["12"].cards == (result.card,)
+
+
+def test_record_crossing_given_always_deal_credits_every_accepted_lap() -> None:
+    """E1 regression: Always Deal credits a card on every crossing.
+
+    With ``hold_short_laps=False`` (the W4 default) neither the lap
+    count nor a short lap time may park a card: the short-lap policy
+    gate is the only thing that ever holds one, so five crossings --
+    a very short opener, then laps one second under, exactly at, one
+    second over ``min_lap_s``, and a long one -- credit all five cards
+    and leave the hold queue empty.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=False, min_lap_s=600))
+    engine.start()
+    times = [_dt(10, 0, 5), _dt(10, 10, 4), _dt(10, 20, 4), _dt(10, 30, 5), _dt(11, 30, 5)]
+
+    results = [engine.record_crossing("12", at=at) for at in times]
+
+    results_by_plate = {entry.plate: entry for entry in engine.snapshot()}
+    assert [result.accepted for result in results] == [True] * len(times)
+    assert [result.flagged for result in results] == [False] * len(times)
+    assert results_by_plate["12"].laps == len(times)
+    assert results_by_plate["12"].cards == tuple(result.card for result in results)
+    assert engine.held_crossings() == ()
 
 
 def test_record_crossing_min_lap_exact_equal_is_not_flagged() -> None:
@@ -1672,6 +1888,95 @@ def test_engine_card_for_given_an_unknown_crossing_raises_key_error() -> None:
         engine.card_for(crossing)
 
 
+# -------------------------- Phase 4: credited-cards read accessor
+
+
+def test_credited_cards_given_no_crossings_returns_an_empty_tuple() -> None:
+    """T-4 boundary: an entry that never crossed credits none."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    assert engine.credited_cards("12") == ()
+
+
+def test_credited_cards_given_an_unknown_plate_returns_an_empty_tuple() -> None:
+    """Negative: a plate no entry owns credits nothing, never raises."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    assert engine.credited_cards("999") == ()
+
+
+def test_credited_cards_given_one_crossing_returns_the_dealt_card() -> None:
+    """T-4 boundary: one lap credits exactly the card the shoe dealt."""
+    engine, _ = _make_engine()
+    engine.start()
+    result = engine.record_crossing("12", at=_dt(10, 30))
+
+    assert engine.credited_cards("12") == (result.card,)
+
+
+def test_credited_cards_given_many_crossings_returns_them_in_deal_order() -> None:
+    """T-4 boundary: many laps credit their cards, oldest first."""
+    engine, _ = _make_engine()
+    engine.start()
+    first = engine.record_crossing("12", at=_dt(10, 30))
+    second = engine.record_crossing("12", at=_dt(10, 31))
+    third = engine.record_crossing("12", at=_dt(10, 32))
+
+    assert engine.credited_cards("12") == (first.card, second.card, third.card)
+
+
+def test_credited_cards_given_a_held_short_lap_credits_nothing_yet() -> None:
+    """R-34: a held card is dealt but never credited until released."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    assert engine.credited_cards("12") == ()
+
+
+def test_credited_cards_after_confirming_a_held_card_credits_it() -> None:
+    """R-34: confirming a held card credits it."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    engine.confirm_held(held.crossing)
+
+    assert engine.credited_cards("12") == (held.card,)
+
+
+def test_credited_cards_after_voiding_a_held_card_still_credits_nothing() -> None:
+    """R-34: a voided card never reaches the credited hand."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    engine.void_held(held.crossing)
+
+    assert engine.credited_cards("12") == ()
+
+
+def test_credited_cards_given_a_pooled_team_returns_the_entrys_whole_hand() -> None:
+    """Cards belong to the entry: two riders' laps pool."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
+    )
+    engine, _ = _make_engine(roster=roster)
+    engine.start()
+    first = engine.record_crossing("45", at=_dt(10, 30))
+    second = engine.record_crossing("9", at=_dt(10, 31))
+    entry = roster.entries[0]
+
+    assert engine.credited_cards(entry.plate) == (first.card, second.card)
+
+
 # --------------------------------------- W9: held-card lookup (R-34)
 
 
@@ -1963,6 +2268,39 @@ def test_apply_reopen_event_returns_finished_ride_to_reopened() -> None:
     assert engine._shoe.is_closed is False
 
 
+def test_apply_finish_event_re_applies_the_recorded_finish_instant() -> None:
+    """C3: replay reads the persisted finished_at, not replay time.
+
+    An old ride replayed today must show its own recorded finish, so
+    ``closed_elapsed()`` uses the payload timestamp and the re-appended
+    event keeps that payload.
+    """
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(3600)  # the replay clock is nowhere near the finish instant
+    event = Event(action="finish", payload={"finished_at": "2026-09-20T10:30:00"})
+
+    engine.apply(event)
+
+    assert engine.closed_elapsed() == pytest.approx(1800.0)
+    assert engine.events[-1] == event
+
+
+def test_apply_reopen_event_re_applies_the_recorded_reopened_instant() -> None:
+    """C3: replay keeps the recorded reopen payload and finish."""
+    engine, clock = _make_engine()
+    engine.start(at=_dt(10, 0))
+    clock.advance(3600)
+    engine.apply(Event(action="finish", payload={"finished_at": "2026-09-20T10:01:40"}))
+    event = Event(action="reopen", payload={"reopened_at": "2026-09-20T11:00:00"})
+
+    engine.apply(event)
+
+    assert engine.state is RideStatus.REOPENED
+    assert engine.events[-1] == event
+    assert engine.closed_elapsed() == pytest.approx(100.0)
+
+
 def test_apply_replay_finish_reopen_deal_manual_is_equivalent() -> None:
     """Replaying finish/reopen/deal_manual reproduces the live state.
 
@@ -2030,3 +2368,41 @@ def test_apply_confirm_held_for_an_unrecorded_crossing_raises_clear_error() -> N
 
     with pytest.raises(RideEngineError, match=re.escape("no crossing")):
         engine.apply(event)
+
+
+# ============================================================ D2
+# Edit Ride: the engine's config is the live ride's own settings, so an
+# edit replaces it in place -- the ride, its shoe and its event log are
+# untouched.
+
+
+def test_engine_clock_returns_the_injected_clock_source() -> None:
+    """The console-rebuild seam carries an injected clock (R-74)."""
+    engine, clock = _make_engine()
+
+    assert engine.clock is clock
+
+
+def test_engine_update_config_replaces_the_live_config() -> None:
+    """D2: an edited ride's settings become the engine's own config."""
+    engine, _clock = _make_engine()
+    edited = _config(name="Renamed Ride", venue="New Venue", lap_km=6.5)
+
+    engine.update_config(edited)
+
+    assert engine.config == edited
+
+
+def test_engine_update_config_keeps_the_ride_state_and_its_events() -> None:
+    """D2: editing setup settings never rewinds a started ride."""
+    engine, _clock = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=engine.config.planned_start + timedelta(seconds=60))
+    events_before = engine.events
+    crossings_before = engine.crossings
+
+    engine.update_config(_config(name="Renamed Ride"))
+
+    assert engine.state is RideStatus.RUNNING
+    assert engine.events == events_before
+    assert engine.crossings == crossings_before

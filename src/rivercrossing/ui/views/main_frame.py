@@ -39,16 +39,28 @@ from typing import TYPE_CHECKING, Any
 
 import wx
 import wx.dataview
+import wx.xrc  # Submodule: plain `import wx` does not load it.
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import feed_model, ids, sound, std_dialogs
 from rivercrossing.ui.presenters.console import stop_light_mode
-from rivercrossing.ui.views._support import default_card_images, find_control
+from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
+from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.views._support import (
+    RiderRowListModel,
+    apply_sort_indicator,
+    associate_model,
+    default_card_images,
+    find_control,
+)
 from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_bundle
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from datetime import date, datetime
+    from pathlib import Path
 
+    from rivercrossing.roster import EntryMode
     from rivercrossing.ui.cards_imagelist import CardImageList
     from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import (
@@ -69,6 +81,7 @@ __all__ = [
     "FLAG_COL_LAP_TIME",
     "FLAG_COL_PLATE",
     "MIN_SIZE",
+    "NEEDS_REVIEW_PAGE_LABEL",
     "REMAINING_CLOCK",
     "REMAINING_CLOCK_PANEL",
     "REOPENED_INFOBAR",
@@ -80,12 +93,14 @@ __all__ = [
     "RIDERS_COL_NAME",
     "RIDERS_COL_PLATE",
     "RIDERS_COL_TEAM",
+    "RIDERS_PAGE_LABEL",
     "RIDE_STATUS_LIGHT",
     "RIDE_STATUS_PANEL",
+    "START_BLOCKED_COLUMN_LABELS",
     "CrossingsFeedModel",
     "FlaggedListModel",
     "MainFrame",
-    "RidersListModel",
+    "StartBlockedListModel",
 ]
 
 _TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
@@ -135,12 +150,16 @@ RIDE_STATUS_PANEL = ids.RIDE_STATUS_PANEL
 REVIEW_NOTEBOOK = ids.REVIEW_NOTEBOOK
 CONSOLE_RIDERS_LIST = ids.CONSOLE_RIDERS_LIST
 
-# console_riders_list's columns (WS-H), the same Plate | Name | Team
-# shape rider_editor's own riders_list draws (xrc-windows.md C).
+# console_riders_list's columns (Phase 4): the console draws every
+# shared column (``ui.rider_columns.CONSOLE_RIDER_COLUMNS`` -- Plate |
+# Name | Team | Sex | Cards), so the headers, the cells and the sort
+# keys are the rider editor's own plus the Cards column, never a
+# second copy. The three indexes below name the columns the console's
+# own code reads back (``_on_rider_activated`` takes the Plate cell).
 RIDERS_COL_PLATE = 0
 RIDERS_COL_NAME = 1
 RIDERS_COL_TEAM = 2
-RIDERS_COLUMN_LABELS: tuple[str, ...] = ("Plate", "Name", "Team")
+RIDERS_COLUMN_LABELS: tuple[str, ...] = tuple(column.label for column in CONSOLE_RIDER_COLUMNS)
 
 # flagged_list's columns (WS-H): the three cells of the canvas's
 # flagged-row line ("45 · lap 6 · 07:12") as sortable columns.
@@ -149,8 +168,17 @@ FLAG_COL_LAP = 1
 FLAG_COL_LAP_TIME = 2
 FLAG_COLUMN_LABELS: tuple[str, ...] = ("Plate", "Lap", "Lap time")
 
-# rider_editor.SOLO_TEAM_TEXT's dash for a solo rider's Team cell.
-_TEAM_CELL = "—"
+# start_blocked_dlg's one column (Phase 5): the blocked-start issue
+# list, one reason per row.
+START_BLOCKED_COLUMN_LABELS: tuple[str, ...] = ("Issue",)
+
+# The review notebook's two pages, by label (main.xrc). Phase 4 makes
+# the Riders page page 0 -- the notebook's default page -- and leaves
+# "Needs Review" at index 1; focus_review_panel looks its page up by
+# label through _page_index so a future reorder cannot silently send
+# the operator to the wrong tab.
+RIDERS_PAGE_LABEL = "Riders"
+NEEDS_REVIEW_PAGE_LABEL = "Needs Review"
 
 # The REOPENED corrections banner (spec §3, R-36): the clock stays
 # closed and live plate entry stays off; the operator edits, voids or
@@ -298,37 +326,35 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
         return flagged_row.lap_time
 
 
-class RidersListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
-    """Read-only model over ``RiderRow`` rows (WS-H).
+class StartBlockedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
+    """Read-only model over the blocked-start dialog's issue lines.
 
-    ``# type: ignore[misc]``: the wx-ships-no-stubs note above. The
-    review notebook's "Riders" tab: Plate | Name | Team over
-    ``DataSource.riders()``, with ``rider_editor``'s own dash in the
-    Team cell of a solo rider. The double-click seam reads the Plate
-    cell back out of this model (``set_on_open_rider``).
+    ``# type: ignore[misc]``: the wx-ships-no-stubs note
+    :class:`CrossingsFeedModel` carries -- ``DataViewIndexListModel``
+    resolves to ``Any`` and mypy refuses to subclass ``Any``.
+
+    One "Issue" column and one row per reason
+    :attr:`~rivercrossing.ride.StartBlockedError.reasons` reported, in
+    that order. Rows are supplied fresh per ``show_start_blocked``,
+    the rebuild-per-show pattern the console's other two models use.
     """
 
-    def __init__(self, rows: Sequence[RiderRow]) -> None:
-        """Wrap *rows* in the roster's own order."""
-        super().__init__(len(rows))
-        self._rows = tuple(rows)
+    def __init__(self, reasons: Sequence[str]) -> None:
+        """Wrap *reasons*, one row each."""
+        super().__init__(len(reasons))
+        self._reasons = tuple(reasons)
 
     def GetColumnCount(self) -> int:
-        """Return the riders list's fixed three columns."""
-        return len(RIDERS_COLUMN_LABELS)
+        """Return the issue list's single column."""
+        return len(START_BLOCKED_COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- the model has one type
-        """Return the wx variant type (plain text for every column)."""
+        """Return the wx variant type (plain text)."""
         return "string"
 
-    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the cell value at *row*/*col*."""
-        rider = self._rows[row]
-        if col == RIDERS_COL_PLATE:
-            return rider.plate
-        if col == RIDERS_COL_NAME:
-            return rider.name
-        return rider.team if rider.team is not None else _TEAM_CELL
+    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401, ARG002 -- wx ships no stubs; one column
+        """Return the blocking issue at *row*."""
+        return self._reasons[row]
 
 
 # Fault-B (degraded-XRC-load) completeness contract: the exact frozen
@@ -344,7 +370,11 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.PLATE_INPUT,
     ids.RECORD_BTN,
     ids.LAST_CROSSING_LBL,
+    # C1: the ride-identity block -- name, logo, and the date/start/
+    # type detail line the logo replaces when a ride has one.
     ids.RIDE_NAME_LBL,
+    ids.RIDE_LOGO_BMP,
+    ids.RIDE_DETAILS_LBL,
     ids.RIDE_STATUS_LBL,
     ids.CROSSINGS_COUNT_LBL,
     ids.CARDS_COUNT_LBL,
@@ -355,7 +385,6 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.RIDERS_COUNT_LBL,
     ids.TEAMS_COUNT_LBL,
     ids.START_BTN,
-    ids.ARM_STOP_CHK,
     ids.STOP_BTN,
     ids.UNDO_BTN,
     ELAPSED_CLOCK_PANEL,
@@ -383,6 +412,8 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.RECORD_BTN: wx.Button,
     ids.LAST_CROSSING_LBL: wx.StaticText,
     ids.RIDE_NAME_LBL: wx.StaticText,
+    ids.RIDE_LOGO_BMP: wx.StaticBitmap,
+    ids.RIDE_DETAILS_LBL: wx.StaticText,
     ids.RIDE_STATUS_LBL: wx.StaticText,
     ids.CROSSINGS_COUNT_LBL: wx.StaticText,
     ids.CARDS_COUNT_LBL: wx.StaticText,
@@ -391,7 +422,6 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.RIDERS_COUNT_LBL: wx.StaticText,
     ids.TEAMS_COUNT_LBL: wx.StaticText,
     ids.START_BTN: wx.BitmapButton,
-    ids.ARM_STOP_CHK: wx.CheckBox,
     ids.STOP_BTN: wx.BitmapButton,
     ids.UNDO_BTN: wx.Button,
     ELAPSED_CLOCK_PANEL: wx.Panel,
@@ -415,8 +445,8 @@ class MainFrame:
     ``set_hide_times``, ``show_clock``, ``set_entry_locked``) -- the
     "add the member once the presenter calls it" precedent this
     class's own earlier docstring recorded for ``set_hide_times``.
-    :meth:`wire_console` binds the lifecycle controls (start/arm/
-    stop/undo) and the tick timer, mirroring :meth:`wire_entry`'s
+    :meth:`wire_console` binds the lifecycle controls (start/stop/
+    undo) and the tick timer, mirroring :meth:`wire_entry`'s
     callback idiom; the app bootstrap (and the live-console harness)
     call it after construction.
     """
@@ -472,6 +502,9 @@ class MainFrame:
         self.record_btn = self._find(ids.RECORD_BTN, wx.Button)
         self.last_crossing_lbl = self._find(ids.LAST_CROSSING_LBL, wx.StaticText)
         self.ride_name_lbl = self._find(ids.RIDE_NAME_LBL, wx.StaticText)
+        # C1: the ride logo and its date/start/type fallback line.
+        self.ride_logo_bmp = self._find(ids.RIDE_LOGO_BMP, wx.StaticBitmap)
+        self.ride_details_lbl = self._find(ids.RIDE_DETAILS_LBL, wx.StaticText)
         self.ride_status_lbl = self._find(ids.RIDE_STATUS_LBL, wx.StaticText)
         self.crossings_count_lbl = self._find(ids.CROSSINGS_COUNT_LBL, wx.StaticText)
         self.cards_count_lbl = self._find(ids.CARDS_COUNT_LBL, wx.StaticText)
@@ -482,9 +515,8 @@ class MainFrame:
         self.riders_count_lbl = self._find(ids.RIDERS_COUNT_LBL, wx.StaticText)
         self.teams_count_lbl = self._find(ids.TEAMS_COUNT_LBL, wx.StaticText)
 
-        # E4.4.1 lifecycle controls (start/arm/stop/undo + clock).
+        # E4.4.1 lifecycle controls (start/stop/undo + clock).
         self.start_btn = self._find(ids.START_BTN, wx.BitmapButton)
-        self.arm_stop_chk = self._find(ids.ARM_STOP_CHK, wx.CheckBox)
         self.stop_btn = self._find(ids.STOP_BTN, wx.BitmapButton)
         self.undo_btn = self._find(ids.UNDO_BTN, wx.Button)
         # WS-D gauge slots: the dials and the status lamp are built
@@ -515,13 +547,10 @@ class MainFrame:
         self.start_btn.SetLabel("Start ride")
         self.stop_btn.SetBitmap(stop_bundle().GetBitmapFor(self.stop_btn))
         self.stop_btn.SetLabel("Stop ride…")
-        # R-35: Stop is gated on arm_stop_chk -- disabled at rest even
-        # if the XRC ever leaves it enabled (test_menu_state pins the
-        # commands-side rule; this pins the actual control). W5 adds
-        # the RUNNING gate: arm_stop_chk and stop_btn live only while
-        # the ride is RUNNING (set_state composes both from the armed
-        # mirror set_stop_enabled keeps).
-        self._stop_armed = False
+        # C2: Stop is disabled at rest even if the XRC ever leaves it
+        # enabled; the presenter's refresh_console_gates (called from
+        # every set_state/show_feed render) is the real source, this
+        # just avoids a flash before the first render.
         self.stop_btn.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
 
         # WS-H review notebook: the two DataView shells, their
@@ -534,7 +563,10 @@ class MainFrame:
         self._flagged_columns = self._build_flagged_columns()
         self._riders_columns = self._build_riders_columns()
         self._flagged_model: FlaggedListModel | None = None
-        self._riders_model: RidersListModel | None = None
+        self._riders_model: RiderRowListModel | None = None
+        # Phase 5: the blocked-start dialog's model, alive only while
+        # that modal is up (show_start_blocked).
+        self._start_blocked_model: StartBlockedListModel | None = None
         self._on_open_rider: Callable[[str], None] | None = None
         # W11 F2a: the flagged tab's activation seam (its own slot --
         # activating a flagged row opens entry detail, not the rider
@@ -543,6 +575,14 @@ class MainFrame:
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
         self.console_riders_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_rider_activated
+        )
+        # Phase 4: the riders list's own sort. The presenter owns the
+        # row order (a DataViewIndexListModel cannot sort itself), so a
+        # header click is mapped back to its column index and forwarded
+        # -- wx's internal sort is never allowed to drive this list.
+        self.console_riders_list.Bind(
+            wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK,
+            self._on_riders_column_header_click,
         )
         self.flagged_list.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_flagged_activated)
 
@@ -757,12 +797,28 @@ class MainFrame:
             for col, label in enumerate(FLAG_COLUMN_LABELS)
         )
 
-    def _build_riders_columns(self) -> tuple[Any, ...]:
-        """Append the riders list's three columns (WS-H)."""
-        return tuple(
-            self.console_riders_list.AppendTextColumn(label, col)
-            for col, label in enumerate(RIDERS_COLUMN_LABELS)
-        )
+    def _build_riders_columns(self) -> list[Any]:
+        """Append ``console_riders_list``'s columns in canvas order.
+
+        The labels are the shared
+        :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
+        ones (Plate | Name | Team | Sex | Cards), so the console's list
+        and the rider editor's own draw the same headers, and the
+        console adds the editor's four plus Cards.
+
+        Returns:
+            The appended columns in order -- the list is what
+            :meth:`set_sort_indicator` retitles with the ▲/▼ marker
+            and what :meth:`_on_riders_column_header_click` compares a
+            click against to resolve its index (W7/Phase 4: a
+            ``DataViewIndexListModel`` cannot sort itself, so the
+            columns carry no wx sort flags and the presenter owns row
+            order).
+        """
+        return [
+            self.console_riders_list.AppendTextColumn(column.label, index)
+            for index, column in enumerate(CONSOLE_RIDER_COLUMNS)
+        ]
 
     def set_on_open_rider(self, callback: Callable[[str], None]) -> None:
         """Register the double-click seam of the riders tab (WS-H).
@@ -793,9 +849,52 @@ class MainFrame:
         show the flagged tab and focus its list. It opens nothing
         itself; the app's open-entry-detail wiring lives behind the
         riders tab's own activation seam.
+
+        Phase 4 makes the Riders tab page 0 (the notebook's default),
+        so the page is looked up by its label rather than by a
+        hard-coded index -- a future reorder then re-routes this focus
+        instead of silently landing the operator on the wrong tab. A
+        notebook without that page has nothing to focus, so this
+        returns early (the .xrc always declares it).
         """
-        self.review_notebook.SetSelection(0)
+        page = _page_index(self.review_notebook, NEEDS_REVIEW_PAGE_LABEL)
+        if page is None:
+            return
+        self.review_notebook.SetSelection(page)
         self.flagged_list.SetFocus()
+
+    def _on_riders_column_header_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle a ``console_riders_list`` header click: sort by it.
+
+        Phase 4, the console's half of the rider editor's own
+        ``_on_column_header_click``: the presenter owns the row order
+        (see :meth:`_build_riders_columns`), so the clicked column is
+        resolved to its index in ``self._riders_columns`` and forwarded
+        to ``presenter.on_sort_riders`` -- never wx's own internal
+        sort, which an index-list model cannot drive. A click on a
+        column this list never appended (and a console with no
+        presenter wired yet) forwards nothing.
+        """
+        event.Skip()
+        if self._presenter is None:
+            return
+        index = _clicked_column_index(self._riders_columns, event.GetColumn())
+        if index is None:
+            return
+        self._presenter.on_sort_riders(index)
+
+    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
+        """Mark the riders list *column*'s header ▲/▼, or clear it.
+
+        ``ConsoleView`` member, Phase 4: the presenter owns the riders
+        list's row order (a ``DataViewIndexListModel`` cannot sort
+        itself), so it hands its own sort state back here and
+        :func:`~rivercrossing.ui.views._support.apply_sort_indicator`
+        paints it -- the same shared marker the rider editor uses, so
+        the two lists can never disagree on the ▲/▼ glyphs. ``None``
+        *column* restores every plain label.
+        """
+        apply_sort_indicator(self._riders_columns, column, ascending=ascending)
 
     def _on_review_clicked(self) -> None:
         """Handle ``review_btn``: the sidebar's "Review…" affordance.
@@ -961,9 +1060,14 @@ class MainFrame:
         """Render the review notebook's riders rows (ConsoleView).
 
         WS-H: fed by the presenter's ``_refresh_riders`` on the tick
-        (``DataSource.riders()``), and once at construction.
+        (``DataSource.riders()``), and once at construction. Phase 4:
+        the model renders the shared
+        :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
+        -- Plate | Name | Team | Sex | Cards -- so this list's cells are
+        the rider editor's own plus the live credited card codes, and
+        the presenter's chosen row order comes in already sorted.
         """
-        self._riders_model = RidersListModel(rows)
+        self._riders_model = RiderRowListModel(rows, CONSOLE_RIDER_COLUMNS)
         self.console_riders_list.AssociateModel(self._riders_model)
 
     def show_counters(self, c: Counters) -> None:
@@ -1016,10 +1120,9 @@ class MainFrame:
         every presenter state transition (start/stop/finish/reopen)
         lands here, and the binder re-applies the §15 enablement.
         WS-D adds the status lamp: the same state transition drives
-        the ``StopLight`` through ``console.stop_light_mode``. W5 adds
-        the RUNNING gate for the arm checkbox and Stop button
-        (composed with the armed mirror) and the console-button-gate
-        refresh through the bound presenter.
+        the ``StopLight`` through ``console.stop_light_mode``. C2
+        refreshes the Start/Stop/Undo button gates through the bound
+        presenter (the single source for all three).
         """
         self.ride_status_lbl.SetLabel(status.value.upper())
         self.ride_status_light.set_mode(stop_light_mode(status))
@@ -1039,35 +1142,47 @@ class MainFrame:
         else:
             self.finished_infobar.Dismiss()
         self._status = status
-        self._apply_stop_arm_gate()
         self._notify_ride_changed()
         if self._presenter is not None:
             self._presenter.refresh_console_gates()
 
-    def _apply_stop_arm_gate(self) -> None:
-        """Compose the R-35 arm/Stop controls with the RUNNING gate.
-
-        W5: ``arm_stop_chk`` and ``stop_btn`` are disabled whenever
-        the ride is not RUNNING -- arming only ever guards a live
-        ride. Leaving RUNNING also clears the armed mirror and unticks
-        the checkbox, so a later return to RUNNING starts unarmed.
-        """
-        running = self._status is RideStatus.RUNNING
-        self.arm_stop_chk.Enable(running)
-        if not running:
-            self._stop_armed = False
-            self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.stop_btn.Enable(running and self._stop_armed)
-
-    def show_ride_name(self, name: str) -> None:
-        """Render the open ride's name (ConsoleView, E9.1.4).
+    def show_ride_header(  # noqa: PLR0913 -- the identity block's five facts
+        self,
+        *,
+        name: str,
+        logo: Path | None,
+        event_date: date,
+        planned_start: datetime,
+        entry_mode: EntryMode,
+    ) -> None:
+        """Render the open ride's identity block (ConsoleView, C1).
 
         ``ride_name_lbl`` is the frozen design's ride-identity line
-        (xrc-windows.md section A); every console switch onto a
-        store ride renders the ride's name here -- the library Open
-        and the New Ride flow alike.
+        (xrc-windows.md section A); every console switch onto a ride
+        renders the ride's name, plus either the ride's own logo
+        (``ride_logo_bmp``) or, when it has none, the
+        ``ride_details_lbl`` fallback line -- the library Open, the
+        New Ride flow and Edit Ride alike.
+
+        A logo that is absent, missing on disk or undecodable degrades
+        to the detail line rather than blanking the header (the same
+        "never blank the canvas" rule ``views.about`` follows).
         """
         self.ride_name_lbl.SetLabel(name)
+        self.ride_details_lbl.SetLabel(_ride_details_label(event_date, planned_start, entry_mode))
+        self._show_ride_logo(logo)
+        self.frame.Layout()
+
+    def _show_ride_logo(self, logo: Path | None) -> None:
+        """Show the ride logo, or the detail line in its place (C1)."""
+        bitmap = _ride_logo_bitmap(logo)
+        if bitmap is None:
+            self.ride_logo_bmp.Hide()
+            self.ride_details_lbl.Show()
+            return
+        self.ride_logo_bmp.SetBitmap(bitmap)
+        self.ride_logo_bmp.Show()
+        self.ride_details_lbl.Hide()
 
     def set_on_ride_changed(self, callback: Callable[[RideStatus], None]) -> None:
         """Register the menu-binder callback fired on ride changes.
@@ -1136,20 +1251,12 @@ class MainFrame:
         sound.play(cue)
 
     def set_stop_enabled(self, *, enabled: bool) -> None:
-        """Enable or disable the Stop button (ConsoleView, R-35).
+        """Enable or disable the Stop button (ConsoleView, C2).
 
-        The presenter's armed verdict is stored in the armed mirror
-        and composed with the RUNNING gate (W5): Stop is only ever
-        enabled while the ride is RUNNING *and* armed. Disarming also
-        unticks ``arm_stop_chk`` so the checkbox visibly reflects the
-        presenter's auto-clear (after use or timeout); ``SetValue``
-        fires no ``EVT_CHECKBOX`` (measured harness convention), so
-        this cannot loop back into the presenter.
+        The presenter's ``refresh_console_gates`` owns the verdict
+        (RUNNING and not stopped); the view only applies it.
         """
-        self._stop_armed = enabled
-        if not enabled:
-            self.arm_stop_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.stop_btn.Enable(enabled and self._status is RideStatus.RUNNING)
+        self.stop_btn.Enable(enabled)
 
     def set_start_enabled(self, *, enabled: bool) -> None:
         """Enable or disable the Start ride button (ConsoleView, W5)."""
@@ -1162,11 +1269,44 @@ class MainFrame:
     def show_warning(self, title: str, message: str) -> None:
         """Show *message* as a modal warning over this console (W5).
 
-        The presenter's blocked-start / empty-roster-stop alert; the
-        view owns the parent and opens the native dialog, so the
-        presenter stays headless and wx-free.
+        The presenter's empty-roster-stop alert; the view owns the
+        parent and opens the native dialog, so the presenter stays
+        headless and wx-free.
         """
         std_dialogs.show_warning(self.frame, title, message)
+
+    def show_start_blocked(self, reasons: list[str]) -> None:
+        """List *reasons* in the blocked-start dialog (ConsoleView).
+
+        ``ConsolePresenter.on_start`` (Phase 5) routes a
+        :class:`~rivercrossing.ride.StartBlockedError` here: one row
+        per blocking issue, a single OK to dismiss, and the ride left
+        un-started either way. The view owns the parent window and the
+        modal show -- ``run_dialog`` restores focus to this frame -- so
+        the presenter stays headless and wx-free. A resource that
+        cannot load the dialog is a no-op: there is nothing else this
+        route could do, and the operator can still fix the ride.
+
+        The model is held on the frame for the modal's lifetime, the
+        same keep-alive ``show_feed``/``show_flagged`` give theirs.
+        """
+        window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.START_BLOCKED_DLG)
+        # logic-coverage-exempt: T-3 -- a None window means the XRC
+        # handler could not build the dialog at all; unreachable from a
+        # headless unit test (ui/views is coverage-omitted).
+        if window is None:
+            return
+        try:
+            issue_list = find_control(window, ids.START_BLOCKED_LIST, wx.dataview.DataViewCtrl)
+            issue_list.AppendTextColumn(START_BLOCKED_COLUMN_LABELS[0], 0)
+            self._start_blocked_model = StartBlockedListModel(reasons)
+            associate_model(issue_list, self._start_blocked_model)
+            dialogs.run_dialog(window, opener=self.frame)
+        finally:
+            # Fault A's close guard (rider_issues.py's own finally):
+            # a post-load raise must not leave the dialog alive.
+            if not window.IsBeingDeleted():
+                window.Destroy()
 
     def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
         self,
@@ -1221,14 +1361,14 @@ class MainFrame:
     def wire_console(self, presenter: ConsolePresenter) -> None:
         """Bind the lifecycle controls and tick timer to *presenter*.
 
-        Mirrors :meth:`wire_entry`'s callback idiom: Start Ride,
-        the Arm checkbox, Stop Ride and Undo each forward to the
-        presenter, and a 1 s ``wx.Timer`` drives ``presenter.tick()``
-        (feed/counters/clock refresh + R-35's 10 s arm auto-clear).
-        W5: Stop Ride forwards straight to the presenter's native
-        stop-confirm flow (``on_stop_requested``) -- the view opens
-        no dialog itself; the retired ``stop_confirm_dlg`` load lived
-        here before.
+        Mirrors :meth:`wire_entry`'s callback idiom: Start Ride, Stop
+        Ride and Undo each forward to the presenter, and a 1 s
+        ``wx.Timer`` drives ``presenter.tick()`` (feed/counters/clock
+        refresh -- the sole live-clock driver, so C3's closed-ride
+        freeze lives in the presenter). W5: Stop Ride forwards
+        straight to the presenter's native stop-confirm flow
+        (``on_stop_requested``) -- the view opens no dialog itself;
+        the retired ``stop_confirm_dlg`` load lived here before.
 
         The presenter is stored as :attr:`_presenter` and every
         handler routes through it, so :meth:`set_presenter` can swap
@@ -1237,10 +1377,6 @@ class MainFrame:
         """
         self._presenter = presenter
         self.start_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_start())
-        self.arm_stop_chk.Bind(
-            wx.EVT_CHECKBOX,
-            lambda _event: self._presenter.on_arm_stop(armed=self.arm_stop_chk.GetValue()),
-        )
         self.stop_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_stop_requested())
         self.undo_btn.Bind(wx.EVT_BUTTON, lambda _event: self._presenter.on_undo())
         self._tick_timer = wx.Timer(self.frame)
@@ -1266,6 +1402,73 @@ class MainFrame:
         """
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
+
+
+def _clicked_column_index(columns: Sequence[object], clicked: object) -> int | None:
+    """Return *clicked*'s index in *columns*, or ``None`` when absent.
+
+    A ``wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK`` hands over the
+    clicked ``DataViewColumn`` *object*, while the view holds its own
+    appended columns in order -- identity is the only link between the
+    two (wx exposes no index on the column itself), so the search is
+    ``is``, never ``==``. ``None`` means the click named a column this
+    list never appended, which is nothing to sort by.
+    """
+    for index, column in enumerate(columns):
+        if column is clicked:
+            return index
+    return None
+
+
+def _page_index(notebook: wx.Notebook, label: str) -> int | None:
+    """Return the index of the page labelled *label*, or ``None``.
+
+    Pages are addressed by their label (the ``<label>`` text
+    ``main.xrc`` declares) rather than by a hard-coded index, so
+    reordering the review notebook's pages cannot silently point a
+    handler at the wrong tab. A notebook with no such page reports
+    ``None`` for the caller to handle.
+    """
+    for index in range(notebook.GetPageCount()):
+        if notebook.GetPageText(index) == label:
+            return index
+    return None
+
+
+def _ride_details_label(event_date: date, planned_start: datetime, entry_mode: EntryMode) -> str:
+    """Render the header's ride detail line (C1).
+
+    The fallback shown beside the ride name when the ride has no logo:
+    the event date (ISO, ``event_date``'s own storage shape), the
+    planned start's local wall time, and the ride type -- the same
+    "stored UTC, displayed local" rule every other console timestamp
+    follows (spec §13). ``planned_start`` is RideConfig's own naive
+    local value, shown exactly as stored.
+
+    Returns:
+        ``"<YYYY-MM-DD> · <HH:MM> · <Solo|Mixed>"``.
+    """
+    day = event_date.isoformat()
+    start = planned_start.strftime("%H:%M")
+    return f"{day} · {start} · {entry_mode.value.title()}"
+
+
+def _ride_logo_bitmap(logo: Path | None) -> Any | None:  # noqa: ANN401 -- wx ships no stubs
+    """Return *logo*'s decoded PNG bitmap, or ``None`` (C1).
+
+    ``None`` (no logo chosen) is the header's detail-line case; a path
+    that names no file, or bytes wx cannot decode, decodes to a
+    not-OK ``wx.Bitmap`` and is treated the same way -- measured on
+    wxPython 4.3.1: ``wx.Bitmap(path, wx.BITMAP_TYPE_PNG)`` returns a
+    not-OK bitmap for both, rather than raising.
+
+    Returns:
+        A valid ``wx.Bitmap`` for a decodable file, else ``None``.
+    """
+    if logo is None:
+        return None
+    bitmap = wx.Bitmap(str(logo), wx.BITMAP_TYPE_PNG)
+    return bitmap if bitmap.IsOk() else None
 
 
 def _format_count(value: int) -> str:

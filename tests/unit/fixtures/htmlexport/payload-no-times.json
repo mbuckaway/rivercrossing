@@ -101,6 +101,7 @@
       "plate": 7,
       "entry": "Luca Ferrari",
       "type": "SOLO",
+      "sex": "M",
       "laps": 10,
       "hand": "Full House — Aces over Fours",
       "cards": [
@@ -315,6 +316,7 @@
       "plate": 61,
       "entry": "Marc Tremblay",
       "type": "SOLO",
+      "sex": "M",
       "laps": 10,
       "hand": "Flush — King high",
       "cards": [
@@ -519,6 +521,7 @@
       "plate": 12,
       "entry": "Ana Souza",
       "type": "SOLO",
+      "sex": "F",
       "laps": 9,
       "hand": "Two Pair — Kings & Fives",
       "cards": [
@@ -655,6 +658,7 @@
       "plate": 19,
       "entry": "Owen Clark",
       "type": "SOLO",
+      "sex": "M",
       "laps": 8,
       "hand": "Pair — Aces",
       "cards": [
@@ -719,6 +723,7 @@
       "plate": 33,
       "entry": "Peter Kim",
       "type": "SOLO",
+      "sex": "M",
       "laps": 7,
       "hand": "Pair — Kings",
       "cards": [
@@ -843,6 +848,7 @@
       "plate": 71,
       "entry": "Gita Rao",
       "type": "SOLO",
+      "sex": "F",
       "laps": 7,
       "hand": "Pair — Eights",
       "cards": [
@@ -903,6 +909,7 @@
       "plate": 94,
       "entry": "Ted Novak",
       "type": "SOLO",
+      "sex": "M",
       "laps": 4,
       "hand": "High Card — Ace",
       "dnf": true,

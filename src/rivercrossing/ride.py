@@ -177,10 +177,11 @@ class RideConfig:
     them, never this dialog. ``logo_path`` carries the *picker's* own
     chosen file; converting it to the stored BLOB is EPIC 5's own
     concern, not this dataclass's. ``hold_short_laps`` is the one
-    field that *does* persist (store migration v2, W4): the setup
-    dialog's short-lap card policy, default False = "always deal" --
-    a lap under ``min_lap_s`` credits its card to the hand -- with
-    True restoring R-34's hold-for-review behaviour
+    field that *does* persist (the ``ride.hold_short_laps`` column,
+    part of the flattened v1 baseline, W4): the setup dialog's
+    short-lap card policy, default False = "always deal" -- a lap
+    under ``min_lap_s`` credits its card to the hand -- with True
+    restoring R-34's hold-for-review behaviour
     (:meth:`RideEngine.record_crossing`).
 
     ``event_date``/``planned_start`` both round-trip the ``ride``
@@ -297,7 +298,18 @@ class StartBlockedError(RideEngineError):
     (:func:`setup_minimum_violations`), and every
     ``Roster.validate_for_start()`` violation (R-12's team floor);
     any of these blocks the transition.
+
+    ``reasons`` carries that same refusal as one string per blocking
+    issue -- a setup violation verbatim, a roster violation prefixed
+    with its plate -- so a caller can list them one per line (the
+    console's blocked-start issues dialog) instead of re-parsing
+    ``str(self)``, which keeps the joined message every caller reads.
     """
+
+    def __init__(self, message: str, *, reasons: tuple[str, ...]) -> None:
+        """Store the joined *message* and its per-issue *reasons*."""
+        super().__init__(message)
+        self.reasons = reasons
 
 
 class UnknownPlateError(RideEngineError):
@@ -497,8 +509,8 @@ class RideEngine:
       R-34 behaviour exactly. The setup dialog's
       ``always_deal_radio``/``hold_short_radio`` pair owns the value
       (setup.xrc, W4), and the store persists it per ride
-      (``ride.hold_short_laps``, migration v1->v2) so replay
-      reproduces the same disposition.
+      (``ride.hold_short_laps``) so replay reproduces the same
+      disposition.
     - **Undo.** ``undo_last()`` is a full compensating write (R-33):
       the last crossing's lap is removed, its card returns to the shoe
       front via ``shoe.restitute`` (so the next deal reproduces the
@@ -557,11 +569,15 @@ class RideEngine:
       (task-briefs E5.1.2's "where a payload is insufficient" did not
       trigger); the ``card`` fields are audit-only, since the seeded
       shoe reproduces every deal (spec §4, R-40).
-    - **Clock-stamped events.** ``stop``/``finish``/``reopen`` re-stamp
-      their payload timestamp from the engine's clock when replayed,
-      so their audit bytes differ from the live original by design;
-      replay equivalence compares event count/actions, not those three
-      payload fields (recorded in the property's comparison contract).
+    - **Clock-stamped events.** ``stop`` re-stamps its payload
+      timestamp from the engine's clock when replayed, so its audit
+      bytes differ from the live original by design; ``finish`` and
+      ``reopen`` (C3) instead re-apply their persisted
+      ``finished_at``/``reopened_at``, because a replay must reproduce
+      the recorded finish instant -- ``closed_elapsed()`` would
+      otherwise read the replay time. Replay equivalence compares
+      event count/actions, not payload fields (recorded in the
+      property's comparison contract).
     - **shoe_reshuffle is a no-op on replay.** The event is the audit
       record of a reshuffle the deal loop already performed; re-applying
       it would double-reshuffle the fresh shoe. The next deal
@@ -636,6 +652,10 @@ class RideEngine:
         self._state = RideStatus.DRAFT
         self._actual_start: datetime | None = None
         self._stopped = False
+        # C3: the finish instant ``finish()`` records and ``reopen()``
+        # preserves, so a closed ride's final elapsed is the recorded
+        # value, never the live clock. Cleared on continue.
+        self._finished_at: datetime | None = None
         self._crossings: list[Crossing] = []
         # Per-entry lap index (review fix): entry_id -> its live
         # crossings sorted by crossed_at, holding the SAME Crossing
@@ -735,6 +755,23 @@ class RideEngine:
         """Return this ride's frozen setup-time config (spec §2)."""
         return self._config
 
+    def update_config(self, config: RideConfig) -> None:
+        """Replace this ride's setup config in place (D2's Edit Ride).
+
+        Edit Ride… corrects the *settings* of the ride that is already
+        open -- its name, date, start, venue, organizer, scorer and (in
+        DRAFT) its structure. The ride itself is untouched: the shoe,
+        the roster and the event log all stay exactly as they are, so
+        editing a started ride never rewinds it, re-deals a card or
+        invalidates the audit trail. Structural gating is the setup
+        dialog's (it locks those controls past DRAFT); this seam only
+        swaps the value.
+
+        Args:
+            config: The edited configuration to hold from now on.
+        """
+        self._config = config
+
     @property
     def crossings(self) -> tuple[Crossing, ...]:
         """Return every recorded crossing, oldest first, read-only.
@@ -778,8 +815,13 @@ class RideEngine:
         (:meth:`Roster.validate_for_start`) must be clear; then
         ``actual_start`` is *at* or ``clock()`` and the state becomes
         RUNNING. From RUNNING: continue -- unlock plate entry, keep
-        ``actual_start`` unchanged ("Continue ride?"). From FINISHED
-        or REOPENED: raise.
+        ``actual_start`` unchanged ("Continue ride?").
+
+        From REOPENED (C2): continue riding -- the corrections state
+        offers Start, so the engine moves back to RUNNING with the
+        recorded ``actual_start`` kept, the stop guard cleared and the
+        roster back on RUNNING; the closed finish instant is discarded
+        (the clock is live again). From FINISHED: raise.
 
         Args:
             at: The start instant; omit to use the injected clock.
@@ -790,29 +832,40 @@ class RideEngine:
         Raises:
             StartBlockedError: DRAFT and the ride is not ready --
                 the roster has no entries, the setup misses a minimum
-                field, or a team sits below the size floor.
-            IllegalStateError: the state is FINISHED or REOPENED.
+                field, or a team sits below the size floor. Its
+                ``reasons`` holds one entry per blocking issue.
+            IllegalStateError: the state is FINISHED.
         """
-        if self._state is RideStatus.RUNNING:
+        if self._state in (RideStatus.RUNNING, RideStatus.REOPENED):
             started_at = self._require_actual_start()
+            self._state = RideStatus.RUNNING
+            self._roster.status = RideStatus.RUNNING
             self._stopped = False
+            self._finished_at = None
             return self._append(
                 Event(action="continue", payload={"actual_start": started_at.isoformat()})
             )
         if self._state is not RideStatus.DRAFT:
             raise IllegalStateError(f"cannot start from {self._state}")
         if not self._roster.entries:
-            raise StartBlockedError("roster has no riders")
+            raise StartBlockedError("roster has no riders", reasons=("roster has no riders",))
         setup_violations = setup_minimum_violations(self._config)
         if setup_violations:
-            reasons = "; ".join(setup_violations)
-            raise StartBlockedError(f"ride setup is incomplete: {reasons}")
+            joined = "; ".join(setup_violations)
+            raise StartBlockedError(
+                f"ride setup is incomplete: {joined}", reasons=tuple(setup_violations)
+            )
         violations = self._roster.validate_for_start()
         if violations:
-            reasons = "; ".join(
+            # One tuple, joined for the message: the refusal's two
+            # views cannot drift apart.
+            issue_reasons = tuple(
                 f"{violation.entry.plate}: {violation.reason}" for violation in violations
             )
-            raise StartBlockedError(f"roster is not ready to start: {reasons}")
+            raise StartBlockedError(
+                f"roster is not ready to start: {'; '.join(issue_reasons)}",
+                reasons=issue_reasons,
+            )
         return self._begin_start(at if at is not None else self._clock())
 
     def _begin_start(self, started_at: datetime) -> Event:
@@ -962,6 +1015,25 @@ class RideEngine:
         :meth:`held_crossings` membership test, read-only.
         """
         return self._held.get(crossing)
+
+    def credited_cards(self, plate: str) -> tuple[Card, ...]:
+        """Return the entry's credited (non-held) cards for *plate*.
+
+        The console's rider list reads this for its Cards column: the
+        entry's live credited hand -- normal deals plus confirmed-held
+        releases (R-16/R-34), oldest first. A held (unconfirmed),
+        voided or undone card is not credited, so it never appears;
+        ``plate`` must be the entry's own plate, the key the credited
+        hand is kept under -- a pooled team's member plates do not
+        resolve (they return ``()``), so callers pass
+        ``entry.plate``. An entry that has credited nothing (and an
+        unknown plate) returns an empty tuple rather than raising.
+
+        Read-only: unlike :meth:`snapshot` this does not apply
+        ``config.max_cards`` (R-13), which caps the scored hand, not
+        the cards the entry actually holds.
+        """
+        return tuple(self._hand.get(plate, ()))
 
     def confirm_held(self, crossing: Crossing) -> Event:
         """Release *crossing*'s held card into its entry's hand (R-34).
@@ -1489,17 +1561,31 @@ class RideEngine:
         where the re-opened shoe's restitution returns the undone card
         to the front.
 
+        The finish instant is recorded as :attr:`_finished_at` (C3) so
+        a closed ride's final elapsed (:meth:`closed_elapsed`) never
+        drifts with the live clock.
+
         Raises:
             IllegalStateError: the ride is DRAFT or already FINISHED.
         """
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot finish from {self._state}")
+        return self._finish_at(self._clock())
+
+    def _finish_at(self, finished_at: datetime) -> Event:
+        """Move to FINISHED, recording *finished_at*.
+
+        Shared by :meth:`finish` (stamping the current clock) and the
+        replay seam (:meth:`apply`), which re-applies the persisted
+        instant so a replayed old ride keeps its own finish time.
+        """
         self._state = RideStatus.FINISHED
         self._roster.status = RideStatus.FINISHED
         self._stopped = False
+        self._finished_at = finished_at
         self._shoe.close()
         return self._append(
-            Event(action="finish", payload={"finished_at": self._clock().isoformat()})
+            Event(action="finish", payload={"finished_at": finished_at.isoformat()})
         )
 
     def reopen(self) -> Event:
@@ -1510,20 +1596,43 @@ class RideEngine:
         Re-opening also re-opens the shoe (``Shoe.reopen``, spec §15):
         the closed state from Finish is not sticky, so the corrections
         commands (``deal_manual``, ``add_crossing_at``) deal new cards
-        from the continuing deal order.
+        from the continuing deal order. The recorded finish instant is
+        preserved (C3), so :meth:`closed_elapsed` still reads it here.
 
         Raises:
             IllegalStateError: the ride is not FINISHED.
         """
         if self._state is not RideStatus.FINISHED:
             raise IllegalStateError(f"cannot reopen from {self._state}")
+        return self._reopen_at(self._clock())
+
+    def _reopen_at(self, reopened_at: datetime) -> Event:
+        """Move to REOPENED, re-opening the shoe.
+
+        Shared by :meth:`reopen` (stamping the current clock) and the
+        replay seam (:meth:`apply`), which re-applies the persisted
+        instant. The finish instant is untouched.
+        """
         self._state = RideStatus.REOPENED
         self._roster.status = RideStatus.REOPENED
         self._stopped = False
         self._shoe.reopen()
         return self._append(
-            Event(action="reopen", payload={"reopened_at": self._clock().isoformat()})
+            Event(action="reopen", payload={"reopened_at": reopened_at.isoformat()})
         )
+
+    def closed_elapsed(self) -> float:
+        """Return the recorded final elapsed of a closed ride (C3).
+
+        FINISHED and REOPENED render a frozen clock: this is
+        ``finished_at - actual_start`` from the recorded instant, with
+        zero when the ride never started or was never finished. The
+        console reads it instead of the live :meth:`elapsed`, so a
+        closed ride's display never advances.
+        """
+        if self._finished_at is None or self._actual_start is None:
+            return 0.0
+        return (self._finished_at - self._actual_start).total_seconds()
 
     def elapsed(self) -> float:
         """Return seconds since ``actual_start``, from the clock (R-30).
@@ -1581,11 +1690,15 @@ class RideEngine:
         (unconfirmed) and voided cards never reach the hand. DNF
         entries (``mark_dnf``, E7.1.1) stay listed with ``dnf=True``;
         ``standings.rank`` places them after every ACTIVE entry and the
-        leaderboards exclude them -- never reimplemented here.
+        leaderboards exclude them -- never reimplemented here. ``sex``
+        (E7) is a solo entry's lone rider's ``"M"``/``"F"`` and None
+        for a team: a team has no single sex, so the exports render it
+        blank there.
         """
         results: list[EntryResult] = []
         for entry in self._roster.entries:
             dnf = entry.status.value == "dnf"  # spec §2's stored spelling
+            kind = entry.type.value
             laps = self._laps_for(entry.plate)
             times = self.lap_times(entry.plate)
             hand_cards = self._hand.get(entry.plate)
@@ -1597,13 +1710,16 @@ class RideEngine:
                     entry_id=entry.plate,
                     plate=entry.plate,
                     name=entry.display_name,
-                    kind=entry.type.value,
+                    kind=kind,
                     laps=len(laps),
                     total_time=self._total_time(laps),
                     best_lap=min(times) if times else 0.0,
                     cards=cards,
                     hand=best_hand(cards),
                     dnf=dnf,
+                    # Solo carries its lone rider's sex; a team has none
+                    # (module docstring records the roster non-import).
+                    sex=entry.riders[0].sex if kind == "solo" else None,
                 )
             )
         return results
@@ -1767,12 +1883,15 @@ class RideEngine:
         readiness gates, which a live start already cleared -- so a
         persisted running ride rebuilds even when its stored state
         would not pass today's gates (an empty roster, say).
-        ``stop``/``finish``/``reopen`` re-stamp their payload
-        timestamp from the engine's clock, so their audit bytes differ
-        by design on replay (class docstring's E5.1.2 resolutions).
-        The shoe's open/closed state is part of the reproduced state:
-        ``finish`` closes the fresh shoe and a replayed ``reopen``
-        opens it again, exactly as live.
+        ``stop`` re-stamps its payload timestamp from the engine's
+        clock, so its audit bytes differ by design on replay (class
+        docstring's E5.1.2 resolutions); ``finish``/``reopen``
+        re-apply the persisted instant through :meth:`_finish_at`/
+        :meth:`_reopen_at`, keeping an old ride's recorded finish time
+        (C3). ``continue`` from a replayed REOPENED ride is legal
+        (:meth:`start` accepts it). The shoe's open/closed state is
+        part of the reproduced state: ``finish`` closes the fresh shoe
+        and a replayed ``reopen`` opens it again, exactly as live.
 
         Args:
             event: The event to re-apply, exactly as persisted.
@@ -1837,9 +1956,9 @@ class RideEngine:
         elif action == "stop":
             self.stop()
         elif action == "finish":
-            self.finish()
+            self._finish_at(_payload_dt(event, "finished_at"))
         elif action == "reopen":
-            self.reopen()
+            self._reopen_at(_payload_dt(event, "reopened_at"))
         elif action == "shoe_reshuffle":
             # Deliberate no-op (class docstring, E5.1.2): the deal loop
             # reproduces the reshuffle when the fresh shoe empties.

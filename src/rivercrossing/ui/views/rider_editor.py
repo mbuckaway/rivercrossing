@@ -24,6 +24,18 @@ the other -- :class:`RiderEditor` never renders
 ``riders_list``/``team_choice`` (it has none either); this is the
 honest mirror image, not a gap.
 
+1.0.12 makes ``rider_editor_dlg``'s form display-only (its text
+fields are XRC ``wxTE_READONLY`` and its ``save_btn`` is gone): the
+pane renders the selected record and the writing happens in
+``add_rider_dlg``, which this module opens in either mode --
+:class:`AddRiderDialog` takes the record to edit as its ``editing``
+argument and pairs :class:`~rivercrossing.ui.presenters.riders.
+EditRiderPresenter` with the same :class:`AddRiderDialog` view.
+:class:`RiderEditor` binds ``edit_btn`` and a ``riders_list`` row
+activation to that flow, and implements ``RidersView.confirm`` (the
+delete confirm, :func:`~rivercrossing.ui.std_dialogs.show_confirm`)
+for ``RidersPresenter.on_delete``.
+
 xrc-windows.md section C's code-side footnote puts ``riders_list``'s
 rows, its Team column's solo-only visibility, ``team_choice``'s
 content and ``delete_btn``'s has-data gate in code -- ``riders.xrc``'s
@@ -42,6 +54,27 @@ into it -- and both disable ``wx.InfoBar``'s default slide effect
 
 ``_find`` is shared via ``ui.views._support.find_control`` -- see
 that module's docstring for why it used to be duplicated here.
+
+Phase 3 (Sex + sortable rider lists) changes four things here. The
+editor's Team field becomes a read-only ``wxTextCtrl`` (it shows the
+selected record's team and offers no way to change it -- assignment
+is the Add/Edit dialog's job), so ``show_team_choices`` is gone from
+both this view and ``RidersView``. The editor's list gains a Sex
+column and spans the shared
+:data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`, rendered
+by the shared :class:`~rivercrossing.ui.views._support.
+RiderRowListModel`. Clicking any column's header forwards the click
+to the presenter (which owns row order) and the presenter's own state
+is painted back through :meth:`RiderEditor.set_sort_indicator` --
+``ui.views._support.apply_sort_indicator`` writes the ▲/▼ marker, so
+the console's own rider list can reuse both. ``add_rider_dlg`` gains a
+Sex dropdown (``sex_choice``: blank, M, F) and opens three times
+wider than its fitted size.
+
+Phase 6 gives ``csv_preview_dlg`` its own default size:
+:class:`CsvPreviewDialog` opens it three times wider and twice as
+tall as the size its own ``Fit()`` measured, in code, because XRC
+cannot set a window minsize (``riders.xrc``'s header).
 """
 
 from pathlib import Path
@@ -52,20 +85,26 @@ import wx.dataview
 import wx.xrc
 
 from rivercrossing import csvio
-from rivercrossing.ui import ids
+from rivercrossing.ui import ids, rider_columns, std_dialogs
 from rivercrossing.ui.presenters.riders import (
     AddRiderPresenter,
     CsvConflict,
+    EditRiderPresenter,
     RiderFormValues,
     RidersPresenter,
 )
 from rivercrossing.ui.views import dialogs
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import (
+    RiderRowListModel,
+    apply_sort_indicator,
+    associate_model,
+    find_control,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
-    from rivercrossing.roster import Roster
+    from rivercrossing.roster import Entry, Rider, Roster
     from rivercrossing.ui.presenters.data_source import RiderRow
     from rivercrossing.ui.presenters.riders import CsvPreview
 
@@ -76,29 +115,44 @@ __all__ = [
     "COL_PLATE",
     "COL_PROBLEM",
     "COL_ROW",
+    "COL_SEX",
     "COL_TEAM",
     "CONFLICT_COLUMN_LABELS",
     "CSV_INFOBAR",
+    "CSV_PREVIEW_HEIGHT_SCALE",
+    "CSV_PREVIEW_WIDTH_SCALE",
+    "DIALOG_WIDTH_SCALE",
     "MIN_SIZE",
+    "OK_BUTTON_SCALE",
     "ROSTER_INFOBAR",
+    "SEX_OPTIONS",
     "SOLO_TEAM_TEXT",
     "AddRiderDialog",
     "CsvConflictsListModel",
     "CsvPreviewDialog",
     "RiderEditor",
-    "RidersListModel",
-    "format_team",
+    "ok_button_min_size",
     "run_add_rider_flow",
     "run_csv_export_flow",
     "run_csv_import_flow",
+    "run_edit_rider_flow",
+    "sex_from_choice",
+    "wider_default_size",
 ]
 
+# riders_list's columns come from the shared, wx-free
+# ``ui.rider_columns`` (Phase 3), so this editor's list and the
+# console's own ``console_riders_list`` cannot drift. The index names
+# stay as this module's own public surface (the functional suite and
+# this file read them).
 COL_PLATE = 0
 COL_NAME = 1
 COL_TEAM = 2
+COL_SEX = 3
 
-# xrc-windows.md C's exact column order: "Plate | Name | Team".
-COLUMN_LABELS: tuple[str, ...] = ("Plate", "Name", "Team")
+COLUMN_LABELS: tuple[str, ...] = tuple(
+    column.label for column in rider_columns.EDITOR_RIDER_COLUMNS
+)
 
 COL_ROW = 0
 COL_PROBLEM = 1
@@ -106,10 +160,9 @@ COL_PROBLEM = 1
 # xrc-windows.md C's csv_preview_dlg mock: "Row | Problem".
 CONFLICT_COLUMN_LABELS: tuple[str, ...] = ("Row", "Problem")
 
-# The canvas's own word for a solo rider's Team cell
-# ("123 Sam Ellis solo" -- W7 rework; the user copy is the literal
-# word "solo", never the old em dash).
-SOLO_TEAM_TEXT = "solo"
+# The canvas's own word for a solo rider's Team cell, from the shared
+# module (Phase 3) -- ``views/main_frame.py`` reads the same one.
+SOLO_TEAM_TEXT = rider_columns.SOLO_TEAM_TEXT
 
 # ui/ids.py is generated from the .xrc files (R-05); these names
 # never appear there since XRC cannot author a wxInfoBar at all
@@ -125,6 +178,40 @@ ADD_RIDER_INFOBAR = "add_rider_infobar"
 # width AND height.
 MIN_SIZE = (1280, 560)
 
+# 1.0.12 (B2): add_rider_dlg's primary button is the window's one
+# affordance, and XRC cannot give a *window* a minsize (see above), so
+# its width floor is applied in code. The floor is a multiple of
+# whatever the platform measured for the label, never a fixed pixel
+# width -- "Save" reads the same on Windows and macOS, the metrics do
+# not.
+OK_BUTTON_SCALE = 3
+
+# Phase 3: add_rider_dlg's own default width is the sizer's narrow
+# best width, which reads cramped beside its field labels; the view
+# opens it this many times wider (XRC has no window minsize, so
+# _apply_min_size applies it in code). The height stays whatever the
+# platform fitted.
+DIALOG_WIDTH_SCALE = 3
+
+# Phase 6 (3e): csv_preview_dlg's own default size is the conflicts
+# list's narrow best size; CsvPreviewDialog._apply_min_size opens it
+# this many times wider AND taller (XRC cannot give a window a
+# minsize -- riders.xrc's header defers it to code). Both dimensions
+# scale here, unlike add_rider_dlg's above: the preview is one list
+# plus a summary line, and the width alone would only add empty
+# margin.
+CSV_PREVIEW_WIDTH_SCALE = 3
+CSV_PREVIEW_HEIGHT_SCALE = 2
+
+# Blank first: the Add mode's default, and the "unknown" value that
+# ``sex_from_choice`` maps back to ``None``.
+SEX_OPTIONS: tuple[str, ...] = ("", "M", "F")
+
+# add_rider_dlg serves both modes (1.0.12 B2). XRC authors the Add
+# title; the Edit mode retitles the same window rather than loading a
+# second resource for one string.
+_EDIT_TITLE = "Edit Rider"
+
 # The two NotImplementedError messages each view class's own "wrong
 # half" of RidersView raises (module docstring) -- each keeps "E3.4"
 # as a substring so the already-pinned functional tests naming it
@@ -137,20 +224,37 @@ _RIDER_EDITOR_NOT_IMPLEMENTED = (
 )
 
 
-def format_team(row: RiderRow) -> str:
-    """Return *row*'s ``riders_list`` Team cell text.
+def ok_button_min_size(best: tuple[int, int]) -> tuple[int, int]:
+    """Return add_rider_dlg's primary-button floor for *best* (B2).
 
-    ``RiderRow.team`` is ``None`` for a solo rider; W7 renders the
-    word "solo" (``SOLO_TEAM_TEXT``) rather than a blank cell.
+    *best* is the button's own measured best size as (width, height);
+    the floor scales only the width -- a taller button would sit oddly
+    in the std dialog button sizer it shares with Cancel.
     """
-    return row.team if row.team is not None else SOLO_TEAM_TEXT
+    width, height = best
+    return (width * OK_BUTTON_SCALE, height)
 
 
-_TEXT_ACCESSORS: tuple[Callable[[RiderRow], str], ...] = (
-    lambda rider: rider.plate,
-    lambda rider: rider.name,
-    format_team,
-)
+def wider_default_size(fitted: tuple[int, int]) -> tuple[int, int]:
+    """Return add_rider_dlg's 3x-wider default size for *fitted*.
+
+    *fitted* is the width/height ``Fit()`` measured for the built
+    dialog; only the width scales (see :data:`DIALOG_WIDTH_SCALE`) --
+    the form's rows are laid out vertically, so a wider window needs no
+    extra height.
+    """
+    width, height = fitted
+    return (width * DIALOG_WIDTH_SCALE, height)
+
+
+def sex_from_choice(selection: str) -> str | None:
+    """Return the Sex dropdown's value for *selection*.
+
+    Phase 3's rule: the blank item means "unknown", which is ``None``
+    on :class:`~rivercrossing.roster.Rider` -- never an empty string
+    (the same normalization csvio's import applies).
+    """
+    return selection or None
 
 
 def _build_infobar(dialog: wx.Dialog, name: str) -> wx.InfoBar:
@@ -179,47 +283,23 @@ def _build_infobar(dialog: wx.Dialog, name: str) -> wx.InfoBar:
     return bar
 
 
-def _set_team_choice_row_visible(choice: wx.Choice, *, visible: bool) -> None:
-    """Show/hide *choice* and its FlexGridSizer label sibling.
+def _set_team_choice_row_visible(control: wx.Window, *, visible: bool) -> None:
+    """Show/hide *control* and its FlexGridSizer label sibling.
 
     The two Team labels ("Team" in rider_editor_dlg and add_rider_dlg)
-    carry no frozen name to find them by (only the choice does), so
-    each label is located structurally: it is always the item
-    immediately before its choice in their shared ``wxFlexGridSizer``
-    row.
+    carry no frozen name to find them by (only the control they label
+    does), so each label is located structurally: it is always the
+    item immediately before its control in their shared
+    ``wxFlexGridSizer`` row. The control is either dialog's own
+    ``team_choice`` -- a read-only ``wx.TextCtrl`` in the editor and a
+    ``wx.Choice`` in add_rider_dlg -- so the type is ``wx.Window``.
     """
-    sizer = choice.GetContainingSizer()
+    sizer = control.GetContainingSizer()
     items = list(sizer.GetChildren())
-    index = next(i for i, item in enumerate(items) if item.GetWindow() is choice)
+    index = next(i for i, item in enumerate(items) if item.GetWindow() is control)
     label = items[index - 1].GetWindow()
     sizer.Show(label, visible)
-    sizer.Show(choice, visible)
-
-
-class RidersListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
-    """Read-only model over ``RiderRow`` rows for ``riders_list``.
-
-    ``# type: ignore[misc]``: wx ships no stubs, so mypy refuses to
-    subclass ``Any`` -- the same unavoidable annotation
-    ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
-    """
-
-    def __init__(self, rows: Sequence[RiderRow]) -> None:
-        """Wrap *rows* in the rider editor's canvas order."""
-        super().__init__(len(rows))
-        self._rows = tuple(rows)
-
-    def GetColumnCount(self) -> int:
-        """Return the roster's fixed three columns."""
-        return len(COLUMN_LABELS)
-
-    def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
-        """Return "string" -- every ``riders_list`` column is text."""
-        return "string"
-
-    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the cell value at *row*/*col*."""
-        return _TEXT_ACCESSORS[col](self._rows[row])
+    sizer.Show(control, visible)
 
 
 class RiderEditor:
@@ -252,15 +332,17 @@ class RiderEditor:
         # Replaced by the presenter's own show_riders() call below,
         # before any event can fire -- typed non-optional so
         # _on_row_selected never has to narrow it.
-        self._model: RidersListModel = RidersListModel([])
+        self._model: RiderRowListModel = RiderRowListModel([], rider_columns.EDITOR_RIDER_COLUMNS)
 
         self.rider_search = self._find(ids.RIDER_SEARCH, wx.SearchCtrl)
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)
         self.first_name_input = self._find(ids.FIRST_NAME_INPUT, wx.TextCtrl)
         self.last_name_input = self._find(ids.LAST_NAME_INPUT, wx.TextCtrl)
-        self.team_choice = self._find(ids.TEAM_CHOICE, wx.Choice)
+        # Phase 3: a read-only display of the selected record's team,
+        # not a dropdown -- the Add/Edit dialog owns team assignment.
+        self.team_choice = self._find(ids.TEAM_CHOICE, wx.TextCtrl)
         self.add_btn = self._find(ids.ADD_BTN, wx.Button)
-        self.save_btn = self._find(ids.SAVE_BTN, wx.Button)
+        self.edit_btn = self._find(ids.EDIT_BTN, wx.Button)
         self.delete_btn = self._find(ids.DELETE_BTN, wx.Button)
 
         self.roster_infobar = self._build_infobar()
@@ -284,7 +366,12 @@ class RiderEditor:
         return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> list[Any]:
-        """Append ``riders_list``'s three columns in canvas order.
+        """Append ``riders_list``'s columns in canvas order.
+
+        The labels are the shared
+        :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`
+        ones (Plate | Name | Team | Sex), so the console's own rider
+        list draws the same headers.
 
         Returns:
             The appended columns in order -- the Team column (index
@@ -292,7 +379,9 @@ class RiderEditor:
             hides; header clicks compare against the others to route
             the presenter's own sort (W7: a ``DataViewIndexListModel``
             cannot sort itself, so the columns carry no wx sort
-            flags and the presenter owns row order).
+            flags and the presenter owns row order), and
+            :meth:`set_sort_indicator` addresses them by the same
+            index to paint the ▲/▼ marker.
         """
         return [
             self.riders_list.AppendTextColumn(label, col)
@@ -310,21 +399,15 @@ class RiderEditor:
     def _bind_events(self) -> None:
         """Forward every control event straight to the presenter.
 
-        W7 adds the form-edit events: every keystroke into the three
-        text fields and every team_choice selection re-runs the dirty
-        check (:meth:`RidersPresenter.on_form_changed`) that gates
-        save_btn. The presenter's own ``show_form`` calls re-fire
-        these events (``SetValue``/``SetStringSelection``), which is
-        harmless: each event re-reads the whole form, so the state
-        after the last field lands is the state of the full form.
+        1.0.12: the form is display-only, so the only bindings left are
+        the two dialogs' openers (``add_btn``, ``edit_btn``), delete,
+        the list's own search/selection/sort events -- and a row
+        activation, which opens the Edit dialog exactly as ``edit_btn``
+        does (the double-click/Enter shortcut the canvas asks for).
         """
         self.dialog.Bind(wx.EVT_BUTTON, self._on_add, self.add_btn)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_save, self.save_btn)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_edit, self.edit_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_delete, self.delete_btn)
-        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.plate_input)
-        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.first_name_input)
-        self.dialog.Bind(wx.EVT_TEXT, self._on_form_changed, self.last_name_input)
-        self.dialog.Bind(wx.EVT_CHOICE, self._on_form_changed, self.team_choice)
         self.dialog.Bind(wx.EVT_TEXT, self._on_search_text, self.rider_search)
         self.dialog.Bind(wx.EVT_SEARCHCTRL_SEARCH_BTN, self._on_search_text, self.rider_search)
         self.dialog.Bind(wx.EVT_SEARCHCTRL_CANCEL_BTN, self._on_search_text, self.rider_search)
@@ -332,23 +415,12 @@ class RiderEditor:
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_row_selected, self.riders_list
         )
         self.dialog.Bind(
+            wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_row_activated, self.riders_list
+        )
+        self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK,
             self._on_column_header_click,
             self.riders_list,
-        )
-
-    def _form_values(self) -> RiderFormValues:
-        """Return the form's current fields, read verbatim (R-20).
-
-        ``team_choice``'s selection is forwarded as-is, never
-        translated here -- the passive-view contract
-        ``RiderFormValues`` itself documents.
-        """
-        return RiderFormValues(
-            plate=self.plate_input.GetValue(),
-            first_name=self.first_name_input.GetValue(),
-            last_name=self.last_name_input.GetValue(),
-            team=self.team_choice.GetStringSelection(),
         )
 
     def _on_add(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -364,20 +436,47 @@ class RiderEditor:
         if run_add_rider_flow(self.dialog, self.presenter.roster):
             self.presenter.on_add_committed()
 
-    def _on_save(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle ``save_btn``: forward the form to the presenter."""
+    def _on_edit(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``edit_btn``: open the Edit Rider dialog (B3)."""
         event.Skip()
-        self.presenter.on_save(self._form_values())
+        self._open_edit_dialog()
+
+    def _on_row_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle a ``riders_list`` activation: select it, then edit it.
+
+        Double-clicking (or pressing Enter on) a row is the shortcut to
+        "Edit Rider…". The activation is resolved from the event's own
+        item first -- a programmatic ``Select`` does not fire the
+        selection event on MSW's native control (see
+        ``select_rider_by_plate``), but an activation always names its
+        row, so the selection ``_on_edit`` reads is that row's own.
+        """
+        event.Skip()
+        item = event.GetItem()
+        if item.IsOk():
+            self.presenter.on_row_selected(self._model.GetRow(item))
+        self._open_edit_dialog()
+
+    def _open_edit_dialog(self) -> None:
+        """Open add_rider_dlg in Edit mode over the selected record.
+
+        A no-op when nothing is selected: there is no record to preload,
+        and the dialog must never open blank. A real commit refreshes
+        this editor's rows and re-shows the record through
+        :meth:`RidersPresenter.on_edit_committed` -- nothing else would
+        tell this open editor the roster changed underneath it.
+        """
+        record = self.presenter.selected
+        if record is None:
+            return
+        entry, rider = record
+        if run_edit_rider_flow(self.dialog, self.presenter.roster, editing=(entry, rider)):
+            self.presenter.on_edit_committed(rider)
 
     def _on_delete(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``delete_btn``: forward to the presenter."""
         event.Skip()
         self.presenter.on_delete()
-
-    def _on_form_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle a form edit: re-run the presenter's dirty gating."""
-        event.Skip()
-        self.presenter.on_form_changed(self._form_values())
 
     def _on_search_text(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a rider_search change; forward its current text.
@@ -409,15 +508,22 @@ class RiderEditor:
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``riders_list`` selection: forward its row index.
 
-        No-op when nothing is selected (a stale event after a row it
-        pointed to was deleted, say) -- there is no row index to
-        forward the presenter could act on.
+        Two guards, both measured-needed (B3): nothing selected is a
+        stale event after the row it pointed to was deleted, and a row
+        index past the model's current count is the same staleness one
+        step later -- wx can deliver the event after ``show_riders``
+        has already replaced the model (a search narrowing the list, a
+        delete shrinking it), and a row index into the *new* model
+        would then address the wrong record. Either way there is no row
+        to forward.
         """
         event.Skip()
         item = self.riders_list.GetSelection()
         if not item.IsOk():
             return
         row = self._model.GetRow(item)
+        if not 0 <= row < self._model.GetCount():
+            return
         self.presenter.on_row_selected(row)
 
     def select_rider_by_plate(self, plate: str) -> None:
@@ -446,31 +552,54 @@ class RiderEditor:
         """Render ``riders_list`` (``RidersView``).
 
         Dismisses any prior :data:`ROSTER_INFOBAR` warning first: this
-        is only ever called after a successful add/save/delete
+        is only ever called after a successful add/edit/delete
         refresh (``RidersPresenter``'s own call order), so the next
         successful action is exactly when a stale warning should
         clear. See ``ui.views._support.associate_model``'s docstring
         for why this also repaints explicitly (unverified remedy).
         """
         self.roster_infobar.Dismiss()
-        self._model = RidersListModel(rows)
+        self._model = RiderRowListModel(rows, rider_columns.EDITOR_RIDER_COLUMNS)
         associate_model(self.riders_list, self._model)
 
-    def show_team_choices(self, names: list[str]) -> None:
-        """Replace ``team_choice``'s content with *names* (R-20)."""
-        self.team_choice.Set(names)
+    def set_sort_indicator(
+        self,
+        column: int | None,
+        *,
+        ascending: bool,
+    ) -> None:
+        """Mark riders_list *column*'s header ▲/▼, or clear it.
+
+        ``RidersView`` member, W7: the presenter owns row order (a
+        ``DataViewIndexListModel`` cannot sort itself), so it hands
+        its own sort state back here and
+        :func:`~rivercrossing.ui.views._support.apply_sort_indicator`
+        paints it -- ``None`` *column* restores every plain label.
+        """
+        apply_sort_indicator(self._columns, column, ascending=ascending)
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Toggle ``delete_btn``'s enabled state (R-15)."""
         self.delete_btn.Enable(enabled)
 
-    def set_save_enabled(self, *, enabled: bool) -> None:
-        """Toggle ``save_btn`` on the form's dirty state (W7)."""
-        self.save_btn.Enable(enabled)
+    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
+        """Ask a destructive confirm; return whether OK was chosen (B3).
 
-    def set_plate_enabled(self, *, enabled: bool) -> None:
-        """Toggle ``plate_input``'s editability (W7 plate lock)."""
-        self.plate_input.Enable(enabled)
+        The editor's own window parents the native dialog
+        (:func:`~rivercrossing.ui.std_dialogs.show_confirm`, whose
+        Cancel default keeps Enter off the destructive path); the
+        presenter only ever reads the verdict. The same wiring
+        ``MainFrame.confirm`` uses for the stop confirm.
+        """
+        result = std_dialogs.show_confirm(self.dialog, title, message, ok_label, cancel_label)
+        return result == int(wx.ID_OK)
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """Render ``csv_preview_dlg``; that dialog's own job.
@@ -498,12 +627,15 @@ class RiderEditor:
         """Fill plate_input and the two name inputs (``RidersView``).
 
         ``RidersView``, R-20: the passive view fills exactly what the
-        presenter asks for.
+        presenter asks for. Phase 3: ``team_choice`` is a read-only
+        text box now, so the Team field is set (``SetValue``) with the
+        presenter's own cell text -- ``"— solo —"`` for a solo rider --
+        rather than having a choice selected in it.
         """
         self.plate_input.SetValue(plate)
         self.first_name_input.SetValue(first_name)
         self.last_name_input.SetValue(last_name)
-        self.team_choice.SetStringSelection(team)
+        self.team_choice.SetValue(team)
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Show/hide ``team_choice``, its label, and the Team column.
@@ -544,21 +676,35 @@ class AddRiderDialog:
     """Code-side behaviour for ``add_rider_dlg`` (W7, R-20).
 
     Implements ``AddRiderView`` (``ui.presenters.riders``) over its
-    own :class:`~rivercrossing.ui.presenters.riders.AddRiderPresenter`
-    instance. The dialog pairs per-open like :class:`CsvPreviewDialog`
-    (module docstring's mirror-image note): it never renders
+    own presenter -- :class:`~rivercrossing.ui.presenters.riders.
+    AddRiderPresenter` when ``editing`` is ``None``, :class:`~river-
+    crossing.ui.presenters.riders.EditRiderPresenter` (over the same
+    view surface) when the caller passed the record to edit. The
+    dialog pairs per-open like :class:`CsvPreviewDialog` (module
+    docstring's mirror-image note): it never renders
     ``rider_editor_dlg``'s own rows, and a live ``RiderEditor`` sees
-    the added rider through ``run_add_rider_flow``'s ``True`` result,
-    which refreshes the editor's own presenter.
+    the committed add/edit through the ``run_*_flow`` result, which
+    refreshes the editor's own presenter.
     """
 
-    def __init__(self, dialog: wx.Dialog, *, roster: Roster) -> None:
+    def __init__(
+        self,
+        dialog: wx.Dialog,
+        *,
+        roster: Roster,
+        editing: tuple[Entry, Rider] | None = None,
+    ) -> None:
         """Decorate an already-loaded ``add_rider_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``run_add_rider_flow`` loaded
-                from ``riders.xrc``.
-            roster: The in-memory roster this dialog adds into.
+            dialog: The ``wx.Dialog`` ``run_add_rider_flow`` (or
+                ``run_edit_rider_flow``) loaded from ``riders.xrc``.
+            roster: The in-memory roster this dialog writes into.
+            editing: The ``(entry, rider)`` record to edit, or ``None``
+                for the Add mode. The two modes share the whole window
+                -- only the title and the presenter differ -- because
+                ``riders.xrc`` carries one ``add_rider_dlg`` whose
+                primary button already reads "Save".
         """
         self.dialog = dialog
 
@@ -566,13 +712,26 @@ class AddRiderDialog:
         self.first_name_input = self._find(ids.FIRST_NAME_INPUT, wx.TextCtrl)
         self.last_name_input = self._find(ids.LAST_NAME_INPUT, wx.TextCtrl)
         self.team_choice = self._find(ids.TEAM_CHOICE, wx.Choice)
+        # Phase 3's Sex dropdown: XRC authors an empty wxChoice (there
+        # is no XRC content element in play), so its three items are
+        # set here -- blank first, so an unset sex is the default.
+        self.sex_choice = self._find(ids.SEX_CHOICE, wx.Choice)
+        self.sex_choice.Set(list(SEX_OPTIONS))
         self.ok_btn = self._find("wxID_OK", wx.Button)
+        self._widen_ok_button()
 
         self.add_infobar = _build_infobar(self.dialog, ADD_RIDER_INFOBAR)
 
-        self.presenter = AddRiderPresenter(self, roster)
+        self.presenter: AddRiderPresenter | EditRiderPresenter
+        if editing is None:
+            self.presenter = AddRiderPresenter(self, roster)
+        else:
+            entry, rider = editing
+            self.dialog.SetTitle(_EDIT_TITLE)
+            self.presenter = EditRiderPresenter(self, roster, entry=entry, rider=rider)
 
         self._bind_events()
+        self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -587,34 +746,70 @@ class AddRiderDialog:
         """
         return find_control(self.dialog, name, expected_type)
 
-    def _bind_events(self) -> None:
-        """Forward ``wxID_OK`` ("Add") straight to the presenter."""
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_add, self.ok_btn)
+    def _widen_ok_button(self) -> None:
+        """Give ``wxID_OK`` its 3x width floor (B2).
 
-    def _on_add(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
-        """Handle ``wxID_OK`` ("Add"): commit, then close if it did.
+        XRC has no window minsize (riders.xrc's header), so the floor
+        is applied here, before the sizer lays the button out. Only the
+        width is floored -- see :func:`ok_button_min_size`.
+        """
+        best = self.ok_btn.GetBestSize()
+        width, height = ok_button_min_size((best.width, best.height))
+        self.ok_btn.SetMinSize(wx.Size(width, height))
+
+    def _apply_min_size(self) -> None:
+        """Open the dialog 3x wider than its fitted width (Phase 3).
+
+        XRC gives a window no minsize and no default size, so the
+        dialog would otherwise open at the flex grid's own narrow best
+        width -- cramped beside its labels and too short for a real
+        team name in ``team_choice``. ``Fit()`` first, so the width
+        being tripled is whatever this platform actually measured;
+        the height is left alone (the form is laid out vertically).
+        Only the *width* is floored: ``-1`` means "no minimum height"
+        to wx, so a taller-than-fitted row can still grow the window.
+        """
+        self.dialog.Fit()
+        fitted = self.dialog.GetSize()
+        width, height = wider_default_size((fitted.width, fitted.height))
+        self.dialog.SetMinSize(wx.Size(width, -1))
+        self.dialog.SetSize(wx.Size(width, height))
+
+    def _bind_events(self) -> None:
+        """Forward ``wxID_OK`` ("Save") straight to the presenter."""
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_submit, self.ok_btn)
+
+    def _on_submit(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
+        """Handle ``wxID_OK`` ("Save"): commit, then close if it did.
 
         Measured: ``wxID_OK`` is a stock id wx auto-binds to
         ``EndModal(wx.ID_OK)`` on any ``EVT_BUTTON`` whose handler
-        calls ``event.Skip()`` -- unlike ``add_btn``/``save_btn``
+        calls ``event.Skip()`` -- unlike ``add_btn``/``edit_btn``
         (plain custom ids), so *event* is never skipped here: this
         handler is the only thing allowed to decide whether the
         dialog closes (the same note CsvPreviewDialog's own
-        ``_on_import`` carries). A refused add (blank name, duplicate
-        plate, a full team, ...) leaves the dialog open, showing why
-        on :data:`ADD_RIDER_INFOBAR`, so the operator can correct or
+        ``_on_import`` carries). A refused save -- an add (blank name,
+        duplicate plate, a full team, ...) or an edit (the ride has
+        left DRAFT, ...) -- leaves the dialog open, showing why on
+        :data:`ADD_RIDER_INFOBAR`, so the operator can correct or
         Cancel -- never a silent, unexplained non-close.
         """
         if self.presenter.on_submit(self._form_values()):
             self.dialog.EndModal(wx.ID_OK)
 
     def _form_values(self) -> RiderFormValues:
-        """Return the dialog's current fields, read verbatim (R-20)."""
+        """Return the dialog's current fields, read verbatim (R-20).
+
+        The Sex dropdown's blank item is read as ``None``
+        (:func:`sex_from_choice`) -- the value ``Rider.sex`` uses for
+        an unknown sex, never an empty string.
+        """
         return RiderFormValues(
             plate=self.plate_input.GetValue(),
             first_name=self.first_name_input.GetValue(),
             last_name=self.last_name_input.GetValue(),
             team=self.team_choice.GetStringSelection(),
+            sex=sex_from_choice(self.sex_choice.GetStringSelection()),
         )
 
     # ---------------------------------------------------- AddRiderView
@@ -628,18 +823,38 @@ class AddRiderDialog:
         _set_team_choice_row_visible(self.team_choice, visible=visible)
         self.dialog.Layout()
 
-    def show_form(self, *, plate: str, team: str) -> None:
-        """Pre-fill the plate and team fields; names start blank."""
+    def set_plate_enabled(self, *, enabled: bool) -> None:
+        """Toggle ``plate_input``'s editability (spec S3:46, B2)."""
+        self.plate_input.Enable(enabled)
+
+    def show_form(  # noqa: PLR0913 -- the passive view fills the five form fields verbatim
+        self,
+        *,
+        plate: str,
+        first_name: str,
+        last_name: str,
+        team: str,
+        sex: str | None,
+    ) -> None:
+        """Fill all five fields (Add passes the names blank, B2).
+
+        Phase 3: ``sex_choice``'s blank item is selected for an unset
+        (*sex* ``None``) or unknown sex, its own ``"M"``/``"F"`` item
+        otherwise.
+        """
         self.plate_input.SetValue(plate)
+        self.first_name_input.SetValue(first_name)
+        self.last_name_input.SetValue(last_name)
         self.team_choice.SetStringSelection(team)
+        self.sex_choice.SetStringSelection(sex if sex is not None else "")
 
     def show_validation(self, message: str) -> None:
         """Show *message* on :data:`ADD_RIDER_INFOBAR`.
 
         ``AddRiderView`` member: non-modal, mirroring the editor's
-        own refusal surface -- it stays up until the next successful
-        Add re-renders (or the dialog closes), never blocking the
-        operator from correcting the form.
+        own refusal surface -- it stays up until a real commit closes
+        the dialog, never blocking the operator from correcting the
+        form.
         """
         self.add_infobar.ShowMessage(message, wx.ICON_WARNING)
         self.dialog.Layout()
@@ -706,6 +921,7 @@ class CsvPreviewDialog:
         self.presenter = RidersPresenter(self, roster, load=False)
 
         self._bind_events()
+        self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -732,6 +948,25 @@ class CsvPreviewDialog:
         slide-effect hang this mirrors.
         """
         return _build_infobar(self.dialog, CSV_INFOBAR)
+
+    def _apply_min_size(self) -> None:
+        """Open the preview 3x wider and 2x taller than its fitted size.
+
+        XRC gives a window no minsize and no default size, so the
+        dialog would otherwise open at the conflicts list's own narrow
+        best size. ``Fit()`` first, so the size being scaled is
+        whatever this platform actually measured; that same size is
+        both the floor (``SetMinSize``) and the size the dialog opens
+        at (``SetSize``) -- a floor alone would still let the loaded
+        window keep the size XRC gave it. This is the both-dimensions
+        mirror of :class:`AddRiderDialog`'s own width-only floor.
+        """
+        self.dialog.Fit()
+        fitted = self.dialog.GetSize()
+        width = fitted.width * CSV_PREVIEW_WIDTH_SCALE
+        height = fitted.height * CSV_PREVIEW_HEIGHT_SCALE
+        self.dialog.SetMinSize(wx.Size(width, height))
+        self.dialog.SetSize(wx.Size(width, height))
 
     def _bind_events(self) -> None:
         """Forward ``wxID_OK`` straight to the presenter."""
@@ -791,12 +1026,19 @@ class CsvPreviewDialog:
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
-    def show_team_choices(self, names: list[str]) -> None:
-        """Replace ``team_choice``'s content; that dialog's own job.
+    def set_sort_indicator(
+        self,
+        column: int | None,
+        *,
+        ascending: bool,
+    ) -> None:
+        """Mark riders_list's sort column; that dialog's own job.
 
         Raises:
             NotImplementedError: Always -- ``csv_preview_dlg`` has no
-                ``team_choice`` of its own.
+                ``riders_list`` to sort. ``RidersPresenter`` bound to
+                this view is built with ``load=False`` and has no
+                header to click, so it is never called.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
@@ -809,21 +1051,20 @@ class CsvPreviewDialog:
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
-    def set_save_enabled(self, *, enabled: bool) -> None:
-        """Toggle ``save_btn``; that dialog's own job.
+    def confirm(  # noqa: PLR0913 -- mirrors RidersView.confirm's own signature
+        self,
+        title: str,
+        message: str,
+        *,
+        ok_label: str,
+        cancel_label: str,
+    ) -> bool:
+        """Ask a confirm; that dialog's own job.
 
         Raises:
-            NotImplementedError: Always -- ``csv_preview_dlg`` has no
-                ``save_btn`` of its own.
-        """
-        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
-
-    def set_plate_enabled(self, *, enabled: bool) -> None:
-        """Toggle ``plate_input``; that dialog's own job.
-
-        Raises:
-            NotImplementedError: Always -- ``csv_preview_dlg`` has no
-                ``plate_input`` of its own.
+            NotImplementedError: Always -- this dialog's wxID_OK only
+                ever imports, and no RidersPresenter bound to it
+                reaches the delete confirm.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
@@ -950,13 +1191,13 @@ def run_csv_import_flow(parent: wx.Window, roster: Roster) -> bool:
 
 
 def run_add_rider_flow(parent: wx.Window, roster: Roster) -> bool:
-    """Open the Add Rider dialog; commit only if the operator Adds.
+    """Open the Add Rider dialog; commit only if the operator Saves.
 
     W7's dedicated add path: ``rider_editor_dlg``'s own ``add_btn``
     handler calls this. The dialog pairs with its own
     :class:`AddRiderPresenter` instance over the same live roster
     (the module docstring's mirror-image split -- the editor's own
-    ``RidersPresenter`` never adds); on a committed Add the caller
+    ``RidersPresenter`` never writes); on a committed Add the caller
     refreshes its own rows/form through
     :meth:`~rivercrossing.ui.presenters.riders.RidersPresenter.
     on_add_committed`.
@@ -969,11 +1210,49 @@ def run_add_rider_flow(parent: wx.Window, roster: Roster) -> bool:
     Returns:
         Whether an add actually committed.
     """
+    return _run_rider_form_flow(parent, roster, editing=None)
+
+
+def run_edit_rider_flow(
+    parent: wx.Window, roster: Roster, *, editing: tuple[Entry, Rider]
+) -> bool:
+    """Open the same dialog in Edit Rider… mode; commit on Save (B2).
+
+    ``rider_editor_dlg``'s own ``edit_btn`` handler (and a
+    ``riders_list`` row activation) calls this with the selected
+    record. The dialog pairs with its own
+    :class:`EditRiderPresenter` instance, which preloads *editing* and
+    writes it back through the shared update mutators; a committed edit
+    is reported to the caller through
+    :meth:`~rivercrossing.ui.presenters.riders.RidersPresenter.
+    on_edit_committed`.
+
+    Args:
+        parent: The window to return focus to once ``add_rider_dlg``
+            ends (module banner comment above).
+        roster: The roster the dialog writes into.
+        editing: The ``(entry, rider)`` record to preload and edit.
+
+    Returns:
+        Whether the edit actually committed.
+    """
+    return _run_rider_form_flow(parent, roster, editing=editing)
+
+
+def _run_rider_form_flow(
+    parent: wx.Window, roster: Roster, *, editing: tuple[Entry, Rider] | None
+) -> bool:
+    """Load ``add_rider_dlg``, decorate it per mode and run it.
+
+    The one body :func:`run_add_rider_flow` and
+    :func:`run_edit_rider_flow` share: only ``editing`` (and so the
+    title and the presenter class) differs between them.
+    """
     window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.ADD_RIDER_DLG)
     if window is None:
         return False
     try:
-        AddRiderDialog(window, roster=roster)
+        AddRiderDialog(window, roster=roster, editing=editing)
         default_button = dialogs.default_button_for(ids.ADD_RIDER_DLG)
         if default_button is not None:
             dialogs.set_default_button(window, default_button)

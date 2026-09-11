@@ -440,13 +440,15 @@ class RideLibrary:
     def _on_duplicate_clicked(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Confirm and duplicate the selected ride, then refresh.
 
-        Shows ``duplicate_ride_dlg`` with the ride's name in
-        ``message_lbl`` (E5.4.1 mock-first), and on a confirmed
-        ``wxID_OK`` invokes the injected ``on_duplicate`` -- the seam
-        the app wires to ``Store.duplicate_ride`` (R-15: setup +
-        roster, no timing data) -- then refreshes the list so the new
-        DRAFT ride appears immediately. A selection is required (the
-        button is disabled without one; this guard re-checks).
+        H2: asks through the native ``std_dialogs.show_prompt`` with
+        the ride's name in the message (E5.4.1 mock-first), and on a
+        confirmed ``wxID_OK`` invokes the injected ``on_duplicate`` --
+        the seam the app wires to ``Store.duplicate_ride`` (R-15:
+        setup + roster, no timing data) -- then refreshes the list so
+        the new DRAFT ride appears immediately. The question is
+        non-destructive, so OK is the prompt's default button. A
+        selection is required (the button is disabled without one;
+        this guard re-checks).
         """
         selected = self._selected
         event.Skip()
@@ -454,28 +456,19 @@ class RideLibrary:
         # None selection, so a click cannot carry one here.
         if selected is None or self._on_duplicate is None:
             return
-        import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
-
+        from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- wx-touching, deferred
         from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- wx-touching, deferred
 
-        dialog = wx.xrc.XmlResource.Get().LoadDialog(self.dialog, ids.DUPLICATE_RIDE_DLG)
-        if dialog is None:
-            # logic-coverage-exempt: T-3 -- duplicate_ride_dlg is
-            # authored in dialogs.xrc and loaded before any route opens
-            # the library; a None here means the resource is missing,
-            # which the functional load-time verification fails on.
-            return
-        try:
-            message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
-            if message_lbl is not None:
-                message_lbl.SetLabel(dialogs.duplicate_ride_message(selected.name))
-            result = dialogs.run_dialog(dialog, opener=self.duplicate_button)
-            if result == wx.ID_OK:
-                self._on_duplicate(selected)
-                self.refresh()
-        finally:
-            if not dialog.IsBeingDeleted():
-                dialog.Destroy()
+        result = std_dialogs.show_prompt(
+            self.dialog,
+            "Duplicate Ride",
+            dialogs.duplicate_ride_message(selected.name),
+            "Duplicate",
+            "Cancel",
+        )
+        if result == wx.ID_OK:
+            self._on_duplicate(selected)
+            self.refresh()
 
     # --------------------------------------- E5.3.2 R-18 delete surface
 

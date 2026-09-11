@@ -51,7 +51,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from rivercrossing.store.migrations import StoreError
+from rivercrossing.store.schema import StoreError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -30,7 +30,7 @@ __all__ = ["apply_to_menubar", "enablement_table"]
 def enablement_table(state: commands.RideState) -> dict[str, bool]:
     """Return ``{item_id: enabled}`` for every routed menu item.
 
-    One verdict per ``commands.ROUTE_TABLE`` item id (50 ids), each
+    One verdict per ``commands.ROUTE_TABLE`` item id (47 ids), each
     exactly ``commands.is_route_enabled(route, state)`` -- the pure,
     headless-testable half of the binder.
     """

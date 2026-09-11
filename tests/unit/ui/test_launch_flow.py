@@ -34,7 +34,7 @@ the GUI I/O boundary). Session and ride data run against a real
 
 import re
 import sqlite3
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -81,9 +81,9 @@ class _FakeConsoleView:
         """Record the swapped presenter."""
         self.calls.append(("set_presenter", presenter))
 
-    def show_ride_name(self, name: str) -> None:
-        """Record the rendered ride name."""
-        self.calls.append(("show_ride_name", name))
+    def show_ride_header(self, **fields: object) -> None:
+        """Record the rendered ride-identity header (C1)."""
+        self.calls.append(("show_ride_header", fields))
 
     def set_state(self, status: RideStatus) -> None:
         """Record the rendered lifecycle state."""
@@ -348,7 +348,16 @@ def test_run_launch_flow_continue_resumes_the_ride_and_keeps_the_active_marker(
 
     assert context.active_ride_id == ride_id
     assert _latest_session_active_ride(db_path) == ride_id
-    assert ("show_ride_name", "GORBA EPIC 2026") in view.calls
+    assert (
+        "show_ride_header",
+        {
+            "name": "GORBA EPIC 2026",
+            "logo": None,
+            "event_date": date(2026, 9, 20),
+            "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, by design
+            "entry_mode": EntryMode.MIXED,
+        },
+    ) in view.calls
     assert ("set_state", RideStatus.RUNNING) in view.calls
     swapped = next(arg for name, arg in view.calls if name == "set_presenter")
     assert isinstance(swapped, ConsolePresenter)

@@ -13,21 +13,51 @@ shared home; every view still exposes its own thin ``_find`` method
 
 :func:`associate_model` is not a duplication extraction -- see its
 own docstring for exactly what it does and does not claim to fix.
+
+Phase 3 adds the two rider-list pieces both rider lists need:
+:class:`RiderRowListModel` (a ``DataViewIndexListModel`` rendering
+``RiderRow`` cells through ``ui.rider_columns``) and
+:func:`apply_sort_indicator` (the ▲/▼ header marker for the
+presenter-owned sort ``riders_list`` and ``console_riders_list``
+share).
 """
+
+from __future__ import annotations
 
 import gc
 from functools import cache
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import wx
 
 from rivercrossing.ui.cards_imagelist import CardImageList, load_card_image_list
 
-__all__ = ["FIND_SETTLE_ATTEMPTS", "associate_model", "default_card_images", "find_control"]
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from rivercrossing.ui.presenters.data_source import RiderRow
+    from rivercrossing.ui.rider_columns import RiderColumn
+
+__all__ = [
+    "FIND_SETTLE_ATTEMPTS",
+    "RiderRowListModel",
+    "apply_sort_indicator",
+    "associate_model",
+    "default_card_images",
+    "find_control",
+]
 
 # See find_control's own docstring for the measured, address-reuse
 # stale-lookup hazard this retry bound settles.
 FIND_SETTLE_ATTEMPTS = 25
+
+# The two header markers. A marker is a suffix on the column's own
+# label, so apply_sort_indicator can strip it back off again -- which
+# is what keeps re-marking idempotent (never "Plate ▲ ▼").
+_SORT_ASCENDING = " ▲"
+_SORT_DESCENDING = " ▼"
+
+_SORT_MARKERS: tuple[str, ...] = (_SORT_ASCENDING, _SORT_DESCENDING)
 
 
 def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
@@ -153,3 +183,81 @@ def associate_model(control: Any, model: Any) -> None:  # noqa: ANN401 -- wx shi
     control.AssociateModel(model)
     control.Refresh()
     control.Update()
+
+
+class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
+    """Read-only model over ``RiderRow`` rows for a rider list.
+
+    Both rider lists draw the same rows and differ only in which
+    shared columns they carry (``ui.rider_columns``), so the model
+    takes the column list rather than hard-coding one: the editor
+    passes :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`
+    and the console passes
+    :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`.
+    Every cell renders through its column's own ``value`` accessor,
+    so a column and the cell it draws cannot drift.
+
+    ``# type: ignore[misc]``: wx ships no stubs, so mypy refuses to
+    subclass ``Any`` -- the same unavoidable annotation
+    ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
+    """
+
+    def __init__(
+        self,
+        rows: Sequence[RiderRow],
+        columns: Sequence[RiderColumn],
+    ) -> None:
+        """Wrap *rows*, rendering each cell through *columns*."""
+        super().__init__(len(rows))
+        self._rows = tuple(rows)
+        self._columns = tuple(columns)
+
+    def GetColumnCount(self) -> int:
+        """Return the number of shared columns this list carries."""
+        return len(self._columns)
+
+    def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
+        """Return "string" -- every rider-list column is text."""
+        return "string"
+
+    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
+        """Return the cell value at *row*/*col*."""
+        return self._columns[col].value(self._rows[row])
+
+
+def apply_sort_indicator(
+    column_controls: Sequence[Any],
+    active_col: int | None,
+    *,
+    ascending: bool,
+) -> None:
+    """Mark *active_col*'s header with an arrow, clearing the rest.
+
+    The presenter owns each rider list's row order (a
+    ``DataViewIndexListModel`` cannot sort itself), so the header
+    marker is written here from the presenter's own state rather than
+    by wx: the active column reads ``"Plate ▲"``/``"Plate ▼"`` and
+    every other column gets its plain label back. ``None`` *active_col*
+    means no sort is active, so every label is plain.
+
+    Idempotent by construction: a marker is stripped from the
+    column's current title before the new one is applied, so
+    re-marking the same column replaces a marker instead of stacking
+    a second one.
+    """
+    for index, column in enumerate(column_controls):
+        title = _plain_label(column.GetTitle())
+        if index != active_col:
+            column.SetTitle(title)
+        elif ascending:
+            column.SetTitle(f"{title}{_SORT_ASCENDING}")
+        else:
+            column.SetTitle(f"{title}{_SORT_DESCENDING}")
+
+
+def _plain_label(title: str) -> str:
+    """Return *title* without a sort marker, if it carries one."""
+    for marker in _SORT_MARKERS:
+        if title.endswith(marker):
+            return title[: -len(marker)]
+    return title

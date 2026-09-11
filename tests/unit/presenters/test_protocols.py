@@ -58,6 +58,8 @@ from rivercrossing.ui.presenters import (
 )
 
 if TYPE_CHECKING:
+    from datetime import date, time
+
     from rivercrossing.roster import EntryMode, PlateModel
 
 from rivercrossing.htmlexport import ExportOptions
@@ -142,6 +144,12 @@ class FakeConsoleView:
     def show_warning(self, title: str, message: str) -> None:
         """Record the shown warning (unused here)."""
 
+    # Phase 5: the blocked-start issues dialog joined the Protocol (the
+    # same "add the member once the presenter calls it" precedent).
+    # Behavioral coverage: tests/unit/presenters/test_console.py.
+    def show_start_blocked(self, reasons: list[str]) -> None:
+        """Record the blocked-start reasons (unused here)."""
+
     def confirm(
         self,
         _title: str,
@@ -166,6 +174,12 @@ class FakeConsoleView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the riders review rows (unused here)."""
 
+    # Phase 4: the Protocol grew the riders-list sort marker the
+    # presenter pushes after every render. Behavioral coverage lives in
+    # tests/unit/presenters/test_console.py; this stays a no-op.
+    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
+        """Record the riders-list sort marker (unused here)."""
+
 
 class FakeSetupView:
     """A complete ``SetupView`` implementation for headless tests."""
@@ -187,6 +201,48 @@ class FakeSetupView:
     ) -> None:
         """No-op fake."""
 
+    def show_name(self, name: str) -> None:
+        """No-op fake."""
+
+    def show_date(self, event_date: date) -> None:
+        """No-op fake."""
+
+    def show_start_time(self, start_time: time) -> None:
+        """No-op fake."""
+
+    def show_venue(self, venue: str) -> None:
+        """No-op fake."""
+
+    def show_organizer(self, organizer: str) -> None:
+        """No-op fake."""
+
+    def show_scorer(self, scorer: str) -> None:
+        """No-op fake."""
+
+    def show_duration(self, seconds: int) -> None:
+        """No-op fake."""
+
+    def show_min_lap(self, seconds: int) -> None:
+        """No-op fake."""
+
+    def show_short_lap_policy(self, *, hold_short_laps: bool) -> None:
+        """No-op fake."""
+
+    def show_jokers_per_deck(self, count: int) -> None:
+        """No-op fake."""
+
+    def show_card_cap(self, max_cards: int | None) -> None:
+        """No-op fake."""
+
+    def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
+        """No-op fake."""
+
+    def show_logo(self, logo_path: Path | None) -> None:
+        """No-op fake."""
+
+    def set_structure_enabled(self, *, enabled: bool) -> None:
+        """No-op fake."""
+
     def show_validation(self, message: str) -> None:
         """No-op fake."""
 
@@ -197,7 +253,7 @@ class FakeRidersView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """No-op fake."""
 
-    def show_team_choices(self, names: list[str]) -> None:
+    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
         """No-op fake."""
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
@@ -208,6 +264,17 @@ class FakeRidersView:
 
     def set_plate_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
+
+    def confirm(  # noqa: PLR0913 -- mirrors RidersView.confirm's own signature
+        self,
+        title: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+        message: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+        *,
+        ok_label: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+        cancel_label: str,  # noqa: ARG002 -- no-op fake; only the verdict matters
+    ) -> bool:
+        """No-op fake (1.0.12 B3: the delete confirm's verdict)."""
+        return True
 
     def show_csv_preview(self, preview: CsvPreview) -> None:
         """No-op fake."""
@@ -487,8 +554,8 @@ def test_presenter_holds_the_view_and_data_source_it_was_given(
 # ConsolePresenter behavior moved to test_console.py (E4.4.1):
 # it holds (view, engine, source) and drives a real
 # RideEngine -- every event handler (on_plate_entered/on_undo/
-# on_arm_stop/on_stop_confirmed/on_start/on_hide_times/tick/on_finish)
-# is covered there against a recording fake view and real engine
+# on_stop_confirmed/on_start/on_hide_times/tick/on_finish) is covered
+# there against a recording fake view and real engine
 # fixtures. What remains here is Protocol conformance (FakeConsoleView
 # above) and the wx-free import probe below.
 

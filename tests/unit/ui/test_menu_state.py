@@ -7,7 +7,7 @@ that *applies* those rules to a real menu bar. This module pins the
 binder headlessly:
 
 1. ``enablement_table`` produces one enable/disable verdict per routed
-   menu item id (49 ids, one per ``commands.ROUTE_TABLE`` row), and
+   menu item id (47 ids, one per ``commands.ROUTE_TABLE`` row), and
    the verdicts agree with ``commands.is_route_enabled`` for every
    generated ``RideState`` (a Hypothesis property).
 2. The correction rows' verdicts are parametrized over the four ride
@@ -140,6 +140,75 @@ def test_enablement_table_edit_and_reassign_need_a_crossing(status: RideStatus) 
     assert menu_state.enablement_table(one)[ids.MI_EDIT_CROSSING] is allowed
     assert menu_state.enablement_table(empty)[ids.MI_REASSIGN_PLATE] is False
     assert menu_state.enablement_table(one)[ids.MI_REASSIGN_PLATE] is allowed
+
+
+@pytest.mark.parametrize(
+    ("status", "ride_stopped", "expected"),
+    [
+        (RideStatus.DRAFT, False, True),
+        (RideStatus.RUNNING, True, True),
+        (RideStatus.RUNNING, False, False),
+        (RideStatus.REOPENED, False, True),
+        (RideStatus.FINISHED, True, False),
+    ],
+    ids=["draft", "stopped_running", "live_running", "reopened", "finished"],
+)
+def test_enablement_table_start_ride_follows_state_and_stop_gate(
+    status: RideStatus, *, ride_stopped: bool, expected: bool
+) -> None:
+    """C2: mi_start_ride enables in DRAFT, stopped RUNNING and REOPENED.
+
+    The binder applies the same rule ``commands.is_route_enabled``
+    evaluates: REOPENED continues riding, a live RUNNING ride is not
+    startable, and FINISHED is refused by state alone.
+    """
+    state = commands.RideState(status=status, ride_stopped=ride_stopped)
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_START_RIDE] is expected
+
+
+@pytest.mark.parametrize(
+    ("status", "ride_stopped", "expected"),
+    [
+        (RideStatus.DRAFT, False, True),
+        (RideStatus.DRAFT, True, True),
+        (RideStatus.RUNNING, False, False),
+        (RideStatus.RUNNING, True, True),
+        (RideStatus.FINISHED, True, True),
+        (RideStatus.REOPENED, True, False),
+    ],
+    ids=["draft", "draft_stopped", "live_running", "stopped_running", "finished", "reopened"],
+)
+def test_enablement_table_clear_ride_follows_state_and_stop_gate(
+    status: RideStatus, *, ride_stopped: bool, expected: bool
+) -> None:
+    """D3: mi_clear_ride enables in DRAFT, stopped RUNNING and FINISHED.
+
+    A live RUNNING ride has to stop first, and a REOPENED ride has to
+    finish first -- Clear resets the ride it targets.
+    """
+    state = commands.RideState(status=status, ride_stopped=ride_stopped)
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_CLEAR_RIDE] is expected
+
+
+@pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
+def test_enablement_table_edit_ride_follows_the_open_ride(status: RideStatus) -> None:
+    """D2: mi_edit_ride is bound and open-ride-gated in every state."""
+    table = menu_state.enablement_table(commands.RideState(status=status, ride_open=True))
+
+    assert table[ids.MI_EDIT_RIDE] is True
+
+
+def test_enablement_table_carries_no_row_for_the_retired_add_entry_id() -> None:
+    """D4: mi_add_entry is no longer a routed (or bound) id."""
+    table = menu_state.enablement_table(_baseline_state(RideStatus.RUNNING))
+
+    assert "mi_add_entry" not in table
 
 
 @pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)

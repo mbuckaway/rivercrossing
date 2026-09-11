@@ -1,31 +1,36 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Unit tests for the teams presenter (Phase 4 rework, W8), tests-first.
+"""Unit tests for the teams presenters (Phase 3 editors rework).
 
 ``TeamsPresenter`` drives ``team_editor_dlg`` from a real, in-memory
 :class:`~rivercrossing.roster.Roster` -- the same presenter-inside-
 the-view shape ``RidersPresenter``/``rider_editor_dlg`` use. The
-editor owns team *records* (display name, relay plate, notes, logo
-card or image); membership is read-only here and stays with the Rider
-Editor. The rework adds the ``Riders`` column (``TeamRow.rider_count``
-from ``entry.team_size``) and a real bitmap logo preview
-(``TeamsView.show_logo``). W8 (like W7's rider editor) retires the
-editor's in-form Add: ``add_btn`` opens ``add_team_dlg``, whose own
-:class:`AddTeamPresenter` owns creation -- a zero-rider team entry
-(W8's R-81 amendment) with the name/notes/relay plate/logos picked in
-the dialog -- and the editor only re-renders afterwards through
-:meth:`TeamsPresenter.on_add_committed`.
+editor is a read-only *record display* (name, relay plate, notes and
+the read-only member list); membership and every record edit happen
+elsewhere -- membership in the Rider Editor, a team's record in the
+Add/Edit Team dialog whose own :class:`AddTeamPresenter` owns both
+creation and write-back.
+
+Phase 3's rework retires the editor's logo surface entirely (the
+``Logo`` column, the bitmap preview and the Pick card / Image / Remove
+logo buttons), drops the in-form Save (the form is read-only now) and
+switches both the list and the selection to a key-based shape:
+``teams_list`` sorts through :meth:`TeamsListModel.Compare` (native
+header arrows) and the view forwards the selected row's *display
+name* rather than a positional index, so a sorted row can never select
+the wrong team.
 
 ``RecordingTeamsView`` follows ``test_riders.py``'s
 ``RecordingRidersView`` pattern: a hand-written fake recording every
 call -- no ``unittest.mock``, since this presenter touches no I/O
-boundary (T-10). The view module import at the bottom of the header
-only pulls ``format_logo`` (the pure Logo-cell renderer); importing
-``ui.views.team_editor`` does pull ``wx``, which is inert without a
-display -- the ``test_list_columns.py`` precedent imports
-``ui.views.results_win`` headless the same way.
+boundary (T-10). Importing ``ui.views.team_editor`` does pull ``wx``,
+which is inert without a display -- the ``test_list_columns.py``
+precedent imports ``ui.views.results_win`` headless the same way;
+``wx.dataview.DataViewItem`` (the item ``Compare`` receives) is
+constructible with no ``wx.App``.
 """
 
 import pytest
+import wx.dataview
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -39,9 +44,9 @@ from rivercrossing.ui.presenters.teams import (
     TeamsPresenter,
 )
 from rivercrossing.ui.views.team_editor import (
-    CARD_TEXT,
-    IMAGE_TEXT,
-    format_logo,
+    COL_NAME,
+    COL_RIDERS,
+    TeamsListModel,
     logo_fit_size,
 )
 
@@ -51,25 +56,22 @@ _SEED = 8843
 class RecordingTeamsView:
     """A complete ``TeamsView`` spy recording each call, in order.
 
-    ``logo`` snapshots the last ``show_logo`` call as a
-    ``{"card": ..., "image": ...}`` dict; ``form`` the last
-    ``show_form`` call's three text fields. Nothing else is canned:
-    the presenter drives every state change through these calls.
+    ``form`` snapshots the last ``show_form`` call's three text
+    fields; ``confirm_result`` is the verdict :meth:`confirm` returns,
+    so a test drives both the confirmed and the declined remove path
+    without a real dialog.
     """
 
     def __init__(self) -> None:
-        """Start with empty snapshots and a blank logo state."""
+        """Start with empty snapshots and a confirming view."""
         self.teams: list[TeamRow] = []
         self.form: dict[str, object] = {}
         self.relay_plate_visible: bool | None = None
         self.members: list[str] = []
         self.validation: list[str] = []
-        self.logo: dict[str, object] = {"card": None, "image": None}
-        self.save_enabled: bool = True
-
-    def set_save_enabled(self, *, enabled: bool) -> None:
-        """Record save_btn's dirty-gated enabled state (W8)."""
-        self.save_enabled = enabled
+        self.edit_enabled: bool | None = None
+        self.confirm_result = True
+        self.confirmations: list[tuple[str, str, str, str]] = []
 
     def show_teams(self, rows: list[TeamRow]) -> None:
         """Record the rendered teams_list rows."""
@@ -87,13 +89,50 @@ class RecordingTeamsView:
         """Record the rendered members_list rows."""
         self.members = list(names)
 
-    def show_logo(self, *, card: str | None, image: bytes | None) -> None:
-        """Record the logo preview the view should render."""
-        self.logo = {"card": card, "image": image}
-
     def show_validation(self, message: str) -> None:
         """Record a refused-operation message."""
         self.validation.append(message)
+
+    def set_edit_enabled(self, *, enabled: bool) -> None:
+        """Record edit_btn's selection-driven enabled state."""
+        self.edit_enabled = enabled
+
+    def confirm(  # noqa: PLR0913 -- mirrors the view protocol's four fields
+        self, title: str, message: str, *, ok_label: str, cancel_label: str
+    ) -> bool:
+        """Record the confirm and return the canned verdict."""
+        self.confirmations.append((title, message, ok_label, cancel_label))
+        return self.confirm_result
+
+
+class RecordingAddTeamView:
+    """A complete ``AddTeamView`` spy recording each call, in order."""
+
+    def __init__(self) -> None:
+        """Start with an empty call log and a blank logo snapshot."""
+        self.calls: list[tuple[str, tuple[object, ...]]] = []
+        self.logo: dict[str, object] = {"card": None}
+
+    def set_mode(self, *, editing: bool) -> None:
+        """Record the dialog's Add/Edit title-and-button mode."""
+        self.calls.append(("set_mode", (editing,)))
+
+    def set_relay_plate_visible(self, *, visible: bool) -> None:
+        """Record the Plate (relay) row's visibility."""
+        self.calls.append(("set_relay_plate_visible", (visible,)))
+
+    def show_form(self, *, name: str, relay_plate: str, notes: str) -> None:
+        """Record the filled form text fields."""
+        self.calls.append(("show_form", (name, relay_plate, notes)))
+
+    def show_logo(self, *, card: str | None) -> None:
+        """Record the card preview the dialog should render."""
+        self.logo = {"card": card}
+        self.calls.append(("show_logo", (card,)))
+
+    def show_validation(self, message: str) -> None:
+        """Record a refused-operation message."""
+        self.calls.append(("show_validation", (message,)))
 
 
 # ------------------------------------------------------------- fixtures
@@ -173,12 +212,25 @@ def _unseeded_mixed_roster() -> Roster:
 
 def _exhausted_deck_roster() -> Roster:
     """Return a seeded roster whose 52 logo codes are all claimed."""
+    return _roster_with_teams_claiming(52)
+
+
+def _one_code_left_roster() -> tuple[Roster, str]:
+    """Return a roster claiming all but one card, and that free code."""
+    roster = _roster_with_teams_claiming(51)
+    claimed = {code for entry in roster.entries for code in (entry.logo_card,)}
+    free = next(code for code in seeded_card_codes(_SEED) if code not in claimed)
+    return roster, free
+
+
+def _roster_with_teams_claiming(count: int) -> Roster:
+    """Return a seeded roster of *count* auto-logged two-rider teams."""
     roster = Roster(
         entry_mode=EntryMode.MIXED,
         plate_model=PlateModel.RIDER_POOLED,
         team_logo_seed=_SEED,
     )
-    for index in range(52):
+    for index in range(count):
         roster.create_team_entry(
             display_name=f"Team {index}",
             riders=[
@@ -199,32 +251,37 @@ def _new_form(name: str, notes: str = "") -> TeamFormValues:
     return TeamFormValues(name=name, relay_plate="", notes=notes)
 
 
+def _item(row: int) -> wx.dataview.DataViewItem:
+    """Return the item the control hands ``Compare`` for model *row*.
+
+    ``DataViewItem(0)`` is wx's null item, so a model row's id is
+    ``row + 1`` -- exactly the mapping
+    ``DataViewIndexListModel.GetRow`` reverses.
+    """
+    return wx.dataview.DataViewItem(row + 1)
+
+
 # ------------------------------------------------------ construction
 
 
 def test_teams_presenter_loads_rows_with_rider_counts_from_a_pooled_mixed_roster() -> None:
     """Construction renders the TEAM entries with their rider counts."""
     view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    code0 = seeded_card_codes(_SEED)[0]
 
-    TeamsPresenter(view, roster)
+    TeamsPresenter(view, _draft_pooled_roster())
 
-    assert view.teams == [
-        TeamRow(name="Trail Blazers", rider_count=2, logo_card=code0, has_image=False)
-    ]
+    assert view.teams == [TeamRow(name="Trail Blazers", rider_count=2)]
     assert view.relay_plate_visible is False
     assert view.form == {"name": "", "relay_plate": "", "notes": ""}
-    assert view.logo == {"card": None, "image": None}
     assert view.members == []
+    assert view.edit_enabled is False
 
 
 def test_teams_presenter_load_on_a_relay_ride_shows_the_relay_plate_row() -> None:
     """The relay plate row appears only on team_relay rides."""
     view = RecordingTeamsView()
-    roster = _draft_relay_roster()
 
-    TeamsPresenter(view, roster)
+    TeamsPresenter(view, _draft_relay_roster())
 
     assert view.relay_plate_visible is True
 
@@ -232,36 +289,57 @@ def test_teams_presenter_load_on_a_relay_ride_shows_the_relay_plate_row() -> Non
 # ------------------------------------------------------------ selection
 
 
-def test_teams_presenter_row_selection_fills_the_form_members_and_logo() -> None:
-    """Selecting a team shows its record, members and card preview."""
+def test_teams_presenter_row_selected_by_display_name_fills_form_and_members() -> None:
+    """Selecting a team by name shows its record and members."""
     view = RecordingTeamsView()
     presenter = TeamsPresenter(view, _draft_pooled_roster())
-    code0 = seeded_card_codes(_SEED)[0]
 
-    presenter.on_row_selected(0)
+    presenter.on_row_selected("Trail Blazers")
 
-    assert view.form == {
-        "name": "Trail Blazers",
-        "relay_plate": "",
-        "notes": "",
-    }
-    assert view.logo == {"card": code0, "image": None}
+    assert view.form == {"name": "Trail Blazers", "relay_plate": "", "notes": ""}
     assert view.members == ["A. Roy", "K. Singh"]
+    assert view.edit_enabled is True
 
 
-def test_teams_presenter_row_selection_shows_the_relay_plate_of_a_relay_team() -> None:
+def test_teams_presenter_row_selected_by_an_unknown_name_is_a_no_op() -> None:
+    """A stale row name selects nothing rather than the wrong team."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
+
+    presenter.on_row_selected("Ghost Team")
+
+    assert view.form == {"name": "", "relay_plate": "", "notes": ""}
+    assert view.members == []
+    assert view.edit_enabled is False
+
+
+def test_teams_presenter_selected_is_none_until_a_row_is_chosen() -> None:
+    """The view reads ``selected`` to decide which team to edit."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
+
+    assert presenter.selected is None
+
+
+def test_teams_presenter_selected_is_the_entry_the_row_named() -> None:
+    """After a selection, ``selected`` is that exact roster entry."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+
+    presenter.on_row_selected("Trail Blazers")
+
+    assert presenter.selected is _teams(roster)[0]
+
+
+def test_teams_presenter_row_selected_shows_the_relay_plate_of_a_relay_team() -> None:
     """A relay team's own plate fills the Plate (relay) input."""
     view = RecordingTeamsView()
     presenter = TeamsPresenter(view, _draft_relay_roster())
 
-    presenter.on_row_selected(0)
+    presenter.on_row_selected("Moss Ridge")
 
-    assert view.form["name"] == "Moss Ridge"
-    assert view.form["relay_plate"] == "88"
-    assert view.logo == {
-        "card": seeded_card_codes(_SEED)[0],
-        "image": None,
-    }
+    assert view.form == {"name": "Moss Ridge", "relay_plate": "88", "notes": ""}
 
 
 # ---------------------------------------- single-member filter
@@ -270,9 +348,8 @@ def test_teams_presenter_row_selection_shows_the_relay_plate_of_a_relay_team() -
 def test_teams_presenter_renders_all_teams_by_default() -> None:
     """The filter starts off, so every TEAM row renders."""
     view = RecordingTeamsView()
-    roster = _draft_pooled_roster_with_size_one_team()
 
-    TeamsPresenter(view, roster)
+    TeamsPresenter(view, _draft_pooled_roster_with_size_one_team())
 
     assert [(row.name, row.rider_count) for row in view.teams] == [
         ("Lone Wolf", 1),
@@ -304,13 +381,25 @@ def test_teams_presenter_toggle_single_member_off_renders_all_teams_again() -> N
     ]
 
 
-def test_teams_presenter_row_selection_indexes_the_filtered_list() -> None:
-    """Selection resolves against the filtered list, not the roster."""
+def test_teams_presenter_row_selected_resolves_against_the_filtered_list() -> None:
+    """A filtered-out name selects nothing while the filter is on."""
     view = RecordingTeamsView()
     presenter = TeamsPresenter(view, _draft_pooled_roster_with_size_one_team())
     presenter.on_toggle_single_member(enabled=True)
 
-    presenter.on_row_selected(0)
+    presenter.on_row_selected("Trail Blazers")
+
+    assert view.form == {"name": "", "relay_plate": "", "notes": ""}
+    assert view.members == []
+
+
+def test_teams_presenter_row_selected_still_finds_a_visible_team_when_filtered() -> None:
+    """The surviving one-rider team is selectable while filtered."""
+    view = RecordingTeamsView()
+    presenter = TeamsPresenter(view, _draft_pooled_roster_with_size_one_team())
+    presenter.on_toggle_single_member(enabled=True)
+
+    presenter.on_row_selected("Lone Wolf")
 
     assert view.form["name"] == "Lone Wolf"
     assert view.members == ["W. Reed"]
@@ -326,104 +415,7 @@ def test_teams_presenter_toggle_single_member_on_with_no_size_one_teams_renders_
     assert view.teams == []
 
 
-# ----------------------------------------------------------------- save
-
-
-def test_teams_presenter_save_renames_the_selected_pooled_team() -> None:
-    """Save applies the name through Roster.update_entry."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(_new_form("Dirt Dynamos"))
-
-    team = _teams(roster)[0]
-    assert team.display_name == "Dirt Dynamos"
-
-
-def test_teams_presenter_save_ignores_the_relay_plate_on_a_pooled_ride() -> None:
-    """A pooled team's plate is derived from its riders -- never set."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(TeamFormValues(name="Trail Blazers", relay_plate="99", notes=""))
-
-    assert _teams(roster)[0].plate == "77"
-
-
-def test_teams_presenter_save_changes_a_relay_teams_plate_and_name() -> None:
-    """Save replates a relay team via Roster.change_team_plate."""
-    view = RecordingTeamsView()
-    roster = _draft_relay_roster()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(TeamFormValues(name="Moss Ridge Riders", relay_plate="99", notes=""))
-
-    team = _teams(roster)[0]
-    assert (team.display_name, team.plate) == ("Moss Ridge Riders", "99")
-
-
-def test_teams_presenter_save_persists_the_teams_notes() -> None:
-    """Save writes the Notes field through Roster.update_entry."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(_new_form("Trail Blazers", notes="cap 88"))
-
-    assert _teams(roster)[0].notes == "cap 88"
-
-
-def test_teams_presenter_save_with_no_selection_is_a_no_op() -> None:
-    """Nothing selected, nothing saved -- the roster stays untouched."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    before = roster.audit_log
-
-    presenter.on_save(_new_form("Ghost"))
-
-    assert roster.audit_log == before
-
-
-def test_teams_presenter_save_refuses_a_duplicate_rename_via_validation() -> None:
-    """Renaming onto another team's name (folded case) is refused."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster_with_size_one_team()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(1)
-    presenter.on_save(_new_form("LONE WOLF"))
-
-    team = _teams(roster)[1]
-    assert team.display_name == "Trail Blazers"
-    assert view.validation == ['a team named "LONE WOLF" already exists']
-
-
-def test_teams_presenter_save_allows_renaming_to_the_same_name_in_another_case() -> None:
-    """A team may rename to its own name in any case (no self-dup)."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(_new_form("TRAIL BLAZERS"))
-
-    assert _teams(roster)[0].display_name == "TRAIL BLAZERS"
-
-
 # ------------------------------------------------------------------ add
-
-# W8: the editor's own in-form Add is retired (like W7's rider
-# editor) -- add_btn opens add_team_dlg, whose own AddTeamPresenter
-# owns team creation. The editor only catches its rows/form up once
-# the dialog reports a committed Add (on_add_committed); nothing is
-# ever added from the editor's own form any more.
 
 
 def test_teams_presenter_on_add_committed_renders_a_team_the_dialog_created() -> None:
@@ -437,16 +429,15 @@ def test_teams_presenter_on_add_committed_renders_a_team_the_dialog_created() ->
 
     assert [row.name for row in view.teams] == ["Trail Blazers", "Dirt Dynamos"]
     assert view.form == {"name": "", "relay_plate": "", "notes": ""}
-    assert view.logo == {"card": None, "image": None}
     assert view.members == []
+    assert view.edit_enabled is False
     assert presenter.roster_changed is True
 
 
 def test_teams_presenter_on_add_committed_with_no_change_is_still_a_noop_refresh() -> None:
     """Catching up when nothing changed renders the same state."""
     view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
+    presenter = TeamsPresenter(view, _draft_pooled_roster())
 
     presenter.on_add_committed()
 
@@ -454,23 +445,59 @@ def test_teams_presenter_on_add_committed_with_no_change_is_still_a_noop_refresh
     assert view.form == {"name": "", "relay_plate": "", "notes": ""}
 
 
-# --------------------------------------------------------------- remove
+# ---------------------------------------------------------------- edit
 
 
-def test_teams_presenter_remove_deletes_the_selected_draft_team() -> None:
-    """Remove deletes the selected DRAFT team, form resets."""
+def test_teams_presenter_on_edit_committed_renders_the_renamed_team() -> None:
+    """A committed edit re-renders the list with the new name."""
     view = RecordingTeamsView()
     roster = _draft_pooled_roster()
     presenter = TeamsPresenter(view, roster)
+    presenter.on_row_selected("Trail Blazers")
+    roster.update_entry(_teams(roster)[0], display_name="Dirt Dynamos")
 
-    presenter.on_row_selected(0)
+    presenter.on_edit_committed()
+
+    assert [row.name for row in view.teams] == ["Dirt Dynamos"]
+    assert view.form == {"name": "", "relay_plate": "", "notes": ""}
+    assert view.edit_enabled is False
+    assert presenter.roster_changed is True
+
+
+# --------------------------------------------------------------- remove
+
+
+def test_teams_presenter_remove_confirms_then_deletes_the_selected_draft_team() -> None:
+    """A confirmed Remove deletes the team and resets the editor."""
+    view = RecordingTeamsView()
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+    presenter.on_row_selected("Trail Blazers")
+
     presenter.on_remove()
 
     assert _teams(roster) == ()
     assert view.teams == []
     assert view.form == {"name": "", "relay_plate": "", "notes": ""}
-    assert view.logo == {"card": None, "image": None}
+    assert view.edit_enabled is False
     assert presenter.roster_changed is True
+    assert view.confirmations == [
+        ("Remove team", 'Remove the team "Trail Blazers"?', "Remove", "Cancel")
+    ]
+
+
+def test_teams_presenter_remove_declined_at_the_confirm_leaves_the_team() -> None:
+    """Declining the confirm deletes nothing and saves nothing."""
+    view = RecordingTeamsView()
+    view.confirm_result = False
+    roster = _draft_pooled_roster()
+    presenter = TeamsPresenter(view, roster)
+    presenter.on_row_selected("Trail Blazers")
+
+    presenter.on_remove()
+
+    assert [entry.display_name for entry in _teams(roster)] == ["Trail Blazers"]
+    assert presenter.roster_changed is False
 
 
 def test_teams_presenter_remove_after_start_refuses_via_validation() -> None:
@@ -480,7 +507,7 @@ def test_teams_presenter_remove_after_start_refuses_via_validation() -> None:
     roster.status = RideStatus.RUNNING
     presenter = TeamsPresenter(view, roster)
 
-    presenter.on_row_selected(0)
+    presenter.on_row_selected("Trail Blazers")
     presenter.on_remove()
 
     assert len(roster.entries) == 2
@@ -488,8 +515,8 @@ def test_teams_presenter_remove_after_start_refuses_via_validation() -> None:
     assert presenter.roster_changed is False
 
 
-def test_teams_presenter_remove_with_no_selection_is_a_no_op() -> None:
-    """Nothing selected, nothing removed."""
+def test_teams_presenter_remove_with_no_selection_never_confirms() -> None:
+    """Nothing selected, nothing asked, nothing removed."""
     view = RecordingTeamsView()
     roster = _draft_pooled_roster()
     presenter = TeamsPresenter(view, roster)
@@ -499,132 +526,70 @@ def test_teams_presenter_remove_with_no_selection_is_a_no_op() -> None:
 
     assert len(roster.entries) == before
     assert presenter.roster_changed is False
-
-
-# --------------------------------------------------------- logo picks
-
-
-def test_teams_presenter_pick_card_advances_to_the_next_unused_card() -> None:
-    """Each Pick card click on a selected team walks the seeded deck."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    codes = seeded_card_codes(_SEED)
-    team = _teams(roster)[0]
-
-    presenter.on_row_selected(0)
-    presenter.on_pick_card()
-
-    assert team.logo_card == codes[1]
-    assert view.logo == {"card": codes[1], "image": None}
-    assert presenter.roster_changed is True
-
-
-def test_teams_presenter_pick_card_after_an_image_makes_the_card_win() -> None:
-    """Picking a card on a selected team clears its logo image."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    team = _teams(roster)[0]
-
-    presenter.on_row_selected(0)
-    presenter.on_pick_image(b"team-logo-png")
-    presenter.on_pick_card()
-
-    # The image cleared the team's card, so the pick resumes from the
-    # deck's first unused code -- the team's own original one.
-    assert team.logo_card == seeded_card_codes(_SEED)[0]
-    assert team.logo_png is None
-    assert view.logo["image"] is None
-
-
-def test_teams_presenter_pick_image_sets_the_bytes_and_image_wins() -> None:
-    """Choosing an image on a selected team replaces any card."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    team = _teams(roster)[0]
-
-    presenter.on_row_selected(0)
-    presenter.on_pick_image(b"team-logo-png")
-
-    assert team.logo_png == b"team-logo-png"
-    assert team.logo_card is None
-    assert view.logo == {"card": None, "image": b"team-logo-png"}
-    assert presenter.roster_changed is True
-
-
-def test_teams_presenter_save_refuses_a_relay_plate_change_after_start() -> None:
-    """A relay plate is DRAFT-locked: Save shows a refusal."""
-    view = RecordingTeamsView()
-    roster = _draft_relay_roster()
-    roster.status = RideStatus.RUNNING
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(TeamFormValues(name="Moss Ridge", relay_plate="99", notes=""))
-
-    assert any("plates cannot be changed" in message for message in view.validation)
-    assert _teams(roster)[0].plate == "88"
+    assert view.confirmations == []
 
 
 # -------------------------------------------------- AddTeamPresenter
-
-
-class RecordingAddTeamView:
-    """A complete ``AddTeamView`` spy recording each call, in order."""
-
-    def __init__(self) -> None:
-        """Start with an empty call log and a blank logo snapshot."""
-        self.calls: list[tuple[str, tuple[object, ...]]] = []
-        self.logo: dict[str, object] = {"card": None, "image": None}
-
-    def set_relay_plate_visible(self, *, visible: bool) -> None:
-        """Record the Plate (relay) row's visibility."""
-        self.calls.append(("set_relay_plate_visible", (visible,)))
-
-    def show_form(self, *, name: str, relay_plate: str, notes: str) -> None:
-        """Record the filled form text fields."""
-        self.calls.append(("show_form", (name, relay_plate, notes)))
-
-    def show_logo(self, *, card: str | None, image: bytes | None) -> None:
-        """Record the logo preview the dialog should render."""
-        self.logo = {"card": card, "image": image}
-        self.calls.append(("show_logo", (card, image)))
-
-    def show_validation(self, message: str) -> None:
-        """Record a refused-operation message."""
-        self.calls.append(("show_validation", (message,)))
+# The dialog owns both halves of a team's record: the Add path creates
+# a zero-rider TEAM entry, the Edit path writes the form back onto the
+# entry it was opened for.
 
 
 def test_add_team_presenter_init_on_a_pooled_ride_hides_the_relay_row_and_blank_form() -> None:
-    """Construction: no relay row on pooled rides, blank form."""
+    """Construction: no relay row on pooled, blank form, Add mode."""
     view = RecordingAddTeamView()
-    roster = _draft_pooled_roster()
 
-    AddTeamPresenter(view, roster)
+    AddTeamPresenter(view, _draft_pooled_roster())
 
     assert view.calls == [
+        ("set_mode", (False,)),
         ("set_relay_plate_visible", (False,)),
         ("show_form", ("", "", "")),
-        ("show_logo", (None, None)),
+        ("show_logo", (None,)),
     ]
-    assert view.logo == {"card": None, "image": None}
+    assert view.logo == {"card": None}
 
 
 def test_add_team_presenter_init_on_a_relay_ride_prefills_the_next_free_plate() -> None:
     """The dialog's relay row shows on relay rides, prefilled."""
     view = RecordingAddTeamView()
-    roster = _draft_relay_roster()
 
-    AddTeamPresenter(view, roster)
+    AddTeamPresenter(view, _draft_relay_roster())
 
     assert ("set_relay_plate_visible", (True,)) in view.calls
     assert ("show_form", ("", "124", "")) in view.calls
 
 
+def test_add_team_presenter_editing_preloads_the_entry_and_switches_to_edit_mode() -> None:
+    """Edit mode shows the entry's own record and logo card."""
+    view = RecordingAddTeamView()
+    roster = _draft_relay_roster()
+    entry = _teams(roster)[0]
+
+    AddTeamPresenter(view, roster, editing=entry)
+
+    assert view.calls == [
+        ("set_mode", (True,)),
+        ("set_relay_plate_visible", (True,)),
+        ("show_form", ("Moss Ridge", "88", "")),
+        ("show_logo", (entry.logo_card,)),
+    ]
+
+
+def test_add_team_presenter_editing_a_pooled_team_hides_the_relay_row() -> None:
+    """A pooled team's plate is derived, never offered as text."""
+    view = RecordingAddTeamView()
+    roster = _draft_pooled_roster()
+    entry = _teams(roster)[0]
+
+    AddTeamPresenter(view, roster, editing=entry)
+
+    assert ("set_relay_plate_visible", (False,)) in view.calls
+    assert ("show_form", ("Trail Blazers", "", "")) in view.calls
+
+
 def test_add_team_presenter_submit_creates_a_zero_rider_team_and_returns_true() -> None:
-    """Add commits an empty team entry (W8: riders join later)."""
+    """Add commits an empty team entry (riders join later)."""
     roster = _draft_pooled_roster()
     presenter = AddTeamPresenter(RecordingAddTeamView(), roster)
 
@@ -691,7 +656,7 @@ def test_add_team_presenter_submit_given_a_duplicate_name_refuses_and_returns_fa
 
 
 def test_add_team_presenter_submit_given_a_blank_relay_plate_refuses_and_returns_false() -> None:
-    """W7's no-blank-relay-plate rule holds in the Add dialog too."""
+    """The no-blank-relay-plate rule holds in the Add dialog too."""
     view = RecordingAddTeamView()
     roster = _draft_relay_roster()
     presenter = AddTeamPresenter(view, roster)
@@ -741,7 +706,111 @@ def test_add_team_presenter_submit_after_start_refuses_and_returns_false() -> No
     ) in view.calls
 
 
-def test_add_team_presenter_pick_card_stages_the_next_unused_card() -> None:
+# ------------------------------------------------- edit write-back
+
+
+def test_add_team_presenter_editing_writes_back_name_notes_and_relay_plate() -> None:
+    """Save applies the form to the edited team through the roster."""
+    roster = _draft_relay_roster()
+    entry = _teams(roster)[0]
+    presenter = AddTeamPresenter(RecordingAddTeamView(), roster, editing=entry)
+
+    committed = presenter.on_submit(
+        TeamFormValues(name="Moss Ridge Riders", relay_plate="99", notes="cap 88")
+    )
+
+    assert committed is True
+    assert (entry.display_name, entry.plate, entry.notes) == ("Moss Ridge Riders", "99", "cap 88")
+
+
+def test_add_team_presenter_editing_given_a_blank_name_refuses_and_returns_false() -> None:
+    """A whitespace-only name leaves the edited team untouched."""
+    view = RecordingAddTeamView()
+    roster = _draft_pooled_roster()
+    entry = _teams(roster)[0]
+    presenter = AddTeamPresenter(view, roster, editing=entry)
+
+    committed = presenter.on_submit(_new_form("   "))
+
+    assert committed is False
+    assert entry.display_name == "Trail Blazers"
+    assert ("show_validation", ("enter a team name",)) in view.calls
+
+
+def test_add_team_presenter_editing_given_another_teams_name_refuses() -> None:
+    """A rename onto a different team's name is refused."""
+    view = RecordingAddTeamView()
+    roster = _draft_pooled_roster_with_size_one_team()
+    entry = _teams(roster)[1]
+    presenter = AddTeamPresenter(view, roster, editing=entry)
+
+    committed = presenter.on_submit(_new_form("lone wolf"))
+
+    assert committed is False
+    assert entry.display_name == "Trail Blazers"
+    assert ("show_validation", ('a team named "lone wolf" already exists',)) in view.calls
+
+
+def test_add_team_presenter_editing_allows_its_own_name_in_another_case() -> None:
+    """A team may rename to its own name in any case (no self-dup)."""
+    roster = _draft_pooled_roster()
+    entry = _teams(roster)[0]
+    presenter = AddTeamPresenter(RecordingAddTeamView(), roster, editing=entry)
+
+    committed = presenter.on_submit(_new_form("TRAIL BLAZERS"))
+
+    assert committed is True
+    assert entry.display_name == "TRAIL BLAZERS"
+
+
+def test_add_team_presenter_editing_a_blank_relay_plate_refuses() -> None:
+    """A relay team's plate can never be blanked by an edit."""
+    view = RecordingAddTeamView()
+    roster = _draft_relay_roster()
+    entry = _teams(roster)[0]
+    presenter = AddTeamPresenter(view, roster, editing=entry)
+
+    committed = presenter.on_submit(TeamFormValues(name="Moss Ridge", relay_plate="   ", notes=""))
+
+    assert committed is False
+    assert entry.plate == "88"
+    assert ("show_validation", ("plate '   ' must not be empty",)) in view.calls
+
+
+def test_add_team_presenter_editing_with_an_unchanged_form_writes_nothing() -> None:
+    """Submitting an untouched form commits without an audit write."""
+    roster = _draft_pooled_roster()
+    entry = _teams(roster)[0]
+    presenter = AddTeamPresenter(RecordingAddTeamView(), roster, editing=entry)
+    before = roster.audit_log
+
+    committed = presenter.on_submit(_new_form("Trail Blazers"))
+
+    assert committed is True
+    assert roster.audit_log == before
+
+
+def test_add_team_presenter_editing_applies_a_picked_card_to_the_entry() -> None:
+    """A card picked in edit mode is written back on Save."""
+    view = RecordingAddTeamView()
+    roster = _draft_pooled_roster()
+    entry = _teams(roster)[0]
+    presenter = AddTeamPresenter(view, roster, editing=entry)
+
+    presenter.on_pick_card()
+    presenter.on_submit(_new_form("Trail Blazers"))
+
+    picked = view.logo["card"]
+    assert picked != seeded_card_codes(_SEED)[0]
+    assert entry.logo_card == picked
+
+
+# ------------------------------------------------------- pick card
+# A pick stages a *random* unused code, excluding the one already
+# staged, so every click visibly changes the preview.
+
+
+def test_add_team_presenter_pick_card_stages_an_unused_seeded_card() -> None:
     """Pick card in the dialog only stages; the roster stays put."""
     view = RecordingAddTeamView()
     roster = _draft_pooled_roster()
@@ -750,73 +819,33 @@ def test_add_team_presenter_pick_card_stages_the_next_unused_card() -> None:
 
     presenter.on_pick_card()
 
-    assert view.logo == {"card": seeded_card_codes(_SEED)[1], "image": None}
+    assert view.logo["card"] in seeded_card_codes(_SEED)
+    assert view.logo["card"] != seeded_card_codes(_SEED)[0]  # claimed by a team
     assert roster.audit_log == before
 
 
-def test_add_team_presenter_pick_card_clicks_cycle_the_staged_card() -> None:
-    """Each staged Pick card click walks to the next unused code."""
+def test_add_team_presenter_pick_card_clicks_never_repeat_the_staged_card() -> None:
+    """Each click excludes the staged code, so the preview changes."""
     view = RecordingAddTeamView()
     roster = _draft_pooled_roster()
     presenter = AddTeamPresenter(view, roster)
-    codes = seeded_card_codes(_SEED)
 
     presenter.on_pick_card()
+    first = view.logo["card"]
     presenter.on_pick_card()
 
-    assert view.logo == {"card": codes[2], "image": None}
-
-
-def test_add_team_presenter_pick_image_stages_the_bytes() -> None:
-    """Image… in the dialog only stages; nothing touches the roster."""
-    view = RecordingAddTeamView()
-    roster = _draft_pooled_roster()
-    presenter = AddTeamPresenter(view, roster)
-    before = roster.audit_log
-
-    presenter.on_pick_image(b"team-logo-png")
-
-    assert view.logo == {"card": None, "image": b"team-logo-png"}
-    assert roster.audit_log == before
-
-
-def test_add_team_presenter_staged_image_wins_over_a_previously_staged_card() -> None:
-    """An image picked while a card is staged swaps the pending logo."""
-    roster = _draft_pooled_roster()
-    presenter = AddTeamPresenter(RecordingAddTeamView(), roster)
-
-    presenter.on_pick_card()
-    presenter.on_pick_image(b"team-logo-png")
-    presenter.on_submit(_new_form("Dirt Dynamos"))
-
-    created = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
-    assert created.logo_png == b"team-logo-png"
-    assert created.logo_card is None
-
-
-def test_add_team_presenter_staged_card_wins_over_a_previously_staged_image() -> None:
-    """A card picked while an image is staged swaps the pending logo."""
-    roster = _draft_pooled_roster()
-    presenter = AddTeamPresenter(RecordingAddTeamView(), roster)
-
-    presenter.on_pick_image(b"team-logo-png")
-    presenter.on_pick_card()
-    presenter.on_submit(_new_form("Dirt Dynamos"))
-
-    created = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
-    assert created.logo_card == seeded_card_codes(_SEED)[1]
-    assert created.logo_png is None
+    assert view.logo["card"] != first
 
 
 def test_add_team_presenter_pick_card_on_an_unseeded_roster_says_no_deck_is_available() -> None:
-    """No seed means no card deck exists to stage from (W8 wording)."""
+    """No seed means no card deck exists to stage from."""
     view = RecordingAddTeamView()
     roster = _unseeded_mixed_roster()
     presenter = AddTeamPresenter(view, roster)
 
     presenter.on_pick_card()
 
-    assert view.logo == {"card": None, "image": None}
+    assert view.logo == {"card": None}
     assert ("show_validation", ("no card deck is available for this ride",)) in view.calls
 
 
@@ -830,86 +859,197 @@ def test_add_team_presenter_pick_card_when_the_deck_is_exhausted_says_every_card
 
     presenter.on_pick_card()
 
-    assert view.logo == {"card": None, "image": None}
+    assert view.logo == {"card": None}
     assert ("show_validation", ("every card logo is already in use by a team",)) in view.calls
 
 
-# ------------------------------------------- editor pick card on pick
-# (the editor's own Pick card works on the selected team; the two
-# refusal causes are split so the operator knows which one hit)
+# ---------------------------------------------------- random_team_card
 
 
-def test_teams_presenter_pick_card_on_an_unseeded_roster_says_no_deck_is_available() -> None:
-    """No seed means no card deck exists to pick from (W8 wording)."""
-    view = RecordingTeamsView()
+def test_random_team_card_returns_an_unclaimed_seeded_code() -> None:
+    """A random pick never repeats a code a team already shows."""
+    roster = _draft_pooled_roster()
+
+    code = roster.random_team_card()
+
+    assert code in seeded_card_codes(_SEED)
+    assert code != seeded_card_codes(_SEED)[0]
+
+
+def test_random_team_card_never_returns_the_excluded_code() -> None:
+    """The staged code is excluded, so a repeat click always changes."""
+    roster = _draft_pooled_roster()
+    staged = seeded_card_codes(_SEED)[5]
+
+    code = roster.random_team_card(exclude=staged)
+
+    assert code is not None
+    assert code != staged
+
+
+def test_random_team_card_given_no_seed_returns_none() -> None:
+    """A roster with no team_logo_seed has no deck to draw from."""
     roster = _unseeded_mixed_roster()
-    presenter = TeamsPresenter(view, roster)
 
-    presenter.on_row_selected(0)
-    presenter.on_pick_card()
-
-    assert view.validation == ["no card deck is available for this ride"]
+    assert roster.random_team_card() is None
 
 
-def test_teams_presenter_pick_card_when_the_deck_is_exhausted_says_every_card_is_in_use() -> None:
-    """All 52 codes claimed: the in-use message, not the no-deck one."""
-    view = RecordingTeamsView()
+def test_random_team_card_with_every_code_claimed_returns_none() -> None:
+    """An exhausted deck leaves nothing to draw."""
     roster = _exhausted_deck_roster()
-    presenter = TeamsPresenter(view, roster)
 
-    presenter.on_row_selected(0)
-    presenter.on_pick_card()
-
-    assert view.validation == ["every card logo is already in use by a team"]
+    assert roster.random_team_card() is None
 
 
-# ------------------------------------------------------- format_logo
+def test_random_team_card_given_the_last_free_code_excluded_returns_none() -> None:
+    """Excluding the only free code empties the draw."""
+    roster, free = _one_code_left_roster()
+
+    assert roster.random_team_card(exclude=free) is None
 
 
-@pytest.mark.parametrize(
-    ("logo_card", "has_image", "expected"),
-    [
-        pytest.param(None, False, "", id="blank"),
-        pytest.param("AS", False, CARD_TEXT, id="card"),
-        pytest.param(None, True, IMAGE_TEXT, id="image_over_blank"),
-        pytest.param("AS", True, IMAGE_TEXT, id="image_over_card"),
-    ],
+@given(exclude=st.one_of(st.none(), st.sampled_from(seeded_card_codes(_SEED))))
+def test_random_team_card_given_any_exclusion_never_returns_a_claimed_or_excluded_code(
+    exclude: str | None,
+) -> None:
+    """Invariant: the draw is in-deck, unclaimed and not excluded."""
+    roster = _draft_pooled_roster()
+
+    code = roster.random_team_card(exclude=exclude)
+
+    assert code is not None
+    assert code in seeded_card_codes(_SEED)
+    assert code != seeded_card_codes(_SEED)[0]  # claimed by Trail Blazers
+    assert code != exclude
+
+
+# ---------------------------------------------------- TeamsListModel
+
+
+def test_teams_list_model_compare_sorts_team_names_case_folded() -> None:
+    """Header sorting on Team compares case-folded names."""
+    model = TeamsListModel(
+        [
+            TeamRow(name="Alpha", rider_count=1),
+            TeamRow(name="beta", rider_count=1),
+        ]
+    )
+
+    assert model.Compare(_item(1), _item(0), COL_NAME, True) > 0  # noqa: FBT003
+
+
+def test_teams_list_model_given_no_rows_is_empty_with_two_columns() -> None:
+    """An empty rebuild is a valid state (T-4's empty collection)."""
+    model = TeamsListModel([])
+
+    assert (model.GetCount(), model.GetColumnCount()) == (0, 2)
+
+
+@given(name=st.text(), count=st.integers(0, 999))
+def test_teams_list_model_get_value_by_row_preserves_the_row(name: str, count: int) -> None:
+    """Every row renders its own name and count, in its own column."""
+    model = TeamsListModel([TeamRow(name=name, rider_count=count)])
+
+    assert model.GetValueByRow(0, COL_NAME) == name
+    assert model.GetValueByRow(0, COL_RIDERS) == str(count)
+
+
+def test_teams_list_model_compare_descending_reverses_the_name_order() -> None:
+    """The arrow's descending order inverts the Team comparison."""
+    model = TeamsListModel(
+        [
+            TeamRow(name="Alpha", rider_count=1),
+            TeamRow(name="beta", rider_count=1),
+        ]
+    )
+
+    assert model.Compare(_item(1), _item(0), COL_NAME, False) < 0  # noqa: FBT003
+
+
+def test_teams_list_model_compare_given_equal_names_returns_zero() -> None:
+    """Same team names compare equal."""
+    model = TeamsListModel(
+        [
+            TeamRow(name="Trail Blazers", rider_count=1),
+            TeamRow(name="trail blazers", rider_count=2),
+        ]
+    )
+
+    assert model.Compare(_item(0), _item(1), COL_NAME, True) == 0  # noqa: FBT003
+
+
+def test_teams_list_model_compare_sorts_rider_counts_numerically() -> None:
+    """Riders sorts as a number: 2 before 10, not "10" before "2"."""
+    model = TeamsListModel(
+        [
+            TeamRow(name="Ten", rider_count=10),
+            TeamRow(name="Two", rider_count=2),
+        ]
+    )
+
+    assert model.Compare(_item(1), _item(0), COL_RIDERS, True) < 0  # noqa: FBT003
+
+
+def test_teams_list_model_compare_descending_reverses_the_rider_order() -> None:
+    """Descending Riders puts the biggest team first."""
+    model = TeamsListModel(
+        [
+            TeamRow(name="Ten", rider_count=10),
+            TeamRow(name="Two", rider_count=2),
+        ]
+    )
+
+    assert model.Compare(_item(0), _item(1), COL_RIDERS, False) < 0  # noqa: FBT003
+
+
+def test_teams_list_model_compare_given_equal_rider_counts_ties_on_the_name() -> None:
+    """Equal rider counts fall back to the case-folded name."""
+    model = TeamsListModel(
+        [
+            TeamRow(name="Zebra", rider_count=2),
+            TeamRow(name="Aardvark", rider_count=2),
+        ]
+    )
+
+    assert model.Compare(_item(1), _item(0), COL_RIDERS, True) < 0  # noqa: FBT003
+
+
+@given(
+    name_a=st.text(),
+    name_b=st.text(),
+    count_a=st.integers(0, 12),
+    count_b=st.integers(0, 12),
 )
-def test_format_logo_returns_card_image_or_blank_cell(
-    logo_card: str | None,
-    has_image: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
-    expected: str,
+def test_teams_list_model_compare_is_antisymmetric(  # noqa: PLR0913, PLR0917 -- the row's four fields
+    name_a: str,
+    name_b: str,
+    count_a: int,
+    count_b: int,
 ) -> None:
-    """The Logo cell shows the logo's kind, never the card code."""
-    assert format_logo(logo_card, has_image=has_image) == expected
+    """Swapping the two items negates the comparison exactly."""
+    model = TeamsListModel(
+        [
+            TeamRow(name=name_a, rider_count=count_a),
+            TeamRow(name=name_b, rider_count=count_b),
+        ]
+    )
+
+    forward = model.Compare(_item(0), _item(1), COL_NAME, True)  # noqa: FBT003
+    backward = model.Compare(_item(1), _item(0), COL_NAME, True)  # noqa: FBT003
+
+    assert forward == -backward
 
 
-@given(card=st.one_of(st.none(), st.text()), has_image=st.booleans())
-def test_format_logo_given_any_logo_state_returns_only_the_three_kind_texts(
-    card: str | None,
-    has_image: bool,  # noqa: FBT001 -- a Hypothesis draw, not a call-site bool
-) -> None:
-    """format_logo's output alphabet is exactly Card/Image/blank."""
-    text = format_logo(card, has_image=has_image)
-
-    assert text in (CARD_TEXT, IMAGE_TEXT, "")
-    assert (text == IMAGE_TEXT) == has_image
-    assert (text == CARD_TEXT) == (card is not None and not has_image)
-
-
-# ---------- W8 slice D
-# Logo sizing + Remove logo: previews fit a bounded box
-# (card 3:4, photos 128 max); remove_logo_btn clears both forms
-# forms at once in the editor and the Add dialog.
+# --------------------------------------------------- logo sizing
 
 
 @pytest.mark.parametrize(
     ("width", "height", "within", "upscale", "expected"),
     [
-        pytest.param(400, 300, (128, 128), False, (128, 96), id="wide_photo_shrinks_to_box"),
-        pytest.param(100, 300, (128, 128), False, (43, 128), id="tall_photo_shrinks_to_box"),
-        pytest.param(64, 64, (128, 128), False, (64, 64), id="small_photo_stays_natural"),
-        pytest.param(96, 128, (128, 128), False, (96, 128), id="box_sized_photo_stays"),
+        pytest.param(400, 300, (128, 128), False, (128, 96), id="wide_shrinks_to_box"),
+        pytest.param(100, 300, (128, 128), False, (43, 128), id="tall_shrinks_to_box"),
+        pytest.param(64, 64, (128, 128), False, (64, 64), id="small_stays_natural"),
+        pytest.param(96, 128, (128, 128), False, (96, 128), id="box_sized_stays"),
         pytest.param(24, 32, (96, 128), True, (96, 128), id="card_1x_upscales_to_card_box"),
         pytest.param(48, 64, (96, 128), True, (96, 128), id="card_2x_upscales_to_card_box"),
     ],
@@ -936,179 +1076,3 @@ def test_logo_fit_size_never_exceeds_the_box_and_keeps_aspect(
     assert (fitted_w, fitted_h) <= (128, 128)
     # Aspect preserved up to one rounding pixel per side.
     assert abs(fitted_w * height - fitted_h * width) <= max(width, height)
-
-
-def test_teams_presenter_remove_logo_clears_the_selected_teams_logo() -> None:
-    """Remove logo clears both forms on the selected team."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    team = _teams(roster)[0]
-
-    presenter.on_row_selected(0)
-    presenter.on_pick_image(b"team-logo-png")
-    presenter.on_remove_logo()
-
-    assert (team.logo_card, team.logo_png) == (None, None)
-    assert view.logo == {"card": None, "image": None}
-    assert view.teams[0] == TeamRow(
-        name="Trail Blazers", rider_count=2, logo_card=None, has_image=False
-    )
-    assert presenter.roster_changed is True
-
-
-def test_teams_presenter_remove_logo_with_no_selection_is_a_no_op() -> None:
-    """With nothing selected, no logo is cleared."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    before = roster.audit_log
-
-    presenter.on_remove_logo()
-
-    assert roster.audit_log == before
-    assert presenter.roster_changed is False
-
-
-def test_add_team_presenter_remove_logo_clears_a_staged_card() -> None:
-    """Remove logo in the dialog drops the pending card pick."""
-    view = RecordingAddTeamView()
-    roster = _draft_pooled_roster()
-    presenter = AddTeamPresenter(view, roster)
-
-    presenter.on_pick_card()
-    presenter.on_remove_logo()
-    presenter.on_submit(_new_form("Dirt Dynamos"))
-
-    assert view.logo == {"card": None, "image": None}
-    created = next(entry for entry in roster.entries if entry.display_name == "Dirt Dynamos")
-    assert created.logo_card == seeded_card_codes(_SEED)[1]  # the auto code, no staging
-    assert created.logo_png is None
-
-
-def test_add_team_presenter_remove_logo_clears_a_staged_image() -> None:
-    """Remove logo in the dialog drops the pending image pick."""
-    view = RecordingAddTeamView()
-    roster = _draft_pooled_roster()
-    presenter = AddTeamPresenter(view, roster)
-
-    presenter.on_pick_image(b"team-logo-png")
-    presenter.on_remove_logo()
-
-    assert view.logo == {"card": None, "image": None}
-
-
-# ---------- W8 slice F
-# Save gating + trim-on-save: save_btn is enabled while the form
-# differs from the selected record; saves store the trimmed name
-# and a blank-name save refuses instead of storing "".
-
-
-def test_teams_presenter_construction_and_selection_disable_save() -> None:
-    """A fresh or just-selected record leaves Save disabled."""
-    view = RecordingTeamsView()
-    presenter = TeamsPresenter(view, _draft_pooled_roster())
-
-    assert view.save_enabled is False
-    presenter.on_row_selected(0)
-
-    assert view.save_enabled is False
-
-
-def test_teams_presenter_form_change_enables_save_only_when_the_record_differs() -> None:
-    """Typing a new name marks the form dirty; restoring it is clean."""
-    view = RecordingTeamsView()
-    presenter = TeamsPresenter(view, _draft_pooled_roster())
-    presenter.on_row_selected(0)
-
-    presenter.on_form_changed(_new_form("Dirt Dynamos"))
-    assert view.save_enabled is True
-    presenter.on_form_changed(_new_form("Trail Blazers"))
-    assert view.save_enabled is False
-
-
-def test_teams_presenter_form_change_ignores_the_relay_plate_on_a_pooled_ride() -> None:
-    """A pooled team's hidden plate row can never dirty the form."""
-    view = RecordingTeamsView()
-    presenter = TeamsPresenter(view, _draft_pooled_roster())
-    presenter.on_row_selected(0)
-
-    presenter.on_form_changed(TeamFormValues(name="Trail Blazers", relay_plate="99", notes=""))
-
-    assert view.save_enabled is False
-
-
-def test_teams_presenter_form_change_counts_the_relay_plate_on_a_relay_ride() -> None:
-    """On relay rides the visible plate row is part of the record."""
-    view = RecordingTeamsView()
-    presenter = TeamsPresenter(view, _draft_relay_roster())
-    presenter.on_row_selected(0)
-
-    presenter.on_form_changed(TeamFormValues(name="Moss Ridge", relay_plate="99", notes=""))
-
-    assert view.save_enabled is True
-
-
-def test_teams_presenter_form_change_with_no_selection_stays_disabled() -> None:
-    """The blank no-selection form never enables Save."""
-    view = RecordingTeamsView()
-    presenter = TeamsPresenter(view, _draft_pooled_roster())
-
-    presenter.on_form_changed(_new_form("Dirt Dynamos"))
-
-    assert view.save_enabled is False
-
-
-def test_teams_presenter_save_given_a_blank_name_refuses_via_validation() -> None:
-    """A whitespace-only save name refuses and changes nothing."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(_new_form("   "))
-
-    team = _teams(roster)[0]
-    assert team.display_name == "Trail Blazers"
-    assert view.validation == ["A team name is required"]
-
-
-def test_teams_presenter_save_stores_the_trimmed_name_and_disables_save_again() -> None:
-    """Save stores the trimmed name; the form lands clean again."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-
-    presenter.on_row_selected(0)
-    presenter.on_save(_new_form("  Dirt Dynamos  "))
-
-    team = _teams(roster)[0]
-    assert team.display_name == "Dirt Dynamos"
-    assert view.teams[0].name == "Dirt Dynamos"
-    assert view.save_enabled is False
-
-
-def test_teams_presenter_pick_card_with_no_selection_is_a_no_op() -> None:
-    """Pick card with nothing selected never touches the roster."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    before = roster.audit_log
-
-    presenter.on_pick_card()
-
-    assert roster.audit_log == before
-    assert view.logo == {"card": None, "image": None}
-
-
-def test_teams_presenter_pick_image_with_no_selection_is_a_no_op() -> None:
-    """Image… with nothing selected never touches the roster."""
-    view = RecordingTeamsView()
-    roster = _draft_pooled_roster()
-    presenter = TeamsPresenter(view, roster)
-    before = roster.audit_log
-
-    presenter.on_pick_image(b"team-logo-png")
-
-    assert roster.audit_log == before
-    assert view.logo == {"card": None, "image": None}

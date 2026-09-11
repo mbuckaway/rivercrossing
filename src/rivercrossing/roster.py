@@ -59,6 +59,7 @@ to across renames and moves, not interchangeable values like
 relay ride, both plate-less, must never compare equal to each other.
 """
 
+import random
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
@@ -200,12 +201,16 @@ class Rider:
     holds this rider's own plate only under
     ``PlateModel.RIDER_POOLED``; under ``PlateModel.TEAM_RELAY`` it
     always ends up ``None`` -- the plate belongs to the entry, not
-    the individual rider (S1).
+    the individual rider (S1). ``sex`` is ``"M"``/``"F"``, or ``None``
+    when the rider's sex is unknown (a blank registration cell);
+    registration forms write ``Male``/``Female`` and CSV import
+    normalizes those to the one canonical letter.
     """
 
     first_name: str
     last_name: str = ""
     plate: str | None = None
+    sex: str | None = None
     sort_order: int = 0
 
     @property
@@ -233,10 +238,9 @@ class Entry:
     E3.1.2's permanent delete guard (R-15): once
     :meth:`Roster.mark_has_data` sets it, ``delete_entry`` refuses in
     every ride state -- DNF or void is the only path from there.
-    ``logo_card``/``logo_png`` are Phase 4's team logo: a natural
-    card code and/or image bytes, set only through
-    :meth:`Roster.set_team_logo_card`/:meth:`Roster.set_team_logo_image`
-    (an image wins over a card -- either clears the other).
+    ``logo_card`` is Phase 4's team logo: a natural card code, set
+    only through :meth:`Roster.set_team_logo_card`. A team carries no
+    logo image (retired in Phase 3 -- a team's logo is its card).
     """
 
     plate: str
@@ -247,7 +251,6 @@ class Entry:
     notes: str = ""
     has_data: bool = False
     logo_card: str | None = None
-    logo_png: bytes | None = None
 
     @property
     def team_size(self) -> int:
@@ -531,11 +534,36 @@ class Roster:
         in_use = {entry.logo_card for entry in self._entries if entry.logo_card is not None}
         return next((code for code in ordered if code not in in_use), None)
 
+    def random_team_card(self, exclude: str | None = None) -> str | None:
+        """Return a random unused seeded logo card (Phase 3).
+
+        The Add/Edit Team dialog's Pick card source: a uniformly
+        random code from this roster's deterministic
+        ``team_logo_seed`` deck, minus every code a current team
+        already holds as ``logo_card`` and minus *exclude* (the code
+        the dialog has staged, so a repeat click can never land on the
+        card already showing). Random rather than sequential so a
+        pick feels like drawing from the deck; the exclusion is what
+        keeps each click visibly different.
+
+        Returns:
+            A free code, or ``None`` when this roster has no
+            ``team_logo_seed`` or nothing is left to draw.
+        """
+        if self._team_logo_codes is None:
+            return None
+        in_use = {entry.logo_card for entry in self._entries if entry.logo_card is not None}
+        available = [
+            code for code in self._team_logo_codes if code not in in_use and code != exclude
+        ]
+        if not available:
+            return None
+        # The deck is a game flourish, not a secret: the seed is public
+        # ride data and nothing here is security-relevant (S311).
+        return random.choice(available)  # noqa: S311
+
     def set_team_logo_card(self, entry: Entry, *, code: str) -> None:
         """Set *entry*'s logo to the natural card *code* (Phase 4).
-
-        A picked card wins over an image: any ``logo_png`` on *entry*
-        is cleared, so the two logo forms never both display.
 
         Raises:
             EntryNotFoundError: *entry* is not a member of this
@@ -543,41 +571,7 @@ class Roster:
         """
         self._require_known_entry(entry)
         entry.logo_card = code
-        entry.logo_png = None
         self._log("set_team_logo_card", {"plate": entry.plate, "code": code})
-
-    def set_team_logo_image(self, entry: Entry, *, image: bytes) -> None:
-        """Set *entry*'s logo to the image *image* (Phase 4).
-
-        An image wins over a card: any ``logo_card`` on *entry* is
-        cleared, so the two logo forms never both display.
-
-        Raises:
-            EntryNotFoundError: *entry* is not a member of this
-                roster.
-        """
-        self._require_known_entry(entry)
-        entry.logo_png = image
-        entry.logo_card = None
-        self._log("set_team_logo_image", {"plate": entry.plate})
-
-    def clear_team_logo(self, entry: Entry) -> None:
-        """Remove *entry*'s logo entirely: card and image both (W8).
-
-        The one removal path the Remove logo button needs -- the two
-        ``set_team_logo_*`` methods each clear the *other* form, but
-        neither clears both, and a logo-less entry is a valid state.
-        A no-op on an entry that already carries no logo, apart from
-        the audit event.
-
-        Raises:
-            EntryNotFoundError: *entry* is not a member of this
-                roster.
-        """
-        self._require_known_entry(entry)
-        entry.logo_card = None
-        entry.logo_png = None
-        self._log("clear_team_logo", {"plate": entry.plate})
 
     def next_free_plate(self) -> str:
         """Return one past the highest numeric plate in use (R-20).
@@ -629,13 +623,12 @@ class Roster:
             if entry.type is EntryType.TEAM and entry.team_size < MIN_TEAM_SIZE
         ]
 
-    def create_empty_team(  # noqa: PLR0913 -- (display_name, plate, logo_card, logo_png), keyword-only
+    def create_empty_team(
         self,
         *,
         display_name: str,
         plate: str | None = None,
         logo_card: str | None = None,
-        logo_png: bytes | None = None,
     ) -> Entry:
         """Create a TEAM entry with zero riders -- members join later.
 
@@ -651,10 +644,9 @@ class Roster:
         claim is exactly what the anchor rider used to occupy. The
         first rider to join replaces it through
         :meth:`_recompute_pooled_plate`, freeing the placeholder.
-        *logo_card*/*logo_png* (Phase 4) name the team's logo; an
-        image wins over a card, matching :meth:`set_team_logo_image`
-        (``None`` both ways auto-assigns the next unused seeded card
-        when this roster carries a ``team_logo_seed``).
+        *logo_card* (Phase 4) names the team's logo; ``None``
+        auto-assigns the next unused seeded card when this roster
+        carries a ``team_logo_seed``.
 
         Raises:
             LockedError: the ride has left DRAFT.
@@ -672,16 +664,11 @@ class Roster:
             msg = "this ride is solo-only; team entries are not allowed"
             raise SoloOnlyRideError(msg)
         entry_plate = self._empty_team_plate(plate)
-        # An image wins over a card (set_team_logo_image's rule): it
-        # also suppresses auto-assignment, so no seeded code hides
-        # behind the image.
-        resolved_card = None if logo_png is not None else self._resolved_logo_card(logo_card)
         entry = Entry(
             plate=entry_plate,
             display_name=display_name,
             type=EntryType.TEAM,
-            logo_card=resolved_card,
-            logo_png=logo_png,
+            logo_card=self._resolved_logo_card(logo_card),
         )
         self._entries.append(entry)
         self._log(
@@ -690,17 +677,20 @@ class Roster:
         )
         return entry
 
-    def create_solo_entry(self, *, first_name: str, last_name: str = "", plate: str) -> Entry:
+    def create_solo_entry(  # noqa: PLR0913 -- (first_name, last_name, plate, sex), keyword-only
+        self, *, first_name: str, last_name: str = "", plate: str, sex: str | None = None
+    ) -> Entry:
         """Create a solo entry for *first_name*/*last_name*.
 
         Plated per S1's plate model; the entry's ``display_name``
-        mirrors the rider's :attr:`Rider.full_name`.
+        mirrors the rider's :attr:`Rider.full_name`. *sex* is the
+        rider's ``"M"``/``"F"``, or ``None`` for unknown.
 
         Raises:
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
-        rider = Rider(first_name=first_name, last_name=last_name, plate=plate)
+        rider = Rider(first_name=first_name, last_name=last_name, plate=plate, sex=sex)
         entry_plate = self._shape_and_validate([rider], plate)
         entry = Entry(
             plate=entry_plate, display_name=rider.full_name, type=EntryType.SOLO, riders=[rider]

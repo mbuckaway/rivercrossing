@@ -53,13 +53,18 @@ _THEME_SPELLINGS: tuple[str, ...] = tuple(mode.value for mode in ThemeMode)
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
-    """The settings_dlg fields (appearance, sound, times, zoom, layout).
+    """The settings_dlg fields (appearance, sound, times, zoom, log).
 
     E8.1.1 adds the two layout fields: ``splitter_sash`` and
     ``window_geometry`` (x, y, width, height) persist the console's
     sash position and the frame's placement -- the two settings that
     survive relaunch but have no dialog control. ``None`` means no
     saved value yet (a first launch or an older file).
+
+    F1 adds ``verbose_logging``: whether the NDJSON verbose log is
+    written (``rivercrossing-verbose.log``, ``ui.logging``). It
+    defaults on, so a support session has the trace without the
+    operator having to remember to enable it.
     """
 
     appearance: str
@@ -68,14 +73,15 @@ class AppSettings:
     zoom_percent: int
     splitter_sash: int | None = None
     window_geometry: tuple[int, int, int, int] | None = None
+    verbose_logging: bool = True
 
 
 def default_settings() -> AppSettings:
     """Return the all-defaults :class:`AppSettings`.
 
     The first-launch / corrupt-file fallback: System appearance, sound
-    on (spec §10's default), times shown, 100% zoom, and no saved
-    layout yet.
+    on (spec §10's default), times shown, 100% zoom, no saved layout
+    yet, and verbose logging on.
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
@@ -84,6 +90,7 @@ def default_settings() -> AppSettings:
         zoom_percent=DEFAULT_ZOOM_PERCENT,
         splitter_sash=None,
         window_geometry=None,
+        verbose_logging=True,
     )
 
 
@@ -129,7 +136,7 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     Creates the parent directory, writes the JSON payload to a
     temporary sibling, then atomically replaces *path* with it
     (``Path.replace``) -- a crash mid-write leaves the previous file
-    intact. All six fields are written by name.
+    intact. All seven fields are written by name.
 
     Args:
         settings: The settings to persist.
@@ -146,6 +153,7 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "window_geometry": (
             list(settings.window_geometry) if settings.window_geometry is not None else None
         ),
+        "verbose_logging": settings.verbose_logging,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -190,6 +198,7 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         zoom_percent=_clamp_zoom(_int_or(raw.get("zoom_percent"), defaults.zoom_percent)),
         splitter_sash=_int_or(raw.get("splitter_sash"), None),
         window_geometry=_geometry_or(raw.get("window_geometry"), None),
+        verbose_logging=_bool_or(raw.get("verbose_logging"), default=defaults.verbose_logging),
     )
 
 
@@ -250,5 +259,5 @@ class SettingsView(Protocol):
     """View surface for the settings dialog (settings_dlg, 3a)."""
 
     def show_settings(self, settings: AppSettings) -> None:
-        """Render the current appearance/sound/times/zoom values."""
+        """Render the appearance/sound/times/verbose-log values."""
         ...

@@ -29,6 +29,8 @@ XRC_FILES = ("main.xrc", "setup.xrc", "settings.xrc")
 # drops the name of a wxInfoBar, so they are built in code.
 MAIN_FRAME_CONTROLS = (
     "ride_name_lbl",
+    "ride_logo_bmp",
+    "ride_details_lbl",
     "ride_status_lbl",
     "ride_status_panel",
     "clock_elapsed_lbl",
@@ -36,7 +38,6 @@ MAIN_FRAME_CONTROLS = (
     "elapsed_clock_panel",
     "remaining_clock_panel",
     "start_btn",
-    "arm_stop_chk",
     "stop_btn",
     "plate_input",
     "record_btn",
@@ -60,7 +61,6 @@ MAIN_FRAME_CONTROLS = (
 # spec.md section 15b menu-item names, in spec.md section 15 row
 # order. Stock ids sit where the platform expects them.
 FILE_MENU_ITEMS = (
-    "mi_new_ride",
     "mi_open_library",
     "mi_duplicate_ride",
     "mi_import_csv",
@@ -69,21 +69,26 @@ FILE_MENU_ITEMS = (
     "wxID_PREFERENCES",
     "wxID_EXIT",
 )
-# W14: mi_ride_setup left the Ride menu with its §15 row -- File ▸
-# New Ride… is the single entry point to the ride-setup window.
+# D1: the ride-lifecycle rows live in ONE menu. mi_new_ride moved off
+# File, mi_edit_ride / mi_clear_ride joined it, and the destructive
+# Clear Ride… row sits last (W14's mi_ride_setup stays retired).
 RIDE_MENU_ITEMS = (
+    "mi_new_ride",
+    "mi_edit_ride",
     "mi_start_ride",
     "mi_stop_ride",
     "mi_set_start_time",
     "mi_finish_ride",
     "mi_reopen_ride",
     "mi_audit_trail",
+    "mi_clear_ride",
 )
+# D4: mi_add_entry retired -- the Rider Editor row is the single entry
+# point for adding riders.
 RIDERS_MENU_ITEMS = (
     "mi_rider_editor",
     "mi_team_editor",
     "mi_check_rider_issues",
-    "mi_add_entry",
     "mi_mark_dnf",
     "mi_entry_detail",
 )
@@ -177,15 +182,14 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15 has 39 rows: File 8, Ride 6, Riders 6, Cards 7,
-# Results 7, View 1, Help 4 (W14: the Ride Setup… row left the Ride
-# menu with mi_ride_setup). The single View row expands into the 8
-# items section 15b names for it (W13: hide-times + the seven zoom
-# radios; the theme trio left the View menu).
+# spec.md section 15's rows after D1/D4: File 7, Ride 9, Riders 5,
+# Cards 7, Results 7, View 1, Help 4. The single View row expands into
+# the 8 items section 15b names for it (W13: hide-times + the seven
+# zoom radios; the theme trio left the View menu).
 MENU_ITEM_COUNTS = (
-    ("&File", 8),
-    ("&Ride", 6),
-    ("Ri&ders", 6),
+    ("&File", 7),
+    ("&Ride", 9),
+    ("Ri&ders", 5),
     ("&Cards", 7),
     ("Re&sults", 7),
     ("&View", 8),
@@ -396,22 +400,60 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_three_menu_item_names() -> None:
-    """spec.md 15b names 43 ``mi_*`` items across the menus (W14)."""
+def test_main_menubar_declares_forty_four_menu_item_names() -> None:
+    """D1/D4: 44 ``mi_*`` items; mi_add_entry is retired."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 43
+    assert len(menu_item_names) == 44
 
 
-def test_file_menu_declares_the_spec_15_row_order() -> None:
-    """Import CSV, Export CSV, then Back Up -- spec.md 15's order."""
+def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:
+    """D1: New Ride… left File; the other seven rows remain."""
     file_menu = _menus()[0]
 
     names = [item.attrib["name"] for item in _menu_items(file_menu)]
 
     assert tuple(names) == FILE_MENU_ITEMS
+
+
+def test_ride_menu_declares_the_spec_15_row_order_after_d1() -> None:
+    """New/Edit open the menu; the destructive Clear Ride… closes it."""
+    ride_menu = _menus()[1]
+
+    names = [item.attrib["name"] for item in _menu_items(ride_menu)]
+
+    assert tuple(names) == RIDE_MENU_ITEMS
+
+
+@pytest.mark.parametrize(
+    ("item_name", "label"),
+    [
+        ("mi_new_ride", "&New Ride…"),
+        ("mi_edit_ride", "&Edit Ride…"),
+        ("mi_clear_ride", "&Clear Ride…"),
+    ],
+)
+def test_new_ride_menu_row_declares_its_label(item_name: str, label: str) -> None:
+    """D1: the Ride menu's lifecycle rows carry their frozen verbs."""
+    item = _objects_by_name(_window("main_menubar"))[item_name]
+
+    assert _param(item, "label") == label
+
+
+def test_ride_header_logo_is_declared_as_a_static_bitmap() -> None:
+    """C1: the header renders the ride logo, or the detail line."""
+    control = _objects_by_name(_window("main_frame"))["ride_logo_bmp"]
+
+    assert control.attrib["class"] == "wxStaticBitmap"
+
+
+def test_ride_header_details_is_declared_as_a_static_text() -> None:
+    """C1: date · start · type sit next to the ride name."""
+    control = _objects_by_name(_window("main_frame"))["ride_details_lbl"]
+
+    assert control.attrib["class"] == "wxStaticText"
 
 
 @pytest.mark.parametrize(("item_name", "accelerator"), ACCELERATOR_CASES)
@@ -488,6 +530,17 @@ def test_radio_group_later_member_omits_rb_group(radio_name: str) -> None:
     assert "wxRB_GROUP" not in _param(radio, "style")
 
 
+def test_ride_setup_ok_button_declares_the_save_label() -> None:
+    """D2: the setup dialog commits with "Save" (both modes).
+
+    The stock id stays ``wxID_OK`` -- wx keeps its platform button
+    order and default handling -- only the visible text changes.
+    """
+    button = _objects_by_name(_window("ride_setup_dlg"))["wxID_OK"]
+
+    assert _param(button, "label") == "Save"
+
+
 def test_team_size_spin_declares_the_spec_documented_range() -> None:
     """spec.md 1 and 2: 2 to 10 riders per team, default 4."""
     spin = _objects_by_name(_window("ride_setup_dlg"))["team_size_spin"]
@@ -527,8 +580,8 @@ def test_short_lap_policy_radios_declare_the_two_policy_labels() -> None:
 
 
 # --------------------------------------------------------------------
-# Phase 8: the record-crossing row and exit_confirm_dlg (xrc-windows.md
-# amendments A2/P8-D1, P8-D3).
+# Phase 8: the record-crossing row (xrc-windows.md amendments
+# A7/P8-D3).
 
 
 def test_entry_row_is_wrapped_in_a_record_crossing_static_box_sizer() -> None:
@@ -564,20 +617,3 @@ def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
     width = int(_param(control, "size").split(",")[0])
 
     assert (_param(control, "hint"), width >= 200) == ("Plate number", True)
-
-
-def test_exit_confirm_dlg_is_declared_with_cancel_default_focused() -> None:
-    """A2/P8-D1: the destructive confirm -- Cancel is safe & default."""
-    dialog = _top_level_windows("dialogs.xrc")["exit_confirm_dlg"]
-    sizer = next(
-        obj for obj in dialog.iter("object") if obj.attrib["class"] == "wxStdDialogButtonSizer"
-    )
-    buttons = _objects_by_name(sizer)
-
-    values = (
-        _param(buttons["wxID_CANCEL"], "default"),
-        _param(buttons["wxID_CANCEL"], "focused"),
-        _param(buttons["wxID_OK"], "label"),
-    )
-
-    assert values == ("1", "1", "Quit")

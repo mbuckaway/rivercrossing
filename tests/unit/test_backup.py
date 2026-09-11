@@ -46,7 +46,7 @@ from hypothesis import strategies as st
 from rivercrossing.ride import Event, RideConfig
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.store import Store, backup
-from rivercrossing.store.migrations import StoreError
+from rivercrossing.store.schema import StoreError
 
 if TYPE_CHECKING:
     from collections.abc import Callable

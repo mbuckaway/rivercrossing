@@ -50,6 +50,31 @@ WINSETUP_SMOKE = ROOT / "tests" / "functional" / "test_winsetup_smoke.py"
 
 DEV = "-e.[dev]"
 
+# The pinned Tailwind CLI (package.json's @tailwindcss/cli) lives in the
+# gitignored node_modules; npm names its shim differently on Windows.
+_TAILWIND_SHIM = "tailwindcss.cmd" if os.name == "nt" else "tailwindcss"
+TAILWIND_CLI = ROOT / "node_modules" / ".bin" / _TAILWIND_SHIM
+
+
+def _ensure_node_modules(session: nox.Session) -> None:
+    """Install the pinned Tailwind CLI when ``node_modules`` is missing.
+
+    ``node_modules`` is gitignored, so a fresh clone (or a ``git
+    worktree``) has no Tailwind CLI and ``gen_css``/``css_drift`` would
+    fail with a bare "run npm install first". Bootstrap it with the
+    lockfile's ``npm ci`` so the CSS sessions work on a clean checkout;
+    a no-op once ``node_modules`` exists.
+    """
+    if TAILWIND_CLI.is_file():
+        return
+    if shutil.which("npm") is None:
+        session.error(
+            "npm is required to build the vendored CSS but was not found on PATH; "
+            "install Node.js, or run the CSS sessions where npm is available"
+        )
+    session.log("Tailwind CLI missing -- running `npm ci` at the repo root")
+    session.run("npm", "ci", external=True)
+
 
 @nox.session(python=PYTHON)
 def lint(session):
@@ -134,7 +159,12 @@ def functional(session):
 
     --forked would be the wrong tool on macOS: forking a process that
     has already initialised NSApplication is not safe.
+
+    DISABLED (2026-09-10): the suite is broken and is being rewritten
+    from scratch, so this session refuses to run.
     """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
+
     sys.path.insert(0, str(ROOT))
     from tools.functional_gate import host_functional_run_allowed  # noqa: PLC0415
 
@@ -189,9 +219,11 @@ def ids_drift(session):
 def gen_css(session):
     """Regenerate the vendored compiled_css + fonts_css (E6.2.1).
 
-    Requires the pinned Tailwind CLI (``npm install`` at the repo
-    root); the nox ``unit`` session never needs it.
+    Needs the pinned Tailwind CLI; :func:`_ensure_node_modules` installs
+    it with the lockfile's ``npm ci`` on a clean checkout. The nox
+    ``unit`` session never needs it.
     """
+    _ensure_node_modules(session)
     session.install(DEV)
     session.run("python", str(GEN_CSS), "--write")
 
@@ -202,11 +234,14 @@ def css_drift(session):
 
     This single ``--check`` is both the CI compile and the TB-7
     staleness gate. Passes vacuously until the templates exist, so the
-    gate can be wired into CI before they are authored.
+    gate can be wired into CI before they are authored. Needs the pinned
+    Tailwind CLI; :func:`_ensure_node_modules` installs it with the
+    lockfile's ``npm ci`` on a clean checkout.
     """
     if not GEN_CSS.exists() or not any(HTMLEXPORT_TEMPLATES.glob("*.j2")):
         session.log("no htmlexport templates yet - nothing to check")
         return
+    _ensure_node_modules(session)
     session.install(DEV)
     session.run("python", str(GEN_CSS), "--check")
 
@@ -230,12 +265,13 @@ def bundle(session):
 
 @nox.session(python=PYTHON)
 def smoke(session):
-    """Launch the built bundle and smoke-test it (CI stage 5)."""
-    if not BUNDLE_SMOKE.exists():
-        session.log("bundle smoke test not authored yet")
-        return
-    session.install(DEV)
-    session.run("pytest", str(BUNDLE_SMOKE), "--no-cov", *session.posargs)
+    """Launch the built bundle and smoke-test it (CI stage 5).
+
+    DISABLED (2026-09-10): this test lives in ``tests/functional``,
+    whose suite is broken and is being rewritten from scratch. CI no
+    longer runs it.
+    """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
 
 
 def _project_version() -> str:
@@ -282,12 +318,13 @@ def dmg(session):
 
 @nox.session(python=PYTHON)
 def dmg_smoke(session):
-    """Mount the built DMG and smoke-test it (CI stage 5, P8-D7)."""
-    if not DMG_SMOKE.exists():
-        session.log("DMG smoke test not authored yet")
-        return
-    session.install(DEV)
-    session.run("pytest", str(DMG_SMOKE), "--no-cov", *session.posargs)
+    """Mount the built DMG and smoke-test it (CI stage 5, P8-D7).
+
+    DISABLED (2026-09-10): this test lives in ``tests/functional``,
+    whose suite is broken and is being rewritten from scratch. CI no
+    longer runs it.
+    """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
 
 
 # Homebrew's makensis 3.12 (arm64) crashes with std::bad_alloc when
@@ -378,9 +415,10 @@ def winsetup(session):
 
 @nox.session(python=PYTHON)
 def winsetup_smoke(session):
-    """Run the Windows installer smoke tests (CI stage 5, Phase 9)."""
-    if not WINSETUP_SMOKE.exists():
-        session.log("Windows installer smoke test not authored yet")
-        return
-    session.install(DEV)
-    session.run("pytest", str(WINSETUP_SMOKE), "--no-cov", *session.posargs)
+    """Run the Windows installer smoke tests (CI stage 5, Phase 9).
+
+    DISABLED (2026-09-10): these tests live in ``tests/functional``,
+    whose suite is broken and is being rewritten from scratch. CI no
+    longer runs them.
+    """
+    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")

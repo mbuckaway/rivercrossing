@@ -8,6 +8,12 @@ cover -- ``tests/functional/test_quit_flow_wx.py`` covers what only
 a real ``wx.Dialog`` can prove (that the right dialog actually
 shows, and that clicking its buttons genuinely ends the modal with
 these ids).
+
+Phase 11 H2: the non-RUNNING branch stopped naming an XRC dialog at
+all -- ``exit_confirm_dlg`` retired in favour of the native
+``std_dialogs.show_confirm`` -- so ``dialog_for_status`` now returns
+``None`` for every status but RUNNING and the frozen copy lives in
+this module's own constants instead of the deleted XRC window.
 """
 
 import string
@@ -22,18 +28,18 @@ from rivercrossing.ui import ids, quit_flow
 # --- dialog_for_status: all four statuses (T-3/T-13) ---------------
 
 DIALOG_FOR_STATUS_CASES = (
-    (RideStatus.DRAFT, ids.EXIT_CONFIRM_DLG),
+    (RideStatus.DRAFT, None),
     (RideStatus.RUNNING, ids.EXIT_RUNNING_DLG),
-    (RideStatus.FINISHED, ids.EXIT_CONFIRM_DLG),
-    (RideStatus.REOPENED, ids.EXIT_CONFIRM_DLG),
+    (RideStatus.FINISHED, None),
+    (RideStatus.REOPENED, None),
 )
 
 
 @pytest.mark.parametrize(("status", "expected_dialog"), DIALOG_FOR_STATUS_CASES)
 def test_dialog_for_status_given_each_ride_status_returns_expected_dialog(
-    status: RideStatus, expected_dialog: str
+    status: RideStatus, expected_dialog: str | None
 ) -> None:
-    """RUNNING alone gets exit_running_dlg; other statuses don't."""
+    """RUNNING alone loads an XRC dialog; the rest are native."""
     result = quit_flow.dialog_for_status(status)
 
     assert result == expected_dialog
@@ -113,3 +119,18 @@ def test_running_exit_message_given_any_ride_name_contains_it(ride_name: str) ->
 
     assert message.startswith(ride_name)
     assert "wall clock" in message
+
+
+# --- the native non-RUNNING quit confirm's frozen copy (H2) --------
+
+
+def test_exit_confirm_copy_names_the_no_ride_running_state() -> None:
+    """The native confirm explains why quitting is being asked about."""
+    assert quit_flow.EXIT_CONFIRM_TITLE == "Quit RiverCrossing?"
+    assert "No ride is running" in quit_flow.EXIT_CONFIRM_MESSAGE
+
+
+def test_exit_confirm_copy_names_both_buttons_verbatim() -> None:
+    """Quit is the affirmative label; Cancel names the safe default."""
+    assert quit_flow.EXIT_CONFIRM_OK_LABEL == "Quit"
+    assert quit_flow.EXIT_CONFIRM_CANCEL_LABEL == "Cancel"

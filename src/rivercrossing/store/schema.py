@@ -1,33 +1,35 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""SQLite DDL and per-connection PRAGMAs (spec §2, E5.1.1).
+"""SQLite DDL, version gate and PRAGMAs (spec §2, E5.1.1).
 
 The seven tables below are spec §2's own ``ride``, ``entry``,
 ``rider``, ``crossing``, ``card``, ``app_session`` and ``audit``,
 column for column, plus one addition of our own: the
 :data:`SCHEMA_VERSION_DDL` ledger (a single integer row holding the
-migration version) that ``rivercrossing.store.migrations`` reads and
-records. The skeleton's ``settings`` table is deliberately absent:
-spec.md §2 does not list one, and E8.1.1 stores per-user settings in
-a JSON config file (``rivercrossing.ui.presenters.settings``), not
-this database -- the schema stays untouched.
+schema version) that :func:`ensure_schema` reads and records. The
+skeleton's ``settings`` table is deliberately absent: spec.md §2 does
+not list one, and E8.1.1 stores per-user settings in a JSON config
+file (``rivercrossing.ui.presenters.settings``), not this database --
+the schema stays untouched.
 
-**Greenfield reset (Phase 1 rider-name split).** This DDL was edited
-in place, not migrated: the ``rider.name`` column became
-``first_name``/``last_name`` and ``entry`` gained nullable
-``logo_card``/``logo_png`` columns. The project had no production
-data to preserve, so no ALTER TABLE migration was written -- any
-database file created by an older build was stale and had to be
-recreated.
+**One flattened v1 baseline.** The DDL below is edited in place as the
+schema evolves, never migrated. The v0 -> v1 -> v2 -> v3 migration
+chain and ``store/migrations.py`` were removed in Phase 2 (the rider
+``sex`` column): the project is unreleased, so a database file written
+by an older build is stale and has to be recreated, and migrations
+return after release. :data:`SCHEMA_VERSION` is 1;
+:func:`ensure_schema` creates this schema on an empty file and refuses
+any other stamped version.
 
-**Shipped databases now migrate (W4, first additive migration).**
-The tables below are the immutable v1 baseline; v2 -- the ride
-setup dialog's ``hold_short_laps`` short-lap policy column -- is an
-additive ALTER delivered by ``rivercrossing.store.migrations``
-(``_migrate_v1_to_v2``), never a second edit of this CREATE. A fresh
-file still chains v0 -> v1 -> v2 on first open, and a shipped v1
-file upgrades in place with existing rows defaulting to 0 (always
-deal). From here on, schema change means "append a migration", not
-"edit this DDL".
+That flatten folded three migration-era changes back into the CREATE:
+
+- ``ride.hold_short_laps`` -- the short-lap card policy -- is a real
+  column (NOT NULL, DEFAULT 0 = always deal), in the same position
+  ``_INSERT_RIDE_SQL`` lists it.
+- ``entry.logo_png`` is gone: a team's logo is its ``logo_card`` code
+  alone. The ride's own ``ride.logo_png`` organisation logo is a
+  different column and stays.
+- ``rider.sex`` carries the rider's ``"M"``/``"F"``, NULL when the
+  sex is unknown.
 
 Two schema decisions are recorded here because the spec is silent:
 
@@ -52,17 +54,47 @@ at-most-one-keystroke crash window, ``foreign_keys=ON`` for the
 them; ``journal_mode`` persists in the file once set.
 """
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import sqlite3
+import sqlite3
 
 __all__ = [
     "PRAGMA_STATEMENTS",
     "SCHEMA_STATEMENTS",
+    "SCHEMA_VERSION",
     "SCHEMA_VERSION_DDL",
+    "SchemaVersionMismatchError",
+    "StoreError",
     "apply_pragmas",
+    "ensure_schema",
 ]
+
+# The one schema version this build reads and writes. A file stamped
+# with any other value is refused by :func:`ensure_schema` rather than
+# read under a shape it was not written with.
+SCHEMA_VERSION = 1
+
+
+class StoreError(RuntimeError):
+    """A :class:`~rivercrossing.store.Store` operation failed.
+
+    The facade's general error type. Subclasses name the specific
+    failure; callers that only care "did it fail" catch this.
+
+    Defined here, beside the schema that raises it, rather than in the
+    package root: ``rivercrossing.store`` imports this module, so a
+    package-root definition would be a circular import. The package
+    root re-exports the name, and that is the public surface callers
+    import.
+    """
+
+
+class SchemaVersionMismatchError(StoreError):
+    """The database's stamped schema version is not this build's.
+
+    Raised on open so a file from a different build is never half-read:
+    the caller gets the version it found, the version this build
+    expects, and the way out (rename or delete the file).
+    """
+
 
 # Per spec §2, applied to every connection the Store opens.
 PRAGMA_STATEMENTS: tuple[str, ...] = (
@@ -111,7 +143,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         tiebreak_order     TEXT    NOT NULL,
         rng_seed           INTEGER NOT NULL,
         created_at         INTEGER NOT NULL,
-        updated_at         INTEGER NOT NULL
+        updated_at         INTEGER NOT NULL,
+        hold_short_laps    INTEGER NOT NULL DEFAULT 0
     )
     """,
     """
@@ -126,7 +159,6 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         dnf_at       INTEGER,
         notes        TEXT,
         logo_card    TEXT,
-        logo_png     BLOB,
         UNIQUE (ride_id, plate)
     )
     """,
@@ -138,6 +170,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         last_name         TEXT    NOT NULL,
         plate             TEXT,
         sort_order        INTEGER NOT NULL,
+        sex               TEXT    CHECK (sex IN ('M', 'F')),
         emergency_contact TEXT,
         waiver_signed     INTEGER,
         ccn_reg_id        TEXT
@@ -203,3 +236,58 @@ def apply_pragmas(conn: sqlite3.Connection) -> None:
     """
     for statement in PRAGMA_STATEMENTS:
         conn.execute(statement)
+
+
+def _current_version(conn: sqlite3.Connection) -> int:
+    """Return the ledger's stamped version, or 0 when absent."""
+    row = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()
+    return int(row["version"]) if row is not None else 0
+
+
+def ensure_schema(conn: sqlite3.Connection) -> None:
+    """Create or verify the v1 schema on one connection.
+
+    The ledger table is bootstrapped first (CREATE IF NOT EXISTS, so
+    re-running is harmless), then the stamped version decides:
+
+    - ``0`` -- no ledger row yet: create every table and stamp
+      :data:`SCHEMA_VERSION`, all inside one explicit BEGIN/COMMIT so
+      a mid-create failure rolls the whole schema back rather than
+      leaving a half-built database behind (DDL alone autocommits in
+      sqlite3, so the version record must share the transaction).
+    - :data:`SCHEMA_VERSION` -- already current: a no-op, which is what
+      makes re-open idempotent.
+    - anything else -- a file from another build: refuse, naming the
+      version found and the one expected.
+
+    Args:
+        conn: The connection to bring to the current schema. Expects
+            the schema PRAGMAs already applied (see
+            :func:`apply_pragmas`).
+
+    Raises:
+        SchemaVersionMismatchError: If the database's stamped version
+            is neither 0 nor :data:`SCHEMA_VERSION`.
+    """
+    conn.execute(SCHEMA_VERSION_DDL)
+    current = _current_version(conn)
+    if current == SCHEMA_VERSION:
+        return
+    if current != 0:
+        raise SchemaVersionMismatchError(
+            f"Database schema version {current} does not match this build's "
+            f"schema version {SCHEMA_VERSION}. "
+            "Rename or delete the database file to continue."
+        )
+    conn.execute("BEGIN")
+    try:
+        for statement in SCHEMA_STATEMENTS:
+            conn.execute(statement)
+        conn.execute(
+            "INSERT OR REPLACE INTO schema_version (id, version) VALUES (1, ?)",
+            (SCHEMA_VERSION,),
+        )
+    except sqlite3.Error:
+        conn.rollback()
+        raise
+    conn.commit()

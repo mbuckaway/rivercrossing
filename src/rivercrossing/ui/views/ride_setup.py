@@ -45,11 +45,21 @@ from typing import TYPE_CHECKING, Any, cast
 import wx
 import wx.adv
 
-from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER, TIEBREAK_HIGH_CARD, TIEBREAK_LAPS
+from rivercrossing.ride import (
+    DEFAULT_JOKERS_PER_DECK,
+    DEFAULT_TIEBREAK_ORDER,
+    TIEBREAK_HIGH_CARD,
+    TIEBREAK_LAPS,
+)
 from rivercrossing.ride import TIEBREAK_TOTAL_TIME as _TIEBREAK_TOTAL_TIME
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.ui import ids
-from rivercrossing.ui.presenters.setup import SetupFormValues, SetupPresenter
+from rivercrossing.ui.presenters.setup import (
+    SetupFormValues,
+    SetupPresenter,
+    _format_duration,
+    _format_min_lap,
+)
 from rivercrossing.ui.views._support import find_control
 
 if TYPE_CHECKING:
@@ -76,15 +86,21 @@ _TIEBREAK_LABELS: dict[str, str] = {
 }
 _TIEBREAK_IDS_BY_LABEL: dict[str, str] = {label: id_ for id_, label in _TIEBREAK_LABELS.items()}
 
+# The jokers radio group's third choice (setup.xrc's jokers_0/2/4_radio
+# trio); 2, the group's XRC default, is ride.py's own
+# DEFAULT_JOKERS_PER_DECK, so only the odd one out needs a name here.
+JOKERS_4_PER_DECK = 4
+
 
 class RideSetup:
     """Code-side behaviour for ``ride_setup_dlg`` (1c/7a, R-17)."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (dialog, roster, config, on_submitted): the view's own wiring
         self,
         dialog: wx.Dialog,
         *,
         roster: Roster,
+        config: RideConfig | None = None,
         on_submitted: Callable[[RideConfig], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``ride_setup_dlg`` window.
@@ -95,11 +111,18 @@ class RideSetup:
             roster: The in-memory roster whose own entry_mode/
                 max_team_size/plate_model/status this dialog reads
                 (``SetupPresenter``'s own module docstring).
+            config: The ride being edited (D2's Edit Ride…), or
+                ``None`` for a New Ride; when given, every field opens
+                on that ride's own values and the name/date/start/
+                venue/organizer/scorer fields stay editable while the
+                ride-shape controls are gated to DRAFT.
             on_submitted: A callback invoked with the built
                 :class:`~rivercrossing.ride.RideConfig` when a submit
                 commits (E9.1.2 -- the app wires it to
-                ``Store.create_ride`` + ``Store.save_roster`` when a
-                store is open); ``None`` keeps the in-memory behavior.
+                ``Store.create_ride`` + ``Store.save_roster`` for a New
+                Ride, and to ``Store.update_ride_config`` + the live
+                engine for an Edit Ride); ``None`` keeps the in-memory
+                behavior.
         """
         self.dialog = dialog
         self.config: RideConfig | None = None
@@ -136,7 +159,7 @@ class RideSetup:
 
         self.setup_infobar = self._build_infobar()
 
-        self.presenter = SetupPresenter(self, roster)
+        self.presenter = SetupPresenter(self, roster, config)
 
         self._bind_events()
 
@@ -334,6 +357,100 @@ class RideSetup:
             self.relay_radio.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
         else:
             self.pooled_radio.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+
+    def show_name(self, name: str) -> None:
+        """Render name_input from the ride record (``SetupView``)."""
+        self.name_input.SetValue(name)
+
+    def show_date(self, event_date: date) -> None:
+        """Render date_picker from the ride record (``SetupView``)."""
+        self.date_picker.SetValue(
+            wx.DateTime(event_date.day, event_date.month - 1, event_date.year)
+        )
+
+    def show_start_time(self, start_time: time) -> None:
+        """Render start_time_picker from the ride record (D2)."""
+        self.start_time_picker.SetTime(start_time.hour, start_time.minute, start_time.second)
+
+    def show_venue(self, venue: str) -> None:
+        """Render venue_input from the ride record (``SetupView``)."""
+        self.venue_input.SetValue(venue)
+
+    def show_organizer(self, organizer: str) -> None:
+        """Render organizer_input from the ride record (D2)."""
+        self.organizer_input.SetValue(organizer)
+
+    def show_scorer(self, scorer: str) -> None:
+        """Render scorer_input from the ride record (``SetupView``)."""
+        self.scorer_input.SetValue(scorer)
+
+    def show_duration(self, seconds: int) -> None:
+        """Render duration_input's "H:MM" text from the record (D2)."""
+        self.duration_input.SetValue(_format_duration(seconds))
+
+    def show_min_lap(self, seconds: int) -> None:
+        """Render min_lap_input's "M:SS" text from the record (D2)."""
+        self.min_lap_input.SetValue(_format_min_lap(seconds))
+
+    def show_short_lap_policy(self, *, hold_short_laps: bool) -> None:
+        """Check the W4 radio pair's stored policy (D2)."""
+        self.hold_short_radio.SetValue(hold_short_laps)
+        self.always_deal_radio.SetValue(not hold_short_laps)
+
+    def show_jokers_per_deck(self, count: int) -> None:
+        """Check jokers_0/2/4_radio from the record (D2)."""
+        self.jokers_2_radio.SetValue(count == DEFAULT_JOKERS_PER_DECK)
+        self.jokers_0_radio.SetValue(count == 0)
+        self.jokers_4_radio.SetValue(count == JOKERS_4_PER_DECK)
+
+    def show_card_cap(self, max_cards: int | None) -> None:
+        """Render cap_chk/cap_spin; ``None`` means uncapped (D2)."""
+        self.cap_chk.SetValue(max_cards is not None)
+        self.cap_spin.SetValue(max_cards if max_cards is not None else 1)
+        self.cap_spin.Enable(self.cap_chk.GetValue())
+
+    def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
+        """Render tiebreak_list's rows from the record (D2).
+
+        Rows are the same plain labels the New Ride seed uses (this
+        module's own docstring); an unrecognised stored id falls back
+        to the whole default order, exactly as :meth:`_tiebreak_order`
+        does in the other direction.
+        """
+        labels = [_TIEBREAK_LABELS.get(id_, "") for id_ in order]
+        if "" in labels:
+            labels = [_TIEBREAK_LABELS[id_] for id_ in DEFAULT_TIEBREAK_ORDER]
+        self.tiebreak_list.SetStrings(labels)
+
+    def show_logo(self, logo_path: Path | None) -> None:
+        """Render logo_picker from the ride record (``SetupView``)."""
+        self.logo_picker.SetPath(str(logo_path) if logo_path is not None else "")
+
+    def set_structure_enabled(self, *, enabled: bool) -> None:
+        """Gate the ride-shape controls to a DRAFT ride (D2).
+
+        Entry mode, plate model, decks, jokers, the card cap and the
+        tie-break order: a started ride's format is fixed, so these go
+        read-only while a live ride keeps its shoe and roster. The
+        name/date/start/venue/organizer/scorer fields are deliberately
+        untouched -- D2 keeps them editable in every state.
+        """
+        for control in (
+            self.solo_radio,
+            self.mixed_radio,
+            self.pooled_radio,
+            self.relay_radio,
+            self.decks_spin,
+            self.jokers_0_radio,
+            self.jokers_2_radio,
+            self.jokers_4_radio,
+            self.cap_chk,
+            self.tiebreak_list,
+        ):
+            control.Enable(enabled)
+        # cap_spin already tracks cap_chk (the view's own toggle); the
+        # structure gate only ever narrows that, never widens it.
+        self.cap_spin.Enable(enabled and self.cap_chk.GetValue())
 
     def show_validation(self, message: str) -> None:
         """Show *message* on :data:`SETUP_INFOBAR` (``SetupView``)."""

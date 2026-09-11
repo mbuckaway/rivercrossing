@@ -124,7 +124,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 - **E4.4.1 Console live** · Goal: swap console demo → engine (DataSource impl over RideEngine). Refs: #mainframe; R-32. Tests first: harness — typed plate appears in feed ≤ 100 ms with card chip; counters update; flagged row bold + review panel count. Done when: console runs a ride with demo wiring line unused on this screen.
 
-- **E4.4.2 Arm/stop/finish flows** · Goal: R-35 three deliberate acts + finish confirm. Tests first: harness — arm enables stop, auto-clears after use/timeout; stop confirm Cancel default; finish gate hook consulted (stubbed green until E6.4.3). Done when: flows green.
+- **E4.4.2 Arm/stop/finish flows** · Goal: R-35 three deliberate acts + finish confirm. Tests first: harness — arm enables stop, auto-clears after use/timeout; stop confirm Cancel default; finish gate hook consulted (stubbed green until E6.4.3). Done when: flows green. **1.0.12 C2 amendment:** R-35's three acts were reversed — `arm_stop_chk` and its 10 s auto-clear are retired, Stop is enabled by the engine's own live-RUNNING state, and it still asks the native confirm; the arm harness assertions are gone with the control.
 
 - **E4.4.3 Sound cues** · Goal: recorded/flagged/error WAVs per Spec §10, behind the Settings toggle (R-31). Tests first: cue events emitted per outcome (audio backend faked); toggle mutes; missing WAV falls back silent not crash (negative). A starter cue set is bundled (assets/sounds/: recorded 70 ms tick · flagged 280 ms two-tone down-chirp · error 300 ms low buzz). Done when: cue tests green + manual listen note in PR.
 

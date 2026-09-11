@@ -55,7 +55,12 @@ MAIN_FRAME = WindowSpec(
     xrc_file="main.xrc",
     is_frame=True,
     controls=(
+        # C1: the ride-identity block -- ride_logo_bmp carries the
+        # ride's own logo, ride_details_lbl is the "date · start ·
+        # type" fallback.
+        ids.RIDE_LOGO_BMP,
         ids.RIDE_NAME_LBL,
+        ids.RIDE_DETAILS_LBL,
         ids.RIDE_STATUS_LBL,
         # WS-D/WS-H: the code-side gauge slots and the review notebook
         # (elapsed_clock_panel/remaining_clock_panel/ride_status_panel
@@ -67,7 +72,6 @@ MAIN_FRAME = WindowSpec(
         ids.ELAPSED_CLOCK_PANEL,
         ids.REMAINING_CLOCK_PANEL,
         ids.START_BTN,
-        ids.ARM_STOP_CHK,
         ids.STOP_BTN,
         ids.PLATE_INPUT,
         ids.RECORD_BTN,
@@ -135,33 +139,12 @@ SET_START_DLG = WindowSpec(
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
-FINISH_CONFIRM_DLG = WindowSpec(
-    name=ids.FINISH_CONFIRM_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(WX_ID_OK, WX_ID_CANCEL),
-    buttons=(WX_ID_OK, WX_ID_CANCEL),
-)
-
-# E5.4.1 mock-first: the two §15 rows that had no frozen window until
-# this session (task-brief E5.4.1); their names are registered in
-# spec.md 15b. Both are non-destructive confirms: message_lbl names
-# the ride and OK is the default + focused control.
-DUPLICATE_RIDE_DLG = WindowSpec(
-    name=ids.DUPLICATE_RIDE_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(ids.MESSAGE_LBL, WX_ID_OK, WX_ID_CANCEL),
-    buttons=(WX_ID_OK, WX_ID_CANCEL),
-)
-
-REOPEN_RIDE_DLG = WindowSpec(
-    name=ids.REOPEN_RIDE_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(ids.MESSAGE_LBL, WX_ID_OK, WX_ID_CANCEL),
-    buttons=(WX_ID_OK, WX_ID_CANCEL),
-)
+# W5/W15/native-confirms: finish_confirm_dlg, duplicate_ride_dlg,
+# reopen_ride_dlg and exit_confirm_dlg were deleted from the .xrc
+# files -- the finish/reopen/exit confirmations are now native
+# ``ui.std_dialogs`` dialogs (show_danger / show_prompt /
+# show_confirm), which have no XRC window and so no ``FindWindowByName``
+# target. This registry therefore no longer lists them.
 
 RESUME_DLG = WindowSpec(
     name=ids.RESUME_DLG,
@@ -177,17 +160,6 @@ EXIT_RUNNING_DLG = WindowSpec(
     is_frame=False,
     controls=(ids.MESSAGE_LBL, WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
     buttons=(WX_ID_CANCEL, ids.FINISH_FIRST_BTN, WX_ID_OK),
-)
-
-# Phase 8 (P8-D1): the app never exits without confirmation, so a
-# quit with no ride running shows this destructive confirm instead
-# of quitting outright.
-EXIT_CONFIRM_DLG = WindowSpec(
-    name=ids.EXIT_CONFIRM_DLG,
-    xrc_file="dialogs.xrc",
-    is_frame=False,
-    controls=(WX_ID_OK, WX_ID_CANCEL),
-    buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
 # ux-polish W3: no_ride_dlg, the no-ride prompt that replaced
@@ -209,14 +181,17 @@ RIDER_EDITOR_DLG = WindowSpec(
         ids.FIRST_NAME_INPUT,
         ids.LAST_NAME_INPUT,
         ids.TEAM_CHOICE,
+        # 1.0.12: the Rider box is display-only and the pane's add_btn /
+        # edit_btn open add_rider_dlg (Add) or the same window in its
+        # Edit mode; the editor's own save_btn was removed.
         ids.ADD_BTN,
-        ids.SAVE_BTN,
+        ids.EDIT_BTN,
         ids.DELETE_BTN,
         WX_ID_CLOSE,
     ),
     buttons=(
         ids.ADD_BTN,
-        ids.SAVE_BTN,
+        ids.EDIT_BTN,
         ids.DELETE_BTN,
         WX_ID_CLOSE,
     ),
@@ -265,11 +240,14 @@ RIDER_ISSUES_DLG = WindowSpec(
 
 # --- xrc-windows section C: Phase 4 teams editor ---
 
-# The reworked three-pane editor: Team | Riders | Logo columns, with
-# add_btn anchoring the right pane's bottom and the save_btn /
-# remove_btn / wxID_CLOSE row on the left pane's (teams.xrc). The
-# logo preview is the real-bitmap logo_bmp (the Phase 4 logo_preview
-# control was replaced by it in the rework).
+# The reworked three-pane editor: Team | Riders | Members columns. Both
+# the read-only record form and the pane's buttons are display/route
+# only: add_btn and edit_btn open add_team_dlg (blank / on the
+# selected team), remove_btn sits between them, and wxID_CLOSE closes
+# the editor -- the old save_btn / image_btn / remove_logo_btn row was
+# removed with the read-only rework. The logo preview and its
+# pick_card_btn moved to add_team_dlg, where the record is written, so
+# this window carries no logo controls of its own.
 TEAM_EDITOR_DLG = WindowSpec(
     name=ids.TEAM_EDITOR_DLG,
     xrc_file="teams.xrc",
@@ -280,23 +258,16 @@ TEAM_EDITOR_DLG = WindowSpec(
         ids.NAME_INPUT,
         ids.RELAY_PLATE_INPUT,
         ids.NOTES_INPUT,
-        ids.LOGO_BMP,
-        ids.PICK_CARD_BTN,
-        ids.IMAGE_BTN,
-        ids.REMOVE_LOGO_BTN,
         ids.MEMBERS_LIST,
-        ids.SAVE_BTN,
+        ids.EDIT_BTN,
         ids.REMOVE_BTN,
         ids.ADD_BTN,
         WX_ID_CLOSE,
     ),
     buttons=(
-        ids.SAVE_BTN,
+        ids.EDIT_BTN,
         ids.REMOVE_BTN,
         ids.ADD_BTN,
-        ids.PICK_CARD_BTN,
-        ids.IMAGE_BTN,
-        ids.REMOVE_LOGO_BTN,
         WX_ID_CLOSE,
     ),
 )
@@ -317,8 +288,6 @@ ADD_TEAM_DLG = WindowSpec(
         ids.NOTES_INPUT,
         ids.LOGO_BMP,
         ids.PICK_CARD_BTN,
-        ids.IMAGE_BTN,
-        ids.REMOVE_LOGO_BTN,
         WX_ID_OK,
         WX_ID_CANCEL,
     ),
@@ -326,8 +295,6 @@ ADD_TEAM_DLG = WindowSpec(
         WX_ID_OK,
         WX_ID_CANCEL,
         ids.PICK_CARD_BTN,
-        ids.IMAGE_BTN,
-        ids.REMOVE_LOGO_BTN,
     ),
 )
 
@@ -464,6 +431,8 @@ SETTINGS_DLG = WindowSpec(
         ids.APPEARANCE_DARK_RADIO,
         ids.SOUND_CHK,
         ids.HIDE_TIMES_CHK,
+        # S7: verbose logging writes the support diagnostic log.
+        ids.VERBOSE_LOG_CHK,
         ids.BACKUP_NOW_BTN,
         WX_ID_OK,
         WX_ID_CANCEL,
@@ -495,21 +464,18 @@ SELFTEST_DLG = WindowSpec(
     buttons=(ids.RERUN_BTN, WX_ID_CLOSE),
 )
 
-# xrc-windows's own A-E order: 1 console + 8 setup/lifecycle dialogs
-# (stop_confirm_dlg retired W5, no_ride_dlg retired W15) + 11
-# rider/card dialogs (add_rider_dlg, add_team_dlg and team_editor_dlg
-# are W7/Phase 4 section-C members) + 4 results/library/audit + 4
-# system/help = 28.
+# xrc-windows's own A-E order: 1 console + 4 setup/lifecycle dialogs
+# (finish_confirm_dlg, duplicate_ride_dlg, reopen_ride_dlg and
+# exit_confirm_dlg became native std_dialogs confirms; stop_confirm_dlg
+# retired W5, no_ride_dlg retired W15) + 11 rider/card dialogs
+# (add_rider_dlg, add_team_dlg and team_editor_dlg are W7/Phase 4
+# section-C members) + 4 results/library/audit + 4 system/help = 24.
 WINDOWS: tuple[WindowSpec, ...] = (
     MAIN_FRAME,
     RIDE_SETUP_DLG,
     SET_START_DLG,
-    FINISH_CONFIRM_DLG,
-    DUPLICATE_RIDE_DLG,
-    REOPEN_RIDE_DLG,
     RESUME_DLG,
     EXIT_RUNNING_DLG,
-    EXIT_CONFIRM_DLG,
     RIDER_EDITOR_DLG,
     ADD_RIDER_DLG,
     CSV_PREVIEW_DLG,

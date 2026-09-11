@@ -455,7 +455,7 @@ def test_export_helpers_parse_handwritten_files(oracle: ModuleType, tmp_path: Pa
 
     csv_path = tmp_path / "standings.csv"
     csv_path.write_text(
-        "place,plate,entry,type,laps,hand\n1,12,Alice,solo,3,Trips\n", encoding="utf-8"
+        "place,plate,entry,type,sex,laps,hand\n1,12,Alice,solo,F,3,Trips\n", encoding="utf-8"
     )
     assert oracle._csv_standings(csv_path) == ((1, "12", 3, "Trips"),)
 
@@ -483,10 +483,10 @@ def test_compare_export_checks_html_and_csv(oracle: ModuleType, tmp_path: Path) 
     csv_path = exports_dir / "standings.csv"
     with csv_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["place", "plate", "entry", "type", "laps", "hand"])
+        writer.writerow(["place", "plate", "entry", "type", "sex", "laps", "hand"])
         for row in standings:
             writer.writerow(
-                [row["place"], row["plate"], row["name"], "solo", row["laps"], row["hand"]]
+                [row["place"], row["plate"], row["name"], "solo", "", row["laps"], row["hand"]]
             )
 
     record["export_paths"] = {
@@ -500,7 +500,7 @@ def test_compare_export_checks_html_and_csv(oracle: ModuleType, tmp_path: Path) 
     assert _check(report, "export_poster").ok is False  # no path recorded
 
     csv_path.write_text(
-        "place,plate,entry,type,laps,hand\n9,9,Wrong,solo,9,Wrong\n", encoding="utf-8"
+        "place,plate,entry,type,sex,laps,hand\n9,9,Wrong,solo,,9,Wrong\n", encoding="utf-8"
     )
     tampered = oracle.compare(facts, record, exports_dir)
     assert _check(tampered, "export_csv").ok is False
