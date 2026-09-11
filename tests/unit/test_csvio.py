@@ -17,9 +17,9 @@ RUNNING/REOPENED; only solo<->team *conversions* stay DRAFT-only).
 
 The unified contract under test:
 
-- Header mapping order is TEAMNAME, TYPE, FIRSTNAME, LASTNAME, NUMBER,
-  NOTES, first match per column wins, all case-insensitive; canonical
-  export tokens round-trip through the same map.
+- Header mapping order is TEAMNAME, TYPE, FIRSTNAME, LASTNAME, SEX,
+  NUMBER, NOTES, first match per column wins, all case-insensitive;
+  canonical export tokens round-trip through the same map.
 - Rows with neither first nor last name are skipped (trailing
   footer/empty rows); a row that still names a number/team/type is a
   missing-name conflict instead of a silent drop.
@@ -30,8 +30,12 @@ The unified contract under test:
 - NUMBER auto-assigns from :meth:`Roster.next_free_plate` when blank;
   under rider_pooled each rider owns their row's plate, under
   team_relay a team's member rows share the team's one plate.
-- Export writes ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES``, one
-  row per rider; a FINISHED ride's *placed* columns append after them.
+- SEX normalizes Male/male/M/m to ``M`` and Female/female/F/f to ``F``;
+  blank or absent is unknown (``None``), any other non-blank cell is a
+  per-row conflict. Export writes ``M``/``F``/blank.
+- Export writes ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX``,
+  one row per rider; a FINISHED ride's *placed* columns append after
+  them.
 
 Fixtures live in ``tests/unit/fixtures/csv/``: ``clean_180.csv`` is the
 relay-shaped clean sample (120 solo + 15 team4 rows = 180 riders /
@@ -95,8 +99,12 @@ _NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
 _CSV_MALFORMED_PREFIX = "malformed CSV data:"
 _SOLO_ONLY_TEAM_PROBLEM = "team entries are not allowed on a solo-only ride"
 
-_UNIFIED_HEADER = "firstname,lastname,type,teamname,number,notes"
-_CANONICAL_HEADER = "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
+_UNIFIED_HEADER = "firstname,lastname,type,teamname,number,notes,sex"
+_CANONICAL_HEADER = "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX"
+# The SEX column's own header matcher, spelled the two ways a real
+# registration export and this app's own export spell it.
+_SEX_HEADER_TOKENS = ("Sex", "SEX", "sex")
+_BLANK_SEX_CELL = ""
 
 # ------------------------------------------------------------- helpers
 
@@ -117,8 +125,22 @@ def _pooled_roster(*, max_team_size: int = DEFAULT_MAX_TEAM_SIZE) -> Roster:
     )
 
 
+def _relay_roster_of_solo_sexes(sexes: list[str | None]) -> Roster:
+    """Build a relay roster holding one solo rider per sex in *sexes*.
+
+    Plates are 1..N so every rider is distinct; the roster exists to
+    round-trip a generated sex mix through export and preview.
+    """
+    roster = _relay_roster()
+    for index, sex in enumerate(sexes, start=1):
+        roster.create_solo_entry(
+            first_name=f"Rider{index}", last_name="X", plate=str(index), sex=sex
+        )
+    return roster
+
+
 class _Row(NamedTuple):
-    """One unified data row's six fields, before comma-joining."""
+    """One unified data row's seven fields, before comma-joining."""
 
     first: str = ""
     last: str = ""
@@ -126,11 +148,12 @@ class _Row(NamedTuple):
     team: str = ""
     number: str = ""
     notes: str = ""
+    sex: str = ""
 
 
 def _line(row: _Row) -> str:
     """Render *row* as one unified CSV data line."""
-    return f"{row.first},{row.last},{row.type_},{row.team},{row.number},{row.notes}"
+    return f"{row.first},{row.last},{row.type_},{row.team},{row.number},{row.notes},{row.sex}"
 
 
 def _write_csv(tmp_path: Path, lines: list[str]) -> Path:
@@ -178,6 +201,7 @@ def _read_lines(path: Path) -> list[str]:
                 "TEAMNAME": 3,
                 "NUMBER": 4,
                 "NOTES": 5,
+                "SEX": 6,
             },
         ),
         # Case and whitespace are ignored everywhere.
@@ -210,6 +234,8 @@ def test_map_header_given_header_row_maps_the_expected_columns(
         "T-shirt size?",
         # A fuller "Race Number" is not the whole-header NUMBER token.
         "Race Number",
+        # SEX needs the standalone word, not "sex" inside "Unisex".
+        "Unisex t-shirt size?",
     ],
 )
 def test_map_header_given_an_unmapped_column_ignores_it(header: str) -> None:
@@ -2126,7 +2152,7 @@ def test_export_solo_entry_writes_one_row(tmp_path: Path) -> None:
 
     export(roster, path)
 
-    assert _read_lines(path)[1] == "Alex,Tremblay,solo,,1,"
+    assert _read_lines(path)[1] == "Alex,Tremblay,solo,,1,,"
 
 
 def test_export_relay_team_writes_one_row_per_member_sharing_the_entry_plate(
@@ -2143,7 +2169,7 @@ def test_export_relay_team_writes_one_row_per_member_sharing_the_entry_plate(
 
     export(roster, path)
 
-    assert _read_lines(path)[1:] == ["Bo,,team,Team A,7,", "Cy,,team,Team A,7,"]
+    assert _read_lines(path)[1:] == ["Bo,,team,Team A,7,,", "Cy,,team,Team A,7,,"]
 
 
 def test_export_pooled_team_writes_each_members_own_plate(tmp_path: Path) -> None:
@@ -2160,11 +2186,11 @@ def test_export_pooled_team_writes_each_members_own_plate(tmp_path: Path) -> Non
 
     export(roster, path)
 
-    assert _read_lines(path)[1:] == ["Bo,,team,Wolves,2,", "Cy,,team,Wolves,3,"]
+    assert _read_lines(path)[1:] == ["Bo,,team,Wolves,2,,", "Cy,,team,Wolves,3,,"]
 
 
-def test_export_solo_entry_notes_land_in_the_final_column(tmp_path: Path) -> None:
-    """An entry's notes are the CSV row's final column."""
+def test_export_solo_entry_notes_land_before_the_sex_column(tmp_path: Path) -> None:
+    """An entry's notes are the row's NOTES cell, one before SEX."""
     path = tmp_path / "out.csv"
     roster = _relay_roster()
     entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
@@ -2172,7 +2198,7 @@ def test_export_solo_entry_notes_land_in_the_final_column(tmp_path: Path) -> Non
 
     export(roster, path)
 
-    assert _read_lines(path)[1] == "Alex,,solo,,1,late scratch"
+    assert _read_lines(path)[1] == "Alex,,solo,,1,late scratch,"
 
 
 def test_export_pooled_team_writes_notes_on_first_row_only(tmp_path: Path) -> None:
@@ -2191,8 +2217,8 @@ def test_export_pooled_team_writes_notes_on_first_row_only(tmp_path: Path) -> No
     export(roster, path)
 
     assert _read_lines(path)[1:] == [
-        "Bo,,team,Wolves,2,flat tire; spare batteries",
-        "Cy,,team,Wolves,3,",
+        "Bo,,team,Wolves,2,flat tire; spare batteries,",
+        "Cy,,team,Wolves,3,,",
     ]
 
 
@@ -2242,7 +2268,7 @@ def test_export_of_an_uppercase_team_name_reimports_as_its_normalized_form(
 # ================================================ P3: standings columns
 
 
-def _placed(  # noqa: PLR0913 -- mirrors standings.EntryResult's 10 fields
+def _placed(  # noqa: PLR0913 -- mirrors standings.EntryResult's 11 fields
     plate: str,
     codes: str,
     *,
@@ -2250,6 +2276,7 @@ def _placed(  # noqa: PLR0913 -- mirrors standings.EntryResult's 10 fields
     laps: int = 0,
     total_time: float = 0.0,
     dnf: bool = False,
+    sex: str | None = None,
 ) -> Placed:
     """Build one Placed whose result's hand is best_hand of *codes*."""
     cards = tuple(Card.parse(code) for code in codes.split())
@@ -2264,6 +2291,7 @@ def _placed(  # noqa: PLR0913 -- mirrors standings.EntryResult's 10 fields
         cards=cards,
         hand=best_hand(cards),
         dnf=dnf,
+        sex=sex,
     )
     return Placed(place=1, result=result, tie_note=None, draw_required=False)
 
@@ -2321,9 +2349,9 @@ def test_export_finished_relay_rows_carry_the_matching_placed_values(
     export(roster, path, placed=placed)
 
     assert _read_lines(path)[1:] == [
-        "Alex,,solo,,1,,5,2,Pair — Aces,20811.0",
-        "Bo,,team,Team A,7,,4,3,Three of a Kind — Nines,19000.0",
-        "Cy,,team,Team A,7,,4,3,Three of a Kind — Nines,19000.0",
+        "Alex,,solo,,1,,,5,2,Pair — Aces,20811.0",
+        "Bo,,team,Team A,7,,,4,3,Three of a Kind — Nines,19000.0",
+        "Cy,,team,Team A,7,,,4,3,Three of a Kind — Nines,19000.0",
     ]
 
 
@@ -2353,9 +2381,9 @@ def test_export_finished_pooled_rows_repeat_entry_stats_on_every_rider_row(
     assert (lines[0], lines[1:]) == (
         f"{_CANONICAL_HEADER},laps,cards,best_hand,total_time",
         [
-            "Alex,,solo,,1,,2,2,Pair — Aces,6000.0",
-            "Bo,,team,Wolves,2,,3,2,Pair — Kings,9000.0",
-            "Cy,,team,Wolves,3,,3,2,Pair — Kings,9000.0",
+            "Alex,,solo,,1,,,2,2,Pair — Aces,6000.0",
+            "Bo,,team,Wolves,2,,,3,2,Pair — Kings,9000.0",
+            "Cy,,team,Wolves,3,,,3,2,Pair — Kings,9000.0",
         ],
     )
 
@@ -2369,7 +2397,7 @@ def test_export_finished_ride_writes_dnf_entry_stats_from_placed(tmp_path: Path)
 
     export(roster, path, placed=[_placed("1", "AS AH", laps=3, total_time=12345.0, dnf=True)])
 
-    assert _read_lines(path)[1] == "Alex,,solo,,1,,3,2,Pair — Aces,12345.0"
+    assert _read_lines(path)[1] == "Alex,,solo,,1,,,3,2,Pair — Aces,12345.0"
 
 
 def test_export_finished_ride_ignores_extra_placed_rows_with_no_matching_entry(
@@ -2387,7 +2415,7 @@ def test_export_finished_ride_ignores_extra_placed_rows_with_no_matching_entry(
 
     export(roster, path, placed=placed)
 
-    assert _read_lines(path)[1] == "Alex,,solo,,1,,5,2,Pair — Aces,20811.0"
+    assert _read_lines(path)[1] == "Alex,,solo,,1,,,5,2,Pair — Aces,20811.0"
 
 
 @pytest.mark.parametrize("status", [RideStatus.DRAFT, RideStatus.RUNNING])
@@ -2452,7 +2480,7 @@ def test_export_stages_a_same_directory_temp_file_then_atomic_replace(
     export(roster, path)
 
     assert calls == [(str(path.with_name(path.name + ".tmp")), str(path))]
-    assert _read_lines(path) == [_CANONICAL_HEADER, "Alex,,solo,,1,"]
+    assert _read_lines(path) == [_CANONICAL_HEADER, "Alex,,solo,,1,,"]
     assert sorted(tmp_path.iterdir()) == [path]
 
 
@@ -2474,7 +2502,7 @@ def test_export_standings_stages_a_temp_file_then_atomic_replace(
     export_standings(placed, path, show_times=True)
 
     assert calls == [(str(path.with_name(path.name + ".tmp")), str(path))]
-    assert _read_lines(path)[1] == "1,88,Rider,solo,11,Four of a Kind — Nines,20000.0"
+    assert _read_lines(path)[1] == "1,88,Rider,solo,,11,Four of a Kind — Nines,20000.0"
     assert sorted(tmp_path.iterdir()) == [path]
 
 
@@ -2603,11 +2631,11 @@ def test_preview_gorba_fixture_imports_as_is_against_a_relay_roster() -> None:
 
 
 def test_export_standings_writes_the_s15_header_without_times() -> None:
-    """§15: place, plate, entry, type, laps, hand -- no total_time."""
+    """§15: the six base columns plus sex, no total_time."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings([], path)
-        assert _read_lines(path)[0] == "place,plate,entry,type,laps,hand"
+        assert _read_lines(path)[0] == "place,plate,entry,type,sex,laps,hand"
 
 
 def test_export_standings_show_times_appends_total_time_column() -> None:
@@ -2615,22 +2643,36 @@ def test_export_standings_show_times_appends_total_time_column() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings([], path, show_times=True)
-        assert _read_lines(path)[0] == "place,plate,entry,type,laps,hand,total_time"
+        assert _read_lines(path)[0] == "place,plate,entry,type,sex,laps,hand,total_time"
 
 
 def test_export_standings_rows_carry_the_placed_values_and_kind() -> None:
-    """One row per Placed: place, plate, entry, type, laps, hand."""
+    """One row per Placed, with the sex column after type."""
     placed = [
         _placed("88", "9S 9D 9C 9H 2C", kind="team", laps=11, total_time=20_000.0),
-        replace(_placed("7", "KH KC 5H 5D AS", laps=10, total_time=21_000.0), place=2),
+        replace(_placed("7", "KH KC 5H 5D AS", laps=10, total_time=21_000.0, sex="F"), place=2),
     ]
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings(placed, path, show_times=True)
         lines = _read_lines(path)
 
-    assert lines[1] == "1,88,Rider,team,11,Four of a Kind — Nines,20000.0"
-    assert lines[2] == "2,7,Rider,solo,10,Two Pair — Kings & Fives,21000.0"
+    assert lines[1] == "1,88,Rider,team,,11,Four of a Kind — Nines,20000.0"
+    assert lines[2] == "2,7,Rider,solo,F,10,Two Pair — Kings & Fives,21000.0"
+
+
+@pytest.mark.parametrize(("sex", "expected_cell"), [("M", "M"), ("F", "F"), (None, "")])
+def test_export_standings_sex_cell_is_the_solo_letter_or_blank(
+    sex: str | None, expected_cell: str
+) -> None:
+    """The sex column carries the solo letter, "" when unknown."""
+    placed = [_placed("9", "", laps=0, sex=sex)]
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "standings.csv"
+        export_standings(placed, path)
+        row = _read_lines(path)[1]
+
+    assert row == f"1,9,Rider,solo,{expected_cell},0,"
 
 
 def test_export_standings_keeps_dnf_rows() -> None:
@@ -2639,7 +2681,7 @@ def test_export_standings_keeps_dnf_rows() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings(placed, path)
-        assert _read_lines(path)[1] == "1,3,Rider,solo,5,Royal Flush"
+        assert _read_lines(path)[1] == "1,3,Rider,solo,,5,Royal Flush"
 
 
 def test_export_standings_zero_card_hand_writes_a_blank_hand() -> None:
@@ -2648,7 +2690,7 @@ def test_export_standings_zero_card_hand_writes_a_blank_hand() -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings(placed, path)
-        assert _read_lines(path)[1] == "1,9,Rider,solo,0,"
+        assert _read_lines(path)[1] == "1,9,Rider,solo,,0,"
 
 
 # ========================================================= T-7 property
@@ -2672,6 +2714,20 @@ def test_preview_clean_solo_rows_rider_count_matches_generated_row_count(
         result = preview(path, roster)
 
     assert (result.rider_count, result.team_count, result.conflicts) == (row_count, 0, ())
+
+
+@given(sexes=st.lists(st.sampled_from([None, "M", "F"]), min_size=1, max_size=6))
+@settings(max_examples=25, deadline=None)
+def test_export_then_preview_round_trips_every_riders_sex(sexes: list[str | None]) -> None:
+    """Export then re-preview preserves each rider's sex (T-7)."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        path = Path(tmp_dir) / "out.csv"
+        export(_relay_roster_of_solo_sexes(sexes), path)
+        target = _relay_roster()
+
+        result = preview(path, target)
+
+    assert [entry.riders[0].sex for entry in result.entries] == sexes
 
 
 def test_csvio_all_lists_the_public_api_sorted() -> None:
@@ -2897,4 +2953,359 @@ def test_export_roster_with_zero_rider_teams_writes_only_entries_with_riders(
 
     export(roster, path)
 
-    assert _read_lines(path) == [_CANONICAL_HEADER, "Alex,Tremblay,solo,,1,"]
+    assert _read_lines(path) == [_CANONICAL_HEADER, "Alex,Tremblay,solo,,1,,"]
+
+
+# ===================================================== rider sex column
+# A rider's sex is M/F, or unknown when the cell is blank or the column
+# is absent. The registration forms write Male/Female; this app writes
+# M/F; both spellings normalize to the one canonical letter, and any
+# other non-blank cell is a per-row conflict -- never a silent guess.
+
+_EPIC_SEX_HEADER = (
+    "Reg Checkout Date,Category,Fee,First Name,Last Name,Sex,Email,DOB,Age,Team?,Team Name"
+)
+
+
+@pytest.mark.parametrize("token", _SEX_HEADER_TOKENS)
+def test_map_header_sex_token_maps_to_the_sex_field(token: str) -> None:
+    """Sex, SEX and sex all claim the SEX field (case-insensitive)."""
+    header = ("First Name", "Last Name", token, "Email", "Team?", "Team Name")
+
+    assert csvio._map_header(header)["SEX"] == 2
+
+
+def test_map_header_sex_column_steals_no_other_field() -> None:
+    """A Sex column claims exactly SEX; the name columns keep theirs."""
+    header = ("First Name", "Last Name", "Sex", "Team Name")
+
+    assert csvio._map_header(header) == {
+        "FIRSTNAME": 0,
+        "LASTNAME": 1,
+        "SEX": 2,
+        "TEAMNAME": 3,
+    }
+
+
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [
+        ("Male", "M"),
+        ("male", "M"),
+        ("MALE", "M"),
+        ("M", "M"),
+        ("m", "M"),
+        (" Male ", "M"),
+        ("Female", "F"),
+        ("female", "F"),
+        ("FEMALE", "F"),
+        ("F", "F"),
+        ("f", "F"),
+    ],
+)
+def test_preview_sex_cell_normalizes_to_one_canonical_letter(
+    tmp_path: Path, cell: str, expected: str
+) -> None:
+    """Male/Female and M/F both normalize to the canonical letter."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", type_="solo", number="1", sex=cell)])
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.entries[0].riders[0].sex == expected
+
+
+@pytest.mark.parametrize("cell", ["", "   "])
+def test_preview_blank_sex_cell_stays_unknown(tmp_path: Path, cell: str) -> None:
+    """A blank or whitespace SEX cell means unknown, not a conflict."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", type_="solo", number="1", sex=cell)])
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert (result.entries[0].riders[0].sex, result.conflicts) == (None, ())
+
+
+def test_preview_missing_sex_column_stays_unknown(tmp_path: Path) -> None:
+    """A file with no SEX column parses with every rider unknown."""
+    path = _write_csv(tmp_path, ["firstname,lastname,type,number", "Alex,Tremblay,solo,1"])
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert (result.entries[0].riders[0].sex, result.conflicts) == (None, ())
+
+
+@pytest.mark.parametrize("cell", ["X", "unknown", "male female", "1"])
+def test_preview_unrecognized_sex_cell_is_a_row_conflict_excluding_the_row(
+    tmp_path: Path, cell: str
+) -> None:
+    """Any other non-blank sex value conflicts and drops that row."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", type_="solo", number="1", sex=cell),
+            _Row(first="Bo", type_="solo", number="2"),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.conflicts == (ImportConflict(row=2, problem=f"invalid sex {cell!r}"),)
+    assert result.rider_count == 1
+
+
+def test_preview_epic_registration_shaped_file_assigns_sex_and_groups_by_team_name(
+    tmp_path: Path,
+) -> None:
+    """The real export's shape: Sex read, Team Name groups."""
+    path = _write_csv(
+        tmp_path,
+        [
+            _EPIC_SEX_HEADER,
+            (
+                "2026/08/20 13:00:00,General Registration,50,John,Annis,Male,"
+                "john@example.com,1972/11/09,53,Solo,"
+            ),
+            (
+                "2026/08/20 13:09:00,General Registration,50,Jonathan,Nobels,Male,"
+                "jnobels@example.com,1975/04/04,51,Team,Full Send"
+            ),
+            (
+                "2026/08/20 13:09:00,Under 17,40,Willem,Nobels,,"
+                "wpnobels@example.com,2011/08/12,15,Team,Full Send"
+            ),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert (result.conflicts, result.entries) == (
+        (),
+        (
+            ParsedEntry(
+                plate="1",
+                display_name="John Annis",
+                type=EntryType.SOLO,
+                riders=(ParsedRider(first_name="John", last_name="Annis", sex="M"),),
+            ),
+            ParsedEntry(
+                plate="2",
+                display_name="full send",
+                type=EntryType.TEAM,
+                riders=(
+                    ParsedRider(first_name="Jonathan", last_name="Nobels", sex="M"),
+                    ParsedRider(first_name="Willem", last_name="Nobels"),
+                ),
+            ),
+        ),
+    )
+
+
+def test_preview_relay_team_rows_thread_each_riders_sex_into_its_parsed_rider(
+    tmp_path: Path,
+) -> None:
+    """team_relay: every grouped member row keeps its own sex."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Bo", type_="team", team="Team A", number="7", sex="Male"),
+            _Row(first="Cy", type_="team", team="Team A", number="7", sex="Female"),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster)
+
+    assert result.entries[0].riders == (
+        ParsedRider(first_name="Bo", last_name="", sex="M"),
+        ParsedRider(first_name="Cy", last_name="", sex="F"),
+    )
+
+
+def test_preview_pooled_team_rows_thread_each_riders_sex_into_its_parsed_rider(
+    tmp_path: Path,
+) -> None:
+    """rider_pooled: every grouped member row keeps its own sex too."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Bo", type_="team", team="Wolves", number="2", sex="M"),
+            _Row(first="Cy", type_="team", team="Wolves", number="3", sex="F"),
+        ],
+    )
+    roster = _pooled_roster()
+
+    result = preview(path, roster)
+
+    assert result.entries[0].riders == (
+        ParsedRider(first_name="Bo", last_name="", plate="2", sex="M"),
+        ParsedRider(first_name="Cy", last_name="", plate="3", sex="F"),
+    )
+
+
+def test_export_header_lists_the_sex_column_last(tmp_path: Path) -> None:
+    """SEX is the final roster column, matching _UNIFIED_COLUMNS."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+
+    export(roster, path)
+
+    assert _read_lines(path)[0] == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX"
+
+
+@pytest.mark.parametrize(("sex", "cell"), [(None, ""), ("M", "M"), ("F", "F")])
+def test_export_writes_the_riders_sex_cell(tmp_path: Path, sex: str | None, cell: str) -> None:
+    """Each row's SEX cell is the letter, blank when unknown."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.create_solo_entry(first_name="Alex", last_name="Tremblay", plate="1", sex=sex)
+
+    export(roster, path)
+
+    assert _read_lines(path)[1] == f"Alex,Tremblay,solo,,1,,{cell}"
+
+
+def test_export_then_reimport_preserves_every_riders_sex(tmp_path: Path) -> None:
+    """An export re-imported into a fresh roster keeps every sex."""
+    path = tmp_path / "out.csv"
+    source = _relay_roster()
+    source.create_solo_entry(first_name="Alex", last_name="Tremblay", plate="1", sex="M")
+    source.create_team_entry(
+        display_name="Team A",
+        riders=[
+            Rider(first_name="Bo", last_name="", sex="F"),
+            Rider(first_name="Cy", last_name=""),
+        ],
+        plate="7",
+    )
+    export(source, path)
+    target = _relay_roster()
+
+    commit(preview(path, target))
+
+    assert [
+        (entry.plate, [(rider.full_name, rider.sex) for rider in entry.riders])
+        for entry in target.entries
+    ] == [("1", [("Alex Tremblay", "M")]), ("7", [("Bo", "F"), ("Cy", None)])]
+
+
+def test_commit_relay_matched_solo_reimport_with_a_changed_sex_updates_the_rider(
+    tmp_path: Path,
+) -> None:
+    """A matched solo row's changed sex updates the existing rider."""
+    roster = _relay_roster()
+    roster.create_solo_entry(first_name="Alex", last_name="Smith", plate="1", sex="M")
+    path = _unified_file(
+        tmp_path, [_Row(first="Alex", last="Smith", type_="solo", number="1", sex="Female")]
+    )
+
+    report = commit(preview(path, roster))
+
+    assert (roster.entries[0].riders[0].sex, report.updated_count) == ("F", 1)
+
+
+def test_commit_relay_matched_team_reimport_updates_each_members_sex(tmp_path: Path) -> None:
+    """A matched relay team's changed sexes update its riders."""
+    roster = _relay_roster()
+    roster.create_team_entry(
+        display_name="team a",
+        riders=[Rider(first_name="Bo", last_name=""), Rider(first_name="Cy", last_name="")],
+        plate="10",
+    )
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Bo", type_="team", team="Team A", number="10", sex="Male"),
+            _Row(first="Cy", type_="team", team="Team A", number="10", sex="Female"),
+        ],
+    )
+
+    report = commit(preview(path, roster))
+
+    assert ([rider.sex for rider in roster.entries[0].riders], report.updated_count) == (
+        ["M", "F"],
+        1,
+    )
+
+
+def test_commit_relay_matched_team_reimport_with_unchanged_sexes_updates_nothing(
+    tmp_path: Path,
+) -> None:
+    """A matching sex is not a change: zero updates, no audit event."""
+    roster = _relay_roster()
+    roster.create_team_entry(
+        display_name="team a",
+        riders=[
+            Rider(first_name="Bo", last_name="", sex="M"),
+            Rider(first_name="Cy", last_name="", sex="F"),
+        ],
+        plate="10",
+    )
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Bo", type_="team", team="Team A", number="10", sex="Male"),
+            _Row(first="Cy", type_="team", team="Team A", number="10", sex="Female"),
+        ],
+    )
+
+    report = commit(preview(path, roster))
+
+    assert (report.inserted_count, report.updated_count, report.audit_events) == (0, 0, ())
+
+
+def test_commit_pooled_inserted_solo_rider_carries_its_sex(tmp_path: Path) -> None:
+    """A brand-new pooled solo entry is built with the row's sex."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", type_="solo", number="1", sex="Female")])
+    roster = _pooled_roster()
+
+    commit(preview(path, roster))
+
+    assert roster.entries[0].riders[0].sex == "F"
+
+
+def test_commit_pooled_new_team_member_carries_its_sex(tmp_path: Path) -> None:
+    """A brand-new pooled team's riders are built with their sex."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Bo", type_="team", team="Wolves", number="2", sex="Male"),
+            _Row(first="Cy", type_="team", team="Wolves", number="3", sex="Female"),
+        ],
+    )
+    roster = _pooled_roster()
+
+    commit(preview(path, roster))
+
+    assert [rider.sex for rider in roster.entries[0].riders] == ["M", "F"]
+
+
+def test_commit_pooled_rider_joining_an_existing_team_carries_its_sex(tmp_path: Path) -> None:
+    """A brand-new pooled plate joining a team keeps its sex."""
+    roster = _pooled_roster()
+    roster.create_team_entry(
+        display_name="falcons",
+        riders=[
+            Rider(first_name="Do", last_name="", plate="5"),
+            Rider(first_name="El", last_name="", plate="6"),
+        ],
+    )
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Do", type_="team", team="Falcons", number="5"),
+            _Row(first="El", type_="team", team="Falcons", number="6"),
+            _Row(first="Fay", type_="team", team="Falcons", number="99", sex="Male"),
+        ],
+    )
+
+    commit(preview(path, roster))
+
+    assert [(rider.full_name, rider.sex) for rider in roster.entries[0].riders] == [
+        ("Do", None),
+        ("El", None),
+        ("Fay", "M"),
+    ]

@@ -2766,3 +2766,59 @@ def test_roster_exposes_no_team_logo_seed_when_unseeded() -> None:
     roster = Roster(entry_mode=EntryMode.MIXED)
 
     assert roster.team_logo_seed is None
+
+
+# ------------------------------------------------------ rider sex field
+
+
+def test_rider_sex_defaults_to_none_when_not_given() -> None:
+    """A rider built without a sex is unknown, not guessed."""
+    rider = Rider(first_name="Alex")
+
+    assert rider.sex is None
+
+
+@pytest.mark.parametrize("sex", ["M", "F"])
+def test_rider_sex_carries_the_supplied_value(sex: str) -> None:
+    """A rider built with a sex keeps exactly that value."""
+    rider = Rider(first_name="Alex", sex=sex)
+
+    assert rider.sex == sex
+
+
+def test_rider_sex_is_mutable_like_the_rest_of_the_rider() -> None:
+    """Rider stays a mutable dataclass; a sex edit sticks."""
+    rider = Rider(first_name="Alex", sex="M")
+
+    rider.sex = "F"
+
+    assert rider.sex == "F"
+
+
+def test_create_solo_entry_defaults_rider_sex_to_none() -> None:
+    """A solo entry built without a sex leaves the rider unknown."""
+    roster = Roster()
+
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="12")
+
+    assert entry.riders[0].sex is None
+
+
+@pytest.mark.parametrize("sex", ["M", "F"])
+def test_create_solo_entry_stores_the_supplied_rider_sex(sex: str) -> None:
+    """create_solo_entry threads its sex kwarg onto the rider."""
+    roster = Roster()
+
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="12", sex=sex)
+
+    assert entry.riders[0].sex == sex
+
+
+def test_create_team_entry_of_one_keeps_the_callers_rider_sex() -> None:
+    """A transient team-of-one keeps the caller's rider and sex."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    rider = Rider(first_name="Alex", last_name="Roy", plate="9", sex="F")
+
+    entry = roster.create_team_entry_of_one(display_name="Solo Act", rider=rider, plate="9")
+
+    assert entry.riders[0].sex == "F"

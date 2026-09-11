@@ -177,10 +177,11 @@ class RideConfig:
     them, never this dialog. ``logo_path`` carries the *picker's* own
     chosen file; converting it to the stored BLOB is EPIC 5's own
     concern, not this dataclass's. ``hold_short_laps`` is the one
-    field that *does* persist (store migration v2, W4): the setup
-    dialog's short-lap card policy, default False = "always deal" --
-    a lap under ``min_lap_s`` credits its card to the hand -- with
-    True restoring R-34's hold-for-review behaviour
+    field that *does* persist (the ``ride.hold_short_laps`` column,
+    part of the flattened v1 baseline, W4): the setup dialog's
+    short-lap card policy, default False = "always deal" -- a lap
+    under ``min_lap_s`` credits its card to the hand -- with True
+    restoring R-34's hold-for-review behaviour
     (:meth:`RideEngine.record_crossing`).
 
     ``event_date``/``planned_start`` both round-trip the ``ride``
@@ -297,7 +298,18 @@ class StartBlockedError(RideEngineError):
     (:func:`setup_minimum_violations`), and every
     ``Roster.validate_for_start()`` violation (R-12's team floor);
     any of these blocks the transition.
+
+    ``reasons`` carries that same refusal as one string per blocking
+    issue -- a setup violation verbatim, a roster violation prefixed
+    with its plate -- so a caller can list them one per line (the
+    console's blocked-start issues dialog) instead of re-parsing
+    ``str(self)``, which keeps the joined message every caller reads.
     """
+
+    def __init__(self, message: str, *, reasons: tuple[str, ...]) -> None:
+        """Store the joined *message* and its per-issue *reasons*."""
+        super().__init__(message)
+        self.reasons = reasons
 
 
 class UnknownPlateError(RideEngineError):
@@ -497,8 +509,8 @@ class RideEngine:
       R-34 behaviour exactly. The setup dialog's
       ``always_deal_radio``/``hold_short_radio`` pair owns the value
       (setup.xrc, W4), and the store persists it per ride
-      (``ride.hold_short_laps``, migration v1->v2) so replay
-      reproduces the same disposition.
+      (``ride.hold_short_laps``) so replay reproduces the same
+      disposition.
     - **Undo.** ``undo_last()`` is a full compensating write (R-33):
       the last crossing's lap is removed, its card returns to the shoe
       front via ``shoe.restitute`` (so the next deal reproduces the
@@ -820,7 +832,8 @@ class RideEngine:
         Raises:
             StartBlockedError: DRAFT and the ride is not ready --
                 the roster has no entries, the setup misses a minimum
-                field, or a team sits below the size floor.
+                field, or a team sits below the size floor. Its
+                ``reasons`` holds one entry per blocking issue.
             IllegalStateError: the state is FINISHED.
         """
         if self._state in (RideStatus.RUNNING, RideStatus.REOPENED):
@@ -835,17 +848,24 @@ class RideEngine:
         if self._state is not RideStatus.DRAFT:
             raise IllegalStateError(f"cannot start from {self._state}")
         if not self._roster.entries:
-            raise StartBlockedError("roster has no riders")
+            raise StartBlockedError("roster has no riders", reasons=("roster has no riders",))
         setup_violations = setup_minimum_violations(self._config)
         if setup_violations:
-            reasons = "; ".join(setup_violations)
-            raise StartBlockedError(f"ride setup is incomplete: {reasons}")
+            joined = "; ".join(setup_violations)
+            raise StartBlockedError(
+                f"ride setup is incomplete: {joined}", reasons=tuple(setup_violations)
+            )
         violations = self._roster.validate_for_start()
         if violations:
-            reasons = "; ".join(
+            # One tuple, joined for the message: the refusal's two
+            # views cannot drift apart.
+            issue_reasons = tuple(
                 f"{violation.entry.plate}: {violation.reason}" for violation in violations
             )
-            raise StartBlockedError(f"roster is not ready to start: {reasons}")
+            raise StartBlockedError(
+                f"roster is not ready to start: {'; '.join(issue_reasons)}",
+                reasons=issue_reasons,
+            )
         return self._begin_start(at if at is not None else self._clock())
 
     def _begin_start(self, started_at: datetime) -> Event:
@@ -995,6 +1015,25 @@ class RideEngine:
         :meth:`held_crossings` membership test, read-only.
         """
         return self._held.get(crossing)
+
+    def credited_cards(self, plate: str) -> tuple[Card, ...]:
+        """Return the entry's credited (non-held) cards for *plate*.
+
+        The console's rider list reads this for its Cards column: the
+        entry's live credited hand -- normal deals plus confirmed-held
+        releases (R-16/R-34), oldest first. A held (unconfirmed),
+        voided or undone card is not credited, so it never appears;
+        ``plate`` must be the entry's own plate, the key the credited
+        hand is kept under -- a pooled team's member plates do not
+        resolve (they return ``()``), so callers pass
+        ``entry.plate``. An entry that has credited nothing (and an
+        unknown plate) returns an empty tuple rather than raising.
+
+        Read-only: unlike :meth:`snapshot` this does not apply
+        ``config.max_cards`` (R-13), which caps the scored hand, not
+        the cards the entry actually holds.
+        """
+        return tuple(self._hand.get(plate, ()))
 
     def confirm_held(self, crossing: Crossing) -> Event:
         """Release *crossing*'s held card into its entry's hand (R-34).
@@ -1651,11 +1690,15 @@ class RideEngine:
         (unconfirmed) and voided cards never reach the hand. DNF
         entries (``mark_dnf``, E7.1.1) stay listed with ``dnf=True``;
         ``standings.rank`` places them after every ACTIVE entry and the
-        leaderboards exclude them -- never reimplemented here.
+        leaderboards exclude them -- never reimplemented here. ``sex``
+        (E7) is a solo entry's lone rider's ``"M"``/``"F"`` and None
+        for a team: a team has no single sex, so the exports render it
+        blank there.
         """
         results: list[EntryResult] = []
         for entry in self._roster.entries:
             dnf = entry.status.value == "dnf"  # spec §2's stored spelling
+            kind = entry.type.value
             laps = self._laps_for(entry.plate)
             times = self.lap_times(entry.plate)
             hand_cards = self._hand.get(entry.plate)
@@ -1667,13 +1710,16 @@ class RideEngine:
                     entry_id=entry.plate,
                     plate=entry.plate,
                     name=entry.display_name,
-                    kind=entry.type.value,
+                    kind=kind,
                     laps=len(laps),
                     total_time=self._total_time(laps),
                     best_lap=min(times) if times else 0.0,
                     cards=cards,
                     hand=best_hand(cards),
                     dnf=dnf,
+                    # Solo carries its lone rider's sex; a team has none
+                    # (module docstring records the roster non-import).
+                    sex=entry.riders[0].sex if kind == "solo" else None,
                 )
             )
         return results

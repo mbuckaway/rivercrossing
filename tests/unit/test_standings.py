@@ -23,6 +23,7 @@ regression in the evaluator itself.
 
 import itertools
 import re
+from dataclasses import replace
 
 import pytest
 from hypothesis import given, settings
@@ -49,7 +50,7 @@ def _cards(codes: str) -> tuple[Card, ...]:
     return tuple(Card.parse(code) for code in codes.split())
 
 
-def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 10 fields
+def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 11 fields
     entry_id: str,
     codes: str,
     *,
@@ -72,6 +73,26 @@ def _result(  # noqa: PLR0913 -- a fixture builder mirroring S4 EntryResult's 10
         hand=best_hand(cards),
         dnf=dnf,
     )
+
+
+# ------------------------------------------------- EntryResult's sex
+
+
+def test_entry_result_sex_defaults_to_none() -> None:
+    """A snapshot built without a sex (a team row) carries None."""
+    result = _result("1", "AS QD 9H 5C 3S")
+
+    assert result.sex is None
+
+
+@pytest.mark.parametrize("sex", ["M", "F"])
+def test_entry_result_sex_survives_ranking_for_both_spellings(sex: str) -> None:
+    """A solo snapshot's "M"/"F" reaches the placed rows."""
+    results = [replace(_result("1", "AS QD 9H 5C 3S"), sex=sex)]
+
+    placed = rank(results)
+
+    assert placed[0].result.sex == sex
 
 
 # ------------------------------------------------------ basic ordering

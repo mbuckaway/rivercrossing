@@ -83,6 +83,7 @@ def _sample_results() -> tuple[ResultRow, ...]:
             total="2:37:43",
             best_lap="31:07",
             dnf=True,
+            sex="M",
             cards=(("A", "d"), ("Q", "c"), ("9", "s"), ("5", "h")),
             drawn=(("A", "d"),),
         ),

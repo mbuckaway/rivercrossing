@@ -1,13 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Unit tests for rivercrossing.store (E5.1.1: schema + migrations).
+"""Unit tests for rivercrossing.store (E5.1.1: schema + version gate).
 
-Tests first (R-70), against a ``store`` package that did not exist
-yet. E5.1.1's surface is deliberately small: ``Store.open`` creates
-and migrates a fresh database (WAL + NORMAL + foreign_keys ON per
-spec §2), re-opening is idempotent, ``create_ride`` persists a
+Tests first (R-70). The store's schema is a single flattened v1
+baseline: ``Store.open`` creates it on a fresh file and stamps
+``schema_version.version = 1``, re-opening a v1 file is an idempotent
+no-op, and a file stamped with any other version refuses to open with
+:class:`~rivercrossing.store.SchemaVersionMismatchError` naming what
+it found. The v0 -> v1 -> v2 -> v3 migration chain was removed with
+the flatten (unreleased code; migrations return post-release).
+
+E5.1.1's own surface is small: ``create_ride`` persists a
 :class:`RideConfig` row (logo BLOB, JSON tiebreak order, DB-owned
-seed), ``rides()`` lists the library, and a database written by a
-newer build refuses to open with the version named.
+seed) and ``rides()`` lists the library.
 
 No mocks anywhere: every test drives real sqlite3 against a
 ``tmp_path`` file (the task's own "no mocks of sqlite3 beyond
@@ -31,18 +35,21 @@ import rivercrossing.store as store_module
 from rivercrossing.ride import Event, RideConfig, RideStatus
 from rivercrossing.roster import Entry, EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import (
-    FutureSchemaVersionError,
     RideNameMismatchError,
     RideNotFoundError,
     RideRow,
     RideRunningError,
+    SchemaVersionMismatchError,
     SessionState,
     Store,
     StoreError,
     backup,
 )
-from rivercrossing.store.migrations import LATEST_SCHEMA_VERSION
-from rivercrossing.store.schema import SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL
+from rivercrossing.store.schema import (
+    SCHEMA_STATEMENTS,
+    SCHEMA_VERSION,
+    SCHEMA_VERSION_DDL,
+)
 from rivercrossing.ui.presenters.data_source import AuditRow
 
 # The same always-valid kwarg set test_ride.py builds from, so a
@@ -94,8 +101,13 @@ def _fetch_ride_row(path: Path, ride_id: int) -> dict[str, object]:
 # ------------------------------------------------------------- open
 
 
-def test_store_open_fresh_db_creates_all_spec_tables(tmp_path: Path) -> None:
-    """A fresh database opens with all spec tables plus the ledger."""
+def test_store_open_fresh_db_creates_the_full_v1_schema(tmp_path: Path) -> None:
+    """A fresh database opens with every spec table at schema version 1.
+
+    The flattened baseline: ``ride.hold_short_laps`` is part of v1 (no
+    ALTER brings it later), ``entry`` carries no retired ``logo_png``
+    image column, and ``rider`` carries the nullable ``sex`` column.
+    """
     db_path = tmp_path / "rides.db"
 
     store = Store.open(db_path)
@@ -115,8 +127,16 @@ def test_store_open_fresh_db_creates_all_spec_tables(tmp_path: Path) -> None:
         names = {
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-        assert expected <= names
+        ride_columns = {row[1] for row in conn.execute("PRAGMA table_info(ride)")}
+        entry_columns = {row[1] for row in conn.execute("PRAGMA table_info(entry)")}
+        rider_columns = {row[1] for row in conn.execute("PRAGMA table_info(rider)")}
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+    assert expected <= names
+    assert "hold_short_laps" in ride_columns
+    assert "logo_png" not in entry_columns
+    assert "logo_card" in entry_columns
+    assert "sex" in rider_columns
 
 
 def test_store_open_creates_missing_parent_directories(tmp_path: Path) -> None:
@@ -138,18 +158,18 @@ def test_store_open_creates_missing_parent_directories(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
-def test_store_open_records_ledger_at_latest_version(tmp_path: Path) -> None:
-    """schema_version holds exactly one row at LATEST_SCHEMA_VERSION."""
+def test_store_open_stamps_the_ledger_at_schema_version_1(tmp_path: Path) -> None:
+    """schema_version holds exactly one row, stamped at v1."""
     db_path = tmp_path / "rides.db"
 
     Store.open(db_path).close()
 
     with closing(sqlite3.connect(str(db_path))) as conn:
-        assert (
-            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
-            == LATEST_SCHEMA_VERSION
-        )
-        assert conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 1
+        version = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
+        rows = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+
+    assert SCHEMA_VERSION == 1
+    assert (version, rows) == (SCHEMA_VERSION, 1)
 
 
 def test_store_open_applies_spec_pragmas_to_every_connection(tmp_path: Path) -> None:
@@ -175,10 +195,10 @@ def test_store_open_applies_spec_pragmas_to_every_connection(tmp_path: Path) -> 
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
-def test_store_open_idempotent_reopen_runs_no_duplicate_migrations(
+def test_store_open_version_1_database_reopens_as_a_noop_keeping_its_rides(
     tmp_path: Path,
 ) -> None:
-    """Reopening a migrated database is a no-op that keeps its rides."""
+    """Reopening a version-1 database keeps its rides untouched."""
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     ride_id = store.create_ride(_config(name="Idempotent"))
@@ -186,34 +206,33 @@ def test_store_open_idempotent_reopen_runs_no_duplicate_migrations(
 
     reopened = Store.open(db_path)
     try:
-        assert reopened.rides() == [
-            RideRow(
-                id=ride_id,
-                name="Idempotent",
-                event_date=date(2026, 9, 20),
-                status=RideStatus.DRAFT,
-            )
-        ]
+        rides = reopened.rides()
     finally:
         reopened.close()
 
     with closing(sqlite3.connect(str(db_path))) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 1
-        assert (
-            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
-            == LATEST_SCHEMA_VERSION
+        version = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
+        rows = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+
+    assert rides == [
+        RideRow(
+            id=ride_id,
+            name="Idempotent",
+            event_date=date(2026, 9, 20),
+            status=RideStatus.DRAFT,
         )
+    ]
+    assert (version, rows) == (SCHEMA_VERSION, 1)
 
 
-def test_store_open_migrates_v0_empty_database_to_latest_schema(tmp_path: Path) -> None:
-    """A v0 database (no schema, no ledger) upgrades to the latest."""
+def test_store_open_given_an_empty_file_creates_the_full_v1_schema(tmp_path: Path) -> None:
+    """A pre-schema file becomes a full v1 database."""
     db_path = tmp_path / "v0.db"
-    conn = sqlite3.connect(str(db_path))
-    conn.close()
+    sqlite3.connect(str(db_path)).close()
 
     store = Store.open(db_path)
     try:
-        assert store.rides() == []
+        rides = store.rides()
     finally:
         store.close()
 
@@ -221,167 +240,62 @@ def test_store_open_migrates_v0_empty_database_to_latest_schema(tmp_path: Path) 
         names = {
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-        assert {"ride", "entry", "rider", "crossing", "card", "app_session", "audit"} <= names
-        assert (
-            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
-            == LATEST_SCHEMA_VERSION
-        )
+        version = conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
         columns = {row[1] for row in conn.execute("PRAGMA table_info(ride)")}
-        assert "hold_short_laps" in columns
+
+    assert rides == []
+    assert {"ride", "entry", "rider", "crossing", "card", "app_session", "audit"} <= names
+    assert version == SCHEMA_VERSION
+    assert "hold_short_laps" in columns
 
 
-def test_store_open_upgrades_a_v1_database_adding_hold_short_laps_defaulted_to_zero(
-    tmp_path: Path,
+@pytest.mark.parametrize("stored_version", [2, 3, 99])
+def test_store_open_given_a_mismatched_version_raises_naming_it(
+    tmp_path: Path, stored_version: int
 ) -> None:
-    """A genuine v1 file migrates in place; existing rows read 0 (W4).
+    """A file stamped with any version but 1 refuses to open, naming it.
 
-    The fresh-DB chain (v0 -> v1 -> v2) and the shipped-v1 upgrade
-    path meet here: the staged file carries the v1 schema -- the
-    pre-W4 ``ride`` CREATE without ``hold_short_laps``, stamped at
-    version 1 -- and opening it with today's code must add the column
-    (NOT NULL, DEFAULT 0), back-fill 0 onto the existing row, and
-    stamp the ledger at the latest version.
+    The flattened schema has exactly one version -- 1 -- so a file from
+    an older (v2/v3) or newer (99) build cannot be read honestly. The
+    refusal names what the ledger holds, what this build expects, and
+    the way out (rename or delete the file), and it is a
+    :class:`StoreError` subclass so existing "did it fail" callers keep
+    working.
     """
-    db_path = tmp_path / "v1.db"
+    db_path = tmp_path / f"v{stored_version}.db"
     conn = sqlite3.connect(str(db_path))
     try:
-        for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
-            conn.execute(statement)
-        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 1)")
-        conn.execute(
-            """
-            INSERT INTO ride (
-                name, event_date, venue, course_name, lap_km, organizer, scorer,
-                logo_png, planned_start, planned_duration_s, actual_start,
-                finished_at, status, entry_mode, max_team_size, plate_model,
-                min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
-                rng_seed, created_at, updated_at
-            ) VALUES (
-                'GORBA EPIC 2026', '2026-09-20', 'Sea to Sky Gondola',
-                'Sea to Sky Gondola', 8.0, 'GORBA', 'K. Singh', NULL,
-                1789898400, 21600, NULL, NULL, 'draft', 'mixed', 4,
-                'rider_pooled', 1080, 8, 2, NULL, '["laps","total_time","high_card"]',
-                20260920, 1789898400, 1789898400
-            )
-            """
-        )
+        conn.execute(SCHEMA_VERSION_DDL)
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, ?)", (stored_version,))
         conn.commit()
     finally:
         conn.close()
 
-    store = Store.open(db_path)
-    try:
-        assert [ride.name for ride in store.rides()] == ["GORBA EPIC 2026"]
-    finally:
-        store.close()
-
-    with closing(sqlite3.connect(str(db_path))) as conn:
-        assert (
-            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
-            == LATEST_SCHEMA_VERSION
-        )
-        assert (
-            conn.execute(
-                "SELECT hold_short_laps FROM ride WHERE name = 'GORBA EPIC 2026'"
-            ).fetchone()[0]
-            == 0
-        )
-        row = conn.execute("PRAGMA table_info(ride)").fetchall()
-        column = next(one for one in row if one[1] == "hold_short_laps")
-        assert column[3] == 1  # NOT NULL
-        assert column[4] == "0"  # DEFAULT 0, so later inserts may omit it
-
-
-def test_store_open_upgrades_a_v2_database_dropping_entry_logo_png(tmp_path: Path) -> None:
-    """A shipped v2 file loses entry.logo_png in place (Phase 3).
-
-    The team logo image is retired: the v1 baseline DDL still declares
-    the column (it is immutable), so ``_migrate_v2_to_v3`` is what
-    takes it off a real database. The entry's own logo *card* -- and
-    the ride's separate ``logo_png`` organisation-logo column -- must
-    survive untouched.
-    """
-    db_path = tmp_path / "v2.db"
-    conn = sqlite3.connect(str(db_path))
-    try:
-        for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
-            conn.execute(statement)
-        conn.execute("ALTER TABLE ride ADD COLUMN hold_short_laps INTEGER NOT NULL DEFAULT 0")
-        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 2)")
-        conn.execute(
-            """
-            INSERT INTO ride (
-                name, event_date, venue, course_name, lap_km, organizer, scorer,
-                logo_png, planned_start, planned_duration_s, actual_start,
-                finished_at, status, entry_mode, max_team_size, plate_model,
-                min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
-                rng_seed, created_at, updated_at
-            ) VALUES (
-                'GORBA EPIC 2026', '2026-09-20', 'Sea to Sky Gondola',
-                'Sea to Sky Gondola', 8.0, 'GORBA', 'K. Singh', X'0102',
-                1789898400, 21600, NULL, NULL, 'draft', 'mixed', 4,
-                'rider_pooled', 1080, 8, 2, NULL, '["laps","total_time","high_card"]',
-                20260920, 1789898400, 1789898400
-            )
-            """
-        )
-        conn.execute(
-            """
-            INSERT INTO entry (
-                ride_id, plate, display_name, type, team_size, status, dnf_at,
-                notes, logo_card, logo_png
-            ) VALUES (1, '9', 'Dirt Dynamos', 'team', 0, 'active', NULL, '', 'AS', X'0304')
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-    store = Store.open(db_path)
-    try:
-        roster = store.roster_for(1)
-    finally:
-        store.close()
-
-    assert [entry.logo_card for entry in roster.entries] == ["AS"]
-    with closing(sqlite3.connect(str(db_path))) as conn:
-        assert (
-            conn.execute("SELECT version FROM schema_version WHERE id = 1").fetchone()[0]
-            == LATEST_SCHEMA_VERSION
-        )
-        assert LATEST_SCHEMA_VERSION == 3
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(entry)")}
-        assert "logo_png" not in columns
-        assert "logo_card" in columns
-        ride = conn.execute("SELECT name, logo_png FROM ride WHERE id = 1").fetchone()
-        assert (ride[0], bytes(ride[1])) == ("GORBA EPIC 2026", b"\x01\x02")
-
-
-def test_store_open_future_schema_version_refuses_with_version_named(
-    tmp_path: Path,
-) -> None:
-    """A newer-build database refuses to open, naming the version."""
-    db_path = tmp_path / "future.db"
-    conn = sqlite3.connect(str(db_path))
-    try:
-        conn.execute(
-            "CREATE TABLE schema_version (id INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
-        )
-        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 99)")
-        conn.commit()
-    finally:
-        conn.close()
-
-    with pytest.raises(FutureSchemaVersionError, match=re.escape("99")):
+    with pytest.raises(
+        SchemaVersionMismatchError,
+        match=re.escape(
+            f"Database schema version {stored_version} does not match this build's "
+            f"schema version {SCHEMA_VERSION}. "
+            "Rename or delete the database file to continue."
+        ),
+    ):
         Store.open(db_path)
 
 
-def test_store_open_migration_failure_rolls_back_all_ddl(tmp_path: Path) -> None:
-    """A mid-migration failure rolls back earlier DDL."""
+def test_store_open_given_a_mid_create_failure_rolls_back_to_an_empty_ledger(
+    tmp_path: Path,
+) -> None:
+    """A failure while creating v1 leaves no half-built schema behind.
+
+    The ledger table is bootstrapped first (mirroring the old migrate
+    flow), then every CREATE runs inside one explicit BEGIN; a
+    collision rolls the whole transaction back, so the database has an
+    empty ledger and none of the partially-created tables.
+    """
     db_path = tmp_path / "conflict.db"
     conn = sqlite3.connect(str(db_path))
     try:
-        # A v0-era table colliding with the last migration statement.
+        # A pre-schema table colliding with the last CREATE statement.
         conn.execute("CREATE TABLE audit (x INTEGER)")
         conn.commit()
     finally:
@@ -394,10 +308,12 @@ def test_store_open_migration_failure_rolls_back_all_ddl(tmp_path: Path) -> None
         names = {
             row[0] for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-        assert "ride" not in names  # earlier DDL was rolled back, not half-created
-        assert "audit" in names  # the v0 conflicting table survived
-        assert "schema_version" in names  # ledger bootstrapped, no version row
-        assert check.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0] == 0
+        version_rows = check.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+
+    assert "ride" not in names  # earlier DDL was rolled back, not half-created
+    assert "audit" in names  # the pre-schema conflicting table survived
+    assert "schema_version" in names  # ledger bootstrapped, no version row
+    assert version_rows == 0
 
 
 def test_store_open_retries_transient_wal_io_error(
@@ -438,7 +354,7 @@ def test_store_open_does_not_retry_persistent_errors(
 
     The retry is bounded to transient conditions; a schema collision
     ("already exists") must raise on the first attempt exactly as
-    before (test_store_open_migration_failure_rolls_back_all_ddl).
+    before (the mid-create rollback test).
     """
     calls = {"n": 0}
 
@@ -454,9 +370,9 @@ def test_store_open_does_not_retry_persistent_errors(
     assert calls["n"] == 1
 
 
-def test_store_future_schema_version_error_is_a_store_error() -> None:
+def test_store_schema_version_mismatch_error_is_a_store_error() -> None:
     """The refusal surfaces as a StoreError subclass."""
-    assert issubclass(FutureSchemaVersionError, StoreError)
+    assert issubclass(SchemaVersionMismatchError, StoreError)
 
 
 # --------------------------------------------------------- create_ride
@@ -542,15 +458,17 @@ def test_store_create_ride_hold_short_laps_column_round_trips(tmp_path: Path) ->
     assert deal_engine.config.hold_short_laps is False
 
 
-def test_store_load_engine_after_v1_migration_rebuilds_policy_false(
+def test_store_load_engine_given_a_row_without_a_policy_rebuilds_false(
     tmp_path: Path,
 ) -> None:
-    """A migrated ride replays under W4's default: never holds.
+    """A stored row that never set the policy replays as "always deal".
 
-    The v1 file upgrades with ``hold_short_laps=0``, so the rebuilt
-    config carries the always-deal default.
+    A ``ride`` row written directly -- not through ``create_ride`` --
+    still gets ``hold_short_laps=0`` from the column's NOT NULL
+    DEFAULT, so the rebuilt config never fabricates a hold it did not
+    record.
     """
-    db_path = tmp_path / "migrated.db"
+    db_path = tmp_path / "direct.db"
     conn = sqlite3.connect(str(db_path))
     try:
         for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
@@ -1832,6 +1750,90 @@ def test_store_save_roster_writes_first_and_last_name_columns(tmp_path: Path) ->
         ).fetchall()
 
     assert rows == [("Alice", ""), ("A.", "Roy"), ("K.", "Singh")]
+
+
+def test_store_save_roster_writes_the_canonical_sex_letters(tmp_path: Path) -> None:
+    """The rider table stores "M"/"F" and NULL for an unknown sex."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12", sex="F")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77", sex="M"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        rows = conn.execute(
+            "SELECT sex FROM rider"
+            " WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?) ORDER BY id",
+            (ride_id,),
+        ).fetchall()
+
+    assert rows == [("F",), ("M",), (None,)]
+
+
+@pytest.mark.parametrize("sex", ["M", "F", None])
+def test_store_save_roster_round_trips_rider_sex(tmp_path: Path, sex: str | None) -> None:
+    """Rider.sex survives save_roster -> roster_for."""
+    roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12", sex=sex)
+    db_path = tmp_path / "rides.db"
+    ride_id = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.SOLO,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    rebuilt = _round_trip_roster(db_path, ride_id)
+
+    (entry,) = rebuilt.entries
+    (rider,) = entry.riders
+    assert rider.sex == sex
+
+
+def test_store_duplicate_ride_copies_rider_sex(tmp_path: Path) -> None:
+    """R-15's roster copy carries each rider's stored sex."""
+    db_path = tmp_path / "rides.db"
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Alice", last_name="", plate="12", sex="F")
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77", sex="M"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    source_ride = _save_roster_ride(
+        db_path,
+        roster,
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+    )
+
+    store = Store.open(db_path)
+    try:
+        copy_ride = store.duplicate_ride(source_ride)
+        copied = store.roster_for(copy_ride)
+    finally:
+        store.close()
+
+    assert [
+        (rider.full_name, rider.sex) for entry in copied.entries for rider in entry.riders
+    ] == [
+        ("Alice", "F"),
+        ("A. Roy", "M"),
+        ("K. Singh", None),
+    ]
 
 
 def test_store_save_roster_round_trips_two_part_rider_names(tmp_path: Path) -> None:

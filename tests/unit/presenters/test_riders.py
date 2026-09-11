@@ -67,12 +67,12 @@ from rivercrossing.ui.presenters.riders import (
     RidersView,
     _apply_team_change,
     _pair_rows,
-    _plate_order_key,
     _rider_pairs,
     _rider_rows,
     _team_choices,
     _visible_pairs,
 )
+from rivercrossing.ui.rider_columns import plate_order_key
 
 # tests/unit/fixtures/csv/ is test_csvio.py's own fixture home (its
 # module docstring); reused here rather than re-derived, per E3.4's
@@ -102,9 +102,9 @@ class RecordingRidersView:
         """Record the rendered riders_list rows."""
         self.calls.append(("show_riders", (rows,)))
 
-    def show_team_choices(self, names: list[str]) -> None:
-        """Record the rendered team_choice content."""
-        self.calls.append(("show_team_choices", (names,)))
+    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
+        """Record the riders_list sort indicator (column, ascending)."""
+        self.calls.append(("set_sort_indicator", (column, ascending)))
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Record delete_btn's enabled state."""
@@ -221,7 +221,7 @@ def test_riders_presenter_init_given_mixed_roster_calls_view_in_order() -> None:
                 ],
             ),
         ),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers"],)),
+        ("set_sort_indicator", (None, True)),
         ("set_team_ui_visible", (True,)),
         ("show_form", ("79", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
@@ -346,7 +346,6 @@ def test_on_add_committed_refreshes_rows_and_prefills_the_next_plate() -> None:
                 ],
             ),
         ),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
         ("show_form", ("125", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
     ]
@@ -360,8 +359,8 @@ class RecordingAddRiderView:
 
     add_rider_dlg and its Edit Rider… mode share this one surface
     (1.0.12 B2): the same window, one protocol. ``show_form`` fills
-    all four fields -- the edit mode preloads the record's names, the
-    add mode passes them blank.
+    all five fields -- the edit mode preloads the record's names and
+    sex, the add mode passes the names blank and the sex unset.
     """
 
     def __init__(self) -> None:
@@ -380,11 +379,17 @@ class RecordingAddRiderView:
         """Record plate_input's enabled state (1.0.12 plate lock)."""
         self.calls.append(("set_plate_enabled", (enabled,)))
 
-    def show_form(  # noqa: PLR0913 -- test spy mirrors the view's four-field contract
-        self, *, plate: str, first_name: str, last_name: str, team: str
+    def show_form(  # noqa: PLR0913 -- test spy mirrors the view's five-field contract
+        self,
+        *,
+        plate: str,
+        first_name: str,
+        last_name: str,
+        team: str,
+        sex: str | None,
     ) -> None:
-        """Record the prefilled fields."""
-        self.calls.append(("show_form", (plate, first_name, last_name, team)))
+        """Record the prefilled fields, sex included (Phase 3)."""
+        self.calls.append(("show_form", (plate, first_name, last_name, team, sex)))
 
     def show_validation(self, message: str) -> None:
         """Record a refused-operation message."""
@@ -402,7 +407,7 @@ def test_add_rider_presenter_init_given_a_mixed_roster_renders_the_choices_and_f
         ("show_team_choices", ([SOLO_TEAM_CHOICE, "Trail Blazers"],)),
         ("set_team_ui_visible", (True,)),
         ("set_plate_enabled", (True,)),
-        ("show_form", ("79", "", "", SOLO_TEAM_CHOICE)),
+        ("show_form", ("79", "", "", SOLO_TEAM_CHOICE, None)),
     ]
 
 
@@ -416,8 +421,17 @@ def test_add_rider_presenter_init_given_a_solo_only_ride_hides_the_team_row() ->
         ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
         ("set_team_ui_visible", (False,)),
         ("set_plate_enabled", (True,)),
-        ("show_form", ("1", "", "", SOLO_TEAM_CHOICE)),
+        ("show_form", ("1", "", "", SOLO_TEAM_CHOICE, None)),
     ]
+
+
+def test_add_rider_presenter_init_given_a_blank_form_leaves_the_sex_unset() -> None:
+    """Phase 3: the Add dialog opens on the blank Sex item."""
+    view = RecordingAddRiderView()
+
+    AddRiderPresenter(view, Roster())
+
+    assert ("show_form", ("1", "", "", SOLO_TEAM_CHOICE, None)) in view.calls
 
 
 def test_add_rider_presenter_submit_given_a_solo_form_creates_the_entry_and_returns_true() -> None:
@@ -470,6 +484,55 @@ def test_add_rider_presenter_submit_given_a_relay_team_join_lands_plateless() ->
 
     team = roster.entries[0]
     assert [r.plate for r in team.riders] == [None, None, None]
+
+
+# ------------------------------------------- the Sex field (Phase 3)
+#
+# Rider.sex is "M"/"F" or None for unknown. The dialog's blank choice
+# is read as None by the view before it ever reaches the presenter
+# (views/rider_editor.sex_from_choice), so these rows are what the
+# presenter actually receives.
+
+
+@pytest.mark.parametrize(
+    ("sex", "expected"),
+    [("M", "M"), ("F", "F"), (None, None)],
+    ids=["male", "female", "unknown"],
+)
+def test_add_rider_presenter_submit_given_a_sex_persists_it_on_the_rider(
+    sex: str | None,
+    expected: str | None,
+) -> None:
+    """T-4 nullable: M, F and unknown all land on the rider."""
+    roster = Roster()
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    created = presenter.on_submit(
+        RiderFormValues(
+            plate="1", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE, sex=sex
+        )
+    )
+
+    assert created is True
+    assert roster.entries[0].riders[0].sex == expected
+
+
+def test_add_rider_presenter_submit_given_a_sex_and_a_team_join_persists_it() -> None:
+    """The join path carries the sex onto the folded-in rider too."""
+    roster = _draft_mixed_roster()
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    presenter.on_submit(
+        RiderFormValues(
+            plate="79",
+            first_name="L.",
+            last_name="Marchetti",
+            team="Trail Blazers",
+            sex="F",
+        )
+    )
+
+    assert roster.entries[0].riders[-1].sex == "F"
 
 
 def test_add_rider_presenter_submit_given_a_duplicate_plate_returns_false_and_shows_it() -> None:
@@ -568,8 +631,19 @@ def test_edit_rider_presenter_init_given_a_solo_record_preloads_the_form() -> No
         ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
         ("set_team_ui_visible", (False,)),
         ("set_plate_enabled", (True,)),
-        ("show_form", ("123", "Sam", "Ellis", SOLO_TEAM_CHOICE)),
+        ("show_form", ("123", "Sam", "Ellis", SOLO_TEAM_CHOICE, None)),
     ]
+
+
+def test_edit_rider_presenter_init_given_a_sexed_rider_preloads_the_sex() -> None:
+    """Phase 3: the Edit dialog opens on the record's own sex."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123", sex="F")
+    view = RecordingAddRiderView()
+
+    EditRiderPresenter(view, roster, entry=roster.entries[0], rider=roster.entries[0].riders[0])
+
+    assert ("show_form", ("123", "Sam", "Ellis", SOLO_TEAM_CHOICE, "F")) in view.calls
 
 
 def test_edit_rider_presenter_init_given_a_relay_member_preloads_the_entry_plate() -> None:
@@ -579,7 +653,7 @@ def test_edit_rider_presenter_init_given_a_relay_member_preloads_the_entry_plate
 
     EditRiderPresenter(view, roster, entry=roster.entries[0], rider=roster.entries[0].riders[0])
 
-    assert ("show_form", ("77", "A.", "Roy", "Trail Blazers")) in view.calls
+    assert ("show_form", ("77", "A.", "Roy", "Trail Blazers", None)) in view.calls
 
 
 def test_edit_rider_presenter_init_given_a_pooled_member_preloads_their_own_plate() -> None:
@@ -589,7 +663,7 @@ def test_edit_rider_presenter_init_given_a_pooled_member_preloads_their_own_plat
 
     EditRiderPresenter(view, roster, entry=roster.entries[0], rider=roster.entries[0].riders[0])
 
-    assert ("show_form", ("77", "A.", "Roy", "Trail Blazers")) in view.calls
+    assert ("show_form", ("77", "A.", "Roy", "Trail Blazers", None)) in view.calls
 
 
 def test_edit_rider_presenter_init_given_a_started_ride_locks_the_plate_field() -> None:
@@ -628,6 +702,54 @@ def test_edit_rider_presenter_submit_given_a_team_member_renames_only_the_rider(
 
     entry = roster.entries[0]
     assert (entry.display_name, entry.riders[0].full_name) == ("Trail Blazers", "Alex Roy")
+
+
+def test_edit_rider_presenter_submit_given_a_chosen_sex_persists_it() -> None:
+    """Phase 3: a committed edit stores the form's sex on the rider."""
+    roster = _draft_solo_roster()
+    presenter, _view = _edit_presenter(roster)
+
+    presenter.on_submit(
+        RiderFormValues(
+            plate="123", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE, sex="M"
+        )
+    )
+
+    assert roster.entries[0].riders[0].sex == "M"
+
+
+def test_edit_rider_presenter_submit_given_a_cleared_sex_unsets_it() -> None:
+    """Clearing the dropdown stores None (unknown), never "" (T-4)."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123", sex="F")
+    presenter, _view = _edit_presenter(roster)
+
+    presenter.on_submit(
+        RiderFormValues(
+            plate="123", first_name="Sam", last_name="Ellis", team=SOLO_TEAM_CHOICE, sex=None
+        )
+    )
+
+    assert roster.entries[0].riders[0].sex is None
+
+
+def test_edit_rider_presenter_submit_given_a_sex_and_a_team_move_keeps_both() -> None:
+    """The team move and the sex write-back both apply (B2)."""
+    roster = _solo_and_team_roster()
+    presenter, _view = _edit_presenter(roster)
+
+    presenter.on_submit(
+        RiderFormValues(
+            plate="123",
+            first_name="Sam",
+            last_name="Ellis",
+            team="Trail Blazers",
+            sex="F",
+        )
+    )
+
+    team = roster.entries[0]
+    assert team.riders[-1].sex == "F"
 
 
 def test_edit_rider_presenter_submit_given_a_new_plate_changes_the_solo_entry() -> None:
@@ -1105,7 +1227,6 @@ def test_on_edit_committed_refreshes_and_re_shows_the_record() -> None:
 
     assert view.calls == [
         ("show_riders", ([RiderRow(plate="123", name="Samuel Ellis", team=None)],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
         ("show_form", ("123", "Samuel", "Ellis", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (True,)),
     ]
@@ -1154,7 +1275,6 @@ def test_on_edit_committed_given_a_vanished_rider_resets_to_the_add_form() -> No
 
     assert view.calls == [
         ("show_riders", ([],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
         ("show_form", ("1", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
     ]
@@ -1517,7 +1637,6 @@ def test_on_search_text_given_no_match_shows_an_empty_list() -> None:
 
     assert view.calls == [
         ("show_riders", ([],)),
-        ("show_team_choices", ([SOLO_TEAM_CHOICE],)),
     ]
 
 
@@ -1670,6 +1789,97 @@ def test_on_sort_by_column_given_relay_plates_sorts_digits_then_strings() -> Non
     assert [row.plate for row in _searched_rows(view)] == ["2", "9", "10", "K1"]
 
 
+# ------------------------ the Sex column + sort indicator (Phase 3)
+
+
+def _sexed_roster() -> Roster:
+    """Return three DRAFT solos with M, F and no sex, in that order."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Moe", last_name="Roy", plate="1", sex="M")
+    roster.create_solo_entry(first_name="Fay", last_name="Roy", plate="2", sex="F")
+    roster.create_solo_entry(first_name="Ash", last_name="Roy", plate="3", sex=None)
+    return roster
+
+
+def test_on_sort_by_column_given_the_sex_column_orders_m_then_f_then_blank() -> None:
+    """Shared sex rule: M, then F, then unknown last (Phase 3)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _sexed_roster())
+    view.calls.clear()
+
+    presenter.on_sort_by_column(3)
+
+    assert [row.plate for row in _searched_rows(view)] == ["1", "2", "3"]
+
+
+def test_on_sort_by_column_given_the_sex_column_descending_reverses_it() -> None:
+    """The second click on Sex puts the unknowns first (T-3)."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _sexed_roster())
+    presenter.on_sort_by_column(3)
+    view.calls.clear()
+
+    presenter.on_sort_by_column(3)
+
+    assert [row.plate for row in _searched_rows(view)] == ["3", "2", "1"]
+
+
+def test_riders_presenter_init_given_a_fresh_editor_clears_the_sort_indicator() -> None:
+    """No sort is active on open, so the headers carry no marker."""
+    view = RecordingRidersView()
+
+    RidersPresenter(view, _three_solo_roster())
+
+    assert ("set_sort_indicator", (None, True)) in view.calls
+
+
+def test_on_sort_by_column_given_a_first_click_marks_it_ascending() -> None:
+    """The clicked column's header gets the ascending marker."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    view.calls.clear()
+
+    presenter.on_sort_by_column(1)
+
+    assert view.calls[-1] == ("set_sort_indicator", (1, True))
+
+
+def test_on_sort_by_column_given_a_second_click_marks_it_descending() -> None:
+    """Re-clicking flips both the order and the header marker."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_sort_by_column(1)
+    view.calls.clear()
+
+    presenter.on_sort_by_column(1)
+
+    assert view.calls[-1] == ("set_sort_indicator", (1, False))
+
+
+def test_on_sort_by_column_given_a_new_column_moves_the_marker() -> None:
+    """A different column becomes the only marked one."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_sort_by_column(1)
+    view.calls.clear()
+
+    presenter.on_sort_by_column(2)
+
+    assert view.calls[-1] == ("set_sort_indicator", (2, True))
+
+
+def test_on_search_text_given_an_active_sort_calls_nothing_but_show_riders() -> None:
+    """Searching re-renders the rows; it never touches the marker."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_sort_by_column(0)
+    view.calls.clear()
+
+    presenter.on_search_text("sam")
+
+    assert [name for name, _args in view.calls] == ["show_riders"]
+
+
 def test_on_row_selected_given_a_sort_uses_the_sorted_row_order() -> None:
     """After a plate sort, row 0 is the lowest plate's rider."""
     view = RecordingRidersView()
@@ -1695,10 +1905,10 @@ def test_on_sort_by_column_given_a_search_applies_both_narrowings() -> None:
 
 
 def test_plate_order_key_given_mixed_plates_groups_digits_before_strings() -> None:
-    """The pure key orders every digit plate before any string plate."""
+    """The shared key orders every digit plate before strings."""
     assert sorted(
         ["9", "K1", "2", "A", "10"],
-        key=_plate_order_key,
+        key=plate_order_key,
     ) == ["2", "9", "10", "A", "K1"]
 
 
@@ -1709,6 +1919,20 @@ def test_pair_rows_given_a_pair_list_builds_rows_in_that_order() -> None:
     rows = _pair_rows(roster, list(reversed(_rider_pairs(roster))))
 
     assert [row.plate for row in rows] == ["77", "2", "123"]
+
+
+def test_pair_rows_given_a_riders_own_fields_carries_sex_into_the_row() -> None:
+    """Phase 3: the Sex column reads the rider's own sex (T-4)."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123", sex="F")
+    roster.create_solo_entry(first_name="Bo", last_name="Roy", plate="2")
+
+    rows = _pair_rows(roster, _rider_pairs(roster))
+
+    assert rows == [
+        RiderRow(plate="123", name="Sam Ellis", team=None, sex="F"),
+        RiderRow(plate="2", name="Bo Roy", team=None),
+    ]
 
 
 def test_visible_pairs_given_no_filters_preserves_the_roster_order() -> None:
@@ -1805,7 +2029,7 @@ def test_plate_order_key_given_digit_plates_matches_integer_order(
     plates: list[str],
 ) -> None:
     """The numeric-aware key is monotonic in the integer value (T-7)."""
-    ordered = sorted(set(plates), key=_plate_order_key)
+    ordered = sorted(set(plates), key=plate_order_key)
 
     assert ordered == sorted(set(plates), key=int)
 
@@ -1898,7 +2122,7 @@ def test_rider_rows_given_n_teams_returns_one_row_per_rider(team_names: list[str
 def test_riders_presenter_given_load_false_skips_the_initial_render() -> None:
     """csv_preview_dlg's own pairing skips rider_editor's own render.
 
-    Its view never implements show_riders/show_team_choices/
+    Its view never implements show_riders/set_sort_indicator/
     set_team_ui_visible/show_form/set_delete_enabled for real (E3.4's
     own NotImplementedError stubs, the mirror image of
     RiderEditor's), so ``_load()`` must never call them.
@@ -2162,7 +2386,7 @@ def test_on_confirm_csv_import_given_a_clean_preview_makes_no_further_view_call(
     """A successful commit calls no RidersView member at all (E3.4).
 
     ``CsvPreviewDialog`` -- the only real caller -- never implements
-    ``show_riders``/``show_team_choices`` (module docstring's own
+    ``show_riders``/``set_sort_indicator`` (module docstring's own
     mirror-image split), so this handler must not call them: a live
     ``RiderEditor`` sees the imported roster next time it is
     (re)opened, ``RidersPresenter.__init__`` reading it fresh.
@@ -2226,5 +2450,5 @@ def test_on_export_csv_writes_the_rosters_own_header(tmp_path: Path) -> None:
 
     assert (
         path.read_text(encoding="utf-8").splitlines()[0]
-        == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES"
+        == "FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES,SEX"
     )

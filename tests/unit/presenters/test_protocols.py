@@ -144,6 +144,12 @@ class FakeConsoleView:
     def show_warning(self, title: str, message: str) -> None:
         """Record the shown warning (unused here)."""
 
+    # Phase 5: the blocked-start issues dialog joined the Protocol (the
+    # same "add the member once the presenter calls it" precedent).
+    # Behavioral coverage: tests/unit/presenters/test_console.py.
+    def show_start_blocked(self, reasons: list[str]) -> None:
+        """Record the blocked-start reasons (unused here)."""
+
     def confirm(
         self,
         _title: str,
@@ -167,6 +173,12 @@ class FakeConsoleView:
 
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the riders review rows (unused here)."""
+
+    # Phase 4: the Protocol grew the riders-list sort marker the
+    # presenter pushes after every render. Behavioral coverage lives in
+    # tests/unit/presenters/test_console.py; this stays a no-op.
+    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
+        """Record the riders-list sort marker (unused here)."""
 
 
 class FakeSetupView:
@@ -241,7 +253,7 @@ class FakeRidersView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """No-op fake."""
 
-    def show_team_choices(self, names: list[str]) -> None:
+    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
         """No-op fake."""
 
     def set_delete_enabled(self, *, enabled: bool) -> None:

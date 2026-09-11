@@ -6,14 +6,15 @@ Phase 2 replaces spec S7's two CSV shapes -- relay
 one-row-per-rider ``plate,name,team_name,notes``, selected by the ride's
 plate model -- with ONE unified, header-mapped format. The file's actual
 header row resolves to canonical fields (:func:`_map_header`) through an
-ordered matcher list -- TEAMNAME, TYPE, FIRSTNAME, LASTNAME, NUMBER,
-NOTES -- first match per column wins, all case-insensitive, and a column
-matching nothing is ignored. Every data row is one RIDER; rows with
-neither first nor last name are skipped (the trailing footer/empty rows
-registration exports carry), unless they still name a plate/team/type,
-which is a missing-name conflict instead of a silent drop. TYPE is
-``solo``/``team`` after case folding (blank derives: team when a
-TEAMNAME is present, else solo); team rows group by TEAMNAME's
+ordered matcher list -- TEAMNAME, TYPE, FIRSTNAME, LASTNAME, SEX,
+NUMBER, NOTES -- first match per column wins, all case-insensitive, and
+a column matching nothing is ignored. Every data row is one RIDER;
+rows with neither first nor last name are skipped (the trailing
+footer/empty rows registration exports carry), unless they still
+name a plate/team/type, which is a missing-name conflict instead
+of a silent drop. TYPE is ``solo``/``team`` after case folding
+(blank derives: team when a TEAMNAME is present, else solo); team
+rows group by TEAMNAME's
 normalized form -- trim, collapse internal whitespace, lowercase, "a
 team name is its normalized form" -- across the whole file, never by
 adjacency, so "BNBA1" and "BNBA 1" are two teams while "Full Send" and
@@ -28,7 +29,11 @@ string -- W7's resolution of the csvio-vs-roster docstring
 contradiction, recorded here and in roster.py: blank plates are
 refused by the roster, and this module auto-assigns a blank NUMBER
 cell before the roster ever sees it; the roster only derives from
-numbers under ``rider_pooled``).
+numbers under ``rider_pooled``). SEX is the rider's sex: the
+registration forms' ``Male``/``Female`` and this app's own ``M``/``F``
+both normalize to the one canonical letter, blank (or an absent SEX
+column) means unknown, and any other non-blank cell is a per-row
+conflict -- never a silent guess at someone's sex.
 
 :func:`preview` reads the file and reports every conflict found without
 raising for content problems and without writing anything -- to the
@@ -49,12 +54,13 @@ record this once Store arrives.
 
 **Match/insert/reshape (R-21, spec S7:173-177).** ``commit`` matches a
 parsed entry on its plate: an existing entry updates that entry's
-name/notes (and a solo match's rider first/last, the same rename the
-rider editor performs) in place; a new plate inserts. A row's ride-model
-composition -- a relay entry's rider set, a pooled rider's team
-membership -- may also *reshape* an existing match, applying every
-change through the roster's own mutators (so it is fully audit-logged)
-subject to the same lock matrix E3.1.2 already governs edits with:
+name/notes (and a solo match's rider first/last and sex, the same
+edit the rider editor performs) in place; a new plate inserts. A
+row's ride-model composition -- a relay entry's rider set, a pooled
+rider's team membership -- may also *reshape* an existing match,
+applying every change through the roster's own mutators (so it is
+fully audit-logged) subject to the same lock matrix E3.1.2 already
+governs edits with:
 DRAFT reshapes freely; once started, relay keeps its permanent lock,
 while pooled keeps team-to-team moves open per
 :func:`~rivercrossing.roster.can_move_rider` (spec S7:171 -- "a changed
@@ -89,11 +95,11 @@ commit-then-export-then-preview round trip reproduces the same
 
 **Export (E3.3.3).** ``export(ride, path, *, placed=None)`` writes
 *ride*'s current roster in the same unified shape :func:`preview`
-reads -- one row per rider, header
-``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,NUMBER,NOTES`` -- so an export of a
-conflict-free preview's target therefore previews clean again (spec
-§7's own "export mirrors the columns"; task-briefs.md E3.3.3's
-round-trip property). Under ``rider_pooled`` each row carries its
+reads -- one row per rider, header ``FIRSTNAME,LASTNAME,TYPE,TEAMNAME,
+NUMBER,NOTES,SEX`` -- so an export of a conflict-free preview's target
+therefore previews clean again (spec §7's own "export mirrors the
+columns"; task-briefs.md E3.3.3's round-trip property). Under
+``rider_pooled`` each row carries its
 rider's own plate; under ``team_relay`` every member row of a team
 carries the team's single plate. Passing *placed* -- a sequence of
 :class:`rivercrossing.standings.Placed` from EPIC 6's rankings, the
@@ -108,7 +114,7 @@ machine-readable, decided for P3: laps an int, cards
 numeric seconds (``repr``-clean) -- human formatting belongs to the
 HTML/PDF exports only. The standalone spec §15 standings CSV ships as
 :func:`export_standings` (E6.4.2): rows ``place, plate, entry, type,
-laps, hand`` -- the ``type`` column carries each row's entry kind
+sex, laps, hand`` -- the ``type`` column carries each row's entry kind
 (``team``/``solo``, Phase 3's team/solo results split) -- plus a
 raw-seconds ``total_time`` column when asked (R-63).
 
@@ -165,13 +171,18 @@ _FINISHED_COLUMNS = ("laps", "cards", "best_hand", "total_time")
 _MISSING_NAME_PROBLEM = "missing name"
 _NOT_UTF8_PROBLEM = "file is not valid UTF-8 text"
 _SOLO_ONLY_TEAM_PROBLEM = "team entries are not allowed on a solo-only ride"
-_UNIFIED_COLUMNS = ("FIRSTNAME", "LASTNAME", "TYPE", "TEAMNAME", "NUMBER", "NOTES")
+_UNIFIED_COLUMNS = ("FIRSTNAME", "LASTNAME", "TYPE", "TEAMNAME", "NUMBER", "NOTES", "SEX")
 
 _TEAM_NAME_PATTERN = re.compile(r"team\s*name", re.IGNORECASE)
 _FIRST_NAME_PATTERN = re.compile(r"first\s*name", re.IGNORECASE)
 _LAST_NAME_PATTERN = re.compile(r"last\s*name", re.IGNORECASE)
 _NUMBER_PATTERN = re.compile(r"\s*(?:number|plate|bib)\s*", re.IGNORECASE)
 _NOTES_PATTERN = re.compile(r"\bnotes?\b", re.IGNORECASE)
+_SEX_PATTERN = re.compile(r"\bsex\b", re.IGNORECASE)
+
+# Both spellings in the wild: the registration forms write Male/Female,
+# this app's own export writes M/F.
+_SEX_ALIASES = {"male": "M", "m": "M", "female": "F", "f": "F"}
 
 
 class CsvIoError(Exception):
@@ -190,11 +201,12 @@ def _map_header(header_row: Sequence[str]) -> dict[str, int]:
     r"""Map each header column to one canonical field (Phase 2 spec).
 
     The ordered matcher list is TEAMNAME, TYPE, FIRSTNAME, LASTNAME,
-    NUMBER, NOTES; for every column the first matcher that fires claims
-    it, and a column matching nothing is ignored. All matching is
+    SEX, NUMBER, NOTES; for every column the first matcher that fires
+    claims it, and a column matching nothing is ignored. All matching is
     case-insensitive. The canonical export tokens map too -- FIRSTNAME
-    via ``first\\s*name``, TEAMNAME via ``team\\s*name``, TYPE via its
-    exact token -- so an app-written export round-trips.
+    via ``first\\s*name``, TEAMNAME via ``team\\s*name``, SEX via
+    ``\\bsex\\b``, TYPE via its exact token -- so an app-written export
+    round-trips.
 
     Args:
         header_row: The file's header cells, in column order.
@@ -208,6 +220,7 @@ def _map_header(header_row: Sequence[str]) -> dict[str, int]:
         ("TYPE", _is_type_header),
         ("FIRSTNAME", lambda header: _FIRST_NAME_PATTERN.search(header) is not None),
         ("LASTNAME", lambda header: _LAST_NAME_PATTERN.search(header) is not None),
+        ("SEX", lambda header: _SEX_PATTERN.search(header) is not None),
         ("NUMBER", lambda header: _NUMBER_PATTERN.fullmatch(header) is not None),
         ("NOTES", lambda header: _NOTES_PATTERN.search(header) is not None),
     )
@@ -253,11 +266,13 @@ class ParsedRider:
     equal, which is exactly what a preview assertion needs. ``plate``
     is the rider's own plate under ``rider_pooled``; under
     ``team_relay`` riders stay plateless (the entry owns the plate).
+    ``sex`` is already normalized to ``"M"``/``"F"``/``None``.
     """
 
     first_name: str
     last_name: str
     plate: str | None = None
+    sex: str | None = None
 
     @property
     def full_name(self) -> str:
@@ -539,7 +554,7 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
 def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool = False) -> None:
     """Write *placed* as the spec §15 standings CSV to *path* (E6.4.2).
 
-    Rows are ``place, plate, entry, type, laps, hand`` with a
+    Rows are ``place, plate, entry, type, sex, laps, hand`` with a
     ``total_time`` column appended when *show_times* -- raw numeric
     seconds, consistent with :func:`export`'s finished-ride columns
     (CSVs are machine-readable; human formatting is the HTML/PDF
@@ -547,10 +562,12 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
     ``solo`` from ``Placed.result.kind`` (Phase 3's team/solo results
     split: the caller feeds the two ranked groups Teams-then-Solo, so
     the kind column labels each section and the places are per-kind).
-    DNF entries keep their row with their laps and cards (R-33); an
-    entry that never crossed renders a blank hand. The write is atomic
-    (R-52), exactly like :func:`export`: staged in a same-directory
-    temp file, then swapped over *path* with :func:`os.replace`.
+    ``sex`` (E7) is the solo rider's ``M``/``F`` and blank for a team,
+    which has no single sex. DNF entries keep their row with their
+    laps and cards (R-33); an entry that never crossed renders a blank
+    hand. The write is atomic (R-52), exactly like :func:`export`:
+    staged in a same-directory temp file, then swapped over *path*
+    with :func:`os.replace`.
 
     Args:
         placed: Ranked standings, one row each (teams then solo).
@@ -559,7 +576,7 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
         show_times: Append the ``total_time`` column (R-63: times
             only when the export setting says so).
     """
-    header = ["place", "plate", "entry", "type", "laps", "hand"]
+    header = ["place", "plate", "entry", "type", "sex", "laps", "hand"]
     if show_times:
         header.append("total_time")
     rows: list[list[str]] = []
@@ -570,6 +587,7 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
             result.plate,
             result.name,
             result.kind,
+            result.sex or "",
             str(result.laps),
             hand_name(result.hand) if result.cards else "",
         ]
@@ -590,6 +608,7 @@ class _DataRow:
     team_name: str
     number: str
     notes: str
+    sex: str | None = None
 
 
 def _cell(row: Sequence[str], mapping: Mapping[str, int], field: str) -> str:
@@ -610,6 +629,8 @@ def _read_data_rows(
     case it is a missing-name conflict (a plated rider is never
     silently dropped). TYPE resolves to solo/team (blank derives from
     TEAMNAME); an unrecognized type value conflicts and is excluded.
+    SEX normalizes to M/F/unknown; an unrecognized value conflicts and
+    is excluded the same way.
     """
     rows: list[_DataRow] = []
     conflicts: list[ImportConflict] = []
@@ -623,6 +644,10 @@ def _read_data_rows(
         if not first_name and not last_name:
             if number or team_raw or type_field:
                 conflicts.append(ImportConflict(row_num, _MISSING_NAME_PROBLEM))
+            continue
+        sex, sex_problem = _classify_sex(_cell(raw_row, mapping, "SEX"))
+        if sex_problem is not None:
+            conflicts.append(ImportConflict(row_num, sex_problem))
             continue
         team_name = _normalize_team_name(team_raw) if team_raw else ""
         kind = _classify_row(type_field, team_name)
@@ -644,9 +669,28 @@ def _read_data_rows(
                 team_name=team_key,
                 number=number,
                 notes=notes,
+                sex=sex,
             )
         )
     return rows, conflicts
+
+
+def _classify_sex(value: str) -> tuple[str | None, str | None]:
+    """Return *value*'s canonical sex and any conflict text.
+
+    ``Male``/``male``/``M``/``m`` map to ``"M"`` and
+    ``Female``/``female``/``F``/``f`` to ``"F"``; blank is
+    ``(None, None)`` -- unknown, not a conflict. Any other non-blank
+    value is ``(None, "invalid sex ...")``, the same shape as
+    :func:`_classify_row`'s unknown-TYPE conflict.
+    """
+    lowered = value.lower()
+    if not lowered:
+        return None, None
+    canonical = _SEX_ALIASES.get(lowered)
+    if canonical is None:
+        return None, f"invalid sex {value!r}"
+    return canonical, None
 
 
 def _classify_row(type_field: str, team_name: str) -> str:
@@ -939,7 +983,7 @@ def _relay_solo_entry(
 ) -> tuple[ParsedEntry, str | None]:
     """Build one relay solo ParsedEntry from *row*."""
     plate = row.number or allocator.allocate()
-    parsed_rider = ParsedRider(first_name=row.first_name, last_name=row.last_name)
+    parsed_rider = ParsedRider(first_name=row.first_name, last_name=row.last_name, sex=row.sex)
     parsed = ParsedEntry(
         plate=plate,
         display_name=parsed_rider.full_name,
@@ -970,7 +1014,8 @@ def _relay_team_entry(
     if not plate:
         plate = allocator.allocate()
     riders = tuple(
-        ParsedRider(first_name=row.first_name, last_name=row.last_name) for row in group_rows
+        ParsedRider(first_name=row.first_name, last_name=row.last_name, sex=row.sex)
+        for row in group_rows
     )
     notes = "; ".join(row.notes for row in group_rows if row.notes)
     parsed = ParsedEntry(
@@ -1046,7 +1091,9 @@ def _assemble_pooled(
         if plate in seen_plates:
             conflicts.append(ImportConflict(row.row, _duplicate_plate_problem(plate)))
         seen_plates.add(plate)
-        parsed_rider = ParsedRider(first_name=row.first_name, last_name=row.last_name, plate=plate)
+        parsed_rider = ParsedRider(
+            first_name=row.first_name, last_name=row.last_name, plate=plate, sex=row.sex
+        )
         if row.is_team:
             groups.setdefault(row.team_name, []).append((row.row, parsed_rider, row.notes))
             continue
@@ -1213,6 +1260,7 @@ def _commit_pooled_solo(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
             first_name=parsed_rider.first_name,
             last_name=parsed_rider.last_name,
             plate=parsed.plate,
+            sex=parsed_rider.sex,
         )
         if parsed.notes:
             ctx.ride.update_entry(entry, notes=parsed.notes)
@@ -1263,6 +1311,7 @@ def _form_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry) -> None:
                     first_name=parsed_rider.first_name,
                     last_name=parsed_rider.last_name,
                     plate=plate,
+                    sex=parsed_rider.sex,
                 )
             )
         else:
@@ -1313,6 +1362,7 @@ def _join_pooled_team(ctx: _PooledCtx, parsed: ParsedEntry, target: Entry) -> No
             first_name=parsed_rider.first_name,
             last_name=parsed_rider.last_name,
             plate=plate,
+            sex=parsed_rider.sex,
         )
         ctx.ride.add_rider_to_team(new_rider, to_entry=target)
         ctx.index[plate] = (target, new_rider)
@@ -1335,9 +1385,31 @@ def _commit_relay(ride: Roster, entries: Sequence[ParsedEntry]) -> tuple[int, in
             ride.delete_entry(existing)
             _insert_relay_entry(ride, parsed)
             updated += 1
-        elif _update_name_notes(ride, existing, parsed):
-            updated += 1
+        else:
+            # Both must run: an `or` would short-circuit past the rename
+            # whenever a sex edit already reported a change.
+            sex_changed = _update_relay_sexes(existing, parsed)
+            if _update_name_notes(ride, existing, parsed) or sex_changed:
+                updated += 1
     return inserted, updated
+
+
+def _update_relay_sexes(existing: Entry, parsed: ParsedEntry) -> bool:
+    """Apply each parsed rider's sex onto the matched rider.
+
+    Returns True when at least one rider's sex changed. A matched
+    relay entry reaching here has an unchanged rider composition
+    (:func:`_relay_composition_changed`), so the two rider tuples line
+    up positionally. Sex rides along with the name/notes update -- a
+    re-imported sex edit must land on the existing rider, not only on
+    a freshly inserted one.
+    """
+    changed = False
+    for rider, parsed_rider in zip(existing.riders, parsed.riders, strict=True):
+        if rider.sex != parsed_rider.sex:
+            rider.sex = parsed_rider.sex
+            changed = True
+    return changed
 
 
 def _insert_relay_entry(ride: Roster, parsed: ParsedEntry) -> None:
@@ -1348,17 +1420,22 @@ def _insert_relay_entry(ride: Roster, parsed: ParsedEntry) -> None:
             first_name=parsed_rider.first_name,
             last_name=parsed_rider.last_name,
             plate=parsed.plate,
+            sex=parsed_rider.sex,
         )
     elif len(parsed.riders) == 1:
         parsed_rider = parsed.riders[0]
         entry = ride.create_team_entry_of_one(
             display_name=parsed.display_name,
-            rider=Rider(first_name=parsed_rider.first_name, last_name=parsed_rider.last_name),
+            rider=Rider(
+                first_name=parsed_rider.first_name,
+                last_name=parsed_rider.last_name,
+                sex=parsed_rider.sex,
+            ),
             plate=parsed.plate,
         )
     else:
         riders = [
-            Rider(first_name=rider.first_name, last_name=rider.last_name)
+            Rider(first_name=rider.first_name, last_name=rider.last_name, sex=rider.sex)
             for rider in parsed.riders
         ]
         entry = ride.create_team_entry(
@@ -1372,9 +1449,9 @@ def _update_solo_entry(ride: Roster, entry: Entry, parsed: ParsedEntry) -> bool:
     """Rename a matched solo entry's rider and display; True if changed.
 
     Mirrors the rider editor's own save path: the rider's first/last
-    fields are updated in place and, when the display name changes,
-    ``update_entry`` logs the rename (name fixes stay open in any
-    ride state).
+    fields and sex are updated in place and, when the display name
+    changes, ``update_entry`` logs the rename (name fixes stay open in
+    any ride state).
     """
     parsed_rider = parsed.riders[0]
     rider = entry.riders[0]
@@ -1384,6 +1461,9 @@ def _update_solo_entry(ride: Roster, entry: Entry, parsed: ParsedEntry) -> bool:
         rider_changed = True
     if rider.last_name != parsed_rider.last_name:
         rider.last_name = parsed_rider.last_name
+        rider_changed = True
+    if rider.sex != parsed_rider.sex:
+        rider.sex = parsed_rider.sex
         rider_changed = True
     changes: dict[str, str] = {}
     if entry.display_name != parsed.display_name:
@@ -1464,7 +1544,9 @@ def _entry_rows(ride: Roster, entry: Entry) -> list[list[str]]:
     A team's ``notes`` is written on its first member row only -- the
     export half of the notes-join rule (module docstring) -- so
     re-importing joins it right back onto that one value; a solo entry
-    has only the one row, so its own notes always land on it.
+    has only the one row, so its own notes always land on it. Each
+    row's last cell is the rider's own SEX (blank when unknown),
+    matching ``_UNIFIED_COLUMNS``'s order.
     """
     type_field = "team" if entry.type is EntryType.TEAM else "solo"
     team_name = entry.display_name if entry.type is EntryType.TEAM else ""
@@ -1476,6 +1558,7 @@ def _entry_rows(ride: Roster, entry: Entry) -> list[list[str]]:
             team_name,
             _rider_number(ride, entry, rider),
             entry.notes if index == 0 else "",
+            rider.sex or "",
         ]
         for index, rider in enumerate(entry.riders)
     ]

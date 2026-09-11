@@ -17,6 +17,14 @@ way ``test_std_dialogs.py`` swaps ``wx.MessageDialog``.
 The second half pins the copy H2 moved out of the four retired XRC
 dialogs, so the ride-naming sentences those windows carried cannot
 go blank unnoticed (UX-DESKTOP §4: a confirm names its object).
+
+Phase 6 adds the two dialogs' own default size. XRC has no
+window-level minsize, so each view's ``_apply_min_size`` fits the
+built dialog and then floors *and* opens it at 3x the fitted width
+and 2x the fitted height. A real ``wx.Dialog`` needs a desktop, so
+these tests drive the same kind of recording window double the seam
+tests above use and call the sizing step directly -- the constructor
+next to it binds every control the .xrc window carries.
 """
 
 import json
@@ -30,6 +38,8 @@ from hypothesis import strategies as st
 
 from rivercrossing.ui.logging import VERBOSE_LOG_NAME, VerboseLog
 from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.views.rider_editor import CsvPreviewDialog, RiderEditor
+from rivercrossing.ui.views.rider_issues import RiderIssuesView
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -290,3 +300,147 @@ def test_ride_confirm_messages_given_any_ride_name_embed_it_verbatim(
 
     assert duplicate.count(f'"{ride_name}"') == 1
     assert reopen.count(f'"{ride_name}"') == 1
+
+
+# --- Phase 6: the two dialogs' 3x-wide / 2x-tall default size ---------
+
+
+class _SizingDialog:
+    """A dialog double recording every sizing call the SUT makes."""
+
+    def __init__(self, fitted: tuple[int, int] = (400, 300)) -> None:
+        """Report *fitted* from GetSize, like a just-Fit() dialog."""
+        self._fitted = wx.Size(*fitted)
+        self.calls: list[str] = []
+        self.min_size: wx.Size | None = None
+        self.size: wx.Size | None = None
+
+    def Fit(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the fitting call."""
+        self.calls.append("Fit")
+
+    def GetSize(self) -> wx.Size:  # noqa: N802 -- wx API name the SUT calls
+        """Record the read and report the fitted size."""
+        self.calls.append("GetSize")
+        return wx.Size(self._fitted)
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the floor the SUT applied."""
+        self.calls.append("SetMinSize")
+        self.min_size = size
+
+    def SetSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the size the SUT opened the dialog at."""
+        self.calls.append("SetSize")
+        self.size = size
+
+
+# The two Phase 6 dialogs: both scale their fitted size the same way.
+_DIALOG_VIEWS: list[type[CsvPreviewDialog | RiderIssuesView]] = [
+    CsvPreviewDialog,
+    RiderIssuesView,
+]
+_DIALOG_VIEW_IDS = ["csv_preview_dlg", "rider_issues_dlg"]
+
+
+def _view_over(
+    view_class: type[CsvPreviewDialog | RiderEditor | RiderIssuesView],
+    dialog: _SizingDialog,
+) -> CsvPreviewDialog | RiderEditor | RiderIssuesView:
+    """Return *view_class* over *dialog*, no .xrc window loaded.
+
+    ``__init__`` binds every control the .xrc window carries, which
+    needs a desktop; the sizing step beside it reads only
+    ``self.dialog``, so the instance is made without it -- the window
+    itself is the same kind of stand-in the seam tests above use.
+    """
+    view = object.__new__(view_class)
+    view.dialog = dialog
+    return view
+
+
+@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
+def test_dialog_view_apply_min_size_given_a_fitted_size_floors_it_at_three_by_two(
+    view_class: type[CsvPreviewDialog | RiderIssuesView],
+) -> None:
+    """Phase 6: the floor is 3x the fitted width and 2x its height."""
+    dialog = _SizingDialog(fitted=(400, 300))
+
+    _view_over(view_class, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == (1200, 600)
+
+
+@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
+def test_dialog_view_apply_min_size_given_a_fitted_size_opens_it_at_the_scaled_size(
+    view_class: type[CsvPreviewDialog | RiderIssuesView],
+) -> None:
+    """The dialog opens at the floor, not merely bounded by it."""
+    dialog = _SizingDialog(fitted=(400, 300))
+
+    _view_over(view_class, dialog)._apply_min_size()
+
+    assert (dialog.size.width, dialog.size.height) == (1200, 600)
+
+
+@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
+def test_dialog_view_apply_min_size_measures_the_fitted_size_before_scaling(
+    view_class: type[CsvPreviewDialog | RiderIssuesView],
+) -> None:
+    """Scale what Fit() just measured, never a stale size."""
+    dialog = _SizingDialog(fitted=(400, 300))
+
+    _view_over(view_class, dialog)._apply_min_size()
+
+    assert (dialog.calls, (dialog.min_size.width, dialog.min_size.height)) == (
+        ["Fit", "GetSize", "SetMinSize", "SetSize"],
+        (1200, 600),
+    )
+
+
+_SCALE_CASES = [
+    ((0, 0), (0, 0)),  # T-4 boundary: below any real fitted size
+    ((1, 1), (3, 2)),  # T-4 boundary: min
+    ((2, 3), (6, 6)),  # T-4 boundary: min + 1
+    ((640, 320), (1920, 640)),  # a realistic fitted dialog
+]
+
+
+@pytest.mark.parametrize(("fitted", "expected"), _SCALE_CASES)
+def test_dialog_view_apply_min_size_given_boundary_fitted_sizes_scales_by_three_and_two(
+    fitted: tuple[int, int],
+    expected: tuple[int, int],
+) -> None:
+    """Every fitted size scales by exactly 3 and 2 (T-4)."""
+    dialog = _SizingDialog(fitted=fitted)
+
+    _view_over(CsvPreviewDialog, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
+
+
+@given(
+    view_class=st.sampled_from(_DIALOG_VIEWS),
+    width=st.integers(min_value=0, max_value=10_000),
+    height=st.integers(min_value=0, max_value=10_000),
+)
+def test_dialog_view_apply_min_size_given_any_fitted_size_scales_width_by_three(
+    view_class: type[CsvPreviewDialog | RiderIssuesView],
+    width: int,
+    height: int,
+) -> None:
+    """T-7 property: the floor is always 3x width, 2x height."""
+    dialog = _SizingDialog(fitted=(width, height))
+
+    _view_over(view_class, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == (width * 3, height * 2)
+
+
+def test_rider_editor_apply_min_size_given_the_w7_canvas_keeps_its_own_floor() -> None:
+    """Phase 6 leaves the editor's own 1280x560 floor alone."""
+    dialog = _SizingDialog(fitted=(10, 10))
+
+    _view_over(RiderEditor, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == (1280, 560)

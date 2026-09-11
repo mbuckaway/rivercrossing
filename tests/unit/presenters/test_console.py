@@ -44,6 +44,7 @@ from rivercrossing.ride import (
     RideConfig,
     RideEngine,
     RideStatus,
+    StartBlockedError,
 )
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.standings import (
@@ -67,6 +68,7 @@ from rivercrossing.ui.presenters.data_source import (
     corrected_crossing_keys,
     format_duration,
 )
+from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 
 # -------------------------------------------------------------- helpers
 
@@ -150,6 +152,27 @@ def _solo_only_engine() -> tuple[RideEngine, _FakeDatetimeClock]:
     return engine, clock
 
 
+def _column_index(label: str) -> int:
+    """Return *label*'s index in the console's shared column order."""
+    return next(
+        index for index, column in enumerate(CONSOLE_RIDER_COLUMNS) if column.label == label
+    )
+
+
+def _name_order_roster() -> Roster:
+    """Build a roster whose own order is no column's sort order.
+
+    Two solo entries, "Zoe" (plate 34) first and "Amy" (plate 12)
+    second: the source lists them 34, 12 -- so a Name sort (12, 34)
+    and a Plate sort (12, 34) are both visibly different from the
+    unsorted source order.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Zoe", last_name="", plate="34")
+    roster.create_solo_entry(first_name="Amy", last_name="", plate="12")
+    return roster
+
+
 def _record(  # noqa: PLR0913 -- seeded crossing helper: (engine, clock, plate) + lap_time_s
     engine: RideEngine,
     clock: _FakeDatetimeClock,
@@ -186,6 +209,9 @@ class FakeConsoleView:
         self.last_flagged: list[FeedRow] = []
         self.last_riders: list[RiderRow] = []
         self.last_hide: bool | None = None
+        # Phase 4: the riders list's ▲/▼ marker state the presenter
+        # pushes after every render (None == no active sort).
+        self.last_sort_indicator: tuple[int | None, bool] | None = None
         # W12: the teams-chip visibility verdict the presenter pushes
         # at construction (R-11: solo-only rides hide the Teams chip).
         self.team_visible: bool | None = None
@@ -196,6 +222,9 @@ class FakeConsoleView:
         self.start_enabled: bool | None = None
         self.undo_enabled: bool | None = None
         self.last_warning: tuple[str, str] | None = None
+        # Phase 5: the blocked-start issue dialog's reasons (None means
+        # the dialog was never opened).
+        self.last_start_blocked: list[str] | None = None
         self.last_confirm: tuple[str, str, str, str] | None = None
         self.confirm_result: bool = False
         self._presenter: ConsolePresenter | None = None
@@ -275,6 +304,10 @@ class FakeConsoleView:
         """Record the shown warning (W5)."""
         self.last_warning = (title, message)
 
+    def show_start_blocked(self, reasons: list[str]) -> None:
+        """Record the blocked-start dialog's reasons (Phase 5)."""
+        self.last_start_blocked = list(reasons)
+
     def confirm(  # noqa: PLR0913 -- mirrors std_dialogs.show_confirm's (title, message) + 2 labels
         self,
         title: str,
@@ -300,6 +333,10 @@ class FakeConsoleView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the riders review rows (WS-H)."""
         self.last_riders = list(rows)
+
+    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
+        """Record the riders-list sort marker state (Phase 4)."""
+        self.last_sort_indicator = (column, ascending)
 
 
 def _make_presenter(
@@ -711,13 +748,18 @@ def test_engine_data_source_audit_rows_maps_engine_events_newest_first() -> None
 
 
 def test_engine_data_source_riders_maps_roster_entries_and_team_members() -> None:
-    """Rider editor rows project solo and pooled team members."""
+    """Rider editor rows project solo and pooled team members.
+
+    Phase 4: every row now carries the rider's own ``sex`` as well;
+    no crossings are recorded here, so every row's ``cards`` is the
+    empty house default.
+    """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123", sex="F")
     roster.create_team_entry(
         display_name="Trail Blazers",
         riders=[
-            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="A.", last_name="Roy", plate="77", sex="M"),
             Rider(first_name="K.", last_name="Singh", plate="78"),
         ],
     )
@@ -727,10 +769,72 @@ def test_engine_data_source_riders_maps_roster_entries_and_team_members() -> Non
     rows = source.riders()
 
     assert rows == [
-        RiderRow(plate="123", name="Sam Ellis", team=None),
-        RiderRow(plate="77", name="A. Roy", team="Trail Blazers"),
-        RiderRow(plate="78", name="K. Singh", team="Trail Blazers"),
+        RiderRow(plate="123", name="Sam Ellis", team=None, sex="F", cards=()),
+        RiderRow(plate="77", name="A. Roy", team="Trail Blazers", sex="M", cards=()),
+        RiderRow(plate="78", name="K. Singh", team="Trail Blazers", sex=None, cards=()),
     ]
+
+
+def test_engine_data_source_riders_given_a_solo_crossing_fills_sex_and_credited_cards() -> None:
+    """Phase 4: the Cards cell is the entry's credited codes."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="12", sex="F")
+    engine, clock = _make_engine(roster=roster)
+    engine.start()
+    result = _record(engine, clock, "12", lap_time_s=100)
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert rows == [
+        RiderRow(plate="12", name="Sam Ellis", team=None, sex="F", cards=(result.card.code(),))
+    ]
+
+
+def test_engine_data_source_riders_given_a_team_crossing_shares_the_entrys_cards() -> None:
+    """Cards belong to the entry: every member row shares them."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77", sex="M"),
+            Rider(first_name="K.", last_name="Singh", plate="78", sex="F"),
+        ],
+    )
+    engine, clock = _make_engine(roster=roster)
+    engine.start()
+    result = _record(engine, clock, "77", lap_time_s=100)
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert [(row.plate, row.sex, row.cards) for row in rows] == [
+        ("77", "M", (result.card.code(),)),
+        ("78", "F", (result.card.code(),)),
+    ]
+
+
+def test_engine_data_source_riders_given_a_held_crossing_leaves_cards_empty() -> None:
+    """R-34: a held card is not credited, so the row shows no code."""
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
+    _record(engine, clock, "12", lap_time_s=5)  # 5 s < 60 s min lap
+    source = EngineDataSource(engine, engine._roster)
+
+    rows = source.riders()
+
+    assert [row.cards for row in rows] == [(), ()]
+
+
+def test_engine_data_source_riders_given_unknown_rider_sex_renders_none() -> None:
+    """T-4 nullable: a rider with no recorded sex stays ``None``."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="12")
+    engine, _clock = _make_engine(roster=roster)
+    source = EngineDataSource(engine, roster)
+
+    rows = source.riders()
+
+    assert [row.sex for row in rows] == [None]
 
 
 # -------------------------------------------------------------- rides
@@ -994,39 +1098,64 @@ def test_on_start_given_finished_ride_shows_a_notice() -> None:
     assert engine.state is RideStatus.FINISHED
 
 
-# ---------------------------------------- W5 blocked-start warnings
+# ---------------------------------- Phase 5 blocked-start issues dialog
 
 
-def test_on_start_given_empty_roster_shows_warning_with_exact_copy() -> None:
-    """W5: an empty roster's refusal is a warning, never a notice."""
+def test_on_start_given_empty_roster_shows_the_issues_dialog_with_its_reason() -> None:
+    """Phase 5: an empty roster's refusal opens the issues dialog."""
     engine, _clock = _make_engine(roster=_roster_with_entries())
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
 
     presenter.on_start()
 
-    assert view.last_warning == (
-        "Cannot Start Ride",
-        "Cannot start ride: roster has no riders",
-    )
+    assert view.last_start_blocked == ["roster has no riders"]
     assert engine.state is RideStatus.DRAFT
     assert view.last_notice is None
 
 
-def test_on_start_given_incomplete_setup_shows_warning_with_prefixed_reasons() -> None:
-    """W5: every other blocked-start reason shares the same prefix."""
-    config = dataclasses.replace(_config(), scorer="")
+def test_on_start_given_blocked_start_shows_no_native_warning() -> None:
+    """Phase 5: blocked start opens the dialog, never show_warning."""
+    engine, _clock = _make_engine(roster=_roster_with_entries())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_start()
+
+    assert view.last_warning is None
+    assert view.last_start_blocked == ["roster has no riders"]
+
+
+def test_on_start_given_incomplete_setup_shows_the_dialog_with_every_reason() -> None:
+    """Phase 5: each setup violation is its own dialog line."""
+    config = dataclasses.replace(_config(), scorer="", venue="")
     engine, _clock = _make_engine(config=config)
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
 
     presenter.on_start()
 
-    assert view.last_warning == (
-        "Cannot Start Ride",
-        "Cannot start ride: ride setup is incomplete: scorer is required",
-    )
+    assert view.last_start_blocked == ["venue is required", "scorer is required"]
     assert engine.state is RideStatus.DRAFT
+
+
+def test_on_start_given_an_empty_reasons_tuple_shows_an_empty_dialog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 5: the engine's reasons are shown verbatim."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    def _refuse() -> None:
+        raise StartBlockedError("no issues listed", reasons=())
+
+    monkeypatch.setattr(engine, "start", _refuse)
+
+    presenter.on_start()
+
+    assert view.last_start_blocked == []
+    assert view.last_notice is None
 
 
 # ------------------------------------------ W5 stop-request flow
@@ -1250,6 +1379,89 @@ def test_on_hide_times_forwards_the_setting_to_the_view(hide: bool) -> None:  # 
     presenter.on_hide_times(hide=hide)
 
     assert view.last_hide is hide
+
+
+# --------------------------------------------------------- riders sort
+
+
+def test_refresh_riders_given_no_active_sort_keeps_the_source_order() -> None:
+    """Before any header click the rows keep the source's own order."""
+    engine, _clock = _make_engine(roster=_name_order_roster())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+
+    assert [row.plate for row in view.last_riders] == ["34", "12"]
+    assert view.last_sort_indicator == (None, True)
+
+
+def test_on_sort_riders_given_a_first_click_sorts_that_column_ascending() -> None:
+    """Phase 4: a header click sorts by the shared column's key, up."""
+    engine, _clock = _make_engine(roster=_name_order_roster())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_sort_riders(_column_index("Name"))
+
+    assert [row.plate for row in view.last_riders] == ["12", "34"]
+    assert view.last_sort_indicator == (_column_index("Name"), True)
+
+
+def test_on_sort_riders_given_the_active_column_clicked_again_reverses_it() -> None:
+    """Re-clicking the active column flips the order and the marker."""
+    engine, _clock = _make_engine(roster=_name_order_roster())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.on_sort_riders(_column_index("Name"))
+
+    presenter.on_sort_riders(_column_index("Name"))
+
+    assert [row.plate for row in view.last_riders] == ["34", "12"]
+    assert view.last_sort_indicator == (_column_index("Name"), False)
+
+
+def test_on_sort_riders_given_a_different_column_restarts_ascending() -> None:
+    """A new column sorts up; its marker replaces the old one."""
+    engine, _clock = _make_engine(roster=_name_order_roster())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.on_sort_riders(_column_index("Name"))
+    presenter.on_sort_riders(_column_index("Name"))  # now descending
+
+    presenter.on_sort_riders(_column_index("Plate"))
+
+    assert [row.plate for row in view.last_riders] == ["12", "34"]
+    assert view.last_sort_indicator == (_column_index("Plate"), True)
+
+
+def test_on_sort_riders_given_the_cards_column_sorts_by_the_credited_codes() -> None:
+    """Phase 4: the Cards column sorts by the joined card codes."""
+    engine, clock = _make_engine(roster=_name_order_roster())
+    engine.start()
+    result = _record(engine, clock, "34", lap_time_s=100)  # 34 credits a card
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_sort_riders(_column_index("Cards"))
+
+    assert [(row.plate, row.cards) for row in view.last_riders] == [
+        ("12", ()),  # an empty hand's "" sorts before every real code
+        ("34", (result.card.code(),)),
+    ]
+
+
+def test_on_sort_riders_given_the_active_column_keeps_the_sort_on_the_next_tick() -> None:
+    """The tick re-render keeps the operator's chosen order."""
+    engine, _clock = _make_engine(roster=_name_order_roster())
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.on_sort_riders(_column_index("Name"))
+
+    presenter.tick()
+
+    assert [row.plate for row in view.last_riders] == ["12", "34"]
+    assert view.last_sort_indicator == (_column_index("Name"), True)
 
 
 # ----------------------------------------------------------------- tick

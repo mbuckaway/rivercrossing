@@ -243,11 +243,14 @@ def _poster_subtitle(result: EntryResult) -> str:
     The [5d] mock's "Team of 4 -- member names" lists rider names and
     a team size that ``EntryResult`` does not carry (the same seam
     htmlexport documents for "TEAM by 4"), so the line names the
-    entry itself from the payload: "Solo -- Luca Ferrari · 10 laps" or
-    "Team -- Dirt Dynamos · 10 laps".
+    entry itself from the payload: "Solo (M) -- Luca Ferrari · 10
+    laps" or "Team -- Dirt Dynamos · 10 laps". A solo's sex (E7) is
+    the rider's own "M"/"F"; a team's is None (no single sex), so its
+    line is unchanged.
     """
     kind = "Team" if result.kind == "team" else "Solo"
-    return f"{kind} — {result.name} · {result.laps} laps"
+    sex = f" ({result.sex})" if result.sex else ""
+    return f"{kind}{sex} — {result.name} · {result.laps} laps"
 
 
 class _RideLike(Protocol):
@@ -1092,9 +1095,17 @@ class _ReportPDF(FPDF):
                     self._drawn_row(entry.result)
 
     def _field_row(self, widths: Sequence[float], entry: Placed) -> None:
-        """Draw one full-field row, with the DNF mark after the name."""
+        """Draw one full-field row, with the DNF mark after the name.
+
+        A solo entry's sex (E7) rides in the entry cell beside the
+        name -- "Luca Ferrari (M)" -- the least invasive of the two
+        options, since a dedicated column would re-cut every width. A
+        team's sex is None (no single sex) and renders nothing.
+        """
         result = entry.result
-        name = f"{result.name} DNF" if result.dnf else result.name
+        name = f"{result.name} ({result.sex})" if result.sex else result.name
+        if result.dnf:
+            name = f"{name} DNF"
         self._at_column(widths, 0)
         self._scalar(_Cell(widths[0], str(entry.place), _FIELD_BOLD))
         self._at_column(widths, 1)

@@ -2,16 +2,19 @@
 """Headless tests for the four list windows' pure format logic (E1.5.2).
 
 Only the column/cell *formatting* functions each view module defines
-are exercised here -- ``RidesListModel``/``RidersListModel``/
-``CardsHeldModel``/``EntryLapsModel``/``StandingsListModel`` all
-subclass ``wx.dataview.DataViewIndexListModel`` and are proven against
-the real toolkit instead, in ``tests/functional/test_lists_demo.py``
-(``cards_imagelist``'s own split between ``tests/unit/`` and
-``tests/functional/`` is the precedent this mirrors).
+are exercised here -- ``RidesListModel``/``CardsHeldModel``/
+``EntryLapsModel``/``StandingsListModel`` all subclass
+``wx.dataview.DataViewIndexListModel`` and are proven against the real
+toolkit instead, in ``tests/functional/test_lists_demo.py`` -- and the
+console's riders list has no model of its own at all any more: it
+renders through the shared ``ui.views._support.RiderRowListModel``
+(``tests/unit/ui/test_main_frame_riders_list.py``), which
+``cards_imagelist``'s own split between ``tests/unit/`` and
+``tests/functional/`` is the precedent this mirrors.
 
-Importing ``ride_library``/``rider_editor``/``results_win`` does pull
-in ``wx`` transitively (their ``DataViewIndexListModel`` subclasses
-need it at class-definition time, the same as ``views/main_frame.py``'s
+Importing ``ride_library``/``results_win`` does pull in ``wx``
+transitively (their ``DataViewIndexListModel`` subclasses need it at
+class-definition time, the same as ``views/main_frame.py``'s
 ``CrossingsFeedModel``) -- unlike ``feed_model.py``/
 ``cards_imagelist.py``'s stricter, wx-import-free split. This task's
 file batch has no room for a fifth, wx-free sibling module to hold
@@ -30,6 +33,7 @@ from hypothesis import strategies as st
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui.presenters.data_source import RiderRow, StandingsRow
+from rivercrossing.ui.rider_columns import EDITOR_RIDER_COLUMNS, SOLO_TEAM_TEXT
 from rivercrossing.ui.views.results_win import (
     JOKER_DISPLAY,
     TIE_BADGE,
@@ -38,7 +42,6 @@ from rivercrossing.ui.views.results_win import (
     format_place,
 )
 from rivercrossing.ui.views.ride_library import format_ride_status
-from rivercrossing.ui.views.rider_editor import SOLO_TEAM_TEXT, format_team
 
 # --- ride_library.format_ride_status ----------------------------------
 
@@ -66,12 +69,15 @@ def test_format_ride_status_given_any_status_is_idempotent_uppercase(status: Rid
     assert text == text.upper()
 
 
-# --- rider_editor.format_team ---------------------------------------
+# --- ui.rider_columns Team cell -------------------------------------
 
 
 def _rider(*, plate: str = "1", name: str = "Rider", team: str | None = None) -> RiderRow:
     """Build a minimal ``RiderRow`` varying only what a test needs."""
     return RiderRow(plate=plate, name=name, team=team)
+
+
+_TEAM_COLUMN = next(column for column in EDITOR_RIDER_COLUMNS if column.label == "Team")
 
 
 TEAM_CASES = (
@@ -82,19 +88,19 @@ TEAM_CASES = (
 
 
 @pytest.mark.parametrize(("row", "expected"), TEAM_CASES)
-def test_format_team_given_a_rider_row_returns_its_canvas_cell_text(
+def test_team_column_given_a_rider_row_returns_its_canvas_cell_text(
     row: RiderRow, expected: str
 ) -> None:
-    """None -> em dash; a real team name passes through unchanged."""
-    assert format_team(row) == expected
+    """None -> the word "solo"; a real team name passes through."""
+    assert _TEAM_COLUMN.value(row) == expected
 
 
 @given(st.text(max_size=20))
-def test_format_team_given_any_non_none_team_returns_it_unchanged(team: str) -> None:
+def test_team_column_given_any_non_none_team_returns_it_unchanged(team: str) -> None:
     """Property: type/value preservation for every real team string."""
     row = _rider(team=team)
 
-    assert format_team(row) == team
+    assert _TEAM_COLUMN.value(row) == team
 
 
 # --- results_win.format_card ---------------------------------------

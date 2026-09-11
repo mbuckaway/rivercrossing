@@ -54,6 +54,27 @@ into it -- and both disable ``wx.InfoBar``'s default slide effect
 
 ``_find`` is shared via ``ui.views._support.find_control`` -- see
 that module's docstring for why it used to be duplicated here.
+
+Phase 3 (Sex + sortable rider lists) changes four things here. The
+editor's Team field becomes a read-only ``wxTextCtrl`` (it shows the
+selected record's team and offers no way to change it -- assignment
+is the Add/Edit dialog's job), so ``show_team_choices`` is gone from
+both this view and ``RidersView``. The editor's list gains a Sex
+column and spans the shared
+:data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`, rendered
+by the shared :class:`~rivercrossing.ui.views._support.
+RiderRowListModel`. Clicking any column's header forwards the click
+to the presenter (which owns row order) and the presenter's own state
+is painted back through :meth:`RiderEditor.set_sort_indicator` --
+``ui.views._support.apply_sort_indicator`` writes the ▲/▼ marker, so
+the console's own rider list can reuse both. ``add_rider_dlg`` gains a
+Sex dropdown (``sex_choice``: blank, M, F) and opens three times
+wider than its fitted size.
+
+Phase 6 gives ``csv_preview_dlg`` its own default size:
+:class:`CsvPreviewDialog` opens it three times wider and twice as
+tall as the size its own ``Fit()`` measured, in code, because XRC
+cannot set a window minsize (``riders.xrc``'s header).
 """
 
 from pathlib import Path
@@ -64,7 +85,7 @@ import wx.dataview
 import wx.xrc
 
 from rivercrossing import csvio
-from rivercrossing.ui import ids, std_dialogs
+from rivercrossing.ui import ids, rider_columns, std_dialogs
 from rivercrossing.ui.presenters.riders import (
     AddRiderPresenter,
     CsvConflict,
@@ -73,7 +94,12 @@ from rivercrossing.ui.presenters.riders import (
     RidersPresenter,
 )
 from rivercrossing.ui.views import dialogs
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import (
+    RiderRowListModel,
+    apply_sort_indicator,
+    associate_model,
+    find_control,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -89,32 +115,44 @@ __all__ = [
     "COL_PLATE",
     "COL_PROBLEM",
     "COL_ROW",
+    "COL_SEX",
     "COL_TEAM",
     "CONFLICT_COLUMN_LABELS",
     "CSV_INFOBAR",
+    "CSV_PREVIEW_HEIGHT_SCALE",
+    "CSV_PREVIEW_WIDTH_SCALE",
+    "DIALOG_WIDTH_SCALE",
     "MIN_SIZE",
     "OK_BUTTON_SCALE",
     "ROSTER_INFOBAR",
+    "SEX_OPTIONS",
     "SOLO_TEAM_TEXT",
     "AddRiderDialog",
     "CsvConflictsListModel",
     "CsvPreviewDialog",
     "RiderEditor",
-    "RidersListModel",
-    "format_team",
     "ok_button_min_size",
     "run_add_rider_flow",
     "run_csv_export_flow",
     "run_csv_import_flow",
     "run_edit_rider_flow",
+    "sex_from_choice",
+    "wider_default_size",
 ]
 
+# riders_list's columns come from the shared, wx-free
+# ``ui.rider_columns`` (Phase 3), so this editor's list and the
+# console's own ``console_riders_list`` cannot drift. The index names
+# stay as this module's own public surface (the functional suite and
+# this file read them).
 COL_PLATE = 0
 COL_NAME = 1
 COL_TEAM = 2
+COL_SEX = 3
 
-# xrc-windows.md C's exact column order: "Plate | Name | Team".
-COLUMN_LABELS: tuple[str, ...] = ("Plate", "Name", "Team")
+COLUMN_LABELS: tuple[str, ...] = tuple(
+    column.label for column in rider_columns.EDITOR_RIDER_COLUMNS
+)
 
 COL_ROW = 0
 COL_PROBLEM = 1
@@ -122,10 +160,9 @@ COL_PROBLEM = 1
 # xrc-windows.md C's csv_preview_dlg mock: "Row | Problem".
 CONFLICT_COLUMN_LABELS: tuple[str, ...] = ("Row", "Problem")
 
-# The canvas's own word for a solo rider's Team cell
-# ("123 Sam Ellis solo" -- W7 rework; the user copy is the literal
-# word "solo", never the old em dash).
-SOLO_TEAM_TEXT = "solo"
+# The canvas's own word for a solo rider's Team cell, from the shared
+# module (Phase 3) -- ``views/main_frame.py`` reads the same one.
+SOLO_TEAM_TEXT = rider_columns.SOLO_TEAM_TEXT
 
 # ui/ids.py is generated from the .xrc files (R-05); these names
 # never appear there since XRC cannot author a wxInfoBar at all
@@ -149,6 +186,27 @@ MIN_SIZE = (1280, 560)
 # not.
 OK_BUTTON_SCALE = 3
 
+# Phase 3: add_rider_dlg's own default width is the sizer's narrow
+# best width, which reads cramped beside its field labels; the view
+# opens it this many times wider (XRC has no window minsize, so
+# _apply_min_size applies it in code). The height stays whatever the
+# platform fitted.
+DIALOG_WIDTH_SCALE = 3
+
+# Phase 6 (3e): csv_preview_dlg's own default size is the conflicts
+# list's narrow best size; CsvPreviewDialog._apply_min_size opens it
+# this many times wider AND taller (XRC cannot give a window a
+# minsize -- riders.xrc's header defers it to code). Both dimensions
+# scale here, unlike add_rider_dlg's above: the preview is one list
+# plus a summary line, and the width alone would only add empty
+# margin.
+CSV_PREVIEW_WIDTH_SCALE = 3
+CSV_PREVIEW_HEIGHT_SCALE = 2
+
+# Blank first: the Add mode's default, and the "unknown" value that
+# ``sex_from_choice`` maps back to ``None``.
+SEX_OPTIONS: tuple[str, ...] = ("", "M", "F")
+
 # add_rider_dlg serves both modes (1.0.12 B2). XRC authors the Add
 # title; the Edit mode retitles the same window rather than loading a
 # second resource for one string.
@@ -166,15 +224,6 @@ _RIDER_EDITOR_NOT_IMPLEMENTED = (
 )
 
 
-def format_team(row: RiderRow) -> str:
-    """Return *row*'s ``riders_list`` Team cell text.
-
-    ``RiderRow.team`` is ``None`` for a solo rider; W7 renders the
-    word "solo" (``SOLO_TEAM_TEXT``) rather than a blank cell.
-    """
-    return row.team if row.team is not None else SOLO_TEAM_TEXT
-
-
 def ok_button_min_size(best: tuple[int, int]) -> tuple[int, int]:
     """Return add_rider_dlg's primary-button floor for *best* (B2).
 
@@ -186,11 +235,26 @@ def ok_button_min_size(best: tuple[int, int]) -> tuple[int, int]:
     return (width * OK_BUTTON_SCALE, height)
 
 
-_TEXT_ACCESSORS: tuple[Callable[[RiderRow], str], ...] = (
-    lambda rider: rider.plate,
-    lambda rider: rider.name,
-    format_team,
-)
+def wider_default_size(fitted: tuple[int, int]) -> tuple[int, int]:
+    """Return add_rider_dlg's 3x-wider default size for *fitted*.
+
+    *fitted* is the width/height ``Fit()`` measured for the built
+    dialog; only the width scales (see :data:`DIALOG_WIDTH_SCALE`) --
+    the form's rows are laid out vertically, so a wider window needs no
+    extra height.
+    """
+    width, height = fitted
+    return (width * DIALOG_WIDTH_SCALE, height)
+
+
+def sex_from_choice(selection: str) -> str | None:
+    """Return the Sex dropdown's value for *selection*.
+
+    Phase 3's rule: the blank item means "unknown", which is ``None``
+    on :class:`~rivercrossing.roster.Rider` -- never an empty string
+    (the same normalization csvio's import applies).
+    """
+    return selection or None
 
 
 def _build_infobar(dialog: wx.Dialog, name: str) -> wx.InfoBar:
@@ -219,47 +283,23 @@ def _build_infobar(dialog: wx.Dialog, name: str) -> wx.InfoBar:
     return bar
 
 
-def _set_team_choice_row_visible(choice: wx.Choice, *, visible: bool) -> None:
-    """Show/hide *choice* and its FlexGridSizer label sibling.
+def _set_team_choice_row_visible(control: wx.Window, *, visible: bool) -> None:
+    """Show/hide *control* and its FlexGridSizer label sibling.
 
     The two Team labels ("Team" in rider_editor_dlg and add_rider_dlg)
-    carry no frozen name to find them by (only the choice does), so
-    each label is located structurally: it is always the item
-    immediately before its choice in their shared ``wxFlexGridSizer``
-    row.
+    carry no frozen name to find them by (only the control they label
+    does), so each label is located structurally: it is always the
+    item immediately before its control in their shared
+    ``wxFlexGridSizer`` row. The control is either dialog's own
+    ``team_choice`` -- a read-only ``wx.TextCtrl`` in the editor and a
+    ``wx.Choice`` in add_rider_dlg -- so the type is ``wx.Window``.
     """
-    sizer = choice.GetContainingSizer()
+    sizer = control.GetContainingSizer()
     items = list(sizer.GetChildren())
-    index = next(i for i, item in enumerate(items) if item.GetWindow() is choice)
+    index = next(i for i, item in enumerate(items) if item.GetWindow() is control)
     label = items[index - 1].GetWindow()
     sizer.Show(label, visible)
-    sizer.Show(choice, visible)
-
-
-class RidersListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
-    """Read-only model over ``RiderRow`` rows for ``riders_list``.
-
-    ``# type: ignore[misc]``: wx ships no stubs, so mypy refuses to
-    subclass ``Any`` -- the same unavoidable annotation
-    ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
-    """
-
-    def __init__(self, rows: Sequence[RiderRow]) -> None:
-        """Wrap *rows* in the rider editor's canvas order."""
-        super().__init__(len(rows))
-        self._rows = tuple(rows)
-
-    def GetColumnCount(self) -> int:
-        """Return the roster's fixed three columns."""
-        return len(COLUMN_LABELS)
-
-    def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
-        """Return "string" -- every ``riders_list`` column is text."""
-        return "string"
-
-    def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the cell value at *row*/*col*."""
-        return _TEXT_ACCESSORS[col](self._rows[row])
+    sizer.Show(control, visible)
 
 
 class RiderEditor:
@@ -292,13 +332,15 @@ class RiderEditor:
         # Replaced by the presenter's own show_riders() call below,
         # before any event can fire -- typed non-optional so
         # _on_row_selected never has to narrow it.
-        self._model: RidersListModel = RidersListModel([])
+        self._model: RiderRowListModel = RiderRowListModel([], rider_columns.EDITOR_RIDER_COLUMNS)
 
         self.rider_search = self._find(ids.RIDER_SEARCH, wx.SearchCtrl)
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)
         self.first_name_input = self._find(ids.FIRST_NAME_INPUT, wx.TextCtrl)
         self.last_name_input = self._find(ids.LAST_NAME_INPUT, wx.TextCtrl)
-        self.team_choice = self._find(ids.TEAM_CHOICE, wx.Choice)
+        # Phase 3: a read-only display of the selected record's team,
+        # not a dropdown -- the Add/Edit dialog owns team assignment.
+        self.team_choice = self._find(ids.TEAM_CHOICE, wx.TextCtrl)
         self.add_btn = self._find(ids.ADD_BTN, wx.Button)
         self.edit_btn = self._find(ids.EDIT_BTN, wx.Button)
         self.delete_btn = self._find(ids.DELETE_BTN, wx.Button)
@@ -324,7 +366,12 @@ class RiderEditor:
         return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> list[Any]:
-        """Append ``riders_list``'s three columns in canvas order.
+        """Append ``riders_list``'s columns in canvas order.
+
+        The labels are the shared
+        :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`
+        ones (Plate | Name | Team | Sex), so the console's own rider
+        list draws the same headers.
 
         Returns:
             The appended columns in order -- the Team column (index
@@ -332,7 +379,9 @@ class RiderEditor:
             hides; header clicks compare against the others to route
             the presenter's own sort (W7: a ``DataViewIndexListModel``
             cannot sort itself, so the columns carry no wx sort
-            flags and the presenter owns row order).
+            flags and the presenter owns row order), and
+            :meth:`set_sort_indicator` addresses them by the same
+            index to paint the ▲/▼ marker.
         """
         return [
             self.riders_list.AppendTextColumn(label, col)
@@ -510,12 +559,24 @@ class RiderEditor:
         for why this also repaints explicitly (unverified remedy).
         """
         self.roster_infobar.Dismiss()
-        self._model = RidersListModel(rows)
+        self._model = RiderRowListModel(rows, rider_columns.EDITOR_RIDER_COLUMNS)
         associate_model(self.riders_list, self._model)
 
-    def show_team_choices(self, names: list[str]) -> None:
-        """Replace ``team_choice``'s content with *names* (R-20)."""
-        self.team_choice.Set(names)
+    def set_sort_indicator(
+        self,
+        column: int | None,
+        *,
+        ascending: bool,
+    ) -> None:
+        """Mark riders_list *column*'s header ▲/▼, or clear it.
+
+        ``RidersView`` member, W7: the presenter owns row order (a
+        ``DataViewIndexListModel`` cannot sort itself), so it hands
+        its own sort state back here and
+        :func:`~rivercrossing.ui.views._support.apply_sort_indicator`
+        paints it -- ``None`` *column* restores every plain label.
+        """
+        apply_sort_indicator(self._columns, column, ascending=ascending)
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Toggle ``delete_btn``'s enabled state (R-15)."""
@@ -566,12 +627,15 @@ class RiderEditor:
         """Fill plate_input and the two name inputs (``RidersView``).
 
         ``RidersView``, R-20: the passive view fills exactly what the
-        presenter asks for.
+        presenter asks for. Phase 3: ``team_choice`` is a read-only
+        text box now, so the Team field is set (``SetValue``) with the
+        presenter's own cell text -- ``"— solo —"`` for a solo rider --
+        rather than having a choice selected in it.
         """
         self.plate_input.SetValue(plate)
         self.first_name_input.SetValue(first_name)
         self.last_name_input.SetValue(last_name)
-        self.team_choice.SetStringSelection(team)
+        self.team_choice.SetValue(team)
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Show/hide ``team_choice``, its label, and the Team column.
@@ -648,6 +712,11 @@ class AddRiderDialog:
         self.first_name_input = self._find(ids.FIRST_NAME_INPUT, wx.TextCtrl)
         self.last_name_input = self._find(ids.LAST_NAME_INPUT, wx.TextCtrl)
         self.team_choice = self._find(ids.TEAM_CHOICE, wx.Choice)
+        # Phase 3's Sex dropdown: XRC authors an empty wxChoice (there
+        # is no XRC content element in play), so its three items are
+        # set here -- blank first, so an unset sex is the default.
+        self.sex_choice = self._find(ids.SEX_CHOICE, wx.Choice)
+        self.sex_choice.Set(list(SEX_OPTIONS))
         self.ok_btn = self._find("wxID_OK", wx.Button)
         self._widen_ok_button()
 
@@ -662,6 +731,7 @@ class AddRiderDialog:
             self.presenter = EditRiderPresenter(self, roster, entry=entry, rider=rider)
 
         self._bind_events()
+        self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -687,6 +757,24 @@ class AddRiderDialog:
         width, height = ok_button_min_size((best.width, best.height))
         self.ok_btn.SetMinSize(wx.Size(width, height))
 
+    def _apply_min_size(self) -> None:
+        """Open the dialog 3x wider than its fitted width (Phase 3).
+
+        XRC gives a window no minsize and no default size, so the
+        dialog would otherwise open at the flex grid's own narrow best
+        width -- cramped beside its labels and too short for a real
+        team name in ``team_choice``. ``Fit()`` first, so the width
+        being tripled is whatever this platform actually measured;
+        the height is left alone (the form is laid out vertically).
+        Only the *width* is floored: ``-1`` means "no minimum height"
+        to wx, so a taller-than-fitted row can still grow the window.
+        """
+        self.dialog.Fit()
+        fitted = self.dialog.GetSize()
+        width, height = wider_default_size((fitted.width, fitted.height))
+        self.dialog.SetMinSize(wx.Size(width, -1))
+        self.dialog.SetSize(wx.Size(width, height))
+
     def _bind_events(self) -> None:
         """Forward ``wxID_OK`` ("Save") straight to the presenter."""
         self.dialog.Bind(wx.EVT_BUTTON, self._on_submit, self.ok_btn)
@@ -710,12 +798,18 @@ class AddRiderDialog:
             self.dialog.EndModal(wx.ID_OK)
 
     def _form_values(self) -> RiderFormValues:
-        """Return the dialog's current fields, read verbatim (R-20)."""
+        """Return the dialog's current fields, read verbatim (R-20).
+
+        The Sex dropdown's blank item is read as ``None``
+        (:func:`sex_from_choice`) -- the value ``Rider.sex`` uses for
+        an unknown sex, never an empty string.
+        """
         return RiderFormValues(
             plate=self.plate_input.GetValue(),
             first_name=self.first_name_input.GetValue(),
             last_name=self.last_name_input.GetValue(),
             team=self.team_choice.GetStringSelection(),
+            sex=sex_from_choice(self.sex_choice.GetStringSelection()),
         )
 
     # ---------------------------------------------------- AddRiderView
@@ -733,14 +827,26 @@ class AddRiderDialog:
         """Toggle ``plate_input``'s editability (spec S3:46, B2)."""
         self.plate_input.Enable(enabled)
 
-    def show_form(  # noqa: PLR0913 -- the passive view fills the four form fields verbatim
-        self, *, plate: str, first_name: str, last_name: str, team: str
+    def show_form(  # noqa: PLR0913 -- the passive view fills the five form fields verbatim
+        self,
+        *,
+        plate: str,
+        first_name: str,
+        last_name: str,
+        team: str,
+        sex: str | None,
     ) -> None:
-        """Fill all four fields (Add passes the names blank, B2)."""
+        """Fill all five fields (Add passes the names blank, B2).
+
+        Phase 3: ``sex_choice``'s blank item is selected for an unset
+        (*sex* ``None``) or unknown sex, its own ``"M"``/``"F"`` item
+        otherwise.
+        """
         self.plate_input.SetValue(plate)
         self.first_name_input.SetValue(first_name)
         self.last_name_input.SetValue(last_name)
         self.team_choice.SetStringSelection(team)
+        self.sex_choice.SetStringSelection(sex if sex is not None else "")
 
     def show_validation(self, message: str) -> None:
         """Show *message* on :data:`ADD_RIDER_INFOBAR`.
@@ -815,6 +921,7 @@ class CsvPreviewDialog:
         self.presenter = RidersPresenter(self, roster, load=False)
 
         self._bind_events()
+        self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -841,6 +948,25 @@ class CsvPreviewDialog:
         slide-effect hang this mirrors.
         """
         return _build_infobar(self.dialog, CSV_INFOBAR)
+
+    def _apply_min_size(self) -> None:
+        """Open the preview 3x wider and 2x taller than its fitted size.
+
+        XRC gives a window no minsize and no default size, so the
+        dialog would otherwise open at the conflicts list's own narrow
+        best size. ``Fit()`` first, so the size being scaled is
+        whatever this platform actually measured; that same size is
+        both the floor (``SetMinSize``) and the size the dialog opens
+        at (``SetSize``) -- a floor alone would still let the loaded
+        window keep the size XRC gave it. This is the both-dimensions
+        mirror of :class:`AddRiderDialog`'s own width-only floor.
+        """
+        self.dialog.Fit()
+        fitted = self.dialog.GetSize()
+        width = fitted.width * CSV_PREVIEW_WIDTH_SCALE
+        height = fitted.height * CSV_PREVIEW_HEIGHT_SCALE
+        self.dialog.SetMinSize(wx.Size(width, height))
+        self.dialog.SetSize(wx.Size(width, height))
 
     def _bind_events(self) -> None:
         """Forward ``wxID_OK`` straight to the presenter."""
@@ -900,12 +1026,19 @@ class CsvPreviewDialog:
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 
-    def show_team_choices(self, names: list[str]) -> None:
-        """Replace ``team_choice``'s content; that dialog's own job.
+    def set_sort_indicator(
+        self,
+        column: int | None,
+        *,
+        ascending: bool,
+    ) -> None:
+        """Mark riders_list's sort column; that dialog's own job.
 
         Raises:
             NotImplementedError: Always -- ``csv_preview_dlg`` has no
-                ``team_choice`` of its own.
+                ``riders_list`` to sort. ``RidersPresenter`` bound to
+                this view is built with ``load=False`` and has no
+                header to click, so it is never called.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 

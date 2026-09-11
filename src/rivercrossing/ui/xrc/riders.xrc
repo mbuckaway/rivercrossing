@@ -197,7 +197,9 @@
                   </object>
                   <object class="sizeritem">
                     <flag>wxEXPAND</flag>
-                    <object class="wxChoice" name="team_choice"/>
+                    <object class="wxTextCtrl" name="team_choice">
+                      <style>wxTE_READONLY</style>
+                    </object>
                   </object>
 
                 </object>
@@ -317,6 +319,21 @@
               <object class="sizeritem">
                 <flag>wxEXPAND</flag>
                 <object class="wxChoice" name="team_choice"/>
+              </object>
+
+              <!-- Phase 3: the Sex dropdown (blank = unset, then M
+                   and F). The three items are set in code, in
+                   views/rider_editor.AddRiderDialog, since XRC
+                   authors an empty wxChoice. -->
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxStaticText">
+                  <label>Sex</label>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND</flag>
+                <object class="wxChoice" name="sex_choice"/>
               </object>
 
             </object>
@@ -453,6 +470,40 @@
               <object class="button">
                 <object class="wxButton" name="wxID_CLOSE"/>
               </object>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- Phase 5: the console's blocked-start report. The one-line native
+       warning W5 used could only ever show the engine's joined reason
+       string; this dialog lists each blocking issue on its own row,
+       with a single OK to dismiss (the ride stays un-started either
+       way). Shape mirrors rider_issues_dlg above. -->
+  <object class="wxDialog" name="start_blocked_dlg">
+    <title>Cannot Start Ride</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <option>1</option>
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxDataViewCtrl" name="start_blocked_list"/>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>OK</label>
             </object>
           </object>
         </object>

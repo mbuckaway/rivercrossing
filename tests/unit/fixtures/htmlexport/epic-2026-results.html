@@ -72,7 +72,7 @@
     <!-- j2: {% for r in results[:3] %}{{ podium_card(r, options) }}{% endfor %} -->
     <div class="mt-4 grid gap-5 sm:grid-cols-3">
       <div class="bp p-5 bg-steel-800 text-paper"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">1</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#88 Moss Ridge Riders</div><div class="text-xs text-paper/70">TEAM ×4 · 11 laps<span class="t-col"> · 5:52:41</span></div></div></div><div class="mt-4"><span class="inline-flex flex-wrap gap-1"><span class="chip text-base leading-7 px-2">9 ♠</span><span class="chip r text-base leading-7 px-2">9 ♦</span><span class="chip text-base leading-7 px-2">9 ♣</span><span class="chip j text-base leading-7 px-2">★ JOKER</span><span class="chip r text-base leading-7 px-2">K ♥</span></span></div><div class="mt-3 font-head font-semibold uppercase tracking-wide text-steel-300">Four of a Kind — Nines</div></div>
-      <div class="bp p-5 bg-transparent"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">2</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#7 Luca Ferrari</div><div class="text-xs text-ink/55">SOLO · 10 laps<span class="t-col"> · 5:41:03</span></div></div></div><div class="mt-4"><span class="inline-flex flex-wrap gap-1"><span class="chip text-base leading-7 px-2">A ♠</span><span class="chip r text-base leading-7 px-2">A ♦</span><span class="chip j text-base leading-7 px-2">★ JOKER</span><span class="chip text-base leading-7 px-2">4 ♣</span><span class="chip r text-base leading-7 px-2">4 ♥</span></span></div><div class="mt-3 font-head font-semibold uppercase tracking-wide text-steel-700">Full House — Aces over Fours</div></div>
+      <div class="bp p-5 bg-transparent"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">2</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#7 Luca Ferrari</div><div class="text-xs text-ink/55">SOLO · 10 laps<span class="t-col"> · 5:41:03</span><span class="text-ink/55"> · M</span></div></div></div><div class="mt-4"><span class="inline-flex flex-wrap gap-1"><span class="chip text-base leading-7 px-2">A ♠</span><span class="chip r text-base leading-7 px-2">A ♦</span><span class="chip j text-base leading-7 px-2">★ JOKER</span><span class="chip text-base leading-7 px-2">4 ♣</span><span class="chip r text-base leading-7 px-2">4 ♥</span></span></div><div class="mt-3 font-head font-semibold uppercase tracking-wide text-steel-700">Full House — Aces over Fours</div></div>
       <div class="bp p-5 bg-transparent"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">3</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#127 Dirt Dynamos</div><div class="text-xs text-ink/55">TEAM ×3 · 10 laps<span class="t-col"> · 5:48:19</span></div></div></div><div class="mt-4"><span class="inline-flex flex-wrap gap-1"><span class="chip text-base leading-7 px-2">Q ♠</span><span class="chip r text-base leading-7 px-2">Q ♦</span><span class="chip j text-base leading-7 px-2">★ JOKER</span><span class="chip r text-base leading-7 px-2">9 ♥</span><span class="chip text-base leading-7 px-2">9 ♣</span></span></div><div class="mt-3 font-head font-semibold uppercase tracking-wide text-steel-700">Full House — Queens over Nines</div></div>
     </div>
   </section>
@@ -135,19 +135,19 @@
 
         <!-- j2: {% for r in solo %}{{ field_row(r, options) }}{% if options.all_cards %}{{ drawn_row(r, options) }}{% endif %}{% endfor %} -->
         <tr class="border-b border-ink/15"><td colspan="8" class="py-2 font-head font-semibold uppercase tracking-[0.08em] text-steel-700">Solo</td></tr>
-        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">2</td><td class="py-1.5 pr-3 font-bold">7</td><td class="py-1.5 pr-3">Luca Ferrari</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">10</td><td class="py-1.5 pr-3 t-col">5:41:03</td><td class="py-1.5 pr-3 t-col">28:30</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♠</span><span class="chip r">A ♦</span><span class="chip j">★ JOKER</span><span class="chip">4 ♣</span><span class="chip r">4 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Full House — Aces over Fours</span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">2</td><td class="py-1.5 pr-3 font-bold">7</td><td class="py-1.5 pr-3">Luca Ferrari<span class="text-xs text-ink/55"> · M</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">10</td><td class="py-1.5 pr-3 t-col">5:41:03</td><td class="py-1.5 pr-3 t-col">28:30</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♠</span><span class="chip r">A ♦</span><span class="chip j">★ JOKER</span><span class="chip">4 ♣</span><span class="chip r">4 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Full House — Aces over Fours</span></td></tr>
         <tr class="border-b border-ink/8"><td></td><td></td><td colspan="6" class="pb-2 pt-0 text-xs text-ink/55">All 10 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">A ♠</span><span class="chip r">A ♦</span><span class="chip j">★ JOKER</span><span class="chip">4 ♣</span><span class="chip r">4 ♥</span><span class="chip">8 ♠</span><span class="chip r">2 ♦</span><span class="chip r">9 ♥</span><span class="chip">Q ♣</span><span class="chip">6 ♠</span></span></td></tr>
-        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">5</td><td class="py-1.5 pr-3 font-bold">61</td><td class="py-1.5 pr-3">Marc Tremblay</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">10</td><td class="py-1.5 pr-3 t-col">5:44:56</td><td class="py-1.5 pr-3 t-col">29:12</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">K ♦</span><span class="chip r">J ♦</span><span class="chip r">8 ♦</span><span class="chip r">6 ♦</span><span class="chip r">2 ♦</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Flush — King high</span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">5</td><td class="py-1.5 pr-3 font-bold">61</td><td class="py-1.5 pr-3">Marc Tremblay<span class="text-xs text-ink/55"> · M</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">10</td><td class="py-1.5 pr-3 t-col">5:44:56</td><td class="py-1.5 pr-3 t-col">29:12</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">K ♦</span><span class="chip r">J ♦</span><span class="chip r">8 ♦</span><span class="chip r">6 ♦</span><span class="chip r">2 ♦</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Flush — King high</span></td></tr>
         <tr class="border-b border-ink/8"><td></td><td></td><td colspan="6" class="pb-2 pt-0 text-xs text-ink/55">All 10 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip r">K ♦</span><span class="chip r">J ♦</span><span class="chip r">8 ♦</span><span class="chip r">6 ♦</span><span class="chip r">2 ♦</span><span class="chip">4 ♠</span><span class="chip">9 ♣</span><span class="chip r">Q ♥</span><span class="chip">7 ♣</span><span class="chip r">10 ♥</span></span></td></tr>
-        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">8</td><td class="py-1.5 pr-3 font-bold">12</td><td class="py-1.5 pr-3">Ana Souza</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">9</td><td class="py-1.5 pr-3 t-col">5:21:38</td><td class="py-1.5 pr-3 t-col">31:44</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">K ♠</span><span class="chip r">K ♥</span><span class="chip">5 ♣</span><span class="chip r">5 ♦</span><span class="chip r">A ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Two Pair — Kings &amp; Fives</span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">8</td><td class="py-1.5 pr-3 font-bold">12</td><td class="py-1.5 pr-3">Ana Souza<span class="text-xs text-ink/55"> · F</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">9</td><td class="py-1.5 pr-3 t-col">5:21:38</td><td class="py-1.5 pr-3 t-col">31:44</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">K ♠</span><span class="chip r">K ♥</span><span class="chip">5 ♣</span><span class="chip r">5 ♦</span><span class="chip r">A ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Two Pair — Kings &amp; Fives</span></td></tr>
         <tr class="border-b border-ink/8"><td></td><td></td><td colspan="6" class="pb-2 pt-0 text-xs text-ink/55">All 9 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">K ♠</span><span class="chip r">K ♥</span><span class="chip">5 ♣</span><span class="chip r">5 ♦</span><span class="chip r">A ♥</span><span class="chip">2 ♠</span><span class="chip r">8 ♦</span><span class="chip r">4 ♥</span><span class="chip">10 ♣</span></span></td></tr>
-        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">10</td><td class="py-1.5 pr-3 font-bold">19</td><td class="py-1.5 pr-3">Owen Clark</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">8</td><td class="py-1.5 pr-3 t-col">4:52:50</td><td class="py-1.5 pr-3 t-col">32:05</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♣</span><span class="chip">A ♠</span><span class="chip r">K ♥</span><span class="chip">J ♣</span><span class="chip r">8 ♦</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Aces</span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">10</td><td class="py-1.5 pr-3 font-bold">19</td><td class="py-1.5 pr-3">Owen Clark<span class="text-xs text-ink/55"> · M</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">8</td><td class="py-1.5 pr-3 t-col">4:52:50</td><td class="py-1.5 pr-3 t-col">32:05</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">A ♣</span><span class="chip">A ♠</span><span class="chip r">K ♥</span><span class="chip">J ♣</span><span class="chip r">8 ♦</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Aces</span></td></tr>
         <tr class="border-b border-ink/8"><td></td><td></td><td colspan="6" class="pb-2 pt-0 text-xs text-ink/55">All 8 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">A ♣</span><span class="chip">A ♠</span><span class="chip r">K ♥</span><span class="chip">J ♣</span><span class="chip r">8 ♦</span><span class="chip r">5 ♥</span><span class="chip">2 ♣</span><span class="chip r">7 ♦</span></span></td></tr>
-        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">11</td><td class="py-1.5 pr-3 font-bold">33</td><td class="py-1.5 pr-3">Peter Kim</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">7</td><td class="py-1.5 pr-3 t-col">4:31:19</td><td class="py-1.5 pr-3 t-col">33:58</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">K ♣</span><span class="chip r">K ♦</span><span class="chip">Q ♠</span><span class="chip r">9 ♥</span><span class="chip">6 ♣</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Kings</span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">11</td><td class="py-1.5 pr-3 font-bold">33</td><td class="py-1.5 pr-3">Peter Kim<span class="text-xs text-ink/55"> · M</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">7</td><td class="py-1.5 pr-3 t-col">4:31:19</td><td class="py-1.5 pr-3 t-col">33:58</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">K ♣</span><span class="chip r">K ♦</span><span class="chip">Q ♠</span><span class="chip r">9 ♥</span><span class="chip">6 ♣</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Kings</span></td></tr>
         <tr class="border-b border-ink/8"><td></td><td></td><td colspan="6" class="pb-2 pt-0 text-xs text-ink/55">All 7 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">K ♣</span><span class="chip r">K ♦</span><span class="chip">Q ♠</span><span class="chip r">9 ♥</span><span class="chip">6 ♣</span><span class="chip">3 ♠</span><span class="chip r">10 ♥</span></span></td></tr>
-        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">13</td><td class="py-1.5 pr-3 font-bold">71</td><td class="py-1.5 pr-3">Gita Rao</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">7</td><td class="py-1.5 pr-3 t-col">4:22:08</td><td class="py-1.5 pr-3 t-col">34:12</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">8 ♠</span><span class="chip r">8 ♥</span><span class="chip">K ♣</span><span class="chip r">10 ♦</span><span class="chip r">4 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Eights</span></td></tr>
+        <tr class="border-b border-ink/8"><td class="py-1.5 pr-3">13</td><td class="py-1.5 pr-3 font-bold">71</td><td class="py-1.5 pr-3">Gita Rao<span class="text-xs text-ink/55"> · F</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">7</td><td class="py-1.5 pr-3 t-col">4:22:08</td><td class="py-1.5 pr-3 t-col">34:12</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip">8 ♠</span><span class="chip r">8 ♥</span><span class="chip">K ♣</span><span class="chip r">10 ♦</span><span class="chip r">4 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">Pair — Eights</span></td></tr>
         <tr class="border-b border-ink/8"><td></td><td></td><td colspan="6" class="pb-2 pt-0 text-xs text-ink/55">All 7 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip">8 ♠</span><span class="chip r">8 ♥</span><span class="chip">K ♣</span><span class="chip r">10 ♦</span><span class="chip r">4 ♥</span><span class="chip r">2 ♦</span><span class="chip">Q ♣</span></span></td></tr>
-        <tr class="border-b border-ink/8 opacity-60"><td class="py-1.5 pr-3">14</td><td class="py-1.5 pr-3 font-bold">94</td><td class="py-1.5 pr-3">Ted Novak <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">4</td><td class="py-1.5 pr-3 t-col">2:37:43</td><td class="py-1.5 pr-3 t-col">31:07</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">A ♦</span><span class="chip">Q ♣</span><span class="chip">9 ♠</span><span class="chip r">5 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">High Card — Ace</span></td></tr>
+        <tr class="border-b border-ink/8 opacity-60"><td class="py-1.5 pr-3">14</td><td class="py-1.5 pr-3 font-bold">94</td><td class="py-1.5 pr-3">Ted Novak<span class="text-xs text-ink/55"> · M</span> <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span></td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">SOLO</td><td class="py-1.5 pr-3">4</td><td class="py-1.5 pr-3 t-col">2:37:43</td><td class="py-1.5 pr-3 t-col">31:07</td><td class="py-1.5"><span class="inline-flex flex-wrap gap-1"><span class="chip r">A ♦</span><span class="chip">Q ♣</span><span class="chip">9 ♠</span><span class="chip r">5 ♥</span></span> <span class="ms-1 font-head font-semibold uppercase text-xs">High Card — Ace</span></td></tr>
         <tr class="border-b border-ink/8 opacity-60"><td></td><td></td><td colspan="6" class="pb-2 pt-0 text-xs text-ink/55">All 4 cards, in draw order: <span class="inline-flex flex-wrap gap-1"><span class="chip r">A ♦</span><span class="chip">Q ♣</span><span class="chip">9 ♠</span><span class="chip r">5 ♥</span></span></td></tr>
       </tbody>
     </table></div>
@@ -269,6 +269,7 @@
       "plate": 7,
       "entry": "Luca Ferrari",
       "type": "SOLO",
+      "sex": "M",
       "laps": 10,
       "total": "5:41:03",
       "bestLap": "28:30",
@@ -490,6 +491,7 @@
       "plate": 61,
       "entry": "Marc Tremblay",
       "type": "SOLO",
+      "sex": "M",
       "laps": 10,
       "total": "5:44:56",
       "bestLap": "29:12",
@@ -700,6 +702,7 @@
       "plate": 12,
       "entry": "Ana Souza",
       "type": "SOLO",
+      "sex": "F",
       "laps": 9,
       "total": "5:21:38",
       "bestLap": "31:44",
@@ -840,6 +843,7 @@
       "plate": 19,
       "entry": "Owen Clark",
       "type": "SOLO",
+      "sex": "M",
       "laps": 8,
       "total": "4:52:50",
       "bestLap": "32:05",
@@ -906,6 +910,7 @@
       "plate": 33,
       "entry": "Peter Kim",
       "type": "SOLO",
+      "sex": "M",
       "laps": 7,
       "total": "4:31:19",
       "bestLap": "33:58",
@@ -1034,6 +1039,7 @@
       "plate": 71,
       "entry": "Gita Rao",
       "type": "SOLO",
+      "sex": "F",
       "laps": 7,
       "total": "4:22:08",
       "bestLap": "34:12",
@@ -1096,6 +1102,7 @@
       "plate": 94,
       "entry": "Ted Novak",
       "type": "SOLO",
+      "sex": "M",
       "laps": 4,
       "total": "2:37:43",
       "bestLap": "31:07",

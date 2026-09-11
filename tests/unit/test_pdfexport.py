@@ -64,8 +64,14 @@ _FIVE_CARDS = (
 )
 
 
-def _entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf): the EntryResult's own fields
-    plate: str, name: str, laps: int, *, kind: str = "solo", dnf: bool = False
+def _entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf, sex): the EntryResult's own fields
+    plate: str,
+    name: str,
+    laps: int,
+    *,
+    kind: str = "solo",
+    dnf: bool = False,
+    sex: str | None = None,
 ) -> EntryResult:
     """Build one finished-ride EntryResult for the render() tests.
 
@@ -84,6 +90,7 @@ def _entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf): the EntryResult'
         cards=_FIVE_CARDS,
         hand=best_hand(_FIVE_CARDS),
         dnf=dnf,
+        sex=sex,
     )
 
 
@@ -328,6 +335,34 @@ def test_render_full_field_team_only_field_omits_the_solo_section(tmp_path: Path
 
     assert "TEAMS" in text
     assert "SOLO" not in text
+
+
+@pytest.mark.parametrize(
+    ("name", "kind", "sex", "expected_cell"),
+    [
+        ("Luca Ferrari", "solo", "M", "Luca Ferrari (M)"),
+        ("Luca Ferrari", "solo", "F", "Luca Ferrari (F)"),
+        ("Luca Ferrari", "solo", None, "Luca Ferrari"),
+        ("Moss Ridge Riders", "team", None, "Moss Ridge Riders"),
+    ],
+)
+def test_render_full_field_marks_the_sex_for_solo_entries_only(  # noqa: PLR0913, PLR0917 -- the parametrize row's four inputs
+    tmp_path: Path, name: str, kind: str, sex: str | None, expected_cell: str
+) -> None:
+    """The full-field entry cell appends the sex for a solo only."""
+    placed = (
+        Placed(
+            place=1,
+            result=_entry("88", name, 10, kind=kind, sex=sex),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+    opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
+
+    text = _text(_render(tmp_path, placed, opts))
+
+    assert expected_cell in text
 
 
 def test_render_all_cards_off_omits_draw_order_rows(tmp_path: Path) -> None:
@@ -656,18 +691,35 @@ def test_raw_stream_span_body_without_line_ending_still_replaces() -> None:
 
 
 @pytest.mark.parametrize(
-    ("kind", "name", "laps", "expected"),
+    ("kind", "sex", "name", "laps", "expected"),
     [
-        ("solo", "Luca Ferrari", 10, "Solo — Luca Ferrari · 10 laps"),
-        ("team", "Dirt Dynamos", 10, "Team — Dirt Dynamos · 10 laps"),
-        ("team", "Moss Ridge Riders", 11, "Team — Moss Ridge Riders · 11 laps"),
+        ("solo", "M", "Luca Ferrari", 10, "Solo (M) — Luca Ferrari · 10 laps"),
+        ("solo", "F", "Ana Souza", 8, "Solo (F) — Ana Souza · 8 laps"),
+        ("solo", None, "Peter Kim", 9, "Solo — Peter Kim · 9 laps"),
+        ("team", None, "Dirt Dynamos", 10, "Team — Dirt Dynamos · 10 laps"),
+        ("team", None, "Moss Ridge Riders", 11, "Team — Moss Ridge Riders · 11 laps"),
     ],
 )
-def test_poster_subtitle_formats_team_and_solo_lines(  # noqa: PLR0913, PLR0917 -- the parametrize row's four inputs
-    kind: str, name: str, laps: int, expected: str
+def test_poster_subtitle_formats_team_and_solo_lines(  # noqa: PLR0913, PLR0917 -- the parametrize row's five inputs
+    kind: str, sex: str | None, name: str, laps: int, expected: str
 ) -> None:
-    """The poster's team/solo line renders kind, name and laps."""
-    assert pdfexport._poster_subtitle(_entry("88", name, laps, kind=kind)) == expected
+    """The poster's team/solo line renders kind, sex, name and laps."""
+    assert pdfexport._poster_subtitle(_entry("88", name, laps, kind=kind, sex=sex)) == expected
+
+
+@given(
+    name=st.text(max_size=40),
+    laps=st.integers(min_value=0, max_value=60),
+    sex=st.sampled_from(["M", "F", None]),
+)
+def test_poster_subtitle_preserves_the_solo_name_laps_and_sex(
+    name: str, laps: int, sex: str | None
+) -> None:
+    """Property: a solo line keeps its name, laps and sex marker."""
+    line = pdfexport._poster_subtitle(_entry("88", name, laps, sex=sex))
+    marker = f" ({sex})" if sex is not None else ""
+
+    assert line == f"Solo{marker} — {name} · {laps} laps"
 
 
 @pytest.mark.parametrize(

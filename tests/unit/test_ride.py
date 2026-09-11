@@ -37,6 +37,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
@@ -809,6 +811,85 @@ def test_start_with_multiple_missing_setup_fields_joins_every_reason() -> None:
     assert engine.events == ()
 
 
+# ------------------------------ start gate: structured reasons
+
+
+def test_start_with_empty_roster_reports_the_single_reason_in_reasons() -> None:
+    """A blocked start carries its one reason structured (Phase 5)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    engine, _ = _make_engine(roster=roster)
+
+    with pytest.raises(StartBlockedError, match=re.escape("roster has no riders")) as excinfo:
+        engine.start()
+
+    assert excinfo.value.reasons == ("roster has no riders",)
+    assert str(excinfo.value) == "roster has no riders"
+
+
+def test_start_with_setup_violations_reports_each_field_in_reasons() -> None:
+    """Every setup violation lands in ``reasons``, one entry each."""
+    engine, _ = _make_engine(config=_config(name="", venue="", lap_km=0.0))
+
+    with pytest.raises(
+        StartBlockedError,
+        match=re.escape("name is required; venue is required; lap length must be positive"),
+    ) as excinfo:
+        engine.start()
+
+    assert excinfo.value.reasons == (
+        "name is required",
+        "venue is required",
+        "lap length must be positive",
+    )
+    assert str(excinfo.value) == (
+        "ride setup is incomplete: name is required; venue is required; "
+        "lap length must be positive"
+    )
+
+
+def test_start_with_roster_violations_reports_plate_prefixed_reasons() -> None:
+    """Each roster violation lands in ``reasons`` as "plate: reason"."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry_of_one(
+        display_name="Half Team", rider=Rider(first_name="Bo", last_name="", plate="7")
+    )
+    engine, _ = _make_engine(roster=roster)
+
+    with pytest.raises(
+        StartBlockedError,
+        match=re.escape("7: team size must be at least 2, got 1"),
+    ) as excinfo:
+        engine.start()
+
+    assert excinfo.value.reasons == ("7: team size must be at least 2, got 1",)
+    assert str(excinfo.value) == (
+        "roster is not ready to start: 7: team size must be at least 2, got 1"
+    )
+
+
+def test_start_blocked_error_given_no_reasons_raises_type_error() -> None:
+    """``reasons`` is required keyword-only, never defaulted."""
+    with pytest.raises(TypeError, match="reasons"):
+        StartBlockedError("roster has no riders")
+
+
+@given(message=st.text(min_size=1), reasons=st.lists(st.text(), max_size=5))
+def test_start_blocked_error_structured_reasons_never_change_the_message(
+    message: str, reasons: list[str]
+) -> None:
+    """The joined message survives whatever ``reasons`` carries.
+
+    Round-trip invariant for Phase 5's wiring: every pre-Phase-5 caller
+    reads ``str(exc)``, so adding structured reasons must leave it --
+    and ``args`` -- byte-for-byte the message it was raised with.
+    """
+    exc = StartBlockedError(message, reasons=tuple(reasons))
+
+    assert str(exc) == message
+    assert exc.args == (message,)
+    assert exc.reasons == tuple(reasons)
+
+
 # -------------------------------------------------- record_crossing
 
 
@@ -958,6 +1039,45 @@ def test_snapshot_includes_dnf_entries_with_dnf_flag() -> None:
     assert [result.plate for result in results] == ["12", "34"]
     assert results[0].dnf is True
     assert results[1].dnf is False
+
+
+def test_snapshot_sets_a_solo_entries_sex_from_its_lone_rider() -> None:
+    """A solo snapshot carries its rider's "M"/"F" (E7)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Luca", last_name="Ferrari", plate="12", sex="M")
+    engine, _ = _make_engine(roster=roster)
+
+    results = engine.snapshot()
+
+    assert [result.sex for result in results] == ["M"]
+
+
+def test_snapshot_leaves_a_solo_entries_sex_none_when_the_rider_has_none() -> None:
+    """An unknown rider sex stays None; exports render it blank."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Luca", last_name="Ferrari", plate="12")
+    engine, _ = _make_engine(roster=roster)
+
+    results = engine.snapshot()
+
+    assert [result.sex for result in results] == [None]
+
+
+def test_snapshot_leaves_a_team_entries_sex_none_even_when_its_riders_have_one() -> None:
+    """A team has no single sex, so its row never carries one."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45", sex="F"),
+            Rider(first_name="Bo", last_name="", plate="9", sex="M"),
+        ],
+    )
+    engine, _ = _make_engine(roster=roster)
+
+    results = engine.snapshot()
+
+    assert [result.sex for result in results] == [None]
 
 
 def test_lap_times_empty_for_entry_without_laps() -> None:
@@ -1766,6 +1886,95 @@ def test_engine_card_for_given_an_unknown_crossing_raises_key_error() -> None:
 
     with pytest.raises(KeyError, match=re.escape(str(crossing))):
         engine.card_for(crossing)
+
+
+# -------------------------- Phase 4: credited-cards read accessor
+
+
+def test_credited_cards_given_no_crossings_returns_an_empty_tuple() -> None:
+    """T-4 boundary: an entry that never crossed credits none."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    assert engine.credited_cards("12") == ()
+
+
+def test_credited_cards_given_an_unknown_plate_returns_an_empty_tuple() -> None:
+    """Negative: a plate no entry owns credits nothing, never raises."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    assert engine.credited_cards("999") == ()
+
+
+def test_credited_cards_given_one_crossing_returns_the_dealt_card() -> None:
+    """T-4 boundary: one lap credits exactly the card the shoe dealt."""
+    engine, _ = _make_engine()
+    engine.start()
+    result = engine.record_crossing("12", at=_dt(10, 30))
+
+    assert engine.credited_cards("12") == (result.card,)
+
+
+def test_credited_cards_given_many_crossings_returns_them_in_deal_order() -> None:
+    """T-4 boundary: many laps credit their cards, oldest first."""
+    engine, _ = _make_engine()
+    engine.start()
+    first = engine.record_crossing("12", at=_dt(10, 30))
+    second = engine.record_crossing("12", at=_dt(10, 31))
+    third = engine.record_crossing("12", at=_dt(10, 32))
+
+    assert engine.credited_cards("12") == (first.card, second.card, third.card)
+
+
+def test_credited_cards_given_a_held_short_lap_credits_nothing_yet() -> None:
+    """R-34: a held card is dealt but never credited until released."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    assert engine.credited_cards("12") == ()
+
+
+def test_credited_cards_after_confirming_a_held_card_credits_it() -> None:
+    """R-34: confirming a held card credits it."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    engine.confirm_held(held.crossing)
+
+    assert engine.credited_cards("12") == (held.card,)
+
+
+def test_credited_cards_after_voiding_a_held_card_still_credits_nothing() -> None:
+    """R-34: a voided card never reaches the credited hand."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    held = engine.held_crossings()[0]
+    engine.void_held(held.crossing)
+
+    assert engine.credited_cards("12") == ()
+
+
+def test_credited_cards_given_a_pooled_team_returns_the_entrys_whole_hand() -> None:
+    """Cards belong to the entry: two riders' laps pool."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
+    )
+    engine, _ = _make_engine(roster=roster)
+    engine.start()
+    first = engine.record_crossing("45", at=_dt(10, 30))
+    second = engine.record_crossing("9", at=_dt(10, 31))
+    entry = roster.entries[0]
+
+    assert engine.credited_cards(entry.plate) == (first.card, second.card)
 
 
 # --------------------------------------- W9: held-card lookup (R-34)

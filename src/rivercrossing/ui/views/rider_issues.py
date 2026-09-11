@@ -37,8 +37,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ISSUES_COLUMN_LABELS",
+    "ISSUES_HEIGHT_SCALE",
     "ISSUES_INFOBAR",
-    "MIN_SIZE",
+    "ISSUES_WIDTH_SCALE",
     "IssuesListModel",
     "RiderIssuesView",
     "run_rider_issues_flow",
@@ -52,9 +53,12 @@ ISSUES_COLUMN_LABELS: tuple[str, ...] = ("Plate", "Name", "Issue")
 # (rider_editor.py's ROSTER_INFOBAR precedent).
 ISSUES_INFOBAR = "issues_infobar"
 
-# The canvas draws this dialog at 640px wide; XRC has no window-level
-# minsize (riders.xrc's own header notes this and defers to code).
-MIN_SIZE = (640, 320)
+# Phase 6: XRC has no window-level minsize (riders.xrc's own header
+# notes this and defers to code), so _apply_min_size opens the report
+# this many times wider and taller than the size Fit() measured for
+# it -- the single issues list reads through a letterbox otherwise.
+ISSUES_WIDTH_SCALE = 3
+ISSUES_HEIGHT_SCALE = 2
 
 
 class IssuesListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -241,9 +245,20 @@ class RiderIssuesView:
         self.dialog.Layout()
 
     def _apply_min_size(self) -> None:
-        """Force the canvas's width floor, then Fit() the rest (D16)."""
-        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
+        """Open the report 3x wider and 2x taller than its fitted size.
+
+        ``Fit()`` first, so the size being scaled is whatever this
+        platform actually measured for the built window. That same
+        size is then both the floor (``SetMinSize``) and the size the
+        dialog opens at (``SetSize``): a floor alone would still let
+        the loaded window keep the narrow size XRC gave it.
+        """
         self.dialog.Fit()
+        fitted = self.dialog.GetSize()
+        width = fitted.width * ISSUES_WIDTH_SCALE
+        height = fitted.height * ISSUES_HEIGHT_SCALE
+        self.dialog.SetMinSize(wx.Size(width, height))
+        self.dialog.SetSize(wx.Size(width, height))
 
 
 def run_rider_issues_flow(parent: wx.Window, roster: Roster) -> bool:

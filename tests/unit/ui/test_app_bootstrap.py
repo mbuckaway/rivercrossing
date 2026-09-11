@@ -26,18 +26,21 @@ from __future__ import annotations
 
 import gc
 import json
+import re
 import weakref
 from typing import TYPE_CHECKING
 
+import pytest
+
+from rivercrossing.store import SchemaVersionMismatchError
 from rivercrossing.ui import app as app_module
+from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.logging import VERBOSE_LOG_NAME, VerboseLog
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.settings import AppSettings
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 
 class _FakeFrame:
@@ -150,17 +153,24 @@ class _Bootstrap:
         self.crash_hook_calls: list[object] = []
 
 
-def _install_fakes(
+def _install_fakes(  # noqa: PLR0913 -- (monkeypatch, tmp_path), verbose_logging, open_error
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     *,
     verbose_logging: bool,
+    open_error: Exception | None = None,
 ) -> _Bootstrap:
-    """Swap ``main``'s collaborators for recording doubles."""
+    """Swap ``main``'s collaborators for recording doubles.
+
+    *open_error* makes the ``Store.open`` double raise instead of
+    returning -- the start-failure seam the exit-path tests drive.
+    """
     store = _FakeStore("staged")
     bootstrap = _Bootstrap(store)
 
     def _open(_cls: object, path: object) -> _FakeStore:
+        if open_error is not None:
+            raise open_error
         store.path = path
         return store
 
@@ -317,3 +327,59 @@ def test_main_retains_the_installed_event_filter_on_the_app(
     gc.collect()
 
     assert reference() is bootstrap.app.verbose_event_filter
+
+
+# --- W4/Phase 2: a schema-version mismatch is an expected exit -------
+
+
+def test_main_given_a_schema_version_mismatch_shows_a_danger_box_and_exits_nonzero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mismatched database is diagnosed, never crashed on.
+
+    A file written by a different build cannot be read; the operator
+    is told exactly what to do (rename or delete it) and the process
+    exits non-zero without re-raising, because the generic crash path
+    would file a crash log for an expected condition.
+    """
+    message = (
+        "Database schema version 2 does not match this build's schema version 1. "
+        "Rename or delete the database file to continue."
+    )
+    _install_fakes(
+        monkeypatch,
+        tmp_path,
+        verbose_logging=False,
+        open_error=SchemaVersionMismatchError(message),
+    )
+    shown: list[tuple[object, str, str]] = []
+    monkeypatch.setattr(
+        std_dialogs,
+        "show_error",
+        lambda parent, title, text: shown.append((parent, title, text)),
+    )
+
+    exit_code = app_module.main()
+
+    assert exit_code == 1
+    assert shown == [(None, "Database Mismatch", message)]
+
+
+def test_main_given_a_generic_start_failure_still_shows_the_box_and_reraises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every other start failure keeps the W3 crash path unchanged."""
+    _install_fakes(monkeypatch, tmp_path, verbose_logging=False, open_error=RuntimeError("boom"))
+    shown: list[tuple[object, str, str]] = []
+    monkeypatch.setattr(
+        std_dialogs,
+        "show_error",
+        lambda parent, title, text: shown.append((parent, title, text)),
+    )
+
+    with pytest.raises(RuntimeError, match=re.escape("boom")):
+        app_module.main()
+
+    assert shown == [
+        (None, "RiverCrossing Could Not Start", "RiverCrossing could not start:\nboom")
+    ]

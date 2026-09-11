@@ -210,7 +210,7 @@ def test_write_export_poster_writes_one_page(tmp_path: Path) -> None:
 
 
 def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
-    """The standings CSV carries the spec §15 header (with type)."""
+    """The standings CSV carries the spec §15 header (type and sex)."""
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "standings.csv"
 
@@ -219,7 +219,7 @@ def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
     app_module._write_export(config, teams, solo, opts, "export_results_csv", out)
 
     lines = out.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "place,plate,entry,type,laps,hand"
+    assert lines[0] == "place,plate,entry,type,sex,laps,hand"
     assert len(lines) == 3  # header + two rows
 
 

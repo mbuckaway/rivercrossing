@@ -56,6 +56,22 @@ def _button(dialog: ET.Element, name: str) -> ET.Element:
     return button
 
 
+def _flex_grid_child_names(dialog: ET.Element) -> list[str]:
+    """Return the named controls of the dialog's flex grid, in order."""
+    grid = _flex_grid(dialog)
+    return [
+        child.get("name")
+        for item in grid.findall("object")
+        for child in item.findall("object")
+        if child.get("name") is not None
+    ]
+
+
+def _flex_grid(dialog: ET.Element) -> ET.Element:
+    """Return *dialog*'s own ``wxFlexGridSizer``."""
+    return next(obj for obj in dialog.iter("object") if obj.get("class") == "wxFlexGridSizer")
+
+
 def _sizeritems_without_one_object() -> list[str]:
     """Return every sizeritem whose child object count is not one."""
     # S314: the project's own XRC, not untrusted input.
@@ -79,15 +95,25 @@ def test_rider_editor_text_field_is_read_only(control_name: str) -> None:
     assert "wxTE_READONLY" in _style(_dialog(RIDER_EDITOR_DLG), control_name)
 
 
-def test_rider_editor_team_field_is_a_non_editable_choice() -> None:
-    """team_choice is a wxChoice: selectable, never free-typed (B1).
+def test_rider_editor_team_field_is_a_read_only_text_ctrl() -> None:
+    """team_choice is display-only: a read-only ``wxTextCtrl``.
 
-    XRC's wxChoice is the read-only Team field -- wxComboBox is the
-    type that would accept free text, and it appears nowhere here.
+    It replaced the pre-Phase-3 ``wxChoice``: the editor shows which
+    team the selected record belongs to and offers no way to change
+    it -- team assignment is the Add/Edit dialog's job.
     """
+    dialog = _dialog(RIDER_EDITOR_DLG)
+    control = _controls(dialog, "team_choice")[0]
+
+    assert control.get("class") == "wxTextCtrl"
+    assert "wxTE_READONLY" in _style(dialog, "team_choice")
+
+
+def test_rider_editor_team_field_is_not_a_combo_box() -> None:
+    """A ``wxComboBox`` accepts free-typed names; none exists here."""
     control = _controls(_dialog(RIDER_EDITOR_DLG), "team_choice")[0]
 
-    assert control.get("class") == "wxChoice"
+    assert control.get("class") != "wxComboBox"
 
 
 def test_rider_editor_dialog_declares_no_save_button() -> None:
@@ -141,6 +167,57 @@ def test_add_rider_dialog_keeps_the_shared_field_names() -> None:
     ] == ["plate_input", "first_name_input", "last_name_input"]
 
 
+# ------------------------------------ the Add/Edit dialog's Sex row
+
+
+def test_add_rider_dialog_team_choice_stays_a_choice() -> None:
+    """Names are per top-level window: only the editor's changed."""
+    control = _controls(_dialog(ADD_RIDER_DLG), "team_choice")[0]
+
+    assert control.get("class") == "wxChoice"
+
+
+def test_add_rider_dialog_declares_a_sex_choice() -> None:
+    """Phase 3: the dialog offers a Sex dropdown (M/F, blank first)."""
+    control = _controls(_dialog(ADD_RIDER_DLG), "sex_choice")[0]
+
+    assert control.get("class") == "wxChoice"
+
+
+def test_add_rider_dialog_sex_choice_follows_the_team_row() -> None:
+    """The canvas order is Plate, First name, Last name, Team, Sex."""
+    names = _flex_grid_child_names(_dialog(ADD_RIDER_DLG))
+
+    assert names.index("sex_choice") == names.index("team_choice") + 1
+
+
+def test_add_rider_dialog_sex_row_carries_a_label() -> None:
+    """WCAG/UX: every input has a real, persistent label control.
+
+    The label has no frozen name of its own (only the choice does),
+    so it is located structurally: the flex grid's item immediately
+    before the choice.
+    """
+    dialog = _dialog(ADD_RIDER_DLG)
+    items = _flex_grid(dialog).findall("object")
+    index = next(
+        i
+        for i, item in enumerate(items)
+        if any(child.get("name") == "sex_choice" for child in item.findall("object"))
+    )
+    label = items[index - 1].find("object")
+    text = label.findtext("label") if label is not None else None
+
+    assert text == "Sex"
+
+
+def test_add_rider_dialog_sex_row_keeps_two_columns() -> None:
+    """The new row is a label/control pair, not a stray third column."""
+    grid = _flex_grid(_dialog(ADD_RIDER_DLG))
+
+    assert (len(grid.findall("object")), grid.findtext("cols")) == (10, "2")
+
+
 def test_ok_button_min_size_given_a_best_size_triples_only_the_width() -> None:
     """The primary button's floor is 3x its best width (B2)."""
     assert rider_editor.ok_button_min_size((60, 24)) == (180, 24)
@@ -155,3 +232,39 @@ def test_ok_button_min_size_scales_width_and_preserves_height(width: int, height
     scaled = rider_editor.ok_button_min_size((width, height))
 
     assert scaled == (width * rider_editor.OK_BUTTON_SCALE, height)
+
+
+# ---------------------------------- the Add/Edit dialog's 3x width
+
+
+def test_wider_default_size_given_a_fitted_size_triples_only_the_width() -> None:
+    """The Add/Edit dialog opens 3x wider than its fitted size (B2)."""
+    assert rider_editor.wider_default_size((300, 180)) == (900, 180)
+
+
+@pytest.mark.parametrize(
+    ("fitted", "expected"),
+    [
+        ((0, 0), (0, 0)),  # T-4 boundary: below any real fitted width
+        ((1, 1), (3, 1)),  # T-4 boundary: min
+        ((2, 5), (6, 5)),  # T-4 boundary: min + 1
+        ((640, 480), (1920, 480)),  # a realistic fitted dialog
+    ],
+)
+def test_wider_default_size_given_boundary_widths_scales_by_three(
+    fitted: tuple[int, int],
+    expected: tuple[int, int],
+) -> None:
+    """Every width scales by exactly ``DIALOG_WIDTH_SCALE`` (T-4)."""
+    assert rider_editor.wider_default_size(fitted) == expected
+
+
+@given(
+    width=st.integers(min_value=1, max_value=10_000),
+    height=st.integers(min_value=1, max_value=400),
+)
+def test_wider_default_size_given_any_size_preserves_the_height(width: int, height: int) -> None:
+    """Property: widening never changes the dialog's height (T-7)."""
+    widened = rider_editor.wider_default_size((width, height))
+
+    assert widened == (width * rider_editor.DIALOG_WIDTH_SCALE, height)

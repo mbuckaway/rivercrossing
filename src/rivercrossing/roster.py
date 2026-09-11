@@ -201,12 +201,16 @@ class Rider:
     holds this rider's own plate only under
     ``PlateModel.RIDER_POOLED``; under ``PlateModel.TEAM_RELAY`` it
     always ends up ``None`` -- the plate belongs to the entry, not
-    the individual rider (S1).
+    the individual rider (S1). ``sex`` is ``"M"``/``"F"``, or ``None``
+    when the rider's sex is unknown (a blank registration cell);
+    registration forms write ``Male``/``Female`` and CSV import
+    normalizes those to the one canonical letter.
     """
 
     first_name: str
     last_name: str = ""
     plate: str | None = None
+    sex: str | None = None
     sort_order: int = 0
 
     @property
@@ -673,17 +677,20 @@ class Roster:
         )
         return entry
 
-    def create_solo_entry(self, *, first_name: str, last_name: str = "", plate: str) -> Entry:
+    def create_solo_entry(  # noqa: PLR0913 -- (first_name, last_name, plate, sex), keyword-only
+        self, *, first_name: str, last_name: str = "", plate: str, sex: str | None = None
+    ) -> Entry:
         """Create a solo entry for *first_name*/*last_name*.
 
         Plated per S1's plate model; the entry's ``display_name``
-        mirrors the rider's :attr:`Rider.full_name`.
+        mirrors the rider's :attr:`Rider.full_name`. *sex* is the
+        rider's ``"M"``/``"F"``, or ``None`` for unknown.
 
         Raises:
             DuplicatePlateError: *plate* collides with an existing
                 entry's or rider's plate.
         """
-        rider = Rider(first_name=first_name, last_name=last_name, plate=plate)
+        rider = Rider(first_name=first_name, last_name=last_name, plate=plate, sex=sex)
         entry_plate = self._shape_and_validate([rider], plate)
         entry = Entry(
             plate=entry_plate, display_name=rider.full_name, type=EntryType.SOLO, riders=[rider]

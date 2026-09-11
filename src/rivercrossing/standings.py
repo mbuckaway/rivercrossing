@@ -149,8 +149,10 @@ class EntryResult:
     standings orders by it and never re-derives it from ``cards``.
     ``kind`` is the entry-type spelling ("solo"/"team") as a plain
     string, since standings must not import ``roster`` (R-71).
-    ``total_time``/``best_lap`` are seconds; ``laps`` counts completed
-    laps.
+    ``sex`` is a solo rider's ``"M"``/``"F"`` -- also a plain string,
+    and ``None`` for a team (no single sex) or an unknown rider --
+    so the three results exports can render it. ``total_time``/
+    ``best_lap`` are seconds; ``laps`` counts completed laps.
     """
 
     entry_id: str
@@ -163,6 +165,7 @@ class EntryResult:
     cards: tuple[Card, ...]
     hand: EvaluatedHand
     dnf: bool
+    sex: str | None = None
 
 
 @dataclass(frozen=True)

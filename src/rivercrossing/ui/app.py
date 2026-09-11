@@ -81,6 +81,7 @@ from rivercrossing.store import (
     RideNameMismatchError,
     RideNotFoundError,
     RideRunningError,
+    SchemaVersionMismatchError,
     Store,
     StoreError,
     default_db_path,
@@ -3131,9 +3132,9 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     generic stub. ``start_ride`` (ux-polish) fires the live
     presenter's ``on_start`` the same way -- the engine's own start
     gate (empty roster, incomplete setup) refuses through
-    ``StartBlockedError`` and the presenter surfaces a native warning
-    (W5); with no presenter the fallback posts "Start Ride — no ride
-    open".
+    ``StartBlockedError`` and the presenter opens the blocked-start
+    issues dialog, one row per reason (Phase 5); with no presenter
+    the fallback posts "Start Ride — no ride open".
     ``stop_ride`` (W5) fires the live presenter's native stop-confirm
     flow (``on_stop_requested``) the same way -- a riderless roster
     gets a native warning from the flow itself; with no presenter the
@@ -4092,7 +4093,10 @@ def main(db_path: Path | None = None) -> int:
     ``MainLoop``. A raise anywhere before the loop shows a parentless
     error box (:func:`~rivercrossing.ui.std_dialogs.show_error`) and
     is re-raised, so the crash excepthook still appends the crash
-    log.
+    log -- except
+    :class:`~rivercrossing.store.SchemaVersionMismatchError`, whose
+    branch reports "Database Mismatch" and returns 1 without
+    re-raising, so no crash log is filed.
 
     Args:
         db_path: The rides database to open; ``None`` uses the per-user
@@ -4144,6 +4148,15 @@ def main(db_path: Path | None = None) -> int:
         wx.CallAfter(_run_launch_flow, app.launch_context, store)
         wx.CallAfter(_run_launch_self_test, app.launch_context)
         app.MainLoop()
+    except SchemaVersionMismatchError as exc:
+        # A version mismatch is an expected condition, not a crash: the
+        # database was written by a different build. Tell the operator
+        # the way out (rename or delete the file) and exit without
+        # re-raising, so the crash excepthook files no crash log.
+        from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+        std_dialogs.show_error(None, "Database Mismatch", str(exc))
+        return 1
     except Exception as exc:
         # W3: a raise with no frame to own the notice (a store open or
         # bootstrap failure) still gets a parentless error box, then

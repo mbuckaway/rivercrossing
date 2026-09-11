@@ -409,22 +409,39 @@
               </object>
 
               <!--
-                Review notebook (WS-H): the flagged crossings on page 1
-                ("Needs Review", the default page, index 0), the
-                roster on page 2 ("Riders"). wxNotebook IS authorable
-                here (measured on wxPython 4.3.1 / wxWidgets 3.3.3);
-                the notebookpage node's own name attribute is dropped by
-                the handler, so names live on the page children (the
-                wxPanels) and the controls inside them. That is why
+                Review notebook (WS-H): the roster on page 1 ("Riders",
+                the default page, index 0), the flagged crossings on
+                page 2 ("Needs Review", index 1). wxNotebook IS
+                authorable here (measured on wxPython 4.3.1 /
+                wxWidgets 3.3.3); the notebookpage node's own name
+                attribute is dropped by the handler, so names live on
+                the page children (the wxPanels) and the controls
+                inside them. That is why
                 flagged_list / review_btn / console_riders_list are
-                declared where they are. Columns, rows and the
-                double-click seam are code-side (main_frame.py).
+                declared where they are. Columns, rows, the
+                double-click seam and the sorted header are code-side
+                (main_frame.py); focus_review_panel finds the
+                "Needs Review" page by its label, so a future reorder
+                here cannot silently break it.
               -->
               <object class="sizeritem">
                 <option>1</option>
                 <flag>wxEXPAND|wxLEFT|wxBOTTOM</flag>
                 <border>8</border>
                 <object class="wxNotebook" name="review_notebook">
+                  <object class="notebookpage">
+                    <label>Riders</label>
+                    <object class="wxPanel">
+                      <object class="wxBoxSizer">
+                        <orient>wxVERTICAL</orient>
+                        <object class="sizeritem">
+                          <option>1</option>
+                          <flag>wxEXPAND</flag>
+                          <object class="wxDataViewCtrl" name="console_riders_list"/>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
                   <object class="notebookpage">
                     <label>Needs Review</label>
                     <object class="wxPanel">
@@ -441,19 +458,6 @@
                           <object class="wxButton" name="review_btn">
                             <label>Review…</label>
                           </object>
-                        </object>
-                      </object>
-                    </object>
-                  </object>
-                  <object class="notebookpage">
-                    <label>Riders</label>
-                    <object class="wxPanel">
-                      <object class="wxBoxSizer">
-                        <orient>wxVERTICAL</orient>
-                        <object class="sizeritem">
-                          <option>1</option>
-                          <flag>wxEXPAND</flag>
-                          <object class="wxDataViewCtrl" name="console_riders_list"/>
                         </object>
                       </object>
                     </object>
