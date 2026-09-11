@@ -1127,6 +1127,56 @@ class Roster:
             self._dissolve_entry(entry)
         return solo
 
+    def remove_rider(self, rider: Rider) -> None:
+        """Remove *rider* from this roster, leaving their entry intact.
+
+        The rider editor's Delete acts on the selected *rider*, never
+        on the row's whole entry (the 1.0.12 defect this closes): a
+        solo entry *is* its rider, so that case delegates to
+        :meth:`delete_entry` -- keeping ``_delete_refusal``'s message
+        verbatim -- while a TEAM entry loses only *rider* and survives
+        with the members left. A pooled team re-derives its own plate
+        from them (S1); a team with no riders left dissolves outright
+        (:meth:`_dissolve_entry`), exactly as a move's last rider does.
+
+        Dropping a two-rider team to one therefore leaves a transient
+        size-1 team: the 2..max_team_size floor is a start-time check
+        (:meth:`validate_for_start`), the same documented
+        :meth:`move_rider` behavior. There is no composed alternative
+        to this third copy of the remove -> recompute -> dissolve
+        idiom -- :meth:`extract_rider_to_solo` would leave a dangling
+        solo entry behind, and :meth:`move_rider` needs a destination
+        entry to move to.
+
+        Raises:
+            RiderNotFoundError: *rider* is not on any entry here.
+            LockedError: the rider's entry carries recorded data
+                (DNF or void it instead), or the ride has left DRAFT
+                (R-15).
+        """
+        entry = self._find_owning_entry(rider)
+        if entry is None:
+            msg = "rider is not on any entry in this roster"
+            raise RiderNotFoundError(msg)
+        if entry.type is EntryType.SOLO:
+            self.delete_entry(entry)
+            return
+        if not can_delete_entry(self._status, has_data=entry.has_data):
+            raise LockedError(self._delete_refusal(entry))
+        entry.riders.remove(rider)
+        if entry.riders:
+            self._recompute_pooled_plate(entry)
+        else:
+            self._dissolve_entry(entry)
+        self._log(
+            "remove_rider",
+            {
+                "rider_name": rider.full_name,
+                "plate": entry.plate,
+                "display_name": entry.display_name,
+            },
+        )
+
     def _empty_team_plate(self, plate: str | None) -> str:
         """Return the entry plate of a zero-rider team (W8).
 

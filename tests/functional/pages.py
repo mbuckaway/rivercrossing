@@ -34,7 +34,6 @@ WX_ID_CANCEL = "wxID_CANCEL"
 WX_ID_CLOSE = "wxID_CLOSE"
 WX_ID_DELETE = "wxID_DELETE"
 WX_ID_OPEN = "wxID_OPEN"
-WX_ID_NEW = "wxID_NEW"
 
 
 @dataclass(frozen=True)
@@ -399,8 +398,8 @@ RIDE_LIBRARY_DLG = WindowSpec(
     name=ids.RIDE_LIBRARY_DLG,
     xrc_file="library.xrc",
     is_frame=False,
-    controls=(ids.RIDES_LIST, WX_ID_OPEN, WX_ID_NEW, ids.DUPLICATE_BTN, WX_ID_DELETE, WX_ID_CLOSE),
-    buttons=(WX_ID_OPEN, WX_ID_NEW, ids.DUPLICATE_BTN, WX_ID_DELETE, WX_ID_CLOSE),
+    controls=(ids.RIDES_LIST, WX_ID_OPEN, ids.DUPLICATE_BTN, WX_ID_DELETE, WX_ID_CLOSE),
+    buttons=(WX_ID_OPEN, ids.DUPLICATE_BTN, WX_ID_DELETE, WX_ID_CLOSE),
 )
 
 DELETE_RIDE_DLG = WindowSpec(

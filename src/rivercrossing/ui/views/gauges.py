@@ -63,6 +63,10 @@ _MODE_COLOURS: dict[str, tuple[int, int, int]] = {
     "yellow": _AMBER,
     "red": _RED,
 }
+# Every mode ``set_mode`` accepts. "off" (the no-ride console) has no
+# colour of its own: the paint loop only fills the circle whose mode
+# matches, so "off" matches none and all three stay outlined.
+_MODES: frozenset[str] = frozenset(_MODE_COLOURS) | {"off"}
 
 # Shapes-only GO/STOP glyphs -- a circle plus a play arrow, and a
 # rounded square. Deliberately no <text> element: the buttons keep
@@ -213,14 +217,16 @@ class StopLight(wx.Control):  # type: ignore[misc]
         return wx.Size(*_stop_light_size())
 
     def set_mode(self, mode: str) -> None:
-        """Light the circle for *mode* ("green"/"yellow"/"red").
+        """Light the circle for *mode* ("green"/"yellow"/"red"/"off").
+
+        ``"off"`` is the no-ride console (W1): it lights no circle.
 
         Raises:
-            ValueError: If *mode* is not one of the three lamp colours
-                -- a new ride state that forgot to map here must fail
+            ValueError: If *mode* is not one of the accepted modes --
+                a new ride state that forgot to map here must fail
                 loudly, not silently dim the lamp.
         """
-        if mode not in _MODE_COLOURS:
+        if mode not in _MODES:
             raise ValueError(f"unknown stop-light mode {mode!r}")
         self.mode = mode
         self.Refresh()

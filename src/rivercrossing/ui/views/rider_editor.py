@@ -72,9 +72,12 @@ Sex dropdown (``sex_choice``: blank, M, F) and opens three times
 wider than its fitted size.
 
 Phase 6 gives ``csv_preview_dlg`` its own default size:
-:class:`CsvPreviewDialog` opens it three times wider and twice as
-tall as the size its own ``Fit()`` measured, in code, because XRC
-cannot set a window minsize (``riders.xrc``'s header).
+:class:`CsvPreviewDialog` opens it twice as wide and twice as tall
+as the size its own ``Fit()`` measured, in code, because XRC cannot
+set a window minsize (``riders.xrc``'s header). Phase 3 narrows that
+width from three times to two and adds the dialog's own "Map unknown
+sex to Male" checkbox, forwarded to the presenter as
+``on_toggle_map_unknown_sex``.
 """
 
 from pathlib import Path
@@ -200,7 +203,7 @@ DIALOG_WIDTH_SCALE = 3
 # scale here, unlike add_rider_dlg's above: the preview is one list
 # plus a summary line, and the width alone would only add empty
 # margin.
-CSV_PREVIEW_WIDTH_SCALE = 3
+CSV_PREVIEW_WIDTH_SCALE = 2
 CSV_PREVIEW_HEIGHT_SCALE = 2
 
 # Blank first: the Add mode's default, and the "unknown" value that
@@ -915,6 +918,7 @@ class CsvPreviewDialog:
         self._model: CsvConflictsListModel = CsvConflictsListModel(())
 
         self.ok_btn = self._find("wxID_OK", wx.Button)
+        self.map_unknown_sex_chk = self._find(ids.MAP_UNKNOWN_SEX_CHK, wx.CheckBox)
 
         self.csv_infobar = self._build_infobar()
 
@@ -950,7 +954,7 @@ class CsvPreviewDialog:
         return _build_infobar(self.dialog, CSV_INFOBAR)
 
     def _apply_min_size(self) -> None:
-        """Open the preview 3x wider and 2x taller than its fitted size.
+        """Open the preview twice as wide and twice as tall as fitted.
 
         XRC gives a window no minsize and no default size, so the
         dialog would otherwise open at the conflicts list's own narrow
@@ -958,7 +962,8 @@ class CsvPreviewDialog:
         whatever this platform actually measured; that same size is
         both the floor (``SetMinSize``) and the size the dialog opens
         at (``SetSize``) -- a floor alone would still let the loaded
-        window keep the size XRC gave it. This is the both-dimensions
+        window keep the size XRC gave it. Phase 3 narrowed the width
+        from Phase 6's three times to two; this is the both-dimensions
         mirror of :class:`AddRiderDialog`'s own width-only floor.
         """
         self.dialog.Fit()
@@ -969,8 +974,14 @@ class CsvPreviewDialog:
         self.dialog.SetSize(wx.Size(width, height))
 
     def _bind_events(self) -> None:
-        """Forward ``wxID_OK`` straight to the presenter."""
+        """Bind ``wxID_OK`` and the sex checkbox toggle."""
         self.dialog.Bind(wx.EVT_BUTTON, self._on_import, self.ok_btn)
+        self.dialog.Bind(wx.EVT_CHECKBOX, self._on_map_unknown_sex_chk, self.map_unknown_sex_chk)
+
+    def _on_map_unknown_sex_chk(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Forward the sex checkbox's new state (Phase 3)."""
+        event.Skip()
+        self.presenter.on_toggle_map_unknown_sex(enabled=self.map_unknown_sex_chk.GetValue())
 
     def _on_import(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
         """Handle ``wxID_OK`` ("Import"): commit, then close if it did.

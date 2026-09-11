@@ -20,11 +20,23 @@ Phase 3 adds the two rider-list pieces both rider lists need:
 :func:`apply_sort_indicator` (the ▲/▼ header marker for the
 presenter-owned sort ``riders_list`` and ``console_riders_list``
 share).
+
+W10 adds :func:`apply_glass_bezel`: the macOS-26 ``.glass`` bezel
+applied to a ``wx.Button`` through its native ``NSButton`` handle.
+It is a *native-bezel selection*, not owner-draw -- the button is
+already a themed native control and ``setBezelStyle:`` picks the
+Liquid Glass material Apple added in macOS 26 -- so R-05's "no
+custom-drawn chrome" holds. It is a no-op on Windows and on every
+macOS before 26.
 """
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import gc
+import platform
+import sys
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -40,7 +52,9 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FIND_SETTLE_ATTEMPTS",
+    "GLASS_BEZEL_STYLE",
     "RiderRowListModel",
+    "apply_glass_bezel",
     "apply_sort_indicator",
     "associate_model",
     "default_card_images",
@@ -261,3 +275,99 @@ def _plain_label(title: str) -> str:
         if title.endswith(marker):
             return title[: -len(marker)]
     return title
+
+
+# NSBezelStyleGlass is Apple's own enum value (macOS 26.0+), sent
+# straight to the native NSButton -- it is not a wx constant.
+GLASS_BEZEL_STYLE = 16
+
+# The first macOS with the glass material, from Apple's own versioning.
+_GLASS_BEZEL_MAJOR = 26
+
+
+def apply_glass_bezel(button: wx.Button) -> None:
+    """Give *button* the macOS-26 ``.glass`` bezel, where it can apply.
+
+    A native-bezel selection, not owner-draw: the button is already a
+    themed native ``NSButton``, and ``setBezelStyle:`` picks the
+    Liquid Glass material Apple added in 26 (wxWidgets 3.3.3's Cocoa
+    ``wxButton`` supports exactly this access path -- its
+    ``button.mm`` handles "application code when accessed with
+    ``wxWindow::GetHandle()``").
+
+    A no-op off macOS 26+ and before the button is realized
+    (``GetHandle()`` is 0 until the dialog is shown), so Windows, older
+    macOS and a not-yet-shown dialog are unaffected. Idempotent --
+    setting the same bezel style twice is a no-op.
+
+    Args:
+        button: The ``wx.Button`` whose native bezel to change. Call
+            this after the dialog is shown (``RideLibrary`` defers it
+            through ``wx.CallAfter`` for exactly that reason), or the
+            handle is still 0.
+    """
+    if not _glass_bezel_supported():
+        return
+    handle = button.GetHandle()
+    if not handle:
+        return
+    _send_set_bezel_style(handle, GLASS_BEZEL_STYLE)
+
+
+def _glass_bezel_supported() -> bool:
+    """Return whether this process can apply the glass bezel.
+
+    Darwin-only and macOS 26+ only: ``NSBezelStyleGlass`` does not
+    exist before Tahoe, and neither Windows nor Linux has a native
+    ``NSButton`` to set it on.
+    """
+    if sys.platform != "darwin":
+        return False
+    return _macos_major() >= _GLASS_BEZEL_MAJOR
+
+
+def _macos_major() -> int:
+    """Return the running macOS major version, or 0 when unparseable.
+
+    ``platform.mac_ver()`` returns ``("26.6.2", ...)`` on Tahoe. An
+    empty or non-numeric release (a stripped image, a future format
+    change) reads as 0, so the guard fails closed rather than
+    guessing.
+    """
+    release = platform.mac_ver()[0]
+    major, _, _ = release.partition(".")
+    return int(major) if major.isdigit() else 0
+
+
+def _send_set_bezel_style(handle: Any, style: int) -> None:  # noqa: ANN401 -- a native pointer
+    """Send ``setBezelStyle:`` to the native ``NSButton`` at *handle*.
+
+    The exact recipe this feature's macOS-26 probe pinned: libobjc via
+    ``ctypes`` (no new dependency -- PyObjC's ``objc`` + libffi runtime
+    would add a real PyInstaller-frozen-app packaging cost),
+    ``sel_registerName`` typed to return ``c_void_p``, and
+    ``objc_msgSend`` typed ``[c_void_p, c_void_p, c_long]`` with
+    restype ``None`` for the void-returning setter.
+
+    Kept apart from :func:`apply_glass_bezel` so the guard and the
+    dispatch stay unit-testable without ever dereferencing a pointer:
+    a fake handle here would abort the interpreter, so only a real
+    realized button on macOS 26 exercises the send itself.
+
+    # logic-coverage-exempt: T-15 -- the send below needs a live
+    NSButton pointer and libobjc; unit tests cover the
+    ``find_library``-is-None arm and the dispatch above, and the
+    user's manual macOS-26 check covers the rest. Both this function
+    and its module live outside the coverage gate
+    (``pyproject.toml`` omits ``ui/views/*``).
+    """
+    library = ctypes.util.find_library("objc")
+    if library is None:
+        return
+    objc = ctypes.CDLL(library)
+    objc.sel_registerName.restype = ctypes.c_void_p
+    objc.sel_registerName.argtypes = [ctypes.c_char_p]
+    objc.objc_msgSend.restype = None
+    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
+    selector = objc.sel_registerName(b"setBezelStyle:")
+    objc.objc_msgSend(ctypes.c_void_p(handle), selector, style)

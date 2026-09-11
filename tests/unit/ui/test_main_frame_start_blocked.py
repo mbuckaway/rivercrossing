@@ -15,10 +15,17 @@ are checked here, both cheap and headless:
 The presenter half (``on_start`` opening that dialog) lives in
 ``tests/unit/presenters/test_console.py``. Real window geometry and
 the modal show stay with the functional suite.
+
+A third, pure half is pinned at the end: the size rule the view
+applies after loading the dialog
+(:func:`main_frame._start_blocked_size`), so the one "Issue" column
+gets room instead of opening at the sizer's narrow best size.
 """
 
 from pathlib import Path
 from xml.etree import ElementTree as ET
+
+import pytest
 
 from rivercrossing.ui.views import main_frame
 
@@ -134,3 +141,25 @@ def test_start_blocked_list_model_given_many_reasons_keeps_their_order() -> None
     assert model.GetValueByRow(0, 0) == "venue is required"
     assert model.GetValueByRow(1, 0) == "scorer is required"
     assert model.GetValueByRow(2, 0) == "7: team size must be at least 2, got 1"
+
+
+# ------------------------------------------------------- the size rule
+
+
+@pytest.mark.parametrize(
+    ("fitted", "expected"),
+    [
+        ((0, 0), (0, 0)),
+        ((1, 1), (2, 2)),
+        ((400, 300), (800, 600)),
+        ((1920, 1080), (3840, 2160)),
+    ],
+    ids=["empty", "single_dip", "nominal", "large"],
+)
+def test_start_blocked_size_given_a_fitted_size_returns_double_both_dimensions(
+    fitted: tuple[int, int], expected: tuple[int, int]
+) -> None:
+    """The dialog opens at twice the fitted width and height."""
+    result = main_frame._start_blocked_size(fitted)
+
+    assert result == expected

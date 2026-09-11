@@ -3056,6 +3056,65 @@ def test_preview_unrecognized_sex_cell_is_a_row_conflict_excluding_the_row(
     assert result.rider_count == 1
 
 
+@pytest.mark.parametrize("cell", ["", "   "])
+def test_preview_blank_sex_cell_with_map_unknown_sex_to_male_imports_as_male(
+    tmp_path: Path, cell: str
+) -> None:
+    """The opt-in maps a blank (unknown) sex to "M"."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", type_="solo", number="1", sex=cell)])
+    roster = _relay_roster()
+
+    result = preview(path, roster, map_unknown_sex_to_male=True)
+
+    assert (result.entries[0].riders[0].sex, result.conflicts) == ("M", ())
+
+
+@pytest.mark.parametrize("cell", ["X", "unknown", "male female", "1"])
+def test_preview_unrecognized_sex_cell_with_map_unknown_sex_to_male_imports_as_male(
+    tmp_path: Path, cell: str
+) -> None:
+    """An unrecognized sex maps to "M", keeping the row."""
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", type_="solo", number="1", sex=cell),
+            _Row(first="Bo", type_="solo", number="2", sex=""),
+        ],
+    )
+    roster = _relay_roster()
+
+    result = preview(path, roster, map_unknown_sex_to_male=True)
+
+    assert result.conflicts == ()
+    assert [rider.sex for entry in result.entries for rider in entry.riders] == ["M", "M"]
+
+
+@pytest.mark.parametrize("cell", ["Female", "female", "FEMALE", "F", "f"])
+def test_preview_known_female_sex_cell_with_map_unknown_sex_to_male_stays_female(
+    tmp_path: Path, cell: str
+) -> None:
+    """A recognized female sex is kept, not mapped to "M"."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", type_="solo", number="1", sex=cell)])
+    roster = _relay_roster()
+
+    result = preview(path, roster, map_unknown_sex_to_male=True)
+
+    assert result.entries[0].riders[0].sex == "F"
+
+
+@pytest.mark.parametrize("cell", ["Male", "male", "M", "m"])
+def test_preview_known_male_sex_cell_with_map_unknown_sex_to_male_stays_male(
+    tmp_path: Path, cell: str
+) -> None:
+    """A recognized "M"/"Male" cell is unchanged by the opt-in."""
+    path = _unified_file(tmp_path, [_Row(first="Alex", type_="solo", number="1", sex=cell)])
+    roster = _relay_roster()
+
+    result = preview(path, roster, map_unknown_sex_to_male=True)
+
+    assert result.entries[0].riders[0].sex == "M"
+
+
 def test_preview_epic_registration_shaped_file_assigns_sex_and_groups_by_team_name(
     tmp_path: Path,
 ) -> None:

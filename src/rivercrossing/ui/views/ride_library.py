@@ -23,7 +23,11 @@ import wx.dataview
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import (
+    apply_glass_bezel,
+    associate_model,
+    find_control,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -41,6 +45,7 @@ __all__ = [
     "COL_STATUS",
     "COL_STATUS_WIDTH",
     "MIN_SIZE",
+    "WX_ID_CLOSE",
     "WX_ID_DELETE",
     "RideLibrary",
     "RidesListModel",
@@ -72,9 +77,9 @@ class RidesSource(Protocol):
 # by tools/gen_ids.py's STOCK_IDS set (spec.md §15b) -- the same
 # literal views/dialogs.py repeats for the identical reason; pages.py
 # is test-only and production cannot import it.
+WX_ID_CLOSE = "wxID_CLOSE"
 WX_ID_DELETE = "wxID_DELETE"
 WX_ID_OPEN = "wxID_OPEN"
-WX_ID_NEW = "wxID_NEW"
 
 COL_NAME = 0
 COL_DATE = 1
@@ -84,12 +89,16 @@ COL_ENTRIES = 3
 # xrc-windows.md D's exact order: Ride | Date | Status | Entries.
 COLUMN_LABELS: tuple[str, ...] = ("Ride", "Date", "Status", "Entries")
 
-# D16: the canvas draws this dialog at 520px; XRC has no window-level
+# D16: the canvas draws this dialog at 520x182; XRC has no window-level
 # minsize (library.xrc's own header notes this and defers to code).
-# Height is Fit()'s own measurement of the real, demo-populated
-# sizer content, not a second canvas number -- see this task's own
-# report for how it was measured.
-MIN_SIZE = (520, 182)
+# W10 doubles the canvas width (520 -> 1040) and triples its height
+# (182 -> 546). At the 520 px floor the four columns did not fit and
+# the last one clipped; the doubled width hands the elastic Ride
+# column the slack, and the tripled height stops the list collapsing
+# to the sizer's own small best height. Measured (this task's own
+# probe on 4.3.1 osx-cocoa): ``SetMinSize`` + ``Fit()`` honours BOTH
+# dimensions at this size, so no ``SetSize`` fallback is needed.
+MIN_SIZE = (1040, 546)
 
 # W10 column-width plan. A DataViewCtrl column never sizes itself to
 # its content, and (measured on 4.3.1 osx-cocoa / wxWidgets 3.3.3)
@@ -108,11 +117,14 @@ COL_DATE_WIDTH = 110
 COL_STATUS_WIDTH = 110
 COL_ENTRIES_WIDTH = 70
 
-# The Ride column's floor: 208 px is the fill at the dialog's 520 px
-# floor (the list's client measures ~498 px there on 4.3.1 osx-cocoa;
-# 498 - 110 - 110 - 70 = 208) and fits the canvas's own names plus the
-# longest a duplicate creates, "GORBA EPIC 2026 (copy)" (135 px at
-# the stock font).
+# The Ride column's floor: 208 px is the fill the canvas's own 520 px
+# dialog gave it (the list's client measures ~498 px there on 4.3.1
+# osx-cocoa; 498 - 110 - 110 - 70 = 208) and fits the canvas's own
+# names plus the longest a duplicate creates, "GORBA EPIC 2026
+# (copy)" (135 px at the stock font). W10 widened the dialog's own
+# floor to MIN_SIZE's 1040 px, so this is now only what a
+# not-yet-laid-out list starts from -- :func:`name_column_width`
+# replaces it on the first size event.
 COL_NAME_WIDTH = 208
 
 # One width per COLUMN_LABELS entry, in canvas order: the Ride column
@@ -168,11 +180,16 @@ _TEXT_ACCESSORS: tuple[Callable[[RideSummary], str], ...] = (
 
 
 class RidesListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
-    """Read-only model over ``RideSummary`` rows for ``rides_list``.
+    """Read-only, sortable model over ``RideSummary`` rows.
 
     ``# type: ignore[misc]``: wx ships no stubs, so mypy refuses to
     subclass ``Any`` -- the same unavoidable annotation
     ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
+
+    :meth:`Compare` is what makes the native header arrows work: the
+    control hands it two items and the model column, and the model
+    answers the Ordering on the *rows* those items index.
+    ``DataViewIndexListModel.GetRow`` is the item-to-row mapping.
     """
 
     def __init__(self, rows: Sequence[RideSummary]) -> None:
@@ -192,6 +209,44 @@ class RidesListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
         """Return the cell value at *row*/*col*."""
         return _TEXT_ACCESSORS[col](self._rows[row])
 
+    def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
+        self,
+        item1: Any,  # noqa: ANN401 -- wx ships no stubs
+        item2: Any,  # noqa: ANN401 -- wx ships no stubs
+        col: int,
+        ascending: bool,  # noqa: FBT001 -- wx's own callback argument
+    ) -> int:
+        """Return the Ordering of *item1* versus *item2* on *col*.
+
+        The base ``DataViewIndexListModel`` already compares each text
+        column's *displayed* value, so this override exists for the two
+        columns whose display text is the wrong sort key. Ride compares
+        case-folded (so "alpha" sorts beside "Alpha", never after
+        "Zulu"), and Entries compares as a number -- its cell is
+        ``str(entries)``, and text order would put "10" before "2".
+        Date compares its ISO text, which is already chronological, and
+        Status compares :func:`format_ride_status`, the string the cell
+        shows. *ascending* is the header arrow's own direction.
+        """
+        first = self._rows[self.GetRow(item1)]
+        second = self._rows[self.GetRow(item2)]
+        if col == COL_ENTRIES:
+            result = _ordering(first.entries, second.entries)
+        elif col == COL_NAME:
+            result = _ordering(first.name.casefold(), second.name.casefold())
+        elif col == COL_STATUS:
+            result = _ordering(format_ride_status(first.status), format_ride_status(second.status))
+        else:  # COL_DATE -- its ISO text is already chronological
+            result = _ordering(first.date, second.date)
+        return result if ascending else -result
+
+
+def _ordering[T: (str, int)](first: T, second: T) -> int:
+    """Return -1, 0 or 1: how *first* orders against *second*."""
+    if first == second:
+        return 0
+    return -1 if first < second else 1
+
 
 class RideLibrary:
     """Code-side behaviour for ``ride_library_dlg`` (1g).
@@ -206,26 +261,27 @@ class RideLibrary:
     callback -- the seam E5.4 wires to ``Store.delete_ride`` (which
     writes its backup first) -- with the selected ride row, then the
     view refreshes so the deleted row disappears (W10). E5.4.1 wires
-    the live library's other three buttons the same way: ``wxID_OPEN``
+    the live library's other two buttons the same way: ``wxID_OPEN``
     and ``duplicate_btn`` are enabled only while a ride row is
     selected (the "no ride selected" disable rule the store-backed
-    library carries over from Delete), ``wxID_NEW`` is enabled only
-    when an ``on_new`` callback was injected (W10: the no-store
-    library disables New instead of silently no-oping a click), and
-    each forwards its selection to the injected
-    ``on_open``/``on_new``/``on_duplicate`` callbacks -- the seams
-    ``app.py`` wires to ``Store.load_engine`` + console switch, the
-    ride-setup flow, and ``Store.duplicate_ride`` + :meth:`refresh`.
+    library carries over from Delete), and each forwards its selection
+    to the injected ``on_open``/``on_duplicate`` callbacks -- the seams
+    ``app.py`` wires to ``Store.load_engine`` + console switch and
+    ``Store.duplicate_ride`` + :meth:`refresh`. W10 removes the New
+    button: the library never owned the ride-setup flow, which stays
+    File ▸ New Ride…'s own route. W10 also makes the columns natively
+    sortable (the model's :meth:`~RidesListModel.Compare`), keeps the
+    operator's chosen sort across rebuilds, and applies the macOS-26
+    ``.glass`` bezel to the dialog's buttons.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the four injected action callbacks
+    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the three injected action callbacks
         self,
         dialog: wx.Dialog,
         *,
         data_source: RidesSource,
         on_delete: Callable[[RideSummary], None] | None = None,
         on_open: Callable[[RideSummary], None] | None = None,
-        on_new: Callable[[], None] | None = None,
         on_duplicate: Callable[[RideSummary], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``ride_library_dlg`` window.
@@ -248,9 +304,6 @@ class RideLibrary:
             on_open: Called with the selected ride when Open is
                 clicked; ``None`` leaves the button a no-op (the empty
                 library, which has no store ride to load).
-            on_new: Called when New is clicked (the app opens the ride
-                setup flow); ``None`` disables the New button (W10 --
-                the no-store library has no setup flow to open).
             on_duplicate: Called with the selected ride when Duplicate
                 is clicked; ``None`` leaves it a no-op. The view
                 refreshes its rows after the callback returns so a
@@ -260,31 +313,48 @@ class RideLibrary:
         self.data_source = data_source
         self._on_delete = on_delete
         self._on_open = on_open
-        self._on_new = on_new
         self._on_duplicate = on_duplicate
         self._rows: tuple[RideSummary, ...] = ()
         self._selected: RideSummary | None = None
+        # The operator's current header sort, re-applied whenever the
+        # model is rebuilt (a new model drops the control's sort key).
+        self._sort_column: int = COL_NAME
+        self._sort_ascending: bool = True
 
         self.rides_list = self._find(ids.RIDES_LIST, wx.dataview.DataViewCtrl)
         self.delete_button = self._find(WX_ID_DELETE, wx.Button)
         self.open_button = self._find(WX_ID_OPEN, wx.Button)
-        self.new_button = self._find(WX_ID_NEW, wx.Button)
         self.duplicate_button = self._find(ids.DUPLICATE_BTN, wx.Button)
+        self.close_button = self._find(WX_ID_CLOSE, wx.Button)
         self._build_columns()
-        self._model: RidesListModel | None = None
+        # Replaced by show_rides() below, before any event can fire --
+        # typed non-optional so _apply_sort never has to narrow it.
+        self._model: RidesListModel = RidesListModel([])
 
-        self.show_rides(self.data_source.rides())
         self.rides_list.Bind(
             wx.dataview.EVT_DATAVIEW_SELECTION_CHANGED, self._on_selection_changed
         )
+        # Remember the operator's header arrow, so the next show_rides
+        # rebuild can put it back.
+        self.rides_list.Bind(wx.dataview.EVT_DATAVIEW_COLUMN_SORTED, self._on_column_sorted)
         # W10: the elastic Ride column follows the list's own width.
         self.rides_list.Bind(wx.EVT_SIZE, self._on_rides_list_resize)
         self.open_button.Bind(wx.EVT_BUTTON, self._on_open_clicked)
-        self.new_button.Bind(wx.EVT_BUTTON, self._on_new_clicked)
         self.duplicate_button.Bind(wx.EVT_BUTTON, self._on_duplicate_clicked)
         self.delete_button.Bind(wx.EVT_BUTTON, self._on_delete_clicked)
+        self.show_rides(self.data_source.rides())
         self._update_action_enablement()
         self._apply_min_size()
+        # W10: the macOS-26 .glass bezel reaches the native NSButton,
+        # which GetHandle() only yields once the dialog is realized --
+        # hence CallAfter rather than a direct call here.
+        for button in (
+            self.open_button,
+            self.duplicate_button,
+            self.delete_button,
+            self.close_button,
+        ):
+            wx.CallAfter(apply_glass_bezel, button)
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -311,9 +381,22 @@ class RideLibrary:
         column starts at the elastic floor and
         :meth:`_on_rides_list_resize` re-fills it from the live
         client width on every size event.
+
+        Every column is SORTABLE (W10 -- the native header arrow,
+        answered by :meth:`RidesListModel.Compare`) and RESIZABLE. An
+        explicit ``flags`` argument *replaces* ``AppendTextColumn``'s
+        RESIZABLE default rather than being OR'd with it (wxWidgets
+        3.3.3 ``dataview.h``: explicit flags are never merged), so
+        both are spelled out -- on macOS a SORTABLE-only column is
+        actively set ``NSTableColumnNoResizing``.
         """
         for col, label in enumerate(COLUMN_LABELS):
-            self.rides_list.AppendTextColumn(label, col, width=_COLUMN_WIDTHS[col])
+            self.rides_list.AppendTextColumn(
+                label,
+                col,
+                width=_COLUMN_WIDTHS[col],
+                flags=wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE,
+            )
 
     def _on_rides_list_resize(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Re-fill the Ride column after this resize settles (W10).
@@ -339,6 +422,24 @@ class RideLibrary:
         self.rides_list.GetColumn(COL_ENTRIES).SetWidth(COL_ENTRIES_WIDTH)
         self.rides_list.GetColumn(COL_NAME).SetWidth(name_column_width(client_width))
 
+    def _apply_sort(self) -> None:
+        """Re-apply the remembered header sort to the current model.
+
+        ``show_rides`` replaces the model, which drops the sort key the
+        control was holding; setting it on the column again and asking
+        the model to resort restores exactly the order the operator
+        left the list in (the team editor's own shape).
+        """
+        column = self.rides_list.GetColumn(self._sort_column)
+        if column is None:
+            # logic-coverage-exempt: T-3 -- _sort_column is always a
+            # real column's GetModelColumn(), so this lookup cannot
+            # miss; the guard keeps the resort total (the team editor's
+            # own arm, kept for parity).
+            return
+        column.SetSortOrder(self._sort_ascending)
+        self._model.Resort()
+
     def show_rides(self, rows: list[RideSummary]) -> None:
         """Render ``rides_list`` (``LibraryView``).
 
@@ -349,6 +450,7 @@ class RideLibrary:
         self._selected = None
         self._model = RidesListModel(rows)
         associate_model(self.rides_list, self._model)
+        self._apply_sort()
         self._update_action_enablement()
 
     def refresh(self) -> None:
@@ -361,7 +463,7 @@ class RideLibrary:
         """
         self.show_rides(self.data_source.rides())
 
-    # ------------------- E5.4.1 live library: Open / New / Duplicate
+    # ------------------------- E5.4.1 live library: Open / Duplicate
 
     def _selected_row(self) -> RideSummary | None:
         """Return the currently selected ride row, or None.
@@ -388,6 +490,19 @@ class RideLibrary:
         self._update_action_enablement()
         event.Skip()
 
+    def _on_column_sorted(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Remember the header sort the operator just chose (W10)."""
+        event.Skip()
+        column = self.rides_list.GetSortingColumn()
+        if column is None:
+            # logic-coverage-exempt: T-3 -- this event fires from a
+            # header click, which always carries a sorting column; the
+            # guard only covers wx's documented "nothing is sorted"
+            # state, which the library's own rebuilds never reach.
+            return
+        self._sort_column = column.GetModelColumn()
+        self._sort_ascending = column.IsSortOrderAscending()
+
     def _update_action_enablement(self) -> None:
         """Gate the library's action buttons (E5.3.2 rules).
 
@@ -395,14 +510,10 @@ class RideLibrary:
         selection-driven action: Open and Duplicate are enabled only
         while a ride row is selected, exactly as Delete is (and Delete
         additionally stays off for a RUNNING ride -- R-18, spec §3).
-        New is never selection-dependent; it is enabled only when an
-        ``on_new`` callback was injected (W10: the no-store library
-        disables the button rather than silently swallowing a click).
         """
         selected = self._selected
         self.open_button.Enable(selected is not None)
         self.duplicate_button.Enable(selected is not None)
-        self.new_button.Enable(self._on_new is not None)
         self.delete_button.Enable(
             selected is not None and selected.status is not RideStatus.RUNNING
         )
@@ -424,18 +535,6 @@ class RideLibrary:
         if selected is None or self._on_open is None:
             return
         self._on_open(selected)
-
-    def _on_new_clicked(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Forward the New click to ``on_new`` (E5.4.1).
-
-        The app-side callback ends this modal and opens the ride setup
-        flow (File ▸ New Ride…'s target). No selection needed -- the
-        button is disabled without an injected ``on_new`` (W10), and
-        this guard re-checks anyway.
-        """
-        event.Skip()
-        if self._on_new is not None:
-            self._on_new()
 
     def _on_duplicate_clicked(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Confirm and duplicate the selected ride, then refresh.
@@ -530,14 +629,17 @@ class RideLibrary:
                 dialog.Destroy()
 
     def _apply_min_size(self) -> None:
-        """Force the canvas's 520px floor, then Fit() the rest (D16).
+        """Force :data:`MIN_SIZE`, then Fit() the rest (D16, W10).
 
         ``SetMinSize`` alone only stops *future* shrinking; ``Fit()``
-        is what actually grows the dialog to respect it right now --
-        measured to honour an already-set minimum width (this task's
-        own probe script; ``library.xrc``'s header anticipates
-        exactly this: "Code re-applies SetMinSize() if a screen-fit
-        minimum is ever specified").
+        is what actually grows the dialog to respect it right now.
+        W10 pins BOTH dimensions (the old call passed ``-1`` for the
+        height, so only the width was floored and the list collapsed
+        to the sizer's own small best height); ``Fit()`` honours both
+        -- measured on this task's own probe on 4.3.1 osx-cocoa, so no
+        ``SetSize`` fallback is needed. ``library.xrc``'s header
+        anticipates exactly this: "Code re-applies SetMinSize() if a
+        screen-fit minimum is ever specified".
         """
-        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
+        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], MIN_SIZE[1]))
         self.dialog.Fit()

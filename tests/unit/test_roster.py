@@ -1990,6 +1990,183 @@ def test_extract_rider_to_solo_unknown_rider_raises_rider_not_found_error() -> N
         roster.extract_rider_to_solo(ghost)
 
 
+# ------------------------------------------------------ remove_rider
+
+
+def test_remove_rider_solo_removes_the_solo_entry() -> None:
+    """A solo entry IS its rider, so removing one leaves no entry."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+
+    roster.remove_rider(entry.riders[0])
+
+    assert roster.entries == ()
+
+
+def test_remove_rider_solo_delegates_to_delete_entry() -> None:
+    """A solo removal logs delete_entry, never a new action."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+
+    roster.remove_rider(entry.riders[0])
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="delete_entry", payload={"plate": "1", "display_name": "Alex"}
+    )
+
+
+def test_remove_rider_team_member_removes_only_that_rider() -> None:
+    """A team member's removal leaves the team and its other riders."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="5")
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(first_name="Bo", last_name="", plate="9")],
+    )
+
+    roster.remove_rider(alex)
+
+    assert (team in roster.entries, [rider.full_name for rider in team.riders]) == (True, ["Bo"])
+
+
+def test_remove_rider_from_a_three_rider_team_keeps_the_other_two() -> None:
+    """A member leaves a three-rider team intact around them."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    bo = Rider(first_name="Bo", last_name="", plate="9")
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[
+            Rider(first_name="Alex", last_name="", plate="5"),
+            bo,
+            Rider(first_name="Cy", last_name="", plate="12"),
+        ],
+    )
+
+    roster.remove_rider(bo)
+
+    assert [rider.full_name for rider in team.riders] == ["Alex", "Cy"]
+
+
+def test_remove_rider_lowest_plate_member_recomputes_the_teams_plate() -> None:
+    """The team re-derives its own plate from the riders left (S1)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="1")
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(first_name="Bo", last_name="", plate="9")],
+    )
+
+    roster.remove_rider(alex)
+
+    assert team.plate == "9"
+
+
+def test_remove_rider_from_a_relay_team_keeps_the_entry_plate() -> None:
+    """A relay plate is the entry's, so its riders changing is moot."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    alex = Rider(first_name="Alex", last_name="")
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(first_name="Bo", last_name="")],
+        plate="7",
+    )
+
+    roster.remove_rider(alex)
+
+    assert (team.plate, [rider.full_name for rider in team.riders]) == ("7", ["Bo"])
+
+
+def test_remove_rider_appends_a_remove_rider_audit_event() -> None:
+    """The audit names the removed rider and the entry left behind."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[
+            Rider(first_name="Alex", last_name="", plate="5"),
+            Rider(first_name="Bo", last_name="", plate="9"),
+        ],
+    )
+
+    roster.remove_rider(team.riders[1])
+
+    assert roster.audit_log[-1] == AuditEvent(
+        action="remove_rider",
+        payload={"rider_name": "Bo", "plate": "5", "display_name": "Team A"},
+    )
+
+
+def test_remove_rider_last_member_dissolves_the_team() -> None:
+    """A size-1 team's last rider leaves no size-0 team behind."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="1")
+    team = roster.create_team_entry_of_one(display_name="Team A", rider=alex)
+
+    roster.remove_rider(alex)
+
+    assert team not in roster.entries
+
+
+def test_remove_rider_last_member_audits_the_dissolve_then_the_removal() -> None:
+    """The dissolve event and the removal both land in the log."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="1")
+    roster.create_team_entry_of_one(display_name="Team A", rider=alex)
+
+    roster.remove_rider(alex)
+
+    assert [event.action for event in roster.audit_log[-2:]] == [
+        "dissolve_team_entry",
+        "remove_rider",
+    ]
+
+
+def test_remove_rider_on_a_team_with_recorded_data_raises_locked_error() -> None:
+    """A team carrying recorded data is never deletable (R-15)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="5")
+    team = roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(first_name="Bo", last_name="", plate="9")],
+    )
+    roster.mark_has_data(team)
+
+    with pytest.raises(LockedError, match=re.escape("recorded data")):
+        roster.remove_rider(alex)
+
+
+def test_remove_rider_from_a_team_after_start_raises_locked_error() -> None:
+    """Removal is a structural edit: DRAFT-only (R-15)."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    alex = Rider(first_name="Alex", last_name="", plate="5")
+    roster.create_team_entry(
+        display_name="Team A",
+        riders=[alex, Rider(first_name="Bo", last_name="", plate="9")],
+    )
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("no longer be deleted")):
+        roster.remove_rider(alex)
+
+
+def test_remove_rider_solo_after_start_raises_locked_error() -> None:
+    """The solo delegation keeps the post-start refusal (R-15)."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    roster.status = RideStatus.RUNNING
+
+    with pytest.raises(LockedError, match=re.escape("no longer be deleted")):
+        roster.remove_rider(entry.riders[0])
+
+
+def test_remove_rider_unknown_rider_raises_rider_not_found_error() -> None:
+    """A rider on no entry in this roster cannot be removed."""
+    roster = Roster()
+    ghost = Rider(first_name="Ghost", last_name="", plate="999")
+
+    with pytest.raises(RiderNotFoundError, match=re.escape("not on any entry")):
+        roster.remove_rider(ghost)
+
+
 # -------------------------------------------------- resolve_plate
 
 

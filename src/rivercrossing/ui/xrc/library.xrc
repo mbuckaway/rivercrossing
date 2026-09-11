@@ -18,7 +18,7 @@
       still created as a child of the dialog, so it resolves by name,
       but it is never added to the sizer: GetContainingSizer() is None
       and it stays at (-1,-1). Measured for wxID_OPEN (5000),
-      wxID_NEW (5002), wxID_DELETE (5038) and a custom-named button.
+      wxID_DELETE (5038) and a custom-named button.
       So the extra buttons live in a sibling wxBoxSizer and only
       wxID_CLOSE / wxID_CANCEL sit in a wxStdDialogButtonSizer - the
       same shape rider_editor_dlg and entry_detail_dlg use.
@@ -61,10 +61,12 @@
         <object class="wxDataViewCtrl" name="rides_list"/>
       </object>
 
-      <!-- Open · New… · Duplicate… · Delete… on the left, Close on the
-           right. wxID_OPEN and wxID_CLOSE keep their stock labels; the
-           canvas gives New/Duplicate/Delete the ellipsis that marks a
-           button as opening a further dialog (UX-DESKTOP 5). -->
+      <!-- Open · Duplicate… · Delete… on the left, Close on the right.
+           wxID_OPEN and wxID_CLOSE keep their stock labels; the canvas
+           gives Duplicate/Delete the ellipsis that marks a button as
+           opening a further dialog (UX-DESKTOP 5). W10 removed the
+           New… button: the library never owned the ride-setup flow,
+           which stays File ▸ New Ride…'s own route. -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
         <border>10</border>
@@ -76,13 +78,6 @@
             <border>6</border>
             <object class="wxButton" name="wxID_OPEN">
               <default>1</default>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxButton" name="wxID_NEW">
-              <label>New…</label>
             </object>
           </object>
           <object class="sizeritem">

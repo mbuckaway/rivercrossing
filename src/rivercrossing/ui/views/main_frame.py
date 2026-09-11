@@ -44,6 +44,7 @@ import wx.xrc  # Submodule: plain `import wx` does not load it.
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import feed_model, ids, sound, std_dialogs
 from rivercrossing.ui.presenters.console import stop_light_mode
+from rivercrossing.ui.presenters.data_source import Counters
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
@@ -64,7 +65,6 @@ if TYPE_CHECKING:
     from rivercrossing.ui.cards_imagelist import CardImageList
     from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import (
-        Counters,
         DataSource,
         FeedRow,
         RiderRow,
@@ -1146,6 +1146,46 @@ class MainFrame:
         if self._presenter is not None:
             self._presenter.refresh_console_gates()
 
+    def show_no_ride(self) -> None:
+        """Render the true no-ride empty state (W1, R-55/R-80).
+
+        The app bootstrap calls this directly when no store-backed
+        ride is open, so it is deliberately not part of the
+        ``ConsoleView`` Protocol -- with no ride there is no presenter
+        to call it. The header is blank, the status lamp is dark
+        (``"off"``, no circle lit), every ride control is inert, all
+        three banners are dismissed, and the clocks/feed/counters
+        show their zero state. ``_status`` returns to DRAFT so the
+        menu binder's ride-state seam sees DRAFT; the app's own
+        ``ride_open=False`` state keeps the ride-gated rows off.
+        """
+        self.ride_name_lbl.SetLabel("")
+        self.ride_details_lbl.SetLabel("")
+        self.ride_logo_bmp.Hide()
+        self.ride_details_lbl.Show()
+        self.ride_status_lbl.SetLabel("")
+        self.ride_status_light.set_mode("off")
+        # W1: every ride control is inert with no ride to act on.
+        for control in (
+            self.plate_input,
+            self.record_btn,
+            self.start_btn,
+            self.stop_btn,
+            self.undo_btn,
+        ):
+            control.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.resume_infobar.Dismiss()
+        self.reopened_infobar.Dismiss()
+        self.finished_infobar.Dismiss()
+        self.show_clock("0:00:00", "0:00:00")
+        self.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
+        self.show_feed([])
+        self.show_flagged([])
+        self.show_riders([])
+        self.show_counters(Counters(0, 0, 0, 0, 0, 0, 0))
+        self._status = RideStatus.DRAFT
+        self._notify_ride_changed()
+
     def show_ride_header(  # noqa: PLR0913 -- the identity block's five facts
         self,
         *,
@@ -1289,6 +1329,12 @@ class MainFrame:
 
         The model is held on the frame for the modal's lifetime, the
         same keep-alive ``show_feed``/``show_flagged`` give theirs.
+
+        After loading, the dialog is fitted and then opened at
+        :func:`_start_blocked_size`'s doubled width and height: XRC
+        gives a window no min-size, so the one "Issue" column would
+        otherwise clip its text (``CsvPreviewDialog._apply_min_size``'s
+        idiom).
         """
         window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.START_BLOCKED_DLG)
         # logic-coverage-exempt: T-3 -- a None window means the XRC
@@ -1301,6 +1347,10 @@ class MainFrame:
             issue_list.AppendTextColumn(START_BLOCKED_COLUMN_LABELS[0], 0)
             self._start_blocked_model = StartBlockedListModel(reasons)
             associate_model(issue_list, self._start_blocked_model)
+            window.Fit()
+            size = _start_blocked_size((window.GetSize().width, window.GetSize().height))
+            window.SetMinSize(wx.Size(*size))
+            window.SetSize(wx.Size(*size))
             dialogs.run_dialog(window, opener=self.frame)
         finally:
             # Fault A's close guard (rider_issues.py's own finally):
@@ -1399,7 +1449,18 @@ class MainFrame:
         start/arm/stop/undo, the tick timer -- without rebinding any
         control or starting a second timer. The caller then re-renders
         state/feed/counters from the new presenter's source.
+
+        W1: the no-ride bootstrap wires no presenter at all, so the
+        first ride attach is what performs the one-time
+        :meth:`wire_entry`/:meth:`wire_console` binding (plate entry,
+        lifecycle controls, tick timer). ``_presenter is None`` is the
+        "never wired" sentinel, so those binds run exactly once and
+        later swaps stay the cheap reference replacement.
         """
+        if self._presenter is None:
+            self.wire_entry(presenter.on_plate_entered)
+            self.wire_console(presenter)
+            return
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
 
@@ -1477,3 +1538,21 @@ def _format_count(value: int) -> str:
     Matches the canvas exactly: 1124 -> "1 124", 42 -> "42".
     """
     return f"{value:,}".replace(",", " ")
+
+
+def _start_blocked_size(fitted: tuple[int, int]) -> tuple[int, int]:
+    """Return the blocked-start dialog size from its fitted one.
+
+    ``start_blocked_dlg`` is loaded with no code-side min-size, so it
+    would otherwise open at the issue list's narrow best size and clip
+    the issue text. Doubling both dimensions gives the dialog's single
+    (and therefore stretched) "Issue" column room, mirroring
+    ``CsvPreviewDialog._apply_min_size``'s Fit-then-scale idiom.
+
+    Args:
+        fitted: The ``(width, height)`` ``Fit()`` measured.
+
+    Returns:
+        ``(width * 2, height * 2)``.
+    """
+    return (fitted[0] * 2, fitted[1] * 2)

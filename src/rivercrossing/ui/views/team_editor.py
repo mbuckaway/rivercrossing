@@ -22,10 +22,14 @@ both open through :func:`run_add_team_flow` (``editing=`` an entry for
 the edit route, with a row double-click as the second way in).
 
 **Native sorting.** Each column is appended with
-``wx.dataview.DATAVIEW_COL_SORTABLE`` and sorted through
+``TEAMS_LIST_COLUMN_FLAGS`` -- sortable *and* resizable, since an
+explicit ``flags=`` argument replaces rather than extends wx's
+default flags -- and sorted through
 :class:`TeamsListModel.Compare` -- the Team column by case-folded
 name, Riders numerically -- so the header arrows the platform draws
-actually reorder the rows. The dialog opens on an ascending Team
+actually reorder the rows. The Team column opens at
+:data:`COL_NAME_WIDTH` (double the platform's 80 DIP default); Riders
+keeps :data:`COL_RIDERS_WIDTH`. The dialog opens on an ascending Team
 sort, and :meth:`TeamEditor._apply_sort` re-applies the operator's
 current sort after every ``show_teams`` rebuild (replacing the model
 drops the control's sort key). Because the rows move under the
@@ -73,13 +77,16 @@ __all__ = [
     "COLUMN_LABELS",
     "COL_MEMBER",
     "COL_NAME",
+    "COL_NAME_WIDTH",
     "COL_RIDERS",
+    "COL_RIDERS_WIDTH",
     "LOGO_PREVIEW_BOX",
     "MEMBERS_COLUMN_LABELS",
     "MEMBERS_MIN_HEIGHT",
     "MIN_SIZE",
     "NOTES_MIN_LINES",
     "TEAMS_INFOBAR",
+    "TEAMS_LIST_COLUMN_FLAGS",
     "AddTeamDialog",
     "MembersListModel",
     "TeamEditor",
@@ -93,6 +100,20 @@ COL_RIDERS = 1
 
 # xrc-windows.md C (Teams Editor), reworked: "Team | Riders".
 COLUMN_LABELS: tuple[str, ...] = ("Team", "Riders")
+
+# Both columns default to wxDVC_DEFAULT_WIDTH (80 DIP). The first
+# ("Team") column carries the team name the operator reads, so it
+# opens at double that; the second ("Riders") keeps the platform
+# default -- it is the last column, which wx stretches to fill the
+# control, so it needs no width of its own.
+COL_NAME_WIDTH = 160
+COL_RIDERS_WIDTH = 80
+
+# AppendTextColumn's own default flags include
+# wxDATAVIEW_COL_RESIZABLE, but an explicit flags= argument *replaces*
+# the default rather than OR-ing into it -- macOS then sets the
+# column NSTableColumnNoResizing -- so both bits must be spelled out.
+TEAMS_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
 
 COL_MEMBER = 0
 MEMBERS_COLUMN_LABELS: tuple[str, ...] = ("Member",)
@@ -418,9 +439,13 @@ class TeamEditor:
         _floor_notes_min_height(self.notes_input)
 
     def _build_team_columns(self) -> None:
-        """Append ``teams_list``'s two sortable columns."""
-        for col, label in enumerate(COLUMN_LABELS):
-            self.teams_list.AppendTextColumn(label, col, flags=wx.dataview.DATAVIEW_COL_SORTABLE)
+        """Append ``teams_list``'s two sortable, resizable columns."""
+        for col, (label, width) in enumerate(
+            zip(COLUMN_LABELS, (COL_NAME_WIDTH, COL_RIDERS_WIDTH), strict=True)
+        ):
+            self.teams_list.AppendTextColumn(
+                label, col, width=width, flags=TEAMS_LIST_COLUMN_FLAGS
+            )
 
     def _build_member_columns(self) -> None:
         """Append ``members_list``'s one column."""

@@ -20,11 +20,13 @@ go blank unnoticed (UX-DESKTOP §4: a confirm names its object).
 
 Phase 6 adds the two dialogs' own default size. XRC has no
 window-level minsize, so each view's ``_apply_min_size`` fits the
-built dialog and then floors *and* opens it at 3x the fitted width
-and 2x the fitted height. A real ``wx.Dialog`` needs a desktop, so
-these tests drive the same kind of recording window double the seam
-tests above use and call the sizing step directly -- the constructor
-next to it binds every control the .xrc window carries.
+built dialog and then floors *and* opens it at its own scale pair:
+Phase 3 narrowed ``csv_preview_dlg`` to 2x the fitted width and 2x
+the height, while ``rider_issues_dlg`` keeps 3x/2x. A real
+``wx.Dialog`` needs a desktop, so these tests drive the same kind of
+recording window double the seam tests above use and call the sizing
+step directly -- the constructor next to it binds every control the
+.xrc window carries.
 """
 
 import json
@@ -335,10 +337,12 @@ class _SizingDialog:
         self.size = size
 
 
-# The two Phase 6 dialogs: both scale their fitted size the same way.
-_DIALOG_VIEWS: list[type[CsvPreviewDialog | RiderIssuesView]] = [
-    CsvPreviewDialog,
-    RiderIssuesView,
+# The two sizing dialogs, each with its own (width, height) scale
+# pair. Phase 3 narrows csv_preview_dlg from 3x to 2x; rider_issues_dlg
+# keeps Phase 6's 3x/2x.
+_DIALOG_VIEWS: list[tuple[type[CsvPreviewDialog | RiderIssuesView], int, int]] = [
+    (CsvPreviewDialog, 2, 2),
+    (RiderIssuesView, 3, 2),
 ]
 _DIALOG_VIEW_IDS = ["csv_preview_dlg", "rider_issues_dlg"]
 
@@ -359,59 +363,74 @@ def _view_over(
     return view
 
 
-@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
-def test_dialog_view_apply_min_size_given_a_fitted_size_floors_it_at_three_by_two(
+@pytest.mark.parametrize(
+    ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
+)
+def test_dialog_view_apply_min_size_given_a_fitted_size_floors_it_at_its_own_scale(
     view_class: type[CsvPreviewDialog | RiderIssuesView],
+    width_scale: int,
+    height_scale: int,
 ) -> None:
-    """Phase 6: the floor is 3x the fitted width and 2x its height."""
+    """Each dialog floors itself at its own (width, height) scale."""
     dialog = _SizingDialog(fitted=(400, 300))
 
     _view_over(view_class, dialog)._apply_min_size()
 
-    assert (dialog.min_size.width, dialog.min_size.height) == (1200, 600)
+    expected = (400 * width_scale, 300 * height_scale)
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
 
 
-@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
-def test_dialog_view_apply_min_size_given_a_fitted_size_opens_it_at_the_scaled_size(
+@pytest.mark.parametrize(
+    ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
+)
+def test_dialog_view_apply_min_size_given_a_fitted_size_opens_it_at_its_own_scale(
     view_class: type[CsvPreviewDialog | RiderIssuesView],
+    width_scale: int,
+    height_scale: int,
 ) -> None:
-    """The dialog opens at the floor, not merely bounded by it."""
+    """The dialog opens at its own floor, not merely bounded by it."""
     dialog = _SizingDialog(fitted=(400, 300))
 
     _view_over(view_class, dialog)._apply_min_size()
 
-    assert (dialog.size.width, dialog.size.height) == (1200, 600)
+    expected = (400 * width_scale, 300 * height_scale)
+    assert (dialog.size.width, dialog.size.height) == expected
 
 
-@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
-def test_dialog_view_apply_min_size_measures_the_fitted_size_before_scaling(
+@pytest.mark.parametrize(
+    ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
+)
+def test_dialog_view_apply_min_size_measures_the_fitted_size_before_scaling_by_its_own_scale(
     view_class: type[CsvPreviewDialog | RiderIssuesView],
+    width_scale: int,
+    height_scale: int,
 ) -> None:
     """Scale what Fit() just measured, never a stale size."""
     dialog = _SizingDialog(fitted=(400, 300))
 
     _view_over(view_class, dialog)._apply_min_size()
 
+    expected = (400 * width_scale, 300 * height_scale)
     assert (dialog.calls, (dialog.min_size.width, dialog.min_size.height)) == (
         ["Fit", "GetSize", "SetMinSize", "SetSize"],
-        (1200, 600),
+        expected,
     )
 
 
-_SCALE_CASES = [
+_CSV_SCALE_CASES = [
     ((0, 0), (0, 0)),  # T-4 boundary: below any real fitted size
-    ((1, 1), (3, 2)),  # T-4 boundary: min
-    ((2, 3), (6, 6)),  # T-4 boundary: min + 1
-    ((640, 320), (1920, 640)),  # a realistic fitted dialog
+    ((1, 1), (2, 2)),  # T-4 boundary: min
+    ((2, 3), (4, 6)),  # T-4 boundary: min + 1
+    ((640, 320), (1280, 640)),  # a realistic fitted dialog
 ]
 
 
-@pytest.mark.parametrize(("fitted", "expected"), _SCALE_CASES)
-def test_dialog_view_apply_min_size_given_boundary_fitted_sizes_scales_by_three_and_two(
+@pytest.mark.parametrize(("fitted", "expected"), _CSV_SCALE_CASES)
+def test_csv_preview_dialog_apply_min_size_given_boundary_fitted_sizes_scales_by_two_and_two(
     fitted: tuple[int, int],
     expected: tuple[int, int],
 ) -> None:
-    """Every fitted size scales by exactly 3 and 2 (T-4)."""
+    """Phase 3: every fitted size scales by exactly 2 and 2 (T-4)."""
     dialog = _SizingDialog(fitted=fitted)
 
     _view_over(CsvPreviewDialog, dialog)._apply_min_size()
@@ -420,21 +439,25 @@ def test_dialog_view_apply_min_size_given_boundary_fitted_sizes_scales_by_three_
 
 
 @given(
-    view_class=st.sampled_from(_DIALOG_VIEWS),
+    case=st.sampled_from(_DIALOG_VIEWS),
     width=st.integers(min_value=0, max_value=10_000),
     height=st.integers(min_value=0, max_value=10_000),
 )
-def test_dialog_view_apply_min_size_given_any_fitted_size_scales_width_by_three(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+def test_dialog_view_apply_min_size_given_any_fitted_size_scales_by_its_own_pair(
+    case: tuple[type[CsvPreviewDialog | RiderIssuesView], int, int],
     width: int,
     height: int,
 ) -> None:
-    """T-7 property: the floor is always 3x width, 2x height."""
+    """T-7 property: the floor is the view's own scale pair."""
+    view_class, width_scale, height_scale = case
     dialog = _SizingDialog(fitted=(width, height))
 
     _view_over(view_class, dialog)._apply_min_size()
 
-    assert (dialog.min_size.width, dialog.min_size.height) == (width * 3, height * 2)
+    assert (dialog.min_size.width, dialog.min_size.height) == (
+        width * width_scale,
+        height * height_scale,
+    )
 
 
 def test_rider_editor_apply_min_size_given_the_w7_canvas_keeps_its_own_floor() -> None:

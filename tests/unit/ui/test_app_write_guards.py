@@ -325,7 +325,7 @@ def test_library_delete_callback_given_a_refused_delete_shows_an_error_dialog(
 def test_live_library_duplicate_given_a_failed_duplicate_posts_a_notice() -> None:
     """A refused duplicate surfaces on the status bar."""
     context = _context(store=_DuplicateFailsStore())
-    _open, _new, duplicate = app_module._live_library_callbacks(
+    _open, duplicate = app_module._live_library_callbacks(
         context, window=object(), store=_DuplicateFailsStore()
     )
     selected = RideSummary(

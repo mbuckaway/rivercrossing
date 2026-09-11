@@ -397,6 +397,17 @@
         </object>
       </object>
 
+      <!-- Phase 3: the explicit opt-in that maps blank AND
+           unrecognized non-blank SEX cells to "M" on import. It sits
+           unchecked; the operator chooses it deliberately. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="map_unknown_sex_chk">
+          <label>Map unknown sex to Male</label>
+        </object>
+      </object>
+
       <!-- wxID_OK carries the canvas's "Import" label; the stock id is
            what keeps the button on the platform-correct side. -->
       <object class="sizeritem">

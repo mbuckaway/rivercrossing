@@ -33,7 +33,11 @@ numbers under ``rider_pooled``). SEX is the rider's sex: the
 registration forms' ``Male``/``Female`` and this app's own ``M``/``F``
 both normalize to the one canonical letter, blank (or an absent SEX
 column) means unknown, and any other non-blank cell is a per-row
-conflict -- never a silent guess at someone's sex.
+conflict -- never a silent guess at someone's sex. The one exception
+is :func:`preview`'s explicit ``map_unknown_sex_to_male`` opt-in: when
+the operator checks it, both a blank cell and an unrecognized
+non-blank one import as ``M``, so it is a deliberate operator choice
+rather than a guess.
 
 :func:`preview` reads the file and reports every conflict found without
 raising for content problems and without writing anything -- to the
@@ -378,7 +382,7 @@ class ImportReport:
     audit_events: tuple[AuditEvent, ...]
 
 
-def preview(path: Path, ride: Roster) -> ImportPreview:
+def preview(path: Path, ride: Roster, *, map_unknown_sex_to_male: bool = False) -> ImportPreview:
     """Preview a CSV import against *ride*; write nothing (R-21).
 
     The file's header is resolved through :func:`_map_header`; unmapped
@@ -403,6 +407,11 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
         ride: The roster this import would apply to; its
             plate_model, max_team_size, status and existing entries
             drive every check below. Never mutated.
+        map_unknown_sex_to_male: Explicit operator opt-in: when
+            ``True``, a blank or unrecognized non-blank SEX cell
+            imports as ``"M"`` rather than staying unknown or raising
+            a per-row conflict. Defaults to ``False`` -- the
+            silent-guess-free behavior.
 
     Returns:
         An :class:`ImportPreview` naming every conflict found and
@@ -422,7 +431,9 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
             mapping = _map_header(header_row)
             if "FIRSTNAME" not in mapping and "LASTNAME" not in mapping:
                 return _whole_file_conflict(path, ride, _HEADER_PROBLEM)
-            rows, row_conflicts = _read_data_rows(reader, mapping)
+            rows, row_conflicts = _read_data_rows(
+                reader, mapping, map_unknown_sex_to_male=map_unknown_sex_to_male
+            )
         except UnicodeDecodeError:
             return _whole_file_conflict(path, ride, _NOT_UTF8_PROBLEM)
         except csv.Error as exc:
@@ -620,7 +631,10 @@ def _cell(row: Sequence[str], mapping: Mapping[str, int], field: str) -> str:
 
 
 def _read_data_rows(
-    reader: Iterable[Sequence[str]], mapping: Mapping[str, int]
+    reader: Iterable[Sequence[str]],
+    mapping: Mapping[str, int],
+    *,
+    map_unknown_sex_to_male: bool = False,
 ) -> tuple[list[_DataRow], list[ImportConflict]]:
     """Parse every usable data row *reader* yields (Phase 2 spec).
 
@@ -630,7 +644,9 @@ def _read_data_rows(
     silently dropped). TYPE resolves to solo/team (blank derives from
     TEAMNAME); an unrecognized type value conflicts and is excluded.
     SEX normalizes to M/F/unknown; an unrecognized value conflicts and
-    is excluded the same way.
+    is excluded the same way -- unless *map_unknown_sex_to_male*, the
+    operator's explicit opt-in, which maps both blank and unrecognized
+    cells to ``"M"`` so no row is dropped for that reason.
     """
     rows: list[_DataRow] = []
     conflicts: list[ImportConflict] = []
@@ -645,7 +661,9 @@ def _read_data_rows(
             if number or team_raw or type_field:
                 conflicts.append(ImportConflict(row_num, _MISSING_NAME_PROBLEM))
             continue
-        sex, sex_problem = _classify_sex(_cell(raw_row, mapping, "SEX"))
+        sex, sex_problem = _classify_sex(
+            _cell(raw_row, mapping, "SEX"), map_unknown_sex_to_male=map_unknown_sex_to_male
+        )
         if sex_problem is not None:
             conflicts.append(ImportConflict(row_num, sex_problem))
             continue
@@ -675,21 +693,26 @@ def _read_data_rows(
     return rows, conflicts
 
 
-def _classify_sex(value: str) -> tuple[str | None, str | None]:
+def _classify_sex(
+    value: str, *, map_unknown_sex_to_male: bool = False
+) -> tuple[str | None, str | None]:
     """Return *value*'s canonical sex and any conflict text.
 
     ``Male``/``male``/``M``/``m`` map to ``"M"`` and
-    ``Female``/``female``/``F``/``f`` to ``"F"``; blank is
-    ``(None, None)`` -- unknown, not a conflict. Any other non-blank
-    value is ``(None, "invalid sex ...")``, the same shape as
-    :func:`_classify_row`'s unknown-TYPE conflict.
+    ``Female``/``female``/``F``/``f`` to ``"F"``. A blank cell is
+    ``(None, None)`` -- unknown, not a conflict -- and any other
+    non-blank value is ``(None, "invalid sex ...")``, the same shape
+    as :func:`_classify_row`'s unknown-TYPE conflict. When
+    *map_unknown_sex_to_male* is ``True`` (the operator's explicit
+    opt-in) both the blank and the unrecognized non-blank cell become
+    ``("M", None)`` instead; a recognized ``M``/``F`` is unaffected.
     """
     lowered = value.lower()
     if not lowered:
-        return None, None
+        return ("M", None) if map_unknown_sex_to_male else (None, None)
     canonical = _SEX_ALIASES.get(lowered)
     if canonical is None:
-        return None, f"invalid sex {value!r}"
+        return ("M", None) if map_unknown_sex_to_male else (None, f"invalid sex {value!r}")
     return canonical, None
 
 

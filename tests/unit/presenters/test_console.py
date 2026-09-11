@@ -1671,6 +1671,19 @@ def test_stop_light_mode_given_ride_status_returns_the_semantic_colour(
     assert console_module.stop_light_mode(status) == mode
 
 
+def test_stop_light_mode_given_no_ride_returns_off() -> None:
+    """WS-D/W1: no ride open leaves every lamp circle dark ("off")."""
+    assert console_module.stop_light_mode(None) == "off"
+
+
+@given(status=st.sampled_from((*RideStatus, None)))
+def test_stop_light_mode_given_any_lifecycle_value_returns_a_known_mode(
+    status: RideStatus | None,
+) -> None:
+    """T-7: the status -> lamp mapping is total over every state."""
+    assert console_module.stop_light_mode(status) in {"green", "yellow", "red", "off"}
+
+
 @pytest.mark.parametrize(
     ("seconds", "total", "expected"),
     [

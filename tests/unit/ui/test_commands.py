@@ -189,6 +189,20 @@ def test_clear_ride_route_declares_the_d3_enablement_rule() -> None:
     assert rule.requires_ride_stopped is True
 
 
+def test_start_ride_route_declares_the_ride_open_gate() -> None:
+    """W1: Start Ride needs an open ride (no-ride console)."""
+    rule = commands.route_for_id(ids.MI_START_RIDE).enabled_when
+
+    assert rule.requires_ride_open is True
+
+
+def test_clear_ride_route_declares_the_ride_open_gate() -> None:
+    """W1: Clear Ride needs an open ride (no-ride console)."""
+    rule = commands.route_for_id(ids.MI_CLEAR_RIDE).enabled_when
+
+    assert rule.requires_ride_open is True
+
+
 # H2: the three ride-lifecycle confirms retired their XRC dialogs for
 # the native std_dialogs prompts, so each row becomes a COMMAND with a
 # symbolic action target rather than a frozen XRC dialog name.

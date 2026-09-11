@@ -252,9 +252,13 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # C2: REOPENED joins the startable set (Start continues riding
         # out of the corrections state); the stopped clause still only
         # gates a RUNNING ride, so DRAFT/REOPENED need no stop state.
+        # W1: an open ride is also required -- the bootstrap console
+        # holds no ride at all, so Start must be off there.
         enabled_when=Enablement(
-            allowed_states=_DRAFT_RUNNING_REOPENED, requires_ride_stopped=True
-        ),  # "DRAFT, or stopped RUNNING, or REOPENED"
+            allowed_states=_DRAFT_RUNNING_REOPENED,
+            requires_ride_stopped=True,
+            requires_ride_open=True,
+        ),  # "a ride is open; DRAFT, or stopped RUNNING, or REOPENED"
     ),
     MenuRoute(
         menu="Ride",
@@ -319,9 +323,12 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # DRAFT, or stopped RUNNING, or FINISHED -- REOPENED is not
         # clearable (finish it first) and a live RUNNING ride must
         # stop first; the stopped clause only gates a RUNNING ride.
+        # W1: an open ride is also required -- there is nothing to
+        # clear on the no-ride bootstrap console.
         enabled_when=Enablement(
             allowed_states=frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}),
             requires_ride_stopped=True,
+            requires_ride_open=True,
         ),
     ),
     # --- Riders: 5 rows ---

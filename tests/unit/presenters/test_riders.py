@@ -1018,8 +1018,8 @@ def test_on_delete_given_nothing_selected_is_a_no_op() -> None:
     assert view.calls == []
 
 
-def test_on_delete_given_a_draft_selection_asks_a_confirm_naming_the_entry() -> None:
-    """The destructive confirm names the entry it would remove (B3)."""
+def test_on_delete_given_a_draft_selection_asks_a_confirm_naming_the_rider() -> None:
+    """The destructive confirm names the rider it would remove (B3)."""
     view = RecordingRidersView()
     view.confirm_result = False
     presenter = RidersPresenter(view, _draft_solo_roster())
@@ -1029,8 +1029,38 @@ def test_on_delete_given_a_draft_selection_asks_a_confirm_naming_the_entry() -> 
     presenter.on_delete()
 
     assert view.calls == [
-        ("confirm", ("Delete entry?", 'Delete "Sam Ellis" from this ride?', "Delete", "Cancel"))
+        ("confirm", ("Delete rider?", 'Delete "Sam Ellis" from this ride?', "Delete", "Cancel"))
     ]
+
+
+def test_on_delete_given_a_team_member_asks_a_confirm_naming_the_rider() -> None:
+    """A team-member row confirms the rider, never the team."""
+    view = RecordingRidersView()
+    view.confirm_result = False
+    presenter = RidersPresenter(view, _draft_mixed_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_delete()
+
+    assert view.calls == [
+        ("confirm", ("Delete rider?", 'Delete "A. Roy" from this ride?', "Delete", "Cancel"))
+    ]
+
+
+def test_on_delete_given_a_team_member_removes_only_that_rider() -> None:
+    """OK on a team-member row removes only that rider."""
+    roster = _draft_mixed_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+
+    presenter.on_delete()
+
+    assert [
+        (entry.display_name, [rider.full_name for rider in entry.riders])
+        for entry in roster.entries
+    ] == [("Trail Blazers", ["K. Singh"])]
 
 
 def test_on_delete_given_a_declined_confirm_is_a_no_op() -> None:
@@ -2320,7 +2350,7 @@ def test_on_pick_csv_import_given_a_preview_value_error_shows_validation_not_cra
     measured note).
     """
 
-    def _preview_that_raises(_path: object, _ride: object) -> object:
+    def _preview_that_raises(_path: object, _ride: object, **_kwargs: object) -> object:
         raise ValueError("simulated parse failure")
 
     view = RecordingRidersView()
@@ -2334,6 +2364,64 @@ def test_on_pick_csv_import_given_a_preview_value_error_shows_validation_not_cra
     assert validation[0] == f"Could not read {picked.name}: simulated parse failure"
     assert view.calls[-1] == ("set_import_enabled", (False,))
     assert presenter.on_confirm_csv_import() is False
+
+
+# ------------------------------- mapping unknown sex to Male (Phase 3)
+
+
+def _write_sex_csv(directory: Path, rows: str) -> Path:
+    """Write a unified CSV carrying a SEX column; return its path."""
+    path = directory / "riders.csv"
+    path.write_text(f"firstname,lastname,type,teamname,number,sex\n{rows}", encoding="utf-8")
+    return path
+
+
+def test_on_toggle_map_unknown_sex_true_repreviews_the_picked_file_as_clean(
+    tmp_path: Path,
+) -> None:
+    """Checking the box re-previews the picked file cleanly."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    path = _write_sex_csv(tmp_path, "Alex,Ferreira,solo,,1,X\nBo,Lindqvist,solo,,2,\n")
+    presenter.on_pick_csv_import(path)
+    first = view.calls[0][1][0]
+    assert first.conflicts == (CsvConflict(row=2, problem="invalid sex 'X'"),)
+    view.calls.clear()
+
+    presenter.on_toggle_map_unknown_sex(enabled=True)
+
+    second = view.calls[0][1][0]
+    assert second.conflicts == ()
+    assert second.summary == "riders.csv → 2 riders · 0 teams · 0 conflicts"
+    assert view.calls[-1] == ("set_import_enabled", (True,))
+
+
+def test_on_toggle_map_unknown_sex_false_repreviews_with_the_conflict_restored(
+    tmp_path: Path,
+) -> None:
+    """Unchecking restores the unrecognized-sex conflict."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    path = _write_sex_csv(tmp_path, "Alex,Ferreira,solo,,1,X\n")
+    presenter.on_pick_csv_import(path)
+    presenter.on_toggle_map_unknown_sex(enabled=True)
+    view.calls.clear()
+
+    presenter.on_toggle_map_unknown_sex(enabled=False)
+
+    preview = view.calls[0][1][0]
+    assert preview.conflicts == (CsvConflict(row=2, problem="invalid sex 'X'"),)
+    assert view.calls[-1] == ("set_import_enabled", (False,))
+
+
+def test_on_toggle_map_unknown_sex_before_any_pick_is_a_no_op() -> None:
+    """T-3: the toggle's own guard -- no preview yet renders nothing."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    presenter.on_toggle_map_unknown_sex(enabled=True)
+
+    assert view.calls == []
 
 
 # -------------------------------------------- confirming a csv import

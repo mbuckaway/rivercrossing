@@ -693,6 +693,10 @@ class RidersPresenter:
         self.roster = roster
         self._selected: tuple[Entry, Rider] | None = None
         self._csv_preview: csvio.ImportPreview | None = None
+        # Phase 3: csv_preview_dlg's "Map unknown sex to Male" checkbox.
+        # The picked path needs no field of its own -- it is already
+        # retained as ``self._csv_preview.source_path``.
+        self._map_unknown_sex_to_male = False
         # W7 close-persist flag: True once any add/edit/delete has
         # actually committed this session (app.py's editor-close save
         # consults :attr:`roster_changed`).
@@ -788,29 +792,34 @@ class RidersPresenter:
         self._show_record(entry, rider)
 
     def on_delete(self) -> None:
-        """Handle delete_btn: confirm, then remove the selection (R-15).
+        """Handle delete_btn: confirm, then remove that rider (R-15).
 
         1.0.12 B3: a delete is irreversible, so the view asks the
-        operator first (``RidersView.confirm``, naming the entry) and
-        this handler returns early on Cancel -- nothing is attempted,
-        no message shown, nothing flagged. A refusal from the roster
-        (recorded data, or the ride has left DRAFT) shows via
-        :meth:`RidersView.show_validation`, naming the reason, and
-        never raises past this handler. A no-op if nothing is selected
-        -- including the confirm, which never opens over an empty form.
+        operator first (``RidersView.confirm``, naming the *rider* --
+        a team-member row must not be confirmed as the team) and this
+        handler returns early on Cancel -- nothing is attempted, no
+        message shown, nothing flagged. The removal goes through
+        :meth:`~rivercrossing.roster.Roster.remove_rider`, so OK
+        deletes only the selected rider: a solo rider's own entry
+        goes, a team member leaves their team standing. A refusal
+        from the roster (recorded data, or the ride has left DRAFT)
+        shows via :meth:`RidersView.show_validation`, naming the
+        reason, and never raises past this handler. A no-op if nothing
+        is selected -- including the confirm, which never opens over
+        an empty form.
         """
         if self._selected is None:
             return
-        entry, _rider = self._selected
+        _, rider = self._selected
         if not self.view.confirm(
-            "Delete entry?",
-            f'Delete "{entry.display_name}" from this ride?',
+            "Delete rider?",
+            f'Delete "{rider.full_name}" from this ride?',
             ok_label="Delete",
             cancel_label="Cancel",
         ):
             return
         try:
-            self.roster.delete_entry(entry)
+            self.roster.remove_rider(rider)
         except LockedError as exc:
             self.view.show_validation(str(exc))
             return
@@ -820,6 +829,15 @@ class RidersPresenter:
 
     def on_pick_csv_import(self, path: Path) -> None:
         """Preview *path* against this roster; render it (E3.4, R-21).
+
+        The picker's entry point; the preview and render both live in
+        :meth:`_preview_csv`, which this delegates to (Phase 3 shared
+        it with :meth:`on_toggle_map_unknown_sex`).
+        """
+        self._preview_csv(path)
+
+    def _preview_csv(self, path: Path) -> None:
+        """Preview *path* and render the result (E3.4, R-21).
 
         Nothing is written -- :func:`~rivercrossing.csvio.preview`'s
         own contract. A file that cannot be read raises ``OSError``
@@ -833,9 +851,14 @@ class RidersPresenter:
         escapes the presenter's caller, which would leave the dialog
         open with nothing happening (the measured note
         ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+
+        Phase 3 threads :attr:`_map_unknown_sex_to_male` into every
+        preview, so the toggle's re-run and a fresh pick agree.
         """
         try:
-            self._csv_preview = csvio.preview(path, self.roster)
+            self._csv_preview = csvio.preview(
+                path, self.roster, map_unknown_sex_to_male=self._map_unknown_sex_to_male
+            )
         except (OSError, ValueError) as exc:
             self.view.show_validation(f"Could not read {path.name}: {exc}")
             self.view.set_import_enabled(enabled=False)
@@ -858,6 +881,19 @@ class RidersPresenter:
             CsvPreview(summary=summary, conflicts=conflicts, warnings=warnings)
         )
         self.view.set_import_enabled(enabled=len(conflicts) == 0)
+
+    def on_toggle_map_unknown_sex(self, *, enabled: bool) -> None:
+        """Handle ``map_unknown_sex_chk``; re-preview if one is open.
+
+        *enabled* is the checkbox's new state. With no preview yet
+        this only records the flag -- the next pick honours it. With
+        one, the same retained path is re-previewed, so the conflicts
+        list and Import button reflect the new mapping immediately
+        (``csvio.preview`` writes nothing; re-running it is free).
+        """
+        self._map_unknown_sex_to_male = enabled
+        if self._csv_preview is not None:
+            self._preview_csv(self._csv_preview.source_path)
 
     def on_confirm_csv_import(self) -> bool:
         """Commit the last previewed import (E3.4, R-21).

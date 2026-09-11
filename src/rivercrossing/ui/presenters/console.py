@@ -113,7 +113,7 @@ def _finish_gate_clear() -> bool:
 FINISH_GATE: Callable[[], bool] = _finish_gate_clear
 
 
-def stop_light_mode(status: RideStatus) -> str:
+def stop_light_mode(status: RideStatus | None) -> str:
     """Return the ride-status light's mode for *status* (WS-D).
 
     The console's code-side ``StopLight`` (``views/gauges.py``) lights
@@ -122,11 +122,15 @@ def stop_light_mode(status: RideStatus) -> str:
     so the mapping is testable without wx. REOPENED shares DRAFT's
     amber: the corrections banner and the status label carry the
     distinction -- the light never carries meaning by colour alone.
+    W1: ``None`` is the no-ride console -- no ride is open, so no
+    circle lights (``"off"``).
 
     Returns:
         ``"green"`` RUNNING, ``"yellow"`` DRAFT/REOPENED, ``"red"``
-        FINISHED.
+        FINISHED, ``"off"`` no ride open (``None``).
     """
+    if status is None:
+        return "off"
     if status is RideStatus.RUNNING:
         return "green"
     if status is RideStatus.FINISHED:

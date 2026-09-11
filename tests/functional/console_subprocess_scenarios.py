@@ -475,14 +475,13 @@ def _spy_on_destroy(window: Any) -> list[bool]:  # noqa: ANN401
 
 
 def _plate_entry_round_trip() -> dict[str, Any]:
-    """Typing a plate with no ride open rejects it (R-31, E5.4.2).
+    """Typing a plate with no ride open reaches no handler (W1, R-31).
 
-    The bootstrap console's engine is DRAFT -- no store-backed ride is
-    open, and a fresh launch starts no ride (E5.4.2) -- so a typed
-    plate is refused because the ride is not running: the entry is
-    refused with the ERROR notice, the field is kept, focus returns,
-    and no crossing is recorded -- the console's correct empty state
-    until a store-backed ride is opened.
+    The bootstrap console holds no ride and no presenter (W1), so
+    ``wire_entry`` never bound ``EVT_TEXT_ENTER``: a typed plate falls
+    through to nothing, no crossing is recorded, the field keeps its
+    text and no notice is posted -- the console's correct no-ride
+    empty state until a store-backed ride is opened.
     """
     frame = _build_app_window()
     frame.Show()
@@ -508,11 +507,11 @@ def _plate_entry_round_trip() -> dict[str, Any]:
 
 
 def _record_btn_click_records_once() -> dict[str, Any]:
-    """Clicking Record with no ride open rejects it (R-31, E5.4.2).
+    """Clicking Record with no ride open records nothing (W1, R-31).
 
-    The bootstrap console's engine is DRAFT -- no store-backed ride is
-    open -- so Record is refused with the "ride is not running" notice
-    and records nothing.
+    The bootstrap console holds no ride and no presenter (W1), so
+    Record carries no binding: the click records nothing and posts no
+    notice -- the console's correct no-ride empty state.
     """
     frame = _build_app_window()
     frame.Show()
@@ -540,10 +539,12 @@ def _record_btn_click_records_once() -> dict[str, Any]:
 def _console_starts_in_draft_state() -> dict[str, Any]:
     """Run the bootstrap and read the console's starting state.
 
-    A fresh launch starts no ride (E5.4.2, R-31): the bootstrap
-    console's engine is DRAFT, so plate entry and Record are disabled
-    and the status label reads ``DRAFT`` -- the A4 wiring
-    (``set_state(data_source.ride_status())``) ran during bootstrap.
+    A fresh launch starts no ride at all (E5.4.2/W1): the bootstrap
+    console holds no ride, so plate entry and Record are disabled and
+    the status label is blank -- the W1 wiring
+    (``MainFrame.show_no_ride()``) ran during bootstrap. The scenario
+    key keeps its historical name; the state it reads is now the
+    no-ride empty state, not a DRAFT engine.
     """
     frame = _build_app_window()
     frame.Show()

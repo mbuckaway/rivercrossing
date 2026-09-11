@@ -1058,10 +1058,10 @@ def _live_library_callbacks(
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs; a loaded wx.Dialog
     store: Store,
-) -> tuple[Callable[[RideSummary], None], Callable[[], None], Callable[[RideSummary], None]]:
-    """Return the store-backed library's Open/New/Duplicate callbacks.
+) -> tuple[Callable[[RideSummary], None], Callable[[RideSummary], None]]:
+    """Return the store-backed library's Open/Duplicate callbacks.
 
-    E5.4.1 wires the live library to the real DB through these three:
+    E5.4.1 wires the live library to the real DB through these two:
 
     - **Open** loads the selected ride and swaps the console onto it
       (:func:`_switch_console_to_ride`), then ends the library modal
@@ -1069,8 +1069,6 @@ def _live_library_callbacks(
       avoidance the resume flow's ``library_btn`` uses (measured
       there: a modal opened synchronously inside this one's unwind is
       not dismissible by the harness).
-    - **New** ends the library modal and opens File ▸ New Ride…'s
-      target (the ride setup flow), also deferred.
     - **Duplicate** shows the ride's name in the E5.4.1 mock-first
       confirm and, on OK, calls ``Store.duplicate_ride`` -- the view
       refreshes its own rows afterwards, so the new DRAFT ride
@@ -1079,9 +1077,13 @@ def _live_library_callbacks(
       swallowed by wx with zero signal (the measured note
       ``docs/EPIC3-SESSION-SUMMARY.md`` records).
 
+    W10 dropped the third callback (New): the library no longer has a
+    New button, so the ride-setup flow stays File ▸ New Ride…'s route
+    alone.
+
     ``window`` is the live ``ride_library_dlg``, used to end the
-    modal for Open/New. ``store`` is the live Store the callbacks
-    act on (:func:`_decorate` only calls this with one open).
+    modal for Open. ``store`` is the live Store the callbacks act on
+    (:func:`_decorate` only calls this with one open).
     """
     wx = require_wx()
 
@@ -1092,11 +1094,6 @@ def _live_library_callbacks(
             window.EndModal(wx.ID_CLOSE)
         wx.CallAfter(_switch_console_to_ride, context, selected.ride_id)
 
-    def _new() -> None:
-        if not window.IsBeingDeleted():
-            window.EndModal(wx.ID_CLOSE)
-        wx.CallAfter(_open_target, context, commands.route_for_id("mi_new_ride"))
-
     def _duplicate(selected: RideSummary) -> None:
         if selected.ride_id is None:
             return
@@ -1105,7 +1102,7 @@ def _live_library_callbacks(
         except (OSError, sqlite3.Error) as exc:
             context.frame.SetStatusText(f"Could not duplicate ride: {exc}")
 
-    return _open, _new, _duplicate
+    return _open, _duplicate
 
 
 def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
@@ -1262,13 +1259,12 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         if context.store is not None:
-            on_open, on_new, on_duplicate = _live_library_callbacks(context, window, context.store)
+            on_open, on_duplicate = _live_library_callbacks(context, window, context.store)
             RideLibrary(
                 window,
                 data_source=_StoreLibrarySource(context.store),
                 on_delete=_library_delete_callback(context, window),
                 on_open=on_open,
-                on_new=on_new,
                 on_duplicate=on_duplicate,
             )
         else:
@@ -2850,9 +2846,9 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     The live ride status and name come from the console's own
     presenter engine (E5.4.2: the ``data_source`` seam is gone; the
     quit flow asks the live console, never a display-data source).
-    Route-level tests construct ``_RouteContext`` without a live
-    presenter and never reach this path; the DRAFT/"The ride"
-    fallbacks mirror the finish route's own presenter-less stub.
+    W1: the no-ride bootstrap threads no presenter, so the
+    DRAFT/"The ride" fallbacks are the real empty-console path -- with
+    no ride open there is nothing to finish and no ride name to name.
 
     A confirmed ``QuitOutcome.QUIT`` stamps the open session's
     ``closed_at`` through :func:`_stamp_closed_session` (E5.2.1: a
@@ -2866,11 +2862,9 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     wx = require_wx()
 
     presenter = context.presenter
-    # logic-coverage-exempt: T-3 -- the DRAFT/"The ride" fallback arms
-    # are unreachable in every live construction: _confirm_quit runs
-    # only from post-bootstrap route handlers, which always have a
-    # live presenter threaded (build_main_window's replace), mirroring
-    # the finish route's own presenter-less stub exemption.
+    # W1: the bootstrap's no-ride console threads no presenter, so the
+    # DRAFT/"The ride" fallbacks below are the live empty-console path
+    # (quitting from the no-ride console), not a presenter-less stub.
     status = presenter.engine.state if presenter is not None else RideStatus.DRAFT
     dialog_name = quit_flow.dialog_for_status(status)
     if dialog_name is None:
@@ -3598,9 +3592,9 @@ def build_main_window(
     the two process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
     (Phase 8, P8-D1/P8-D2/P8-D4). E5.4.2 retired the
     :class:`DemoDataSource` construction: the bootstrap roster is
-    empty (no store-backed ride is open), the console reads its own
-    live ``EngineDataSource``, and the E6/E7 windows read the
-    :data:`_EMPTY_SOURCE` empty state -- no production module imports
+    empty (no store-backed ride is open), and both the console (W1:
+    :data:`_EMPTY_SOURCE` + :meth:`MainFrame.show_no_ride`) and the
+    E6/E7 windows read the empty state -- no production module imports
     ``rivercrossing.demo`` any more (import-linter contract).
 
     E8.1.1 loads the per-user settings file at startup and applies
@@ -3608,15 +3602,16 @@ def build_main_window(
     :class:`~rivercrossing.ui.theme.ThemeController` (constructed with
     the loaded mode; W13 removed the View-menu theme trio, so there is
     no menu radio to tick), the sound
-    mute through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
-    through the console presenter's ``on_hide_times`` (with the menu
-    check item synced, E8.1.3), zoom through
-    :func:`~rivercrossing.ui.zoom.set_percent` (with the menu radio
-    synced, E8.1.4), and the saved splitter sash / frame geometry
-    through :class:`MainFrame`'s layout seams. The settings file path
-    and current :class:`AppSettings` are kept on
-    :class:`_RouteContext`, and the layout save callback persists
-    sash/geometry changes back to the file.
+    mute through :func:`~rivercrossing.ui.sound.set_muted`, zoom
+    through :func:`~rivercrossing.ui.zoom.set_percent` (with the menu
+    radio synced, E8.1.4), and the saved splitter sash / frame
+    geometry through :class:`MainFrame`'s layout seams. Hide-times
+    (E8.1.3) applies with the first ride attach, since the no-ride
+    bootstrap has no presenter to call ``on_hide_times`` on (its menu
+    check item is still synced here). The settings file path and
+    current :class:`AppSettings` are kept on :class:`_RouteContext`,
+    and the layout save callback persists sash/geometry changes back
+    to the file.
 
     ux-polish adds one post-wiring step: the console Riders tab's
     double-click seam is wired to the rider editor
@@ -3731,13 +3726,15 @@ def build_main_window(
         # need the pieces already set here.
     )
 
-    # W3: no launch modal runs here. The console always opens on the
-    # empty DRAFT engine (E5.4.2); the post-Show launch flow
+    # W3/W1: no launch modal runs here, and no ride is built either.
+    # With no store-backed ride open the console holds a true empty
+    # state (no engine, no presenter); the post-Show launch flow
     # (main()'s _run_launch_flow) shows resume_dlg / the No Ride Open
     # alert over the visible frame, and Continue -- or the library's
     # Open -- swaps the console onto the store ride afterwards, so a
     # replay against a drifted roster can never take the build down.
-    engine, engine_source = _build_console_engine(roster)
+    # _build_console_engine stays for Clear Ride's no-store fallback
+    # (and the unit tests); the bootstrap no longer calls it.
 
     def _save_layout(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
         """Persist the console's layout and keep the context current."""
@@ -3745,37 +3742,31 @@ def build_main_window(
 
     _console = MainFrame(
         frame,
-        data_source=engine_source,
+        data_source=_EMPTY_SOURCE,
         initial_sash=loaded_settings.splitter_sash,
         initial_geometry=loaded_settings.window_geometry,
         on_layout_changed=_save_layout,
     )
-
-    # _presenter is kept alive the same way: wire_entry/wire_console's
-    # closures hold its bound handlers, which wx's own event table and
-    # the tick timer then hold.
-    _presenter = ConsolePresenter(_console, engine=engine, source=engine_source)
-    _console.wire_entry(_presenter.on_plate_entered)
-    _console.wire_console(_presenter)
-    _console.set_state(engine_source.ride_status())
-    _console.focus_entry()
+    _console.show_no_ride()
 
     # E8.1.1-E8.1.4: apply the persisted settings that have live
     # paths -- appearance (the ThemeController, constructed with the
-    # loaded mode), sound, hide-times and zoom.
+    # loaded mode), sound and zoom. hide-times applies when a ride
+    # attaches (a new presenter renders it), not at the no-ride
+    # bootstrap where there is no presenter to call.
     sound.set_muted(muted=not loaded_settings.sound_on)
-    _presenter.on_hide_times(hide=loaded_settings.hide_times)
     zoom.set_percent(loaded_settings.zoom_percent)
 
     _apply_accelerators(frame, menubar)
     # theme_controller is kept alive by _RouteContext, threaded through
     # every route handler. console_view is threaded the same way so
-    # E5.4.1's library Open can swap the console's presenter;
-    # active_ride_id records the store ride the launch flow's Continue
-    # opened, if any (File ▸ Duplicate Ride… reads it).
+    # E5.4.1's library Open can swap the console's presenter; the
+    # presenter starts as None (W1) and _swap_console_onto sets it on
+    # the first ride attach. active_ride_id records the store ride the
+    # launch flow's Continue opened, if any (File ▸ Duplicate Ride…
+    # reads it).
     context = replace(
         context,
-        presenter=_presenter,
         console_view=_console,
     )
     _bind_routes(context)
@@ -3788,9 +3779,9 @@ def build_main_window(
     # set_on_ride_changed fires on every ride-state change (the
     # console's own seam) and on every feed re-render, so the §15
     # "Enabled when" cells hold in the app -- the initial call below
-    # applies them to the bootstrap's DRAFT ride.
+    # applies them to the no-ride state (DRAFT, ride_open=False).
     _console.set_on_ride_changed(lambda status: _apply_menu_state(context, status))
-    _apply_menu_state(context, engine.state)
+    _apply_menu_state(context, RideStatus.DRAFT)
 
     # W3: the post-Show launch flow needs the assembled context, and
     # the app object is the one handle main() and the functional

@@ -251,17 +251,16 @@ def test_build_main_window_attaches_a_menubar_with_seven_menus(
 # --- demo data flows through the bootstrap (D1 exit criteria) ----
 
 
-def test_build_main_window_wires_the_console_to_the_live_engine_feed(
+def test_build_main_window_opens_the_console_with_an_empty_feed(
     bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """Not demo rows: the bootstrap console reads a fresh live engine.
+    """Not demo rows: the no-ride bootstrap console has an empty feed.
 
-    E4.4.1 swapped the console's ``DemoDataSource`` wiring for an
-    ``EngineDataSource`` over a fresh DRAFT engine (E5.4.2: a new
-    launch starts no ride); a fresh engine has no crossings yet, so
-    the feed is empty at startup (the E4.4.4 mini race drives real
-    rows through this same bootstrap). The library/editor/detail
-    windows keep demo data until E5/E6.
+    W1: with no store-backed ride open the bootstrap builds no engine
+    at all -- it renders :meth:`MainFrame.show_no_ride` over
+    ``_EMPTY_SOURCE``, whose feed is empty (the E4.4.4 mini race
+    attaches a real engine through the library's Open). The
+    library/editor/detail windows keep their own empty state.
     """
     crossings_list = harness.find_control(bound_frame, ids.CROSSINGS_LIST)
 
@@ -282,22 +281,22 @@ def test_build_main_window_applies_the_console_canvas_minimum_size(
 # --- record-crossing wiring runs at bootstrap (Phase 8, A4) -------
 
 
-def test_build_main_window_wires_the_console_to_the_draft_data_source(
+def test_build_main_window_opens_the_console_on_the_no_ride_empty_state(
     bound_frame: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """``set_state(data_source.ride_status())`` ran during bootstrap.
+    """``MainFrame.show_no_ride()`` ran during bootstrap (W1).
 
-    A fresh launch starts no ride (E5.4.2, R-31): the bootstrap ride
-    is DRAFT -- no ride is running -- so the console opens with plate
-    entry disabled and the status label reading DRAFT. Read-only:
-    ``bound_frame`` never mutates after construction, so this shares
-    the fixture with every other assertion in this module (fixture
-    docstring).
+    A fresh launch starts no ride at all (E5.4.2/W1): the bootstrap
+    console holds no ride in memory, so plate entry is disabled and
+    the status label is blank (the header and status row carry no
+    ride identity). Read-only: ``bound_frame`` never mutates after
+    construction, so this shares the fixture with every other
+    assertion in this module (fixture docstring).
     """
     plate_input = harness.find_control(bound_frame, ids.PLATE_INPUT)
     status_label = harness.find_control(bound_frame, ids.RIDE_STATUS_LBL)
 
-    assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (False, "DRAFT")
+    assert (plate_input.IsEnabled(), status_label.GetLabelText()) == (False, "")
 
 
 # --- zoom menu radio default (Phase 8, 8.6) -------------------------
