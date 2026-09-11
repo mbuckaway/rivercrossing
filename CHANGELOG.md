@@ -4,7 +4,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.12] - 2026-09-11
 
 ### Added
 
@@ -13,6 +13,9 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - **Verbose logging setting** — Settings gains a "Verbose logging" checkbox, on by default, that writes an NDJSON diagnostic log (`rivercrossing-verbose.log`) beside the always-on crash log (F1).
 - **Finish publishes its own results** — Ride ▸ Finish Ride… writes the ride's HTML and PDF results into the per-user `exports` folder, so a finished ride always leaves its results behind instead of waiting for the Results menu (E2).
 - **Native `show_danger` and `show_prompt` dialogs** — `ui.std_dialogs` grows the two confirm shapes the finish/clear and duplicate/reopen questions need (H2).
+- **Rider sex** — riders carry a sex (`M`/`F`; blank means unknown) through the domain model, the rider editor (a Sex dropdown on the add/edit dialog), CSV import and export (a `Sex` header accepting `Male`/`M`/`Female`/`F`), the database, the console's Riders panel, and the results exports (HTML, PDF and the standings CSV; solo rows only).
+- **Sortable rider lists with a sort marker** — the Rider Editor list and the console's Riders panel sort by any column on a header click, with a ▲/▼ marker on the active column.
+- **A dedicated "Cannot Start Ride" dialog** — Start Ride now lists each blocking issue on its own line in a custom dialog instead of a single-line warning.
 
 ### Changed
 
@@ -25,18 +28,22 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - **Ride ▸ New Ride…** — New Ride… moved from the File menu to Ride, which now owns the whole ride lifecycle (D1); Ride Setup's primary button reads "Save" in both its modes (D2).
 - **Remove and Delete ask a native warning confirm** — the Teams editor's Remove and the Rider editor's Delete confirm through `ui.std_dialogs.show_confirm` (B3).
 - **Dialogs open centred over the console** — every XRC dialog is centred over the opener's own top-level window (screen-centred when there is none) before it is shown, instead of being placed by the platform and possibly hiding behind the console (H1). A dialog is never re-parented: a `wx.Dialog` must stay a top-level window, and re-parenting one to the frame renders its controls inside the frame on Cocoa.
+- **The Rider Editor's Team field is read-only** — it renders the rider's team (or "solo") as a non-editable value; team assignment stays in the Add/Edit dialog.
+- **The Add/Edit rider dialog is three times wider** — and the CSV import preview and Check-for-Rider-Issues dialogs default to three times wider and twice as tall.
+- **The console's Riders panel is the default tab** — it shows solo riders as "solo" (not "—") and gains Sex and live Cards columns; card cells render as suit glyphs (`9♥ K♦`).
 
 ### Removed
 
 - **The Arm checkbox (`arm_stop_chk`)** — Stop's separate arming act is retired (C2).
 - **The editors' Save buttons (`save_btn`)** — both editors are read-only displays; their Edit buttons open the record's own dialog (Phase 3).
-- **The team logo image** — a team's logo is its card code alone; the Teams editor's Image…/Remove logo buttons (`image_btn`, `remove_logo_btn`) go with it, and database migration v2→v3 drops `entry.logo_png` (Phase 3).
+- **The team logo image** — a team's logo is its card code alone; the Teams editor's Image…/Remove logo buttons (`image_btn`, `remove_logo_btn`) go with it, and the retired `entry.logo_png` column is gone from the schema (Phase 3).
 - **Riders ▸ Add Rider/Entry… (`mi_add_entry`)** — the Rider Editor is the one entry point for adding riders (D4).
 - **Four XRC confirm dialogs** — `finish_confirm_dlg`, `exit_confirm_dlg`, `duplicate_ride_dlg` and `reopen_ride_dlg` are replaced by the native confirms (`show_danger`, `show_confirm`, `show_prompt`), with the quit question's copy moved into `quit_flow` (H2).
+- **Database migration code** — the SQLite schema is reset to version 1 (the code is unreleased); migration support returns in a later release.
 
 ### Notes
 
-- **Store migration v2→v3** — opening an existing database drops the retired `entry.logo_png` column; the ride's own organisation logo column is deliberately untouched (Phase 3).
+- **Database schema version 1** — a database at any other version refuses to open, showing a "Database Mismatch" alert that tells the operator to rename or delete the database file.
 - **Verbose log format** — `rivercrossing-verbose.log` is NDJSON, one JSON object per line (`ts`, `level`, `file`, `line`, `func`, `msg`), so a support session can filter it with `jq` or a spreadsheet (F1).
 
 ## [1.0.11] - 2026-09-09
