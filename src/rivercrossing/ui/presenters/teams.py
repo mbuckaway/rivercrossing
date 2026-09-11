@@ -387,6 +387,18 @@ class TeamsPresenter:
         self._selected = entry
         self._show_entry(entry)
 
+    def select_by_name(self, display_name: str) -> None:
+        """Preselect the named ``teams_list`` row, if it is visible.
+
+        The name-keyed preselect seam ``TeamEditor.select_team_by_name``
+        forwards to (the rider-issues dialog uses it to land on a
+        team-of-one's form). A thin, documented entry point over
+        :meth:`on_row_selected`, which already resolves a row by its
+        display name -- the list sorts, so a row position names no
+        entry. A no-op when no visible team bears that name.
+        """
+        self.on_row_selected(display_name)
+
     def on_toggle_single_member(self, *, enabled: bool) -> None:
         """Handle the one-rider-teams filter, then re-render the list.
 

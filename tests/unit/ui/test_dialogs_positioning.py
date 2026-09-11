@@ -467,3 +467,126 @@ def test_rider_editor_apply_min_size_given_the_w7_canvas_keeps_its_own_floor() -
     _view_over(RiderEditor, dialog)._apply_min_size()
 
     assert (dialog.min_size.width, dialog.min_size.height) == (1280, 560)
+
+
+# --- Phase D: RiderIssuesView's own selection reconcile --------------
+
+
+class _FakeSelection:
+    """A ``wx.dataview.DataViewItem`` double answering ``IsOk``."""
+
+    def __init__(self, *, ok: bool) -> None:
+        """Report *ok* from IsOk."""
+        self._ok = ok
+
+    def IsOk(self) -> bool:  # noqa: N802 -- wx API name the SUT calls
+        """Report whether this is a real selection."""
+        return self._ok
+
+
+class _FakeIssuesList:
+    """An ``issues_list`` double returning one scripted selection."""
+
+    def __init__(self, selection: _FakeSelection) -> None:
+        """Return *selection* from every GetSelection call."""
+        self._selection = selection
+
+    def GetSelection(self) -> _FakeSelection:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted selection."""
+        return self._selection
+
+
+class _FakeIssuesModel:
+    """An ``IssuesListModel`` double with a scripted row and count."""
+
+    def __init__(self, *, row: int, count: int) -> None:
+        """Report *row* for the item and *count* rows overall."""
+        self._row = row
+        self._count = count
+
+    def GetRow(self, _item: object) -> int:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted row index."""
+        return self._row
+
+    def GetCount(self) -> int:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted row count."""
+        return self._count
+
+
+class _RecordingIssuesPresenter:
+    """A presenter double recording selection notifications only."""
+
+    def __init__(self) -> None:
+        """Start with an empty call log."""
+        self.calls: list[tuple[str, int | None]] = []
+
+    def on_row_selected(self, row: int) -> None:
+        """Record a forwarded row selection."""
+        self.calls.append(("on_row_selected", row))
+
+    def on_nothing_selected(self) -> None:
+        """Record a forwarded no-selection notice."""
+        self.calls.append(("on_nothing_selected", None))
+
+    def refresh(self) -> None:
+        """Record a refresh; reconcile must never make one."""
+        self.calls.append(("refresh", None))
+
+
+def _issues_view(
+    *, selection_ok: bool, row: int, count: int
+) -> tuple[RiderIssuesView, _RecordingIssuesPresenter]:
+    """Return a real ``RiderIssuesView`` wired to recording doubles.
+
+    Built with ``object.__new__`` like ``_view_over``: the reconcile
+    seam touches only ``issues_list``, ``_model`` and ``presenter``,
+    so no desktop (and no ``__init__`` binding) is needed.
+    """
+    view = object.__new__(RiderIssuesView)
+    view.issues_list = _FakeIssuesList(_FakeSelection(ok=selection_ok))
+    view._model = _FakeIssuesModel(row=row, count=count)
+    presenter = _RecordingIssuesPresenter()
+    view.presenter = presenter
+    return view, presenter
+
+
+@pytest.mark.parametrize(("row", "count"), [(0, 1), (2, 3)])
+def test_issues_view_reconcile_given_a_valid_selection_forwards_the_row(
+    row: int, count: int
+) -> None:
+    """A live in-range selection is forwarded to the presenter."""
+    view, presenter = _issues_view(selection_ok=True, row=row, count=count)
+
+    view._reconcile_selection()
+
+    assert presenter.calls == [("on_row_selected", row)]
+
+
+@pytest.mark.parametrize(
+    ("selection_ok", "row", "count"),
+    [
+        (False, 0, 3),  # T-3: nothing selected
+        (True, -1, 3),  # T-4: min - 1
+        (True, 3, 3),  # T-4: max + 1
+    ],
+)
+def test_issues_view_reconcile_given_no_valid_row_notifies_nothing_selected(
+    selection_ok: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+    row: int,
+    count: int,
+) -> None:
+    """No live in-range row disables through on_nothing_selected."""
+    view, presenter = _issues_view(selection_ok=selection_ok, row=row, count=count)
+
+    view._reconcile_selection()
+
+    assert presenter.calls == [("on_nothing_selected", None)]
+
+
+def test_issues_view_reconcile_never_refreshes_the_report() -> None:
+    """Reconcile must not recurse through refresh (D1)."""
+    view, presenter = _issues_view(selection_ok=True, row=0, count=1)
+
+    view._reconcile_selection()
+
+    assert ("refresh", None) not in presenter.calls

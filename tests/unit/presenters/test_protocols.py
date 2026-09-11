@@ -174,12 +174,6 @@ class FakeConsoleView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the riders review rows (unused here)."""
 
-    # Phase 4: the Protocol grew the riders-list sort marker the
-    # presenter pushes after every render. Behavioral coverage lives in
-    # tests/unit/presenters/test_console.py; this stays a no-op.
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Record the riders-list sort marker (unused here)."""
-
 
 class FakeSetupView:
     """A complete ``SetupView`` implementation for headless tests."""
@@ -251,9 +245,6 @@ class FakeRidersView:
     """A complete ``RidersView`` implementation for headless tests."""
 
     def show_riders(self, rows: list[RiderRow]) -> None:
-        """No-op fake."""
-
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
         """No-op fake."""
 
     def set_delete_enabled(self, *, enabled: bool) -> None:

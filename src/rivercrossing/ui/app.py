@@ -1534,14 +1534,19 @@ def _handle_export_csv(context: _RouteContext) -> None:
 def _handle_check_rider_issues(context: _RouteContext) -> None:
     """Riders ▸ Check for Rider Issues…: open the issues dialog (R-78).
 
-    A conversion made inside the dialog mutates the shared in-memory
-    roster; persist + rebuild after the modal ends, exactly like a CSV
-    import (persist first, then ``_switch_console_to_ride`` with the
-    live clock), so a converted team-of-one survives a relaunch. A
-    refused roster save surfaces as a status notice and skips the
-    rebuild -- the same guard :func:`_handle_import_csv` uses, for
-    the same wx-swallowed-raise reason (the measured note
-    ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+    Any roster change made inside the dialog -- a one-click fix, or an
+    edit made through the Open Editor button's nested rider/team
+    editor -- mutates the shared in-memory roster, so this persists +
+    rebuilds after the modal ends, exactly like a CSV import (persist
+    first, then ``_switch_console_to_ride`` with the live clock), so
+    the change survives a relaunch. ``run_rider_issues_flow`` reports
+    an audit-log length delta rather than the presenter's own
+    ``did_change``, so a nested editor's edit (which the presenter
+    never performs) is caught too. A refused roster save surfaces as a
+    status notice and skips the rebuild -- the same guard
+    :func:`_handle_import_csv` uses, for the same wx-swallowed-raise
+    reason (the measured note ``docs/EPIC3-SESSION-SUMMARY.md``
+    records).
     """
     from rivercrossing.ui.views import rider_issues  # noqa: PLC0415
 

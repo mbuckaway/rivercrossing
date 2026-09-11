@@ -1,44 +1,38 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless Phase-4 pins for the console's riders tab (main_frame).
+"""Headless pins for the console's riders tab (main_frame).
 
 The console's ``console_riders_list`` draws the shared
 ``CONSOLE_RIDER_COLUMNS`` (Plate | Name | Team | Sex | Cards) and sorts
-on a header click, exactly like the rider editor's own list; the review
-notebook opens on that Riders page.
+natively through ``RiderRowListModel.Compare`` -- the same pattern the
+team editor, the ride library and the rider editor's own list use; the
+review notebook opens on that Riders page.
 
 As with ``test_main_frame_ride_header.py``, only what genuinely needs
 no window is pinned here:
 
 - the ``review_notebook`` page order, read straight out of
   ``main.xrc`` as XML;
-- the three pure helpers the code-side wiring is built from --
-  ``_clicked_column_index``, ``_page_index`` and the column-label
-  tuple;
-- the console's own thin delegates (``set_sort_indicator``,
-  ``show_riders``, ``_on_riders_column_header_click``), driven against
-  a shell that owns only the state each one reads.
+- the one pure helper the code-side wiring is built from --
+  ``_page_index`` -- and the column-label tuple;
+- the console's own thin delegates (``show_riders``,
+  ``_on_column_sorted``, ``_apply_sort``), driven against a shell that
+  owns only the state each one reads.
 
 The rest of the wiring -- the ``Bind`` calls that deliver a real header
-click or select a real notebook page -- needs a live ``wx`` window and
+sort or select a real notebook page -- needs a live ``wx`` window and
 stays with the functional suite.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 from xml.etree import ElementTree as ET
 
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
 
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, SOLO_TEAM_TEXT
 from rivercrossing.ui.views import main_frame
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
@@ -125,130 +119,104 @@ def test_riders_column_sex_and_cards_indexes_given_the_shared_order() -> None:
 
 
 class _Column:
-    """A ``wx.dataview.DataViewColumn`` stand-in without wx."""
+    """A ``wx.dataview.DataViewColumn`` double for the native sort."""
 
-    def __init__(self, title: str) -> None:
-        """Start with *title* as the header text."""
-        self.title = title
+    def __init__(self, model_column: int, *, ascending: bool = True) -> None:
+        """Carry *model_column* and the header arrow's own direction."""
+        self.model_column = model_column
+        self.ascending = ascending
+        self.sort_orders: list[bool] = []
 
-    def GetTitle(self) -> str:  # noqa: N802 -- wx API name the stub mirrors
-        """Return the current header text."""
-        return self.title
+    def GetModelColumn(self) -> int:  # noqa: N802 -- wx API name the double mirrors
+        """Return the model column this header sorts."""
+        return self.model_column
 
-    def SetTitle(self, title: str) -> None:  # noqa: N802 -- wx API name the stub mirrors
-        """Replace the header text."""
-        self.title = title
+    def IsSortOrderAscending(self) -> bool:  # noqa: N802 -- wx API name the double mirrors
+        """Return the header arrow's direction."""
+        return self.ascending
+
+    def SetSortOrder(self, ascending: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record the direction the view re-applied."""
+        self.sort_orders.append(ascending)
 
 
-def _columns() -> list[_Column]:
-    """Return one stand-in per shared console column, in order."""
-    return [_Column(column.label) for column in CONSOLE_RIDER_COLUMNS]
+class _SortEvent:
+    """A ``wx.dataview.DataViewEvent`` double for the sorted event."""
 
-
-class _HeaderClick:
-    """A ``wx.dataview.DataViewEvent`` stand-in for a header click."""
-
-    def __init__(self, column: object) -> None:
-        """Carry the column object the operator clicked."""
-        self._column = column
+    def __init__(self) -> None:
+        """Start before the handler ran."""
         self.skipped = False
 
-    def GetColumn(self) -> object:  # noqa: N802 -- wx API name the stub mirrors
-        """Return the clicked column object."""
-        return self._column
-
-    def Skip(self) -> None:  # noqa: N802 -- wx API name the stub mirrors
+    def Skip(self) -> None:  # noqa: N802 -- wx API name the double mirrors
         """Record that the handler let the event continue."""
         self.skipped = True
 
 
-class _FakePresenter:
-    """A ``ConsolePresenter`` stand-in recording forwarded clicks."""
+class _ResortModel:
+    """A ``RiderRowListModel`` double recording its resorts."""
 
     def __init__(self) -> None:
-        """Start with no forwarded click."""
-        self.sorted_columns: list[int] = []
+        """Start with no resort requested."""
+        self.resorts = 0
 
-    def on_sort_riders(self, column: int) -> None:
-        """Record the forwarded column index."""
-        self.sorted_columns.append(column)
+    def Resort(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record one resort request."""
+        self.resorts += 1
 
 
-class _Control:
-    """A ``wx.dataview.DataViewCtrl`` stand-in recording its model."""
+class _RidersListControl:
+    """A ``wx.dataview.DataViewCtrl`` double for the riders list."""
 
-    def __init__(self) -> None:
-        """Start with no associated model."""
+    def __init__(self, *, sorting: _Column | None = None) -> None:
+        """Carry the control's current sorting column, if any."""
+        self.sorting = sorting
+        self.columns: dict[int, _Column] = {}
         self.model: object | None = None
+
+    def GetSortingColumn(self) -> _Column | None:  # noqa: N802 -- wx API name
+        """Return the column the control currently sorts by."""
+        return self.sorting
+
+    def GetColumn(self, index: int) -> _Column | None:  # noqa: N802 -- wx API name
+        """Return the column at *index*, or ``None``."""
+        return self.columns.get(index)
 
     def AssociateModel(self, model: object) -> None:  # noqa: N802 -- wx API name
         """Record the associated model."""
         self.model = model
 
-    def Refresh(self) -> None:  # noqa: N802 -- wx API name the stub mirrors
+    def Refresh(self) -> None:  # noqa: N802 -- wx API name the double mirrors
         """No-op repaint (nothing to paint)."""
 
-    def Update(self) -> None:  # noqa: N802 -- wx API name the stub mirrors
+    def Update(self) -> None:  # noqa: N802 -- wx API name the double mirrors
         """No-op repaint (nothing to paint)."""
 
 
 class _Shell:
-    """A ``MainFrame`` stand-in owning only what these methods read.
+    """A ``MainFrame`` double owning only what these methods read.
 
-    The console's ``set_sort_indicator``,
-    ``_on_riders_column_header_click`` and ``show_riders`` are called
-    here as unbound methods against this shell, so their wiring is
-    pinned without building a real frame (no window, no display).
+    The console's ``show_riders``, ``_on_column_sorted`` and
+    ``_apply_sort`` are called here as unbound methods against this
+    shell, so their wiring is pinned without building a real frame (no
+    window, no display).
     """
 
     def __init__(
         self,
         *,
-        columns: Sequence[_Column] | None = None,
-        presenter: _FakePresenter | None = None,
-        control: _Control | None = None,
+        control: _RidersListControl | None = None,
+        sort_column: int | None = None,
+        sort_ascending: bool = True,
     ) -> None:
         """Store the state the three methods under test read."""
-        self._riders_columns = list(columns if columns is not None else _columns())
-        self._presenter = presenter
-        self.console_riders_list = control
+        self.console_riders_list = control if control is not None else _RidersListControl()
         self._riders_model: object | None = None
+        self._riders_sort_column = sort_column
+        self._riders_sort_ascending = sort_ascending
 
-
-# ---------------------------------------------- the clicked-column map
-
-
-@pytest.mark.parametrize("index", [0, 1, 2, 3, 4], ids=lambda index: f"column_{index}")
-def test_clicked_column_index_given_a_shared_column_returns_its_index(index: int) -> None:
-    """Every shared column maps back to the sorted index."""
-    columns = _columns()
-
-    assert main_frame._clicked_column_index(columns, columns[index]) == index
-
-
-def test_clicked_column_index_given_an_unknown_object_returns_none() -> None:
-    """A click on a column this list never appended sorts nothing."""
-    assert main_frame._clicked_column_index(_columns(), _Column("Elsewhere")) is None
-
-
-def test_clicked_column_index_given_no_columns_returns_none() -> None:
-    """T-4 boundary: a list with no columns has nothing to map."""
-    assert main_frame._clicked_column_index([], _Column("Plate")) is None
-
-
-def test_clicked_column_index_given_one_column_returns_zero() -> None:
-    """T-4 boundary: the single-column case."""
-    column = _Column("Plate")
-
-    assert main_frame._clicked_column_index([column], column) == 0
-
-
-@given(index=st.integers(min_value=0, max_value=4))
-def test_clicked_column_index_given_any_shared_column_round_trips_its_index(index: int) -> None:
-    """Property: the column at *index* maps back to *index* (T-7)."""
-    columns = _columns()
-
-    assert main_frame._clicked_column_index(columns, columns[index]) == index
+    def _apply_sort(self) -> None:
+        """Run the real handler so the show_riders wiring runs."""
+        main_frame.MainFrame._apply_sort(self)
 
 
 # --------------------------------------------------- the page lookup
@@ -315,98 +283,82 @@ def test_page_index_given_no_pages_returns_none() -> None:
     assert main_frame._page_index(_Notebook(), "Riders") is None
 
 
-# -------------------------------------------------- the view wiring
+# -------------------------------------------------- the native sort
 
 
-@pytest.mark.parametrize("index", [0, 1, 2, 3, 4], ids=lambda index: f"column_{index}")
-def test_on_riders_column_header_click_given_a_column_forwards_its_index(index: int) -> None:
-    """Phase 4: a header click reaches ``presenter.on_sort_riders``."""
-    columns = _columns()
-    presenter = _FakePresenter()
-    shell = _Shell(columns=columns, presenter=presenter)
+def test_on_column_sorted_given_a_column_remembers_its_state() -> None:
+    """A header sort is remembered as its model column + direction."""
+    control = _RidersListControl(sorting=_Column(main_frame.RIDERS_COL_NAME, ascending=False))
+    shell = _Shell(control=control)
+    event = _SortEvent()
 
-    main_frame.MainFrame._on_riders_column_header_click(shell, _HeaderClick(columns[index]))
+    main_frame.MainFrame._on_column_sorted(shell, event)
 
-    assert presenter.sorted_columns == [index]
-
-
-def test_on_riders_column_header_click_given_an_unknown_column_forwards_nothing() -> None:
-    """T-3 negative: a click this list never appended is ignored."""
-    presenter = _FakePresenter()
-    shell = _Shell(presenter=presenter)
-
-    main_frame.MainFrame._on_riders_column_header_click(shell, _HeaderClick(_Column("Elsewhere")))
-
-    assert presenter.sorted_columns == []
-
-
-def test_on_riders_column_header_click_given_no_presenter_skips_the_click() -> None:
-    """T-3 negative: an unwired console swallows the click, no crash.
-
-    The guard is what the assertion proves: without it the handler
-    would raise on the ``None`` presenter and ``skip`` would never be
-    recorded.
-    """
-    columns = _columns()
-    event = _HeaderClick(columns[0])
-    shell = _Shell(columns=columns, presenter=None)
-
-    main_frame.MainFrame._on_riders_column_header_click(shell, event)
-
+    assert (shell._riders_sort_column, shell._riders_sort_ascending) == (
+        main_frame.RIDERS_COL_NAME,
+        False,
+    )
     assert event.skipped is True
 
 
-def test_on_riders_column_header_click_given_no_presenter_and_no_column_skips() -> None:
-    """T-13 row 4: both guards together still let the event continue."""
-    columns = _columns()
-    event = _HeaderClick(_Column("Elsewhere"))
-    shell = _Shell(columns=columns, presenter=None)
+def test_on_column_sorted_given_no_sorting_column_keeps_the_state() -> None:
+    """T-3 negative: wx's "nothing sorted" state changes nothing."""
+    shell = _Shell(control=_RidersListControl(sorting=None), sort_column=2, sort_ascending=False)
 
-    main_frame.MainFrame._on_riders_column_header_click(shell, event)
+    main_frame.MainFrame._on_column_sorted(shell, _SortEvent())
 
-    assert event.skipped is True
+    assert (shell._riders_sort_column, shell._riders_sort_ascending) == (2, False)
 
 
-def test_on_riders_column_header_click_given_a_click_skips_the_event() -> None:
-    """The handler lets wx continue, like the editor's own."""
-    columns = _columns()
-    event = _HeaderClick(columns[2])
-    shell = _Shell(columns=columns, presenter=_FakePresenter())
+def test_apply_sort_given_a_remembered_column_restores_it_and_resorts() -> None:
+    """The remembered column's arrow and order are re-applied."""
+    column = _Column(main_frame.RIDERS_COL_NAME)
+    control = _RidersListControl()
+    control.columns[main_frame.RIDERS_COL_NAME] = column
+    model = _ResortModel()
+    shell = _Shell(control=control, sort_column=main_frame.RIDERS_COL_NAME, sort_ascending=False)
+    shell._riders_model = model
 
-    main_frame.MainFrame._on_riders_column_header_click(shell, event)
+    main_frame.MainFrame._apply_sort(shell)
 
-    assert event.skipped is True
-
-
-def test_set_sort_indicator_given_a_column_marks_its_header() -> None:
-    """Phase 4: the console's ▲/▼ marker is the shared indicator's."""
-    shell = _Shell()
-
-    main_frame.MainFrame.set_sort_indicator(shell, 1, ascending=True)
-
-    assert [column.GetTitle() for column in shell._riders_columns] == [
-        "Plate",
-        "Name ▲",
-        "Team",
-        "Sex",
-        "Cards",
-    ]
+    assert (column.sort_orders, model.resorts) == ([False], 1)
 
 
-def test_set_sort_indicator_given_no_column_clears_every_header() -> None:
-    """No active sort restores every plain label (T-3 False branch)."""
-    shell = _Shell()
-    main_frame.MainFrame.set_sort_indicator(shell, 1, ascending=True)
+def test_apply_sort_given_no_remembered_column_leaves_the_order_alone() -> None:
+    """T-3 negative: nothing clicked means the source's own order."""
+    column = _Column(main_frame.RIDERS_COL_NAME)
+    control = _RidersListControl()
+    control.columns[main_frame.RIDERS_COL_NAME] = column
+    model = _ResortModel()
+    shell = _Shell(control=control)
+    shell._riders_model = model
 
-    main_frame.MainFrame.set_sort_indicator(shell, None, ascending=True)
+    main_frame.MainFrame._apply_sort(shell)
 
-    assert [column.GetTitle() for column in shell._riders_columns] == [
-        "Plate",
-        "Name",
-        "Team",
-        "Sex",
-        "Cards",
-    ]
+    assert (column.sort_orders, model.resorts) == ([], 0)
+
+
+def test_apply_sort_given_no_model_leaves_the_control_alone() -> None:
+    """T-3 negative: rows never rendered means nothing to resort."""
+    column = _Column(main_frame.RIDERS_COL_NAME)
+    control = _RidersListControl()
+    control.columns[main_frame.RIDERS_COL_NAME] = column
+    shell = _Shell(control=control, sort_column=main_frame.RIDERS_COL_NAME)
+
+    main_frame.MainFrame._apply_sort(shell)
+
+    assert column.sort_orders == []
+
+
+def test_apply_sort_given_a_missing_column_leaves_the_model_alone() -> None:
+    """T-3 negative: a remembered column the control no longer has."""
+    model = _ResortModel()
+    shell = _Shell(control=_RidersListControl(), sort_column=main_frame.RIDERS_COL_NAME)
+    shell._riders_model = model
+
+    main_frame.MainFrame._apply_sort(shell)
+
+    assert model.resorts == 0
 
 
 # -------------------------------------------------- show_riders
@@ -417,13 +369,26 @@ _ROW = RiderRow(plate="123", name="Sam Ellis", team=None, sex="F", cards=("AS", 
 
 def test_show_riders_given_rows_builds_the_five_shared_columns() -> None:
     """Phase 4: the console's list carries every shared column."""
-    control = _Control()
+    control = _RidersListControl()
     shell = _Shell(control=control)
 
     main_frame.MainFrame.show_riders(shell, [_ROW])
 
     assert control.model.GetColumnCount() == len(CONSOLE_RIDER_COLUMNS)
     assert control.model.GetColumnCount() == 5
+
+
+def test_show_riders_given_a_remembered_sort_re_applies_it() -> None:
+    """A rebuilt model drops the sort key; the view restores it."""
+    column = _Column(main_frame.RIDERS_COL_NAME)
+    control = _RidersListControl()
+    control.columns[main_frame.RIDERS_COL_NAME] = column
+    shell = _Shell(control=control, sort_column=main_frame.RIDERS_COL_NAME)
+
+    main_frame.MainFrame.show_riders(shell, [_ROW])
+
+    assert column.sort_orders == [True]
+    assert control.model.GetCount() == 1
 
 
 @pytest.mark.parametrize(
@@ -439,7 +404,7 @@ def test_show_riders_given_rows_builds_the_five_shared_columns() -> None:
 )
 def test_show_riders_given_a_row_renders_its_shared_cells(column: int, expected: str) -> None:
     """A solo row renders "solo", its sex, and its card glyphs."""
-    control = _Control()
+    control = _RidersListControl()
     shell = _Shell(control=control)
 
     main_frame.MainFrame.show_riders(shell, [_ROW])

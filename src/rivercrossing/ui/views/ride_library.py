@@ -23,11 +23,7 @@ import wx.dataview
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
-from rivercrossing.ui.views._support import (
-    apply_glass_bezel,
-    associate_model,
-    find_control,
-)
+from rivercrossing.ui.views._support import associate_model, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -45,7 +41,6 @@ __all__ = [
     "COL_STATUS",
     "COL_STATUS_WIDTH",
     "MIN_SIZE",
-    "WX_ID_CLOSE",
     "WX_ID_DELETE",
     "RideLibrary",
     "RidesListModel",
@@ -77,7 +72,6 @@ class RidesSource(Protocol):
 # by tools/gen_ids.py's STOCK_IDS set (spec.md §15b) -- the same
 # literal views/dialogs.py repeats for the identical reason; pages.py
 # is test-only and production cannot import it.
-WX_ID_CLOSE = "wxID_CLOSE"
 WX_ID_DELETE = "wxID_DELETE"
 WX_ID_OPEN = "wxID_OPEN"
 
@@ -271,8 +265,7 @@ class RideLibrary:
     button: the library never owned the ride-setup flow, which stays
     File ▸ New Ride…'s own route. W10 also makes the columns natively
     sortable (the model's :meth:`~RidesListModel.Compare`), keeps the
-    operator's chosen sort across rebuilds, and applies the macOS-26
-    ``.glass`` bezel to the dialog's buttons.
+    operator's chosen sort across rebuilds.
     """
 
     def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the three injected action callbacks
@@ -325,7 +318,6 @@ class RideLibrary:
         self.delete_button = self._find(WX_ID_DELETE, wx.Button)
         self.open_button = self._find(WX_ID_OPEN, wx.Button)
         self.duplicate_button = self._find(ids.DUPLICATE_BTN, wx.Button)
-        self.close_button = self._find(WX_ID_CLOSE, wx.Button)
         self._build_columns()
         # Replaced by show_rides() below, before any event can fire --
         # typed non-optional so _apply_sort never has to narrow it.
@@ -345,16 +337,6 @@ class RideLibrary:
         self.show_rides(self.data_source.rides())
         self._update_action_enablement()
         self._apply_min_size()
-        # W10: the macOS-26 .glass bezel reaches the native NSButton,
-        # which GetHandle() only yields once the dialog is realized --
-        # hence CallAfter rather than a direct call here.
-        for button in (
-            self.open_button,
-            self.duplicate_button,
-            self.delete_button,
-            self.close_button,
-        ):
-            wx.CallAfter(apply_glass_bezel, button)
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.

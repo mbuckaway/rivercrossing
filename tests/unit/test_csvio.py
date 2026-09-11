@@ -3368,3 +3368,353 @@ def test_commit_pooled_rider_joining_an_existing_team_carries_its_sex(tmp_path: 
         ("El", None),
         ("Fay", "M"),
     ]
+
+
+# =========================== convert teams of one to solo (Phase E)
+
+
+def _one_rider_team_file(tmp_path: Path) -> Path:
+    """Write a lone "Solo Team" rider's unified CSV; return its path."""
+    return _unified_file(
+        tmp_path,
+        [_Row(first="Alex", last="Ellis", type_="team", team="Solo Team", number="4")],
+    )
+
+
+def test_preview_convert_flag_defaults_off_and_keeps_one_rider_team_as_a_team(
+    tmp_path: Path,
+) -> None:
+    """T-3: the default -- no conversion, the team warning stays."""
+    roster = _pooled_roster()
+
+    result = preview(_one_rider_team_file(tmp_path), roster)
+
+    entry = result.entries[0]
+    assert (
+        entry.type,
+        entry.display_name,
+        result.team_count,
+        result.warnings,
+    ) == (
+        EntryType.TEAM,
+        "solo team",
+        1,
+        (
+            ImportConflict(
+                row=2, problem="team of 1 rider is below the minimum of 2 (team-under-min)"
+            ),
+        ),
+    )
+
+
+def test_preview_convert_flag_pooled_one_rider_team_emits_a_solo_entry(
+    tmp_path: Path,
+) -> None:
+    """A DRAFT lone pooled team becomes a solo on the rider's plate."""
+    roster = _pooled_roster()
+
+    result = preview(_one_rider_team_file(tmp_path), roster, convert_teams_of_one_to_solo=True)
+
+    entry = result.entries[0]
+    assert (
+        entry.type,
+        entry.plate,
+        entry.display_name,
+        entry.riders,
+    ) == (
+        EntryType.SOLO,
+        "4",
+        "Alex Ellis",
+        (ParsedRider(first_name="Alex", last_name="Ellis", plate="4"),),
+    )
+
+
+def test_preview_convert_flag_pooled_one_rider_team_drops_team_count_and_warning(
+    tmp_path: Path,
+) -> None:
+    """The converted group is a solo: no team count, no warning."""
+    roster = _pooled_roster()
+
+    result = preview(_one_rider_team_file(tmp_path), roster, convert_teams_of_one_to_solo=True)
+
+    assert (result.team_count, result.conflicts, result.warnings) == (0, (), ())
+
+
+def test_preview_convert_flag_relay_one_rider_team_emits_a_solo_entry(
+    tmp_path: Path,
+) -> None:
+    """A DRAFT lone relay team becomes a plateless-rider solo."""
+    roster = _relay_roster()
+
+    result = preview(_one_rider_team_file(tmp_path), roster, convert_teams_of_one_to_solo=True)
+
+    entry = result.entries[0]
+    assert (
+        entry.type,
+        entry.plate,
+        entry.display_name,
+        entry.riders,
+    ) == (
+        EntryType.SOLO,
+        "4",
+        "Alex Ellis",
+        (ParsedRider(first_name="Alex", last_name="Ellis"),),
+    )
+
+
+def test_preview_convert_flag_relay_one_rider_team_drops_team_count_and_warning(
+    tmp_path: Path,
+) -> None:
+    """The converted relay group is a solo: no count, no warning."""
+    roster = _relay_roster()
+
+    result = preview(_one_rider_team_file(tmp_path), roster, convert_teams_of_one_to_solo=True)
+
+    assert (result.team_count, result.conflicts, result.warnings) == (0, (), ())
+
+
+@pytest.mark.parametrize(
+    ("plate_model", "bo_number", "cy_number"),
+    [
+        (PlateModel.RIDER_POOLED, "2", "3"),
+        (PlateModel.TEAM_RELAY, "2", "2"),
+    ],
+)
+def test_preview_convert_flag_two_rider_team_stays_a_team(  # noqa: PLR0913 -- two plate cells
+    tmp_path: Path, *, plate_model: PlateModel, bo_number: str, cy_number: str
+) -> None:
+    """T-4 boundary: a one-rider team converts; two stays a team."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=plate_model)
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Bo", type_="team", team="Team A", number=bo_number),
+            _Row(first="Cy", type_="team", team="Team A", number=cy_number),
+        ],
+    )
+
+    result = preview(path, roster, convert_teams_of_one_to_solo=True)
+
+    assert [entry.type for entry in result.entries] == [EntryType.TEAM]
+    assert result.team_count == 1
+
+
+@pytest.mark.parametrize("status", [RideStatus.RUNNING, RideStatus.REOPENED, RideStatus.FINISHED])
+@pytest.mark.parametrize("plate_model", [PlateModel.RIDER_POOLED, PlateModel.TEAM_RELAY])
+def test_preview_convert_flag_after_draft_refuses_the_conversion(
+    tmp_path: Path, *, status: RideStatus, plate_model: PlateModel
+) -> None:
+    """Once started, a lone team cannot convert: it conflicts.
+
+    Without the explicit DRAFT gate a brand-new plate would quietly
+    convert in any ride state, adding a solo entry to a started ride.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=plate_model)
+    roster.status = status
+    path = _unified_file(
+        tmp_path, [_Row(first="Lone", last="Wolf", type_="team", team="One", number="99")]
+    )
+
+    result = preview(path, roster, convert_teams_of_one_to_solo=True)
+
+    assert [entry.type for entry in result.entries] == [EntryType.TEAM]
+    assert result.conflicts == (
+        ImportConflict(
+            row=2, problem="team of 1 rider is below the minimum of 2 (team-under-min)"
+        ),
+    )
+
+
+def test_preview_convert_flag_matched_existing_team_after_draft_conflicts_not_raises(
+    tmp_path: Path,
+) -> None:
+    """A matched existing team conflicts, so commit never raises.
+
+    The group loop bypasses the solo reshape gates, so a conversion
+    that reached commit outside DRAFT would raise ``LockedError`` from
+    the roster mutator. Routing the converted entry through
+    ``_pooled_solo_problem`` (plus the explicit DRAFT gate) makes the
+    matched team a preview conflict instead.
+    """
+    roster = _pooled_roster()
+    roster.create_team_entry(
+        display_name="wolves",
+        riders=[
+            Rider(first_name="Bo", last_name="", plate="2"),
+            Rider(first_name="Cy", last_name="", plate="3"),
+        ],
+    )
+    roster.status = RideStatus.RUNNING
+    path = _unified_file(
+        tmp_path, [_Row(first="Cy", last="", type_="team", team="Solo Team", number="3")]
+    )
+
+    result = preview(path, roster, convert_teams_of_one_to_solo=True)
+
+    assert len(result.conflicts) == 1
+    assert _TEAM_TO_SOLO_LOCKED_PROBLEM in result.conflicts[0].problem
+    assert result.entries == ()
+    with pytest.raises(ImportConflictsPresentError, match=re.escape("1 conflict")):
+        commit(result)
+
+
+def test_preview_convert_flag_relay_matched_team_after_draft_conflicts_not_raises(
+    tmp_path: Path,
+) -> None:
+    """Relay: a RUNNING matched team is refused structurally."""
+    roster = _relay_roster()
+    roster.create_team_entry(
+        display_name="Team X",
+        riders=[Rider(first_name="Bo", last_name=""), Rider(first_name="Cy", last_name="")],
+        plate="10",
+    )
+    roster.status = RideStatus.RUNNING
+    path = _unified_file(
+        tmp_path, [_Row(first="Lone", type_="team", team="Solo Team", number="10")]
+    )
+
+    result = preview(path, roster, convert_teams_of_one_to_solo=True)
+
+    assert len(result.conflicts) == 1
+    assert _STRUCTURAL_PROBLEM in result.conflicts[0].problem
+    assert result.entries == ()
+    with pytest.raises(ImportConflictsPresentError, match=re.escape("1 conflict")):
+        commit(result)
+
+
+def test_preview_convert_flag_matched_existing_team_in_draft_extracts_on_commit(
+    tmp_path: Path,
+) -> None:
+    """DRAFT: the converted solo passes the gate; commit extracts."""
+    roster = _pooled_roster()
+    roster.create_team_entry(
+        display_name="wolves",
+        riders=[
+            Rider(first_name="Bo", last_name="", plate="2"),
+            Rider(first_name="Cy", last_name="", plate="3"),
+        ],
+    )
+    path = _unified_file(
+        tmp_path, [_Row(first="Cy", last="", type_="team", team="Solo Team", number="3")]
+    )
+
+    result = preview(path, roster, convert_teams_of_one_to_solo=True)
+
+    assert result.conflicts == ()
+    report = commit(result)
+    cy = next(entry for entry in roster.entries if entry.plate == "3")
+    assert (
+        result.entries[0].type,
+        cy.type,
+        [rider.full_name for rider in cy.riders],
+        report.extracted_count,
+    ) == (EntryType.SOLO, EntryType.SOLO, ["Cy"], 1)
+
+
+def test_commit_convert_flag_relay_matched_team_in_draft_reshapes_to_solo(
+    tmp_path: Path,
+) -> None:
+    """DRAFT: the relay conversion replaces the matched team."""
+    roster = _relay_roster()
+    roster.create_team_entry(
+        display_name="team x",
+        riders=[Rider(first_name="Bo", last_name=""), Rider(first_name="Cy", last_name="")],
+        plate="10",
+    )
+    path = _unified_file(
+        tmp_path, [_Row(first="Lone", type_="team", team="Solo Team", number="10")]
+    )
+
+    result = preview(path, roster, convert_teams_of_one_to_solo=True)
+
+    assert result.conflicts == ()
+    report = commit(result)
+    entry = roster.entries[0]
+    assert (
+        entry.type,
+        entry.plate,
+        [rider.full_name for rider in entry.riders],
+        report.updated_count,
+    ) == (EntryType.SOLO, "10", ["Lone"], 1)
+
+
+def test_preview_convert_flag_suppresses_near_duplicate_warning_for_converted_group(
+    tmp_path: Path,
+) -> None:
+    """A converted team is gone, so its near-duplicate warning goes.
+
+    Otherwise the summary would read "1 teams" while warning about a
+    team name that no longer exists in the preview.
+    """
+    roster = _pooled_roster()
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", type_="team", team="BNBA1", number="1"),
+            _Row(first="Bo", type_="team", team="BNBA1", number="2"),
+            _Row(first="Cy", type_="team", team="BNBA 1", number="3"),
+        ],
+    )
+
+    result = preview(path, roster, convert_teams_of_one_to_solo=True)
+
+    assert (result.team_count, result.warnings) == (1, ())
+
+
+def test_preview_convert_flag_near_duplicate_warning_still_fires_when_not_converted(
+    tmp_path: Path,
+) -> None:
+    """T-3: with the flag off the same pair still warns."""
+    roster = _pooled_roster()
+    path = _unified_file(
+        tmp_path,
+        [
+            _Row(first="Alex", type_="team", team="BNBA1", number="1"),
+            _Row(first="Bo", type_="team", team="BNBA1", number="2"),
+            _Row(first="Cy", type_="team", team="BNBA 1", number="3"),
+        ],
+    )
+
+    result = preview(path, roster)
+
+    assert tuple(w.problem for w in result.warnings) == (
+        "team of 1 rider is below the minimum of 2 (team-under-min)",
+        'possible duplicate team name: "bnba1" and "bnba 1"',
+    )
+
+
+def test_commit_convert_flag_pooled_one_rider_team_inserts_a_solo_entry(
+    tmp_path: Path,
+) -> None:
+    """commit() dispatches on the SOLO entry's type, no flag needed."""
+    roster = _pooled_roster()
+    result = preview(_one_rider_team_file(tmp_path), roster, convert_teams_of_one_to_solo=True)
+
+    report = commit(result)
+
+    entry = roster.entries[0]
+    assert (
+        entry.type,
+        entry.plate,
+        entry.display_name,
+        [rider.full_name for rider in entry.riders],
+        report.inserted_count,
+    ) == (EntryType.SOLO, "4", "Alex Ellis", ["Alex Ellis"], 1)
+
+
+def test_commit_convert_flag_relay_one_rider_team_inserts_a_solo_entry(
+    tmp_path: Path,
+) -> None:
+    """commit() inserts the converted relay solo at its plate."""
+    roster = _relay_roster()
+    result = preview(_one_rider_team_file(tmp_path), roster, convert_teams_of_one_to_solo=True)
+
+    report = commit(result)
+
+    entry = roster.entries[0]
+    assert (
+        entry.type,
+        entry.plate,
+        [rider.plate for rider in entry.riders],
+        report.inserted_count,
+    ) == (EntryType.SOLO, "4", [None], 1)

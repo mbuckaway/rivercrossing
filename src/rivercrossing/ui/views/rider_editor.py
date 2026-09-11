@@ -63,13 +63,23 @@ both this view and ``RidersView``. The editor's list gains a Sex
 column and spans the shared
 :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`, rendered
 by the shared :class:`~rivercrossing.ui.views._support.
-RiderRowListModel`. Clicking any column's header forwards the click
-to the presenter (which owns row order) and the presenter's own state
-is painted back through :meth:`RiderEditor.set_sort_indicator` --
-``ui.views._support.apply_sort_indicator`` writes the ▲/▼ marker, so
-the console's own rider list can reuse both. ``add_rider_dlg`` gains a
-Sex dropdown (``sex_choice``: blank, M, F) and opens three times
-wider than its fitted size.
+RiderRowListModel`. ``add_rider_dlg`` gains a Sex dropdown
+(``sex_choice``: blank, M, F) and opens three times wider than its
+fitted size.
+
+**Native sorting.** Each column is appended with
+:data:`RIDERS_LIST_COLUMN_FLAGS` (sortable *and* resizable, since an
+explicit ``flags=`` argument replaces rather than extends wx's
+default) and sorted through :meth:`RiderRowListModel.Compare` --
+keyed by the shared column's own ``sort_key`` -- so the header arrow
+the platform draws actually reorders the rows. The Name column opens
+at :data:`COL_NAME_WIDTH` (double the platform's 80 DIP default).
+:meth:`RiderEditor._apply_sort` re-applies the operator's current
+sort after every ``show_riders`` rebuild (replacing the model drops
+the control's sort key); no column sorts until a header is clicked,
+so the list opens in the presenter's own order. Selection survives
+the sort because the view forwards the selected row's *model* index
+and the presenter's visible list is that same model order.
 
 Phase 6 gives ``csv_preview_dlg`` its own default size:
 :class:`CsvPreviewDialog` opens it twice as wide and twice as tall
@@ -99,7 +109,6 @@ from rivercrossing.ui.presenters.riders import (
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
     RiderRowListModel,
-    apply_sort_indicator,
     associate_model,
     find_control,
 )
@@ -114,7 +123,10 @@ if TYPE_CHECKING:
 __all__ = [
     "ADD_RIDER_INFOBAR",
     "COLUMN_LABELS",
+    "COLUMN_WIDTHS",
+    "COL_DEFAULT_WIDTH",
     "COL_NAME",
+    "COL_NAME_WIDTH",
     "COL_PLATE",
     "COL_PROBLEM",
     "COL_ROW",
@@ -127,6 +139,7 @@ __all__ = [
     "DIALOG_WIDTH_SCALE",
     "MIN_SIZE",
     "OK_BUTTON_SCALE",
+    "RIDERS_LIST_COLUMN_FLAGS",
     "ROSTER_INFOBAR",
     "SEX_OPTIONS",
     "SOLO_TEAM_TEXT",
@@ -155,6 +168,28 @@ COL_SEX = 3
 
 COLUMN_LABELS: tuple[str, ...] = tuple(
     column.label for column in rider_columns.EDITOR_RIDER_COLUMNS
+)
+
+# AppendTextColumn's own default flags include
+# wxDATAVIEW_COL_RESIZABLE, but an explicit flags= argument *replaces*
+# the default rather than OR-ing into it -- macOS then sets the
+# column NSTableColumnNoResizing -- so both bits must be spelled out
+# (team_editor.py's measured note).
+RIDERS_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
+
+# Both rider lists default every column to wxDVC_DEFAULT_WIDTH (80
+# DIP). The Name column carries the rider the operator reads, so it
+# opens at double that; the other columns keep the platform default
+# -- the last one is what wx stretches to fill the control.
+COL_DEFAULT_WIDTH = 80
+COL_NAME_WIDTH = 160
+
+# One width per COLUMN_LABELS entry, in that order.
+COLUMN_WIDTHS: tuple[int, ...] = (
+    COL_DEFAULT_WIDTH,
+    COL_NAME_WIDTH,
+    COL_DEFAULT_WIDTH,
+    COL_DEFAULT_WIDTH,
 )
 
 COL_ROW = 0
@@ -330,6 +365,11 @@ class RiderEditor:
         self.dialog = dialog
 
         self.riders_list = self._find(ids.RIDERS_LIST, wx.dataview.DataViewCtrl)
+        # The operator's current header sort, re-applied whenever the
+        # presenter rebuilds the model (a new model drops the control's
+        # sort key). No column sorts until a header is clicked.
+        self._sort_column: int | None = None
+        self._sort_ascending = True
         self._columns = self._build_columns()
         self._team_column = self._columns[COL_TEAM]
         # Replaced by the presenter's own show_riders() call below,
@@ -369,25 +409,26 @@ class RiderEditor:
         return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> list[Any]:
-        """Append ``riders_list``'s columns in canvas order.
+        """Append ``riders_list``'s sortable columns in canvas order.
 
         The labels are the shared
         :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`
-        ones (Plate | Name | Team | Sex), so the console's own rider
-        list draws the same headers.
+        ones (Plate | Name | Team | Sex) and the widths are
+        :data:`COLUMN_WIDTHS`, so the console's own rider list draws
+        the same headers at the same widths. Each column carries
+        :data:`RIDERS_LIST_COLUMN_FLAGS`, so the platform draws a
+        header arrow and sorts through
+        :meth:`RiderRowListModel.Compare`.
 
         Returns:
             The appended columns in order -- the Team column (index
             :data:`COL_TEAM`) is what :meth:`set_team_ui_visible`
-            hides; header clicks compare against the others to route
-            the presenter's own sort (W7: a ``DataViewIndexListModel``
-            cannot sort itself, so the columns carry no wx sort
-            flags and the presenter owns row order), and
-            :meth:`set_sort_indicator` addresses them by the same
-            index to paint the ▲/▼ marker.
+            hides.
         """
         return [
-            self.riders_list.AppendTextColumn(label, col)
+            self.riders_list.AppendTextColumn(
+                label, col, width=COLUMN_WIDTHS[col], flags=RIDERS_LIST_COLUMN_FLAGS
+            )
             for col, label in enumerate(COLUMN_LABELS)
         ]
 
@@ -420,10 +461,10 @@ class RiderEditor:
         self.dialog.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_row_activated, self.riders_list
         )
+        # Remember the operator's header arrow, so the next show_riders
+        # rebuild can put it back.
         self.dialog.Bind(
-            wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK,
-            self._on_column_header_click,
-            self.riders_list,
+            wx.dataview.EVT_DATAVIEW_COLUMN_SORTED, self._on_column_sorted, self.riders_list
         )
 
     def _on_add(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -493,20 +534,21 @@ class RiderEditor:
         event.Skip()
         self.presenter.on_search_text(self.rider_search.GetValue())
 
-    def _on_column_header_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle a riders_list header click: sort by that column.
+    def _on_column_sorted(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Remember the header sort the operator just chose.
 
-        W7: the presenter owns row order (see :meth:`_build_columns`),
-        so a header click resolves to its column index and forwards
-        it -- never wx's own internal sort, which an index-list model
-        cannot drive.
+        wx's ``EVT_DATAVIEW_COLUMN_SORTED`` fires after the control has
+        already reordered its rows through
+        :meth:`RiderRowListModel.Compare`; this handler keeps the
+        column and direction so :meth:`_apply_sort` can restore both
+        after the next model rebuild.
         """
         event.Skip()
-        clicked = event.GetColumn()
-        for column, control in enumerate(self._columns):
-            if control is clicked:
-                self.presenter.on_sort_by_column(column)
-                return
+        column = self.riders_list.GetSortingColumn()
+        if column is None:
+            return
+        self._sort_column = column.GetModelColumn()
+        self._sort_ascending = column.IsSortOrderAscending()
 
     def _on_row_selected(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a ``riders_list`` selection: forward its row index.
@@ -564,22 +606,24 @@ class RiderEditor:
         self.roster_infobar.Dismiss()
         self._model = RiderRowListModel(rows, rider_columns.EDITOR_RIDER_COLUMNS)
         associate_model(self.riders_list, self._model)
+        self._apply_sort()
 
-    def set_sort_indicator(
-        self,
-        column: int | None,
-        *,
-        ascending: bool,
-    ) -> None:
-        """Mark riders_list *column*'s header ▲/▼, or clear it.
+    def _apply_sort(self) -> None:
+        """Re-apply the remembered header sort to the current model.
 
-        ``RidersView`` member, W7: the presenter owns row order (a
-        ``DataViewIndexListModel`` cannot sort itself), so it hands
-        its own sort state back here and
-        :func:`~rivercrossing.ui.views._support.apply_sort_indicator`
-        paints it -- ``None`` *column* restores every plain label.
+        ``show_riders`` replaces the model, which drops the sort key the
+        control was holding; setting it on the column again and asking
+        the model to resort restores exactly the order the operator
+        left the list in. No column is remembered until a header is
+        clicked, so the first render keeps the presenter's own order.
         """
-        apply_sort_indicator(self._columns, column, ascending=ascending)
+        if self._sort_column is None:
+            return
+        column = self.riders_list.GetColumn(self._sort_column)
+        if column is None:
+            return
+        column.SetSortOrder(self._sort_ascending)
+        self._model.Resort()
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Toggle ``delete_btn``'s enabled state (R-15)."""
@@ -919,6 +963,7 @@ class CsvPreviewDialog:
 
         self.ok_btn = self._find("wxID_OK", wx.Button)
         self.map_unknown_sex_chk = self._find(ids.MAP_UNKNOWN_SEX_CHK, wx.CheckBox)
+        self.convert_teams_of_one_chk = self._find(ids.CONVERT_TEAMS_OF_ONE_CHK, wx.CheckBox)
 
         self.csv_infobar = self._build_infobar()
 
@@ -974,14 +1019,24 @@ class CsvPreviewDialog:
         self.dialog.SetSize(wx.Size(width, height))
 
     def _bind_events(self) -> None:
-        """Bind ``wxID_OK`` and the sex checkbox toggle."""
+        """Bind ``wxID_OK`` and both import-option checkbox toggles."""
         self.dialog.Bind(wx.EVT_BUTTON, self._on_import, self.ok_btn)
         self.dialog.Bind(wx.EVT_CHECKBOX, self._on_map_unknown_sex_chk, self.map_unknown_sex_chk)
+        self.dialog.Bind(
+            wx.EVT_CHECKBOX, self._on_convert_teams_of_one_chk, self.convert_teams_of_one_chk
+        )
 
     def _on_map_unknown_sex_chk(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Forward the sex checkbox's new state (Phase 3)."""
         event.Skip()
         self.presenter.on_toggle_map_unknown_sex(enabled=self.map_unknown_sex_chk.GetValue())
+
+    def _on_convert_teams_of_one_chk(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Forward the teams-of-one checkbox's new state (Phase E)."""
+        event.Skip()
+        self.presenter.on_toggle_convert_teams_of_one(
+            enabled=self.convert_teams_of_one_chk.GetValue()
+        )
 
     def _on_import(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
         """Handle ``wxID_OK`` ("Import"): commit, then close if it did.
@@ -1034,22 +1089,6 @@ class CsvPreviewDialog:
             NotImplementedError: Always -- ``RiderEditor`` implements
                 this for real; ``csv_preview_dlg`` has no
                 ``riders_list`` of its own.
-        """
-        raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
-
-    def set_sort_indicator(
-        self,
-        column: int | None,
-        *,
-        ascending: bool,
-    ) -> None:
-        """Mark riders_list's sort column; that dialog's own job.
-
-        Raises:
-            NotImplementedError: Always -- ``csv_preview_dlg`` has no
-                ``riders_list`` to sort. ``RidersPresenter`` bound to
-                this view is built with ``load=False`` and has no
-                header to click, so it is never called.
         """
         raise NotImplementedError(_RIDER_EDITOR_NOT_IMPLEMENTED)
 

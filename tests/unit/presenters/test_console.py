@@ -56,7 +56,7 @@ from rivercrossing.standings import (
 from rivercrossing.ui import commands, ids
 from rivercrossing.ui.presenters import Cue, EngineDataSource
 from rivercrossing.ui.presenters import console as console_module
-from rivercrossing.ui.presenters.console import ConsolePresenter
+from rivercrossing.ui.presenters.console import ConsolePresenter, ConsoleView
 from rivercrossing.ui.presenters.data_source import (
     Counters,
     DataSource,
@@ -68,7 +68,6 @@ from rivercrossing.ui.presenters.data_source import (
     corrected_crossing_keys,
     format_duration,
 )
-from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 
 # -------------------------------------------------------------- helpers
 
@@ -152,20 +151,14 @@ def _solo_only_engine() -> tuple[RideEngine, _FakeDatetimeClock]:
     return engine, clock
 
 
-def _column_index(label: str) -> int:
-    """Return *label*'s index in the console's shared column order."""
-    return next(
-        index for index, column in enumerate(CONSOLE_RIDER_COLUMNS) if column.label == label
-    )
-
-
 def _name_order_roster() -> Roster:
     """Build a roster whose own order is no column's sort order.
 
     Two solo entries, "Zoe" (plate 34) first and "Amy" (plate 12)
     second: the source lists them 34, 12 -- so a Name sort (12, 34)
     and a Plate sort (12, 34) are both visibly different from the
-    unsorted source order.
+    source order, which is the order the presenters' rows must keep
+    (the riders tab's native header arrows do the ordering).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_solo_entry(first_name="Zoe", last_name="", plate="34")
@@ -209,9 +202,6 @@ class FakeConsoleView:
         self.last_flagged: list[FeedRow] = []
         self.last_riders: list[RiderRow] = []
         self.last_hide: bool | None = None
-        # Phase 4: the riders list's ▲/▼ marker state the presenter
-        # pushes after every render (None == no active sort).
-        self.last_sort_indicator: tuple[int | None, bool] | None = None
         # W12: the teams-chip visibility verdict the presenter pushes
         # at construction (R-11: solo-only rides hide the Teams chip).
         self.team_visible: bool | None = None
@@ -333,10 +323,6 @@ class FakeConsoleView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the riders review rows (WS-H)."""
         self.last_riders = list(rows)
-
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Record the riders-list sort marker state (Phase 4)."""
-        self.last_sort_indicator = (column, ascending)
 
 
 def _make_presenter(
@@ -1381,11 +1367,16 @@ def test_on_hide_times_forwards_the_setting_to_the_view(hide: bool) -> None:  # 
     assert view.last_hide is hide
 
 
-# --------------------------------------------------------- riders sort
+# --------------------------------------------------------- riders order
 
 
-def test_refresh_riders_given_no_active_sort_keeps_the_source_order() -> None:
-    """Before any header click the rows keep the source's own order."""
+def test_refresh_riders_given_no_sort_keeps_the_source_order() -> None:
+    """Every render keeps the source's own order (Phase C).
+
+    The riders tab sorts through the list's own native header arrows
+    (``RiderRowListModel.Compare``), so the presenter never re-orders
+    what it renders -- the model's rows stay the presenter's own order.
+    """
     engine, _clock = _make_engine(roster=_name_order_roster())
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
@@ -1393,75 +1384,34 @@ def test_refresh_riders_given_no_active_sort_keeps_the_source_order() -> None:
     presenter.tick()
 
     assert [row.plate for row in view.last_riders] == ["34", "12"]
-    assert view.last_sort_indicator == (None, True)
 
 
-def test_on_sort_riders_given_a_first_click_sorts_that_column_ascending() -> None:
-    """Phase 4: a header click sorts by the shared column's key, up."""
-    engine, _clock = _make_engine(roster=_name_order_roster())
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-
-    presenter.on_sort_riders(_column_index("Name"))
-
-    assert [row.plate for row in view.last_riders] == ["12", "34"]
-    assert view.last_sort_indicator == (_column_index("Name"), True)
-
-
-def test_on_sort_riders_given_the_active_column_clicked_again_reverses_it() -> None:
-    """Re-clicking the active column flips the order and the marker."""
-    engine, _clock = _make_engine(roster=_name_order_roster())
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-    presenter.on_sort_riders(_column_index("Name"))
-
-    presenter.on_sort_riders(_column_index("Name"))
-
-    assert [row.plate for row in view.last_riders] == ["34", "12"]
-    assert view.last_sort_indicator == (_column_index("Name"), False)
-
-
-def test_on_sort_riders_given_a_different_column_restarts_ascending() -> None:
-    """A new column sorts up; its marker replaces the old one."""
-    engine, _clock = _make_engine(roster=_name_order_roster())
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-    presenter.on_sort_riders(_column_index("Name"))
-    presenter.on_sort_riders(_column_index("Name"))  # now descending
-
-    presenter.on_sort_riders(_column_index("Plate"))
-
-    assert [row.plate for row in view.last_riders] == ["12", "34"]
-    assert view.last_sort_indicator == (_column_index("Plate"), True)
-
-
-def test_on_sort_riders_given_the_cards_column_sorts_by_the_credited_codes() -> None:
-    """Phase 4: the Cards column sorts by the joined card codes."""
+def test_refresh_riders_given_credited_cards_keeps_the_source_order_too() -> None:
+    """A live Cards cell does not make the presenter order the rows."""
     engine, clock = _make_engine(roster=_name_order_roster())
     engine.start()
     result = _record(engine, clock, "34", lap_time_s=100)  # 34 credits a card
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
 
-    presenter.on_sort_riders(_column_index("Cards"))
+    presenter.tick()
 
     assert [(row.plate, row.cards) for row in view.last_riders] == [
-        ("12", ()),  # an empty hand's "" sorts before every real code
         ("34", (result.card.code(),)),
+        ("12", ()),
     ]
 
 
-def test_on_sort_riders_given_the_active_column_keeps_the_sort_on_the_next_tick() -> None:
-    """The tick re-render keeps the operator's chosen order."""
-    engine, _clock = _make_engine(roster=_name_order_roster())
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-    presenter.on_sort_riders(_column_index("Name"))
+def test_console_presenter_carries_no_riders_sort_state() -> None:
+    """The list's own native sort owns row order now (Phase C)."""
+    assert {"on_sort_riders", "_riders_sort_column", "_riders_sort_ascending"}.isdisjoint(
+        ConsolePresenter.__dict__
+    )
 
-    presenter.tick()
 
-    assert [row.plate for row in view.last_riders] == ["12", "34"]
-    assert view.last_sort_indicator == (_column_index("Name"), True)
+def test_console_view_protocol_carries_no_sort_indicator_member() -> None:
+    """The ▲/▼ marker is retired; the platform draws the arrow."""
+    assert "set_sort_indicator" not in ConsoleView.__dict__
 
 
 # ----------------------------------------------------------------- tick

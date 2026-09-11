@@ -1345,6 +1345,83 @@ def test_validate_for_start_reports_every_undersized_team_in_order() -> None:
     assert [violation.entry for violation in violations] == [first, second]
 
 
+# ------------------------------------------------------- change_plate
+# The shared dispatch S1's plate-ownership shape needs: the one helper
+# the rider editor's save and the rider-issues fixes all call.
+
+
+def test_change_plate_solo_entry_dispatches_to_change_solo_plate() -> None:
+    """A SOLO entry's plate change goes through change_solo_plate."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+
+    roster.change_plate(entry, entry.riders[0], plate="9")
+
+    assert roster.audit_log[-1].action == "change_solo_plate"
+    assert (entry.plate, entry.riders[0].plate) == ("9", "9")
+
+
+def test_change_plate_pooled_team_member_dispatches_to_change_pooled_rider_plate() -> None:
+    """A pooled team member's change uses the member primitive."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="Sam", last_name="", plate="1"),
+            Rider(first_name="Bo", last_name="", plate="2"),
+        ],
+    )
+
+    roster.change_plate(entry, entry.riders[1], plate="9")
+
+    assert roster.audit_log[-1].action == "change_pooled_rider_plate"
+    assert (entry.riders[1].plate, entry.plate) == ("9", "1")
+
+
+def test_change_plate_relay_team_dispatches_to_change_team_plate() -> None:
+    """A team_relay team's change goes through change_team_plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[Rider(first_name="Sam", last_name=""), Rider(first_name="Bo", last_name="")],
+        plate="5",
+    )
+
+    roster.change_plate(entry, None, plate="9")
+
+    assert roster.audit_log[-1].action == "change_team_plate"
+    assert (entry.plate, entry.riders[0].plate) == ("9", None)
+
+
+def test_change_plate_to_its_own_value_is_a_no_op() -> None:
+    """An unchanged plate writes nothing (no spurious audit event)."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    before = len(roster.audit_log)
+
+    roster.change_plate(entry, entry.riders[0], plate="1")
+
+    assert len(roster.audit_log) == before
+
+
+def test_change_plate_pooled_team_without_a_rider_raises_rider_not_found_error() -> None:
+    """A pooled team needs a named member to change its plate."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="Sam", last_name="", plate="1"),
+            Rider(first_name="Bo", last_name="", plate="2"),
+        ],
+    )
+
+    with pytest.raises(
+        RiderNotFoundError,
+        match=re.escape("a rider_pooled team plate change requires the member rider"),
+    ):
+        roster.change_plate(entry, None, plate="9")
+
+
 # -------------------------------------------------- change_solo_plate
 
 

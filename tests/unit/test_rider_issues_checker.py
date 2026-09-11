@@ -5,11 +5,18 @@
 sortable list of every rider issue a roster still carries before a
 ride starts. The five kinds and their report order are the contract:
 
-    1. team-of-one      (TEAM entry below MIN_TEAM_SIZE riders)
-    2. missing-name     (rider with an empty full_name)
-    3. missing-number   (rider_pooled rider with a blank/None plate)
-    4. duplicate-name   (case/whitespace-duplicate rider name)
-    5. duplicate-number (one plate value claimed twice)
+    1. team-of-one              (TEAM entry below MIN_TEAM_SIZE riders)
+    2. missing-name             (rider with an empty full_name)
+    3. missing-number           (pooled rider with a blank plate)
+    4. duplicate-name           (case/whitespace-duplicate rider name)
+    5. duplicate-team-name      (two teams sharing one normalized name)
+    6. near-duplicate-team-name (two teams, one shared fuzzy key)
+    7. duplicate-number         (one plate value claimed twice)
+
+A near-duplicate team name is a *warning*, not a hard defect, and
+says so with the ``⚠ warning: `` message prefix the CSV preview uses
+(``ui.views.rider_editor.CsvPreviewDialog``) rather than a separate
+severity field.
 
 Written FIRST, against a module that does not exist yet: this file is
 red until rivercrossing/rider_issues.py lands.
@@ -21,14 +28,25 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
+from rivercrossing import csvio
 from rivercrossing.rider_issues import RiderIssue, rider_issues
-from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider, Roster
+from rivercrossing.roster import (
+    Entry,
+    EntryMode,
+    EntryType,
+    PlateModel,
+    Rider,
+    Roster,
+    team_name_key,
+)
 
 _CANONICAL_KINDS = (
     "team-of-one",
     "missing-name",
     "missing-number",
     "duplicate-name",
+    "duplicate-team-name",
+    "near-duplicate-team-name",
     "duplicate-number",
 )
 
@@ -47,6 +65,21 @@ def _solo_entry(plate: str | None, *, first_name: str, last_name: str) -> Entry:
 def _team_riders(count: int) -> list[Rider]:
     """Return *count* distinct, fully-formed riders (plates "1"..)."""
     return [Rider(first_name=f"Rider {i}", last_name="", plate=str(i + 1)) for i in range(count)]
+
+
+def _named_team(plate: str, name: str, *, rider_plates: tuple[str, ...]) -> Entry:
+    """Return one TEAM entry named *name* for the name checks."""
+    return Entry(
+        plate=plate,
+        display_name=name,
+        type=EntryType.TEAM,
+        riders=[
+            # Plate-derived names stay distinct across teams, so the
+            # fixture never trips the duplicate-rider-name check.
+            Rider(first_name=f"Rider{plate}x{i}", last_name="", plate=rider_plate)
+            for i, rider_plate in enumerate(rider_plates)
+        ],
+    )
 
 
 # ------------------------------ empty roster
@@ -241,6 +274,115 @@ def test_rider_issues_relay_blank_entry_plate_is_not_flagged() -> None:
     assert rider_issues(roster) == ()
 
 
+# ------------------------------ duplicate-team-name
+
+
+def test_rider_issues_two_teams_sharing_a_normalized_name_report_duplicate_team_name() -> None:
+    """Two teams, one normalized name: one duplicate-team-name."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    first = _named_team("20", "Thunder", rider_plates=("21", "22"))
+    dupe = _named_team("23", "  thunder ", rider_plates=("24", "25"))
+    roster.load_entries([first, dupe])
+
+    issues = rider_issues(roster)
+
+    assert issues == (
+        RiderIssue(
+            entry=dupe,
+            rider=None,
+            kind="duplicate-team-name",
+            message='duplicate team name "  thunder "',
+        ),
+    )
+
+
+def test_rider_issues_single_team_reports_no_team_name_issue() -> None:
+    """One team cannot collide with itself (T-4: [single])."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.load_entries([_named_team("20", "Thunder", rider_plates=("21", "22"))])
+
+    assert rider_issues(roster) == ()
+
+
+def test_rider_issues_distinct_team_names_report_no_team_name_issue() -> None:
+    """Two unrelated team names are neither duplicates nor warnings."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.load_entries(
+        [
+            _named_team("20", "Thunder", rider_plates=("21", "22")),
+            _named_team("23", "Lightning", rider_plates=("24", "25")),
+        ]
+    )
+
+    assert rider_issues(roster) == ()
+
+
+def test_rider_issues_duplicate_solo_display_names_are_not_team_name_issues() -> None:
+    """The team-name check is TEAM-only."""
+    roster = Roster()
+    roster.load_entries(
+        [
+            Entry(
+                plate="1",
+                display_name="Same",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Alex", last_name="Roy", plate="1")],
+            ),
+            Entry(
+                plate="2",
+                display_name="Same",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Sam", last_name="Ellis", plate="2")],
+            ),
+        ]
+    )
+
+    assert rider_issues(roster) == ()
+
+
+# ------------------------------ near-duplicate-team-name
+
+
+def test_rider_issues_near_duplicate_team_names_report_prefixed_warning() -> None:
+    """Distinct names sharing the fuzzy key are one prefixed warning."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    first = _named_team("30", "Good 2 Go", rider_plates=("31", "32"))
+    near = _named_team("33", "Good 2Go", rider_plates=("34", "35"))
+    roster.load_entries([first, near])
+
+    issues = rider_issues(roster)
+
+    assert issues == (
+        RiderIssue(
+            entry=near,
+            rider=None,
+            kind="near-duplicate-team-name",
+            message='⚠ warning: possible duplicate team name: "good 2 go" and "good 2go"',
+        ),
+    )
+
+
+def test_rider_issues_exact_team_name_duplicate_is_not_also_a_near_duplicate() -> None:
+    """One name yields the duplicate, never a near one too."""
+    roster = Roster(entry_mode=EntryMode.MIXED)
+    roster.load_entries(
+        [
+            _named_team("20", "Thunder", rider_plates=("21", "22")),
+            _named_team("23", "thunder", rider_plates=("24", "25")),
+        ]
+    )
+
+    kinds = [issue.kind for issue in rider_issues(roster)]
+
+    assert kinds == ["duplicate-team-name"]
+
+
+@pytest.mark.parametrize("name", ["Good 2 Go", "Good 2Go", "MARY's   TEAM", "Win Win and More"])
+def test_team_name_key_matches_the_csv_preview_fuzzy_key(name: str) -> None:
+    """The rider report and the CSV preview share one fuzzy key."""
+    assert team_name_key(name) == csvio._fuzzy_team_key(name)
+
+
 # ------------------------------ stable ordering
 
 
@@ -277,7 +419,23 @@ def test_rider_issues_reports_kinds_in_canonical_order() -> None:
         type=EntryType.SOLO,
         riders=[Rider(first_name="mary anne", last_name="knibbe", plate="5")],
     )
-    roster.load_entries([team_of_one, missing_name, missing_number, first, dupe])
+    team_dupe = _named_team("20", "Thunder", rider_plates=("21", "22"))
+    team_dupe_later = _named_team("23", "thunder", rider_plates=("24", "25"))
+    near_team = _named_team("30", "Good 2 Go", rider_plates=("31", "32"))
+    near_team_later = _named_team("33", "Good 2Go", rider_plates=("34", "35"))
+    roster.load_entries(
+        [
+            team_of_one,
+            missing_name,
+            missing_number,
+            first,
+            dupe,
+            team_dupe,
+            team_dupe_later,
+            near_team,
+            near_team_later,
+        ]
+    )
 
     kinds = [issue.kind for issue in rider_issues(roster)]
 

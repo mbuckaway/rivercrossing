@@ -408,6 +408,17 @@
         </object>
       </object>
 
+      <!-- Phase E: the DRAFT-only opt-in that reshapes a team group of
+           exactly one rider into a solo entry on import. Unchecked by
+           default, like the sex mapping above. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="convert_teams_of_one_chk">
+          <label>Convert teams of 1 to solo</label>
+        </object>
+      </object>
+
       <!-- wxID_OK carries the canvas's "Import" label; the stock id is
            what keeps the button on the platform-correct side. -->
       <object class="sizeritem">
@@ -473,6 +484,22 @@
             <border>6</border>
             <object class="wxButton" name="convert_solo_btn">
               <label>Convert to Solo</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="assign_plate_btn">
+              <label>Assign Plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <option>1</option>
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="renumber_btn">
+              <label>Renumber</label>
             </object>
           </object>
           <object class="sizeritem">

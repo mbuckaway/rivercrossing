@@ -49,7 +49,6 @@ from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
     RiderRowListModel,
-    apply_sort_indicator,
     associate_model,
     default_card_images,
     find_control,
@@ -90,9 +89,11 @@ __all__ = [
     "RESUME_INFOBAR",
     "REVIEW_NOTEBOOK",
     "RIDERS_COLUMN_LABELS",
+    "RIDERS_COLUMN_WIDTHS",
     "RIDERS_COL_NAME",
     "RIDERS_COL_PLATE",
     "RIDERS_COL_TEAM",
+    "RIDERS_LIST_COLUMN_FLAGS",
     "RIDERS_PAGE_LABEL",
     "RIDE_STATUS_LIGHT",
     "RIDE_STATUS_PANEL",
@@ -160,6 +161,19 @@ RIDERS_COL_PLATE = 0
 RIDERS_COL_NAME = 1
 RIDERS_COL_TEAM = 2
 RIDERS_COLUMN_LABELS: tuple[str, ...] = tuple(column.label for column in CONSOLE_RIDER_COLUMNS)
+
+# AppendTextColumn's own default flags include
+# wxDATAVIEW_COL_RESIZABLE, but an explicit flags= argument *replaces*
+# the default rather than OR-ing into it -- macOS then sets the
+# column NSTableColumnNoResizing -- so both bits must be spelled out
+# (team_editor.py's measured note).
+RIDERS_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
+
+# One width per RIDERS_COLUMN_LABELS entry, in that order. Every
+# column defaults to wxDVC_DEFAULT_WIDTH (80 DIP); Name opens at
+# double that, the rider editor's own width for it (rider_editor.py's
+# COL_NAME_WIDTH).
+RIDERS_COLUMN_WIDTHS: tuple[int, ...] = (80, 160, 80, 80, 80)
 
 # flagged_list's columns (WS-H): the three cells of the canvas's
 # flagged-row line ("45 · lap 6 · 07:12") as sortable columns.
@@ -564,6 +578,11 @@ class MainFrame:
         self._riders_columns = self._build_riders_columns()
         self._flagged_model: FlaggedListModel | None = None
         self._riders_model: RiderRowListModel | None = None
+        # The operator's current riders-tab header sort, re-applied
+        # whenever the model is rebuilt (a new model drops the
+        # control's sort key). No column sorts until a header click.
+        self._riders_sort_column: int | None = None
+        self._riders_sort_ascending = True
         # Phase 5: the blocked-start dialog's model, alive only while
         # that modal is up (show_start_blocked).
         self._start_blocked_model: StartBlockedListModel | None = None
@@ -576,13 +595,11 @@ class MainFrame:
         self.console_riders_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_rider_activated
         )
-        # Phase 4: the riders list's own sort. The presenter owns the
-        # row order (a DataViewIndexListModel cannot sort itself), so a
-        # header click is mapped back to its column index and forwarded
-        # -- wx's internal sort is never allowed to drive this list.
+        # Remember the operator's riders-tab header arrow, so the next
+        # show_riders rebuild can put it back.
         self.console_riders_list.Bind(
-            wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK,
-            self._on_riders_column_header_click,
+            wx.dataview.EVT_DATAVIEW_COLUMN_SORTED,
+            self._on_column_sorted,
         )
         self.flagged_list.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_flagged_activated)
 
@@ -798,25 +815,29 @@ class MainFrame:
         )
 
     def _build_riders_columns(self) -> list[Any]:
-        """Append ``console_riders_list``'s columns in canvas order.
+        """Append ``console_riders_list``'s sortable columns.
 
         The labels are the shared
         :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
-        ones (Plate | Name | Team | Sex | Cards), so the console's list
-        and the rider editor's own draw the same headers, and the
-        console adds the editor's four plus Cards.
+        ones (Plate | Name | Team | Sex | Cards) and the widths are
+        :data:`RIDERS_COLUMN_WIDTHS`, so the console's list and the
+        rider editor's own draw the same headers at the same widths
+        (plus Cards). Each column carries
+        :data:`RIDERS_LIST_COLUMN_FLAGS`, so the platform draws a
+        header arrow and sorts through
+        :meth:`~rivercrossing.ui.views._support.RiderRowListModel.
+        Compare` -- keyed by the shared column's own ``sort_key``.
 
         Returns:
-            The appended columns in order -- the list is what
-            :meth:`set_sort_indicator` retitles with the ▲/▼ marker
-            and what :meth:`_on_riders_column_header_click` compares a
-            click against to resolve its index (W7/Phase 4: a
-            ``DataViewIndexListModel`` cannot sort itself, so the
-            columns carry no wx sort flags and the presenter owns row
-            order).
+            The appended columns in order.
         """
         return [
-            self.console_riders_list.AppendTextColumn(column.label, index)
+            self.console_riders_list.AppendTextColumn(
+                column.label,
+                index,
+                width=RIDERS_COLUMN_WIDTHS[index],
+                flags=RIDERS_LIST_COLUMN_FLAGS,
+            )
             for index, column in enumerate(CONSOLE_RIDER_COLUMNS)
         ]
 
@@ -863,38 +884,41 @@ class MainFrame:
         self.review_notebook.SetSelection(page)
         self.flagged_list.SetFocus()
 
-    def _on_riders_column_header_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle a ``console_riders_list`` header click: sort by it.
+    def _on_column_sorted(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Remember the riders-tab header sort the operator just chose.
 
-        Phase 4, the console's half of the rider editor's own
-        ``_on_column_header_click``: the presenter owns the row order
-        (see :meth:`_build_riders_columns`), so the clicked column is
-        resolved to its index in ``self._riders_columns`` and forwarded
-        to ``presenter.on_sort_riders`` -- never wx's own internal
-        sort, which an index-list model cannot drive. A click on a
-        column this list never appended (and a console with no
-        presenter wired yet) forwards nothing.
+        wx's ``EVT_DATAVIEW_COLUMN_SORTED`` fires after the control has
+        already reordered its rows through
+        :meth:`~rivercrossing.ui.views._support.RiderRowListModel.
+        Compare`; this handler keeps the column and direction so
+        :meth:`_apply_sort` can restore both after the next
+        :meth:`show_riders` rebuild.
         """
         event.Skip()
-        if self._presenter is None:
+        column = self.console_riders_list.GetSortingColumn()
+        if column is None:
             return
-        index = _clicked_column_index(self._riders_columns, event.GetColumn())
-        if index is None:
-            return
-        self._presenter.on_sort_riders(index)
+        self._riders_sort_column = column.GetModelColumn()
+        self._riders_sort_ascending = column.IsSortOrderAscending()
 
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Mark the riders list *column*'s header ▲/▼, or clear it.
+    def _apply_sort(self) -> None:
+        """Re-apply the remembered riders-tab sort to the current model.
 
-        ``ConsoleView`` member, Phase 4: the presenter owns the riders
-        list's row order (a ``DataViewIndexListModel`` cannot sort
-        itself), so it hands its own sort state back here and
-        :func:`~rivercrossing.ui.views._support.apply_sort_indicator`
-        paints it -- the same shared marker the rider editor uses, so
-        the two lists can never disagree on the ▲/▼ glyphs. ``None``
-        *column* restores every plain label.
+        :meth:`show_riders` rebuilds the model on every tick, which
+        drops the sort key the control was holding; setting it on the
+        column again and asking the model to resort restores exactly
+        the order the operator left the tab in. No column is
+        remembered until a header is clicked, so the first render
+        keeps the source's own order.
         """
-        apply_sort_indicator(self._riders_columns, column, ascending=ascending)
+        model = self._riders_model
+        if model is None or self._riders_sort_column is None:
+            return
+        column = self.console_riders_list.GetColumn(self._riders_sort_column)
+        if column is None:
+            return
+        column.SetSortOrder(self._riders_sort_ascending)
+        model.Resort()
 
     def _on_review_clicked(self) -> None:
         """Handle ``review_btn``: the sidebar's "Review…" affordance.
@@ -1060,15 +1084,18 @@ class MainFrame:
         """Render the review notebook's riders rows (ConsoleView).
 
         WS-H: fed by the presenter's ``_refresh_riders`` on the tick
-        (``DataSource.riders()``), and once at construction. Phase 4:
-        the model renders the shared
+        (``DataSource.riders()``), and once at construction. The model
+        renders the shared
         :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
         -- Plate | Name | Team | Sex | Cards -- so this list's cells are
         the rider editor's own plus the live credited card codes, and
-        the presenter's chosen row order comes in already sorted.
+        the rows keep the source's own order: the tab's native header
+        sort (answered by ``RiderRowListModel.Compare``) is re-applied
+        to this new model by :meth:`_apply_sort`.
         """
         self._riders_model = RiderRowListModel(rows, CONSOLE_RIDER_COLUMNS)
         self.console_riders_list.AssociateModel(self._riders_model)
+        self._apply_sort()
 
     def show_counters(self, c: Counters) -> None:
         """Render the six counter chips (ConsoleView)."""
@@ -1463,22 +1490,6 @@ class MainFrame:
             return
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
-
-
-def _clicked_column_index(columns: Sequence[object], clicked: object) -> int | None:
-    """Return *clicked*'s index in *columns*, or ``None`` when absent.
-
-    A ``wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK`` hands over the
-    clicked ``DataViewColumn`` *object*, while the view holds its own
-    appended columns in order -- identity is the only link between the
-    two (wx exposes no index on the column itself), so the search is
-    ``is``, never ``==``. ``None`` means the click named a column this
-    list never appended, which is nothing to sort by.
-    """
-    for index, column in enumerate(columns):
-        if column is clicked:
-            return index
-    return None
 
 
 def _page_index(notebook: wx.Notebook, label: str) -> int | None:

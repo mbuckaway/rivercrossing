@@ -9,12 +9,11 @@ presenter actually calls: ``set_stop_enabled`` (the Stop gate),
 display), ``set_entry_locked`` (R-35's "only confirming locks the
 entry field"), -- WS-D/WS-H -- ``set_clock_fractions`` (the
 gauge-clock dials), ``show_flagged`` and ``show_riders`` (the review
-notebook's two tabs), ``set_sort_indicator`` (the riders list's
-▲/▼ header marker), ``show_start_blocked`` (Phase 5's blocked-start
-issues dialog), and -- W12 -- ``set_team_ui_visible`` (the R-11
-Teams-chip visibility on the count chips), the same "add the member
-once the presenter calls it" precedent ``main_frame.py``'s own
-docstring records.
+notebook's two tabs), ``show_start_blocked`` (Phase 5's
+blocked-start issues dialog), and -- W12 --
+``set_team_ui_visible`` (the R-11 Teams-chip visibility on the count
+chips), the same "add the member once the presenter calls it"
+precedent ``main_frame.py``'s own docstring records.
 
 Pure Python -- no ``wx`` import may ever land here (R-71). The
 ``Cue`` enum it re-exports lives in ``rivercrossing.ui.sound``
@@ -81,7 +80,6 @@ from rivercrossing import hands
 from rivercrossing.ride import IllegalStateError, RideStatus, StartBlockedError
 from rivercrossing.roster import EntryMode
 from rivercrossing.ui.presenters.data_source import format_duration
-from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, toggle_sort
 from rivercrossing.ui.sound import Cue  # Re-exported; see module docstring
 
 if TYPE_CHECKING:
@@ -225,20 +223,10 @@ class ConsoleView(Protocol):
         ...
 
     def show_riders(self, rows: list[RiderRow]) -> None:
-        """Render the review notebook's riders rows (WS-H)."""
-        ...
+        """Render the review notebook's riders rows (WS-H).
 
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Mark the riders list *column*'s header (▲/▼), or clear it.
-
-        Phase 4 mirrors the rider editor's own marker: the presenter
-        owns the riders list's row order (a
-        ``DataViewIndexListModel`` cannot sort itself), so it hands its
-        own sort state back here and the view paints it -- ``None``
-        *column* restores every plain label. Column indexes are the
-        shared
-        :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
-        order.
+        Rows arrive in the source's own order; the list's native header
+        sort re-orders what it displays.
         """
         ...
 
@@ -333,11 +321,6 @@ class ConsolePresenter:
         # W6: the elapsed value shown while the engine is stopped;
         # None while live, so the first refresh after a stop captures.
         self._frozen_elapsed: float | None = None
-        # Phase 4: the riders list's own sort state (the view cannot
-        # sort a DataViewIndexListModel; see on_sort_riders). No
-        # active column until the operator clicks a header.
-        self._riders_sort_column: int | None = None
-        self._riders_sort_ascending = True
         # W12/R-11: the constructor-owned render (class docstring).
         self.view.set_team_ui_visible(visible=self.engine.config.entry_mode is EntryMode.MIXED)
 
@@ -492,25 +475,6 @@ class ConsolePresenter:
         """Handle the hide-times setting toggling live (R-37)."""
         self.view.set_hide_times(hide=hide)
 
-    def on_sort_riders(self, column: int) -> None:
-        """Sort the riders tab by *column*; re-clicking toggles it.
-
-        The view forwards a header click here with the clicked
-        column's index into the shared
-        :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
-        order. The presenter owns the row order (a
-        ``DataViewIndexListModel`` cannot sort itself), so the
-        direction rule is the shared
-        :func:`~rivercrossing.ui.rider_columns.toggle_sort`: the first
-        click on a column sorts it ascending, clicking the active
-        column again reverses it. ``_refresh_riders`` then re-renders
-        the rows and marks the active header ▲/▼.
-        """
-        self._riders_sort_column, self._riders_sort_ascending = toggle_sort(
-            column, column=self._riders_sort_column, ascending=self._riders_sort_ascending
-        )
-        self._refresh_riders()
-
     def on_finish(self) -> None:
         """Handle the Finish Ride flow (E4.4.2, gate hook E6.4.3).
 
@@ -590,21 +554,13 @@ class ConsolePresenter:
         come from the engine's credited hand, so this same tick is what
         keeps the Cards cell live as laps are recorded.
 
-        Phase 4: the rows are ordered here, by the operator's chosen
-        column (``on_sort_riders``) -- a ``DataViewIndexListModel``
-        cannot sort itself -- and the active column's ▲/▼ marker is
-        pushed back with the rows, so a tick re-render can never lose
-        the operator's sort. ``sorted`` is stable, so equal keys keep
-        the source's own order.
+        The rows keep the source's own order: the tab sorts through
+        the list's native header arrows
+        (:meth:`~rivercrossing.ui.views._support.RiderRowListModel.
+        Compare`), which the periodic re-render never disturbs -- a new
+        model re-applies the operator's chosen sort in the view.
         """
-        rows = self.source.riders()
-        if self._riders_sort_column is not None:
-            key = CONSOLE_RIDER_COLUMNS[self._riders_sort_column].sort_key
-            rows = sorted(rows, key=key, reverse=not self._riders_sort_ascending)
-        self.view.show_riders(rows)
-        self.view.set_sort_indicator(
-            self._riders_sort_column, ascending=self._riders_sort_ascending
-        )
+        self.view.show_riders(self.source.riders())
 
     def _refresh_counters(self) -> None:
         """Re-render the six counter chips from the source."""

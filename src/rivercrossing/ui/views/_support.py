@@ -14,29 +14,20 @@ shared home; every view still exposes its own thin ``_find`` method
 :func:`associate_model` is not a duplication extraction -- see its
 own docstring for exactly what it does and does not claim to fix.
 
-Phase 3 adds the two rider-list pieces both rider lists need:
+Phase 3 adds the rider-list piece both rider lists need:
 :class:`RiderRowListModel` (a ``DataViewIndexListModel`` rendering
-``RiderRow`` cells through ``ui.rider_columns``) and
-:func:`apply_sort_indicator` (the ▲/▼ header marker for the
-presenter-owned sort ``riders_list`` and ``console_riders_list``
-share).
-
-W10 adds :func:`apply_glass_bezel`: the macOS-26 ``.glass`` bezel
-applied to a ``wx.Button`` through its native ``NSButton`` handle.
-It is a *native-bezel selection*, not owner-draw -- the button is
-already a themed native control and ``setBezelStyle:`` picks the
-Liquid Glass material Apple added in macOS 26 -- so R-05's "no
-custom-drawn chrome" holds. It is a no-op on Windows and on every
-macOS before 26.
+``RiderRow`` cells through ``ui.rider_columns``). Both lists sort
+natively -- ``riders_list`` and ``console_riders_list`` append their
+columns with the sortable flag and answer wx's header sort through
+:meth:`RiderRowListModel.Compare`, exactly as the team editor and the
+ride library do. That retired the presenter-owned ▲/▼ marker
+(``apply_sort_indicator``): the platform's own header arrow replaces
+it.
 """
 
 from __future__ import annotations
 
-import ctypes
-import ctypes.util
 import gc
-import platform
-import sys
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -52,10 +43,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FIND_SETTLE_ATTEMPTS",
-    "GLASS_BEZEL_STYLE",
     "RiderRowListModel",
-    "apply_glass_bezel",
-    "apply_sort_indicator",
     "associate_model",
     "default_card_images",
     "find_control",
@@ -64,14 +52,6 @@ __all__ = [
 # See find_control's own docstring for the measured, address-reuse
 # stale-lookup hazard this retry bound settles.
 FIND_SETTLE_ATTEMPTS = 25
-
-# The two header markers. A marker is a suffix on the column's own
-# label, so apply_sort_indicator can strip it back off again -- which
-# is what keeps re-marking idempotent (never "Plate ▲ ▼").
-_SORT_ASCENDING = " ▲"
-_SORT_DESCENDING = " ▼"
-
-_SORT_MARKERS: tuple[str, ...] = (_SORT_ASCENDING, _SORT_DESCENDING)
 
 
 def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
@@ -238,136 +218,49 @@ class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mis
         """Return the cell value at *row*/*col*."""
         return self._columns[col].value(self._rows[row])
 
+    def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
+        self,
+        item1: Any,  # noqa: ANN401 -- wx ships no stubs
+        item2: Any,  # noqa: ANN401 -- wx ships no stubs
+        col: int,
+        ascending: bool,  # noqa: FBT001 -- wx's own callback argument
+    ) -> int:
+        """Return the Ordering of *item1* versus *item2* on *col*.
 
-def apply_sort_indicator(
-    column_controls: Sequence[Any],
-    active_col: int | None,
-    *,
-    ascending: bool,
-) -> None:
-    """Mark *active_col*'s header with an arrow, clearing the rest.
+        The native header arrows' answer: the control hands this two
+        items and the model column, and the comparison runs on the
+        *rows* those items index (``DataViewIndexListModel.GetRow``),
+        keyed by the list's own column description
+        (``ui.rider_columns``), so the editor's list and the console's
+        cannot order the same rows differently. The keys are
+        heterogeneous between columns (Plate is an ``(int, int)``/
+        ``(int, str)`` pair, Sex an ``int``, the rest ``str``), so the
+        comparison goes through :func:`_ordering` -- never arithmetic.
 
-    The presenter owns each rider list's row order (a
-    ``DataViewIndexListModel`` cannot sort itself), so the header
-    marker is written here from the presenter's own state rather than
-    by wx: the active column reads ``"Plate ▲"``/``"Plate ▼"`` and
-    every other column gets its plain label back. ``None`` *active_col*
-    means no sort is active, so every label is plain.
+        Equal keys fall back to the row's own position, which is
+        unique: wx's control-side sort is not stable (unlike the
+        presenter's former ``sorted``), so without the tie-break two
+        rows showing the same cell could reorder freely between sorts.
+        The tie-break is deliberately *not* negated for the downward
+        arrow, so equal-key rows keep the presenter's own order in
+        both directions. *ascending* is the arrow's own direction.
+        """
+        first_row = self.GetRow(item1)
+        second_row = self.GetRow(item2)
+        sort_key = self._columns[col].sort_key
+        result = _ordering(sort_key(self._rows[first_row]), sort_key(self._rows[second_row]))
+        if result == 0:
+            return _ordering(first_row, second_row)
+        return result if ascending else -result
 
-    Idempotent by construction: a marker is stripped from the
-    column's current title before the new one is applied, so
-    re-marking the same column replaces a marker instead of stacking
-    a second one.
+
+def _ordering(first: Any, second: Any) -> int:  # noqa: ANN401 -- the shared column keys' own union
+    """Return -1, 0 or 1: how *first* orders against *second*.
+
+    ``Any``, not a TypeVar bound: the rider columns' keys differ in
+    type *between* columns (see :meth:`RiderRowListModel.Compare`), so
+    no single comparable type covers them all.
     """
-    for index, column in enumerate(column_controls):
-        title = _plain_label(column.GetTitle())
-        if index != active_col:
-            column.SetTitle(title)
-        elif ascending:
-            column.SetTitle(f"{title}{_SORT_ASCENDING}")
-        else:
-            column.SetTitle(f"{title}{_SORT_DESCENDING}")
-
-
-def _plain_label(title: str) -> str:
-    """Return *title* without a sort marker, if it carries one."""
-    for marker in _SORT_MARKERS:
-        if title.endswith(marker):
-            return title[: -len(marker)]
-    return title
-
-
-# NSBezelStyleGlass is Apple's own enum value (macOS 26.0+), sent
-# straight to the native NSButton -- it is not a wx constant.
-GLASS_BEZEL_STYLE = 16
-
-# The first macOS with the glass material, from Apple's own versioning.
-_GLASS_BEZEL_MAJOR = 26
-
-
-def apply_glass_bezel(button: wx.Button) -> None:
-    """Give *button* the macOS-26 ``.glass`` bezel, where it can apply.
-
-    A native-bezel selection, not owner-draw: the button is already a
-    themed native ``NSButton``, and ``setBezelStyle:`` picks the
-    Liquid Glass material Apple added in 26 (wxWidgets 3.3.3's Cocoa
-    ``wxButton`` supports exactly this access path -- its
-    ``button.mm`` handles "application code when accessed with
-    ``wxWindow::GetHandle()``").
-
-    A no-op off macOS 26+ and before the button is realized
-    (``GetHandle()`` is 0 until the dialog is shown), so Windows, older
-    macOS and a not-yet-shown dialog are unaffected. Idempotent --
-    setting the same bezel style twice is a no-op.
-
-    Args:
-        button: The ``wx.Button`` whose native bezel to change. Call
-            this after the dialog is shown (``RideLibrary`` defers it
-            through ``wx.CallAfter`` for exactly that reason), or the
-            handle is still 0.
-    """
-    if not _glass_bezel_supported():
-        return
-    handle = button.GetHandle()
-    if not handle:
-        return
-    _send_set_bezel_style(handle, GLASS_BEZEL_STYLE)
-
-
-def _glass_bezel_supported() -> bool:
-    """Return whether this process can apply the glass bezel.
-
-    Darwin-only and macOS 26+ only: ``NSBezelStyleGlass`` does not
-    exist before Tahoe, and neither Windows nor Linux has a native
-    ``NSButton`` to set it on.
-    """
-    if sys.platform != "darwin":
-        return False
-    return _macos_major() >= _GLASS_BEZEL_MAJOR
-
-
-def _macos_major() -> int:
-    """Return the running macOS major version, or 0 when unparseable.
-
-    ``platform.mac_ver()`` returns ``("26.6.2", ...)`` on Tahoe. An
-    empty or non-numeric release (a stripped image, a future format
-    change) reads as 0, so the guard fails closed rather than
-    guessing.
-    """
-    release = platform.mac_ver()[0]
-    major, _, _ = release.partition(".")
-    return int(major) if major.isdigit() else 0
-
-
-def _send_set_bezel_style(handle: Any, style: int) -> None:  # noqa: ANN401 -- a native pointer
-    """Send ``setBezelStyle:`` to the native ``NSButton`` at *handle*.
-
-    The exact recipe this feature's macOS-26 probe pinned: libobjc via
-    ``ctypes`` (no new dependency -- PyObjC's ``objc`` + libffi runtime
-    would add a real PyInstaller-frozen-app packaging cost),
-    ``sel_registerName`` typed to return ``c_void_p``, and
-    ``objc_msgSend`` typed ``[c_void_p, c_void_p, c_long]`` with
-    restype ``None`` for the void-returning setter.
-
-    Kept apart from :func:`apply_glass_bezel` so the guard and the
-    dispatch stay unit-testable without ever dereferencing a pointer:
-    a fake handle here would abort the interpreter, so only a real
-    realized button on macOS 26 exercises the send itself.
-
-    # logic-coverage-exempt: T-15 -- the send below needs a live
-    NSButton pointer and libobjc; unit tests cover the
-    ``find_library``-is-None arm and the dispatch above, and the
-    user's manual macOS-26 check covers the rest. Both this function
-    and its module live outside the coverage gate
-    (``pyproject.toml`` omits ``ui/views/*``).
-    """
-    library = ctypes.util.find_library("objc")
-    if library is None:
-        return
-    objc = ctypes.CDLL(library)
-    objc.sel_registerName.restype = ctypes.c_void_p
-    objc.sel_registerName.argtypes = [ctypes.c_char_p]
-    objc.objc_msgSend.restype = None
-    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long]
-    selector = objc.sel_registerName(b"setBezelStyle:")
-    objc.objc_msgSend(ctypes.c_void_p(handle), selector, style)
+    if first == second:
+        return 0
+    return -1 if first < second else 1

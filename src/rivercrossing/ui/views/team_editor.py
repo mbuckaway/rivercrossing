@@ -285,7 +285,7 @@ def _scaled_bitmap(
     is returned as-is; anything else rescales through ``wx.Image``
     with the high-quality filter so the preview never distorts.
     """
-    image = wx.Image(bitmap)
+    image = bitmap.ConvertToImage()
     width, height = image.GetWidth(), image.GetHeight()
     fitted = logo_fit_size(width, height, within=within, upscale=upscale)
     if fitted == (width, height):
@@ -546,6 +546,31 @@ class TeamEditor:
             return
         row = self._teams_model.GetRow(item)
         self.presenter.on_row_selected(self._teams_model.GetValueByRow(row, COL_NAME))
+
+    def select_team_by_name(self, name: str) -> None:
+        """Select the ``teams_list`` row named *name*.
+
+        The rider-issues dialog's name-keyed preselect seam (mirrors
+        ``RiderEditor.select_rider_by_plate``): after opening this
+        editor on a team-of-one issue the operator lands on that
+        team's form instead of the blank add form. A no-op when no
+        row's Team cell matches -- a stale name from an earlier
+        roster state, say.
+
+        The form fills through the presenter's own ``on_row_selected``
+        directly, never by relying on the selection event alone: a
+        programmatic ``Select`` fires
+        ``EVT_DATAVIEW_SELECTION_CHANGED`` on macOS's generic control
+        but not on MSW's native one
+        (``RiderEditor.select_rider_by_plate``'s measured note). Where
+        macOS does fire the event, it re-runs the same idempotent
+        handler.
+        """
+        for row in range(self._teams_model.GetCount()):
+            if self._teams_model.GetValueByRow(row, COL_NAME) == name:
+                self.teams_list.Select(self._teams_model.GetItem(row))
+                self.presenter.select_by_name(name)
+                return
 
     def _on_toggle_single_member(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle the one-rider-teams filter checkbox."""
