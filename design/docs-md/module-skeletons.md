@@ -198,7 +198,7 @@ class EntryMode(StrEnum): SOLO MIXED · class PlateModel(StrEnum): RIDER_POOLED 
 class Roster:                 # one ride's entries/riders; status set by the E4 engine
     __init__(*, entry_mode=SOLO, max_team_size=4, plate_model=RIDER_POOLED)
     create_solo_entry · create_team_entry · create_team_entry_of_one · add_rider_to_team
-    move_rider · extract_rider_to_solo · update_entry · delete_entry · mark_has_data
+    move_rider · extract_rider_to_solo · remove_rider · update_entry · delete_entry · mark_has_data
     change_solo_plate · change_pooled_rider_plate · change_team_plate
     next_free_plate() -> str                       # highest numeric + 1
     validate_for_start() -> list[StartViolation]   # R-12's floor, checked at start
@@ -229,7 +229,7 @@ schema.py: rides · entries · riders · crossings · cards · audit · sessions
 rivercrossing.csvio / htmlexport / pdfexport (§7/§8/§8b · R-21/61/62/63)
 
 ```
-csvio.preview(path, ride) -> ImportPreview      # counts + conflicts; writes nothing;
+csvio.preview(path, ride, *, map_unknown_sex_to_male=False) -> ImportPreview      # counts + conflicts; writes nothing;
                                                 #   ride = the Roster aggregate until E5's Store
 csvio.commit(preview) -> ImportReport · csvio.export(ride, path, *, placed=None) -> None
     # commit applies through the roster's own audited mutators, atomically;

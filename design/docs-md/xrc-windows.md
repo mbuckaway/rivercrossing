@@ -230,11 +230,13 @@ riders.csv → **178 riders · 12 teams · 3 conflicts** `summary_lbl`
 
 Nothing is written until you import. Re-import freely reshapes teams before start.
 
+☑ Map unknown sex to Male `map_unknown_sex_chk`
+
 ImportCancel
 
-`wxID_OK "Import" (disabled while conflicts > 0) · wxID_CANCEL`
+`map_unknown_sex_chk "Map unknown sex to Male" · wxID_OK "Import" (disabled while conflicts > 0) · wxID_CANCEL`
 
-⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). Opened from File ▸ Import Riders CSV… after the OS-native picker (the editor's own import_btn retired with W7's rework — the File menu is the one CSV path).
+⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). map_unknown_sex_chk (W10) maps blank and unrecognized sex cells to "M" for the preview and commit — an explicit operator opt-in, not a silent guess. Opened from File ▸ Import Riders CSV… after the OS-native picker (the editor's own import_btn retired with W7's rework — the File menu is the one CSV path).
 
 Teams Editor`team_editor_dlg`✕
 
@@ -243,7 +245,7 @@ Teams Editor`team_editor_dlg`✕
 | Trail Blazers | 3 |
 | Moss Ridge Riders | 2 |
 
-`teams_list (wxDataViewCtrl · Team | Riders — the Riders cell is the team's rider count. Phase 3 dropped the Logo column and made both columns natively sortable through the model's Compare; the editor then selects by the row's display name, never a positional index, since sorting moves rows under the selection)`
+`teams_list (wxDataViewCtrl · Team | Riders — the Riders cell is the team's rider count. Phase 3 dropped the Logo column and made both columns natively sortable through the model's Compare; W10 makes them resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE) and defaults the Team column to 160 px; the editor then selects by the row's display name, never a positional index, since sorting moves rows under the selection)`
 
  Only show one-rider teams `single_member_only_chk (R-78's one-rider filter)`
 
@@ -418,9 +420,9 @@ Ride Library`ride_library_dlg`✕
 
 `rides_list (wxDataViewCtrl · W10: the Ride column is elastic — the three compact columns pin their widths and the Ride name takes every remaining pixel (recomputed on each size event, floored at the 208 px that fills the dialog's 520 px minimum), because the control stretches only its last column and the canvas's old fixed widths truncated long ride names`
 
-OpenNew…Duplicate…Delete…Close
+OpenDuplicate…Delete…Close
 
-`wxID_OPEN · wxID_NEW · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b)`
+`wxID_OPEN · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b). W10: wxID_NEW is removed (File ▸ New Ride… owns the setup flow), the dialog floors at 1040×546 (doubled width / tripled height so all four columns fit — MIN_SIZE, code-side), and the four columns are natively sortable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE with a RidesListModel.Compare). The macOS-26 `.glass` bezel is applied to the buttons code-side (§15b).`
 
 Delete Ride`delete_ride_dlg`✕
 
