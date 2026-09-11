@@ -1,4 +1,7 @@
 #!/bin/bash
+# shellcheck disable=SC2317,SC2329
+# Everything below the early refusal is deliberately-kept dead code awaiting
+# the functional-suite rewrite; the unreachability is intended, not a defect.
 #
 # Run RiverCrossing's functional test suite (23 real wx windows) inside
 # a disposable Tart macOS VM cloned from the rivercrossing-func-template

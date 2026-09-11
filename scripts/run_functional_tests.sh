@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2317,SC2329
+# Everything below the early refusal is deliberately-kept dead code awaiting
+# the functional-suite rewrite; the unreachability is intended, not a defect.
 #
 # Thin wrapper around `nox -s functional` (CI stage 3 - drives real wx
 # windows). nox is the single source of truth for what CI runs; this

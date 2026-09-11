@@ -1,4 +1,7 @@
 #!/bin/bash
+# shellcheck disable=SC2317,SC2329
+# Everything below the early refusal is deliberately-kept dead code awaiting
+# the functional-suite rewrite; the unreachability is intended, not a defect.
 #
 # One-time provisioning of the reusable Tart macOS VM template used to
 # run RiverCrossing's functional test suite. Local macOS functional
