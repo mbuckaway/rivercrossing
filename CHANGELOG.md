@@ -14,8 +14,10 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - **Finish publishes its own results** — Ride ▸ Finish Ride… writes the ride's HTML and PDF results into the per-user `exports` folder, so a finished ride always leaves its results behind instead of waiting for the Results menu (E2).
 - **Native `show_danger` and `show_prompt` dialogs** — `ui.std_dialogs` grows the two confirm shapes the finish/clear and duplicate/reopen questions need (H2).
 - **Rider sex** — riders carry a sex (`M`/`F`; blank means unknown) through the domain model, the rider editor (a Sex dropdown on the add/edit dialog), CSV import and export (a `Sex` header accepting `Male`/`M`/`Female`/`F`), the database, the console's Riders panel, and the results exports (HTML, PDF and the standings CSV; solo rows only).
-- **Sortable rider lists with a sort marker** — the Rider Editor list and the console's Riders panel sort by any column on a header click, with a ▲/▼ marker on the active column.
+- **Sortable rider lists** — the Rider Editor list and the console's Riders panel sort natively by any column on a header click: the platform's own header arrow marks the active column (not a ▲/▼ suffix on the title), and the Name column opens double-width.
 - **A dedicated "Cannot Start Ride" dialog** — Start Ride now lists each blocking issue on its own line in a custom dialog instead of a single-line warning.
+- **Check for Rider Issues… quick fixes and team-name checks** — the dialog gains "Assign Plate" (a missing-number rider takes the next free plate) and "Renumber" (a duplicate-number's later claimant is renumbered), both DRAFT-only and writing through the roster's shared plate dispatch; its report adds duplicate-team-name and near-duplicate-team-name (a warning), and Open Editor… now lands on the issue's own team or rider.
+- **Convert teams of 1 to solo on CSV import** — the import preview gains a "Convert teams of 1 to solo" checkbox (DRAFT-only, both plate models) that loads a one-rider team row as a solo entry instead of warning about a team of one.
 
 ### Changed
 

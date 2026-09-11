@@ -71,7 +71,7 @@ Needs Review   Riders — `review_notebook (wxNotebook · two tabs — ux-polish
 Plate | Lap | Lap time   `flagged_list (wxDataViewCtrl — the R-34 flag rows, three sortable columns)`
 Review… `review_btn — and the Cards ▸ Review Held Cards route both land on this page (SetSelection(0) + focus)`
 
-Plate | Name | Team   `console_riders_list (wxDataViewCtrl — the live roster; a solo rider's Team cell is "—"; rows refreshed on the 1 s tick) — activating a rider row (double-click or Enter) opens rider_editor_dlg pre-selected at that rider's plate (the app wires the view's set_on_open_rider seam)`
+Plate | Name | Team   `console_riders_list (wxDataViewCtrl — the live roster; a solo rider's Team cell is "—"; rows refreshed on the 1 s tick; the five shared CONSOLE_RIDER_COLUMNS — Plate | Name | Team | Sex | Cards — are natively sortable and resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE, the platform's own header arrow, the sort re-applied after every tick rebuild) with the Name column at 160 px and the rest at the platform's 80 DIP default) — activating a rider row (double-click or Enter) opens rider_editor_dlg pre-selected at that rider's plate (the app wires the view's set_on_open_rider seam)`
 
 epic-2026.prdb
 
@@ -195,7 +195,7 @@ Search`rider_search (wxSearchCtrl — W7: narrows riders_list by name or plate; 
 | 78 | K. Singh | Trail Blazers |
 | 212 | M. Chen | solo |
 
-`riders_list (wxDataViewCtrl · the list pane takes 3/5 of the dialog width and the form pane 2/5 — sizer options 3:2, W7 rework — Team col hidden in solo-only · a solo rider's Team cell is the word "solo" (W7), never the em dash`
+`riders_list (wxDataViewCtrl · the list pane takes 3/5 of the dialog width and the form pane 2/5 — sizer options 3:2, W7 rework — Team col hidden in solo-only · a solo rider's Team cell is the word "solo" (W7), never the em dash · the shared Plate | Name | Team | Sex columns are natively sortable and resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE with RiderRowListModel.Compare — the platform's own header arrow replaces W7's ▲/▼ title suffix) with the Name column opening at 160 px and the rest at the platform's 80 DIP default; the presenter holds no sort state and the view re-applies the operator's chosen sort after each show_riders rebuild, so the rows stay ordered and a selection tracks the model row index through the sort`
 
 DeleteClose
 
@@ -231,12 +231,13 @@ riders.csv → **178 riders · 12 teams · 3 conflicts** `summary_lbl`
 Nothing is written until you import. Re-import freely reshapes teams before start.
 
 ☑ Map unknown sex to Male `map_unknown_sex_chk`
+☑ Convert teams of 1 to solo `convert_teams_of_one_chk`
 
 ImportCancel
 
-`map_unknown_sex_chk "Map unknown sex to Male" · wxID_OK "Import" (disabled while conflicts > 0) · wxID_CANCEL`
+`map_unknown_sex_chk "Map unknown sex to Male" · convert_teams_of_one_chk "Convert teams of 1 to solo" · wxID_OK "Import" (disabled while conflicts > 0) · wxID_CANCEL`
 
-⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). map_unknown_sex_chk (W10) maps blank and unrecognized sex cells to "M" for the preview and commit — an explicit operator opt-in, not a silent guess. Opened from File ▸ Import Riders CSV… after the OS-native picker (the editor's own import_btn retired with W7's rework — the File menu is the one CSV path).
+⚠ code-side: summary_lbl text + conflicts_list rows; the wxID_OK gate; a refused import shows on csv_infobar (wxInfoBar, code-side SetName, §15b). map_unknown_sex_chk (W10) maps blank and unrecognized sex cells to "M" for the preview and commit — an explicit operator opt-in, not a silent guess. convert_teams_of_one_chk (R-21) imports each one-rider team row as a solo entry instead of leaving it a warned team-of-one — DRAFT-only (off DRAFT the ride's structure lock leaves the row on the existing team-of-one path) and defined on both plate models (pooled: the lone rider keeps their own plate as a solo entry; relay: the new solo entry carries the team's single plate). It too is an explicit, unchecked-by-default opt-in. Opened from File ▸ Import Riders CSV… after the OS-native picker (the editor's own import_btn retired with W7's rework — the File menu is the one CSV path).
 
 Teams Editor`team_editor_dlg`✕
 
@@ -286,13 +287,13 @@ AddCancel
 
 Check for Rider Issues — `rider_issues_dlg`✕
 
-- **Rider issues** — `issues_summary_lbl` (count line) · `issues_list (wxDataViewCtrl · Plate | Name | Issue)` — the read-only report `rivercrossing.rider_issues.rider_issues` finds.
+- **Rider issues** — `issues_summary_lbl` (count line) · `issues_list (wxDataViewCtrl · Plate | Name | Issue)` — the report `rivercrossing.rider_issues.rider_issues` finds.
 
-Open Editor… Convert to Solo Close
+Open Editor… Convert to Solo Assign Plate Renumber Close
 
-`open_editor_btn · convert_solo_btn · wxID_CLOSE (default, §15b dialogs.py decisions)`
+`open_editor_btn · convert_solo_btn · assign_plate_btn ("Assign Plate") · renumber_btn ("Renumber") · wxID_CLOSE (default, §15b dialogs.py decisions)`
 
-⚠ code-side (R-78): issues_list columns/rows; convert_solo_btn enabled only for a pooled DRAFT team-of-one — "Convert to Solo" extracts its lone rider to their own solo entry (extract_rider_to_solo); "Open Editor…" opens the teams editor for a team-of-one, the rider editor otherwise, then re-lists; a refused conversion shows on issues_infobar (an wxInfoBar built code-side with SetName). Opened from Riders ▸ Check for Rider Issues… (mi_check_rider_issues), a ride-open route; the window lives in riders.xrc (§15b).
+⚠ code-side (R-78): issues_list columns/rows; the report covers the duplicate-team-name (hard) and near-duplicate-team-name (⚠ warning) kinds beside team-of-one/missing-name/missing-number/duplicate-name/duplicate-number; convert_solo_btn enabled only for a pooled DRAFT team-of-one — "Convert to Solo" extracts its lone rider to their own solo entry (extract_rider_to_solo); assign_plate_btn is enabled only for a missing-number issue (gives that rider the next free plate) and renumber_btn only for a duplicate-number issue (renumbers the later claimant), both DRAFT-only and writing through the roster's shared change_plate dispatch so each plate shape picks its model-correct primitive; "Open Editor…" opens the teams editor preselected on a team-of-one's team by name (select_team_by_name), the rider editor preselected on the issue's plate (select_rider_by_plate) otherwise, then re-lists; refusals show on issues_infobar (an wxInfoBar built code-side with SetName). The view reconciles the list selection after every render so the fix buttons derive from the post-render row, and the flow reports a change from the roster's audit-log delta, so a nested editor's edit counts too. Opened from Riders ▸ Check for Rider Issues… (mi_check_rider_issues), a ride-open route; the window lives in riders.xrc (§15b).
 
 Entry Detail — 77 Trail Blazers`entry_detail_dlg`✕
 
@@ -422,7 +423,7 @@ Ride Library`ride_library_dlg`✕
 
 OpenDuplicate…Delete…Close
 
-`wxID_OPEN · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b). W10: wxID_NEW is removed (File ▸ New Ride… owns the setup flow), the dialog floors at 1040×546 (doubled width / tripled height so all four columns fit — MIN_SIZE, code-side), and the four columns are natively sortable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE with a RidesListModel.Compare). The macOS-26 `.glass` bezel is applied to the buttons code-side (§15b).`
+`wxID_OPEN · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b). W10: wxID_NEW is removed (File ▸ New Ride… owns the setup flow), the dialog floors at 1040×546 (doubled width / tripled height so all four columns fit — MIN_SIZE, code-side), and the four columns are natively sortable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE with a RidesListModel.Compare).`
 
 Delete Ride`delete_ride_dlg`✕
 

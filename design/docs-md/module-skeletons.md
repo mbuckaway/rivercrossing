@@ -199,14 +199,24 @@ class Roster:                 # one ride's entries/riders; status set by the E4 
     __init__(*, entry_mode=SOLO, max_team_size=4, plate_model=RIDER_POOLED)
     create_solo_entry · create_team_entry · create_team_entry_of_one · add_rider_to_team
     move_rider · extract_rider_to_solo · remove_rider · update_entry · delete_entry · mark_has_data
-    change_solo_plate · change_pooled_rider_plate · change_team_plate
+    change_solo_plate · change_pooled_rider_plate · change_team_plate · change_plate   # the model-correct dispatch the editors + fixes share
     next_free_plate() -> str                       # highest numeric + 1
     validate_for_start() -> list[StartViolation]   # R-12's floor, checked at start
     entries · audit_log · status                   # audit events persist via the E5 store
 can_edit_structure(status) · can_delete_entry(status, has_data)
 can_move_rider(status, plate_model) · can_add_entry() · can_fix_name()
+team_name_key(name) -> str                     # fuzzy team key; the CSV preview and rider_issues share it
 # one plate namespace per ride; a pooled team entry adopts its lowest rider plate;
 # teams may be size 1 while DRAFT — the floor is enforced at CSV commit and ride start
+```
+
+rivercrossing.rider_issues — the roster defect report (R-78 · rider_issues_dlg)
+
+```
+rider_issues(roster) -> tuple[RiderIssue, ...]
+    # stable report order: team-of-one · missing-name · missing-number · duplicate-name
+    #   · duplicate-team-name · near-duplicate-team-name (a ⚠ warning) · duplicate-number
+    # team-name checks reuse the CSV importer's identity rules (roster.team_name_key / the normalized name)
 ```
 
 rivercrossing.store — persistence (§2/§9 · R-50…54)
@@ -229,8 +239,9 @@ schema.py: rides · entries · riders · crossings · cards · audit · sessions
 rivercrossing.csvio / htmlexport / pdfexport (§7/§8/§8b · R-21/61/62/63)
 
 ```
-csvio.preview(path, ride, *, map_unknown_sex_to_male=False) -> ImportPreview      # counts + conflicts; writes nothing;
+csvio.preview(path, ride, *, map_unknown_sex_to_male=False, convert_teams_of_one_to_solo=False) -> ImportPreview   # counts + conflicts; writes nothing;
                                                 #   ride = the Roster aggregate until E5's Store
+                                                #   convert_teams_of_one_to_solo imports a DRAFT one-rider team as a solo entry (both plate models)
 csvio.commit(preview) -> ImportReport · csvio.export(ride, path, *, placed=None) -> None
     # commit applies through the roster's own audited mutators, atomically;
     # ImportReport carries inserted/updated/moved/extracted/joined counts + the audit events
