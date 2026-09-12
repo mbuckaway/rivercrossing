@@ -6,11 +6,8 @@ Phase-1 built a ``wx.App()`` and returned -- no frame, no menubar, no
 with nothing on screen (E1.6.1's own report). This module assembles
 every already-tested piece (XRC, ``MainFrame``, the §15 route table,
 the accelerator table) into a window that actually stays up. E5.4.2
-retired the ``DemoDataSource`` wiring: no production module imports
-``rivercrossing.demo`` (import-linter contract), the bootstrap's
-windows read either a real store/engine-backed source or the
-``EmptyDataSource`` empty state, and demo.py remains as test-only
-fixture data.
+retired the demo seam: the bootstrap's windows read either a real
+store/engine-backed source or the ``EmptyDataSource`` empty state.
 
 Two measured wx failure modes this module exists to avoid (AGENTS.md):
 
@@ -813,12 +810,12 @@ def _wire_store_append(  # noqa: PLR0913 -- (engine, store, ride_id) + the notic
 
 
 def _show_ride_header(context: _RouteContext, config: RideConfig) -> None:
-    """Render *config*'s identity block onto the console header (C1).
+    """Render *config*'s ride-info group onto the console header (C1).
 
-    One seam for every console switch: the ride's name, its logo when
-    it has one, and the date/start/type fallback line -- all read off
-    the config the console is running, so a store reload, a New Ride
-    and an Edit Ride cannot render different headers.
+    One seam for every console switch: the ride's name, date, venue,
+    organizer, scorer, lap length and its logo when it has one -- all
+    read off the config the console is running, so a store reload, a
+    New Ride and an Edit Ride cannot render different headers.
     """
     view = context.console_view
     if view is None:
@@ -829,6 +826,10 @@ def _show_ride_header(context: _RouteContext, config: RideConfig) -> None:
         event_date=config.event_date,
         planned_start=config.planned_start,
         entry_mode=config.entry_mode,
+        venue=config.venue,
+        organizer=config.organizer,
+        scorer=config.scorer,
+        lap_km=config.lap_km,
     )
 
 
@@ -840,13 +841,13 @@ def _swap_console_onto(  # noqa: PLR0913, PLR0917 -- (context, engine, roster, s
 ) -> None:
     """Build a presenter over *engine* and render it onto the console.
 
-    The one render sequence every console swap shares: the library
-    Open's store load (:func:`_switch_console_to_ride`) and D3's Clear
-    Ride reset. ``set_presenter`` rewires the plate entry, lifecycle
-    controls and tick timer without rebinding (E5.2.2's resume wiring
-    is the same shape, applied at launch). The context's presenter and
-    roster are mutated in place because every bound route handler
-    closes over this one object (``_RouteContext`` docstring).
+    The library Open's store load (:func:`_switch_console_to_ride`)
+    runs through here. ``set_presenter`` rewires the plate entry,
+    lifecycle controls and tick timer without rebinding (E5.2.2's
+    resume wiring is the same shape, applied at launch). The context's
+    presenter and roster are mutated in place because every bound
+    route handler closes over this one object (``_RouteContext``
+    docstring).
     """
     view = context.console_view
     presenter = ConsolePresenter(view, engine=engine, source=source)
@@ -934,22 +935,9 @@ def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
 
 # D2/D3: the two rows the Ride menu gains. Edit Ride reuses the New
 # Ride window in its preload mode (the dialog's own title separates
-# them); Clear Ride is destructive, so it confirms through the native
-# error-icon danger dialog before touching anything.
+# them); Clear Ride takes the ride off the screen, so it confirms
+# through the native error-icon danger dialog first.
 EDIT_RIDE_TITLE = "Edit Ride"
-
-
-def _empty_roster_for(config: RideConfig) -> Roster:
-    """Build an empty roster shaped like *config* (D3's Clear Ride).
-
-    The ride keeps its own setup (entry mode, plate model, team size);
-    only its entries, crossings, cards and audit trail are cleared.
-    """
-    return Roster(
-        entry_mode=config.entry_mode,
-        max_team_size=config.max_team_size,
-        plate_model=config.plate_model,
-    )
 
 
 def _decorate_edit_ride(context: _RouteContext, window: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -1015,19 +1003,23 @@ def _apply_edited_ride(context: _RouteContext, config: RideConfig) -> None:
 
 
 def _handle_clear_ride_route(context: _RouteContext) -> None:
-    """Ride ▸ Clear Ride…: confirm, then reset the ride (D3).
+    """Ride ▸ Clear Ride…: confirm, then clear the console (D3).
 
-    The ride is reset IN PLACE -- its entries, crossings, cards and
-    audit rows are removed and its state returns to DRAFT -- rather
-    than deleted and re-created: the ride keeps its own setup and its
-    library entry, and the console switches onto the emptied ride
-    through the same store load the library Open uses. The console is
-    left exactly as the bootstrap opens it (zero crossings, zero
-    counters, empty feed).
+    The ride comes off the SCREEN only: the store is never written to,
+    so the ride, its riders and every recorded crossing stay in the
+    database exactly as they were and remain reopenable from the
+    library. The console returns to its W1 no-ride state
+    (:meth:`MainFrame.show_no_ride`), its presenter is unthreaded, the
+    context's in-memory session state -- the active ride id, the entry
+    detail it was showing, the preview exports and the export
+    watermark -- is dropped so no later route acts on the cleared
+    ride, and the roster returns to its empty bootstrap shape. The
+    engine's store sink is unlinked in the same step, so an in-memory
+    mutation after a clear cannot record an audit row for a ride the
+    console no longer shows.
 
-    With no store (the store-less bootstrap console) the same reset
-    runs in memory over :func:`_build_console_engine`. The confirm is
-    the native danger dialog; anything but OK leaves every row alone.
+    The confirm is the native danger dialog; anything but OK leaves
+    the console and every row alone.
     """
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
@@ -1039,28 +1031,33 @@ def _handle_clear_ride_route(context: _RouteContext) -> None:
     confirmed = std_dialogs.show_danger(
         context.frame,
         "Clear Ride",
-        f'Clears "{config.name}": every rider, crossing and card is removed '
-        "and the ride returns to DRAFT. This cannot be undone.",
+        f'Removes "{config.name}" from the screen only. Nothing is deleted: the ride, '
+        "its riders and every recorded crossing stay saved in the database and remain "
+        "reopenable from the library.",
         "Clear Ride",
         "Cancel",
     )
     if confirmed != int(require_wx().ID_OK):
         return
-    store = context.store
-    ride_id = context.active_ride_id
-    if store is not None and ride_id is not None:
-        try:
-            store.clear_ride(ride_id)
-        except (OSError, sqlite3.Error, StoreError) as exc:
-            context.frame.SetStatusText(f"Could not clear ride: {exc}")
-            return
-        _switch_console_to_ride(context, ride_id)
-        context.frame.SetStatusText("Ride cleared")
-        return
-    empty_roster = _empty_roster_for(config)
-    engine, source = _build_console_engine(empty_roster)
-    _swap_console_onto(context, engine, empty_roster, source)
-    context.frame.SetStatusText("Ride cleared")
+    presenter.engine.on_event = None
+    context.presenter = None
+    context.active_ride_id = None
+    context.detail_plate = None
+    context.html_export_path = None
+    context.pdf_export_path = None
+    context.export_watermark = None
+    context.roster = Roster(
+        entry_mode=EntryMode.MIXED,
+        plate_model=PlateModel.RIDER_POOLED,
+        max_team_size=_SEEDED_MAX_TEAM_SIZE,
+        team_logo_seed=_SEEDED_TEAM_LOGO_SEED,
+    )
+    view = context.console_view
+    if view is not None:
+        view.clear_presenter()
+        view.show_no_ride()
+    _apply_menu_state(context, RideStatus.DRAFT)
+    context.frame.SetStatusText("Ride removed from the screen")
 
 
 def _live_library_callbacks(
@@ -3773,12 +3770,10 @@ def build_main_window(
     applies the accelerator table, binds every §15 route and the theme
     controller's own ``EVT_SYS_COLOUR_CHANGED`` re-apply, and wires
     the two process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
-    (Phase 8, P8-D1/P8-D2/P8-D4). E5.4.2 retired the
-    :class:`DemoDataSource` construction: the bootstrap roster is
-    empty (no store-backed ride is open), and both the console (W1:
+    (Phase 8, P8-D1/P8-D2/P8-D4). The bootstrap roster is empty (no
+    store-backed ride is open), and both the console (W1:
     :data:`_EMPTY_SOURCE` + :meth:`MainFrame.show_no_ride`) and the
-    E6/E7 windows read the empty state -- no production module imports
-    ``rivercrossing.demo`` any more (import-linter contract).
+    E6/E7 windows read the empty state.
 
     E8.1.1 loads the per-user settings file at startup and applies
     what already has live paths: the persisted appearance through
@@ -3916,8 +3911,9 @@ def build_main_window(
     # alert over the visible frame, and Continue -- or the library's
     # Open -- swaps the console onto the store ride afterwards, so a
     # replay against a drifted roster can never take the build down.
-    # _build_console_engine stays for Clear Ride's no-store fallback
-    # (and the unit tests); the bootstrap no longer calls it.
+    # The bootstrap no longer calls _build_console_engine (nor does
+    # Clear Ride any more): it stays as the unit tests' builder for a
+    # bootstrap-shaped console.
 
     def _save_layout(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
         """Persist the console's layout and keep the context current."""

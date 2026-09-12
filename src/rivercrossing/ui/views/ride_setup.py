@@ -19,8 +19,10 @@ positive lap length) is refused like any other -- the dialog stays
 open on :data:`SETUP_INFOBAR`, and ``on_submitted`` never fires
 (``SetupPresenter.on_submit``'s own docstring). ``tiebreak_list`` (a
 ``wx.adv.EditableListBox``) carries no XRC rows at all -- this module
-seeds it with R-14's own three named criteria, in the mock's default
-order, as **plain** labels ("Most laps", not "① Most laps"): a
+seeds it with R-14's own three named criteria in
+:data:`~rivercrossing.ride.DEFAULT_TIEBREAK_ORDER`'s order (Phase 3's
+stored default, the venue's high-card draw first), as **plain** labels
+("Most laps", not "① Most laps"): a
 baked-in rank prefix would go stale the instant the operator uses the
 control's own Up/Down buttons to reorder it, defeating the point of a
 reorderable list (this task's own doc-silence -- xrc-windows.md's
@@ -35,9 +37,25 @@ exactly the three known rows, rather than crash on an unrecognised
 label -- this task's own scope is the *reorder* case ("reorder
 persisted", not "row set editable"), and a New/Delete-caused mismatch
 is flagged here as a known, undefended gap for follow-up, not fixed
-outright.
+outright. The list carries its own bounded box (plan section 3c):
+:data:`TIEBREAK_LIST_MIN_SIZE` is the same 160x120 setup.xrc authors,
+so the reorder control no longer stretches to the dialog's whole
+width.
+
+Plan section 3d retires the standalone Logo row's ``wxFilePickerCtrl``
+for the Cards box's own logo column: :data:`LOGO_PREVIEW_SIZE`-sized
+``logo_preview_bmp``, the ``logo_status_lbl`` that reads "NO LOGO"
+until a logo is staged, and ``logo_browse_btn``. A picked file is
+*staged* -- :meth:`RideSetup.stage_logo` resizes it into
+:data:`LOGO_STANDARD_SIZE` through the pure
+:func:`~rivercrossing.ui.views.team_editor.logo_fit_size` rule and
+writes the copy to a temp file, so the operator's own file is never
+touched and the store's ``read_bytes`` at create/update time reads a
+PNG the dialog already bounded. ``_logo_path`` is what the form
+submits; ``logo_picker``'s own transient text is gone.
 """
 
+import tempfile
 from datetime import date, time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -60,6 +78,7 @@ from rivercrossing.ui.presenters.setup import (
     _format_duration,
     _format_min_lap,
 )
+from rivercrossing.ui.views import team_editor
 from rivercrossing.ui.views._support import find_control
 
 if TYPE_CHECKING:
@@ -68,7 +87,15 @@ if TYPE_CHECKING:
     from rivercrossing.ride import RideConfig
     from rivercrossing.roster import Roster
 
-__all__ = ["SETUP_INFOBAR", "RideSetup"]
+__all__ = [
+    "LOGO_PREVIEW_SIZE",
+    "LOGO_STANDARD_SIZE",
+    "LOGO_STATUS_NO_LOGO",
+    "SETUP_INFOBAR",
+    "TIEBREAK_LIST_MIN_SIZE",
+    "TIEBREAK_LIST_ROWS",
+    "RideSetup",
+]
 
 # ui/ids.py is generated from the .xrc files (R-05); this name never
 # appears there since XRC cannot author a wxInfoBar at all
@@ -90,6 +117,94 @@ _TIEBREAK_IDS_BY_LABEL: dict[str, str] = {label: id_ for id_, label in _TIEBREAK
 # trio); 2, the group's XRC default, is ride.py's own
 # DEFAULT_JOKERS_PER_DECK, so only the odd one out needs a name here.
 JOKERS_4_PER_DECK = 4
+
+# tiebreak_list's own bounded box (plan section 3c): R-14 names exactly
+# three criteria, and setup.xrc authors the same 160x120 <size>. The
+# control used to stretch to the Cards box's full width, which pushed
+# the logo column (section 3d) out of it.
+TIEBREAK_LIST_ROWS = 3
+TIEBREAK_LIST_MIN_SIZE = (160, 120)
+
+# The logo column's two boxes (plan section 3d): a picked PNG is
+# resized into LOGO_STANDARD_SIZE -- aspect ratio preserved -- and that
+# resized copy is what gets staged and stored; logo_preview_bmp renders
+# it inside LOGO_PREVIEW_SIZE.
+LOGO_STANDARD_SIZE = (256, 256)
+LOGO_PREVIEW_SIZE = (96, 96)
+
+# logo_status_lbl's own default, the same string setup.xrc authors:
+# a fresh dialog, and any dialog whose logo is cleared.
+LOGO_STATUS_NO_LOGO = "NO LOGO"
+
+
+def _fitted_image(image: Any, *, within: tuple[int, int]) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return *image* scaled into the *within* box.
+
+    The wx half of :func:`~rivercrossing.ui.views.team_editor.
+    logo_fit_size` -- the pure rule answers the fitted width/height,
+    this applies it. An image already inside the box (never upscaled)
+    comes back unchanged.
+    """
+    width, height = image.GetWidth(), image.GetHeight()
+    fitted = team_editor.logo_fit_size(width, height, within=within)
+    if fitted == (width, height):
+        return image
+    return image.Scale(*fitted, wx.IMAGE_QUALITY_HIGH)
+
+
+def _load_logo_png(path: Path) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Decode *path* as a PNG, or return a null image if it won't.
+
+    ``wx.LogNull`` keeps a failed decode out of wx's log queue: with a
+    live app and nothing to flush it, a queued error blocks
+    ``wxApp::CleanUp()`` at interpreter exit on a modal nobody can
+    dismiss (measured -- ``cards_imagelist._load_bitmap``'s own
+    guard). A missing or undecodable file is a stale record path, not
+    a crash: the caller renders it as "no logo".
+    """
+    with wx.LogNull():
+        return wx.Image(str(path), wx.BITMAP_TYPE_PNG)
+
+
+def _preview_bitmap(image: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return *image* fitted into :data:`LOGO_PREVIEW_SIZE`."""
+    return wx.Bitmap(_fitted_image(image, within=LOGO_PREVIEW_SIZE))
+
+
+def _staged_logo_path(image: Any, picked: Path) -> Path:  # noqa: ANN401 -- wx ships no stubs
+    """Write *image* fitted into :data:`LOGO_STANDARD_SIZE`; return it.
+
+    The copy lands in its own temp directory under the picked file's
+    own name: the store reads ``RideConfig.logo_path``'s bytes when it
+    creates or updates the ride, and the operator's file must survive
+    that untouched.
+    """
+    staged = Path(tempfile.mkdtemp(prefix="rivercrossing-logo-")) / picked.name
+    _fitted_image(image, within=LOGO_STANDARD_SIZE).SaveFile(str(staged), wx.BITMAP_TYPE_PNG)
+    return staged
+
+
+def _pick_logo_path(parent: wx.Window) -> Path | None:
+    """Ask the operator which PNG to use as the ride's logo.
+
+    A thin ``wx.FileDialog`` seam: tests monkeypatch this function
+    itself (module-level) rather than ever driving the native picker,
+    which no test in this suite can do
+    (``rider_editor._pick_import_path``'s own note).
+    """
+    with wx.FileDialog(
+        parent,
+        message="Choose a logo",
+        wildcard="PNG images (*.png)|*.png",
+        style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
+    ) as picker:
+        # logic-coverage-exempt: T-3 -- a native modal's own two return
+        # values cannot be driven headlessly (harness.py's own note);
+        # both outcomes ARE tested, through this seam being patched in
+        # test_ride_setup_logo_wx.py.
+        if picker.ShowModal() != wx.ID_OK:
+            return None
+        return Path(picker.GetPath())
 
 
 class RideSetup:
@@ -139,7 +254,9 @@ class RideSetup:
         self.min_lap_input = self._find(ids.MIN_LAP_INPUT, wx.TextCtrl)
         self.hold_short_radio = self._find(ids.HOLD_SHORT_RADIO, wx.RadioButton)
         self.always_deal_radio = self._find(ids.ALWAYS_DEAL_RADIO, wx.RadioButton)
-        self.logo_picker = self._find(ids.LOGO_PICKER, wx.FilePickerCtrl)
+        self.logo_preview_bmp = self._find(ids.LOGO_PREVIEW_BMP, wx.StaticBitmap)
+        self.logo_status_lbl = self._find(ids.LOGO_STATUS_LBL, wx.StaticText)
+        self.logo_browse_btn = self._find(ids.LOGO_BROWSE_BTN, wx.Button)
         self.solo_radio = self._find(ids.SOLO_RADIO, wx.RadioButton)
         self.mixed_radio = self._find(ids.MIXED_RADIO, wx.RadioButton)
         self.team_size_spin = self._find(ids.TEAM_SIZE_SPIN, wx.SpinCtrl)
@@ -154,7 +271,13 @@ class RideSetup:
         self.tiebreak_list = self._find(ids.TIEBREAK_LIST, wx.adv.EditableListBox)
         self.ok_btn = self._find("wxID_OK", wx.Button)
 
-        self.tiebreak_list.SetStrings([_TIEBREAK_LABELS[id_] for id_ in DEFAULT_TIEBREAK_ORDER])
+        # The staged logo's own path: the browsed PNG's resized copy,
+        # or the record's own file (D2). None until one is staged --
+        # show_logo(None) is what every fresh dialog opens on.
+        self._logo_path: Path | None = None
+        self._apply_tiebreak_min_size()
+        self.show_tiebreak_order(DEFAULT_TIEBREAK_ORDER)
+        self.show_logo(None)
         self.cap_spin.Enable(self.cap_chk.GetValue())
 
         self.setup_infobar = self._build_infobar()
@@ -202,7 +325,45 @@ class RideSetup:
         self.dialog.Bind(wx.EVT_RADIOBUTTON, self._on_entry_mode_radio, self.solo_radio)
         self.dialog.Bind(wx.EVT_RADIOBUTTON, self._on_entry_mode_radio, self.mixed_radio)
         self.dialog.Bind(wx.EVT_CHECKBOX, self._on_cap_toggle, self.cap_chk)
+        self.dialog.Bind(wx.EVT_BUTTON, self._on_browse_logo, self.logo_browse_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, self.ok_btn)
+
+    def _on_browse_logo(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Handle ``logo_browse_btn``: pick a PNG, then stage it.
+
+        :func:`_pick_logo_path` is the native picker's own seam, so
+        this handler and :meth:`stage_logo` stay drivable without a
+        desktop (``rider_editor._pick_import_path``'s own note).
+        """
+        event.Skip()
+        picked = _pick_logo_path(self.dialog)
+        if picked is not None:
+            self.stage_logo(picked)
+
+    def stage_logo(self, path: Path) -> None:
+        """Stage *path* as this ride's logo (plan section 3d).
+
+        The picked PNG is resized into :data:`LOGO_STANDARD_SIZE` and
+        that copy becomes ``self._logo_path`` -- the path the form
+        submits and the store reads. A file wx cannot decode stages
+        nothing, leaving :data:`LOGO_STATUS_NO_LOGO` up rather than a
+        preview of something that will not render later.
+        """
+        image = _load_logo_png(path)
+        if not image.IsOk():
+            self.show_logo(None)
+            return
+        self._logo_path = _staged_logo_path(image, path)
+        self._show_logo_preview(_preview_bitmap(image), status=path.name)
+
+    def _apply_tiebreak_min_size(self) -> None:
+        """Floor ``tiebreak_list`` at :data:`TIEBREAK_LIST_MIN_SIZE`.
+
+        setup.xrc authors the same 160x120 ``<size>``; the floor is
+        what stops the control collapsing below three readable rows
+        when the Cards box is dragged small (R-05 resizes both ways).
+        """
+        self.tiebreak_list.SetMinSize(wx.Size(*TIEBREAK_LIST_MIN_SIZE))
 
     def _on_entry_mode_radio(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a solo_radio/mixed_radio click; forward it on."""
@@ -255,7 +416,6 @@ class RideSetup:
         """
         picked_date = self.date_picker.GetValue()
         picked_time = self.start_time_picker.GetValue()
-        logo_text = self.logo_picker.GetPath()
         event_date = date(picked_date.GetYear(), picked_date.GetMonth() + 1, picked_date.GetDay())
         start_time = time(picked_time.GetHour(), picked_time.GetMinute(), picked_time.GetSecond())
         return SetupFormValues(
@@ -279,7 +439,7 @@ class RideSetup:
             cap_enabled=self.cap_chk.GetValue(),
             max_cards=self.cap_spin.GetValue(),
             tiebreak_order=self._tiebreak_order(),
-            logo_path=Path(logo_text) if logo_text else None,
+            logo_path=self._logo_path,
         )
 
     def _jokers_per_deck(self) -> int:
@@ -299,7 +459,7 @@ class RideSetup:
         note), rather than raise on an unrecognised label.
         """
         labels = tuple(self.tiebreak_list.GetStrings())
-        if len(labels) != len(DEFAULT_TIEBREAK_ORDER):
+        if len(labels) != TIEBREAK_LIST_ROWS:
             return DEFAULT_TIEBREAK_ORDER
         try:
             return cast(
@@ -423,8 +583,34 @@ class RideSetup:
         self.tiebreak_list.SetStrings(labels)
 
     def show_logo(self, logo_path: Path | None) -> None:
-        """Render logo_picker from the ride record (``SetupView``)."""
-        self.logo_picker.SetPath(str(logo_path) if logo_path is not None else "")
+        """Render the logo column from the ride record (``SetupView``).
+
+        ``None`` blanks the preview back to
+        :data:`LOGO_STATUS_NO_LOGO` -- the state a New Ride opens on,
+        and the one :meth:`stage_logo` falls back to. A stored path
+        whose file no longer decodes reads as no logo too: the store
+        re-materialises the record's logo BLOB per load
+        (``store._materialize_ride_logo``), so a stale path must never
+        leave a blank preview wearing a file name.
+        """
+        image = None if logo_path is None else _load_logo_png(logo_path)
+        if image is None or not image.IsOk():
+            self._logo_path = None
+            self._show_logo_preview(wx.NullBitmap, status=LOGO_STATUS_NO_LOGO)
+            return
+        self._logo_path = logo_path
+        self._show_logo_preview(_preview_bitmap(image), status="")
+
+    def _show_logo_preview(self, bitmap: Any, *, status: str) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Render ``logo_preview_bmp`` and ``logo_status_lbl`` together.
+
+        The two always move as a pair -- a preview is never shown
+        without its own status text, and the blank bitmap never
+        without :data:`LOGO_STATUS_NO_LOGO`.
+        """
+        self.logo_preview_bmp.SetBitmap(bitmap)
+        self.logo_status_lbl.SetLabel(status)
+        self.dialog.Layout()
 
     def set_structure_enabled(self, *, enabled: bool) -> None:
         """Gate the ride-shape controls to a DRAFT ride (D2).

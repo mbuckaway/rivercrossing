@@ -15,9 +15,9 @@ E5.4.2 retired the demo seam from the app path: the app's entry-detail
 route now opens the empty state (``EmptyDataSource`` -- no store-backed
 entry is selected until E7 wires the real lookup), so the two canvas-row
 pins below assert that empty state against their own empty-fed dialogs.
-The shared ``shared_entry_detail`` fixture keeps demo's populated rows
-for the view-capability assertions (bitmap rendering, card-imagelist
-cache) -- ``rivercrossing.demo`` remains importable from tests.
+The shared ``shared_entry_detail`` fixture keeps a test-only populated
+entry for the view-capability assertions (bitmap rendering,
+card-imagelist cache).
 
 The window carries no splitter, so the rebuild-and-compare hazard
 this suite's harness warns about does not apply; it is built exactly
@@ -40,9 +40,8 @@ from _lists_common import (
     _spy_repaint,
 )
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui import ids
-from rivercrossing.ui.presenters.data_source import EmptyDataSource
+from rivercrossing.ui.presenters.data_source import EmptyDataSource, EntryDetail, EntryLapRow
 from rivercrossing.ui.views import _support, entry_detail
 from rivercrossing.ui.views.entry_detail import COL_CARD as LAPS_COL_CARD
 from rivercrossing.ui.views.entry_detail import EntryDetailDialog
@@ -50,27 +49,44 @@ from rivercrossing.ui.views.entry_detail import EntryDetailDialog
 pytestmark = pytest.mark.functional
 
 
+class _PopulatedEntrySource:
+    """Test-only source returning one populated entry (plate 77)."""
+
+    def entry_detail(self, plate: str) -> EntryDetail:
+        """Return the populated entry; raise for any other plate."""
+        if plate != "77":
+            raise LookupError(f"no entry detail for plate {plate!r}")
+        return EntryDetail(
+            header="Team · 3 riders · 9 laps · 3:02:11",
+            members="A. Roy (77) · K. Singh (78) · L. Marchetti (79)",
+            cards_held=("9H", "KS", "KC", "JK", "4D"),
+            laps=(
+                EntryLapRow(lap=9, time="14:22:18", lap_time="19:55", rider="78", card="KC"),
+                EntryLapRow(lap=8, time="14:02:23", lap_time="21:40", rider="77", card="JK"),
+            ),
+        )
+
+
 # ----------------------------------------------------------- fixtures
 
 
 @pytest.fixture(scope="module")
 def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
-    """One ``EntryDetailDialog``, demo-fed for the view-capability rows.
+    """One ``EntryDetailDialog`` populated for view-capability rows.
 
-    Kept populated (demo fixture, tests-only since E5.4.2) so the
-    bitmap-rendering and card-imagelist assertions below have rows to
-    render; the app-path pins build their own empty-fed dialogs.
+    Kept populated (test-only fixture) so the bitmap-rendering and
+    card-imagelist assertions below have rows to render; the app-path
+    pins build their own empty-fed dialogs.
     """
     window = harness.load_window_verified(xrc_resource, ids.ENTRY_DETAIL_DLG, frame=False)
     try:
         window.Show()
         window.Layout()
         harness.pump()
-        view = EntryDetailDialog(window, "77", data_source=DemoDataSource())
+        view = EntryDetailDialog(window, "77", data_source=_PopulatedEntrySource())
         yield view
     finally:
-        # Phase 2 reference hygiene: drop the view before the window
-        # dies (see test_console_demo.py's shared_console finally).
+        # Reference hygiene: drop the view before the window dies.
         del view
         harness.close_window(window)
 
@@ -166,7 +182,7 @@ def test_entry_detail_card_images_defaults_to_the_shared_support_cache(
 
 
 def test_entry_detail_given_an_unknown_plate_raises_naming_it(xrc_resource: object) -> None:
-    """T-5: ``DemoDataSource.entry_detail``'s only ``raise``."""
+    """T-5: the populated source's only ``raise``."""
     # load_window, not load_window_verified: this test's own dialog
     # coexists with the module-scoped shared_entry_detail fixture's
     # same-named window (Fault B / PR #45); access is reference-scoped.
@@ -176,7 +192,7 @@ def test_entry_detail_given_an_unknown_plate_raises_naming_it(xrc_resource: obje
         harness.pump()
         expected = re.escape("no entry detail for plate 'no-such-plate'")
         with pytest.raises(LookupError, match=expected):
-            EntryDetailDialog(window, "no-such-plate", data_source=DemoDataSource())
+            EntryDetailDialog(window, "no-such-plate", data_source=_PopulatedEntrySource())
     finally:
         harness.close_window(window)
 

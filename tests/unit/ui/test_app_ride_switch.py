@@ -184,6 +184,10 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
                 "event_date": date(2026, 9, 20),
                 "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, by design
                 "entry_mode": EntryMode.MIXED,
+                "venue": "Sea to Sky Gondola",
+                "organizer": "GORBA",
+                "scorer": "K. Singh",
+                "lap_km": 8.0,
             },
         ) in view.calls
         assert ("set_state", (RideStatus.DRAFT, False)) in view.calls

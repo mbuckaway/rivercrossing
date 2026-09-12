@@ -34,6 +34,7 @@ from rivercrossing.cards import Card
 from rivercrossing.hands import EvaluatedHand, HandClass, best_hand
 from rivercrossing.standings import (
     DEFAULT_TIEBREAK_ORDER,
+    LIVE_TIEBREAK_ORDER,
     EntryResult,
     TieBreak,
     hand_name,
@@ -126,11 +127,17 @@ def test_rank_partial_four_card_hand_ranks_below_any_five_card_hand() -> None:
 
 
 def test_rank_hand_tie_resolved_by_most_laps() -> None:
-    """Equal hand ranks: the entry with more laps wins (①)."""
+    """Equal hand ranks: the entry with more laps wins (①).
+
+    The criterion is exercised through an explicit laps-first order:
+    Phase 3's stored default puts the venue draw first, so the default
+    leaves this tie unresolved (pinned below).
+    """
     more_laps = _result("1", "AS KS QS JS TS", laps=5)
     fewer_laps = _result("2", "AH KH QH JH TH", laps=4)
+    laps_first = (TieBreak.MOST_LAPS, TieBreak.TOTAL_TIME, TieBreak.HIGH_CARD_DRAW)
 
-    placed = rank([fewer_laps, more_laps])
+    placed = rank([fewer_laps, more_laps], laps_first)
 
     assert [p.result.entry_id for p in placed] == ["1", "2"]
     assert all(p.draw_required is False and p.tie_note is None for p in placed)
@@ -140,10 +147,32 @@ def test_rank_hand_tie_resolved_by_shortest_total_time() -> None:
     """Equal hand ranks and laps: the shorter total time wins (②)."""
     fast = _result("1", "AS KS QS JS TS", laps=5, total_time=90.0)
     slow = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    laps_first = (TieBreak.MOST_LAPS, TieBreak.TOTAL_TIME, TieBreak.HIGH_CARD_DRAW)
 
-    placed = rank([slow, fast])
+    placed = rank([slow, fast], laps_first)
 
     assert [p.result.entry_id for p in placed] == ["1", "2"]
+
+
+def test_rank_live_order_resolves_a_hand_tie_by_laps_then_time() -> None:
+    """The live order ranks a hand tie without the venue draw."""
+    more_laps = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
+    fewer_laps = _result("2", "AH KH QH JH TH", laps=4, total_time=50.0)
+
+    placed = rank([fewer_laps, more_laps], LIVE_TIEBREAK_ORDER)
+
+    assert [p.result.entry_id for p in placed] == ["1", "2"]
+    assert all(p.draw_required is False and p.tie_note is None for p in placed)
+
+
+def test_rank_live_order_equal_laps_and_time_still_flags_draw() -> None:
+    """An equal pair with no venue draw stays a draw (R-43)."""
+    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+
+    placed = rank([first, second], LIVE_TIEBREAK_ORDER)
+
+    assert [(p.place, p.draw_required) for p in placed] == [(1, True), (1, True)]
 
 
 def test_rank_unresolved_hand_tie_flags_draw_required_and_shares_place() -> None:
@@ -212,13 +241,36 @@ def test_rank_high_card_draw_first_leaves_every_hand_tie_unresolved() -> None:
     assert all(p.draw_required is True and p.place == 1 for p in placed)
 
 
-def test_rank_default_order_matches_r14_constant() -> None:
-    """The default order is ① laps ② time ③ high-card draw (R-14)."""
+def test_rank_default_order_matches_phase_three_constant() -> None:
+    """Phase 3's stored default: the venue draw leads the order."""
     assert DEFAULT_TIEBREAK_ORDER == (
+        TieBreak.HIGH_CARD_DRAW,
         TieBreak.MOST_LAPS,
         TieBreak.TOTAL_TIME,
-        TieBreak.HIGH_CARD_DRAW,
     )
+
+
+def test_live_tiebreak_order_is_most_laps_then_total_time() -> None:
+    """The live order carries the two auto-rank criteria only."""
+    assert LIVE_TIEBREAK_ORDER == (TieBreak.MOST_LAPS, TieBreak.TOTAL_TIME)
+
+
+def test_rank_default_order_flags_a_laps_resolvable_tie_for_the_venue_draw() -> None:
+    """High-card first: a hand tie goes to the venue draw.
+
+    Under the Phase 3 default nothing precedes ``HIGH_CARD_DRAW``, so
+    two identical hands are flagged even though their laps differ --
+    the pre-Phase-3 default silently ordered this pair by laps.
+    """
+    more_laps = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
+    fewer_laps = _result("2", "AH KH QH JH TH", laps=4, total_time=50.0)
+
+    placed = rank([fewer_laps, more_laps])
+
+    assert [(p.place, p.draw_required, p.tie_note) for p in placed] == [
+        (1, True, "draw required"),
+        (1, True, "draw required"),
+    ]
 
 
 def test_rank_omitted_order_uses_default_constant() -> None:

@@ -123,15 +123,15 @@ def test_ride_config_bare_required_fields_defaults_max_cards_to_uncapped() -> No
     assert config.max_cards is None
 
 
-def test_ride_config_bare_required_fields_defaults_tiebreak_order_to_the_spec_order() -> None:
-    """R-14's own order: laps, then total time, then high-card draw."""
+def test_ride_config_bare_required_fields_defaults_tiebreak_order_to_high_card_first() -> None:
+    """Phase 3's default: the venue's high-card draw leads (R-14)."""
     config = _config()
 
-    assert config.tiebreak_order == (TIEBREAK_LAPS, TIEBREAK_TOTAL_TIME, TIEBREAK_HIGH_CARD)
+    assert config.tiebreak_order == (TIEBREAK_HIGH_CARD, TIEBREAK_LAPS, TIEBREAK_TOTAL_TIME)
 
 
 def test_ride_config_bare_required_fields_defaults_logo_path_to_none() -> None:
-    """logo_picker empty by default: no logo chosen (E5 owns BLOBs)."""
+    """No logo staged by default: the logo column reads "NO LOGO"."""
     config = _config()
 
     assert config.logo_path is None
@@ -149,7 +149,7 @@ def test_ride_config_bare_required_fields_defaults_hold_short_laps_to_false() ->
 
 
 def test_ride_config_given_a_logo_path_stores_it_verbatim() -> None:
-    """A chosen logo_picker path round-trips exactly."""
+    """A staged logo path round-trips exactly."""
     path = Path(tempfile.gettempdir()) / "gorba-logo.png"
 
     config = _config(logo_path=path)

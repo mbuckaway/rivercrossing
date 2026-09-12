@@ -457,10 +457,10 @@ def test_ride_setup_dlg_ok_given_a_missing_minimum_setup_field_leaves_the_dialog
 # ------------------------------------------------------ tie-break list
 
 
-def test_ride_setup_dlg_tiebreak_list_starts_with_the_spec_default_order(
+def test_ride_setup_dlg_tiebreak_list_starts_with_the_ride_default_order(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """R-14's own order: laps, then total time, then high-card draw."""
+    """Phase 3's stored default: the venue's high-card draw first."""
     dialog, _view = _show(xrc_resource, _mixed_pooled_roster())
 
     try:
@@ -468,7 +468,7 @@ def test_ride_setup_dlg_tiebreak_list_starts_with_the_spec_default_order(
     finally:
         harness.close_window(dialog)
 
-    assert rows == ("Most laps", "Total time", "High-card draw")
+    assert rows == ("High-card draw", "Most laps", "Total time")
 
 
 def test_ride_setup_dlg_ok_reads_tiebreak_lists_current_order(

@@ -169,6 +169,19 @@ def test_results_presenter_renders_the_two_phase_three_sections_separately() -> 
     assert [row.place for row in view.shown_solo] == [1, 2]
 
 
+def test_results_presenter_init_without_a_stored_order_requests_the_ride_default() -> None:
+    """No stored order: the default converts to high-card-first.
+
+    The presenter's default spellings (ride.py) map onto standings'
+    Phase 3 member default, so the two modules never drift.
+    """
+    source = RecordingResultsSource()
+
+    ResultsPresenter(RecordingResultsView(), source)
+
+    assert source.standings_orders == [DEFAULT_TIEBREAK_ORDER]
+
+
 def test_results_presenter_holds_the_view_and_data_source_it_was_given() -> None:
     """E6.4.1 keeps the E1.2.3 ``(view, data_source)`` shape."""
     view = RecordingResultsView()

@@ -219,7 +219,13 @@ class SetupView(Protocol):
         ...
 
     def show_logo(self, logo_path: Path | None) -> None:
-        """Render logo_picker from the ride record (D2 preload)."""
+        """Render the logo column from the ride record (D2 preload).
+
+        ``None`` blanks ``logo_preview_bmp`` back to the "NO LOGO"
+        default; a stored path renders its PNG into the preview box
+        (plan section 3d -- the standalone ``logo_picker`` row and its
+        ``GetPath()`` seam are retired).
+        """
         ...
 
     def set_structure_enabled(self, *, enabled: bool) -> None:

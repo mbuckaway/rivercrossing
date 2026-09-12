@@ -17,6 +17,13 @@
   plate-model groups lock after start for relay rides and stay editable for
   pooled ones (R-17); tiebreak_list rows and their reorder are persisted.
 
+  Plan sections 3c/3d reshaped the Cards box: the standalone Logo row's
+  wxFilePickerCtrl is retired, tiebreak_list carries its own bounded
+  160x120 box, and the logo column (preview bitmap, status label, Browse…
+  button) sits beside it. The staged PNG itself is code-side: the view
+  resizes the browsed file into LOGO_STANDARD_SIZE, writes the copy to a
+  temp file and previews it.
+
   Ranges: only max riders per team has documented bounds (spec.md 1 and 2 -
   2 to 10, default 4). decks_spin and cap_spin get a floor of 1 and no
   ceiling; lap_km_spin gets one decimal, matching the canvas's "8.0".
@@ -187,29 +194,6 @@
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxBoxSizer">
-          <orient>wxHORIZONTAL</orient>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-            <border>8</border>
-            <object class="wxStaticText">
-              <label>Logo</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <option>1</option>
-            <flag>wxEXPAND</flag>
-            <object class="wxFilePickerCtrl" name="logo_picker">
-              <style>wxFLP_OPEN|wxFLP_USE_TEXTCTRL</style>
-              <wildcard>PNG images (*.png)|*.png</wildcard>
-            </object>
-          </object>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
         <object class="wxStaticBoxSizer">
           <label>Entries</label>
           <orient>wxVERTICAL</orient>
@@ -355,12 +339,67 @@
           </object>
 
           <!-- Rows and their order come from the ride's tiebreak_order
-               (spec.md 5); the control supplies the reorder arrows. -->
+               (spec.md 5); the control supplies the reorder arrows.
+               The list carries its own bounded 160x120 box (the view
+               floors it at the same size): full-width, the reorder
+               control stretched to the whole dialog and pushed the
+               logo column out of the Cards box.
+
+               The logo column (plan section 3d) replaces the retired
+               standalone Logo row's wxFilePickerCtrl. logo_preview_bmp
+               is authored with no bitmap child (measured on wxPython
+               4.3.1, XRC yields a real wxStaticBitmap that keeps its
+               name and accepts SetBitmap later, ride_logo_bmp's own
+               authored shape), and logo_status_lbl declares the "NO
+               LOGO" default a fresh dialog shows until one is staged
+               through logo_browse_btn's native PNG picker. -->
           <object class="sizeritem">
             <option>1</option>
             <flag>wxEXPAND</flag>
-            <object class="wxEditableListBox" name="tiebreak_list">
-              <label>Tie-break order</label>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND</flag>
+                <object class="wxEditableListBox" name="tiebreak_list">
+                  <label>Tie-break order</label>
+                  <size>160,120</size>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxLEFT</flag>
+                <border>8</border>
+                <object class="wxBoxSizer">
+                  <orient>wxVERTICAL</orient>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_HORIZONTAL</flag>
+                    <object class="wxStaticBitmap" name="logo_preview_bmp">
+                      <size>96,96</size>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_HORIZONTAL|wxTOP</flag>
+                    <border>4</border>
+                    <object class="wxStaticText" name="logo_status_lbl">
+                      <label>NO LOGO</label>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_HORIZONTAL|wxTOP</flag>
+                    <border>4</border>
+                    <object class="wxButton" name="logo_browse_btn">
+                      <label>Browse…</label>
+                    </object>
+                  </object>
+
+                </object>
+              </object>
+
             </object>
           </object>
 

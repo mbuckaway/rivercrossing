@@ -356,6 +356,10 @@ def test_run_launch_flow_continue_resumes_the_ride_and_keeps_the_active_marker(
             "event_date": date(2026, 9, 20),
             "planned_start": datetime(2026, 9, 20, 10, 0),  # noqa: DTZ001 -- naive, by design
             "entry_mode": EntryMode.MIXED,
+            "venue": "Sea to Sky Gondola",
+            "organizer": "GORBA",
+            "scorer": "K. Singh",
+            "lap_km": 8.0,
         },
     ) in view.calls
     assert ("set_state", (RideStatus.RUNNING, False)) in view.calls

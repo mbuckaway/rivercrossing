@@ -95,7 +95,9 @@ SPEC_KNOWN_SUFFIXES: tuple[str, ...] = (
 # _preview joined when Phase 4 registered logo_preview (team_editor_dlg)
 # in section 15b; _notebook joined when the ux-polish review notebook
 # registered review_notebook (main.xrc); _gauge joined when the Rider
-# Simulator registered progress_gauge (simulation.xrc).
+# Simulator registered progress_gauge (simulation.xrc); _value joined
+# when the ride-lifecycle header registered the six ride_*_value
+# read-outs (main.xrc).
 CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_menubar",
     "_statusbar",
@@ -107,6 +109,7 @@ CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_preview",
     "_notebook",
     "_gauge",
+    "_value",
 )
 
 KNOWN_SUFFIXES: tuple[str, ...] = SPEC_KNOWN_SUFFIXES + CANVAS_KNOWN_SUFFIXES

@@ -34,9 +34,13 @@ XRC_FILES = ("main.xrc", "setup.xrc", "settings.xrc")
 # reopened_infobar and finished_infobar are deliberately absent: XRC
 # drops the name of a wxInfoBar, so they are built in code.
 MAIN_FRAME_CONTROLS = (
-    "ride_name_lbl",
     "ride_logo_bmp",
-    "ride_details_lbl",
+    "ride_name_value",
+    "ride_date_value",
+    "ride_venue_value",
+    "ride_organizer_value",
+    "ride_scorer_value",
+    "ride_lap_km_value",
     "ride_status_lbl",
     "ride_status_panel",
     "clock_elapsed_lbl",
@@ -145,7 +149,10 @@ MAIN_MENUBAR_CONTROLS = (
 )
 
 # xrc-windows.md section B: 22 annotated controls plus the stock
-# button row.
+# button row. The standalone Logo row's wxFilePickerCtrl is retired
+# (plan §3d): the Cards box now carries the logo *column* beside
+# tiebreak_list -- logo_preview_bmp, logo_status_lbl and
+# logo_browse_btn.
 RIDE_SETUP_CONTROLS = (
     "name_input",
     "date_picker",
@@ -158,7 +165,9 @@ RIDE_SETUP_CONTROLS = (
     "min_lap_input",
     "hold_short_radio",
     "always_deal_radio",
-    "logo_picker",
+    "logo_preview_bmp",
+    "logo_status_lbl",
+    "logo_browse_btn",
     "solo_radio",
     "mixed_radio",
     "team_size_spin",
@@ -231,6 +240,13 @@ GROUP_FOLLOWING_RADIOS = (
 
 FEED_LIST_NAMES = ("crossings_list", "flagged_list")
 
+# ride_setup_dlg's Cards box after plan §3c/§3d: tiebreak_list's own
+# three-row box (the view floors it at the same 160x120) sits left of
+# the logo column, whose preview bitmap carries the 96x96 box.
+TIEBREAK_LIST_BOX = "160,120"
+LOGO_PREVIEW_BOX = "96,96"
+LOGO_COLUMN_NAMES = ("logo_preview_bmp", "logo_status_lbl", "logo_browse_btn")
+
 # The name wxDataViewListCtrl's XRC handler forces onto its control,
 # discarding the authored one. It must never appear.
 FORCED_DATAVIEW_NAME = "dataviewCtrl"
@@ -275,6 +291,33 @@ def _param(obj: Element, tag: str) -> str:
     """Return the text of *obj*'s direct ``<tag>`` child, or ``""``."""
     child = obj.find(tag)
     return "" if child is None or child.text is None else child.text
+
+
+def _nearest_sizer(window: Element, name: str) -> Element:
+    """Return the innermost sizer that holds the named control.
+
+    Document order puts a control's ancestors before it, so the *last*
+    sizer whose subtree contains *name* is its own immediate parent
+    sizer -- the nesting fact the Cards-box layout tests pin.
+    """
+    containing = [
+        obj
+        for obj in window.iter("object")
+        if obj.attrib.get("class", "").endswith("Sizer")
+        and any(child.attrib.get("name") == name for child in obj.iter("object"))
+    ]
+    return containing[-1]
+
+
+def _sizeritem_of(window: Element, name: str) -> Element:
+    """Return the sizer item whose own object is the named control."""
+    return next(
+        obj
+        for obj in window.iter("object")
+        if obj.attrib.get("class") == "sizeritem"
+        and obj.find("object") is not None
+        and obj.find("object").attrib.get("name") == name
+    )
 
 
 def _menus() -> list[Element]:
@@ -454,17 +497,124 @@ def test_new_ride_menu_row_declares_its_label(item_name: str, label: str) -> Non
 
 
 def test_ride_header_logo_is_declared_as_a_static_bitmap() -> None:
-    """C1: the header renders the ride logo, or the detail line."""
+    """C1: the header renders the ride's own logo in its slot."""
     control = _objects_by_name(_window("main_frame"))["ride_logo_bmp"]
 
     assert control.attrib["class"] == "wxStaticBitmap"
 
 
-def test_ride_header_details_is_declared_as_a_static_text() -> None:
-    """C1: date · start · type sit next to the ride name."""
-    control = _objects_by_name(_window("main_frame"))["ride_details_lbl"]
+# --------------------------------------------------------------------
+# Plan §5: the ride-info group beside the stop light.
 
-    assert control.attrib["class"] == "wxStaticText"
+# The six value rows, in the grid's own order. Captions are unnamed
+# wxStaticText, like every counter chip's caption.
+RIDE_INFO_VALUE_NAMES = (
+    "ride_name_value",
+    "ride_date_value",
+    "ride_venue_value",
+    "ride_organizer_value",
+    "ride_scorer_value",
+    "ride_lap_km_value",
+)
+
+
+def _ride_info_box() -> Element:
+    """Return main.xrc's one "Ride" ``wxStaticBoxSizer``."""
+    return next(
+        obj
+        for obj in _window("main_frame").iter("object")
+        if obj.attrib.get("class") == "wxStaticBoxSizer" and _param(obj, "label") == "Ride"
+    )
+
+
+def _ride_info_grid() -> Element:
+    """Return the Ride box's label + value ``wxFlexGridSizer``."""
+    return next(
+        obj
+        for obj in _ride_info_box().iter("object")
+        if obj.attrib.get("class") == "wxFlexGridSizer"
+    )
+
+
+def _ride_info_rows() -> tuple[tuple[str, str], ...]:
+    """Pair each caption cell with the value control beside it.
+
+    The grid is row-major -- caption, value, caption, value -- so each
+    pair is one "Name -> ride_name_value" row.
+    """
+    cells = [
+        item.find("object")
+        for item in _ride_info_grid()
+        if item.attrib.get("class") == "sizeritem"
+    ]
+    return tuple(
+        (_param(cells[index], "label"), cells[index + 1].attrib["name"])
+        for index in range(0, len(cells), 2)
+    )
+
+
+def test_ride_header_declares_the_ride_group_box() -> None:
+    """§5: the identity block is a native "Ride" wxStaticBoxSizer."""
+    assert _param(_ride_info_box(), "label") == "Ride"
+
+
+def test_ride_header_ride_box_holds_the_logo_and_the_six_values() -> None:
+    """§5: the reused logo slot leads, then the six value controls."""
+    names = [obj.attrib["name"] for obj in _ride_info_box().iter("object") if "name" in obj.attrib]
+
+    assert names == ["ride_logo_bmp", *RIDE_INFO_VALUE_NAMES]
+
+
+def test_ride_info_grid_declares_the_six_captioned_rows_in_order() -> None:
+    """§5: Name, Date, Venue, Organizer, Scorer and Lap length km."""
+    assert _ride_info_rows() == (
+        ("Name", "ride_name_value"),
+        ("Date", "ride_date_value"),
+        ("Venue", "ride_venue_value"),
+        ("Organizer", "ride_organizer_value"),
+        ("Scorer", "ride_scorer_value"),
+        ("Lap length km", "ride_lap_km_value"),
+    )
+
+
+@pytest.mark.parametrize("value_name", RIDE_INFO_VALUE_NAMES)
+def test_ride_info_value_is_a_read_only_240_wide_text_ctrl(value_name: str) -> None:
+    """§5: each value row is a 240-wide read-only wxTextCtrl."""
+    control = _objects_by_name(_window("main_frame"))[value_name]
+
+    assert (control.attrib["class"], _param(control, "style"), _param(control, "size")) == (
+        "wxTextCtrl",
+        "wxTE_READONLY",
+        "240,-1",
+    )
+
+
+def test_ride_logo_slot_declares_the_64_pixel_display_size() -> None:
+    """§5: the moved logo slot renders at its own 64x64 size."""
+    control = _objects_by_name(_window("main_frame"))["ride_logo_bmp"]
+
+    assert _param(control, "size") == "64,64"
+
+
+def test_ride_info_group_shares_the_header_row_with_the_status_column() -> None:
+    """§5: the Ride box sits beside ride_status_panel's own column."""
+    row = _nearest_sizer(_window("main_frame"), "ride_status_panel")
+    names = [obj.attrib["name"] for obj in row.iter("object") if "name" in obj.attrib]
+
+    assert (_param(row, "orient"), names) == (
+        "wxHORIZONTAL",
+        [
+            "ride_logo_bmp",
+            "ride_name_value",
+            "ride_date_value",
+            "ride_venue_value",
+            "ride_organizer_value",
+            "ride_scorer_value",
+            "ride_lap_km_value",
+            "ride_status_panel",
+            "ride_status_lbl",
+        ],
+    )
 
 
 @pytest.mark.parametrize(("item_name", "accelerator"), ACCELERATOR_CASES)
@@ -628,3 +778,74 @@ def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
     width = int(_param(control, "size").split(",")[0])
 
     assert (_param(control, "hint"), width >= 200) == ("Plate number", True)
+
+
+# --------------------------------------------------------------------
+# Plan §3c/§3d: the Cards box's tie-break box and logo column.
+
+
+def test_ride_setup_tiebreak_list_declares_the_three_row_box() -> None:
+    """§3c: a bounded 160x120 box, not a full-width stretch."""
+    control = _objects_by_name(_window("ride_setup_dlg"))["tiebreak_list"]
+
+    assert _param(control, "size") == TIEBREAK_LIST_BOX
+
+
+def test_ride_setup_tiebreak_list_takes_the_rows_own_slack() -> None:
+    """The list grows with the Cards box; the logo column does not."""
+    item = _sizeritem_of(_window("ride_setup_dlg"), "tiebreak_list")
+
+    assert (_param(item, "option"), _param(item, "flag")) == ("1", "wxEXPAND")
+
+
+def test_ride_setup_tiebreak_list_sits_beside_the_logo_column() -> None:
+    """§3d: tie-break list and logo column share one horizontal row."""
+    window = _window("ride_setup_dlg")
+    row = _nearest_sizer(window, "tiebreak_list")
+    names = [obj.attrib["name"] for obj in row.iter("object") if "name" in obj.attrib]
+
+    assert (_param(row, "orient"), names[0], set(names)) == (
+        "wxHORIZONTAL",
+        "tiebreak_list",
+        {"tiebreak_list", *LOGO_COLUMN_NAMES},
+    )
+
+
+def test_ride_setup_logo_column_stacks_its_three_controls_vertically() -> None:
+    """§3d: the preview, the status label and Browse… are one column."""
+    column = _nearest_sizer(_window("ride_setup_dlg"), "logo_browse_btn")
+    names = [obj.attrib["name"] for obj in column.iter("object") if "name" in obj.attrib]
+
+    assert (_param(column, "orient"), names) == ("wxVERTICAL", list(LOGO_COLUMN_NAMES))
+
+
+def test_ride_setup_logo_preview_is_declared_as_a_sized_static_bitmap() -> None:
+    """§3d: a bitmap-less 96x96 wxStaticBitmap the view fills in."""
+    control = _objects_by_name(_window("ride_setup_dlg"))["logo_preview_bmp"]
+
+    assert (control.attrib["class"], _param(control, "size"), control.find("bitmap")) == (
+        "wxStaticBitmap",
+        LOGO_PREVIEW_BOX,
+        None,
+    )
+
+
+def test_ride_setup_logo_status_label_declares_the_no_logo_default() -> None:
+    """§3d: a fresh dialog reads "NO LOGO" until one is staged."""
+    control = _objects_by_name(_window("ride_setup_dlg"))["logo_status_lbl"]
+
+    assert (control.attrib["class"], _param(control, "label")) == ("wxStaticText", "NO LOGO")
+
+
+def test_ride_setup_logo_browse_button_declares_the_browse_label() -> None:
+    """§3d: the native PNG picker's own button."""
+    control = _objects_by_name(_window("ride_setup_dlg"))["logo_browse_btn"]
+
+    assert (control.attrib["class"], _param(control, "label")) == ("wxButton", "Browse…")
+
+
+def test_ride_setup_declares_no_file_picker_control() -> None:
+    """§3d retires the standalone Logo row's wxFilePickerCtrl."""
+    classes = [obj.attrib["class"] for obj in _window("ride_setup_dlg").iter("object")]
+
+    assert classes.count("wxFilePickerCtrl") == 0
