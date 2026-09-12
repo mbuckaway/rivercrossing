@@ -24,6 +24,7 @@ from rivercrossing.ride import RideStatus
 from rivercrossing.roster import Entry, EntryType, Roster
 from rivercrossing.standings import (
     DEFAULT_TIEBREAK_ORDER,
+    LIVE_TIEBREAK_ORDER,
     TieBreak,
     hand_name,
     rank_by_kind,
@@ -559,6 +560,12 @@ class EngineDataSource:
       plate the operator typed. When no roster rider owns that plate
       -- a ``team_relay`` ride's riders carry none (S1) -- the entry's
       own display name stands, unchanged from before J1.
+    - **standings order gate (Phase 3).** ``standings(order=...)``
+      applies the ride's stored tie-break criteria only once the
+      engine is FINISHED; a live ride (DRAFT/RUNNING/REOPENED) ranks
+      by ``standings.LIVE_TIEBREAK_ORDER`` -- most laps, then total
+      time -- so the stored order arbitrates the finished result
+      alone.
     """
 
     def __init__(self, engine: RideEngine, roster: Roster) -> None:
@@ -764,14 +771,20 @@ class EngineDataSource:
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
         """Return the results standings as (teams, solo) row lists.
 
-        ``rank_by_kind`` runs over the engine's current snapshot with
-        *order* (the ride's stored tie-break criteria), so a MIXED
-        ride's teams and solos each rank from 1 (Phase 3). ``hand`` is
-        the human prose
+        ``rank_by_kind`` runs over the engine's current snapshot, so a
+        MIXED ride's teams and solos each rank from 1 (Phase 3).
+        *order* -- the ride's stored tie-break criteria -- applies only
+        once the ride is FINISHED; while it is live (DRAFT, RUNNING or
+        REOPENED) the board ranks by
+        :data:`~rivercrossing.standings.LIVE_TIEBREAK_ORDER` (most
+        laps, then shortest total time), so a hand tie never leaves the
+        live board as an unresolved draw. ``hand`` is the human prose
         name (``standings.hand_name``), with the 0-card guard from the
         class docstring: an entry that never credited a card has no
         rank to name and renders ``""`` instead of crashing.
         """
+        if self._engine.state is not RideStatus.FINISHED:
+            order = LIVE_TIEBREAK_ORDER
         teams, solo = rank_by_kind(self._engine.snapshot(), order)
 
         def rows(placed: Sequence[Placed]) -> list[StandingsRow]:

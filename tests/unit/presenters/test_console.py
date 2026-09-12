@@ -638,6 +638,80 @@ def test_engine_data_source_standings_omitted_order_uses_the_default_constant() 
     assert source.standings() == source.standings(order=DEFAULT_TIEBREAK_ORDER)
 
 
+def _engine_with_a_hand_tie() -> RideEngine:
+    """Record a pair tied on hand but not on laps: 12 leads 34 by laps.
+
+    Plate 12 rides two 100 s laps and 34 one 60 s lap; both credited
+    hands are overwritten with the same five cards (the private-access
+    style the reordered-order test below already uses), so the pair
+    ties on hand rank and only laps/time separate them.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=60)
+    _record(engine, clock, "12", lap_time_s=100)
+    tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
+    engine._hand["12"] = list(tied)
+    engine._hand["34"] = list(tied)
+    return engine
+
+
+def test_engine_data_source_standings_live_ride_ignores_the_stored_order() -> None:
+    """A RUNNING ride auto-ranks by laps then time, not stored order.
+
+    Phase 3's finished-vs-live split: the stored high-card-first order
+    would flag this tied pair as a draw; live, the source swaps in
+    LIVE_TIEBREAK_ORDER and 12 leads on its extra lap.
+    """
+    engine = _engine_with_a_hand_tie()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings(
+        order=tiebreak_order_from_spellings(("high_card", "laps", "total_time"))
+    )
+
+    assert engine.state is RideStatus.RUNNING
+    assert [(row.plate, row.place, row.draw_required) for row in rows] == [
+        ("12", 1, False),
+        ("34", 2, False),
+    ]
+
+
+def test_engine_data_source_standings_reopened_ride_auto_ranks_like_a_live_ride() -> None:
+    """REOPENED is not FINISHED, so the stored order still waits."""
+    engine = _engine_with_a_hand_tie()
+    engine.finish()
+    engine.reopen()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings(
+        order=tiebreak_order_from_spellings(("high_card", "laps", "total_time"))
+    )
+
+    assert engine.state is RideStatus.REOPENED
+    assert [(row.plate, row.place, row.draw_required) for row in rows] == [
+        ("12", 1, False),
+        ("34", 2, False),
+    ]
+
+
+def test_engine_data_source_standings_finished_ride_respects_the_stored_order() -> None:
+    """A FINISHED ride ranks by the stored order and flags the draw."""
+    engine = _engine_with_a_hand_tie()
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings(
+        order=tiebreak_order_from_spellings(("high_card", "laps", "total_time"))
+    )
+
+    assert engine.state is RideStatus.FINISHED
+    assert [(row.plate, row.place, row.draw_required) for row in rows] == [
+        ("12", 1, True),
+        ("34", 1, True),
+    ]
+
+
 def test_engine_data_source_standings_reordered_order_changes_row_order() -> None:
     """A reordered tie-break order re-ranks the same snapshot live.
 

@@ -119,10 +119,16 @@ TIEBREAK_LAPS = "laps"
 TIEBREAK_TOTAL_TIME = "total_time"
 TIEBREAK_HIGH_CARD = "high_card"
 
+# Phase 3's stored default leads with the venue's high-card draw: a
+# finished ride's hand tie is flagged "draw required" (R-43) rather
+# than silently ordered by laps/time, and any criterion after the draw
+# is unreachable. The operator drags tiebreak_list to reorder it
+# (R-14); a live (unfinished) board auto-ranks by laps/time instead
+# (standings.LIVE_TIEBREAK_ORDER).
 DEFAULT_TIEBREAK_ORDER: tuple[str, str, str] = (
+    TIEBREAK_HIGH_CARD,
     TIEBREAK_LAPS,
     TIEBREAK_TOTAL_TIME,
-    TIEBREAK_HIGH_CARD,
 )
 
 # R-12's own 2..10 bound (also roster.py's MIN_TEAM_SIZE/

@@ -29,6 +29,12 @@ Handling rules, in order of application:
   draw pair shares its place; the run after a two-way draw starts one
   place past the whole run (competition numbering: 1, 2, 2, 4).
 
+  Phase 3's :data:`DEFAULT_TIEBREAK_ORDER` leads with
+  ``HIGH_CARD_DRAW``, so the stored default flags every hand tie for
+  the venue's draw; :data:`LIVE_TIEBREAK_ORDER` -- most laps, then
+  total time -- is the order ``EngineDataSource.standings`` applies
+  while a ride is not yet FINISHED.
+
 - DNF entries keep all laps/cards (spec §6 "DNF keeps all laps/cards,
   listed and marked"), appear after every ACTIVE entry, and never
   displace an ACTIVE placing. Their places continue from
@@ -73,6 +79,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_TIEBREAK_ORDER",
+    "LIVE_TIEBREAK_ORDER",
     "EntryResult",
     "Placed",
     "TieBreak",
@@ -102,12 +109,24 @@ class TieBreak(Enum):
     HIGH_CARD_DRAW = "high_card"
 
 
-# R-14's default order, and :func:`rank`'s own default argument: ① most
-# laps ② shortest total time ③ high-card draw (venue event, flags).
+# Phase 3's stored default, and :func:`rank`'s own default argument:
+# the venue's high-card draw first -- it resolves nothing in code, so a
+# finished hand tie is flagged "draw required" (R-43), never silently
+# ordered by laps/time, and the criteria after it are unreachable at
+# that position. A ride's stored order overrides it per ride (R-14).
 DEFAULT_TIEBREAK_ORDER: tuple[TieBreak, ...] = (
+    TieBreak.HIGH_CARD_DRAW,
     TieBreak.MOST_LAPS,
     TieBreak.TOTAL_TIME,
-    TieBreak.HIGH_CARD_DRAW,
+)
+
+# The live board's order (Phase 3): while a ride is not FINISHED,
+# ``EngineDataSource.standings`` ranks by most laps, then shortest
+# total time -- the venue draw arbitrates the finished result only --
+# so a hand tie never leaves the live board as an unresolved draw.
+LIVE_TIEBREAK_ORDER: tuple[TieBreak, ...] = (
+    TieBreak.MOST_LAPS,
+    TieBreak.TOTAL_TIME,
 )
 
 
@@ -278,7 +297,8 @@ def rank(
     Args:
         results: The ride's finished snapshots, in any order.
         order: Tie-break criteria in priority sequence; defaults to
-            ``(MOST_LAPS, TOTAL_TIME, HIGH_CARD_DRAW)`` (R-14).
+            :data:`DEFAULT_TIEBREAK_ORDER` -- the high-card draw first,
+            so a hand tie flags for the venue (R-14).
 
     Returns:
         One :class:`Placed` per result, best hand first, DNFs last.
@@ -326,7 +346,8 @@ def rank_by_kind(
     Args:
         results: The ride's finished snapshots, in any order.
         order: Tie-break criteria in priority sequence; defaults to
-            ``(MOST_LAPS, TOTAL_TIME, HIGH_CARD_DRAW)`` (R-14).
+            :data:`DEFAULT_TIEBREAK_ORDER` -- the high-card draw first,
+            so a hand tie flags for the venue (R-14).
 
     Returns:
         ``(teams, solo)`` -- each a :func:`rank` output over that

@@ -119,7 +119,7 @@ class RecordingSetupView:
         self.calls.append(("show_tiebreak_order", (order,)))
 
     def show_logo(self, logo_path: Path | None) -> None:
-        """Record logo_picker's rendered path (D2 preload)."""
+        """Record the logo column's rendered path (D2 preload)."""
         self.calls.append(("show_logo", (logo_path,)))
 
     def set_structure_enabled(self, *, enabled: bool) -> None:
@@ -185,8 +185,9 @@ def _form(**overrides: object) -> SetupFormValues:
 
 # The stored ride an Edit Ride dialog (D2) opens onto. Every field is
 # deliberately different from a New Ride's defaults (DEFAULT_DECK_COUNT
-# / DEFAULT_LAP_KM / the XRC radio defaults), so a preload that quietly
-# fell back to the defaults would disagree with it.
+# / DEFAULT_LAP_KM / the XRC radio defaults / the high-card-first
+# tie-break default), so a preload that quietly fell back to the
+# defaults would disagree with it.
 def _stored_config(**overrides: object) -> RideConfig:
     """Build the ride config an Edit Ride dialog preloads from."""
     kwargs: dict[str, object] = {
@@ -205,7 +206,7 @@ def _stored_config(**overrides: object) -> RideConfig:
         "deck_count": 2,
         "jokers_per_deck": 4,
         "max_cards": 5,
-        "tiebreak_order": ("high_card", "laps", "total_time"),
+        "tiebreak_order": ("laps", "total_time", "high_card"),
         "hold_short_laps": True,
         **overrides,
     }
@@ -230,7 +231,7 @@ _PRELOAD_CALLS: tuple[tuple[str, tuple[object, ...]], ...] = (
     ("show_deck_count", (2,)),
     ("show_jokers_per_deck", (4,)),
     ("show_card_cap", (5,)),
-    ("show_tiebreak_order", (("high_card", "laps", "total_time"),)),
+    ("show_tiebreak_order", (("laps", "total_time", "high_card"),)),
     ("show_logo", (None,)),
 )
 _PRELOAD_SEAMS = tuple(name for name, _args in _PRELOAD_CALLS)
@@ -363,7 +364,7 @@ def test_setup_presenter_init_given_no_config_leaves_the_preload_seams_uncalled(
 
 
 def test_setup_presenter_init_given_a_stored_logo_preloads_its_path() -> None:
-    """D2: logo_picker opens on the ride's own logo, when it has one."""
+    """D2: the logo column opens on the ride's own logo."""
     view = RecordingSetupView()
     logo = Path(tempfile.gettempdir()) / "gorba-logo.png"
 
@@ -559,7 +560,7 @@ def test_on_submit_combines_event_date_and_start_time_into_planned_start() -> No
 
 
 def test_on_submit_given_a_logo_path_carries_it_onto_the_config() -> None:
-    """logo_picker's chosen path round-trips onto the built config."""
+    """A staged logo path round-trips onto the built config."""
     presenter = SetupPresenter(RecordingSetupView(), Roster())
     path = Path(tempfile.gettempdir()) / "gorba-logo.png"
 
