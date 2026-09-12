@@ -7,7 +7,7 @@ that *applies* those rules to a real menu bar. This module pins the
 binder headlessly:
 
 1. ``enablement_table`` produces one enable/disable verdict per routed
-   menu item id (47 ids, one per ``commands.ROUTE_TABLE`` row), and
+   menu item id (48 ids, one per ``commands.ROUTE_TABLE`` row), and
    the verdicts agree with ``commands.is_route_enabled`` for every
    generated ``RideState`` (a Hypothesis property).
 2. The correction rows' verdicts are parametrized over the four ride
@@ -24,6 +24,8 @@ menu item -- lives in ``tests/functional/test_entry_detail_actions.py``
 (and the bootstrap's ``set_state`` seam), mirroring the split
 ``test_commands.py``/``test_menu_coverage.py`` already use.
 """
+
+import dataclasses
 
 import pytest
 from hypothesis import given
@@ -66,7 +68,8 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
         held_cards=1,
         audit_rows=1,
         entry_has_cards=True,
-        export_exists=True,
+        html_exported=True,
+        pdf_exported=True,
     )
 
 
@@ -81,7 +84,8 @@ def _state_strategy() -> st.SearchStrategy[commands.RideState]:
         held_cards=st.integers(min_value=0, max_value=5),
         audit_rows=st.integers(min_value=0, max_value=5),
         entry_has_cards=st.booleans(),
-        export_exists=st.booleans(),
+        html_exported=st.booleans(),
+        pdf_exported=st.booleans(),
     )
 
 
@@ -225,6 +229,60 @@ def test_enablement_table_void_card_needs_the_entry_to_have_cards(status: RideSt
 
     assert menu_state.enablement_table(no_cards)[ids.MI_VOID_CARD] is False
     assert menu_state.enablement_table(has_cards)[ids.MI_VOID_CARD] is allowed
+
+
+def test_enablement_table_standings_needs_no_ride() -> None:
+    """Part D: Standings is always enabled -- no ride needed."""
+    state = commands.RideState(status=RideStatus.DRAFT, ride_open=False)
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_STANDINGS] is True
+
+
+@pytest.mark.parametrize(
+    ("html_exported", "pdf_exported", "expected_html", "expected_pdf"),
+    [
+        (False, False, False, False),
+        (True, False, True, False),
+        (False, True, False, True),
+        (True, True, True, True),
+    ],
+    ids=["none", "html_only", "pdf_only", "both"],
+)
+def test_enablement_table_preview_rows_follow_their_own_format_export(  # noqa: PLR0913 -- the decision-table rows
+    *, html_exported: bool, pdf_exported: bool, expected_html: bool, expected_pdf: bool
+) -> None:
+    """Part D: each Preview row reads only its own export flag."""
+    state = dataclasses.replace(
+        _baseline_state(RideStatus.FINISHED),
+        html_exported=html_exported,
+        pdf_exported=pdf_exported,
+    )
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_PREVIEW_HTML_BROWSER] is expected_html
+    assert table[ids.MI_PREVIEW_PDF_BROWSER] is expected_pdf
+
+
+@pytest.mark.parametrize(
+    "status",
+    [RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.REOPENED],
+    ids=lambda status: status.value,
+)
+def test_enablement_table_preview_rows_stay_disabled_before_finish(status: RideStatus) -> None:
+    """Part D: a recorded export never enables Preview outside FINISHED.
+
+    A ride reopened mid-export keeps its recorded paths but both
+    Preview rows stay off until the ride finishes again.
+    """
+    state = _baseline_state(status)
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_PREVIEW_HTML_BROWSER] is False
+    assert table[ids.MI_PREVIEW_PDF_BROWSER] is False
 
 
 # ------------------------------------------------- apply_to_menubar

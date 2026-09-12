@@ -2,12 +2,13 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 40 menu rows reaches ("Opens / does"), and when it is allowed to
+the 41 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 40 :class:`MenuRoute` rows
+once, so both jobs read off the same 41 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
-ride's stored config, set in Ride Setup.)
+ride's stored config, set in Ride Setup; its single Preview row
+split per format -- HTML and PDF -- in Part D.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -89,8 +90,11 @@ class Enablement:
         min_held_cards: Review Held Cards' "held cards > 0".
         min_audit_rows: Audit Trail's "≥1 audit row".
         requires_entry_has_cards: Void Card's "entry has cards".
-        requires_export_exists: Preview in Browser's "an export
-            exists".
+        requires_html_export: Preview HTML in Browser's "an HTML
+            export exists".
+        requires_pdf_export: Preview PDF in Browser's "a PDF export
+            exists" (either PDF writer -- report or poster -- records
+            it).
     """
 
     allowed_states: frozenset[RideStatus] | None = None
@@ -101,7 +105,8 @@ class Enablement:
     min_held_cards: int = 0
     min_audit_rows: int = 0
     requires_entry_has_cards: bool = False
-    requires_export_exists: bool = False
+    requires_html_export: bool = False
+    requires_pdf_export: bool = False
 
 
 ALWAYS = Enablement()
@@ -457,14 +462,17 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="focus_review_panel",
         enabled_when=Enablement(min_held_cards=1),  # "held cards > 0 (shows count)"
     ),
-    # --- Results: 6 rows ---
+    # --- Results: 7 rows ---
     MenuRoute(
         menu="Results",
         label="Standings",
         ids=("mi_standings",),
         kind=TargetKind.DIALOG,
         target=ids.RESULTS_DLG,
-        enabled_when=Enablement(requires_ride_open=True),  # "ride open (live while running)"
+        # Part D: "always" -- with no ride open the dialog opens on the
+        # empty-state source and its export buttons stay disabled
+        # (EmptyDataSource.ride_status() -> DRAFT).
+        enabled_when=ALWAYS,
     ),
     MenuRoute(
         menu="Results",
@@ -500,13 +508,26 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
     ),
     MenuRoute(
         menu="Results",
-        label="Preview in Browser",
-        ids=("mi_preview_browser",),
+        label="Preview HTML in Browser",
+        ids=("mi_preview_html_browser",),
         kind=TargetKind.COMMAND,  # opens the external, OS-default browser
-        target="preview_in_browser",
-        # "an export exists", and only for a FINISHED ride -- Part D
-        # gates every Results export on FINISHED.
-        enabled_when=Enablement(allowed_states=_FINISHED, requires_export_exists=True),
+        target="preview_html_browser",
+        # "an HTML export exists", and only for a FINISHED ride -- Part
+        # D gates every Results export on FINISHED. The recorded path
+        # is in-memory: a restart disables the row until the next
+        # export.
+        enabled_when=Enablement(allowed_states=_FINISHED, requires_html_export=True),
+    ),
+    MenuRoute(
+        menu="Results",
+        label="Preview PDF in Browser",
+        ids=("mi_preview_pdf_browser",),
+        kind=TargetKind.COMMAND,  # opens the external, OS-default browser
+        target="preview_pdf_browser",
+        # Both PDF writers (the full-results report and the podium
+        # poster) record the PDF path, so either export enables the
+        # row.
+        enabled_when=Enablement(allowed_states=_FINISHED, requires_pdf_export=True),
     ),
     # --- View: 1 row, 8 ids (W13: the theme trio left the View menu;
     # the Settings appearance radios are the single theme surface) ---
@@ -606,7 +627,10 @@ class RideState:
         audit_rows: How many audit rows the open ride has.
         entry_has_cards: Whether the entry Void Card targets holds
             any cards.
-        export_exists: Whether a results export has been written.
+        html_exported: Whether an HTML results export has been
+            written this session.
+        pdf_exported: Whether a PDF results export (the report or the
+            podium poster) has been written this session.
         teams_allowed: Whether the open ride's entry_mode is mixed
             (teams exist to edit).
     """
@@ -618,7 +642,8 @@ class RideState:
     held_cards: int = 0
     audit_rows: int = 0
     entry_has_cards: bool = False
-    export_exists: bool = False
+    html_exported: bool = False
+    pdf_exported: bool = False
     teams_allowed: bool = False
 
 
@@ -637,7 +662,8 @@ def is_route_enabled(route: MenuRoute, state: RideState) -> bool:
         and (not rule.requires_ride_open or state.ride_open)
         and (not rule.teams_allowed or state.teams_allowed)
         and (not rule.requires_entry_has_cards or state.entry_has_cards)
-        and (not rule.requires_export_exists or state.export_exists)
+        and (not rule.requires_html_export or state.html_exported)
+        and (not rule.requires_pdf_export or state.pdf_exported)
         and state.crossings >= rule.min_crossings
         and state.held_cards >= rule.min_held_cards
         and state.audit_rows >= rule.min_audit_rows

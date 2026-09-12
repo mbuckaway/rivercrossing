@@ -3,14 +3,21 @@ r"""PDF export tests (P7, E6.3.1 / P8, E6.3.2) -- tests first, per R-70.
 
 Pins spec §8b's render contract: ``pdfexport.render(ride, placed,
 opts, path)`` writes a print-ready PDF whose sections and flags mirror
-the HTML export (R-63) -- podium, top ten, optional laps/time boards,
-full field, show/hide times, all cards drawn -- with the retired
-designs' print geometry ([5a]-[5c]): Letter/A4, 0.58in margins, footer
-rule + "Page n of N" on every page, a page-2+ running title, Barlow +
-Barlow Condensed headings + DejaVu Sans suit glyphs, and the
-ink/steel/deep-steel tokens. It also pins P8's ``podium_poster``
-sibling ([5d]): one celebratory Letter page (A4 via ``letter=False``),
-the top-3 placings as large podium cards, hand prose (D1, not
+the HTML export (R-63) -- per-kind podiums (3/3 on a team event, 3 on
+a solo one), per-kind top lists (5/5 or 10), the laps boards (5/5 or
+10), the flat ten-row time board, and the full field under its
+umbrella heading with "Teams"/"Solo riders" subsections; show/hide
+times and all-cards-drawn still switch -- with the retired designs'
+print geometry ([5a]-[5c]): Letter/A4, 0.58in margins, footer rule +
+"Page n of N" on every page, a page-2+ running title, Barlow + Barlow
+Condensed headings + DejaVu Sans suit glyphs, and the
+ink/steel/deep-steel tokens. Teams never show a plate at any of the
+six render sites (podium card, top-list column, laps row, time row,
+full-field row, poster card), mirroring the HTML's own rule. It also
+pins P8's ``podium_poster`` sibling ([5d]): one celebratory Letter
+page (A4 via ``letter=False``) -- a team event's two stacked compact
+sections ("Teams" top 3 then "Solo riders" top 3, plate-less team
+cards), a solo event's top five at full sizing -- hand prose (D1, not
 ALL-CAPS), and a credit-line footer with no page count.
 
 Determinism (R-62, D14) is the load-bearing claim: identical inputs
@@ -20,11 +27,12 @@ files, and the committed goldens at
 ``epic-2026-podium.pdf`` regenerate byte-for-byte from this renderer
 (the honest regeneration pattern gen_rank_vectors.py established).
 pypdf reads the bytes back to prove page count, page size, section
-presence/absence under each flag, DNF marking, the podium's top-3
-plates and the per-page footer.
+presence/absence under each flag, DNF marking, the per-kind top-3
+cards and the per-page footer.
 """
 
 import base64
+import io
 import os
 import re
 import zlib
@@ -47,7 +55,7 @@ from pypdf import PdfReader
 from rivercrossing import pdfexport
 from rivercrossing.cards import Card, Rank, Suit
 from rivercrossing.hands import best_hand
-from rivercrossing.htmlexport import ExportOptions
+from rivercrossing.htmlexport import ExportOptions, build_payload
 from rivercrossing.standings import EntryResult, Placed
 
 if TYPE_CHECKING:
@@ -116,9 +124,41 @@ def _placed_three() -> tuple[Placed, ...]:
 
 
 def _placed_mixed() -> tuple[Placed, ...]:
-    """Five placed entries: the podium trio plus a DNF and a no-show."""
+    """Eight placed entries in the app's own order: teams, then solo.
+
+    Per-kind places -- three teams ranked 1-3, then five solo riders
+    ranked 1-5 (a DNF and a no-show at the tail), exactly the sequence
+    ``rank_by_kind`` hands the exporters.
+    """
     return (
-        *_placed_three(),
+        Placed(
+            place=1,
+            result=_entry("127", "Dirt Dynamos", 10, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        Placed(
+            place=2,
+            result=_entry("64", "Fat Tire Four", 9, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        Placed(
+            place=3,
+            result=_entry("33", "Mud Slingers", 8, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        ),
+        Placed(
+            place=1,
+            result=_entry("88", "Moss Ridge Riders", 11),
+            tie_note=None,
+            draw_required=False,
+        ),
+        Placed(
+            place=2, result=_entry("7", "Luca Ferrari", 10), tie_note=None, draw_required=False
+        ),
+        Placed(place=3, result=_entry("55", "Ana Souza", 9), tie_note=None, draw_required=False),
         Placed(
             place=4,
             result=_entry("94", "Ted Novak", 4, dnf=True),
@@ -126,6 +166,47 @@ def _placed_mixed() -> tuple[Placed, ...]:
             draw_required=False,
         ),
         Placed(place=5, result=_entry("1", "No Show", 0), tie_note=None, draw_required=False),
+    )
+
+
+def _team_field(teams: int, solo: int) -> tuple[Placed, ...]:
+    """Build a per-kind ranked field: *teams* rows, then *solo*.
+
+    Team plates are 600+ and solo plates 500+, so every plate assertion
+    names its own kind; laps fall with place so the boards' order is
+    deterministic.
+    """
+    entries = [
+        Placed(
+            place=index + 1,
+            result=_entry(str(600 + index), f"Team {index + 1}", 12 - index, kind="team"),
+            tie_note=None,
+            draw_required=False,
+        )
+        for index in range(teams)
+    ]
+    entries += [
+        Placed(
+            place=index + 1,
+            result=_entry(str(500 + index), f"Solo {index + 1}", 11 - index),
+            tie_note=None,
+            draw_required=False,
+        )
+        for index in range(solo)
+    ]
+    return tuple(entries)
+
+
+def _ranked_solo(count: int) -> tuple[Placed, ...]:
+    """Build *count* solo entries with laps falling from 20."""
+    return tuple(
+        Placed(
+            place=index + 1,
+            result=_entry(str(500 + index), f"Solo {index + 1}", 20 - index),
+            tie_note=None,
+            draw_required=False,
+        )
+        for index in range(count)
     )
 
 
@@ -147,6 +228,22 @@ def _text(pdf_path: Path) -> str:
     """Extract every page's text, joined with newlines."""
     reader = PdfReader(str(pdf_path))
     return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def _section(text: str, heading: str, until: str | None = None) -> str:
+    """Return the text from *heading* up to the next *until* heading.
+
+    Extraction follows drawing order, so a slice keeps each assertion
+    scoped to its own section -- a plate absent from the Teams table
+    cannot be satisfied by the Solo table's own plate below it.
+    """
+    start = text.find(heading)
+    assert start != -1, f"heading not found: {heading!r}"
+    if until is None:
+        return text[start:]
+    stop = text.find(until, start + len(heading))
+    assert stop != -1, f"following heading not found: {until!r}"
+    return text[start:stop]
 
 
 # --------------------------------------------------------- R-62 bytes
@@ -307,34 +404,35 @@ def test_render_full_field_off_omits_full_field_section(tmp_path: Path) -> None:
 
 
 def test_render_full_field_splits_into_teams_then_solo_sections(tmp_path: Path) -> None:
-    """Phase 3: the Full field labels its Teams then Solo sections."""
+    """The umbrella heading stays; the subsections are titled."""
     text = _text(_render(tmp_path, build_placed(9), golden_opts()))
 
-    assert "TEAMS" in text
-    assert "SOLO" in text
-    assert text.find("TEAMS") < text.find("SOLO")
+    field = _section(text, "Full field")
+    assert "Teams" in field
+    assert "Solo riders" in field
+    assert field.find("Teams") < field.find("Solo riders")
 
 
 def test_render_full_field_solo_only_field_omits_the_teams_section(tmp_path: Path) -> None:
-    """A solo-only field renders one section: SOLO, never TEAMS."""
+    """A solo-only field renders one subsection: Solo riders."""
     opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
     solo_only = _placed_three()[:2]  # two solo entries, no team
 
     text = _text(_render(tmp_path, solo_only, opts))
 
-    assert "SOLO" in text
-    assert "TEAMS" not in text
+    assert "Solo riders" in text
+    assert "Teams" not in text
 
 
 def test_render_full_field_team_only_field_omits_the_solo_section(tmp_path: Path) -> None:
-    """A team-only field renders one section: TEAMS, never SOLO."""
+    """A team-only field renders one subsection: Teams."""
     opts = ExportOptions(full_field=True, laps_board=False, time_board=False)
     team_only = _placed_three()[2:]  # the one team entry
 
     text = _text(_render(tmp_path, team_only, opts))
 
-    assert "TEAMS" in text
-    assert "SOLO" not in text
+    assert "Teams" in text
+    assert "Solo riders" not in text
 
 
 @pytest.mark.parametrize(
@@ -386,13 +484,19 @@ def test_render_all_cards_on_includes_draw_order_rows(tmp_path: Path) -> None:
 # -------------------------------------------------------------- content
 
 
-def test_render_podium_shows_top_three_plates(tmp_path: Path) -> None:
-    """The podium lists the top-3 plates with their entry names."""
-    text = _text(_render(tmp_path, _placed_three(), golden_opts()))
+def test_render_podium_shows_each_kinds_top_three_with_plate_less_team_cards(
+    tmp_path: Path,
+) -> None:
+    """Team event: a teams podium (no plate) then a solo podium."""
+    text = _text(_render(tmp_path, _team_field(4, 4), golden_opts()))
 
-    assert "#88 Moss Ridge Riders" in text
-    assert "#7 Luca Ferrari" in text
-    assert "#127 Dirt Dynamos" in text
+    teams = _section(text, "Best hands — teams", "Best hands — solo riders")
+    assert "Team 3" in teams
+    assert "Team 4" not in teams
+    assert "#600" not in teams
+    solo = _section(text, "Best hands — solo riders", "Top teams")
+    assert "#500 Solo 1" in solo
+    assert "Solo 4" not in solo
 
 
 def test_render_marks_dnf_entries_in_full_field(tmp_path: Path) -> None:
@@ -456,12 +560,145 @@ def test_render_meta_line_formats_ride_fields(tmp_path: Path) -> None:
 
 
 def test_render_credits_and_generated_footer_text(tmp_path: Path) -> None:
-    """The footer names the organizer/scorer and the generated stamp."""
+    """The footer names the credits and the shared stamp."""
     text = _text(_render(tmp_path, _placed_three(), golden_opts()))
 
     assert "Organizer: GORBA — J. Marsden · Scorer: D. Whitfield" in text
-    assert "generated 20:07, Sept 20 2026" in text
+    assert "Generated 20:07, Sept 20 2026" in text
     assert "RiverCrossing" in text
+
+
+def test_render_team_event_top_lists_split_per_kind_without_a_team_plate_column(
+    tmp_path: Path,
+) -> None:
+    """Top teams (5, no Plate column) then Top solo riders (5)."""
+    text = _text(_render(tmp_path, _team_field(6, 6), golden_opts()))
+
+    teams = _section(text, "Top teams", "Top solo riders")
+    assert "Team 5" in teams
+    assert "Team 6" not in teams
+    assert "#600" not in teams
+    assert "Plate" not in teams
+    solo = _section(text, "Top solo riders", "Most laps")
+    assert "Solo 5" in solo
+    assert "Solo 6" not in solo
+    assert "500 Solo 1" in solo
+
+
+def test_render_team_event_laps_boards_split_per_kind(tmp_path: Path) -> None:
+    """Most laps — teams (no plate) then — solo riders (plate)."""
+    text = _text(_render(tmp_path, _team_field(6, 6), golden_opts()))
+
+    teams = _section(text, "Most laps — teams", "Most laps — solo riders")
+    assert "Team 5" in teams
+    assert "Team 6" not in teams
+    assert "#600" not in teams
+    solo = _section(text, "Most laps — solo riders", "Fastest — laps then time")
+    assert "Solo 5" in solo
+    assert "Solo 6" not in solo
+    assert "#500" in solo
+
+
+def test_render_team_event_time_board_stays_flat_and_hides_team_plates(
+    tmp_path: Path,
+) -> None:
+    """One flat board; a team row shows no plate."""
+    text = _text(_render(tmp_path, _team_field(6, 6), golden_opts()))
+
+    fastest = _section(text, "Fastest — laps then time", "Full field")
+    assert "Team 1" in fastest
+    assert "#600" not in fastest
+    assert "#500 Solo 1" in fastest
+
+
+def test_render_team_event_full_field_teams_table_drops_plate_and_type(
+    tmp_path: Path,
+) -> None:
+    """The Teams table is Place|Entry|Laps|times|Cards|Hand."""
+    text = _text(_render(tmp_path, _team_field(4, 4), golden_opts()))
+
+    teams = _section(text, "Teams", "Solo riders")
+    assert "Team 4" in teams
+    assert "#600" not in teams
+    assert "Type" not in teams
+    assert "Cards" in teams
+    assert "500 Solo 1" in _section(text, "Solo riders")
+
+
+def test_render_team_field_row_draws_the_inline_logo_when_the_row_has_one(
+    tmp_path: Path,
+) -> None:
+    """A team full-field row draws its small inline logo."""
+    logo = _data_uri(_logo_png(tmp_path))
+    payload = build_payload(
+        build_ride(),
+        _team_field(1, 0),
+        golden_opts(),
+        "Generated 20:07, Sept 20 2026",
+        team_logos={"600": logo},
+    )
+    report = pdfexport._ReportPDF(
+        build_ride(), golden_opts(), letter=True, created_at=FIXED_CREATED
+    )
+    report.add_page()
+    widths = pdfexport._team_field_widths(show_times=True, content=report._content_width())
+
+    report._team_field_row(widths, payload.results[0])
+
+    page = PdfReader(io.BytesIO(bytes(report.output()))).pages[0]
+    assert len(page.images) == 1
+
+
+def test_render_team_field_row_draws_no_image_when_the_row_has_no_logo() -> None:
+    """A row without a logo renders text only."""
+    payload = build_payload(
+        build_ride(), _team_field(1, 0), golden_opts(), "Generated 20:07, Sept 20 2026"
+    )
+    report = pdfexport._ReportPDF(
+        build_ride(), golden_opts(), letter=True, created_at=FIXED_CREATED
+    )
+    report.add_page()
+    widths = pdfexport._team_field_widths(show_times=True, content=report._content_width())
+
+    report._team_field_row(widths, payload.results[0])
+
+    page = PdfReader(io.BytesIO(bytes(report.output()))).pages[0]
+    assert len(page.images) == 0
+
+
+def test_render_solo_event_keeps_the_single_section_headings(tmp_path: Path) -> None:
+    """A solo field: Top ten, Most laps, Solo riders."""
+    text = _text(_render(tmp_path, _ranked_solo(12), golden_opts()))
+
+    assert "Best hands — top 3" in text
+    assert "Top ten" in text
+    assert "Most laps — solo riders" not in text
+    assert "Top teams" not in text
+    assert "Best hands — teams" not in text
+    assert "Full field" in text
+    assert "Solo riders" in text
+    assert "Teams" not in text
+
+
+def test_render_solo_event_top_lists_and_laps_board_cap_at_ten(tmp_path: Path) -> None:
+    """A solo field keeps the HTML's ten-row top list and laps board."""
+    text = _text(_render(tmp_path, _ranked_solo(12), golden_opts()))
+
+    top = _section(text, "Top ten", "Most laps")
+    assert "Solo 10" in top
+    assert "Solo 11" not in top
+    board = _section(text, "Most laps", "Fastest — laps then time")
+    assert "Solo 10" in board
+    assert "Solo 11" not in board
+
+
+def test_render_time_board_lists_ten_rows_mirroring_the_html(tmp_path: Path) -> None:
+    """The fastest board keeps the HTML's ten rows, not five."""
+    text = _text(_render(tmp_path, _ranked_solo(12), golden_opts()))
+
+    fastest = _section(text, "Fastest — laps then time", "Full field")
+    assert "Solo 10" in fastest
+    assert "Solo 11" not in fastest
 
 
 # ------------------------------------------------------- poster (5d)
@@ -500,21 +737,85 @@ def test_podium_poster_letter_false_emits_a4_page(tmp_path: Path) -> None:
     assert float(page.mediabox.height) == pytest.approx(841.89, abs=0.01)
 
 
-def test_podium_poster_shows_top_three_plates_and_names(tmp_path: Path) -> None:
-    """The poster lists the top-3 plates with their entry names."""
-    text = _text(_poster(tmp_path, _placed_mixed()))
+def test_podium_poster_shows_each_kinds_top_three_with_plate_less_team_cards(
+    tmp_path: Path,
+) -> None:
+    """Team cards show no plate; solo cards keep theirs."""
+    text = _text(_poster(tmp_path, _team_field(4, 4)))
 
-    assert "#88 Moss Ridge Riders" in text
-    assert "#7 Luca Ferrari" in text
-    assert "#127 Dirt Dynamos" in text
+    teams = _section(text, "Teams", "Solo riders")
+    assert "Team 3" in teams
+    assert "Team 4" not in teams
+    assert "#600" not in teams
+    solo = _section(text, "Solo riders")
+    assert "#500 Solo 1" in solo
+    assert "Solo 4" not in solo
 
 
-def test_podium_poster_omits_fourth_place(tmp_path: Path) -> None:
-    """Place 4 does not appear on the one-page poster."""
-    text = _text(_poster(tmp_path, _placed_mixed()))
+def test_podium_poster_team_event_stacks_teams_over_solo_riders(tmp_path: Path) -> None:
+    """A team event's poster carries two titled sections."""
+    text = _text(_poster(tmp_path, build_placed()))
 
-    assert "Ted Novak" not in text
-    assert "#94" not in text
+    assert "Teams" in text
+    assert "Solo riders" in text
+    assert text.find("Teams") < text.find("Solo riders")
+
+
+def test_podium_poster_empty_field_renders_one_page(tmp_path: Path) -> None:
+    """A zero-entry field still renders the poster's cover, one page."""
+    out = _poster(tmp_path, ())
+
+    text = _text(out)
+    assert "GORBA EPIC & MTB Festival 2026" in text
+    assert len(PdfReader(str(out)).pages) == 1
+
+
+def test_podium_poster_team_only_field_omits_the_solo_riders_section(
+    tmp_path: Path,
+) -> None:
+    """A team-only event's poster renders the Teams section alone."""
+    text = _text(_poster(tmp_path, _team_field(3, 0)))
+
+    assert "Teams" in text
+    assert "Team 3" in text
+    assert "Solo riders" not in text
+
+
+def test_podium_poster_team_event_content_fits_one_letter_page() -> None:
+    """Six compact cards and two headings end above the footer.
+
+    The measured fit, not just a page count: the last card's baseline
+    must leave the footer gap clear, or the poster is clipped.
+    """
+    poster = pdfexport._PosterPDF(
+        build_ride(), letter=True, created_at=FIXED_CREATED, logo_path=None
+    )
+
+    poster.build(build_placed())
+
+    assert poster.page_no() == 1
+    assert poster.get_y() <= poster.h - pdfexport._FOOTER_GAP_IN
+
+
+def test_podium_poster_solo_event_shows_the_top_five_solos(tmp_path: Path) -> None:
+    """A solo poster lists five solos, one page."""
+    out = _poster(tmp_path, _ranked_solo(7))
+
+    text = _text(out)
+    assert "#500 Solo 1" in text
+    assert "#504 Solo 5" in text
+    assert "Solo 6" not in text
+    assert len(PdfReader(str(out)).pages) == 1
+
+
+def test_podium_poster_omits_the_fourth_place_of_each_kind(tmp_path: Path) -> None:
+    """Place 4 of either kind does not appear on the one-page poster."""
+    text = _text(_poster(tmp_path, _team_field(4, 4)))
+
+    assert "Team 4" not in text
+    assert "Solo 4" not in text
+    assert "#603" not in text
+    assert "#503" not in text
 
 
 def test_podium_poster_shows_hand_prose_not_all_caps(tmp_path: Path) -> None:
@@ -554,13 +855,22 @@ def test_podium_poster_card_faces_text_present(tmp_path: Path) -> None:
 def test_podium_poster_footer_shows_credits_and_generated_no_page_count(
     tmp_path: Path,
 ) -> None:
-    """Footer names organizer/scorer and stamp; no "Page n of N"."""
+    """Footer names the credits and the shared stamp."""
     text = _text(_poster(tmp_path, _placed_three()))
 
     assert "Organizer: GORBA — J. Marsden · Scorer: D. Whitfield" in text
-    assert "generated 20:07, Sept 20 2026" in text
+    assert "Generated 20:07, Sept 20 2026" in text
     assert "RiverCrossing" in text
     assert "Page 1 of" not in text
+
+
+def test_podium_poster_omits_the_dnf_tail_of_the_field(tmp_path: Path) -> None:
+    """Solo places 4-5 stay off the poster."""
+    text = _text(_poster(tmp_path, _placed_mixed()))
+
+    assert "Ted Novak" not in text
+    assert "No Show" not in text
+    assert "#94" not in text
 
 
 def test_podium_poster_identical_inputs_produce_identical_bytes(tmp_path: Path) -> None:
@@ -690,6 +1000,26 @@ def test_raw_stream_span_body_without_line_ending_still_replaces() -> None:
     assert replacement == length_entry + content + b"\nendstream"
 
 
+def test_raw_stream_span_without_a_length_entry_falls_back_to_the_keyword() -> None:
+    """A dict with no /Length resolves the body via "endstream" (T-3).
+
+    Every fpdf2 stream dict carries /Length, but the span logic must
+    still inflate a document whose dict omits it.
+    """
+    content = b"BT (uncompressed text) Tj ET"
+    pdf = (
+        b"1 0 obj\n"
+        b"<<\n/Filter /FlateDecode\n"
+        b">>\nstream\n" + zlib.compress(content) + b"\nendstream\nendobj\n"
+    )
+    match = re.search(rb"stream\r?\n", pdf)
+
+    span = pdfexport._raw_stream_span(pdf, match)
+
+    assert span is not None
+    assert span[3] == b"<<\n>>\nstream\n" + content + b"\nendstream"
+
+
 @pytest.mark.parametrize(
     ("kind", "sex", "name", "laps", "expected"),
     [
@@ -763,24 +1093,6 @@ def test_poster_card_text_embeds_rank_letter_and_suit_glyph(rank: Rank, suit: Su
 
 
 @pytest.mark.parametrize(
-    ("seconds", "expected"),
-    [
-        (0.0, "0:00"),
-        (59.0, "0:59"),
-        (60.0, "1:00"),
-        (3599.0, "59:59"),
-        (3600.0, "1:00:00"),
-        (3601.0, "1:00:01"),
-        (1679.0, "27:59"),
-        (21161.0, "5:52:41"),
-    ],
-)
-def test_format_duration_formats_seconds_as_clock_text(seconds: float, expected: str) -> None:
-    """Duration text matches the golden pages' clock format."""
-    assert pdfexport._format_duration(seconds) == expected
-
-
-@pytest.mark.parametrize(
     ("card", "expected"),
     [
         (Card(Rank.NINE, Suit.SPADES), "9♠"),
@@ -797,12 +1109,12 @@ def test_card_text_renders_rank_suit_and_joker(card: Card, expected: str) -> Non
 
 def test_hand_label_is_blank_for_a_no_card_hand() -> None:
     """The empty-hand guard displays "" -- pinned (like the HTML)."""
-    assert pdfexport._hand_label(best_hand(())) == ""
+    assert pdfexport._hand_label("") == ""
 
 
 def test_hand_label_uppercases_the_prose_name() -> None:
     """Hands render uppercase in the PDF, matching the HTML's CSS."""
-    assert pdfexport._hand_label(best_hand(_FIVE_CARDS)) == "THREE OF A KIND — NINES"
+    assert pdfexport._hand_label("Three of a Kind — Nines") == "THREE OF A KIND — NINES"
 
 
 @pytest.mark.parametrize(
@@ -832,26 +1144,9 @@ def test_cards_cell_clips_cards_wider_than_the_column() -> None:
     )
     report.add_page()
 
-    report._cards_cell(_FIVE_CARDS, 0.05)
+    report._cards_cell((("9", "s"), ("9", "d"), ("9", "c"), ("K", "h"), ("2", "s")), 0.05)
 
     assert report.get_x() == report.l_margin
-
-
-def _parse_duration(text: str) -> int:
-    """Parse clock text back to whole seconds (test helper)."""
-    parts = [int(part) for part in text.split(":")]
-    seconds = parts[-1] + 60 * parts[-2]
-    if len(parts) == 3:
-        seconds += 3600 * parts[0]
-    return seconds
-
-
-@given(seconds=st.integers(min_value=0, max_value=86399))
-def test_format_duration_round_trips_whole_seconds(seconds: int) -> None:
-    """Property: clock text parses back to the same seconds."""
-    rendered = pdfexport._format_duration(float(seconds))
-
-    assert _parse_duration(rendered) == seconds
 
 
 # ------------------------------------------------- logo seam (E6.4.2)
@@ -865,6 +1160,11 @@ def _logo_png(tmp_path: Path) -> Path:
     logo_file = tmp_path / "logo.png"
     logo_file.write_bytes(logo)
     return logo_file
+
+
+def _data_uri(path: Path) -> str:
+    """Return the PNG at *path* as the payload's own logo data URI."""
+    return "data:image/png;base64," + base64.b64encode(path.read_bytes()).decode("ascii")
 
 
 def test_render_with_logo_path_writes_a_valid_pdf(tmp_path: Path) -> None:

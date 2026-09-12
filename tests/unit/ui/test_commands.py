@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 40-row route table,
+``commands.py`` imports no ``wx`` at all, so its 41-row route table,
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -47,7 +47,7 @@ ROUTE_COUNTS_BY_MENU = (
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
     ("Riders", 5),  # D4: mi_add_entry retired
     ("Cards", 7),
-    ("Results", 6),  # C6: mi_tiebreak_order retired
+    ("Results", 7),  # C6: mi_tiebreak_order retired; +1: Preview split per format
     ("View", 1),
     ("Help", 4),
 )
@@ -95,7 +95,8 @@ ROUTE_TARGETS = (
     (commands.TargetKind.COMMAND, None),  # Export PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Podium Poster PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
-    (commands.TargetKind.COMMAND, None),  # Preview in Browser: external browser
+    (commands.TargetKind.COMMAND, None),  # Preview HTML in Browser: external browser
+    (commands.TargetKind.COMMAND, None),  # Preview PDF in Browser: external browser
     (commands.TargetKind.COMMAND, None),  # Hide Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
     (commands.TargetKind.DIALOG, ids.SHORTCUTS_DLG),  # Keyboard Shortcuts
@@ -113,25 +114,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_forty_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_forty_one_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 40
+    assert len(commands.ROUTE_TABLE) == 41
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 9, Riders 5, Cards 7, Results 6, View 1, Help 4."""
+    """File 8, Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_seven_real_menu_item_ids_once_each() -> None:
-    """44 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_forty_eight_real_menu_item_ids_once_each() -> None:
+    """45 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 47
-    assert len(set(flat_ids)) == 47
+    assert len(flat_ids) == 48
+    assert len(set(flat_ids)) == 48
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -201,6 +202,22 @@ def test_clear_ride_route_declares_the_ride_open_gate() -> None:
     rule = commands.route_for_id(ids.MI_CLEAR_RIDE).enabled_when
 
     assert rule.requires_ride_open is True
+
+
+def test_standings_route_is_always_enabled_after_part_d() -> None:
+    """Part D: Standings opens the empty-state dialog with no ride."""
+    route = commands.route_for_id(ids.MI_STANDINGS)
+
+    assert route.enabled_when == commands.Enablement()
+
+
+def test_is_route_enabled_given_standings_and_no_ride_open_is_enabled() -> None:
+    """Part D: the empty-state source replaces the old ride gate."""
+    state = commands.RideState(status=RideStatus.DRAFT, ride_open=False)
+
+    result = commands.is_route_enabled(commands.route_for_id(ids.MI_STANDINGS), state)
+
+    assert result is True
 
 
 # H2: the three ride-lifecycle confirms retired their XRC dialogs for
@@ -284,13 +301,14 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Deal Manual Card...
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Void Card...
     None,  # Cards > Review Held Cards: "held cards > 0"
-    None,  # Results > Standings: "ride open (live while running)"
+    None,  # Results > Standings: "always" -- the dialog shows the empty state
     frozenset({RideStatus.FINISHED}),  # Results > Generate HTML...
     frozenset({RideStatus.FINISHED}),  # Results > Export PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Podium Poster PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Export Standings CSV...
-    # Part D: Preview also requires FINISHED plus "an export exists".
-    frozenset({RideStatus.FINISHED}),
+    # Part D: each Preview row is FINISHED plus its own format's export.
+    frozenset({RideStatus.FINISHED}),  # Results > Preview HTML in Browser
+    frozenset({RideStatus.FINISHED}),  # Results > Preview PDF in Browser
     None,  # View > Hide Times / Zoom: "always"
     None,  # Help > User Guide: "always"
     None,  # Help > Keyboard Shortcuts: "always"
@@ -313,7 +331,8 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
         held_cards=1,
         audit_rows=1,
         entry_has_cards=True,
-        export_exists=True,
+        html_exported=True,
+        pdf_exported=True,
         teams_allowed=True,
     )
 
@@ -340,7 +359,8 @@ _ROUTES_BY_LABEL = {route.label: route for route in commands.ROUTE_TABLE}
 REVIEW_HELD_CARDS_ROUTE = _ROUTES_BY_LABEL["Review Held Cards"]
 AUDIT_TRAIL_ROUTE = _ROUTES_BY_LABEL["Audit Trail…"]
 VOID_CARD_ROUTE = _ROUTES_BY_LABEL["Void Card…"]
-PREVIEW_ROUTE = _ROUTES_BY_LABEL["Preview in Browser"]
+PREVIEW_HTML_ROUTE = _ROUTES_BY_LABEL["Preview HTML in Browser"]
+PREVIEW_PDF_ROUTE = _ROUTES_BY_LABEL["Preview PDF in Browser"]
 START_RIDE_ROUTE = _ROUTES_BY_LABEL["Start Ride"]
 EDIT_RIDE_ROUTE = _ROUTES_BY_LABEL["Edit Ride…"]
 CLEAR_RIDE_ROUTE = _ROUTES_BY_LABEL["Clear Ride…"]
@@ -463,30 +483,67 @@ def test_is_route_enabled_given_entry_has_cards_condition_matches_void_card(
     assert result is expected
 
 
-# Part D: Preview in Browser is now FINISHED-only as well as needing an
-# export -- a full status x export_exists decision table (T-13).
-PREVIEW_CASES = tuple(
-    (status, export_exists, status is RideStatus.FINISHED and export_exists)
-    for status in STATUSES
-    for export_exists in (False, True)
+# Part D: each Preview row is FINISHED-only as well as needing its OWN
+# format's export -- a full status x flag decision table (T-13) per row.
+PREVIEW_FORMAT_ROUTES = (
+    (PREVIEW_HTML_ROUTE, "html_exported"),
+    (PREVIEW_PDF_ROUTE, "pdf_exported"),
 )
-PREVIEW_CASE_IDS = [
-    f"{status.value}:export={export_exists}" for status, export_exists, _ in PREVIEW_CASES
-]
+PREVIEW_CASES = tuple(
+    (status, exported, status is RideStatus.FINISHED and exported)
+    for status in STATUSES
+    for exported in (False, True)
+)
+PREVIEW_CASE_IDS = [f"{status.value}:export={exported}" for status, exported, _ in PREVIEW_CASES]
+PREVIEW_FLAG_CASES = (False, True)
 
 
 @pytest.mark.parametrize(
-    ("status", "export_exists", "expected_enabled"), PREVIEW_CASES, ids=PREVIEW_CASE_IDS
+    ("route", "field"),
+    PREVIEW_FORMAT_ROUTES,
+    ids=("preview_html", "preview_pdf"),
 )
-def test_is_route_enabled_given_preview_requires_finished_and_an_export(
-    status: RideStatus, *, export_exists: bool, expected_enabled: bool
+@pytest.mark.parametrize(
+    ("status", "exported", "expected_enabled"), PREVIEW_CASES, ids=PREVIEW_CASE_IDS
+)
+def test_is_route_enabled_given_preview_requires_finished_and_its_format_export(  # noqa: PLR0913 -- the T-13 row inputs
+    route: commands.MenuRoute,
+    field: str,
+    status: RideStatus,
+    *,
+    exported: bool,
+    expected_enabled: bool,
 ) -> None:
-    """T-13: Preview enables only for FINISHED with an export."""
-    state = dataclasses.replace(_baseline_state(status), export_exists=export_exists)
+    """T-13: each Preview row enables only at FINISHED + its export."""
+    state = dataclasses.replace(_baseline_state(status), **{field: exported})
 
-    result = commands.is_route_enabled(PREVIEW_ROUTE, state)
+    result = commands.is_route_enabled(route, state)
 
     assert result is expected_enabled
+
+
+@pytest.mark.parametrize(
+    ("route", "own_field"),
+    PREVIEW_FORMAT_ROUTES,
+    ids=("preview_html", "preview_pdf"),
+)
+@pytest.mark.parametrize("own_exported", PREVIEW_FLAG_CASES, ids=("own_missing", "own_present"))
+@pytest.mark.parametrize(
+    "other_exported", PREVIEW_FLAG_CASES, ids=("other_missing", "other_present")
+)
+def test_is_route_enabled_given_preview_ignores_the_other_formats_export(  # noqa: PLR0913 -- the T-13 row inputs
+    route: commands.MenuRoute, own_field: str, *, own_exported: bool, other_exported: bool
+) -> None:
+    """T-13: the other format's export never enables this row."""
+    state = dataclasses.replace(
+        _baseline_state(RideStatus.FINISHED),
+        html_exported=own_exported if own_field == "html_exported" else other_exported,
+        pdf_exported=own_exported if own_field == "pdf_exported" else other_exported,
+    )
+
+    result = commands.is_route_enabled(route, state)
+
+    assert result is own_exported
 
 
 @pytest.mark.parametrize(("status", "ride_stopped", "expected_enabled"), START_RIDE_CASES)
@@ -617,7 +674,8 @@ def _ride_states_with(*, ride_open: bool) -> st.SearchStrategy[commands.RideStat
         held_cards=st.integers(min_value=0, max_value=5),
         audit_rows=st.integers(min_value=0, max_value=5),
         entry_has_cards=st.booleans(),
-        export_exists=st.booleans(),
+        html_exported=st.booleans(),
+        pdf_exported=st.booleans(),
     )
 
 

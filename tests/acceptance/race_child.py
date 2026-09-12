@@ -37,6 +37,7 @@ daemon timer hard-bounds the process, the same crash-safety pair
 
 from __future__ import annotations
 
+import contextlib
 import faulthandler
 import json
 import os
@@ -58,6 +59,8 @@ from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import corrections, dialogs, rider_editor
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from rivercrossing.cards import Card
     from rivercrossing.ride import RideEngine
     from rivercrossing.store import Store
@@ -595,30 +598,41 @@ def _import_csv_via_route(frame: Any, csv_path: Path) -> None:  # noqa: ANN401 -
         dialogs.run_dialog = original_run_dialog
 
 
+@contextlib.contextmanager
+def _native_confirm(name: str, result: int = wx.ID_OK) -> Iterator[None]:
+    """Answer a native ``std_dialogs`` confirm with *result* (H2).
+
+    Phase 11 H2 retired the authored finish/reopen/exit confirms for
+    the native ``std_dialogs.show_danger`` / ``show_prompt`` /
+    ``show_confirm`` message dialogs, which this harness cannot click
+    programmatically (the same measured limit the old XRC confirms
+    worked around with a scheduled click). The seam swaps the module
+    function for the route's own synchronous handler and restores it
+    afterwards -- the same swap ``test_app_exports.py`` makes.
+    """
+    original = getattr(std_dialogs, name)
+    setattr(std_dialogs, name, lambda *_args, **_kwargs: result)
+    try:
+        yield
+    finally:
+        setattr(std_dialogs, name, original)
+
+
 def _stop_and_continue(frame: Any) -> dict[str, bool]:  # noqa: ANN401 -- wx ships no stubs
-    """Arm, confirm the stop, check the lock, continue (R-35, W5).
+    """Confirm the stop, check the lock, continue (R-35, C2, W5).
 
     Returns whether the stop locked plate entry and the continue
     re-enabled it with the same start (the caller compares the
-    start/continue audit payloads). The stop confirm is the native
-    ``wx.MessageDialog`` behind ``std_dialogs.show_confirm``, which
-    this harness cannot dismiss programmatically (measured
-    2026-09-09), so the seam is scripted to OK around the click.
+    start/continue audit payloads). C2 retired the Arm checkbox: the
+    presenter's own live-RUNNING gate enables ``stop_btn``, so Stop is
+    one act. The stop confirm is the native ``wx.MessageDialog``
+    behind ``std_dialogs.show_confirm``, which this harness cannot
+    dismiss programmatically (measured 2026-09-09), so the seam is
+    scripted to OK around the click.
     """
-    arm_stop = harness.find_control(frame, ids.ARM_STOP_CHK)
-    arm_stop.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
-    event = wx.CommandEvent(wx.EVT_CHECKBOX.typeId, arm_stop.GetId())
-    event.SetEventObject(arm_stop)
-    arm_stop.GetEventHandler().ProcessEvent(event)
-    harness.pump()
-
-    original_confirm = std_dialogs.show_confirm
-    std_dialogs.show_confirm = lambda *_args, **_kwargs: wx.ID_OK
-    try:
+    with _native_confirm("show_confirm"):
         harness.click(frame, ids.STOP_BTN)
         harness.pump()
-    finally:
-        std_dialogs.show_confirm = original_confirm
     entry_locked = not harness.find_control(frame, ids.PLATE_INPUT).IsEnabled()
 
     harness.click(frame, ids.START_BTN)
@@ -679,17 +693,6 @@ def _voided_card_code(store: Store, ride_id: int) -> str:
     return str(json.loads(row["payload_json"]).get("card", ""))
 
 
-def _drive_dialog_ok(dialog_name: str) -> None:
-    """Schedule a wxID_OK click on the modal *dialog_name*."""
-
-    def _drive() -> None:
-        dialog = wx.Window.FindWindowByName(dialog_name)
-        if dialog is not None:
-            harness.click(dialog, "wxID_OK")
-
-    wx.CallAfter(_drive)
-
-
 def _drive_add_crossing(plate: str = _ADD_CROSSING_PLATE) -> None:
     """Schedule the add-crossing form (plate, time, reason).
 
@@ -726,21 +729,17 @@ def _drive_void_card() -> None:
     wx.CallAfter(_drive)
 
 
-def _click_ok_on_exit_confirm() -> None:
-    """Click Quit (wxID_OK) on the non-running exit-confirm dialog."""
-    dialog = wx.Window.FindWindowByName(ids.EXIT_CONFIRM_DLG)
-    if dialog is not None:
-        harness.click(dialog, pages.WX_ID_OK)
-
-
 def _install_sync_exports(exports_dir: Path, paths: dict[str, Path]) -> None:
     """Point the export picker at *exports_dir* and write synchronously.
 
     The off-loop thread is replaced with a synchronous writer that
-    records the path and watermark the moment the write lands -- the
-    same seam ``test_results_exports._sync_offloop`` uses -- so the
-    child can report ``export_paths``/``export_watermark`` without
-    waiting on a background thread.
+    records the completion the moment the write lands -- through the
+    app's own ``_record_export_completion``, the same seam
+    ``test_app_exports._sync_offloop`` uses -- so the child can report
+    ``export_paths``/``export_watermark`` without waiting on a
+    background thread, and the per-format preview fields (HTML ->
+    ``html_export_path``; PDF/poster -> ``pdf_export_path``; the CSV
+    owns neither) are recorded exactly as the app records them.
     """
 
     def _sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
@@ -752,12 +751,11 @@ def _install_sync_exports(exports_dir: Path, paths: dict[str, Path]) -> None:
         teams: object,
         solo: object,
         opts: object,
-        watermark: int | None = None,
+        watermark: int,
         team_logos: dict[str, str] | None = None,
     ) -> None:
         app_module._write_export(config, teams, solo, opts, target, path, team_logos=team_logos)
-        ctx.last_export_path = path  # type: ignore[attr-defined]
-        ctx.export_watermark = watermark  # type: ignore[attr-defined]
+        app_module._record_export_completion(ctx, target, path, watermark)
         paths[target] = path
 
     app_module._pick_export_path = lambda _name: exports_dir / _name
@@ -934,10 +932,11 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     feed_rows = _feed_rows(frame)
     status_label = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
 
-    # Finish #1 through the real route; snapshot the pre-correction
-    # standings and stamp the baseline export watermark.
-    _drive_dialog_ok(ids.FINISH_CONFIRM_DLG)
-    harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
+    # Finish #1 through the real route (the native H2 danger confirm);
+    # snapshot the pre-correction standings and stamp the baseline
+    # export watermark.
+    with _native_confirm("show_danger"):
+        harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
     status_1 = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
     standings_before = _standings_rows(engine)
     paths: dict[str, Path] = {}
@@ -947,9 +946,10 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     harness.fire_menu_event(frame, ids.MI_EXPORT_HTML)
     watermark_baseline = context.export_watermark
 
-    # Reopen, then the two corrections past the baseline watermark.
-    _drive_dialog_ok(ids.REOPEN_RIDE_DLG)
-    harness.fire_menu_event(frame, ids.MI_REOPEN_RIDE)
+    # Reopen (the native H2 prompt), then the two corrections past the
+    # baseline watermark.
+    with _native_confirm("show_prompt"):
+        harness.fire_menu_event(frame, ids.MI_REOPEN_RIDE)
     reopened = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText() == "REOPENED"
     _drive_add_crossing()
     harness.fire_menu_event(frame, ids.MI_ADD_CROSSING_AT)
@@ -959,8 +959,8 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
     voided_card = _voided_card_code(store, ride_id)
 
     # Finish again (REOPENED re-locks), then export all four.
-    _drive_dialog_ok(ids.FINISH_CONFIRM_DLG)
-    harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
+    with _native_confirm("show_danger"):
+        harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
     status_2 = harness.find_control(frame, ids.RIDE_STATUS_LBL).GetLabelText()
     standings_final = _standings_rows(engine)
     for item_id in (
@@ -976,10 +976,11 @@ def _race_finish_and_exports(env: RaceEnv) -> dict[str, Any]:  # noqa: PLR0915 -
 
     app_module._pick_export_path = original_pick
     app_module._run_export_offloop = original_offloop
-    # Quit cleanly through the real File ▸ Exit route: the session
-    # row's closed_at is stamped (the parent's final session fact).
-    wx.CallAfter(_click_ok_on_exit_confirm)
-    _fire_exit_route(frame)
+    # Quit cleanly through the real File ▸ Exit route: the FINISHED
+    # ride gets the native H2 confirm, whose OK stamps the session
+    # row's closed_at (the parent's final session fact).
+    with _native_confirm("show_confirm"):
+        _fire_exit_route(frame)
     try:
         facts = _ride_facts(store, ride_id)
     finally:
@@ -1116,12 +1117,25 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
         if standings:
             # Phase 3: ``standings`` returns the (teams, solo) pair, so
             # the record flattens Teams-then-Solo -- the same order the
-            # oracle's ``expected_standings`` produces. ``asdict`` keeps
-            # ``best5`` as a tuple; the oracle reads it back as a list,
-            # so the tuple is widened here to match the record schema.
+            # oracle's ``expected_standings`` produces. Each row is
+            # projected to the oracle's documented record keys
+            # (``best5`` widened to a list), deliberately leaving out
+            # the source row's display-layer ``total_seconds`` sort key
+            # so the record schema stays exactly what the oracle
+            # documents.
             teams, solo_rows = source.standings(order=order)
             standing_rows = [
-                {**asdict(row), "best5": list(row.best5)} for row in (*teams, *solo_rows)
+                {
+                    "place": row.place,
+                    "plate": row.plate,
+                    "entry": row.entry,
+                    "laps": row.laps,
+                    "total": row.total,
+                    "best5": list(row.best5),
+                    "hand": row.hand,
+                    "draw_required": row.draw_required,
+                }
+                for row in (*teams, *solo_rows)
             ]
         return {
             "id": snap_id,
@@ -1185,11 +1199,11 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
     checkpoints.append(_snapshot("after_manual_deal", standings=False))
     engine.mark_dnf("4", "mechanical")
     checkpoints.append(_snapshot("after_dnf", standings=False))
-    _drive_dialog_ok(ids.FINISH_CONFIRM_DLG)
-    harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
+    with _native_confirm("show_danger"):
+        harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
     checkpoints.append(_snapshot("after_finish_1", standings=True))
-    _drive_dialog_ok(ids.REOPEN_RIDE_DLG)
-    harness.fire_menu_event(frame, ids.MI_REOPEN_RIDE)
+    with _native_confirm("show_prompt"):
+        harness.fire_menu_event(frame, ids.MI_REOPEN_RIDE)
     checkpoints.append(_snapshot("after_reopen", standings=False))
     _drive_add_crossing("1")
     harness.fire_menu_event(frame, ids.MI_ADD_CROSSING_AT)
@@ -1200,8 +1214,8 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
     _drive_void_card()
     harness.fire_menu_event(frame, ids.MI_VOID_CARD)
     checkpoints.append(_snapshot("after_void_card", standings=False))
-    _drive_dialog_ok(ids.FINISH_CONFIRM_DLG)
-    harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
+    with _native_confirm("show_danger"):
+        harness.fire_menu_event(frame, ids.MI_FINISH_RIDE)
     checkpoints.append(_snapshot("after_finish_2", standings=True))
 
     # The four Results exports, written synchronously through the
@@ -1254,10 +1268,11 @@ def _race_sim_race(env: RaceEnv) -> dict[str, Any]:  # noqa: C901, PLR0915 -- th
         json.dumps(record, indent=2) + "\n", encoding="utf-8"
     )
 
-    # Quit cleanly through the real File ▸ Exit route: the session
-    # row's closed_at is stamped (the parent's final session fact).
-    wx.CallAfter(_click_ok_on_exit_confirm)
-    _fire_exit_route(frame)
+    # Quit cleanly through the real File ▸ Exit route: the FINISHED
+    # ride gets the native H2 confirm, whose OK stamps the session
+    # row's closed_at (the parent's final session fact).
+    with _native_confirm("show_confirm"):
+        _fire_exit_route(frame)
     store.close()
     return {"scenario": "sim_race", "ride_id": ride_id, "record": record}
 

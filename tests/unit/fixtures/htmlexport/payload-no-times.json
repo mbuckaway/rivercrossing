@@ -17,7 +17,7 @@
     "fullField": true,
     "allCards": true
   },
-  "tieNote": "P3/P4 held identical hands — resolved by the ride's tie-break rule #1, most laps (10 v 9).",
+  "tieNote": "P2/P3 held identical hands — resolved by the ride's tie-break rule #1, most laps (10 v 9).",
   "results": [
     {
       "place": 1,
@@ -97,7 +97,7 @@
       "logo": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAABACAYAAABcIPRGAAAEMklEQVR4AexZSUxTYRD+MAEOGji7hMgNlQviQUFxIWJiNJpIQaOWugShekUvLnEBl4vLQRM9WGxJWUUjaCxglGghWtAILmGrMSTWAybsARR0qv1peW2hffNqmrwm03/++f/3z/fNvHlN5817aW2aCmeZhzD/CAKpa1YjnMQVd0HAZQi3USXwvzOmZkDNgMwIKHILdXR0IG5pvJCt27bLhOn7ckUIVFZVeXhsb29HW1ubh41rwk5gfHwcJlOJBJ+5tExi4zCwE6hvaMDQ8LAEm6mkBENDQxK7XAM7AbO5VGBalpAgdFIe1dTSwCqsBHp7e/GisVEAPF5QgJSUFDE3mkxC51JYCVTdrxa4Fsyfj7S0dcjSaISNivn9e95iZiPw8+cvGIqLBVhNlgaRkZHIyNgsbKSUlvEWMxsBa5MVfX19hNEpO3fscI6UCU1mplOnL+5iZiNgLp0uXgL6+vUb3L5zxynDM55KnMXMQoAiX1v7mHALKSwqwoXCv/L4yRNhJ8VgMNDAIiwEHjx8GBCYT58/g6uYAyDgHePU1BSMxunHY2JiIq5cviSR8+fOehzAVcyyCbS2tqLHbhfgDuhysDs7WyI5Wi02btgg9lExDw4OinmwimwCZeUVHr63ZGR4zN0n2VlZ7lNwFLMsAmNjY3C/FejRGRMT4wHSfZKevgn0WHXZysvLXWrQoywC0dHR+PrFLuTG9Wt+gdD+jx/axf4H1ff97p/LoiwCc3Gg9B6VgNIRnu18NQOzRUjpdTUDSkd4tvPVDMwWIaXX1Qz4i/BTiwVv373zt0X2mqIZqKio9PivIButlwMUI9DS0gJLXR2oT0r9Ii++WUyKEOjv74f+2DEBMDcvH6Ojo2LOqbAT6PvxA3v27sO3bw6BkxpaugMHMTIyImxcCisBh8OBXbsyQYBnAmxqboZWp4O3xu/MvYHM2QgMDAxg737t3//HPhBQr0ibo2O9nVgITE5Ogu7zzs5OH9CnzTabDYVFF6cNMjUWAl1dXbBarXOGcs9oxMTExJz3+9vIQoAaVf6ceFvr6u72Zg7YxkJgyeLFATtetHBhwNd4u4CFQHJyMqil4u6A3s7o8/ORdyQXcXFx7ks4cbwAsbGxHrZgJywEyPn1a1dRbLiL06dOgtoltTU1sLXY4HB8x/Nnz2AuMYHai9VVlTiq19MlLMJGICIiwtk6PHzoEFYmJaG+oR702KTGr6XOgtTUVFB7kbLFgvzfIWwE/p3n/LW9eesWco/kuUzIy9f/eXtzD909PcLGpbARsNu/YG3aeiQsX4FLl69I8J0+cwYbN6UjKXkV6F2yZEOQBjYC8fFL8bLxhWgburcc3fW3f+oiKioqSLjSy9gISI8OjUUlEJo4+/aiZsB3bEKzomYgNHH27UXNgO/YhGZFZOBVUzPCSVzhEQRchlCPcv39BgAA//8XhYADAAAABklEQVQDACN6iJ/OaRquAAAAAElFTkSuQmCC"
     },
     {
-      "place": 2,
+      "place": 1,
       "plate": 7,
       "entry": "Luca Ferrari",
       "type": "SOLO",
@@ -170,7 +170,7 @@
       ]
     },
     {
-      "place": 3,
+      "place": 2,
       "plate": 127,
       "entry": "Dirt Dynamos",
       "type": "TEAM ×3",
@@ -243,7 +243,7 @@
       ]
     },
     {
-      "place": 4,
+      "place": 3,
       "plate": 56,
       "entry": "Fat Tire Four",
       "type": "TEAM ×4",
@@ -312,7 +312,7 @@
       ]
     },
     {
-      "place": 5,
+      "place": 2,
       "plate": 61,
       "entry": "Marc Tremblay",
       "type": "SOLO",
@@ -385,7 +385,7 @@
       ]
     },
     {
-      "place": 6,
+      "place": 4,
       "plate": 150,
       "entry": "Singletrack Sisters",
       "type": "TEAM ×4",
@@ -453,7 +453,7 @@
       ]
     },
     {
-      "place": 7,
+      "place": 5,
       "plate": 143,
       "entry": "Chain Gang",
       "type": "TEAM ×2",
@@ -517,7 +517,7 @@
       ]
     },
     {
-      "place": 8,
+      "place": 3,
       "plate": 12,
       "entry": "Ana Souza",
       "type": "SOLO",
@@ -586,7 +586,7 @@
       ]
     },
     {
-      "place": 9,
+      "place": 6,
       "plate": 102,
       "entry": "Lake Effect",
       "type": "TEAM ×3",
@@ -654,7 +654,7 @@
       ]
     },
     {
-      "place": 10,
+      "place": 4,
       "plate": 19,
       "entry": "Owen Clark",
       "type": "SOLO",
@@ -719,7 +719,7 @@
       ]
     },
     {
-      "place": 11,
+      "place": 5,
       "plate": 33,
       "entry": "Peter Kim",
       "type": "SOLO",
@@ -780,7 +780,7 @@
       ]
     },
     {
-      "place": 12,
+      "place": 7,
       "plate": 168,
       "entry": "Grinder Bros",
       "type": "TEAM ×2",
@@ -844,7 +844,7 @@
       ]
     },
     {
-      "place": 13,
+      "place": 6,
       "plate": 71,
       "entry": "Gita Rao",
       "type": "SOLO",
@@ -905,7 +905,7 @@
       ]
     },
     {
-      "place": 14,
+      "place": 7,
       "plate": 94,
       "entry": "Ted Novak",
       "type": "SOLO",
@@ -955,27 +955,62 @@
     {
       "plate": 88,
       "entry": "Moss Ridge Riders",
+      "type": "TEAM",
       "laps": 11
+    },
+    {
+      "plate": 127,
+      "entry": "Dirt Dynamos",
+      "type": "TEAM",
+      "laps": 10
+    },
+    {
+      "plate": 150,
+      "entry": "Singletrack Sisters",
+      "type": "TEAM",
+      "laps": 9
+    },
+    {
+      "plate": 56,
+      "entry": "Fat Tire Four",
+      "type": "TEAM",
+      "laps": 9
+    },
+    {
+      "plate": 102,
+      "entry": "Lake Effect",
+      "type": "TEAM",
+      "laps": 9
     },
     {
       "plate": 7,
       "entry": "Luca Ferrari",
+      "type": "SOLO",
       "laps": 10
     },
     {
       "plate": 61,
       "entry": "Marc Tremblay",
-      "laps": 10
-    },
-    {
-      "plate": 127,
-      "entry": "Dirt Dynamos",
+      "type": "SOLO",
       "laps": 10
     },
     {
       "plate": 12,
       "entry": "Ana Souza",
+      "type": "SOLO",
       "laps": 9
+    },
+    {
+      "plate": 19,
+      "entry": "Owen Clark",
+      "type": "SOLO",
+      "laps": 8
+    },
+    {
+      "plate": 71,
+      "entry": "Gita Rao",
+      "type": "SOLO",
+      "laps": 7
     }
   ],
   "timeBoard": []

@@ -3,8 +3,8 @@
 
 Freezes the data contract the UI and every exporter share: pins
 ``ExportOptions`` defaults (TB-1), ``frozen=True`` on every payload
-dataclass, ``to_record()``'s camelCase JSON shape against both golden
-results pages (Spec §8, R-61/63), and the sparse ``tie``/``dnf``
+dataclass, ``to_record()``'s camelCase JSON shape against all three
+golden results pages (Spec §8, R-61/63), and the sparse ``tie``/``dnf``
 convention. Golden key sets are parsed from the committed fixture
 pages rather than hard-coded, so drift in the samples fails here too.
 """
@@ -13,7 +13,14 @@ import re
 from dataclasses import FrozenInstanceError
 
 import pytest
-from htmlexport_fixtures import NO_TIMES_SAMPLE, TIMES_SAMPLE, parse_race_data
+from htmlexport_fixtures import (
+    NO_TIMES_SAMPLE,
+    SOLO_FIXTURE,
+    SOLO_SAMPLE,
+    TIMES_SAMPLE,
+    load_race_payload,
+    parse_race_data,
+)
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -92,8 +99,8 @@ def _sample_results() -> tuple[ResultRow, ...]:
 
 def _sample_laps_board() -> tuple[LapsBoardRow, ...]:
     return (
-        LapsBoardRow(plate=88, entry="Moss Ridge Riders", laps=11, total="5:52:41"),
-        LapsBoardRow(plate=7, entry="Luca Ferrari", laps=10, total="5:41:03"),
+        LapsBoardRow(plate=88, entry="Moss Ridge Riders", laps=11, total="5:52:41", type="TEAM"),
+        LapsBoardRow(plate=7, entry="Luca Ferrari", laps=10, total="5:41:03", type="SOLO"),
     )
 
 
@@ -199,6 +206,22 @@ def test_race_payload_to_record_key_sets_match_no_times_golden() -> None:
     golden = parse_race_data(NO_TIMES_SAMPLE)
 
     record = _times_hidden_payload().to_record()
+
+    assert set(record) == set(golden)
+    assert set(record["event"]) == set(golden["event"])
+    assert set(record["options"]) == set(golden["options"])
+    assert {key for row in record["results"] for key in row} == {
+        key for row in golden["results"] for key in row
+    }
+    assert set(record["lapsBoard"][0]) == set(golden["lapsBoard"][0])
+    assert record["timeBoard"] == golden["timeBoard"]
+
+
+def test_race_payload_to_record_key_sets_match_solo_golden() -> None:
+    """Every level's key set matches epic-2026-results-solo.html."""
+    golden = parse_race_data(SOLO_SAMPLE)
+
+    record = load_race_payload(SOLO_FIXTURE).to_record()
 
     assert set(record) == set(golden)
     assert set(record["event"]) == set(golden["event"])
@@ -354,3 +377,42 @@ def test_snake_to_camel_never_contains_underscore_and_preserves_letter_count(
 
     assert "_" not in camel
     assert len(camel) == len(snake) - snake.count("_")
+
+
+# --- LapsBoardRow.type (per-kind laps boards) ---
+
+
+def test_laps_board_row_type_defaults_to_empty() -> None:
+    """A board row built without a kind carries no type."""
+    row = LapsBoardRow(plate=1, entry="X", laps=1)
+
+    assert row.type == ""
+
+
+@pytest.mark.parametrize(
+    ("show_times", "expected"),
+    [
+        (
+            True,
+            {
+                "plate": 88,
+                "entry": "Moss Ridge Riders",
+                "type": "TEAM",
+                "laps": 11,
+                "total": "5:52:41",
+            },
+        ),
+        (
+            False,
+            {"plate": 88, "entry": "Moss Ridge Riders", "type": "TEAM", "laps": 11},
+        ),
+    ],
+)
+def test_laps_board_row_to_record_carries_the_type_key(
+    show_times: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
+    expected: dict[str, object],
+) -> None:
+    """The record's board rows always carry the kind (times aside)."""
+    row = LapsBoardRow(plate=88, entry="Moss Ridge Riders", laps=11, total="5:52:41", type="TEAM")
+
+    assert row.to_record(show_times=show_times) == expected

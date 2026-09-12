@@ -4,8 +4,9 @@
 Both ``test_payload.py`` and ``test_htmlexport.py`` parse the same
 three layers of results-page data:
 
-* ``design/exports/*.html`` -- the two hand-assembled golden SAMPLES;
-  their ``race-data`` JSON blocks are the fixture source (AGENTS.md).
+* ``design/exports/*.html`` -- the three hand-assembled golden SAMPLES
+  (times, no-times, solo-only); their ``race-data`` JSON blocks are the
+  fixture source (AGENTS.md).
 * ``tests/unit/fixtures/htmlexport/payload-*.json`` -- the same JSON
   content extracted to stable fixture files, so the byte-for-byte
   goldens and the JSON round-trip tests never depend on ``design/``.
@@ -33,12 +34,15 @@ FIXTURES_DIR = _ROOT / "tests" / "unit" / "fixtures" / "htmlexport"
 
 TIMES_SAMPLE = SAMPLES_DIR / "epic-2026-results.html"
 NO_TIMES_SAMPLE = SAMPLES_DIR / "epic-2026-results-no-times.html"
+SOLO_SAMPLE = SAMPLES_DIR / "epic-2026-results-solo.html"
 
 TIMES_FIXTURE = FIXTURES_DIR / "payload-times.json"
 NO_TIMES_FIXTURE = FIXTURES_DIR / "payload-no-times.json"
+SOLO_FIXTURE = FIXTURES_DIR / "payload-solo.json"
 
 GOLDEN_TIMES = FIXTURES_DIR / "epic-2026-results.html"
 GOLDEN_NO_TIMES = FIXTURES_DIR / "epic-2026-results-no-times.html"
+GOLDEN_SOLO = FIXTURES_DIR / "epic-2026-results-solo.html"
 
 _RACE_DATA_RE = re.compile(
     r'<script type="application/json" id="race-data">(.*?)</script>', re.DOTALL
