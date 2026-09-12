@@ -1100,9 +1100,21 @@ _MONTH_NAMES = (
 )
 
 
+# Fixed-offset tzinfo, not ``st.timezones()``: building IANA zones
+# needs the tzdata package on Windows (absent on the CI runners), and
+# this property only reads the instant's own fields, so any offset-
+# bearing tzinfo exercises it identically.
+def _offset_tz(minutes: int) -> timezone:
+    """Build a fixed-offset tzinfo from a minute count."""
+    return timezone(timedelta(minutes=minutes))
+
+
+_OFFSET_TZ = st.integers(min_value=-14 * 60, max_value=12 * 60).map(_offset_tz)
+
+
 @given(
     dt=st.datetimes(),
-    tz=st.timezones(),
+    tz=_OFFSET_TZ,
 )
 def test_format_generated_decodes_back_to_the_instant_own_fields(dt: datetime, tz: tzinfo) -> None:
     """Property: every stamp field is the instant's own, unconverted."""
