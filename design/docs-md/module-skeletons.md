@@ -163,7 +163,7 @@ class RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
 @dataclass RideConfig(name, event_date, venue, lap_km, organizer, scorer, planned_start,
                       planned_duration_s, min_lap_s, entry_mode, plate_model,
                       max_team_size=4, deck_count=8, jokers_per_deck=2, max_cards=None,
-                      tiebreak_order=("laps","total_time","high_card"), logo_path=None)
+                      tiebreak_order=("high_card","laps","total_time"), logo_path=None)
     # §2 ride-row setup fields; defined here since E3.5, built by ride_setup_dlg,
     # consumed by RideEngine below; EPIC 6's standings imports the tiebreak spellings
 class RideEngine:             # pure; wall-clock injected for tests

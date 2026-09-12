@@ -16,10 +16,11 @@ FileRideRidersCardsResultsViewHelp`main_menubar (the resource id LoadMenuBar() l
 
 ⓘ This ride was running when the app closed. Continue timing on wall clock?Continue rideOpen library`resume_infobar · reopened_infobar (wxInfoBar — built in code and named with SetName(); XRC cannot author one; hidden by default)`
 
-GORBA EPIC & MTB Festival 2026 `ride_name_lbl`   ⬛ `ride_logo_bmp (wxStaticBitmap — the ride's own logo; hidden when the ride has none, C1)`
-2026-09-20 · 10:00 · Mixed `ride_details_lbl (the C1 fallback line: event date · planned start · ride type, shown in the logo's place)`
+▣ Ride — ⬛ `ride_logo_bmp`, then Name / Date / Venue / Organizer / Scorer / Lap length km, each read-out labelled
+`ride_logo_bmp (wxStaticBitmap — the ride's own logo, fitted to 64×64 and hidden when the ride has none) · ride_name_value · ride_date_value · ride_venue_value · ride_organizer_value · ride_scorer_value · ride_lap_km_value (read-only wxTextCtrl, <size>240,-1</size>, each preceded by its own unnamed label, all inside the "Ride" wxStaticBoxSizer group) — the group replaced C1's name/details block: every ride fact is a labelled, selectable read-out and the logo is the box's first item when the ride has one`
 
-◉ ● ◉ — the lit lamp rides the state `ride_status_light (StopLight · three stacked circles — green RUNNING · amber DRAFT/REOPENED · red FINISHED · built code-side into ride_status_panel and named with SetName(); colour is never the sole channel — the status label spells the state)`
+◉ ● ◉ — the lit lamp rides the state, beside the Ride group
+`ride_status_light (StopLight · three stacked circles — green RUNNING · amber DRAFT/REOPENED · red FINISHED · built code-side into ride_status_panel and named with SetName(); colour is never the sole channel — the status label spells the state)`
 RUNNING `ride_status_lbl`
 
 Elapsed — (dial) — 4:22:41      Remaining — (dial) — 1:37:19
@@ -98,7 +99,7 @@ Always deal cards (default)
 
 Logo
 
-`name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · hold_short_radio · always_deal_radio · logo_picker — the W4 short-lap card policy pair sits between the timed-fields grid and the Logo row: Duration and Min lap are text fields that parse "H:MM"/"M:SS" (unparseable or non-positive values refuse on OK, W4), and hold_short_radio ("Hold short-lap cards for review") / always_deal_radio ("Always deal cards") read straight into RideConfig.hold_short_laps — always deal is the checked default (W4), so a fresh ride credits short-lap cards and never flags (R-34)`
+`name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · hold_short_radio · always_deal_radio — the W4 short-lap card policy pair sits between the timed-fields grid and the Entries box: Duration and Min lap are text fields that parse "H:MM"/"M:SS" (unparseable or non-positive values refuse on OK, W4), and hold_short_radio ("Hold short-lap cards for review") / always_deal_radio ("Always deal cards") read straight into RideConfig.hold_short_laps — always deal is the checked default (W4), so a fresh ride credits short-lap cards and never flags (R-34). The standalone Logo row (a `logo_picker` wxFilePickerCtrl with a path box) is retired: `logo_preview_bmp · logo_status_lbl · logo_browse_btn` now live in the Cards box beside `tiebreak_list` — a 96×96 wxStaticBitmap preview, the status label (default "NO LOGO"), and a "Browse…" button that picks a PNG, resizes it to fit the 256×256 standard logo size, previews it and stages the resized file as the ride's `logo_png` BLOB source`
 Entries
  Solo riders only
  Solo + teams (default)
@@ -116,15 +117,15 @@ Decks Jokers/deck:
  0 2 4
  Card cap
 
-Tie-break order ① Most laps ② Total time ③ High-card draw ▲▼
+Tie-break order ① High-card draw ② Most laps ③ Total time ▲▼
 
-`decks_spin · jokers_0_radio · jokers_2_radio (default) · jokers_4_radio · cap_chk · cap_spin · tiebreak_list (wxEditableListBox reorder arrows)`
+`decks_spin · jokers_0_radio · jokers_2_radio (default) · jokers_4_radio · cap_chk · cap_spin · tiebreak_list (wxEditableListBox — exactly the three rows above, three lines tall at <size>160,120</size> with the width sized to the longest row "High-card draw" plus its reorder arrows; the XRC declares no <style>, so it shows the arrows alone and no New/Edit/Delete buttons)`
 
 OKCancel
 
 `wxID_OK "Save" (D2: one label for both modes — New Ride commits a new ride, Edit Ride saves an existing one) · wxID_CANCEL (wxStdDialogButtonSizer)`
 
-⚠ code-side: entry/plate-model group locks after start (relay) or stays editable (pooled, R-17); tiebreak_list reorder persisted (its ①②③ numbering here is illustration, not row text); decks_spin's value — the XRC declares none and the presenter supplies **8** (Spec §4; settled by the E3.5 ride-setup work — the canvas's 2 was a mock artifact); lap_km_spin has the same no-declared-value shape and the presenter pushes the canvas's **8.0** on load (`ride.DEFAULT_LAP_KM`, W4 — a fresh dialog would otherwise sit at 0.0 and refuse every submit). ux-polish: the minimum-setup rule — OK (and a DRAFT ride's Start, ride.py's own start gate) refuses a config with a blank name/venue/organizer/scorer or a non-positive lap length (`ride.setup_minimum_violations`), joining every reason into one `setup_infobar` refusal (the code-side wxInfoBar, §15b) and leaving the dialog open; the ride's date, planned start and logo are not part of the minimum rule — a logo is fully optional and the date/time pickers always hold a value, while duration/min-lap keep their own parse-and-positivity validation (W4: a blank or unparseable "H:MM"/"M:SS" field surfaces its message on the dialog instead of failing silently). The short-lap policy radios persist as `RideConfig.hold_short_laps` — the store's first additive migration (v2, W4), never a setup refusal. All fields plain XRC.
+⚠ code-side: entry/plate-model group locks after start (relay) or stays editable (pooled, R-17); tiebreak_list reorder persisted (its ①②③ numbering here is illustration, not row text); the stored tie-break order's default is high-card-first (`ride.DEFAULT_TIEBREAK_ORDER`) and applies only to a FINISHED ride's results — an unresolved pair is then flagged "draw required" (`standings.HIGH_CARD_DRAW` stops the sort), while a not-yet-finished ride ignores the stored order and auto-ranks most laps then total time (`standings.LIVE_TIEBREAK_ORDER`, applied by `EngineDataSource.standings`); the logo's Browse button resizes the picked PNG to fit 256×256 (`LOGO_STANDARD_SIZE`) and stages that resized file, so the ride row's `logo_png` BLOB is always the standard size; decks_spin's value — the XRC declares none and the presenter supplies **8** (Spec §4; settled by the E3.5 ride-setup work — the canvas's 2 was a mock artifact); lap_km_spin has the same no-declared-value shape and the presenter pushes the canvas's **8.0** on load (`ride.DEFAULT_LAP_KM`, W4 — a fresh dialog would otherwise sit at 0.0 and refuse every submit). ux-polish: the minimum-setup rule — OK (and a DRAFT ride's Start, ride.py's own start gate) refuses a config with a blank name/venue/organizer/scorer or a non-positive lap length (`ride.setup_minimum_violations`), joining every reason into one `setup_infobar` refusal (the code-side wxInfoBar, §15b) and leaving the dialog open; the ride's date, planned start and logo are not part of the minimum rule — a logo is fully optional and the date/time pickers always hold a value, while duration/min-lap keep their own parse-and-positivity validation (W4: a blank or unparseable "H:MM"/"M:SS" field surfaces its message on the dialog instead of failing silently). The short-lap policy radios persist as `RideConfig.hold_short_laps` — the store's first additive migration (v2, W4), never a setup refusal. All fields plain XRC.
 
 Set Start Time`set_start_dlg`✕
 
@@ -422,11 +423,11 @@ Ride Library`ride_library_dlg`✕
 | GORBA EPIC 2026 | 2026-09-20 | RUNNING | 180 |
 | Club poker night | 2026-06-11 | FINISHED | 24 |
 
-`rides_list (wxDataViewCtrl · W10: the Ride column is elastic — the three compact columns pin their widths and the Ride name takes every remaining pixel (recomputed on each size event, floored at the 208 px that fills the dialog's 520 px minimum), because the control stretches only its last column and the canvas's old fixed widths truncated long ride names`
+`rides_list (wxDataViewCtrl · the four columns carry fixed default widths — Ride 240, Date 110, Status 110, Entries 70 — and stay natively sortable and user-resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE, sorted through RidesListModel.Compare); the earlier elastic Ride column is retired — it stretched the name to every spare pixel and pushed Entries out of the dialog`
 
 OpenDuplicate…Delete…Close
 
-`wxID_OPEN · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b). W10: wxID_NEW is removed (File ▸ New Ride… owns the setup flow), the dialog floors at 1040×546 (doubled width / tripled height so all four columns fit — MIN_SIZE, code-side), and the four columns are natively sortable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE with a RidesListModel.Compare).`
+`wxID_OPEN · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b). wxID_NEW is removed (File ▸ New Ride… owns the setup flow); the dialog floors at 560×220 (MIN_SIZE, code-side — the four fixed default column widths plus the button row), and every row comes from the store, so the Status column shows each ride's persisted status (draft/running/finished/reopened) with no replay.`
 
 Delete Ride`delete_ride_dlg`✕
 
