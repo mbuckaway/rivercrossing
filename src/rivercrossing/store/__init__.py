@@ -150,7 +150,7 @@ them open and later EPICs will build on them:
   AuditRow` view-model rather than a second, store-side row type --
   E7.3.1's "reuse the AuditRow projection" ruling, and the one place a
   core module imports the wx-free ``rivercrossing.ui.presenters``
-  package (the same seam ``rivercrossing.demo`` already implements).
+  package.
   ``when`` derives from the stored ``at`` epoch (the audit viewer's
   When column, spec §13's stored-UTC/displayed-local), never re-parsed
   from the payload.

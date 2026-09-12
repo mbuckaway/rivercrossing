@@ -465,8 +465,7 @@ class MainFrame:
                 :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
                 implementation applies (``EngineDataSource`` from
-                E4.4.1; ``rivercrossing.demo`` is test-only fixture
-                data since E5.4.2).
+                E4.4.1, or ``EmptyDataSource``).
             initial_sash: The persisted splitter sash position to
                 restore at construction (E8.1.1); ``None`` keeps the
                 XRC default.

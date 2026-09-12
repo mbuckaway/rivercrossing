@@ -6,11 +6,8 @@ Phase-1 built a ``wx.App()`` and returned -- no frame, no menubar, no
 with nothing on screen (E1.6.1's own report). This module assembles
 every already-tested piece (XRC, ``MainFrame``, the §15 route table,
 the accelerator table) into a window that actually stays up. E5.4.2
-retired the ``DemoDataSource`` wiring: no production module imports
-``rivercrossing.demo`` (import-linter contract), the bootstrap's
-windows read either a real store/engine-backed source or the
-``EmptyDataSource`` empty state, and demo.py remains as test-only
-fixture data.
+retired the demo seam: the bootstrap's windows read either a real
+store/engine-backed source or the ``EmptyDataSource`` empty state.
 
 Two measured wx failure modes this module exists to avoid (AGENTS.md):
 
@@ -3773,12 +3770,10 @@ def build_main_window(
     applies the accelerator table, binds every §15 route and the theme
     controller's own ``EVT_SYS_COLOUR_CHANGED`` re-apply, and wires
     the two process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
-    (Phase 8, P8-D1/P8-D2/P8-D4). E5.4.2 retired the
-    :class:`DemoDataSource` construction: the bootstrap roster is
-    empty (no store-backed ride is open), and both the console (W1:
+    (Phase 8, P8-D1/P8-D2/P8-D4). The bootstrap roster is empty (no
+    store-backed ride is open), and both the console (W1:
     :data:`_EMPTY_SOURCE` + :meth:`MainFrame.show_no_ride`) and the
-    E6/E7 windows read the empty state -- no production module imports
-    ``rivercrossing.demo`` any more (import-linter contract).
+    E6/E7 windows read the empty state.
 
     E8.1.1 loads the per-user settings file at startup and applies
     what already has live paths: the persisted appearance through

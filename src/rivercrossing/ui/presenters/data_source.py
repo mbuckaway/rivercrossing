@@ -3,8 +3,7 @@
 
 Every presenter reads its screen's display data through one
 ``DataSource`` -- read-only, and the same shape whether it is backed
-by ``rivercrossing.demo`` (E1.2.4, test-only fixture data since
-E5.4.2), the real ``rivercrossing.store``-backed source, the live
+by the real ``rivercrossing.store``-backed source, the live
 ``EngineDataSource``, or the ``EmptyDataSource`` empty state. The
 row/view-model dataclasses below are what each window's Protocol
 (``console.py``, ``riders.py``, etc.) and this seam pass back and
@@ -210,9 +209,7 @@ class DataSource(Protocol):
     One seam, one shape, for every screen's real/empty data: the
     E4.4.1 ``EngineDataSource`` serves the live console; the E5.4.2
     ``EmptyDataSource`` serves the windows with no store-backed data
-    yet (results, entry detail, the no-store library); and the E1.2.4
-    ``DemoDataSource`` remains as test-only fixture data (importable
-    from tests only since E5.4.2).
+    yet (results, entry detail, the no-store library).
     """
 
     def feed_rows(self) -> list[FeedRow]:
@@ -836,7 +833,7 @@ class EmptyDataSource:
     counters, a DRAFT ride, and an empty entry detail for any plate.
     Production code (the app bootstrap wires it in ``ui.app``), not a
     test double; it satisfies ``DataSource`` exactly like
-    ``DemoDataSource`` and ``EngineDataSource`` do.
+    ``EngineDataSource`` does.
     """
 
     def feed_rows(self) -> list[FeedRow]:

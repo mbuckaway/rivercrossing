@@ -27,9 +27,8 @@ away.
 
 ``DataSource`` (in ``data_source.py``) is the analogous seam on the
 data side: one read-only Protocol every presenter takes, satisfied by
-the E4.4.1 live ``EngineDataSource``, the E5.4.2 ``EmptyDataSource``
-empty state, and -- test-only since E5.4.2 -- ``DemoDataSource``
-fixture data (module-skeletons.md ownership table).
+the E4.4.1 live ``EngineDataSource`` and the E5.4.2 ``EmptyDataSource``
+empty state (module-skeletons.md ownership table).
 """
 
 from rivercrossing.ui.presenters.audit import AuditPresenter, AuditView

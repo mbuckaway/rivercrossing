@@ -5,10 +5,9 @@ Everything here runs without ``wx`` and without a display:
 ``ui/feed_model.py`` never imports it. The wx-facing half --
 ``CrossingsFeedModel``, a ``wx.dataview.DataViewIndexListModel``
 subclass that delegates to the pure functions tested here -- lives in
-``views/main_frame.py`` and is proven by the real-toolkit suite,
-``tests/functional/test_console_demo.py`` (``cards_imagelist``'s own
-split between ``tests/unit/`` and ``tests/functional/`` is the
-precedent this mirrors).
+``views/main_frame.py`` and is proven by the real-toolkit functional
+suite (``cards_imagelist``'s own split between ``tests/unit/`` and
+``tests/functional/`` is the precedent this mirrors).
 """
 
 import re
@@ -17,7 +16,6 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.demo import DemoDataSource
 from rivercrossing.ui.feed_model import (
     COL_CARD,
     COL_LAP,
@@ -205,9 +203,14 @@ def test_flagged_row_indexes_given_rows_returns_the_flagged_positions(
     assert flagged_row_indexes(rows) == expected
 
 
-def test_flagged_row_indexes_given_the_demo_feed_marks_only_the_plate_45_row() -> None:
+def test_flagged_row_indexes_given_a_mixed_feed_marks_only_the_plate_45_row() -> None:
     """Ties the flagged row to plate 45 -- never a bare row index."""
-    rows = DemoDataSource().feed_rows()
+    rows = (
+        _feed_row(plate="123", flagged=False),
+        _feed_row(plate="77", flagged=False),
+        _feed_row(plate="45", flagged=True),
+        _feed_row(plate="212", flagged=False),
+    )
 
     flagged = flagged_row_indexes(rows)
 

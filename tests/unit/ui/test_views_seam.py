@@ -1,32 +1,17 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Belt-and-braces seam proof for ``ui.views`` (E1.2.4, E5.4.2).
+"""Constructor-signature proof for ``ui.views`` (E1.2.4, E5.4.2).
 
-The "only tests import rivercrossing.demo" contract (pyproject.toml's
-own import-linter config, tightened by E5.4.2 to forbid every
-production module including ``ui.app``) once missed five hidden
-imports because its own ``source_modules`` list left
-``rivercrossing.ui.views`` out -- a contract mis-scoped by the person
-who wrote it. This module re-proves the same fact by parsing each
-view module's own source with ``ast``, mirroring
-``test_app_wiring.py``'s own ``_demo_import_count`` for
-``rivercrossing.ui.app``: a test that reads the source directly
-cannot be mis-scoped the same way a contract's module list can.
-
-The second half proves the fix's other half: with no fallback to
-``DemoDataSource`` left in any of these constructors, omitting
-``data_source`` is no longer a silent default -- it is a
-``TypeError`` from Python's own signature enforcement, asserted here
-rather than hand-checked. ``RiderEditor``'s own required keyword
-changed from ``data_source`` to ``roster`` in E3.2 (it now drives a
-real ``Roster`` directly rather than a display-only ``DataSource``
-projection of one), so it carries its own dedicated case below
-instead of joining the shared ``data_source`` parametrization.
+With no fallback ``DataSource`` default left in any of these
+constructors, omitting ``data_source`` is no longer a silent default --
+it is a ``TypeError`` from Python's own signature enforcement, asserted
+here rather than hand-checked. ``RiderEditor``'s own required keyword
+changed from ``data_source`` to ``roster`` in E3.2 (it now drives a real
+``Roster`` directly rather than a display-only ``DataSource`` projection
+of one), so it carries its own dedicated case below instead of joining
+the shared ``data_source`` parametrization.
 """
 
-import ast
-import inspect
 import re
-from pathlib import Path
 
 import pytest
 
@@ -36,48 +21,6 @@ from rivercrossing.ui.views.results_win import ResultsWindow
 from rivercrossing.ui.views.ride_library import RideLibrary
 from rivercrossing.ui.views.rider_editor import RiderEditor
 from rivercrossing.ui.views.simulator import SimulatorDialog
-
-VIEWS_DIR = Path(inspect.getfile(MainFrame)).resolve().parent
-
-# --- no ui.views module imports rivercrossing.demo (T-3/T-5's contract,
-# proven again structurally rather than by the import-linter alone) ---
-
-
-def _view_module_paths() -> list[Path]:
-    """Return every ``.py`` file directly inside ``ui/views``."""
-    return sorted(VIEWS_DIR.glob("*.py"))
-
-
-def _imports_rivercrossing_demo(source: str) -> bool:
-    """Return whether *source* imports ``rivercrossing.demo`` at all.
-
-    Counts both import forms (``import rivercrossing.demo`` and
-    ``from rivercrossing.demo import ...``), structurally rather
-    than by string-matching the source text -- the same technique
-    ``test_app_wiring.py``'s own ``_demo_import_count`` uses for
-    ``rivercrossing.ui.app``.
-    """
-    tree = ast.parse(source)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "rivercrossing.demo":
-            return True
-        if isinstance(node, ast.Import) and any(
-            alias.name == "rivercrossing.demo" for alias in node.names
-        ):
-            return True
-    return False
-
-
-@pytest.mark.parametrize("module_path", _view_module_paths(), ids=lambda path: path.name)
-def test_ui_views_module_source_never_imports_rivercrossing_demo(module_path: Path) -> None:
-    """E5.4.2's seam: ``ui.views`` never imports ``rivercrossing.demo``.
-
-    The demo seam is tests-only; ``ui.views`` (like every production
-    module) may not reach it.
-    """
-    source = module_path.read_text(encoding="utf-8")
-
-    assert _imports_rivercrossing_demo(source) is False
 
 
 # --- data_source is required: Python's own signature enforcement ---

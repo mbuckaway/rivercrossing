@@ -383,8 +383,7 @@ def test_empty_data_source_isinstance_satisfies_data_source_protocol() -> None:
 
     The empty state is a real production implementation (the windows
     with no store-backed data yet read it), not a test double -- so it
-    must conform to the same Protocol ``DemoDataSource`` and
-    ``EngineDataSource`` do.
+    must conform to the same Protocol ``EngineDataSource`` does.
     """
     assert isinstance(EmptyDataSource(), DataSource)
 

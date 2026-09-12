@@ -8,14 +8,10 @@ instead (mirroring ``test_commands.py``/``test_menu_coverage.py``'s
 own split). What stays here is what ``ast`` and plain imports can
 already prove without wx: that ``rivercrossing.ui.app`` itself never
 needs a ``wx.App`` -- or even wx at all -- to import, that :func:`main`
-is annotated, and that E5.4.2's demo retirement holds structurally:
-the module imports no ``rivercrossing.demo``, constructs no
-``DemoDataSource``, and carries no demo->roster seed helper -- the
-bootstrap roster is empty and the E6/E7 windows read the module's
-``EmptyDataSource``.
+is annotated, and that the bootstrap roster is empty with the E6/E7
+windows reading the module's ``EmptyDataSource``.
 """
 
-import ast
 import inspect
 import sys
 from typing import TYPE_CHECKING
@@ -50,35 +46,6 @@ def _block_wx(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in stale_modules:
         monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.setattr(sys, "meta_path", [_BlockWxFinder(), *sys.meta_path])
-
-
-def _demo_import_count(source: str) -> int:
-    """Count every AST site that imports ``rivercrossing.demo``.
-
-    Counts both import forms (``import rivercrossing.demo`` and
-    ``from rivercrossing.demo import ...``) so the count is enforced
-    structurally rather than by string-matching the source text.
-    """
-    tree = ast.parse(source)
-    count = 0
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == "rivercrossing.demo":
-            count += 1
-        elif isinstance(node, ast.Import):
-            count += sum(1 for alias in node.names if alias.name == "rivercrossing.demo")
-    return count
-
-
-def _demo_construction_count(source: str) -> int:
-    """Count every AST call site constructing ``DemoDataSource()``."""
-    tree = ast.parse(source)
-    return sum(
-        1
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "DemoDataSource"
-    )
 
 
 # --- module importable without a wx.App, or wx at all ----------
@@ -134,42 +101,6 @@ def test_main_takes_only_the_optional_db_path_override() -> None:
 
     assert tuple(parameters) == ("db_path",)
     assert parameters["db_path"].default is None
-
-
-# --- E5.4.2 demo retirement: the seam is gone from app code --------
-
-# The E1.2.4 seam proof ("deleting demo.py breaks exactly one import
-# line") becomes the E5.4.2 proof that there is no line to break: the
-# bootstrap imports no demo, constructs no DemoDataSource, and no
-# longer carries the demo->roster seed helper -- the roster is empty
-# until a store-backed ride is opened.
-
-
-def test_app_module_source_never_imports_rivercrossing_demo() -> None:
-    """E5.4.2: zero ``rivercrossing.demo`` import sites remain."""
-    source = inspect.getsource(app)
-
-    assert _demo_import_count(source) == 0
-
-
-def test_app_module_source_never_constructs_demodatasource() -> None:
-    """E5.4.2: zero ``DemoDataSource()`` construction sites remain."""
-    source = inspect.getsource(app)
-
-    assert _demo_construction_count(source) == 0
-
-
-def test_app_module_source_defines_no_demo_roster_seed_helper() -> None:
-    """E5.4.2: ``_seed_roster`` (demo rows -> a Roster) is gone.
-
-    The demo rows were the only input the helper ever saw; with the
-    seam retired the bootstrap roster is empty, so the conversion
-    logic no longer exists in production (tests build seeded rosters
-    from demo directly, ``_lists_common.demo_seeded_roster``).
-    """
-    source = inspect.getsource(app)
-
-    assert "_seed_roster" not in source
 
 
 def test_app_module_source_defines_the_empty_state_source() -> None:

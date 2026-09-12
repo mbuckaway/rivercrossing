@@ -247,16 +247,14 @@ include_external_packages = true
 [[tool.importlinter.contracts]]
 # R-71: core logic imports no wx. import-linter errors on a source module that
 # does not exist, so this list grows task by task rather than naming the whole
-# eventual tree up front: rivercrossing.htmlexport joins at plan task 2.2,
-# rivercrossing.demo at 2.4, and cards/hands/standings/store/csvio/pdfexport as
-# EPICs 2-6 land.
+# eventual tree up front: rivercrossing.htmlexport joins at plan task 2.2, and
+# cards/hands/standings/store/csvio/pdfexport as EPICs 2-6 land.
 name = "wx stays inside rivercrossing.ui"
 type = "forbidden"
 source_modules = [
     "rivercrossing.ride",
     "rivercrossing.htmlexport",
     "rivercrossing.pdfexport",
-    "rivercrossing.demo",
     "rivercrossing.cards",
     "rivercrossing.hands",
     "rivercrossing.roster",
@@ -265,30 +263,3 @@ source_modules = [
     "rivercrossing.store",
 ]
 forbidden_modules = ["wx"]
-
-[[tool.importlinter.contracts]]
-# E5.4.2: the demo seam is tests-only. The E1.2.4 bootstrap exemption is gone --
-# rivercrossing.ui.app now counts as a forbidden importer too, so every module
-# under src/rivercrossing that could possibly reach the seam is listed. demo.py
-# itself stays (tests import it as fixture data), but no production module may
-# import it, and deleting it later breaks no wiring line. Note demo.py *may*
-# import rivercrossing.ui.presenters.data_source -- that is the wx-free contract
-# it implements, and the restriction the design docs state is on who imports
-# demo, not on what demo imports.
-name = "only tests import rivercrossing.demo"
-type = "forbidden"
-source_modules = [
-    "rivercrossing.cards",
-    "rivercrossing.csvio",
-    "rivercrossing.hands",
-    "rivercrossing.htmlexport",
-    "rivercrossing.ride",
-    "rivercrossing.roster",
-    "rivercrossing.standings",
-    "rivercrossing.store",
-    "rivercrossing.ui",
-    "rivercrossing.ui.app",
-    "rivercrossing.ui.presenters",
-    "rivercrossing.ui.views",
-]
-forbidden_modules = ["rivercrossing.demo"]
