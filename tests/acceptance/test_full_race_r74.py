@@ -62,6 +62,8 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from pypdf import PdfReader
 
+from rivercrossing.roster import EntryType
+
 if TYPE_CHECKING:
     from types import ModuleType
 
@@ -531,7 +533,27 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     assert "Full field" in pdf_text
     assert "Most laps" in pdf_text
     assert "Page 1 of" not in poster_text
+    # Phase 3: the exported pages are per-kind -- a TEAM row never
+    # shows a plate, a solo row keeps `#plate name`. The staged roster
+    # is the ground truth for which ranked rows are teams (its only
+    # TEAM entry survives the CSV import; the import never deletes).
+    team_plates = {
+        entry.plate
+        for entry in store_staging.library_roster().entries
+        if entry.type is EntryType.TEAM
+    }
+    assert len(team_plates) == 1
+    # The staged team ranks first (teams-then-solo order), so its row
+    # must be inside the pinned slice -- otherwise the plate-less team
+    # assertion below would silently stop running.
+    assert team_plates <= {str(row["plate"]) for row in data_c["standings"][:3]}
     for row in data_c["standings"][:3]:
         plate, name = str(row["plate"]), str(row["name"])
-        assert f"#{plate} {name}" in pdf_text
-        assert f"#{plate} {name}" in poster_text
+        if plate in team_plates:
+            assert name in pdf_text
+            assert name in poster_text
+            assert f"#{plate} {name}" not in pdf_text
+            assert f"#{plate} {name}" not in poster_text
+        else:
+            assert f"#{plate} {name}" in pdf_text
+            assert f"#{plate} {name}" in poster_text

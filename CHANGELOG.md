@@ -4,6 +4,18 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Team/solo-aware results pages** — the HTML export and the PDF report render per kind: a mixed ride gets a "Best hands — teams" (top 3) and "Best hands — solo riders" (top 3) podium, "Top teams" (top 5) and "Top solo riders" (top 5) lists, "Most laps — teams" (top 5) and "Most laps — solo riders" (top 5) boards, and a full field split into "Teams" and "Solo riders" subsections under the one "Full field" heading; a solo ride gets the single-kind page (top 3 / top 10 / top 10). Team sections are plate-less and compact — no plate column, team name and cards in separate columns, a small inline logo — and the podium poster gains the same split (top 3 teams + top 3 solo riders on one page; top 5 in a solo event).
+- **A shared results model for the exporters** — `htmlexport.build_payload()`, `htmlexport.sections()` and `htmlexport.format_generated()` build the row model, the per-kind section plan and the "Generated …" stamp both the HTML and PDF renderers consume.
+
+### Changed
+
+- **Preview is per format** — Results ▸ Preview in Browser is replaced by Results ▸ Preview HTML in Browser and Results ▸ Preview PDF in Browser (the last results PDF or podium poster); both need a FINISHED ride and that format's own export this session, and a CSV export never enables either.
+- **Standings is always available** — the Results ▸ Standings row (F5) no longer waits for an open ride; with none open the results window renders its empty state.
+
 ## [1.0.13] - 2026-09-12
 
 ### Added

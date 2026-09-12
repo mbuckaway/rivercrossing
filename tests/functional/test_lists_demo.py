@@ -17,7 +17,7 @@ remains importable from tests for the view-capability suites that
 still need populated fixture rows (``test_rider_editor.py`` builds its
 seeded mixed roster through ``_lists_common.demo_seeded_roster``).
 
-The ``entry_detail_dlg`` and ``results_frame`` suites moved to
+The ``entry_detail_dlg`` and ``results_dlg`` suites moved to
 ``test_lists_entry_detail.py`` and ``test_lists_results.py`` with
 their own module-scoped fixtures: splitting the two heaviest
 functional files spreads per-worker window churn across

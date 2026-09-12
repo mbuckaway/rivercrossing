@@ -1,40 +1,47 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """PDF results report: fpdf2 renderer for a finished ride (spec §8b).
 
-The second exporter over the frozen payload model: same sections and
-flags as ``rivercrossing.htmlexport`` (R-63) -- cover block, podium
-(top 3), top ten, optional laps/time boards, full field (DNF marked),
-all-cards-drawn sub-rows, and Total/Best-lap columns only when
-``ExportOptions.show_times`` is on -- rendered with the retired
-designs' print geometry ([5a]-[5c]): Letter (A4 via ``letter=False``),
-0.58in margins, footer rule + "Page n of N · generated … ·
-RiverCrossing" on every page, a one-line running title from page 2
-on, Barlow + Barlow Condensed headings + DejaVu Sans suit glyphs
-(``♠♥♦♣★``), corner registration marks (two 11pt hairlines per
-corner), and the industry tokens ink ``#1D1F20``, steel ``#416180``
-(hearts/diamonds/jokers and hand names), deep steel ``#1D2D3D`` (the
-P1 podium plate) -- no red.
+One shared model, two renderers: :func:`render` builds the export
+payload through ``rivercrossing.htmlexport.build_payload`` and renders
+the same per-kind section plan (``htmlexport.sections``) the HTML page
+renders -- per-kind podiums (3/3 on a team event, 3 solo), per-kind
+top lists (5/5 or 10), per-kind laps boards (5/5 or 10), a flat
+ten-row time board, and the full field under its umbrella heading with
+"Teams"/"Solo riders" subsections. Teams never show a plate: the
+section name carries the kind, exactly as on the page. Flags mirror
+the HTML (R-63): cover block, DNF marks, all-cards-drawn sub-rows and
+Total/Best-lap columns only when ``ExportOptions.show_times`` is on.
+Only the *layout* stays per-format -- the retired designs' print
+geometry ([5a]-[5c]): Letter (A4 via ``letter=False``), 0.58in
+margins, footer rule + "Page n of N · Generated … · RiverCrossing" on
+every page, a one-line running title from page 2 on, Barlow + Barlow
+Condensed headings + DejaVu Sans suit glyphs (``♠♥♦♣★``), corner
+registration marks (two 11pt hairlines per corner), and the industry
+tokens ink ``#1D1F20``, steel ``#416180`` (hearts/diamonds/jokers and
+hand names), deep steel ``#1D2D3D`` (the P1 podium plate) -- no red.
+The poster is the same shared model: a team event stocks one Letter
+page with two compact titled sections ("Teams" top 3, then "Solo
+riders" top 3); a solo event lists the top five at full card sizing.
 
 Determinism (R-62, D14) is the module's load-bearing contract.
 :func:`render` embeds exactly one timestamp -- the ``created_at``
 stamp, required tz-aware UTC so ``/CreationDate`` never bakes a
-machine-local offset -- and formats the footer's visible "generated
-H:MM, Mon D YYYY" text from the same stamp without a local-time
-conversion (a converted time would differ per machine and break
-byte-identity). Identical inputs plus the same stamp produce
-byte-identical files; ``tools/gen_pdfexport_fixtures.py`` freezes the
-committed golden from this renderer.
+machine-local offset -- and formats the footer's visible stamp with
+:func:`rivercrossing.htmlexport.format_generated`, a pure function of
+that stamp: no local-time conversion, so identical inputs plus the
+same stamp produce byte-identical files on every machine.
+``tools/gen_pdfexport_fixtures.py`` freezes the committed golden from
+this renderer.
 
 Public API (module-skeletons.md): :func:`render` writes the report to
 the caller-supplied *path*; :func:`podium_poster` writes the one-page
 prize-table poster ([5d]) the same way. The ``{ride-slug}-results.pdf``
 and ``{ride-slug}-podium.pdf`` naming is the menu handler's job, never
-this module's. Pure Python -- no ``wx`` (R-71), no ``ui`` import: the
-small duration formatter is duplicated from ``htmlexport`` rather than
-imported, keeping the exporter independent of its sibling (and of the
-UI layer's presenters).
+this module's. Pure Python -- no ``wx`` (R-71), no ``ui`` import.
 """
 
+import base64
+import io
 import os
 import re
 import zlib
@@ -46,15 +53,24 @@ from typing import TYPE_CHECKING, Protocol, cast
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
+from rivercrossing import htmlexport
 from rivercrossing.cards import Suit
-from rivercrossing.standings import EntryResult, hand_name, laps_leaderboard, time_leaderboard
+from rivercrossing.standings import EntryResult, hand_name
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from rivercrossing.cards import Card, Rank
     from rivercrossing.hands import EvaluatedHand
-    from rivercrossing.htmlexport import ExportOptions
+    from rivercrossing.htmlexport import (
+        CardPair,
+        EventInfo,
+        ExportOptions,
+        LapsBoardRow,
+        ResultRow,
+        Sections,
+        TimeBoardRow,
+    )
     from rivercrossing.standings import Placed
 
 __all__ = ["podium_poster", "render"]
@@ -80,6 +96,10 @@ _FIRST_PLACE = 1
 
 _ROW_HEIGHT = 0.24
 
+# A team row's inline logo (R-61's base64 card bitmap) at the HTML's
+# compact inline size.
+_INLINE_LOGO = 0.14
+
 # ------------------------------------------------------------- fonts
 
 # fpdf2 embeds each TTF into the PDF bytes (D14): absolute paths
@@ -101,25 +121,7 @@ _FONT_FILES: tuple[tuple[tuple[str, str], Path], ...] = (
 
 # -------------------------------------------------------- display copy
 
-_KICKER = "Official results · poker run"
 _RUNNING_TITLE_SEP = " — Official results"
-
-# The footer's "Sept" spelling is the samples' own four-letter
-# vocabulary, matching htmlexport's (not strftime's "Sep").
-_MONTH_ABBR = (
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sept",
-    "Oct",
-    "Nov",
-    "Dec",
-)
 
 # cards.Rank's integer values to the display rank letters; the ten is
 # "10" in the report (the golden pages' own spelling), unlike
@@ -147,27 +149,13 @@ _SUIT_GLYPH: dict[Suit, str] = {
 }
 _JOKER_GLYPH = "★"
 
+# The payload's own suit letters (``CardPair``'s second element) to the
+# glyphs above -- derived, never a second glyph table.
+_SUIT_GLYPH_BY_LETTER: dict[str, str] = {
+    suit.value.lower(): glyph for suit, glyph in _SUIT_GLYPH.items()
+}
+
 # ------------------------------------------------------- text helpers
-
-
-def _format_duration(seconds: float) -> str:
-    """Format whole seconds as the golden pages' clock text.
-
-    ``H:MM:SS`` for an hour or more, ``M:SS`` below -- "5:52:41" and
-    "27:59" respectively. Duplicated from ``htmlexport`` rather than
-    imported: pdfexport must not depend on its exporter sibling.
-    """
-    total = round(seconds)
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{secs:02d}"
-    return f"{minutes}:{secs:02d}"
-
-
-def _format_event_date(day: date) -> str:
-    """Format *day* as the golden pages' "Sunday September 20, 2026"."""
-    return f"{day.strftime('%A %B')} {day.day}, {day.year}"
 
 
 def _format_km(lap_km: float) -> str:
@@ -177,14 +165,34 @@ def _format_km(lap_km: float) -> str:
     return str(lap_km)
 
 
-def _format_generated(at: datetime) -> str:
-    """Format the pinned creation stamp as the footer's clock text.
+def _pair_text(pair: CardPair) -> str:
+    """Return one pair's text: rank letter + suit glyph, or ★."""
+    rank, suit = pair
+    if rank == "JK":
+        return _JOKER_GLYPH
+    return f"{rank}{_SUIT_GLYPH_BY_LETTER[suit]}"
 
-    Deliberately no local-time conversion: the aware-UTC stamp is
-    formatted as-is so the visible text is byte-identical across
-    machines (R-62, D14).
+
+def _pair_is_steel(pair: CardPair) -> bool:
+    """Return True for a payload pair in the steel accent."""
+    rank, suit = pair
+    return rank == "JK" or suit in ("h", "d")
+
+
+def _is_team_row(row: ResultRow) -> bool:
+    """Return whether a payload row is a team."""
+    return row.entry_type.upper().startswith("TEAM")
+
+
+def _decode_logo(logo: str) -> io.BytesIO:
+    """Decode a payload logo data URI into the bytes fpdf2 embeds.
+
+    The shared model carries the logo as a ``data:image/png;base64,``
+    URI; fpdf2 wants a path or a binary stream, so the base64 body is
+    decoded here. Malformed input fails loudly in fpdf2's own parser.
     """
-    return f"generated {at.strftime('%H:%M')}, {_MONTH_ABBR[at.month - 1]} {at.day} {at.year}"
+    encoded = logo.partition(",")[2]
+    return io.BytesIO(base64.b64decode(encoded))
 
 
 def _card_text(card: Card) -> str:
@@ -225,16 +233,15 @@ def _hand_prose(hand: EvaluatedHand) -> str:
     return hand_name(hand)
 
 
-def _hand_label(hand: EvaluatedHand) -> str:
-    """Return *hand*'s uppercase prose name, or "" for a no-card hand.
+def _hand_label(hand: str) -> str:
+    """Return the payload's hand prose as the table cell's text.
 
-    A finished ride can still hold an entry that never crossed; its
-    snapshot hand is empty (``best_hand(())``) and names nothing, so
-    the cell renders blank rather than raising (standings.hand_name
-    rejects the empty hand). Uppercase because the PDF has no CSS
-    ``text-transform`` to apply the HTML's hand-cell style with.
+    The shared model carries the prose (``standings.hand_name``); the
+    HTML page uppercases it with CSS ``text-transform``, which fpdf2
+    has no equivalent of, so the report uppercases in Python. A no-show
+    entry's prose is the empty string, which renders blank.
     """
-    return _hand_prose(hand).upper()
+    return hand.upper()
 
 
 def _poster_subtitle(result: EntryResult) -> str:
@@ -282,18 +289,11 @@ class _RideLike(Protocol):
     def scorer(self) -> str: ...
 
 
-def _format_meta(ride: _RideLike) -> str:
-    """Compose the cover meta line from the ride (D15: venue/date)."""
-    return (
-        f"{_format_event_date(ride.event_date)} · {ride.venue} · {_format_km(ride.lap_km)} km loop"
-    )
-
-
 def _top_ten_widths(*, show_times: bool, content: float) -> list[float]:
-    """Return the top-ten table's column widths, in inches.
+    """Return the solo top-list table's column widths, in inches.
 
-    Total/Best-lap columns exist only when times are shown (R-63); the
-    Hand column absorbs the freed width when they are not.
+    Place|Plate|Entry|Laps|[Total time]|Best 5 cards|Hand -- the solo
+    event's "Top ten" and the team event's "Top solo riders" table.
     """
     widths = [0.40, 0.62, 1.50, 0.45]
     if show_times:
@@ -302,11 +302,25 @@ def _top_ten_widths(*, show_times: bool, content: float) -> list[float]:
     return widths
 
 
-def _field_widths(*, show_times: bool, content: float) -> list[float]:
-    """Return the full-field table's column widths, in inches.
+def _team_top_widths(*, show_times: bool, content: float) -> list[float]:
+    """Return the Top teams table's column widths, in inches.
 
-    The final "Best hand" column holds the inline cards plus the hand
-    name; without time columns it re-widens to absorb them.
+    Place|Entry|Laps|[Total time]|Best 5 cards|Hand -- no Plate column,
+    matching the HTML: the section names the kind, so a team's plate has
+    no cell to sit in.
+    """
+    widths = [0.40, 1.80, 0.45]
+    if show_times:
+        widths.append(0.90)
+    widths += [1.20, content - sum(widths) - 1.20]
+    return widths
+
+
+def _field_widths(*, show_times: bool, content: float) -> list[float]:
+    """Return the solo full-field table's column widths, in inches.
+
+    Place|Plate|Entry|Type|Laps|[Total time|Best lap]|Best hand; the
+    final column holds the inline cards plus the hand name.
     """
     widths = [0.35, 0.58, 1.30, 0.62, 0.40]
     if show_times:
@@ -315,12 +329,39 @@ def _field_widths(*, show_times: bool, content: float) -> list[float]:
     return widths
 
 
+def _team_field_widths(*, show_times: bool, content: float) -> list[float]:
+    """Return the Teams full-field table's column widths, in inches.
+
+    Place|Entry|Laps|[Total time|Best lap]|Cards|Hand -- compact, no
+    Plate or Type column, and cards split from the hand name so a team
+    row reads like the HTML's own compact team row.
+    """
+    widths = [0.35, 1.40, 0.40]
+    if show_times:
+        widths += [0.85, 0.80]
+    widths += [1.30, content - sum(widths) - 1.30]
+    return widths
+
+
 def _laps_widths(*, show_times: bool, content: float) -> list[float]:
-    """Return the "Most laps" board's column widths, in inches."""
+    """Return the solo "Most laps" board's column widths, in inches."""
     widths = [0.35, 0.58, 0.60]
     if show_times:
         widths.append(0.90)
     widths.insert(2, content - sum(widths))
+    return widths
+
+
+def _team_laps_widths(*, show_times: bool, content: float) -> list[float]:
+    """Return the team "Most laps" board's column widths, in inches.
+
+    #|Entry|Laps|[Total] -- no plate cell: the board's title names the
+    kind, exactly as the HTML macro's ``show_plate=false`` does.
+    """
+    widths = [0.35, 0.60]
+    if show_times:
+        widths.append(0.90)
+    widths.insert(1, content - sum(widths))
     return widths
 
 
@@ -457,6 +498,40 @@ def _maybe_page_break(pdf: FPDF, height: float) -> None:
         pdf.add_page()
 
 
+def _deflate_body(
+    pdf: bytes, dict_span: tuple[int, int], body_start: int
+) -> tuple[int, bytes] | None:
+    """Return one stream's end offset and inflated bytes, or None.
+
+    The dict's ``/Length`` is authoritative when it yields a body that
+    inflates: a compressed body can itself contain an
+    ``endstream``-looking byte run (measured -- an 8.5KB Barlow subset
+    does), so searching for the keyword first mis-slices the body and
+    leaves the stream compressed, which would break R-62's
+    cross-platform byte-identity. The keyword search is the fallback
+    for a document whose ``/Length`` is a placeholder.
+    """
+    dict_start, dict_end = dict_span
+    candidates: list[int] = []
+    length_match = re.search(rb"/Length (\d+)", pdf[dict_start:dict_end])
+    if length_match is not None:
+        candidates.append(body_start + int(length_match.group(1)))
+    keyword_end = pdf.find(b"endstream", body_start)
+    if keyword_end != -1:
+        candidates.append(keyword_end)
+    for body_end in candidates:
+        body = pdf[body_start:body_end]
+        if body.endswith(b"\r\n"):
+            body = body[:-2]
+        elif body.endswith(b"\n"):
+            body = body[:-1]
+        try:
+            return body_end, zlib.decompress(body)
+        except zlib.error:
+            continue
+    return None
+
+
 def _raw_stream_span(
     pdf: bytes, stream_match: re.Match[bytes]
 ) -> tuple[int, int, int, bytes] | None:
@@ -473,18 +548,10 @@ def _raw_stream_span(
     if dict_end == -1 or b"/FlateDecode" not in pdf[dict_start:dict_end]:
         return None
     body_start = stream_match.end()
-    body_end = pdf.find(b"endstream", body_start)
-    if body_end == -1:
-        return None
-    body = pdf[body_start:body_end]
-    if body.endswith(b"\r\n"):
-        body = body[:-2]
-    elif body.endswith(b"\n"):
-        body = body[:-1]
-    try:
-        raw = zlib.decompress(body)
-    except zlib.error:
+    resolved = _deflate_body(pdf, (dict_start, dict_end), body_start)
+    if resolved is None:
         return None  # not really deflate despite the filter entry
+    body_end, raw = resolved
     dict_text = pdf[dict_start:dict_end]
     # fpdf2 emits one entry per line: "/Filter /FlateDecode\n".
     dict_text = dict_text.replace(b"/Filter /FlateDecode\n", b"")
@@ -586,17 +653,50 @@ def _store_streams_raw(pdf: bytes) -> bytes:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _CardGeom:
+    """A poster card's scale and its page-break guard, in inches.
+
+    ``scale`` multiplies every card dimension (place number, name,
+    subtitle, hand, card faces); ``guard`` is the height the break
+    check reserves before a card -- the full [5d] sizing needs 1.9in,
+    the compact one 1.2in (its own pitch is 1.16in).
+    """
+
+    scale: float
+    guard: float
+
+
+# Full [5d] sizing for a solo event's top five; a 24% downscale so a
+# team event's two sections with six cards still fit one Letter page
+# (measured: card pitch 1.52in -> 1.155in; six cards + two headings end
+# 1.07in above the footer gap, 0.65in once the organizer logo draws).
+_CARD_FULL = _CardGeom(1.0, 1.9)
+_CARD_COMPACT = _CardGeom(0.76, 1.2)
+
+
+def _poster_name(result: EntryResult) -> str:
+    """Return a poster card's name line, plate-less for a team.
+
+    The section heading names the kind, so a team card carries only its
+    name; a solo card keeps the ``#plate`` prefix ([5d]).
+    """
+    if result.kind == "team":
+        return result.name
+    return f"#{result.plate} {result.name}"
+
+
 class _PosterPDF(FPDF):
     """The one-page podium poster document ([5d]).
 
     A sibling of :class:`_ReportPDF` sharing its geometry, fonts and
     D14 metadata, fixed to a single celebratory Letter page: event
-    meta, a "Best poker hands" heading + ride title, then the top-3
-    placings as large podium cards (big place number, ``#plate`` +
-    entry name, the team/solo line, the hand's title-case prose name,
-    and large card faces with the steel accent for
-    hearts/diamonds/jokers). The footer is a credit line + generated
-    stamp -- no "Page n of N", there is only one page.
+    meta, a "Best poker hands" heading + ride title, then the shared
+    model's per-kind top three. A team event stacks two titled,
+    compact sections -- "Teams" (no plate) then "Solo riders" -- so
+    six cards still fit the one page; a solo event lists the top five
+    at full card sizing. The footer is a credit line + generated stamp
+    -- no "Page n of N", there is only one page.
     """
 
     def __init__(  # noqa: PLR0913 -- (ride, letter, created_at, logo_path): the poster's state inputs
@@ -611,7 +711,7 @@ class _PosterPDF(FPDF):
         super().__init__(unit="in", format="Letter" if letter else "A4")
         _open_document(self, ride.name, created_at=created_at)
         self._ride = ride
-        self._generated = _format_generated(created_at)
+        self._generated = htmlexport.format_generated(created_at)
         self._logo_path = logo_path
 
     def file_id(self) -> None:
@@ -644,20 +744,36 @@ class _PosterPDF(FPDF):
         self.cell(0, 0.12, text=f"{self._generated} · RiverCrossing")
 
     def build(self, placed: Sequence[Placed]) -> None:
-        """Draw the header block and the top-3 podium cards."""
-        self.add_page()
-        self._header_block()
-        for entry in placed[: _FIRST_PLACE + 2]:
-            self._podium_card(entry)
+        """Draw the header block and the poster's cards.
 
-    def _header_block(self) -> None:
+        The shared model supplies the cover meta (``EventInfo.meta``);
+        the partition by ``EntryResult.kind`` picks the layout (any
+        team entry is a team event, the exporters' own rule).
+        """
+        payload = htmlexport.build_payload(
+            self._ride, placed, htmlexport.ExportOptions(), self._generated
+        )
+        self.add_page()
+        self._header_block(payload.event.meta)
+        teams = [entry for entry in placed if entry.result.kind == "team"]
+        solo = [entry for entry in placed if entry.result.kind != "team"]
+        if not teams:
+            self._cards(solo[: _FIRST_PLACE + 4], geom=_CARD_FULL)
+            return
+        self._section_head("Teams")
+        self._cards(teams[: _FIRST_PLACE + 2], geom=_CARD_COMPACT)
+        if solo:
+            self._section_head("Solo riders")
+            self._cards(solo[: _FIRST_PLACE + 2], geom=_CARD_COMPACT)
+
+    def _header_block(self, meta: str) -> None:
         """Draw the event meta, "Best poker hands" heading and title."""
         _draw_logo(self, self._logo_path)
         if self._logo_path is not None:
             self.ln(0.42)
         self.set_font(_FONT_BODY, "", 9)
         self.set_text_color(*_STEEL)
-        self.cell(0, 0.16, text=_format_meta(self._ride))
+        self.cell(0, 0.16, text=meta)
         self.ln(0.22)
         self.set_font(_FONT_HEADING, "B", 22)
         self.set_text_color(*_INK)
@@ -670,42 +786,57 @@ class _PosterPDF(FPDF):
         _draw_rule(self)
         self.ln(0.12)
 
-    def _podium_card(self, entry: Placed) -> None:
-        """Draw one large podium card: place, plate/name, run, hand."""
-        _maybe_page_break(self, 1.9)
-        result = entry.result
-        self.set_font(_FONT_HEADING, "B", 34)
-        self.set_text_color(_DEEP_STEEL if entry.place == _FIRST_PLACE else _STEEL)
-        self.cell(0, 0.5, text=str(entry.place))
-        self.ln(0.54)
-        indent = 0.95
-        self.set_font(_FONT_HEADING, "B", 14)
+    def _section_head(self, text: str) -> None:
+        """Draw a poster section head ("Teams"/"Solo riders")."""
+        _maybe_page_break(self, 0.5)
+        self.ln(0.04)
+        self.set_font(_FONT_HEADING, "B", 13)
         self.set_text_color(*_INK)
-        self.set_x(self.l_margin + indent)
-        self.cell(0, 0.24, text=f"#{result.plate} {result.name}")
-        self.ln(0.28)
-        self.set_font(_FONT_BODY, "", 8.5)
-        self.set_text_color(*_INK)
-        self.set_x(self.l_margin + indent)
-        self.cell(0, 0.14, text=_poster_subtitle(result))
-        self.ln(0.18)
-        self.set_x(self.l_margin + indent)
-        self.set_font(_FONT_HEADING, "B", 10)
-        self.set_text_color(*_STEEL)
-        self.cell(0, 0.16, text=_hand_prose(result.hand))
-        self.ln(0.20)
-        self.set_x(self.l_margin + indent)
-        self._large_cards(result.hand.best5)
-        self.ln(0.32)
+        self.cell(0, 0.22, text=text)
+        self.ln(0.26)
 
-    def _large_cards(self, cards: Sequence[Card]) -> None:
+    def _cards(self, entries: Sequence[Placed], *, geom: _CardGeom) -> None:
+        """Draw a section's cards with places enumerated from 1."""
+        for index, entry in enumerate(entries):
+            self._podium_card(entry, place=index + _FIRST_PLACE, geom=geom)
+
+    def _podium_card(self, entry: Placed, place: int, geom: _CardGeom) -> None:
+        """Draw one podium card: place, name, run, hand, card faces."""
+        _maybe_page_break(self, geom.guard)
+        result = entry.result
+        scale = geom.scale
+        self.set_font(_FONT_HEADING, "B", 34 * scale)
+        self.set_text_color(_DEEP_STEEL if place == _FIRST_PLACE else _STEEL)
+        self.cell(0, 0.5 * scale, text=str(place))
+        self.ln(0.54 * scale)
+        indent = 0.95 * scale
+        self.set_font(_FONT_HEADING, "B", 14 * scale)
+        self.set_text_color(*_INK)
+        self.set_x(self.l_margin + indent)
+        self.cell(0, 0.24 * scale, text=_poster_name(result))
+        self.ln(0.28 * scale)
+        self.set_font(_FONT_BODY, "", 8.5 * scale)
+        self.set_text_color(*_INK)
+        self.set_x(self.l_margin + indent)
+        self.cell(0, 0.14 * scale, text=_poster_subtitle(result))
+        self.ln(0.18 * scale)
+        self.set_x(self.l_margin + indent)
+        self.set_font(_FONT_HEADING, "B", 10 * scale)
+        self.set_text_color(*_STEEL)
+        self.cell(0, 0.16 * scale, text=_hand_prose(result.hand))
+        self.ln(0.20 * scale)
+        self.set_x(self.l_margin + indent)
+        self._large_cards(result.hand.best5, size=18 * scale, height=0.30 * scale)
+        self.ln(0.32 * scale)
+
+    def _large_cards(self, cards: Sequence[Card], *, size: float, height: float) -> None:
         """Draw best-5 cards large; steel for red suits and jokers."""
-        self.set_font(_FONT_GLYPH, "", 18)
+        self.set_font(_FONT_GLYPH, "", size)
         for card in cards:
             text = _poster_card_text(card)
             width = self.get_string_width(text) + 0.04
             self.set_text_color(_STEEL if _is_steel_card(card) else _INK)
-            self.cell(width, 0.30, text=text)
+            self.cell(width, height, text=text)
         self.set_text_color(*_INK)
 
 
@@ -713,7 +844,8 @@ class _ReportPDF(FPDF):
     """The report document: header/footer plus the section drawers.
 
     Holds the PDF state for one report (fonts, metadata, the ride's
-    display fields) and draws the sections in the HTML export's order.
+    display fields) and draws the shared section plan in the HTML
+    export's order, one drawer per planned section.
     """
 
     def __init__(  # noqa: PLR0913 -- (ride, opts, letter, created_at, logo_path): the report's state inputs
@@ -736,7 +868,7 @@ class _ReportPDF(FPDF):
         _open_document(self, ride.name, created_at=created_at)
         self._ride = ride
         self._opts = opts
-        self._generated = _format_generated(created_at)
+        self._generated = htmlexport.format_generated(created_at)
         self._logo_path = logo_path
         self.alias_nb_pages("{nb}")
 
@@ -833,21 +965,23 @@ class _ReportPDF(FPDF):
         self.set_text_color(*cell.style.color)
         self.cell(cell.width, cell.height, text=cell.text, align=cell.style.align)
 
-    def _cards_cell(self, cards: Sequence[Card], width: float) -> None:
+    def _cards_cell(self, cards: Sequence[CardPair], width: float) -> None:
         """Draw an inline card run at the current x, clipped to *width*.
 
         Each card is its own cell so hearts/diamonds/jokers can take
         the steel color; a card that would cross the column's right
         edge is dropped rather than let it spill into the next column.
+        The cards are the shared model's rank/suit pairs, so a suit's
+        glyph and its steel accent follow the pair, not a card object.
         """
         self.set_font(_FONT_GLYPH, "", 7)
         right = self.get_x() + width
-        for card in cards:
-            text = _card_text(card)
+        for pair in cards:
+            text = _pair_text(pair)
             text_width = self.get_string_width(text)
             if self.get_x() + text_width > right:
                 break
-            self.set_text_color(_STEEL if _is_steel_card(card) else _INK)
+            self.set_text_color(_STEEL if _pair_is_steel(pair) else _INK)
             self.cell(text_width, _ROW_HEIGHT, text=text)
             self.set_x(self.get_x() + 0.04)
         self.set_text_color(*_INK)
@@ -864,39 +998,41 @@ class _ReportPDF(FPDF):
     # -------------------------------------------------------- sections
 
     def build(self, placed: Sequence[Placed]) -> None:
-        """Draw every section, in the HTML export's order."""
-        self.add_page()
-        self._cover(placed)
-        self._podium(placed)
-        self._top_ten(placed)
-        if self._opts.laps_board:
-            self._laps_board(placed)
-        if self._opts.time_board:
-            self._time_board(placed)
-        if self._opts.full_field:
-            self._full_field(placed)
+        """Draw every section, in the HTML export's order.
 
-    def _cover(self, placed: Sequence[Placed]) -> None:
+        The shared model does the planning: the payload carries the
+        rows and the plan carries the per-kind sections, so this
+        document's drawers only lay them out.
+        """
+        payload = htmlexport.build_payload(self._ride, placed, self._opts, self._generated)
+        plan = htmlexport.sections(payload, placed)
+        self.add_page()
+        self._cover(payload.event)
+        self._podiums(plan)
+        self._top_lists(plan)
+        self._laps_boards(plan)
+        self._time_board(plan)
+        if self._opts.full_field:
+            self._full_field(plan)
+
+    def _cover(self, event: EventInfo) -> None:
         """Draw the page-1 cover: kicker, title, counters, meta."""
         _draw_logo(self, self._logo_path)
         if self._logo_path is not None:
             self.ln(0.42)
-        entries = len(placed)
-        laps = sum(p.result.laps for p in placed)
-        cards = sum(len(p.result.cards) for p in placed)
         self.set_font(_FONT_HEADING, "B", 10)
         self.set_text_color(*_STEEL)
-        self.cell(0, 0.16, text=_KICKER)
+        self.cell(0, 0.16, text=event.kicker)
         self.ln(0.20)
         self.set_font(_FONT_HEADING, "B", 26)
         self.set_text_color(*_INK)
-        self.cell(0, 0.40, text=self._ride.name)
+        self.cell(0, 0.40, text=event.title)
         self.ln(0.44)
         self.set_font(_FONT_BODY, "", 9.5)
         self.set_text_color(*_INK)
-        self.cell(0, 0.16, text=_format_meta(self._ride))
+        self.cell(0, 0.16, text=event.meta)
         self.ln(0.18)
-        self.cell(0, 0.16, text=f"{entries:,} · {laps:,} · {cards:,}", align="R")
+        self.cell(0, 0.16, text=f"{event.entries:,} · {event.laps:,} · {event.cards:,}", align="R")
         self.ln(0.17)
         self.set_font(_FONT_BODY, "", 7.5)
         self.cell(0, 0.13, text="entries · laps · cards dealt", align="R")
@@ -915,110 +1051,178 @@ class _ReportPDF(FPDF):
         )
         self.ln(0.04)
 
-    def _podium(self, placed: Sequence[Placed]) -> None:
-        """Draw the "Best hands — top 3" podium cards."""
-        self._section_heading("Best hands — top 3")
-        for entry in placed[: _FIRST_PLACE + 2]:
-            self._podium_card(entry)
+    def _podiums(self, plan: Sections) -> None:
+        """Draw the per-kind "Best hands" podium cards."""
+        if plan.podium_teams:
+            self._section_heading("Best hands — teams")
+            for row in plan.podium_teams:
+                self._podium_card(row)
+        if plan.podium_solo:
+            title = "Best hands — solo riders" if plan.teams else "Best hands — top 3"
+            self._section_heading(title)
+            for row in plan.podium_solo:
+                self._podium_card(row)
 
-    def _podium_card(self, entry: Placed) -> None:
-        """Draw one podium card: place, plate/name, run, hand."""
+    def _podium_card(self, row: ResultRow) -> None:
+        """Draw one podium card: place, name, run, hand.
+
+        A team card shows no plate -- its section's heading names the
+        kind, mirroring the HTML's ``podium_card`` call.
+        """
         self._maybe_page_break(1.1)
-        result = entry.result
         indent = 0.70
         self.set_font(_FONT_HEADING, "B", 30)
-        self.set_text_color(_DEEP_STEEL if entry.place == _FIRST_PLACE else _STEEL)
-        self.cell(indent, 0.42, text=str(entry.place))
+        self.set_text_color(_DEEP_STEEL if row.place == _FIRST_PLACE else _STEEL)
+        self.cell(indent, 0.42, text=str(row.place))
         self.set_font(_FONT_HEADING, "B", 13)
         self.set_text_color(*_INK)
-        self.cell(0, 0.24, text=f"#{result.plate} {result.name}")
+        name = row.entry if _is_team_row(row) else f"#{row.plate} {row.entry}"
+        self.cell(0, 0.24, text=name)
         self.ln(0.26)
         self.set_font(_FONT_BODY, "", 8)
-        subtitle = f"{result.kind.upper()} · {result.laps} laps"
+        subtitle = f"{row.entry_type} · {row.laps} laps"
         if self._opts.show_times:
-            subtitle += f" · {_format_duration(result.total_time)}"
+            subtitle += f" · {row.total}"
         self.set_x(self.l_margin + indent)
         self.cell(0, 0.13, text=subtitle)
         self.ln(0.16)
         self.set_x(self.l_margin + indent)
-        self._cards_cell(result.hand.best5, 2.0)
+        self._cards_cell(row.cards, 2.0)
         self.ln(0.24)
         self.set_font(_FONT_HEADING, "B", 9.5)
         self.set_text_color(*_STEEL)
         self.set_x(self.l_margin + indent)
-        self.cell(0, 0.15, text=_hand_label(result.hand))
+        self.cell(0, 0.15, text=_hand_label(row.hand))
         self.ln(0.32)
 
-    def _top_ten(self, placed: Sequence[Placed]) -> None:
-        """Draw the "Top ten" standings table."""
-        self._section_heading("Top ten")
-        widths = _top_ten_widths(show_times=self._opts.show_times, content=self._content_width())
-        labels = ["Place", "Plate", "Entry", "Laps"]
+    def _top_lists(self, plan: Sections) -> None:
+        """Draw the standings tables (5/5 or the solo ten)."""
+        if plan.top_teams:
+            self._section_heading("Top teams")
+            widths = _team_top_widths(
+                show_times=self._opts.show_times, content=self._content_width()
+            )
+            self._table_header(widths, self._top_labels(show_plate=False))
+            for row in plan.top_teams:
+                self._maybe_page_break(_ROW_HEIGHT + 0.10)
+                self._standings_row(widths, row, show_plate=False)
+        if plan.top_solo:
+            title = "Top solo riders" if plan.teams else "Top ten"
+            self._section_heading(title)
+            widths = _top_ten_widths(
+                show_times=self._opts.show_times, content=self._content_width()
+            )
+            self._table_header(widths, self._top_labels(show_plate=True))
+            for row in plan.top_solo:
+                self._maybe_page_break(_ROW_HEIGHT + 0.10)
+                self._standings_row(widths, row)
+
+    def _top_labels(self, *, show_plate: bool) -> list[str]:
+        """Return one top-list table's header labels."""
+        labels = ["Place", "Entry", "Laps"]
+        if show_plate:
+            labels.insert(1, "Plate")
         if self._opts.show_times:
             labels.append("Total time")
         labels += ["Best 5 cards", "Hand"]
-        self._table_header(widths, labels)
-        for entry in placed[:10]:
-            self._maybe_page_break(_ROW_HEIGHT + 0.10)
-            self._standings_row(widths, entry)
+        return labels
 
-    def _standings_row(self, widths: Sequence[float], entry: Placed) -> None:
-        """Draw one top-ten row: place, plate, entry, laps, hand."""
-        result = entry.result
+    def _standings_row(
+        self, widths: Sequence[float], row: ResultRow, *, show_plate: bool = True
+    ) -> None:
+        """Draw one top-list row (the team form has no Plate cell)."""
         self._at_column(widths, 0)
-        self._scalar(_Cell(widths[0], str(entry.place), _ROW_BOLD))
-        self._at_column(widths, 1)
-        self._scalar(_Cell(widths[1], result.plate, _ROW_BOLD))
-        self._at_column(widths, 2)
-        self._scalar(_Cell(widths[2], result.name, _ROW_STYLE))
-        self._at_column(widths, 3)
-        self._scalar(_Cell(widths[3], str(result.laps), _ROW_RIGHT))
-        col = 4
-        if self._opts.show_times:
+        self._scalar(_Cell(widths[0], str(row.place), _ROW_BOLD))
+        col = 1
+        if show_plate:
             self._at_column(widths, col)
-            self._scalar(_Cell(widths[col], _format_duration(result.total_time), _ROW_STYLE))
+            self._scalar(_Cell(widths[col], str(row.plate), _ROW_BOLD))
             col += 1
         self._at_column(widths, col)
-        self._cards_cell(result.hand.best5, widths[col])
-        self._at_column(widths, col + 1)
-        self._scalar(_Cell(widths[col + 1], _hand_label(result.hand), _HAND_STYLE))
+        self._scalar(_Cell(widths[col], row.entry, _ROW_STYLE))
+        col += 1
+        self._at_column(widths, col)
+        self._scalar(_Cell(widths[col], str(row.laps), _ROW_RIGHT))
+        col += 1
+        if self._opts.show_times:
+            self._at_column(widths, col)
+            self._scalar(_Cell(widths[col], cast("str", row.total), _ROW_STYLE))
+            col += 1
+        self._at_column(widths, col)
+        self._cards_cell(row.cards, widths[col])
+        col += 1
+        self._at_column(widths, col)
+        self._scalar(_Cell(widths[col], _hand_label(row.hand), _HAND_STYLE))
         self._row_rule()
 
-    def _laps_board(self, placed: Sequence[Placed]) -> None:
-        """Draw the "Most laps" leaderboard, top 5 ACTIVE entries."""
-        self._section_heading("Most laps")
+    def _laps_boards(self, plan: Sections) -> None:
+        """Draw the per-kind "Most laps" boards."""
+        if plan.laps_teams:
+            self._laps_board("Most laps — teams", plan.laps_teams, show_plate=False)
+        if plan.laps_solo:
+            title = "Most laps — solo riders" if plan.teams else "Most laps"
+            self._laps_board(title, plan.laps_solo, show_plate=True)
+
+    def _laps_board(self, title: str, rows: Sequence[LapsBoardRow], *, show_plate: bool) -> None:
+        """Draw one "Most laps" board, positions enumerated.
+
+        The rows are the shared plan's own leaderboard rows -- they
+        carry no place, so the board numbers its rows as it draws them.
+        """
+        self._section_heading(title)
         self.set_font(_FONT_BODY, "", 7.5)
         self.set_text_color(*_INK)
         self.cell(0, 0.13, text=f"Unofficial — {_format_km(self._ride.lap_km)} km per lap.")
         self.ln(0.16)
-        widths = _laps_widths(show_times=self._opts.show_times, content=self._content_width())
-        labels = ["#", "Plate", "Entry", "Laps"]
+        widths = self._laps_widths_for(show_plate=show_plate)
+        labels = ["#", "Entry", "Laps"]
+        if show_plate:
+            labels.insert(1, "Plate")
         if self._opts.show_times:
             labels.append("Total")
         self._table_header(widths, labels)
-        results = [p.result for p in placed]
-        for entry in laps_leaderboard(results, top=5):
+        for place, row in enumerate(rows, start=_FIRST_PLACE):
             self._maybe_page_break(_ROW_HEIGHT + 0.10)
-            self._laps_row(widths, entry)
+            self._laps_row(widths, row, place=place, show_plate=show_plate)
 
-    def _laps_row(self, widths: Sequence[float], entry: Placed) -> None:
+    def _laps_widths_for(self, *, show_plate: bool) -> list[float]:
+        """Return the board's widths for its plate form."""
+        content = self._content_width()
+        if show_plate:
+            return _laps_widths(show_times=self._opts.show_times, content=content)
+        return _team_laps_widths(show_times=self._opts.show_times, content=content)
+
+    def _laps_row(  # noqa: PLR0913 -- (widths, row, place, show_plate): one board row's inputs
+        self, widths: Sequence[float], row: LapsBoardRow, *, place: int, show_plate: bool
+    ) -> None:
         """Draw one "Most laps" board row."""
-        result = entry.result
         self._at_column(widths, 0)
-        self._scalar(_Cell(widths[0], str(entry.place), _ROW_BOLD))
-        self._at_column(widths, 1)
-        self._scalar(_Cell(widths[1], f"#{result.plate}", _ROW_BOLD))
-        self._at_column(widths, 2)
-        self._scalar(_Cell(widths[2], result.name, _ROW_STYLE))
-        self._at_column(widths, 3)
-        self._scalar(_Cell(widths[3], str(result.laps), _ROW_RIGHT))
+        self._scalar(_Cell(widths[0], str(place), _ROW_BOLD))
+        col = 1
+        if show_plate:
+            self._at_column(widths, col)
+            self._scalar(_Cell(widths[col], f"#{row.plate}", _ROW_BOLD))
+            col += 1
+        self._at_column(widths, col)
+        self._scalar(_Cell(widths[col], row.entry, _ROW_STYLE))
+        col += 1
+        self._at_column(widths, col)
+        self._scalar(_Cell(widths[col], str(row.laps), _ROW_RIGHT))
+        col += 1
         if self._opts.show_times:
-            self._at_column(widths, 4)
-            self._scalar(_Cell(widths[4], _format_duration(result.total_time), _ROW_STYLE))
+            self._at_column(widths, col)
+            self._scalar(_Cell(widths[col], cast("str", row.total), _ROW_STYLE))
         self._row_rule()
 
-    def _time_board(self, placed: Sequence[Placed]) -> None:
-        """Draw the "Fastest — laps then time" leaderboard, top 5."""
+    def _time_board(self, plan: Sections) -> None:
+        """Draw the flat "Fastest — laps then time" board, top ten.
+
+        The board is one flat planning list whatever the kinds; a team's
+        row still shows no plate, so its cell is left blank against the
+        solo rows' plates (the plan's team partition is the lookup).
+        """
+        if not plan.time_board:
+            return
         self._section_heading("Fastest — laps then time")
         self.set_font(_FONT_BODY, "", 7.5)
         self.set_text_color(*_INK)
@@ -1026,50 +1230,47 @@ class _ReportPDF(FPDF):
         self.ln(0.16)
         widths = _time_widths(self._content_width())
         self._table_header(widths, ["#", "Plate", "Entry", "Laps", "Total", "Avg lap"])
-        results = [p.result for p in placed]
-        for entry in time_leaderboard(results, top=5):
+        team_plates = {row.plate for row in plan.teams}
+        for place, row in enumerate(plan.time_board, start=_FIRST_PLACE):
             self._maybe_page_break(_ROW_HEIGHT + 0.10)
-            self._time_row(widths, entry)
+            self._time_row(widths, row, place=place, show_plate=row.plate not in team_plates)
 
-    def _time_row(self, widths: Sequence[float], entry: Placed) -> None:
+    def _time_row(  # noqa: PLR0913 -- (widths, row, place, show_plate): one board row's inputs
+        self, widths: Sequence[float], row: TimeBoardRow, *, place: int, show_plate: bool
+    ) -> None:
         """Draw one "Fastest" board row, with the avg-lap time."""
-        result = entry.result
-        avg = _format_duration(result.total_time / result.laps) if result.laps else ""
         self._at_column(widths, 0)
-        self._scalar(_Cell(widths[0], str(entry.place), _ROW_BOLD))
+        self._scalar(_Cell(widths[0], str(place), _ROW_BOLD))
         self._at_column(widths, 1)
-        self._scalar(_Cell(widths[1], f"#{result.plate}", _ROW_BOLD))
+        self._scalar(_Cell(widths[1], f"#{row.plate}" if show_plate else "", _ROW_BOLD))
         self._at_column(widths, 2)
-        self._scalar(_Cell(widths[2], result.name, _ROW_STYLE))
+        self._scalar(_Cell(widths[2], row.entry, _ROW_STYLE))
         self._at_column(widths, 3)
-        self._scalar(_Cell(widths[3], f"{result.laps} laps", _ROW_STYLE))
+        self._scalar(_Cell(widths[3], f"{row.laps} laps", _ROW_STYLE))
         self._at_column(widths, 4)
-        self._scalar(_Cell(widths[4], _format_duration(result.total_time), _BOARD_TOTAL))
+        self._scalar(_Cell(widths[4], row.total, _BOARD_TOTAL))
         self._at_column(widths, 5)
-        self._scalar(_Cell(widths[5], f"avg {avg}", _ROW_STYLE))
+        self._scalar(_Cell(widths[5], f"avg {row.avg}", _ROW_STYLE))
         self._row_rule()
 
-    def _kind_label(self, label: str) -> None:
-        """Draw one full-field section label ("Teams"/"Solo").
-
-        Phase 3 (team/solo results split): each non-empty kind in the
-        full field is preceded by this small-caps label row so the two
-        sections read as separate tables under the shared header.
-        """
-        self._maybe_page_break(0.30)
+    def _subsection_heading(self, label: str) -> None:
+        """Draw one full-field subsection head ("Teams"/"Solo")."""
+        self._maybe_page_break(0.45)
         self.ln(0.04)
-        self.set_font(_FONT_HEADING, "B", 8.5)
-        self.set_text_color(*_STEEL)
-        self.cell(0, 0.16, text=label.upper())
-        self.ln(0.18)
+        self.set_font(_FONT_HEADING, "B", 11)
+        self.set_text_color(*_INK)
+        self.cell(0, 0.20, text=label)
+        self.ln(0.24)
         self._rule()
         self.ln(0.03)
 
-    def _full_field(self, placed: Sequence[Placed]) -> None:
-        """Draw the "Full field" table: Teams then Solo sections."""
+    def _full_field(self, plan: Sections) -> None:
+        """Draw the "Full field" umbrella and its two subsections."""
         self._section_heading("Full field")
-        note = "Every entry, ordered by hand — teams ranked against teams, "
-        note += "solo riders against solo riders. ★ = joker, shown as the card it played."
+        note = "Every entry, ordered by hand"
+        if plan.teams:
+            note += " — teams ranked against teams, solo riders against solo riders"
+        note += ". ★ = joker, shown as the card it played."
         if self._opts.all_cards:
             note += " This export includes every card drawn (organizer option)."
         # DejaVu for the note: it carries the ★ glyph Barlow lacks.
@@ -1077,66 +1278,126 @@ class _ReportPDF(FPDF):
         self.set_text_color(*_INK)
         self.multi_cell(0, 0.13, text=note, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         self.ln(0.05)
+        if plan.teams:
+            self._teams_field(plan.teams)
+        if plan.solo:
+            self._solo_field(plan.solo)
+
+    def _teams_field(self, rows: Sequence[ResultRow]) -> None:
+        """Draw the Teams subsection: compact rows, no plate."""
+        self._subsection_heading("Teams")
+        widths = _team_field_widths(
+            show_times=self._opts.show_times, content=self._content_width()
+        )
+        labels = ["Place", "Entry", "Laps"]
+        if self._opts.show_times:
+            labels += ["Total time", "Best lap"]
+        labels += ["Cards", "Hand"]
+        self._table_header(widths, labels)
+        for row in rows:
+            self._maybe_page_break(_ROW_HEIGHT + 0.10)
+            self._team_field_row(widths, row)
+            if self._opts.all_cards:
+                self._drawn_row(row.drawn)
+
+    def _solo_field(self, rows: Sequence[ResultRow]) -> None:
+        """Draw the Solo riders subsection: the field columns."""
+        self._subsection_heading("Solo riders")
         widths = _field_widths(show_times=self._opts.show_times, content=self._content_width())
         labels = ["Place", "Plate", "Entry", "Type", "Laps"]
         if self._opts.show_times:
             labels += ["Total time", "Best lap"]
         labels.append("Best hand")
         self._table_header(widths, labels)
-        for kind, section_label in (("team", "Teams"), ("solo", "Solo")):
-            entries = [entry for entry in placed if entry.result.kind == kind]
-            if not entries:
-                continue  # a ride without this kind renders no section
-            self._kind_label(section_label)
-            for entry in entries:
-                self._maybe_page_break(_ROW_HEIGHT + 0.10)
-                self._field_row(widths, entry)
-                if self._opts.all_cards:
-                    self._drawn_row(entry.result)
+        for row in rows:
+            self._maybe_page_break(_ROW_HEIGHT + 0.10)
+            self._field_row(widths, row)
+            if self._opts.all_cards:
+                self._drawn_row(row.drawn)
 
-    def _field_row(self, widths: Sequence[float], entry: Placed) -> None:
-        """Draw one full-field row, with the DNF mark after the name.
+    def _team_field_row(self, widths: Sequence[float], row: ResultRow) -> None:
+        """Draw one team full-field row: compact, no plate, no type.
 
-        A solo entry's sex (E7) rides in the entry cell beside the
-        name -- "Luca Ferrari (M)" -- the least invasive of the two
-        options, since a dedicated column would re-cut every width. A
-        team's sex is None (no single sex) and renders nothing.
+        The row's small inline logo (the shared payload's own data URI)
+        draws before the name when it carries one, mirroring the HTML's
+        ``team_field_row``; the DNF mark follows the name.
         """
-        result = entry.result
-        name = f"{result.name} ({result.sex})" if result.sex else result.name
-        if result.dnf:
-            name = f"{name} DNF"
+        name = f"{row.entry} DNF" if row.dnf else row.entry
         self._at_column(widths, 0)
-        self._scalar(_Cell(widths[0], str(entry.place), _FIELD_BOLD))
+        self._scalar(_Cell(widths[0], str(row.place), _FIELD_BOLD))
         self._at_column(widths, 1)
-        self._scalar(_Cell(widths[1], result.plate, _FIELD_BOLD))
+        logo_width = self._inline_logo(row.logo)
+        self._scalar(_Cell(widths[1] - logo_width, name, _FIELD_STYLE))
+        col = 2
+        self._at_column(widths, col)
+        self._scalar(_Cell(widths[col], str(row.laps), _FIELD_STYLE))
+        col += 1
+        if self._opts.show_times:
+            self._at_column(widths, col)
+            self._scalar(_Cell(widths[col], cast("str", row.total), _FIELD_STYLE))
+            col += 1
+            self._at_column(widths, col)
+            self._scalar(_Cell(widths[col], cast("str", row.best_lap), _FIELD_STYLE))
+            col += 1
+        self._at_column(widths, col)
+        self._cards_cell(row.cards, widths[col])
+        col += 1
+        self._at_column(widths, col)
+        self._scalar(_Cell(widths[col], _hand_label(row.hand), _HAND_STYLE))
+        self._row_rule()
+
+    def _inline_logo(self, logo: str | None) -> float:
+        """Draw a row's small inline logo; return the width it consumed.
+
+        ``None`` consumes nothing. A drawn logo is the payload's own
+        data URI bitmapped to the HTML's compact inline size.
+        """
+        if logo is None:
+            return 0.0
+        self.image(_decode_logo(logo), w=_INLINE_LOGO, h=_INLINE_LOGO)
+        self.set_x(self.get_x() + _INLINE_LOGO + 0.03)
+        return _INLINE_LOGO + 0.03
+
+    def _field_row(self, widths: Sequence[float], row: ResultRow) -> None:
+        """Draw one solo full-field row, DNF-marked after the name.
+
+        The row's sex (E7) rides in the entry cell beside the name --
+        "Luca Ferrari (M)" -- the least invasive of the two options,
+        since a dedicated column would re-cut every width. A team's sex
+        is None (no single sex) and renders nothing.
+        """
+        cell_name = f"{row.entry} ({row.sex})" if row.sex else row.entry
+        name = f"{cell_name} DNF" if row.dnf else cell_name
+        self._at_column(widths, 0)
+        self._scalar(_Cell(widths[0], str(row.place), _FIELD_BOLD))
+        self._at_column(widths, 1)
+        self._scalar(_Cell(widths[1], str(row.plate), _FIELD_BOLD))
         self._at_column(widths, 2)
         self._scalar(_Cell(widths[2], name, _FIELD_STYLE))
         self._at_column(widths, 3)
-        self._scalar(_Cell(widths[3], result.kind.upper(), _FIELD_STYLE))
+        self._scalar(_Cell(widths[3], row.entry_type, _FIELD_STYLE))
         self._at_column(widths, 4)
-        self._scalar(_Cell(widths[4], str(result.laps), _FIELD_STYLE))
+        self._scalar(_Cell(widths[4], str(row.laps), _FIELD_STYLE))
         col = 5
         if self._opts.show_times:
             self._at_column(widths, col)
-            self._scalar(_Cell(widths[col], _format_duration(result.total_time), _FIELD_STYLE))
+            self._scalar(_Cell(widths[col], cast("str", row.total), _FIELD_STYLE))
             col += 1
             self._at_column(widths, col)
-            self._scalar(_Cell(widths[col], _format_duration(result.best_lap), _FIELD_STYLE))
+            self._scalar(_Cell(widths[col], cast("str", row.best_lap), _FIELD_STYLE))
             col += 1
         last = len(widths) - 1
         self._at_column(widths, last)
-        self._cards_cell(result.hand.best5, widths[last])
+        self._cards_cell(row.cards, widths[last])
         remaining = self.l_margin + sum(widths[:last]) + widths[last] - self.get_x()
         self.set_font(_HAND_STYLE.font, "B" if _HAND_STYLE.bold else "", _HAND_STYLE.size)
         self.set_text_color(*_HAND_STYLE.color)
-        self.cell(max(remaining, 0.0), _ROW_HEIGHT, text=_hand_label(result.hand))
+        self.cell(max(remaining, 0.0), _ROW_HEIGHT, text=_hand_label(row.hand))
         self._row_rule()
 
-    def _drawn_row(self, result: EntryResult) -> None:
+    def _drawn_row(self, cards: Sequence[CardPair]) -> None:
         """Draw the muted "All N cards, in draw order" sub-row."""
-        cards = result.cards
-        run = " ".join(_card_text(card) for card in cards)
+        run = " ".join(_pair_text(pair) for pair in cards)
         # DejaVu for the run: the sub-row spells out the suit glyphs.
         self.set_font(_FONT_GLYPH, "", 6.5)
         self.set_text_color(*_INK)
@@ -1178,10 +1439,12 @@ def render(  # noqa: PLR0913, PLR0917 -- module-skeletons.md's frozen (ride, pla
     """Write one finished ride's results report PDF to *path*.
 
     Mirrors the HTML export's sections and flags (R-63): cover block,
-    podium (top 3), top ten, then the laps/time boards only when the
-    corresponding option is on, then the full field (DNF marked, with
-    all-cards-drawn sub-rows when ``all_cards``), and Total/Best-lap
-    columns only when ``show_times``. *path* is the caller-supplied
+    then the per-kind podiums and top lists (a team event: 3 team + 3
+    solo places and 5+5 top lists; a solo event: a top-3 podium and a
+    top ten), then the laps/time boards only when the corresponding
+    option is on, then the full field (DNF marked, with all-cards-drawn
+    sub-rows when ``all_cards``), and Total/Best-lap columns only when
+    ``show_times``. *path* is the caller-supplied
     full file path -- the ``{ride-slug}-results.pdf`` naming is the
     menu handler's job, never this module's (module-skeletons.md).
 

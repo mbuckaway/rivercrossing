@@ -2,7 +2,12 @@
     One macro per page section; base.html.j2 imports this file as `m`.
     Card = ["rank", suit] where suit is s/h/d/c or "j" (joker).
     Mono palette: hearts & diamonds take the steel accent (.chip.r), never red.
-    Autoescape is ON — all text renders through it; no |safe here. -#}
+    Teams never render a plate anywhere: the podium card, top-teams row,
+    full-field team row and "Most laps — teams" board all omit the cell, and
+    the flat "Fastest" board blanks a team row's plate (its `team_plates`
+    argument is the plan's team partition, the same lookup pdfexport's
+    _time_row uses) while the solo rows on that board keep `#plate`.
+    autoescape is ON — all text renders through it; no |safe here. -#}
 
 {% set SUITS = {'s': '♠', 'h': '♥', 'd': '♦', 'c': '♣'} %}
 
@@ -31,28 +36,36 @@
   </header>
 {%- endmacro %}
 
-{% macro podium_card(r, options) -%}
-<div class="bp p-5 {{ 'bg-steel-800 text-paper' if r.place == 1 else 'bg-transparent' }}"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">{{ r.place }}</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">#{{ r.plate }} {{ r.entry }}</div><div class="text-xs {{ 'text-paper/70' if r.place == 1 else 'text-ink/55' }}">{{ r.type }} · {{ r.laps }} laps{% if options.show_times %}<span class="t-col"> · {{ r.total }}</span>{% endif %}{% if r.sex %}<span class="{{ 'text-paper/70' if r.place == 1 else 'text-ink/55' }}"> · {{ r.sex }}</span>{% endif %}</div></div></div><div class="mt-4">{{ chips(r.cards, big=true) }}</div><div class="mt-3 font-head font-semibold uppercase tracking-wide {{ 'text-steel-300' if r.place == 1 else 'text-steel-700' }}">{{ r.hand }}</div></div>
+{% macro podium_card(r, options, show_plate=true) -%}
+<div class="bp p-5 {{ 'bg-steel-800 text-paper' if r.place == 1 else 'bg-transparent' }}"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><div class="flex items-baseline gap-3"><span class="font-head font-semibold text-5xl leading-none">{{ r.place }}</span><div class="min-w-0"><div class="font-head font-semibold text-xl leading-tight truncate">{% if show_plate %}#{{ r.plate }} {% endif %}{{ r.entry }}</div><div class="text-xs {{ 'text-paper/70' if r.place == 1 else 'text-ink/55' }}">{{ r.type }} · {{ r.laps }} laps{% if options.show_times %}<span class="t-col"> · {{ r.total }}</span>{% endif %}{% if r.sex %}<span class="{{ 'text-paper/70' if r.place == 1 else 'text-ink/55' }}"> · {{ r.sex }}</span>{% endif %}</div></div></div><div class="mt-4">{{ chips(r.cards, big=true) }}</div><div class="mt-3 font-head font-semibold uppercase tracking-wide {{ 'text-steel-300' if r.place == 1 else 'text-steel-700' }}">{{ r.hand }}</div></div>
 {%- endmacro %}
 
 {% macro standings_row(r, options) -%}
-<tr class="border-b border-ink/8{{ ' bg-steel-500/10' if r.place == 1 }}"><td class="py-2 pr-3 font-bold">{{ r.place }}</td><td class="py-2 pr-3 font-bold">{{ r.plate }}</td><td class="py-2 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo" style="height:48px;width:auto;vertical-align:middle;margin-right:6px">{% endif %}{{ r.entry }}{% if r.tie %} <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span>{% endif %}</td><td class="py-2 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-2 pr-3 t-col">{{ r.total }}</td>{% endif %}<td class="py-2 pr-3">{{ chips(r.cards) }}</td><td class="py-2 font-head font-semibold uppercase">{{ r.hand }}</td></tr>
+<tr class="border-b border-ink/8{{ ' bg-steel-500/10' if r.place == 1 }}"><td class="py-2 pr-3 font-bold">{{ r.place }}</td><td class="py-2 pr-3 font-bold">{{ r.plate }}</td><td class="py-2 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.tie %} <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span>{% endif %}</td><td class="py-2 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-2 pr-3 t-col">{{ r.total }}</td>{% endif %}<td class="py-2 pr-3">{{ chips(r.cards) }}</td><td class="py-2 font-head font-semibold uppercase">{{ r.hand }}</td></tr>
 {%- endmacro %}
 
-{% macro laps_board(rows, options) -%}
-<section><h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Most laps</h2><p class="text-xs text-ink/50 mt-1">Unofficial — {{ options.lap_km }} km per lap.</p><table class="mt-3 w-full text-sm tabular-nums"><tbody>{% for r in rows %}<tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">{{ loop.index }}</td><td class="py-2 pr-3 font-bold w-12">#{{ r.plate }}</td><td class="py-2 pr-3">{{ r.entry }}</td><td class="py-2 pr-3 text-right font-head font-semibold text-lg">{{ r.laps }}</td>{% if options.show_times %}<td class="py-2 t-col text-ink/55 w-20">{{ r.total }}</td>{% endif %}</tr>{% endfor %}</tbody></table></section>
+{% macro team_standings_row(r, options) -%}
+<tr class="border-b border-ink/8{{ ' bg-steel-500/10' if r.place == 1 }}"><td class="py-2 pr-3 font-bold">{{ r.place }}</td><td class="py-2 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.tie %} <span class="text-[10px] uppercase border border-steel-600 text-steel-700 px-1.5 py-0.5">tie-break</span>{% endif %}</td><td class="py-2 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-2 pr-3 t-col">{{ r.total }}</td>{% endif %}<td class="py-2 pr-3">{{ chips(r.cards) }}</td><td class="py-2 font-head font-semibold uppercase">{{ r.hand }}</td></tr>
 {%- endmacro %}
 
-{% macro time_board(rows) -%}
-<section class="t-col"><h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Fastest — laps then time</h2><p class="text-xs text-ink/50 mt-1">Most laps, shortest elapsed to the last crossing.</p><table class="mt-3 w-full text-sm tabular-nums"><tbody>{% for r in rows %}<tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">{{ loop.index }}</td><td class="py-2 pr-3 font-bold w-12">#{{ r.plate }}</td><td class="py-2 pr-3">{{ r.entry }}</td><td class="py-2 pr-3">{{ r.laps }} laps</td><td class="py-2 pr-3 font-head font-semibold">{{ r.total }}</td><td class="py-2 text-ink/55">avg {{ r.avg }}</td></tr>{% endfor %}</tbody></table></section>
+{% macro laps_board(rows, options, title='Most laps', show_plate=true) -%}
+<section><h2 class="font-head font-semibold text-2xl uppercase tracking-wide">{{ title }}</h2><p class="text-xs text-ink/50 mt-1">Unofficial — {{ options.lap_km }} km per lap.</p><table class="mt-3 w-full text-sm tabular-nums"><tbody>{% for r in rows %}<tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">{{ loop.index }}</td>{% if show_plate %}<td class="py-2 pr-3 font-bold w-12">#{{ r.plate }}</td>{% endif %}<td class="py-2 pr-3">{{ r.entry }}</td><td class="py-2 pr-3 text-right font-head font-semibold text-lg">{{ r.laps }}</td>{% if options.show_times %}<td class="py-2 t-col text-ink/55 w-20">{{ r.total }}</td>{% endif %}</tr>{% endfor %}</tbody></table></section>
+{%- endmacro %}
+
+{% macro time_board(rows, team_plates) -%}
+<section class="t-col"><h2 class="font-head font-semibold text-2xl uppercase tracking-wide">Fastest — laps then time</h2><p class="text-xs text-ink/50 mt-1">Most laps, shortest elapsed to the last crossing.</p><table class="mt-3 w-full text-sm tabular-nums"><tbody>{% for r in rows %}<tr class="border-b border-ink/8"><td class="py-2 pr-3 w-8 font-bold">{{ loop.index }}</td><td class="py-2 pr-3 font-bold w-12">{% if r.plate not in team_plates %}#{{ r.plate }}{% endif %}</td><td class="py-2 pr-3">{{ r.entry }}</td><td class="py-2 pr-3">{{ r.laps }} laps</td><td class="py-2 pr-3 font-head font-semibold">{{ r.total }}</td><td class="py-2 text-ink/55">avg {{ r.avg }}</td></tr>{% endfor %}</tbody></table></section>
 {%- endmacro %}
 
 {% macro field_row(r, options) -%}
-<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td class="py-1.5 pr-3">{{ r.place }}</td><td class="py-1.5 pr-3 font-bold">{{ r.plate }}</td><td class="py-1.5 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo" style="height:48px;width:auto;vertical-align:middle;margin-right:6px">{% endif %}{{ r.entry }}{% if r.sex %}<span class="text-xs text-ink/55"> · {{ r.sex }}</span>{% endif %}{% if r.dnf %} <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span>{% endif %}</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">{{ r.type }}</td><td class="py-1.5 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-1.5 pr-3 t-col">{{ r.total }}</td><td class="py-1.5 pr-3 t-col">{{ r.best_lap }}</td>{% endif %}<td class="py-1.5">{{ chips(r.cards) }} <span class="ms-1 font-head font-semibold uppercase text-xs">{{ r.hand }}</span></td></tr>
+<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td class="py-1.5 pr-3">{{ r.place }}</td><td class="py-1.5 pr-3 font-bold">{{ r.plate }}</td><td class="py-1.5 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.sex %}<span class="text-xs text-ink/55"> · {{ r.sex }}</span>{% endif %}{% if r.dnf %} <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span>{% endif %}</td><td class="py-1.5 pr-3 text-xs uppercase text-ink/55">{{ r.type }}</td><td class="py-1.5 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-1.5 pr-3 t-col">{{ r.total }}</td><td class="py-1.5 pr-3 t-col">{{ r.best_lap }}</td>{% endif %}<td class="py-1.5">{{ chips(r.cards) }} <span class="ms-1 font-head font-semibold uppercase text-xs">{{ r.hand }}</span></td></tr>
 {%- endmacro %}
 
-{% macro drawn_row(r, options) -%}
-<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td></td><td></td><td colspan="{{ 6 if options.show_times else 4 }}" class="pb-2 pt-0 text-xs text-ink/55">All {{ r.drawn | length }} cards, in draw order: {{ chips(r.drawn) }}</td></tr>
+{% macro team_field_row(r, options) -%}
+<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td class="py-1.5 pr-3">{{ r.place }}</td><td class="py-1.5 pr-3">{% if r.logo %}<img src="{{ r.logo }}" alt="" class="team-logo h-5 w-auto align-middle me-1.5">{% endif %}{{ r.entry }}{% if r.dnf %} <span class="text-[10px] uppercase border border-ink/30 px-1.5 py-0.5">dnf</span>{% endif %}</td><td class="py-1.5 pr-3">{{ r.laps }}</td>{% if options.show_times %}<td class="py-1.5 pr-3 t-col">{{ r.total }}</td><td class="py-1.5 pr-3 t-col">{{ r.best_lap }}</td>{% endif %}<td class="py-1.5 pr-3">{{ chips(r.cards) }}</td><td class="py-1.5 font-head font-semibold uppercase text-xs">{{ r.hand }}</td></tr>
+{%- endmacro %}
+
+{% macro drawn_row(r, span) -%}
+<tr class="border-b border-ink/8{{ ' opacity-60' if r.dnf }}"><td></td><td></td><td colspan="{{ span }}" class="pb-2 pt-0 text-xs text-ink/55">All {{ r.drawn | length }} cards, in draw order: {{ chips(r.drawn) }}</td></tr>
 {%- endmacro %}
 
 {% macro footer(event) -%}

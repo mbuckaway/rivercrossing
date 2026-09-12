@@ -158,15 +158,15 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 - **E6.2.1 Vendored CSS build step** · Goal: compile once in CI: Tailwind CLI × (base.html.j2 + theme.css) → compiled_css; Barlow/Barlow Condensed woff2 subsets → fonts_css (base64 @font-face). Refs: Spec §8; htmlexport/templates/theme.css. Tests first: build output contains .bp/.chip rules + both font families; checksum recorded; CI fails if theme.css newer than vendored artifact (staleness gate); zero url(http references. Done when: artifact committed + gate live.
 
-- **E6.2.2 HTML render + goldens** · Goal: htmlexport.render() per the template contract. Refs: base.html.j2 + macros.html.j2 headers; R-61; golden samples. Tests first: `tests/unit/test_htmlexport.py` — fixtures parsed from the two samples' race-data blocks render to committed goldens byte-for-byte (regenerated deliberately this once from the real renderer, then frozen); racejson escapes `</` (fixture with `</script>` in a team name — negative/injection case); StrictUndefined raises on missing key; zero external refs. Done when: goldens + injection + offline checks green.
+- **E6.2.2 HTML render + goldens** · Goal: htmlexport.render() per the template contract. Refs: base.html.j2 + macros.html.j2 headers; R-61; golden samples. Tests first: `tests/unit/test_htmlexport.py` — fixtures parsed from the three samples' race-data blocks (times, no-times, solo) render to committed goldens byte-for-byte (regenerated deliberately this once from the real renderer, then frozen); racejson escapes `</` (fixture with `</script>` in a team name — negative/injection case); StrictUndefined raises on missing key; zero external refs. Done when: goldens + injection + offline checks green.
 
 - **E6.2.3 No-times variant** · Goal: R-63 — times absent from markup AND JSON. Tests first: rendered no-times page contains no t-col markup, no total/bestLap/avg keys, empty timeBoard; title suffix "(no times)". Done when: assertions green against the no-times golden.
 
-- **E6.3.1 PDF report / E6.3.2 poster** (two sessions) · Goal: fpdf2 renderer per UI Designs 5a–5c, then the one-page podium poster 5d; deterministic bytes (R-62). Tests first: fixed metadata → identical bytes across two runs and across OSes (CI artifact diff); section flags mirror ExportOptions; poster is a single page at Letter. Done when: byte-determinism green both OSes.
+- **E6.3.1 PDF report / E6.3.2 poster** (two sessions) · Goal: fpdf2 renderer per UI Designs 5a–5c, then the one-page podium poster 5d (team event: top 3 teams + top 3 solo riders, reduced card faces; solo event: top 5 solo riders); deterministic bytes (R-62). Tests first: fixed metadata → identical bytes across two runs and across OSes (CI artifact diff); section flags mirror ExportOptions; poster is a single page at Letter. Done when: byte-determinism green both OSes.
 
 - **E6.4.1 Results window live** · Goal: results_dlg standings + publish checkboxes → ExportOptions; stale_infobar constructed in code and named with SetName(), present but hidden (E7 triggers) — XRC cannot author a wxInfoBar (§15b). Refs: #resultsframe. Tests first: harness — checkbox toggles change rendered exports (times case doubles as R-63 UI proof); tie rows badge. Done when: green.
 
-- **E6.4.2 Results menu** · Goal: §15 Results rows live (Standings F5, Generate HTML, Export PDF, Poster, Standings CSV, Preview in Browser, Tie-break Order) with FINISHED gating. Tests first: extend menu-coverage walk with the real actions writing tmp files. Done when: walk green.
+- **E6.4.2 Results menu** · Goal: §15 Results rows live (Standings F5, Generate HTML, Export PDF, Poster, Standings CSV, Preview HTML in Browser / Preview PDF in Browser, Tie-break Order) with FINISHED gating. Tests first: extend menu-coverage walk with the real actions writing tmp files. Done when: walk green.
 
 - **E6.4.3 Finish gate** · Goal: finish requires evaluator self-test green (Spec §2, E2.4.1 hook). Tests first: hook red → finish confirm blocked with message; hook green → proceeds. Done when: both branches green.
 
@@ -208,7 +208,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 - **E9.2.1 Full acceptance race** · Goal: R-74 verbatim — CSV in, hundreds of typed crossings, stop/continue, kill+relaunch, quit+relaunch, finish, all four exports verified vs fixtures. Done when: green both OSes in stage 4 (this is the release gate).
 
-- **E9.2.2 + E9.2.3 Nightly + release** · Goal: nightly seeded race filing the seed on failure (R-77); tag-triggered release drafting with artifacts. Tests first: forced-failure files seed in the issue body (dry-run); tag dry-run attaches installers + checksums. Done when: one real nightly green + v1.0 draft produced.
+- **E9.2.3 release** · Goal: tag-triggered release publishing with artifacts. Tests first: tag dry-run attaches installers + checksums. Done when: v1.0 draft produced.
 
 ### Review of the brief set — findings & resolutions
 

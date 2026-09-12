@@ -251,6 +251,14 @@ csvio.commit(preview) -> ImportReport · csvio.export(ride, path, *, placed=None
 csvio.export_standings(placed, path, *, show_times=False) -> None   # §15 standings CSV (E6.4.2)
 @dataclass ExportOptions(show_times=False, laps_board=True, time_board=False,
                         full_field=True, all_cards=True, lap_km=8.0)  # times hidden by default (R-63)
+htmlexport.build_payload(ride, placed, opts, generated, team_logos=None) -> RacePayload
+    # the shared results model both renderers consume (§8b); LapsBoardRow gains `type`
+    # (TEAM/SOLO) so the boards split per kind — the record carries the key
+htmlexport.sections(payload, placed) -> Sections
+    # per-kind partition + the counts: podium 3/3 (or 3), top lists 5/5 (or 10),
+    # laps boards 5/5 (or 10); team rows render plate-less
+htmlexport.format_generated(at) -> str
+    # "Generated H:MM, Mon D YYYY" — a pure function of its input, no tz conversion (R-62)
 htmlexport.render(ride, placed, opts, *, logo_src=None, generated=None, logo_path=None) -> str
     # Jinja2 (autoescape, StrictUndefined), base.html.j2 + macros
     # (event_header, podium_card, standings_row, laps_board, time_board, field_row, drawn_row)
@@ -329,4 +337,4 @@ dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",
 [tool.coverage.report] fail_under = 90        # core modules (R-71)
 ```
 
-Companions: Spec (§11 module table, §12 tests, §14 CI) · Requirements (R-70…R-77) · UI Designs (ids referenced in views/). Any rename here must be reflected in Spec §11 the same day — the two documents are one contract.
+Companions: Spec (§11 module table, §12 tests, §14 CI) · Requirements (R-70…R-76) · UI Designs (ids referenced in views/). Any rename here must be reflected in Spec §11 the same day — the two documents are one contract.

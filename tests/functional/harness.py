@@ -355,9 +355,9 @@ def load_window(resource: Any, name: str, *, frame: bool) -> Any:  # noqa: ANN40
         resource: The ``wx.xrc.XmlResource`` returned by
             :func:`load_xrc_resources`.
         name: The frozen XRC name (``ui/ids.py``).
-        frame: ``True`` for the two ``LoadFrame`` windows
-            (``main_frame``, ``results_frame``); ``False`` for every
-            ``LoadDialog`` window.
+        frame: ``True`` for the one ``LoadFrame`` window
+            (``main_frame``); ``False`` for every ``LoadDialog``
+            window (``results_dlg`` included).
 
     Returns:
         The loaded, not-yet-shown window.
@@ -384,7 +384,7 @@ def load_window_verified(resource: Any, name: str, *, frame: bool) -> Any:  # no
     once per test (the ``_show`` helpers): CI has measured the
     process-global ``wx.xrc.XmlResource`` building an incomplete
     window under worker load -- a whole subtree skipped, different
-    per load (``results_frame`` with an empty staticbox,
+    per load (``results_dlg`` with an empty staticbox,
     ``ride_setup_dlg`` missing its radio group, ``rider_editor_dlg``
     missing its whole action staticbox) -- and a degraded load errors
     the whole module or the single test with no rerun able to absorb

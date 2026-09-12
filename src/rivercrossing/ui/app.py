@@ -242,9 +242,13 @@ class _RouteContext:
     # MainFrame construction) and the currently open store ride's id.
     console_view: Any = None
     active_ride_id: int | None = None
-    # E6.4.2: the most recent results export, backing Preview in
-    # Browser (commands.RideState.export_exists derives from it).
-    last_export_path: Path | None = None
+    # E6.4.2/Part D: the most recent per-format results exports,
+    # backing Preview HTML in Browser / Preview PDF in Browser
+    # (commands.RideState.html_exported / pdf_exported derive from
+    # them). In-memory for the session: an app restart disables both
+    # preview items until the next export.
+    html_export_path: Path | None = None
+    pdf_export_path: Path | None = None
     # E7.3.2: the engine event count captured at the last successful
     # results export (the export watermark). The results refresh
     # compares the live event log to it: any correction event at/after
@@ -1451,7 +1455,8 @@ def _menu_ride_state(context: _RouteContext, status: RideStatus) -> commands.Rid
         held_cards=len(engine.held_crossings()),
         audit_rows=len(engine.events),
         entry_has_cards=any(result.cards for result in engine.snapshot()),
-        export_exists=context.last_export_path is not None,
+        html_exported=context.html_export_path is not None,
+        pdf_exported=context.pdf_export_path is not None,
         # Phase 4: teams only exist on a mixed ride, so the Teams
         # Editor menu row follows the config's entry_mode -- the
         # same fact the roster itself records (R-11).
@@ -1777,25 +1782,25 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
     opts: ExportOptions,
     watermark: int,
     team_logos: dict[str, str] | None = None,
-    record_path: bool = True,
 ) -> None:
     """Write the export on a background thread; notice via CallAfter.
 
     R-02's off-loop rule: the UI never blocks on an export. A daemon
     thread renders and writes the already-captured inputs; completion
-    posts the status notice and records ``last_export_path`` /
-    ``export_watermark`` through ``wx.CallAfter`` (the E5-recorded
-    mechanism), keeping every wx touch on the main thread. E7.3.2:
-    the successful export also advances the route context's export
-    watermark and clears an open results window's stale banner -- only
-    on success, so a failed write never masks a post-export
-    correction. Failures surface on the status bar instead of the
-    console.
+    posts the status notice and records the export's path/watermark
+    through ``wx.CallAfter`` (the E5-recorded mechanism), keeping every
+    wx touch on the main thread. E7.3.2: the successful export also
+    advances the route context's export watermark and clears an open
+    results window's stale banner -- only on success, so a failed write
+    never masks a post-export correction. Failures surface on the
+    status bar instead of the console.
 
-    ``record_path=False`` suppresses the ``last_export_path`` /
-    ``export_watermark`` writeback (the notice still posts): the
-    finished-ride auto-export uses it for the PDF so a worker landing
-    after the HTML cannot clobber the authoritative HTML path.
+    Part D: the path lands on the per-format field its target owns
+    (:data:`_EXPORT_PATH_FIELDS`) and the same callback re-applies the
+    menu state, so the matching Preview row enables the moment the
+    worker lands. The finished-ride auto-export schedules both its
+    HTML and PDF workers through here; each records into its own field,
+    so neither can clobber the other.
     """
 
     def write() -> None:
@@ -1807,12 +1812,45 @@ def _run_export_offloop(  # noqa: PLR0913 -- context + the captured export input
             return
         wx = require_wx()
         wx.CallAfter(context.frame.SetStatusText, f"Exported {path.name}")
-        if record_path:
-            wx.CallAfter(setattr, context, "last_export_path", path)
-            wx.CallAfter(setattr, context, "export_watermark", watermark)
+        wx.CallAfter(_record_export_completion, context, target, path, watermark)
         wx.CallAfter(_clear_results_stale, watermark)
 
     threading.Thread(target=write, daemon=True).start()
+
+
+# Part D: the per-format preview path field each export target records.
+# The CSV export owns neither -- a standings .csv is not a preview.
+_EXPORT_PATH_FIELDS = {
+    "export_html": "html_export_path",
+    "export_pdf": "pdf_export_path",
+    "export_poster": "pdf_export_path",
+}
+
+
+def _record_export_completion(  # noqa: PLR0913, PLR0917 -- context + the completion's inputs
+    context: _RouteContext, target: str, path: Path, watermark: int
+) -> None:
+    """Record a finished export and re-apply the menu state (Part D).
+
+    Runs on the main thread via ``wx.CallAfter`` after a successful
+    write: the path lands on the per-format field its target owns
+    (nothing for the CSV target, which only advances the watermark),
+    then the §15 enablement is re-applied so the matching Preview row
+    enables immediately -- the lag the single-path writeback left.
+
+    The refresh reads the LIVE engine status *here*, never a status
+    captured when the export was dispatched: a ride can be reopened or
+    replaced while a worker renders, and a stale FINISHED would wrongly
+    re-enable the FINISHED-gated rows. With no presenter threaded the
+    no-ride DRAFT state applies, matching :func:`_menu_ride_state`.
+    """
+    field_name = _EXPORT_PATH_FIELDS.get(target)
+    if field_name is not None:
+        setattr(context, field_name, path)
+    context.export_watermark = watermark
+    presenter = context.presenter
+    status = RideStatus.DRAFT if presenter is None else presenter.engine.state
+    _apply_menu_state(context, status)
 
 
 def _clear_results_stale(watermark: int) -> None:
@@ -1894,12 +1932,10 @@ def _auto_export_finished_results(context: _RouteContext, engine: RideEngine) ->
     the worker's thread -- into the deterministic per-user directory
     instead of through the save dialog.
 
-    The HTML path is stored on the context after both are scheduled:
-    Preview in Browser opens the finished ride's HTML page, and the
-    export watermark is the event count the rendered files captured.
-    The two workers race, so only the HTML export records the path
-    (``record_path=True``); the PDF schedules with ``record_path=False``
-    and a PDF that lands after the HTML can no longer clobber it.
+    Part D: each worker's completion records its own format's path and
+    re-applies the menu state (:func:`_record_export_completion`), so
+    both Preview rows enable off the finished ride's files; the export
+    watermark is the event count the rendered files captured.
     """
     directory = _finished_exports_dir()
     directory.mkdir(parents=True, exist_ok=True)
@@ -1922,18 +1958,31 @@ def _auto_export_finished_results(context: _RouteContext, engine: RideEngine) ->
             opts=opts,
             watermark=watermark,
             team_logos=team_logos,
-            record_path=target == "export_html",
         )
-    context.last_export_path = html_path
 
 
-def _handle_preview_browser(context: _RouteContext) -> None:
-    """Results ▸ Preview in Browser: open the last export (E6.4.2)."""
-    if context.last_export_path is None:
+def _handle_preview_browser(context: _RouteContext, path: Path | None) -> None:
+    """Results ▸ Preview …: open *path* in the browser (E6.4.2).
+
+    Shared by the two per-format preview rows (Part D): each hands its
+    own recorded export path, and a missing one posts the same notice
+    the single Preview row always did.
+    """
+    if path is None:
         context.frame.SetStatusText("No export yet — generate one first")
         return
-    _open_in_browser(context.last_export_path)
-    context.frame.SetStatusText(f"Opened {context.last_export_path.name}")
+    _open_in_browser(path)
+    context.frame.SetStatusText(f"Opened {path.name}")
+
+
+def _handle_preview_html_browser(context: _RouteContext) -> None:
+    """Results ▸ Preview HTML in Browser: open the last HTML export."""
+    _handle_preview_browser(context, context.html_export_path)
+
+
+def _handle_preview_pdf_browser(context: _RouteContext) -> None:
+    """Results ▸ Preview PDF in Browser: open the last PDF export."""
+    _handle_preview_browser(context, context.pdf_export_path)
 
 
 def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
@@ -2566,10 +2615,16 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     E7 authored Duplicate Ride, Reopen Ride, Void Card), but the
     branch stays as the safety net for any future route whose target
     is not yet authored, with no change needed here: a route never
-    silently does nothing, it always says so on the status bar instead.
+    silently does nothing, it always says so on the status bar instead
+    -- and Part D also records the miss in the launch's NDJSON log, so
+    this failure class (a menu row clicking through to nothing) is
+    diagnosable from the log alone.
     """
     window = context.resource.LoadDialog(None, route.target)
     if window is None:
+        log = _log(context)
+        if log is not None:
+            log.marker(f"{route.label}: no window authored for target {route.target!r}")
         context.frame.SetStatusText(f"{route.label} — no window authored yet")
         return
 
@@ -3204,7 +3259,8 @@ def _export_action(target: str) -> Callable[[_RouteContext], None]:
 _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
     target: _export_action(target) for target in _EXPORT_SUGGESTED_NAMES
 }
-_TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
+_TARGET_ACTIONS["preview_html_browser"] = _handle_preview_html_browser
+_TARGET_ACTIONS["preview_pdf_browser"] = _handle_preview_pdf_browser
 _TARGET_ACTIONS["backup_database"] = _handle_backup_database
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
 _TARGET_ACTIONS[ids.RIDER_ISSUES_DLG] = _handle_check_rider_issues

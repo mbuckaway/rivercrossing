@@ -61,24 +61,27 @@ def test_running_ride_shows_exit_running_dlg_on_exit() -> None:
     assert result["data"] == {"exit_running_dlg_shown": True}, result["context"]
 
 
-def test_non_running_status_shows_exit_confirm_dlg_on_exit() -> None:
-    """A DRAFT ride shows exit_confirm_dlg, not the running one.
+def test_non_running_status_shows_the_native_quit_confirm_on_exit() -> None:
+    """A DRAFT ride gets the native confirm, not the running dialog.
 
-    The scenario builds the bare bootstrap console, which a fresh
-    launch leaves DRAFT (E5.4.2, R-31) -- the natural not-running
-    state for this assertion.
+    H2 retired the authored exit confirm for the native
+    ``std_dialogs.show_confirm``. The scenario builds the bare
+    bootstrap console, which a fresh launch leaves DRAFT (E5.4.2,
+    R-31) -- the natural not-running state for this assertion -- and
+    scripts that native confirm to report it was asked.
     """
-    result = scenario_runner.run_scenario("exit_confirm_dlg_shown_when_not_running")
+    result = scenario_runner.run_scenario("exit_confirm_shown_when_not_running")
 
-    assert result["data"] == {"exit_confirm_dlg_shown": True}, result["context"]
+    assert result["data"] == {"exit_confirm_shown": True}, result["context"]
 
 
 def test_finish_first_btn_routes_to_the_finish_flow() -> None:
     """finish_first_btn opens the finish confirm, then finishes.
 
     E5.2.3 replaces the old stub notice (A1) with the real E4.4.4
-    finish path: the exit dialog ends, finish_confirm_dlg appears, and
-    a confirmed finish leaves the ride FINISHED with the app still up.
+    finish path: the exit dialog ends, the native finish confirm
+    appears, and a confirmed finish leaves the ride FINISHED with the
+    app still up.
     """
     result = scenario_runner.run_scenario("finish_first_routes_to_the_finish_flow")
 
@@ -145,7 +148,8 @@ def test_session_end_confirmed_then_close_destroys_with_no_second_dialog() -> No
 
     QUERY_END_SESSION's own default handler calls a plain (not
     forced) ``TopWindow->Close()`` next -- this is what keeps that
-    second call from re-opening exit_running_dlg/exit_confirm_dlg.
+    second call from re-opening exit_running_dlg/the native quit
+    confirm.
     """
     result = scenario_runner.run_scenario("session_end_confirmed_then_close_destroys_once")
 

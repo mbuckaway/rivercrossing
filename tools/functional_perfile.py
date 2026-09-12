@@ -21,13 +21,11 @@ This wrapper therefore runs one fresh pytest process per *file*
 suite in one process, and never more than two at a time: measured,
 more concurrent wx processes crash (the repo's own VM runner logged
 4-6 wx-churn segfaults per run at xdist ``-n auto``; ``-n 2`` is the
-convergent count, PR #42). tools/functional_rerun.py is unchanged
-and remains the whole-suite/acceptance backstop; this tool is
-deliberately self-contained -- no functional_rerun import -- and
-keeps one retry round of its own: a file that fails its initial
-fresh-process run gets exactly one more fresh-process run, because a
-bad roll is ~1 in 10 even in a fresh process (noxfile.py's functional
-session measurements).
+convergent count, PR #42). This tool is deliberately self-contained
+-- it imports no other runner -- and keeps one retry round of its
+own: a file that fails its initial fresh-process run gets exactly one
+more fresh-process run, because a bad roll is ~1 in 10 even in a
+fresh process (noxfile.py's functional session measurements).
 
 Each file's process is bounded: a file still running after
 ``PASS_TIMEOUT_S`` (default 1200s, env override

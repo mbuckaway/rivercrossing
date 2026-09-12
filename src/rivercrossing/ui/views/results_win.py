@@ -30,9 +30,11 @@ E7.3.2's stale-export flag is the one live banner: ``set_stale``
 shows/hides the code-side ``stale_infobar`` (xrc-windows.md's
 code-side footnote; XRC cannot author a ``wxInfoBar`` -- results.xrc's
 own header). ``show_times_chk`` also toggles the Total column on
-every list here. The window's one presenter (``self.presenter``,
-built here like ``RideSetup`` builds its own) holds the
-``ExportOptions`` the export handlers (E6.4.2) read.
+every list here and gates the Fastest-time box: with times off the
+box is cleared and disabled, so the time_board/time-off combination
+cannot be requested (R-63). The window's one presenter
+(``self.presenter``, built here like ``RideSetup`` builds its own)
+holds the ``ExportOptions`` the export handlers (E6.4.2) read.
 
 W11 wires the four export buttons: the app threads an
 ``on_export(target)`` callback (its own ``_handle_export_command``
@@ -308,7 +310,7 @@ class ResultsWindow:
         self.all_cards_chk = self._find(ids.ALL_CARDS_CHK, wx.CheckBox)
 
         self._total_columns = self._build_columns()
-        self._apply_show_times_column()
+        self._apply_show_times_state()
         self._model: StandingsListModel | None = None
         self._teams_model: StandingsListModel | None = None
         self._solo_model: StandingsListModel | None = None
@@ -428,20 +430,31 @@ class ResultsWindow:
     def _on_publish_toggle(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a publish-checkbox click; forward it to the presenter.
 
-        ``show_times_chk`` also toggles the Total column (results.xrc's
-        own footnote) -- a structural sibling-control fact the view
-        owns, the same ``RideSetup._on_cap_toggle`` precedent.
+        ``show_times_chk`` also toggles the Total column and gates the
+        Fastest-time board (results.xrc's own footnote) -- a structural
+        sibling-control fact the view owns, the same
+        ``RideSetup._on_cap_toggle`` precedent.
         """
         event.Skip()
         if event.GetEventObject() is self.show_times_chk:
-            self._apply_show_times_column()
+            self._apply_show_times_state()
         self.presenter.on_publish_toggled()
 
-    def _apply_show_times_column(self) -> None:
-        """Hide the Total column unless show_times_chk is checked."""
-        hidden = not self.show_times_chk.GetValue()
+    def _apply_show_times_state(self) -> None:
+        """Apply the sibling controls ``show_times_chk`` governs.
+
+        Times off hides the Total column on every list and makes the
+        Fastest-time board unrequestable: its box is cleared and
+        disabled, so ``publish_options()`` can never map a time board
+        while no times are shown (R-63 -- the board is nothing but time
+        data). Re-checking show_times re-enables the box.
+        """
+        show_times = self.show_times_chk.GetValue()
         for column in self._total_columns:
-            column.SetHidden(hidden)
+            column.SetHidden(not show_times)
+        if not show_times:
+            self.time_board_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.time_board_chk.Enable(show_times)
 
     def show_standings(self, teams: list[StandingsRow], solo: list[StandingsRow]) -> None:
         """Render the standings (``ResultsView``, Phase 3).
@@ -497,7 +510,7 @@ class ResultsWindow:
         self.time_board_chk.SetValue(options.time_board)
         self.full_field_chk.SetValue(options.full_field)
         self.all_cards_chk.SetValue(options.all_cards)
-        self._apply_show_times_column()
+        self._apply_show_times_state()
 
     def publish_options(self) -> ExportOptions:
         """Return the five publish checkboxes as ``ExportOptions``.

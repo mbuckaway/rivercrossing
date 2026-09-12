@@ -43,7 +43,7 @@ from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import feed_model, ids, theme
+from rivercrossing.ui import feed_model, ids, std_dialogs, theme
 from rivercrossing.ui.presenters import console as console_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
@@ -267,16 +267,18 @@ def test_reopened_mode_corrected_crossing_highlighted_in_feed(
         harness.release_main_window(wx.GetApp(), window)
 
 
-def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa: PLR0915 -- the scenario IS the test: one finish-again script
+def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(
     xrc_resource: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Finish again: "Finish again" confirm re-locks and re-ranks.
 
     Reopened corrections change the snapshot (voiding plate 12's
     winning QD leaves it eight-high); the existing finish route, shown
-    with the REOPENED "Finish again" label, re-locks to FINISHED and
-    the standings re-rank through standings.rank_by_kind -- plate 34
-    leads the solo section.
+    with the REOPENED "Finish again" label through the native
+    ``std_dialogs.show_danger`` confirm, re-locks to FINISHED and the
+    standings re-rank through standings.rank_by_kind -- plate 34 leads
+    the solo section.
     """
     window, console, _presenter, engine, source = _build_ride_console(xrc_resource, reopen=True)
     try:
@@ -293,19 +295,20 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
             consulted.append(True)
             return original_gate()
 
-        def _drive_and_capture(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-            captured["title"] = dialog.GetTitle()
-            ok_button = wx.Window.FindWindowById(wx.ID_OK, dialog)
-            captured["ok_label"] = ok_button.GetLabel() if ok_button is not None else None
-            harness.click(dialog, "wxID_OK")
+        def _recording_danger(
+            _parent: object,
+            title: str,
+            _message: str,
+            ok_label: str,
+            _cancel_label: str,
+        ) -> int:
+            captured["title"] = title
+            captured["ok_label"] = ok_label
+            return wx.ID_OK
 
         console_module.FINISH_GATE = _recording_gate
         try:
-            harness.dismiss_modal(
-                ids.FINISH_CONFIRM_DLG,
-                dismiss_with=wx.ID_OK,
-                drive=_drive_and_capture,
-            )
+            monkeypatch.setattr(std_dialogs, "show_danger", _recording_danger)
             harness.fire_menu_event(window, ids.MI_FINISH_RIDE)
         finally:
             console_module.FINISH_GATE = original_gate
@@ -331,15 +334,15 @@ def test_reopened_mode_finish_again_relabels_dialog_relocks_and_reranks(  # noqa
         # job. Phase 3: the solo-only fixture renders the Solo section
         # header row above its two entries.
         harness.fire_menu_event(window, ids.MI_STANDINGS)
-        results_frame = wx.Window.FindWindowByName(ids.RESULTS_FRAME)
-        assert results_frame is not None
+        results_dlg = wx.Window.FindWindowByName(ids.RESULTS_DLG)
+        assert results_dlg is not None
         try:
-            model = harness.find_control(results_frame, ids.STANDINGS_LIST).GetModel()
+            model = harness.find_control(results_dlg, ids.STANDINGS_LIST).GetModel()
             assert model.GetCount() == 3
             assert model.GetValueByRow(0, 2) == "Solo"  # COL_ENTRY section header
             assert model.GetValueByRow(1, 1) == "34"  # COL_PLATE
         finally:
-            harness.close_window(results_frame)
+            harness.close_window(results_dlg)
     finally:
         del console
         harness.release_main_window(wx.GetApp(), window)
@@ -381,9 +384,9 @@ def test_finished_mode_banner_shows_on_a_finished_ride(
         assert finished_bar.IsShown() is True
         assert finished_bar.GetButtonCount() == 2
 
-        reopen_btn = wx.Window.FindWindowByName(FINISHED_REOPEN_BTN, window)
-        assert reopen_btn is not None
-        assert reopen_btn.GetLabelText() == "Reopen…"
+        reopen_button = wx.Window.FindWindowByName(FINISHED_REOPEN_BTN, window)
+        assert reopen_button is not None
+        assert reopen_button.GetLabelText() == "Reopen…"
         results_btn = wx.Window.FindWindowByName(FINISHED_RESULTS_BTN, window)
         assert results_btn is not None
         assert results_btn.GetLabelText() == "View results…"
@@ -395,21 +398,20 @@ def test_finished_mode_banner_shows_on_a_finished_ride(
 def test_finished_mode_reopen_button_runs_the_reopen_flow(
     xrc_resource: object,
     wx_app: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """F3: the banner's Reopen… runs mi_reopen_ride's own confirm flow.
 
-    A confirmed reopen moves the console to REOPENED, which dismisses
-    the FINISHED banner and shows the corrections banner.
+    The confirm is H2's native ``std_dialogs.show_prompt`` now (the
+    retired authored reopen confirm); a confirmed reopen moves the
+    console to REOPENED, which dismisses the FINISHED banner and shows
+    the corrections banner.
     """
     window, console, _presenter, engine, _source = _build_ride_console(xrc_resource, reopen=False)
     context = _route_context_for(window, xrc_resource, wx_app, console)
     app_module._wire_finished_banner_actions(context)
     try:
-        harness.dismiss_modal(
-            ids.REOPEN_RIDE_DLG,
-            dismiss_with=wx.ID_OK,
-            drive=None,
-        )
+        monkeypatch.setattr(std_dialogs, "show_prompt", lambda *_args, **_kwargs: wx.ID_OK)
         harness.click(window, FINISHED_REOPEN_BTN)
 
         assert engine.state is RideStatus.REOPENED
@@ -422,7 +424,7 @@ def test_finished_mode_reopen_button_runs_the_reopen_flow(
         harness.release_main_window(wx.GetApp(), window)
 
 
-def test_finished_mode_view_results_button_opens_the_results_frame(
+def test_finished_mode_view_results_button_opens_the_results_dlg(
     xrc_resource: object,
     wx_app: object,
 ) -> None:
@@ -433,9 +435,9 @@ def test_finished_mode_view_results_button_opens_the_results_frame(
     try:
         harness.click(window, FINISHED_RESULTS_BTN)
 
-        results_frame = wx.Window.FindWindowByName(ids.RESULTS_FRAME)
-        assert results_frame is not None
-        harness.close_window(results_frame)
+        results_dlg = wx.Window.FindWindowByName(ids.RESULTS_DLG)
+        assert results_dlg is not None
+        harness.close_window(results_dlg)
     finally:
         del console
         harness.release_main_window(wx.GetApp(), window)

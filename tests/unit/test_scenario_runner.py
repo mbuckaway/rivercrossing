@@ -11,7 +11,7 @@ pass bound killed the suite. The child self-terminates at
 never engages its timeout-and-kill path for a hung scenario.
 ``tests/functional/`` carries no ``__init__.py``, so it is only
 importable as an implicit PEP 420 namespace package once the directory
-is on ``sys.path`` -- the same insertion test_functional_rerun.py
+is on ``sys.path`` -- the same insertion test_functional_perfile.py
 makes for ``tools/``, and for the same reason the import is deferred
 into a fixture (a missing scenario_runner.py would otherwise abort
 collection for the whole tests/unit session).

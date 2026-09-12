@@ -1,0 +1,510 @@
+{
+  "event": {
+    "kicker": "Official results · poker run",
+    "title": "GORBA EPIC & MTB Festival 2026",
+    "meta": "Sunday September 20, 2026 · Guelph Lake MTB Trails · 8 km closed loop · riding 10:00–16:00",
+    "organizer": "Organizer: GORBA — J. Marsden",
+    "scorer": "Scorer: D. Whitfield",
+    "generated": "Generated 16:07, Sept 20 2026",
+    "entries": 180,
+    "laps": 1124,
+    "cards": 1092
+  },
+  "options": {
+    "showTimes": false,
+    "lapsBoard": true,
+    "timeBoard": false,
+    "fullField": true,
+    "allCards": true
+  },
+  "tieNote": null,
+  "results": [
+    {
+      "place": 1,
+      "plate": 7,
+      "entry": "Luca Ferrari",
+      "type": "SOLO",
+      "sex": "M",
+      "laps": 10,
+      "hand": "Full House — Aces over Fours",
+      "cards": [
+        [
+          "A",
+          "s"
+        ],
+        [
+          "A",
+          "d"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "4",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "A",
+          "s"
+        ],
+        [
+          "A",
+          "d"
+        ],
+        [
+          "JK",
+          "j"
+        ],
+        [
+          "4",
+          "c"
+        ],
+        [
+          "4",
+          "h"
+        ],
+        [
+          "8",
+          "s"
+        ],
+        [
+          "2",
+          "d"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "6",
+          "s"
+        ]
+      ]
+    },
+    {
+      "place": 2,
+      "plate": 61,
+      "entry": "Marc Tremblay",
+      "type": "SOLO",
+      "sex": "M",
+      "laps": 10,
+      "hand": "Flush — King high",
+      "cards": [
+        [
+          "K",
+          "d"
+        ],
+        [
+          "J",
+          "d"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "6",
+          "d"
+        ],
+        [
+          "2",
+          "d"
+        ]
+      ],
+      "drawn": [
+        [
+          "K",
+          "d"
+        ],
+        [
+          "J",
+          "d"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "6",
+          "d"
+        ],
+        [
+          "2",
+          "d"
+        ],
+        [
+          "4",
+          "s"
+        ],
+        [
+          "9",
+          "c"
+        ],
+        [
+          "Q",
+          "h"
+        ],
+        [
+          "7",
+          "c"
+        ],
+        [
+          "10",
+          "h"
+        ]
+      ]
+    },
+    {
+      "place": 3,
+      "plate": 12,
+      "entry": "Ana Souza",
+      "type": "SOLO",
+      "sex": "F",
+      "laps": 9,
+      "hand": "Two Pair — Kings & Fives",
+      "cards": [
+        [
+          "K",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "5",
+          "c"
+        ],
+        [
+          "5",
+          "d"
+        ],
+        [
+          "A",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "K",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "5",
+          "c"
+        ],
+        [
+          "5",
+          "d"
+        ],
+        [
+          "A",
+          "h"
+        ],
+        [
+          "2",
+          "s"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "4",
+          "h"
+        ],
+        [
+          "10",
+          "c"
+        ]
+      ]
+    },
+    {
+      "place": 4,
+      "plate": 19,
+      "entry": "Owen Clark",
+      "type": "SOLO",
+      "sex": "M",
+      "laps": 8,
+      "hand": "Pair — Aces",
+      "cards": [
+        [
+          "A",
+          "c"
+        ],
+        [
+          "A",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "J",
+          "c"
+        ],
+        [
+          "8",
+          "d"
+        ]
+      ],
+      "drawn": [
+        [
+          "A",
+          "c"
+        ],
+        [
+          "A",
+          "s"
+        ],
+        [
+          "K",
+          "h"
+        ],
+        [
+          "J",
+          "c"
+        ],
+        [
+          "8",
+          "d"
+        ],
+        [
+          "5",
+          "h"
+        ],
+        [
+          "2",
+          "c"
+        ],
+        [
+          "7",
+          "d"
+        ]
+      ]
+    },
+    {
+      "place": 5,
+      "plate": 33,
+      "entry": "Peter Kim",
+      "type": "SOLO",
+      "sex": "M",
+      "laps": 7,
+      "hand": "Pair — Kings",
+      "cards": [
+        [
+          "K",
+          "c"
+        ],
+        [
+          "K",
+          "d"
+        ],
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "6",
+          "c"
+        ]
+      ],
+      "drawn": [
+        [
+          "K",
+          "c"
+        ],
+        [
+          "K",
+          "d"
+        ],
+        [
+          "Q",
+          "s"
+        ],
+        [
+          "9",
+          "h"
+        ],
+        [
+          "6",
+          "c"
+        ],
+        [
+          "3",
+          "s"
+        ],
+        [
+          "10",
+          "h"
+        ]
+      ]
+    },
+    {
+      "place": 6,
+      "plate": 71,
+      "entry": "Gita Rao",
+      "type": "SOLO",
+      "sex": "F",
+      "laps": 7,
+      "hand": "Pair — Eights",
+      "cards": [
+        [
+          "8",
+          "s"
+        ],
+        [
+          "8",
+          "h"
+        ],
+        [
+          "K",
+          "c"
+        ],
+        [
+          "10",
+          "d"
+        ],
+        [
+          "4",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "8",
+          "s"
+        ],
+        [
+          "8",
+          "h"
+        ],
+        [
+          "K",
+          "c"
+        ],
+        [
+          "10",
+          "d"
+        ],
+        [
+          "4",
+          "h"
+        ],
+        [
+          "2",
+          "d"
+        ],
+        [
+          "Q",
+          "c"
+        ]
+      ]
+    },
+    {
+      "place": 7,
+      "plate": 94,
+      "entry": "Ted Novak",
+      "type": "SOLO",
+      "sex": "M",
+      "laps": 4,
+      "hand": "High Card — Ace",
+      "dnf": true,
+      "cards": [
+        [
+          "A",
+          "d"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "9",
+          "s"
+        ],
+        [
+          "5",
+          "h"
+        ]
+      ],
+      "drawn": [
+        [
+          "A",
+          "d"
+        ],
+        [
+          "Q",
+          "c"
+        ],
+        [
+          "9",
+          "s"
+        ],
+        [
+          "5",
+          "h"
+        ]
+      ]
+    }
+  ],
+  "lapsBoard": [
+    {
+      "plate": 7,
+      "entry": "Luca Ferrari",
+      "type": "SOLO",
+      "laps": 10
+    },
+    {
+      "plate": 61,
+      "entry": "Marc Tremblay",
+      "type": "SOLO",
+      "laps": 10
+    },
+    {
+      "plate": 12,
+      "entry": "Ana Souza",
+      "type": "SOLO",
+      "laps": 9
+    },
+    {
+      "plate": 19,
+      "entry": "Owen Clark",
+      "type": "SOLO",
+      "laps": 8
+    },
+    {
+      "plate": 71,
+      "entry": "Gita Rao",
+      "type": "SOLO",
+      "laps": 7
+    },
+    {
+      "plate": 33,
+      "entry": "Peter Kim",
+      "type": "SOLO",
+      "laps": 7
+    }
+  ],
+  "timeBoard": []
+}

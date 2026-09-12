@@ -12,12 +12,15 @@ defect, corrected here to a package (task E1.2.2).
 The payload half freezes the *data* contract (Spec §8, R-61/63): the
 dataclasses the UI and all three exporters share, plus ``to_record()``
 methods that build the exact camelCase JSON the golden pages'
-``<script id="race-data">`` block embeds (E1.2.2). The renderer half
-(E6.2.2) implements ``render()`` per the template contract: a
-StrictUndefined, autoescaping ``Environment`` over the vendored
-templates, the ``racejson`` filter that escapes every ``</``, and a
-self-contained production page with CSS/fonts inlined and the record
-embedded.
+``<script id="race-data">`` block embeds (E1.2.2). The shared model's
+public entry points are :func:`build_payload` (the ride seam),
+:func:`sections` (the per-kind page plan both exporters render) and
+:func:`format_generated` (the pure stamp formatter, R-62). The
+renderer half (E6.2.2) implements ``render()`` per the template
+contract: a StrictUndefined, autoescaping ``Environment`` over the
+vendored templates, the ``racejson`` filter that escapes every
+``</``, and a self-contained production page with CSS/fonts inlined
+and the record embedded.
 """
 
 import base64
@@ -47,9 +50,13 @@ __all__ = [
     "LapsBoardRow",
     "RacePayload",
     "ResultRow",
+    "Sections",
     "TimeBoardRow",
+    "build_payload",
+    "format_generated",
     "racejson",
     "render",
+    "sections",
 ]
 
 CardPair = tuple[str, str]
@@ -191,18 +198,26 @@ class ResultRow:
 
 @dataclass(frozen=True, slots=True)
 class LapsBoardRow:
-    """One row of the "most laps" leaderboard (Spec §8)."""
+    """One row of the "most laps" leaderboard (Spec §8).
+
+    ``type`` is the row's kind ("TEAM"/"SOLO"), always recorded so the
+    page and the full-results PDF can split one flat board into the
+    per-kind boards; rows built before the field existed carry the
+    empty default.
+    """
 
     plate: int
     entry: str
     laps: int
     total: str | None = None
+    type: str = ""
 
     def to_record(self, *, show_times: bool) -> dict[str, object]:
         """Return the JSON-record view (``total`` omitted, no times)."""
         record: dict[str, object] = {
             "plate": self.plate,
             "entry": self.entry,
+            "type": self.type,
             "laps": self.laps,
         }
         if show_times:
@@ -262,6 +277,53 @@ class RacePayload:
             "lapsBoard": [row.to_record(show_times=show_times) for row in self.laps_board],
             "timeBoard": [row.to_record() for row in self.time_board],
         }
+
+
+# The section plan's per-kind row counts -- the display contract both
+# exporters render from (three podium cards, five per kind on a team
+# event, today's ten on a solo one).
+_PODIUM_ROWS = 3
+_TOP_TEAM_ROWS = 5
+_TOP_SOLO_ROWS = 5
+_TOP_SOLO_ONLY_ROWS = 10
+
+
+@dataclass(frozen=True, slots=True)
+class Sections:
+    """The planned page sections both exporters render (Spec §8).
+
+    ``teams``/``solo`` partition the payload's rows: any TEAM row makes
+    it a team event (a MIXED ride presents as one; the partition, never
+    ``ride.entry_mode``, decides). The podium and top lists are their
+    per-kind heads, and the laps boards come from the placed standings
+    so one kind can never crowd the other out of a combined board.
+    ``time_board`` passes through flat, exactly as recorded, and
+    :attr:`team_plates` is derived from ``teams`` for its row lookup.
+    """
+
+    podium_teams: tuple[ResultRow, ...]
+    podium_solo: tuple[ResultRow, ...]
+    top_teams: tuple[ResultRow, ...]
+    top_solo: tuple[ResultRow, ...]
+    laps_teams: tuple[LapsBoardRow, ...]
+    laps_solo: tuple[LapsBoardRow, ...]
+    time_board: tuple[TimeBoardRow, ...]
+    teams: tuple[ResultRow, ...]
+    solo: tuple[ResultRow, ...]
+
+    @property
+    def team_plates(self) -> frozenset[int]:
+        """Return the plates of the plan's team rows.
+
+        The flat "Fastest" board crosses both kinds, so each of its
+        rows asks this set whether its plate belongs to a team -- team
+        rows render no plate anywhere, and the cell is left blank
+        against the solo rows' own plates. Derived, never a field: the
+        ``teams`` partition is the one source, so the HTML template and
+        ``pdfexport._time_board`` (which builds the same set inline for
+        ``_time_row``) can never disagree.
+        """
+        return frozenset(row.plate for row in self.teams)
 
 
 # ==================================================== E6.2.2 renderer
@@ -389,12 +451,13 @@ def _make_environment() -> Environment:
     return env
 
 
-def _template_context(  # noqa: PLR0913 -- the four context inputs the template contract names
+def _template_context(  # noqa: PLR0913 -- the five context inputs the template contract names
     payload: RacePayload,
     *,
     dev: bool,
     logo_src: str | None,
     generated: str | None,
+    placed: Sequence[Placed] | None = None,
 ) -> dict[str, object]:
     """Build the ``base.html.j2`` context from *payload* (Spec §8).
 
@@ -403,27 +466,28 @@ def _template_context(  # noqa: PLR0913 -- the four context inputs the template 
     ``logo_src`` falls back to a 1x1 transparent PNG so the page never
     carries an empty ``src`` (D8).
 
-    Phase 3 (team/solo results split) partitions the single
-    ``results`` record into the ``teams`` and ``solo`` context lists
-    the full-field template renders as two sections. The record stays
-    one flat ``results`` array (the app feeds it Teams-then-Solo with
-    per-kind places); the partition is by the row's entry type, so a
-    section with no rows of that kind is simply absent. The golden
-    samples' own display suffixes (a "TEAM" prefix plus a team-size
-    note) still lead with "TEAM", hence the prefix match; the
-    renderer's own rows are exactly "TEAM"/"SOLO"
+    The context carries the planned :class:`Sections`, never sliced
+    rows: with *placed* the plan's laps boards come from the standings
+    (the live path through :func:`render`); without it they come from
+    the payload's own per-kind board (the golden-record path). The
+    plan's derived :attr:`Sections.team_plates` set is everything the
+    "Fastest" board needs beyond its rows, so no extra context key is
+    added for it. The
+    record itself stays one flat ``results`` array (the app feeds it
+    Teams-then-Solo with per-kind places); the partition is by the
+    row's entry type, so a kind with no rows is simply absent. The
+    golden samples' own display suffixes (a "TEAM" prefix plus a
+    team-size note) still lead with "TEAM", hence the prefix match;
+    the renderer's own rows are exactly "TEAM"/"SOLO"
     (``_result_row_from_placed``).
     """
     if generated is not None:
         payload = replace(payload, event=replace(payload.event, generated=generated))
+    plan = sections(payload, placed) if placed is not None else _sections_from_payload(payload)
     return {
         "event": payload.event,
         "options": payload.options,
-        "results": payload.results,
-        "teams": [row for row in payload.results if row.entry_type.upper().startswith("TEAM")],
-        "solo": [row for row in payload.results if not row.entry_type.upper().startswith("TEAM")],
-        "laps_board": payload.laps_board,
-        "time_board": payload.time_board,
+        "sections": plan,
         "tie_note": payload.tie_note,
         "logo_src": logo_src if logo_src is not None else _TRANSPARENT_PNG,
         "logo_alt": payload.event.organizer,
@@ -434,12 +498,13 @@ def _template_context(  # noqa: PLR0913 -- the four context inputs the template 
     }
 
 
-def _render_payload(  # noqa: PLR0913 -- the four context inputs the template contract names
+def _render_payload(  # noqa: PLR0913 -- the five context inputs the template contract names
     payload: RacePayload,
     *,
     dev: bool = False,
     logo_src: str | None = None,
     generated: str | None = None,
+    placed: Sequence[Placed] | None = None,
 ) -> str:
     """Render *payload* as the full results page (Spec §8).
 
@@ -448,8 +513,13 @@ def _render_payload(  # noqa: PLR0913 -- the four context inputs the template co
     regenerates the frozen goldens through it. ``dev=True`` is the
     design-sample preview (CDN Tailwind + Google Fonts stand-ins);
     production renders vendored CSS/fonts and embeds the JSON record.
+    *placed* is optional: the fixture path renders the payload's own
+    boards, while :func:`render` passes the standings for the current
+    per-kind boards.
     """
-    context = _template_context(payload, dev=dev, logo_src=logo_src, generated=generated)
+    context = _template_context(
+        payload, dev=dev, logo_src=logo_src, generated=generated, placed=placed
+    )
     return _make_environment().get_template("base.html.j2").render(**context)
 
 
@@ -458,14 +528,20 @@ def _format_event_date(day: date) -> str:
     return f"{day.strftime('%A %B')} {day.day}, {day.year}"
 
 
-def _generated_now() -> str:
-    """Return the footer timestamp in the samples' local-time style.
+def format_generated(at: datetime) -> str:
+    """Render *at* as the footer's "Generated H:MM, Mon D YYYY" stamp.
 
-    "Generated 16:07, Sept 20 2026" -- the operator's wall clock, so a
-    tz-aware local ``now()`` feeds the format.
+    A pure function of its input: the instant's own offset is used as
+    given -- no ``now()`` and no ``astimezone()`` inside -- so a pinned
+    UTC instant renders byte-identical on every machine (R-62). The
+    month abbreviation is the samples' own four-letter "Sept".
     """
-    at = datetime.now(UTC).astimezone()
     return f"Generated {at.strftime('%H:%M')}, {_MONTH_ABBR[at.month - 1]} {at.day} {at.year}"
+
+
+def _generated_now() -> str:
+    """Return the live footer stamp in the operator's own wall clock."""
+    return format_generated(datetime.now(UTC).astimezone())
 
 
 def _format_duration(seconds: float) -> str:
@@ -563,31 +639,58 @@ def _format_meta(ride: _RideLike) -> str:
     )
 
 
+def _is_team_kind(kind: str) -> bool:
+    """Return whether a kind spelling is a team (suffixes ok)."""
+    return kind.upper().startswith("TEAM")
+
+
+def _laps_rows(  # noqa: PLR0913 -- (placed, kind, top, opts): one board's own inputs
+    placed: Sequence[Placed], *, kind: str, top: int, opts: ExportOptions
+) -> tuple[LapsBoardRow, ...]:
+    """Build one kind's laps board from *placed* (standings' rules)."""
+    results = [entry.result for entry in placed if entry.result.kind == kind]
+    return tuple(
+        LapsBoardRow(
+            plate=_parse_plate(entry.result.plate),
+            entry=entry.result.name,
+            laps=entry.result.laps,
+            total=_format_duration(entry.result.total_time) if opts.show_times else None,
+            type=entry.result.kind.upper(),
+        )
+        for entry in laps_leaderboard(results, top=top)
+    )
+
+
+def _laps_record_board(placed: Sequence[Placed], opts: ExportOptions) -> tuple[LapsBoardRow, ...]:
+    """Build the record's per-kind laps board (teams, then solo)."""
+    mixed = any(entry.result.kind == "team" for entry in placed)
+    team_rows = _laps_rows(placed, kind="team", top=_TOP_TEAM_ROWS, opts=opts) if mixed else ()
+    solo_rows = _laps_rows(
+        placed,
+        kind="solo",
+        top=_TOP_SOLO_ROWS if mixed else _TOP_SOLO_ONLY_ROWS,
+        opts=opts,
+    )
+    return team_rows + solo_rows
+
+
 def _boards_from_placed(
     placed: Sequence[Placed], opts: ExportOptions
 ) -> tuple[tuple[LapsBoardRow, ...], tuple[TimeBoardRow, ...]]:
     """Build the leaderboard rows the export options request (E6.4.2).
 
-    ``laps_board`` renders only when ``opts.laps_board`` (rows carry a
-    ``total`` only when times are shown, R-63); ``time_board`` is
-    times-only by contract and renders only when ``opts.time_board``.
-    Both boards order by most laps, then shortest total time
-    (standings' own leaderboards).
+    The laps board is per kind -- a MIXED field gets one five-row board
+    per kind (teams first, then solo) so neither kind can crowd the
+    other out; a solo field keeps the top ten. ``laps_board`` renders
+    only when ``opts.laps_board`` (rows carry a ``total`` only when
+    times are shown, R-63). ``time_board`` is times-only by contract
+    and stays one flat top ten (most laps, then shortest total time);
+    it is built only when times are shown -- a time board is nothing
+    but time data, so ``show_times`` off leaves it empty however
+    ``opts.time_board`` is set (R-63).
     """
     results = [p.result for p in placed]
-    laps = (
-        tuple(
-            LapsBoardRow(
-                plate=_parse_plate(p.result.plate),
-                entry=p.result.name,
-                laps=p.result.laps,
-                total=_format_duration(p.result.total_time) if opts.show_times else None,
-            )
-            for p in laps_leaderboard(results)
-        )
-        if opts.laps_board
-        else ()
-    )
+    laps = _laps_record_board(placed, opts) if opts.laps_board else ()
     times = (
         tuple(
             TimeBoardRow(
@@ -601,13 +704,72 @@ def _boards_from_placed(
             )
             for p in time_leaderboard(results)
         )
-        if opts.time_board
+        if opts.time_board and opts.show_times
         else ()
     )
     return laps, times
 
 
-def _payload_from_ride(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, generated, team_logos): D15's mapping inputs
+def _sections_from_payload(payload: RacePayload) -> Sections:
+    """Partition a payload's rows into its section plan (Spec §8).
+
+    The record-only path -- the golden generator renders a payload with
+    no placed standings -- so the laps boards come from the payload's
+    own per-kind ``laps_board`` rows, capped per kind defensively.
+    """
+    teams = tuple(row for row in payload.results if _is_team_kind(row.entry_type))
+    solo = tuple(row for row in payload.results if not _is_team_kind(row.entry_type))
+    top_solo = _TOP_SOLO_ROWS if teams else _TOP_SOLO_ONLY_ROWS
+    return Sections(
+        podium_teams=teams[:_PODIUM_ROWS],
+        podium_solo=solo[:_PODIUM_ROWS],
+        top_teams=teams[:_TOP_TEAM_ROWS],
+        top_solo=solo[:top_solo],
+        laps_teams=tuple(row for row in payload.laps_board if _is_team_kind(row.type))[
+            :_TOP_TEAM_ROWS
+        ],
+        laps_solo=tuple(row for row in payload.laps_board if not _is_team_kind(row.type))[
+            :top_solo
+        ],
+        time_board=payload.time_board,
+        teams=teams,
+        solo=solo,
+    )
+
+
+def sections(payload: RacePayload, placed: Sequence[Placed]) -> Sections:
+    """Plan the page's sections from the payload and its standings.
+
+    The payload's rows and options decide the layout: any TEAM row makes
+    it a team event (MIXED rides and the legacy samples' display
+    suffixes alike), so the podiums are per kind (three each) and the
+    top lists cap at five each; a solo field keeps today's single top
+    ten. The laps boards are recomputed per kind from *placed* with
+    :func:`standings.laps_leaderboard` (five each on a team event, ten
+    solo) -- never a filter of one combined board, where a kind's rows
+    could crowd the other out. ``time_board`` passes through flat.
+
+    Args:
+        payload: The export payload; its rows set the layout.
+        placed: The ride's ranked standings, one per entry; an empty
+            sequence is valid (a record-only plan with no boards).
+
+    Returns:
+        The :class:`Sections` both exporters render.
+    """
+    plan = _sections_from_payload(payload)
+    if not payload.options.laps_board:
+        return plan
+    if plan.teams:
+        laps_teams = _laps_rows(placed, kind="team", top=_TOP_TEAM_ROWS, opts=payload.options)
+        laps_solo = _laps_rows(placed, kind="solo", top=_TOP_SOLO_ROWS, opts=payload.options)
+    else:
+        laps_teams = ()
+        laps_solo = _laps_rows(placed, kind="solo", top=_TOP_SOLO_ONLY_ROWS, opts=payload.options)
+    return replace(plan, laps_teams=laps_teams, laps_solo=laps_solo)
+
+
+def build_payload(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, generated, team_logos): D15's mapping inputs
     ride: _RideLike,
     placed: Sequence[Placed],
     opts: ExportOptions,
@@ -616,11 +778,23 @@ def _payload_from_ride(  # noqa: PLR0913, PLR0917 -- (ride, placed, opts, genera
 ) -> RacePayload:
     """Build the export payload from a ride and its placed standings.
 
-    The fixture payloads (which carry the golden boards) reach the
-    page through ``_render_payload`` (D15); the public
-    :func:`render` path derives its boards from *placed* here
-    (E6.4.2). *team_logos* (W8) maps a placed entry's plate to its
-    logo data URI -- the roster-entry lookup seam the app supplies.
+    The shared results model: :func:`render` builds its page through
+    this function, and the full-results PDF maps the same payload. The
+    fixture payloads (which carry the golden boards) reach the page
+    through ``_render_payload`` (D15). *team_logos* (W8) maps a placed
+    entry's plate to its logo data URI -- the roster-entry lookup seam
+    the app supplies.
+
+    Args:
+        ride: Ride-like object exposing the six read fields.
+        placed: Ranked standings, one per entry.
+        opts: Export flags (times/boards/full-field/all-cards).
+        generated: The pinned footer stamp; None stamps the local now.
+        team_logos: Plate -> logo data URI for the entries that carry
+            one; rows without a mapping render no logo.
+
+    Returns:
+        The payload the page embeds and both exporters render from.
     """
     logos = team_logos if team_logos is not None else {}
     results = tuple(_result_row_from_placed(p, logo=logos.get(p.result.plate)) for p in placed)
@@ -666,17 +840,17 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
 
     Composes the page's ``EventInfo`` from *ride* (name -> title,
     venue/date -> meta, organizer/scorer, entries/laps/cards tallied
-    from *placed*), one ``ResultRow`` per ``Placed``, and the laps /
-    time boards when the options request them (E6.4.2), then renders
-    through :func:`_render_payload`. ``generated`` pins the footer
-    timestamp (defaults to now in the golden pages' style);
-    ``logo_src`` is the ride logo as a base64 data URI, falling back
-    to a transparent 1x1 PNG when absent (D8); ``logo_path`` is the
-    alternative raw-file form, base64-encoded when *logo_src* is
-    None. ``team_logos`` (W8) maps a placed entry's plate to its logo
-    data URI (the team's card bitmap), rendered as a small image
-    in the team's Top ten and Full field rows; absent entries render
-    nothing.
+    from *placed*), one ``ResultRow`` per ``Placed``, and the per-kind
+    laps / flat time boards when the options request them (E6.4.2),
+    then renders the :func:`sections` plan through
+    :func:`_render_payload`. ``generated`` pins the footer timestamp
+    (defaults to now in the golden pages' style); ``logo_src`` is the
+    ride logo as a base64 data URI, falling back to a transparent 1x1
+    PNG when absent (D8); ``logo_path`` is the alternative raw-file
+    form, base64-encoded when *logo_src* is None. ``team_logos`` (W8)
+    maps a placed entry's plate to its logo data URI (the team's card
+    bitmap), rendered as a small image in the team's Top teams and
+    Full field rows; absent entries render nothing.
 
     Args:
         ride: Ride-like object exposing ``name``/``event_date``/
@@ -699,8 +873,8 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
     """
     if logo_src is None and logo_path is not None:
         logo_src = _logo_data_uri(logo_path)
-    payload = _payload_from_ride(ride, placed, opts, generated, team_logos=team_logos)
-    return _render_payload(payload, logo_src=logo_src)
+    payload = build_payload(ride, placed, opts, generated, team_logos=team_logos)
+    return _render_payload(payload, logo_src=logo_src, placed=placed)
 
 
 # ============================================ record -> payload (TB-5)
@@ -751,12 +925,17 @@ def _result_row_from_record(row: Mapping[str, object]) -> ResultRow:
 
 
 def _laps_board_row_from_record(row: Mapping[str, object]) -> LapsBoardRow:
-    """Build one ``LapsBoardRow`` from its camelCase record row."""
+    """Build one ``LapsBoardRow`` from its camelCase record row.
+
+    ``type`` is read with the empty default so a pre-kind record still
+    parses (the committed samples regenerate with it).
+    """
     return LapsBoardRow(
         plate=cast("int", row["plate"]),
         entry=cast("str", row["entry"]),
         laps=cast("int", row["laps"]),
         total=cast("str | None", row.get("total")),
+        type=cast("str", row.get("type", "")),
     )
 
 

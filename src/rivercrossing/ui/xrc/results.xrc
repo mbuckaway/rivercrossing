@@ -36,7 +36,8 @@
   Code-side per the canvas footnote: the round-robin standings rows,
   with "draw required" tie rows carrying a warning badge in the Place
   cell; the stale-export banner after reopened corrections;
-  show_times_chk also hiding the Total column on every list here.
+  show_times_chk also hiding the Total column on every list here, and
+  clearing/disabling the Fastest-time box while times are off (R-63).
 -->
 <resource>
 

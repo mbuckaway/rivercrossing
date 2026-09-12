@@ -4,8 +4,9 @@
 ``MainFrame`` wired to a real ``RideEngine`` through
 ``EngineDataSource`` + ``ConsolePresenter``: typed plates land in the
 feed with a card chip (R-31/R-32), counters update, a flagged row is
-bold (R-34), arm enables Stop and the confirm flow stops the engine
-(R-35). Sound cues are asserted at the unit level (``test_sound.py``,
+bold (R-34), and Stop is one act: enabled while RUNNING and confirmed
+through the native confirm (R-35/C2). Sound cues are asserted at the
+unit level (``test_sound.py``,
 fake backend -- spec §10's "no audio hardware in CI"); here the real
 view drives the real engine through the real harness (direct event
 injection per ``harness.py``).
@@ -146,19 +147,18 @@ def test_live_console_shows_zero_counters_at_startup(
     assert labels == ("0", "0", "0", "432/432", "0", "0")
 
 
-def test_live_console_starts_running_with_entry_enabled_and_stop_disabled(
+def test_live_console_starts_running_with_entry_and_stop_enabled(
     shared_live_console: tuple[Any, RideEngine, ConsolePresenter],
 ) -> None:
-    """R-35 gate: Stop stays disabled until Arm; entry is live."""
+    """C2 gate: entry is live and Stop is one act while RUNNING."""
     window, _engine, _presenter = shared_live_console
 
     assert (
         harness.find_control(window, ids.PLATE_INPUT).IsEnabled(),
         harness.find_control(window, ids.RECORD_BTN).IsEnabled(),
         harness.find_control(window, ids.STOP_BTN).IsEnabled(),
-        harness.find_control(window, ids.ARM_STOP_CHK).GetValue(),
         harness.find_control(window, ids.RIDE_STATUS_LBL).GetLabelText(),
-    ) == (True, True, False, False, "RUNNING")
+    ) == (True, True, True, "RUNNING")
 
 
 def test_live_console_clock_resolves_with_zero_elapsed_at_startup(
@@ -288,14 +288,12 @@ def test_live_flagged_crossing_row_is_bold() -> None:
     assert result["data"]["held_count"] == 1, result["context"]
 
 
-def test_live_arm_enables_stop_and_confirmed_stop_locks_the_entry_field() -> None:
-    """R-35's three deliberate acts through the real controls."""
-    result = scenario_runner.run_scenario("live_arm_stop_confirm_flow")
+def test_live_stop_confirm_locks_the_entry_field_through_the_real_controls() -> None:
+    """R-35/C2: Stop is one act; a confirmed click locks entry."""
+    result = scenario_runner.run_scenario("live_stop_confirm_flow")
 
     assert result["ok"], result["context"]
-    assert result["data"]["stop_enabled_before_arm"] is False, result["context"]
-    assert result["data"]["stop_enabled_while_armed"] is True, result["context"]
+    assert result["data"]["stop_enabled_while_running"] is True, result["context"]
     assert result["data"]["stop_enabled_after_confirm"] is False, result["context"]
-    assert result["data"]["arm_checked_after_confirm"] is False, result["context"]
     assert result["data"]["plate_enabled_after_stop"] is False, result["context"]
     assert result["data"]["refused_reason"] == "ride is stopped", result["context"]

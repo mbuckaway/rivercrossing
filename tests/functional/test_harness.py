@@ -1085,7 +1085,7 @@ def test_load_window_verified_rebuild_reaps_the_degraded_frame_handle(
     """A degraded first load is reaped by handle; the sibling stays.
 
     ``load_window_verified``'s fresh-rebuild path builds the healthy
-    ``results_frame`` BEFORE tearing down the degraded first load (the
+    ``results_dlg`` BEFORE tearing down the degraded first load (the
     deliberate anti-address-reuse ordering), so both same-named frames
     coexist at close time. The degraded frame's own native handle must
     be absent from ``wx.GetTopLevelWindows()`` by the time the call
@@ -1110,7 +1110,7 @@ def test_load_window_verified_rebuild_reaps_the_degraded_frame_handle(
 
     with monkeypatch.context() as patched:
         patched.setattr(wx.Window, "FindWindowByName", _find)
-        rebuilt = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+        rebuilt = harness.load_window_verified(xrc_resource, ids.RESULTS_DLG, frame=True)
 
     (degraded_handle,) = degraded_handles
     try:
@@ -1250,7 +1250,7 @@ def test_dismiss_modal_probe_raise_rearms_and_ends_the_modal(
     ``ShowModal`` returns, and the dialog closes cleanly -- no modal
     remains.
     """
-    dialog = harness.load_window_verified(xrc_resource, ids.FINISH_CONFIRM_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.DNF_CONFIRM_DLG, frame=False)
     probes: list[str] = []
 
     def _poisoned_then_ok(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -1262,7 +1262,7 @@ def test_dismiss_modal_probe_raise_rearms_and_ends_the_modal(
 
     try:
         harness.dismiss_modal(
-            ids.FINISH_CONFIRM_DLG,
+            ids.DNF_CONFIRM_DLG,
             dismiss_with=wx.ID_OK,
             drive=_poisoned_then_ok,
         )

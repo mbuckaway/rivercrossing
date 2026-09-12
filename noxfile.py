@@ -154,8 +154,7 @@ def functional(session):
     xdist passes at -n 2 accumulate the degradation until late files
     fail with _support.py:106 LookupError, while every file run alone
     in a fresh process passes -- and a failed file gets exactly one
-    fresh-process retry round inside the tool. tools/functional_rerun.
-    py remains the whole-suite/acceptance backstop, untouched.
+    fresh-process retry round inside the tool.
 
     --forked would be the wrong tool on macOS: forking a process that
     has already initialised NSApplication is not safe.

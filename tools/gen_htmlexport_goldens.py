@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Freeze the results-page HTML goldens and payload fixtures (E6.2.2).
 
-The two golden samples in ``design/exports/`` are hand-assembled
+The three golden samples in ``design/exports/`` are hand-assembled
 (Spec §8); their ``race-data`` JSON blocks are the fixture source. This
-generator rebuilds both frozen pages at
+generator rebuilds all three frozen pages at
 ``tests/unit/fixtures/htmlexport/`` from the real renderer through the
 ``_render_payload`` seam -- the one deliberate regeneration TB-5
 permits -- together with the ``payload-*.json`` fixtures the
@@ -54,6 +54,11 @@ GOLDEN_SPECS: tuple[tuple[str, str, str], ...] = (
         "epic-2026-results-no-times.html",
         "payload-no-times.json",
         "epic-2026-results-no-times.html",
+    ),
+    (
+        "epic-2026-results-solo.html",
+        "payload-solo.json",
+        "epic-2026-results-solo.html",
     ),
 )
 

@@ -184,15 +184,12 @@ def _spy_on_set_focus(control: Any) -> list[bool]:  # noqa: ANN401
 # built-in Escape handling already ends these with wxID_CANCEL, no
 # wiring needed. Each row also calls wire_close_button() first,
 # which proves that function's no-op branch (T-3: it has no
-# wxID_CLOSE to find).
+# wxID_CLOSE to find). H2's native confirms (finish, exit, duplicate
+# and reopen) are no XRC windows: the OS owns their Escape handling.
 _HAS_NATIVE_CANCEL = (
     ids.RIDE_SETUP_DLG,
     ids.SET_START_DLG,
-    ids.FINISH_CONFIRM_DLG,
-    ids.DUPLICATE_RIDE_DLG,
-    ids.REOPEN_RIDE_DLG,
     ids.EXIT_RUNNING_DLG,
-    ids.EXIT_CONFIRM_DLG,
     ids.CSV_PREVIEW_DLG,
     ids.EDIT_CROSSING_DLG,
     ids.REASSIGN_DLG,
@@ -375,20 +372,14 @@ class _DefaultClickCase:
 
 # Every dialog whose default button is bound to actually end the
 # modal once wire_close_button() has been applied (a no-op for the
-# ten that already carry a stock wxID_OK/CANCEL). Excludes
+# ones that already carry a stock wxID_OK/CANCEL). Excludes
 # resume_dlg (continue_btn has no bound EndModal yet) and
 # ride_library_dlg (wxID_OPEN is not bound either) -- see the
-# E1.5.3 report.
+# E1.5.3 report. H2's native confirms own their defaults now (Cancel
+# for the destructive finish/exit pair, OK for duplicate/reopen).
 _DEFAULT_CLICK_CASES = (
     _DefaultClickCase(ids.SET_START_DLG, pages.WX_ID_OK, wx.ID_OK),
-    _DefaultClickCase(ids.FINISH_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
-    # E5.4.1's two non-destructive confirms: the primary is the default
-    # so a reflex Enter is safe (spec.md 13) -- the opposite of the
-    # destructive confirms above, whose Cancel is the default.
-    _DefaultClickCase(ids.DUPLICATE_RIDE_DLG, pages.WX_ID_OK, wx.ID_OK),
-    _DefaultClickCase(ids.REOPEN_RIDE_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.EXIT_RUNNING_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
-    _DefaultClickCase(ids.EXIT_CONFIRM_DLG, pages.WX_ID_CANCEL, wx.ID_CANCEL),
     _DefaultClickCase(ids.EDIT_CROSSING_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.REASSIGN_DLG, pages.WX_ID_OK, wx.ID_OK),
     _DefaultClickCase(ids.MANUAL_DEAL_DLG, pages.WX_ID_OK, wx.ID_OK),
@@ -511,26 +502,28 @@ def test_set_default_button_makes_it_the_dialogs_default(
     assert default_item_name == control_name
 
 
-def test_set_default_button_rider_editor_defaults_to_save_not_close_or_add(
+def test_set_default_button_rider_editor_defaults_to_edit_not_close_or_add(
     xrc_resource: object,
 ) -> None:
     """Pinned: do not "tidy" this to ``wxID_CLOSE`` or ``add_btn``.
 
-    Product owner's call (E1.5.3 follow-up): after typing into
-    Plate/Name/Team, Enter should commit the edit in place, not
-    silently discard it (``wxID_CLOSE``'s default action) and not
-    create a duplicate entry alongside it (``add_btn``). ``save_btn``
-    is the only one of the three that matches "commit this edit."
+    Product owner's call, reworked by Phase 3: the editor is a
+    read-only record display, so Enter opens the selected rider's own
+    record dialog (``edit_btn`` -- the commit-then-close flow), never
+    the silent discard of ``wxID_CLOSE`` nor the duplicate-creating
+    ``add_btn``. The editor's in-place Save left with Phase 3;
+    ``dialogs.DEFAULT_BUTTON_DECISIONS`` carries this same table for
+    the app's own route path.
     """
     dialog = _show(xrc_resource, ids.RIDER_EDITOR_DLG)
-    dialogs.set_default_button(dialog, ids.SAVE_BTN)
+    dialogs.set_default_button(dialog, ids.EDIT_BTN)
 
     try:
         default_item_name = dialog.GetDefaultItem().GetName()
     finally:
         harness.close_window(dialog)
 
-    assert default_item_name == ids.SAVE_BTN
+    assert default_item_name == ids.EDIT_BTN
 
 
 def test_set_default_button_given_unknown_control_raises(xrc_resource: object) -> None:
@@ -572,22 +565,14 @@ def test_set_default_button_given_a_non_button_control_raises(xrc_resource: obje
 
 # --------------------------------------- destructive confirms -> Cancel
 
-# finish_confirm_dlg joined this set on the coordinator's explicit
-# decision (E1.5.3 follow-up): it locks the ride and computes final
-# standings, and its XRC default is already Cancel -- it was left
-# out of the original four only because it carries no <focused>
-# marker alongside that default, which was reported rather than
-# guessed at. exit_confirm_dlg joined in Phase 8 (P8-D1): quitting
-# with no ride running is destructive too, and its XRC co-declares
-# <default> and <focused> on Cancel from the start. stop_confirm_dlg
-# (W5) left this set when the Stop flow retired the XRC dialog for
-# the native confirm (ui.std_dialogs.show_confirm).
+# The destructive confirms still authored in XRC. The native H2
+# confirms (finish/exit) and W5's stop left this set with their XRC
+# windows: std_dialogs.show_danger/show_confirm own Cancel as their
+# default -- the same safety contract, pinned at the unit level.
 _DESTRUCTIVE = (
     ids.DNF_CONFIRM_DLG,
     ids.DELETE_RIDE_DLG,
     ids.EXIT_RUNNING_DLG,
-    ids.FINISH_CONFIRM_DLG,
-    ids.EXIT_CONFIRM_DLG,
 )
 
 
@@ -720,7 +705,6 @@ def test_bind_delete_confirmation_gate_redisables_after_clearing_exact_match(
 # ------------------------------------------ focus returns to opener
 
 _RUN_DIALOG_CASES = (
-    (ids.DUPLICATE_RIDE_DLG, wx.ID_CANCEL),  # native Cancel path
     (ids.SET_START_DLG, wx.ID_CANCEL),  # native Cancel path, a form dialog
     (ids.ABOUT_DLG, wx.ID_CLOSE),  # Close-only, needs run_dialog's own wiring
 )

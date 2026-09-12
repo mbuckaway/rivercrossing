@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Unit tests for tools/gen_htmlexport_goldens.py (E6.2.2).
 
-The generator freezes the two results-page goldens at
+The generator freezes the three results-page goldens at
 ``tests/unit/fixtures/htmlexport/epic-2026-results*.html`` plus their
 ``payload-*.json`` fixtures, regenerated once from the real renderer
 with the samples' ``race-data`` JSON as input (TB-5: the hand-assembled
@@ -18,14 +18,17 @@ test_gen_css.py:40 established).
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 from types import ModuleType  # noqa: TC003 -- used at runtime as a return type here
 
 import pytest
 from htmlexport_fixtures import (
     GOLDEN_NO_TIMES,
+    GOLDEN_SOLO,
     GOLDEN_TIMES,
     NO_TIMES_SAMPLE,
+    SOLO_SAMPLE,
     TIMES_SAMPLE,
     parse_race_data,
 )
@@ -60,6 +63,8 @@ _COMMITTED_FIXTURES_DIR = _ROOT / "tests" / "unit" / "fixtures" / "htmlexport"
         "epic-2026-results.html",
         "payload-no-times.json",
         "epic-2026-results-no-times.html",
+        "payload-solo.json",
+        "epic-2026-results-solo.html",
     ],
 )
 def test_write_goldens_regeneration_matches_committed_file_byte_for_byte(
@@ -80,6 +85,7 @@ def test_regenerated_goldens_hold_value_parity_with_samples() -> None:
     """
     assert parse_race_data(GOLDEN_TIMES) == parse_race_data(TIMES_SAMPLE)
     assert parse_race_data(GOLDEN_NO_TIMES) == parse_race_data(NO_TIMES_SAMPLE)
+    assert parse_race_data(GOLDEN_SOLO) == parse_race_data(SOLO_SAMPLE)
 
 
 def test_regenerated_golden_is_production_self_contained_page() -> None:
@@ -110,7 +116,7 @@ def test_generated_fixture_json_parses_to_the_sample_record() -> None:
 # ----------------------------------------------------------- CLI modes
 
 
-def test_main_write_with_out_dir_override_writes_four_files(tmp_path: Path) -> None:
+def test_main_write_with_out_dir_override_writes_six_files(tmp_path: Path) -> None:
     """``--write --out-dir`` points the generator at a scratch tree."""
     out_dir = tmp_path / "out"
 
@@ -127,8 +133,10 @@ def test_main_write_with_out_dir_override_writes_four_files(tmp_path: Path) -> N
     assert exit_code == 0
     assert (out_dir / "epic-2026-results.html").is_file()
     assert (out_dir / "epic-2026-results-no-times.html").is_file()
+    assert (out_dir / "epic-2026-results-solo.html").is_file()
     assert (out_dir / "payload-times.json").is_file()
     assert (out_dir / "payload-no-times.json").is_file()
+    assert (out_dir / "payload-solo.json").is_file()
 
 
 def test_main_write_returns_two_when_sample_missing(tmp_path: Path) -> None:
@@ -139,6 +147,42 @@ def test_main_write_returns_two_when_sample_missing(tmp_path: Path) -> None:
     exit_code = gen_goldens.main(["--write", "--samples-dir", str(empty)])
 
     assert exit_code == 2
+
+
+def test_race_data_block_page_without_record_raises_value_error() -> None:
+    """A page with no race-data block fails generation by name."""
+    with pytest.raises(ValueError, match=re.escape("no race-data block found in page")):
+        gen_goldens._race_data_block("<html><body>no record here</body></html>")
+
+
+def test_payload_and_record_parity_failure_names_the_offending_sample(tmp_path: Path) -> None:
+    """A non-round-tripping record aborts before any write."""
+    text = SOLO_SAMPLE.read_text(encoding="utf-8")
+    record = json.loads(gen_goldens._race_data_block(text))
+    record["results"][0]["bogus"] = 1  # ignored on parse, dropped by to_record()
+    broken = tmp_path / "broken.html"
+    broken.write_text(
+        re.sub(
+            r'(<script type="application/json" id="race-data">).*?(</script>)',
+            lambda match: match.group(1) + json.dumps(record) + match.group(2),
+            text,
+            flags=re.DOTALL,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=re.escape("value-parity failed for broken.html")):
+        gen_goldens.payload_and_record(tmp_path, "broken.html")
+
+
+def test_main_check_reports_missing_artifacts_when_out_dir_empty(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--check`` on an empty tree names each missing artifact."""
+    exit_code = gen_goldens.main(["--check", "--out-dir", str(tmp_path / "empty")])
+
+    assert exit_code == 1
+    assert "missing from" in capsys.readouterr().out
 
 
 def test_main_check_returns_zero_when_committed_goldens_match() -> None:

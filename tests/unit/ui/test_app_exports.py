@@ -44,37 +44,56 @@ class _StubConfig:
     scorer = "T. Ester"
     tiebreak_order = ("laps", "total_time", "high_card")
     logo_path: Path | None = None
+    entry_mode = EntryMode.SOLO
 
 
 class _StubEngine:
-    """The engine surface the export handlers read."""
+    """The engine surface the export handlers and menu state read."""
 
     def __init__(
         self,
         snapshot: tuple[EntryResult, ...],
         *,
         events: tuple = (),
+        state: RideStatus = RideStatus.FINISHED,
     ) -> None:
-        """Store *snapshot* under a stub config and fixed event log."""
+        """Store *snapshot* under a stub config and fixed event log.
+
+        *state* is the live ride state the export-completion menu
+        refresh reads; a REOPENED engine stages the reopened-mid-export
+        case.
+        """
         self.config = _StubConfig()
         self._snapshot = snapshot
         self.events = events
+        self.state = state
+        self.stopped = False
+        self.crossings: tuple = ()
 
     def snapshot(self) -> tuple[EntryResult, ...]:
         """Return the stored results."""
         return self._snapshot
 
+    def held_crossings(self) -> tuple:
+        """Return no held crossings -- only the count is read."""
+        return ()
+
 
 class _StubFrame:
-    """A minimal frame: status notices are captured, nothing else."""
+    """A minimal frame: status notices and an optional menubar."""
 
-    def __init__(self) -> None:
-        """Start with no notices."""
+    def __init__(self, menubar: object = None) -> None:
+        """Start with no notices and *menubar* (None = no menu bar)."""
         self.notices: list[str] = []
+        self._menubar = menubar
 
     def SetStatusText(self, text: str) -> None:  # noqa: N802 -- wx API name
         """Record *text* as the latest notice."""
         self.notices.append(text)
+
+    def GetMenuBar(self) -> object:  # noqa: N802 -- wx API name
+        """Return the staged menubar, or None."""
+        return self._menubar
 
 
 def _result(  # noqa: PLR0913 -- a fixture builder mirroring EntryResult's fields
@@ -125,10 +144,10 @@ def _unpack_groups(groups: object) -> tuple[object, object]:
     return teams, solo
 
 
-def _context(*, engine: _StubEngine | None) -> app_module._RouteContext:
-    """Build a route context with an optional live engine."""
+def _context(*, engine: _StubEngine | None, menubar: object = None) -> app_module._RouteContext:
+    """Build a route context with an optional engine and menubar."""
     return app_module._RouteContext(
-        frame=_StubFrame(),
+        frame=_StubFrame(menubar),
         resource=None,
         roster=None,  # type: ignore[arg-type]
         app=None,
@@ -148,6 +167,46 @@ def _presenter(engine: _StubEngine) -> object:
     return _Presenter(engine)
 
 
+class _RecordingMenuItem:
+    """A menu item that records the last ``Enable`` verdict."""
+
+    def __init__(self) -> None:
+        """Start with no recorded verdict."""
+        self.enabled: bool | None = None
+
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record *enabled* as the item's verdict."""
+        self.enabled = enabled
+
+
+class _RecordingMenuBar:
+    """A menubar carrying exactly the observed frozen item names."""
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        """Build one recording item per frozen *names* entry."""
+        import wx.xrc  # noqa: PLC0415 -- the real id space apply_to_menubar walks
+
+        self._names = {wx.xrc.XRCID(name): name for name in names}
+        self.items = {name: _RecordingMenuItem() for name in names}
+
+    def FindItem(  # noqa: N802 -- wx API name
+        self, real_id: int
+    ) -> tuple[_RecordingMenuItem | None, None]:
+        """Return the item for *real_id*, or a miss."""
+        name = self._names.get(real_id)
+        return (None, None) if name is None else (self.items[name], None)
+
+
+# Part D: the two per-format preview rows the export-completion menu
+# refresh enables; the recording menubar walks the real xrcids.
+PREVIEW_MENU_IDS = ("mi_preview_html_browser", "mi_preview_pdf_browser")
+
+
+def _gating_engine(*, state: RideStatus = RideStatus.FINISHED) -> _StubEngine:
+    """Build an engine with the live state the menu refresh reads."""
+    return _StubEngine(_snapshot(), state=state)
+
+
 def _snapshot() -> tuple[EntryResult, ...]:
     """Build a two-entry field: a quad of nines and a royal flush."""
     return (
@@ -163,11 +222,31 @@ def test_ride_slug_slugifies_and_never_empty() -> None:
     assert app_module._ride_slug("!!!") == "results"
 
 
-def test_target_actions_cover_every_results_export_row() -> None:
-    """Every export target + preview resolves to a handler."""
-    for target in ("export_html", "export_pdf", "export_poster", "export_results_csv"):
-        assert target in app_module._TARGET_ACTIONS
-    assert "preview_in_browser" in app_module._TARGET_ACTIONS
+@pytest.mark.parametrize(
+    "target",
+    [
+        "export_html",
+        "export_pdf",
+        "export_poster",
+        "export_results_csv",
+        "preview_html_browser",
+        "preview_pdf_browser",
+    ],
+)
+def test_target_actions_cover_every_results_export_row(target: str) -> None:
+    """Every export target + both previews resolves to a handler."""
+    assert target in app_module._TARGET_ACTIONS
+
+
+def test_target_actions_route_each_preview_to_its_own_handler() -> None:
+    """Part D: each preview opens its own format's recorded path."""
+    assert (
+        app_module._TARGET_ACTIONS["preview_html_browser"]
+        is app_module._handle_preview_html_browser
+    )
+    assert (
+        app_module._TARGET_ACTIONS["preview_pdf_browser"] is app_module._handle_preview_pdf_browser
+    )
 
 
 def test_write_export_html_writes_a_self_contained_page(tmp_path: Path) -> None:
@@ -243,7 +322,7 @@ def test_handle_export_command_picks_writes_and_records(
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
 
     def sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
-        ctx: object,
+        ctx: app_module._RouteContext,
         target: str,
         path: Path,
         *,
@@ -251,21 +330,20 @@ def test_handle_export_command_picks_writes_and_records(
         teams: object,
         solo: object,
         opts: object,
-        watermark: int | None = None,
+        watermark: int,
         team_logos: object = None,
     ) -> None:
         app_module._write_export(  # type: ignore[arg-type]
             config, teams, solo, opts, target, path, team_logos=team_logos
         )
-        ctx.last_export_path = path  # type: ignore[attr-defined]
-        ctx.export_watermark = watermark  # type: ignore[attr-defined]
+        app_module._record_export_completion(ctx, target, path, watermark)
 
     monkeypatch.setattr(app_module, "_run_export_offloop", sync_offloop)
 
     app_module._handle_export_command(context, "export_html")
 
     assert out.exists()
-    assert context.last_export_path == out
+    assert (context.html_export_path, context.pdf_export_path) == (out, None)
     assert context.export_watermark == 0
     # the off-loop notice is async; the sync seam posts nothing
     assert context.frame.notices == []
@@ -285,25 +363,24 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
     context = _context(engine=_StubEngine(_snapshot(), events=events))
     out = tmp_path / "results.html"
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
-    captured: list[object] = []
+    captured: list[int] = []
 
     def sync_offloop(  # noqa: PLR0913 -- mirrors _run_export_offloop's inputs
-        ctx: object,
-        _target: str,
-        _path: Path,
+        ctx: app_module._RouteContext,
+        target: str,
+        path: Path,
         *,
         config: object,
         teams: object,
         solo: object,
         opts: object,
-        watermark: int | None = None,
+        watermark: int,
         team_logos: object = None,
     ) -> None:
         app_module._write_export(  # type: ignore[arg-type]
-            config, teams, solo, opts, "export_html", out, team_logos=team_logos
+            config, teams, solo, opts, target, path, team_logos=team_logos
         )
-        ctx.last_export_path = out  # type: ignore[attr-defined]
-        ctx.export_watermark = watermark  # type: ignore[attr-defined]
+        app_module._record_export_completion(ctx, target, path, watermark)
         captured.append(watermark)
 
     monkeypatch.setattr(app_module, "_run_export_offloop", sync_offloop)
@@ -311,7 +388,7 @@ def test_handle_export_command_advances_the_export_watermark_to_the_event_count(
     app_module._handle_export_command(context, "export_html")
 
     assert captured == [3]
-    assert context.export_watermark == 3
+    assert (context.html_export_path, context.export_watermark) == (out, 3)
 
 
 def test_handle_export_command_cancel_is_a_silent_noop(
@@ -325,7 +402,7 @@ def test_handle_export_command_cancel_is_a_silent_noop(
 
     assert not (tmp_path / "results.html").exists()
     assert context.frame.notices == []
-    assert context.last_export_path is None
+    assert (context.html_export_path, context.pdf_export_path) == (None, None)
 
 
 def test_handle_export_command_without_engine_notices(
@@ -340,25 +417,70 @@ def test_handle_export_command_without_engine_notices(
     assert context.frame.notices == ["No ride to export"]
 
 
-def test_handle_preview_browser_opens_the_last_export(
+def test_handle_export_command_given_the_csv_target_records_no_preview_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Preview opens the recorded export path via the seam."""
+    """Part D: a standings CSV export records neither preview path.
+
+    Deliberate behavior change: the old single path could open a .csv
+    from the Preview row, so CSV completions now advance the watermark
+    only and both Preview items stay disabled.
+    """
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "standings.csv"
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
+    _inline_offloop(monkeypatch)
+
+    app_module._handle_export_command(context, "export_results_csv")
+
+    assert (context.html_export_path, context.pdf_export_path) == (None, None)
+    assert context.export_watermark == 0
+
+
+def test_handle_preview_html_browser_opens_the_html_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Part D: Preview HTML opens the recorded HTML path."""
     context = _context(engine=None)
-    context.last_export_path = tmp_path / "results.html"
+    context.html_export_path = tmp_path / "results.html"
     opened: list[Path] = []
     monkeypatch.setattr(app_module, "_open_in_browser", opened.append)
 
-    app_module._handle_preview_browser(context)
+    app_module._handle_preview_html_browser(context)
 
     assert opened == [tmp_path / "results.html"]
+    assert context.frame.notices == ["Opened results.html"]
 
 
-def test_handle_preview_browser_without_export_notices() -> None:
-    """No export yet posts a notice and opens nothing."""
+def test_handle_preview_pdf_browser_opens_the_pdf_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Part D: Preview PDF opens the recorded PDF path via the seam."""
+    context = _context(engine=None)
+    context.pdf_export_path = tmp_path / "results.pdf"
+    opened: list[Path] = []
+    monkeypatch.setattr(app_module, "_open_in_browser", opened.append)
+
+    app_module._handle_preview_pdf_browser(context)
+
+    assert opened == [tmp_path / "results.pdf"]
+    assert context.frame.notices == ["Opened results.pdf"]
+
+
+def test_handle_preview_html_browser_without_export_notices() -> None:
+    """No HTML export yet posts a notice and opens nothing."""
     context = _context(engine=None)
 
-    app_module._handle_preview_browser(context)
+    app_module._handle_preview_html_browser(context)
+
+    assert context.frame.notices == ["No export yet — generate one first"]
+
+
+def test_handle_preview_pdf_browser_without_export_notices() -> None:
+    """No PDF export yet posts a notice and opens nothing."""
+    context = _context(engine=None)
+
+    app_module._handle_preview_pdf_browser(context)
 
     assert context.frame.notices == ["No export yet — generate one first"]
 
@@ -406,7 +528,10 @@ def test_write_export_html_embeds_team_logos_when_supplied(tmp_path: Path) -> No
     )
 
     html = out.read_text(encoding="utf-8")
-    assert html.count('class="team-logo"') == 2
+    # Prefix match: the compact team rows carry Tailwind utilities in
+    # the class attribute, so the exact-value form would pin markup
+    # rather than the two logo images W8 owns.
+    assert html.count('class="team-logo') == 2
     assert html.count('<img src="data:image/png;base64,TEAMLOGO"') == 2
 
 
@@ -571,15 +696,12 @@ def _sync_offloop(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
         opts: object,
         watermark: int,
         team_logos: object = None,
-        record_path: bool = True,
     ) -> None:
         app_module._write_export(  # type: ignore[arg-type]
             config, teams, solo, opts, target, path, team_logos=team_logos
         )
         written.append((target, path))
-        if record_path:
-            context.last_export_path = path
-            context.export_watermark = watermark
+        app_module._record_export_completion(context, target, path, watermark)
 
     monkeypatch.setattr(app_module, "_run_export_offloop", _write)
     return written
@@ -591,8 +713,8 @@ def test_handle_finish_route_given_a_finished_engine_exports_html_and_pdf(
     """E2: finishing publishes both results files with no save dialog.
 
     The two exports land in ``<user_data_dir>/exports`` named from the
-    ride slug, and the context records the HTML path -- not the PDF
-    scheduled after it -- so Preview in Browser opens the HTML page.
+    ride slug, and each completion records its own format's path, so
+    both Preview rows enable -- HTML opens the page, PDF the report.
     """
     engine, _source = app_module._build_console_engine(_export_roster())
     engine.start()
@@ -611,7 +733,7 @@ def test_handle_finish_route_given_a_finished_engine_exports_html_and_pdf(
     assert written == [("export_html", html), ("export_pdf", pdf)]
     assert "race-data" in html.read_text(encoding="utf-8")
     assert len(PdfReader(str(pdf)).pages) >= 1
-    assert context.last_export_path == html
+    assert (context.html_export_path, context.pdf_export_path) == (html, pdf)
 
 
 def test_handle_finish_route_given_a_running_engine_exports_nothing(
@@ -634,27 +756,24 @@ def test_handle_finish_route_given_a_running_engine_exports_nothing(
 
     assert engine.state is RideStatus.RUNNING
     assert written == []
-    assert context.last_export_path is None
+    assert (context.html_export_path, context.pdf_export_path) == (None, None)
     assert not (tmp_path / "data" / "exports").exists()
 
 
-# --------------------------------------- E2 race: the HTML path wins
+# ------------------------- E2/Part D: one path field per export format
 # The auto-export schedules HTML first and PDF second, but the two
-# workers finish in whatever order the OS grants them: both writebacks
-# reach ``last_export_path`` through ``wx.CallAfter``, so a PDF that
-# lands last used to clobber the explicit HTML assignment and Preview
-# in Browser opened the PDF. The HTML path is now authoritative -- the
-# PDF schedules with ``record_path=False`` -- independent of either
-# worker's completion order.
+# workers finish in whatever order the OS grants them. Each format now
+# records into its own field through the same ``wx.CallAfter``
+# completion callback, so a PDF worker landing after the HTML one can
+# no longer clobber the path Preview HTML opens -- pinned below.
 
 
 class _DeferredExport:
     """A fake off-loop seam whose completions flush on demand.
 
-    Mirrors ``_run_export_offloop``'s keyword inputs -- including the
-    new ``record_path`` gate -- but defers each completion instead of
-    running it on a worker thread, so a test can force the PDF
-    writeback to land after the HTML one (:meth:`flush`).
+    Mirrors ``_run_export_offloop``'s keyword inputs but defers each
+    completion instead of running it on a worker thread, so a test can
+    force the PDF writeback to land after the HTML one (:meth:`flush`).
     """
 
     def __init__(self) -> None:
@@ -673,9 +792,12 @@ class _DeferredExport:
         self.scheduled.append((target, path))
 
         def complete() -> None:
-            if captured.get("record_path", True):
-                context.last_export_path = path
-                context.export_watermark = captured["watermark"]  # type: ignore[assignment]
+            app_module._record_export_completion(
+                context,
+                target,
+                path,
+                captured["watermark"],  # type: ignore[arg-type]
+            )
 
         self._completions.append(complete)
 
@@ -686,15 +808,15 @@ class _DeferredExport:
         self._completions.clear()
 
 
-def test_handle_finish_route_given_a_pdf_worker_landing_last_keeps_the_html_path(
+def test_handle_finish_route_given_a_pdf_worker_landing_last_records_both_paths(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E2 race: a late PDF worker never clobbers the HTML path.
+    """E2/Part D: a late PDF worker never clobbers the HTML path.
 
     Both completions are forced to run after ``_handle_finish_route``
-    returns, HTML first and PDF last -- the interleaving that made
-    Preview in Browser open the PDF. The recorded path must still be
-    the HTML page.
+    returns, HTML first and PDF last -- the interleaving that used to
+    make Preview open the wrong file. Each format now lands in its own
+    field, so both Preview rows read the right path.
     """
     engine, _source = app_module._build_console_engine(_export_roster())
     engine.start()
@@ -713,7 +835,7 @@ def test_handle_finish_route_given_a_pdf_worker_landing_last_keeps_the_html_path
     html = exports / "gorba-epic-2026-results.html"
     pdf = exports / "gorba-epic-2026-results.pdf"
     assert offloop.scheduled == [("export_html", html), ("export_pdf", pdf)]
-    assert context.last_export_path == html
+    assert (context.html_export_path, context.pdf_export_path) == (html, pdf)
 
 
 class _InlineThread:
@@ -751,43 +873,86 @@ def _inline_offloop(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("record_path", "records"),
-    [(True, True), (False, False)],
+    ("target", "expected_html", "expected_pdf"),
+    [
+        ("export_html", True, False),
+        ("export_pdf", False, True),
+        ("export_poster", False, True),
+        ("export_results_csv", False, False),
+    ],
+    ids=["html", "pdf", "poster", "csv"],
 )
-def test_run_export_offloop_record_path_gates_the_path_writeback(  # noqa: PLR0913, PLR0917
+def test_run_export_offloop_completion_records_and_refreshes_per_format(  # noqa: PLR0913, PLR0917
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    record_path: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
-    records: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+    target: str,
+    expected_html: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+    expected_pdf: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
 ) -> None:
-    """E2: ``record_path=False`` suppresses the export writeback.
+    """Part D: each export records its path and refreshes the menu.
 
-    The HTML auto-export records the path so Preview opens it; the PDF
-    schedules with ``record_path=False`` and must not clobber it. The
-    success notice posts in both cases.
+    The completion callback records the per-format path (the CSV target
+    records neither) and re-reads the menu state on the main thread, so
+    the matching Preview row enables immediately and the other stays
+    disabled. The full status x flag decision tables live in
+    test_commands.py.
     """
-    context = _context(engine=_StubEngine(_snapshot()))
-    out = tmp_path / "results.html"
+    menubar = _RecordingMenuBar(PREVIEW_MENU_IDS)
+    context = _context(engine=_gating_engine(), menubar=menubar)
+    out = tmp_path / f"export-{target}.out"
     monkeypatch.setattr(app_module, "_write_export", lambda *_a, **_k: None)
     _inline_offloop(monkeypatch)
 
     app_module._run_export_offloop(
         context,
-        "export_html",
+        target,
         out,
         config=_StubConfig(),
         teams=(),
         solo=(),
         opts=app_module.ExportOptions(),
         watermark=7,
-        record_path=record_path,
     )
 
-    assert (context.last_export_path, context.export_watermark) == (
-        out if records else None,
-        7 if records else None,
+    assert (context.html_export_path, context.pdf_export_path) == (
+        out if expected_html else None,
+        out if expected_pdf else None,
     )
-    assert context.frame.notices == ["Exported results.html"]
+    assert context.export_watermark == 7
+    assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is expected_html
+    assert menubar.items[PREVIEW_MENU_IDS[1]].enabled is expected_pdf
+    assert context.frame.notices == [f"Exported {out.name}"]
+
+
+def test_run_export_offloop_completion_refreshes_a_stale_menubar_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Part D: the completion callback re-applies the live menu state.
+
+    The HTML preview item starts enabled (stale), so only a real
+    refresh can flip it after a PDF export -- and that refresh reads
+    the path the same callback recorded.
+    """
+    menubar = _RecordingMenuBar(PREVIEW_MENU_IDS)
+    menubar.items[PREVIEW_MENU_IDS[0]].enabled = True
+    context = _context(engine=_gating_engine(), menubar=menubar)
+    out = tmp_path / "results.pdf"
+    monkeypatch.setattr(app_module, "_write_export", lambda *_a, **_k: None)
+    _inline_offloop(monkeypatch)
+
+    app_module._run_export_offloop(
+        context,
+        "export_pdf",
+        out,
+        config=_StubConfig(),
+        teams=(),
+        solo=(),
+        opts=app_module.ExportOptions(),
+        watermark=7,
+    )
+
+    assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is False
+    assert menubar.items[PREVIEW_MENU_IDS[1]].enabled is True
 
 
 def test_run_export_offloop_given_a_failed_write_posts_the_failure_notice(
@@ -815,17 +980,14 @@ def test_run_export_offloop_given_a_failed_write_posts_the_failure_notice(
     )
 
     assert context.frame.notices == ["Export failed: disk full"]
-    assert (context.last_export_path, context.export_watermark) == (None, None)
+    assert (context.html_export_path, context.pdf_export_path) == (None, None)
+    assert context.export_watermark is None
 
 
-def test_handle_export_command_records_the_path_through_the_default_flag(
+def test_handle_export_command_records_the_html_path_for_preview(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E2: the manual export still records its path (the default flag).
-
-    ``_handle_export_command`` omits the flag, so the standalone
-    Results-menu exports keep recording the picked path for Preview.
-    """
+    """Part D: the standalone HTML export records html_export_path."""
     context = _context(engine=_StubEngine(_snapshot()))
     out = tmp_path / "results.html"
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
@@ -833,4 +995,57 @@ def test_handle_export_command_records_the_path_through_the_default_flag(
 
     app_module._handle_export_command(context, "export_html")
 
-    assert (context.last_export_path, context.export_watermark) == (out, 0)
+    assert (context.html_export_path, context.pdf_export_path) == (out, None)
+    assert context.export_watermark == 0
+
+
+# ============================== Part D: menu gating on export
+# The export-completion refresh must read the LIVE ride state on the
+# main thread: a ride can be reopened (or replaced) while a worker is
+# still rendering, and a status captured at dispatch time would wrongly
+# re-enable the FINISHED-gated rows.
+
+
+def test_apply_menu_state_given_a_fresh_context_after_restart_disables_preview() -> None:
+    """Part D: the paths are in-memory, so a restart disables both."""
+    menubar = _RecordingMenuBar(PREVIEW_MENU_IDS)
+    context = _context(engine=_gating_engine(), menubar=menubar)
+
+    app_module._apply_menu_state(context, RideStatus.FINISHED)
+
+    assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is False
+    assert menubar.items[PREVIEW_MENU_IDS[1]].enabled is False
+
+
+def test_record_export_completion_given_a_reopened_ride_keeps_finished_rows_disabled() -> None:
+    """Part D: a reopened ride records its path, enables no rows.
+
+    The completion callback reads the engine's live state (REOPENED),
+    so the FINISHED-gated rows stay disabled even though the export
+    landed; the recorded path survives for the next finish.
+    """
+    menubar = _RecordingMenuBar(PREVIEW_MENU_IDS)
+    context = _context(engine=_gating_engine(state=RideStatus.REOPENED), menubar=menubar)
+    out = Path("/finished/results.html")
+
+    app_module._record_export_completion(context, "export_html", out, 4)
+
+    assert context.html_export_path == out
+    assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is False
+    assert menubar.items[PREVIEW_MENU_IDS[1]].enabled is False
+
+
+def test_record_export_completion_without_a_presenter_applies_the_no_ride_state() -> None:
+    """Part D: no presenter threaded -- the refresh uses DRAFT, no ride.
+
+    The path still records; the no-ride state keeps the FINISHED-gated
+    preview rows off (the console-less construction shape).
+    """
+    menubar = _RecordingMenuBar(PREVIEW_MENU_IDS)
+    context = _context(engine=None, menubar=menubar)
+    out = Path("/finished/results.html")
+
+    app_module._record_export_completion(context, "export_html", out, 0)
+
+    assert context.html_export_path == out
+    assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is False

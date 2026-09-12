@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless tests for the app's structured-log wiring (F3/F4).
+"""Headless tests for the app's structured-log wiring (F3/F4/D1).
 
 ``ui.logging.Logging`` owns the NDJSON file; this module pins the
-three seams ``app.py`` owns that feed it, all headless (no window is
+four seams ``app.py`` owns that feed it, all headless (no window is
 constructed):
 
 - **F3 menu logging.** :func:`~rivercrossing.ui.app._bind_routes`
@@ -16,6 +16,11 @@ constructed):
   :func:`~rivercrossing.ui.app._make_event_filter` records the
   whitelisted control events and skips everything else, and never
   swallows an event.
+- **D1 unauthored-window marker.**
+  :func:`~rivercrossing.ui.app._open_target` records a marker when a
+  route's XRC target loads no window -- a menu row clicking through
+  to nothing, the silent-death class -- and still posts the
+  status-bar notice.
 
 A real :class:`~rivercrossing.ui.logging.Logging` over ``tmp_path``
 is the assertion surface, so each test checks the record that would
@@ -99,11 +104,17 @@ def _context(
     *,
     frame: object,
     log: Logging | None,
+    resource: object = None,
 ) -> app_module._RouteContext:
-    """Build a route context over *frame* carrying *log* (or none)."""
+    """Build a route context over *frame* carrying *log* (or none).
+
+    *resource* is the XRC resource a target opens through; the
+    ``None`` default matches the route-level contexts that never load
+    a dialog.
+    """
     return app_module._RouteContext(
         frame=frame,
-        resource=None,
+        resource=resource,
         roster=Roster(),
         app=_AppWithLog(log),
         theme_controller=None,
@@ -379,3 +390,44 @@ def test_event_filter_given_a_whitelisted_type_with_no_object_writes_nothing(
 
     assert result == wx.EventFilter.Event_Skip
     assert _entries(_log_path(tmp_path)) == []
+
+
+# --------------------------------- D1: the unauthored-window marker
+
+
+class _MissingWindowResource:
+    """An ``XmlResource`` double whose targets load no window (D1)."""
+
+    def LoadDialog(self, _parent: object, _name: object) -> None:  # noqa: N802 -- wx API name
+        """Report the target has no authored window."""
+
+
+def test_open_target_given_no_authored_window_records_the_marker_and_posts_the_notice(
+    tmp_path: Path,
+) -> None:
+    """D1: a click-through to nothing is in log and notice."""
+    log = Logging(_log_path(tmp_path))
+    frame = _NoticeFrame()
+    context = _context(frame=frame, log=log, resource=_MissingWindowResource())
+    route = commands.route_for_id("mi_standings")
+
+    app_module._open_target(context, route)
+
+    assert _entries(_log_path(tmp_path)) == [
+        {
+            "level": "DEBUG",
+            "event": "marker",
+            "msg": "Standings: no window authored for target 'results_dlg'",
+        }
+    ]
+    assert frame.notices == ["Standings — no window authored yet"]
+
+
+def test_open_target_given_no_authored_window_and_no_log_still_posts_the_notice() -> None:
+    """D1: an app with no log still posts the notice."""
+    frame = _NoticeFrame()
+    context = _context(frame=frame, log=None, resource=_MissingWindowResource())
+
+    app_module._open_target(context, commands.route_for_id("mi_standings"))
+
+    assert frame.notices == ["Standings — no window authored yet"]

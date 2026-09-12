@@ -363,13 +363,29 @@ def test_rider_editor_dlg_add_btn_duplicate_plate_refuses_on_the_add_dialogs_inf
     assert rows == _SEEDED_ROWS
 
 
-def test_rider_editor_dlg_successful_add_via_the_dialog_dismisses_a_prior_infobar(
+def test_rider_editor_dlg_refused_edit_warns_in_the_dialog_and_add_stays_clean(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The next successful action clears a prior editor warning."""
+    """A refused edit warns in its dialog; a later Add stays clean.
+
+    Phase 3 moved the record commit into the rider's own dialog: a
+    refused edit (colliding plate) shows on the dialog's infobar and
+    leaves the roster and the editor untouched; the next successful
+    Add commits and the editor's own roster_infobar stays down.
+    """
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
+    found: dict[str, object] = {}
+
+    def _drive_refused_edit(edit_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(edit_dialog, ids.PLATE_INPUT, "77")
+        harness.type_text(edit_dialog, ids.FIRST_NAME_INPUT, "Sam")
+        harness.type_text(edit_dialog, ids.LAST_NAME_INPUT, "Ellis")
+        harness.click(edit_dialog, "wxID_OK")
+        found["refused_shown"] = harness.find_control(edit_dialog, ADD_RIDER_INFOBAR).IsShown()
+        harness.click(edit_dialog, "wxID_CANCEL")
+        return wx.ID_CANCEL
 
     def _drive_add(add_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
         harness.type_text(add_dialog, ids.FIRST_NAME_INPUT, "Unique")
@@ -377,23 +393,17 @@ def test_rider_editor_dlg_successful_add_via_the_dialog_dismisses_a_prior_infoba
         harness.click(add_dialog, "wxID_OK")
         return wx.ID_OK
 
-    monkeypatch.setattr(dialogs, "run_dialog", _drive_add)
-
     try:
-        # A refused Save (colliding plate) puts the editor's own
-        # warning up first.
+        monkeypatch.setattr(dialogs, "run_dialog", _drive_refused_edit)
         harness.select_row(dialog, ids.RIDERS_LIST, 0)
-        harness.type_text(dialog, ids.PLATE_INPUT, "77")
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Sam")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Ellis")
-        harness.click(dialog, ids.SAVE_BTN)
-        refused_shown = harness.find_control(dialog, ROSTER_INFOBAR).IsShown()
+        harness.click(dialog, ids.EDIT_BTN)
+        monkeypatch.setattr(dialogs, "run_dialog", _drive_add)
         harness.click(dialog, ids.ADD_BTN)
         infobar_shown = harness.find_control(dialog, ROSTER_INFOBAR).IsShown()
     finally:
         harness.close_window(dialog)
 
-    assert refused_shown is True
+    assert found["refused_shown"] is True
     assert infobar_shown is False
 
 
@@ -416,48 +426,57 @@ def test_rider_editor_dlg_plate_input_disabled_once_the_ride_has_started(
     assert plate_enabled is False
 
 
-def test_rider_editor_dlg_save_btn_enabled_only_while_the_form_differs(
+def test_rider_editor_dlg_edit_btn_enabled_only_with_a_selected_row(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
 ) -> None:
-    """W7: a clean record disables Save; edits enable it; reverting not.
+    """Phase 3: the editor is read-only; Edit gates on a selection.
 
-    A clean form means Enter is a no-op (its default button is
-    disabled), which is what closes the plate-1-disappears trap:
-    Save can never fire over a record the operator did not change.
+    The editor's in-place Save is retired, so the record-changing
+    action is ``edit_btn`` (it opens the selected rider's own dialog);
+    the presenter disables it until a row is selected, so Enter can
+    never fire an edit over an unselected list.
     """
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
     try:
+        none_selected = harness.find_control(dialog, ids.EDIT_BTN).IsEnabled()
         harness.select_row(dialog, ids.RIDERS_LIST, 0)
-        clean_enabled = harness.find_control(dialog, ids.SAVE_BTN).IsEnabled()
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Samuel")
-        dirty_enabled = harness.find_control(dialog, ids.SAVE_BTN).IsEnabled()
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Sam")
-        reverted_enabled = harness.find_control(dialog, ids.SAVE_BTN).IsEnabled()
+        selected_enabled = harness.find_control(dialog, ids.EDIT_BTN).IsEnabled()
     finally:
         harness.close_window(dialog)
 
-    assert clean_enabled is False
-    assert dirty_enabled is True
-    assert reverted_enabled is False
+    assert none_selected is False
+    assert selected_enabled is True
 
 
-# ----------------------------------------------------------------- save
+# ----------------------------------------------------------------- edit
 
 
-def test_rider_editor_dlg_save_updates_the_selected_rows_name(
+def test_rider_editor_dlg_edit_updates_the_selected_rows_name(
     xrc_resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Select a row, edit Name, Save -- that row updates (R-20)."""
+    """Edit via the dialog's Save -- the selected row updates (R-20).
+
+    Phase 3: the editor is read-only; ``edit_btn`` opens the rider's
+    own dialog, whose ``wxID_OK`` ("Save") commits -- the same seam
+    the add-flow tests below drive.
+    """
     roster = demo_seeded_roster()
     dialog, _view = _show(xrc_resource, roster)
 
+    def _drive_edit(edit_dialog: Any, _opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
+        harness.type_text(edit_dialog, ids.FIRST_NAME_INPUT, "Samuel")
+        harness.type_text(edit_dialog, ids.LAST_NAME_INPUT, "Ellis")
+        harness.click(edit_dialog, "wxID_OK")
+        return wx.ID_OK
+
+    monkeypatch.setattr(dialogs, "run_dialog", _drive_edit)
+
     try:
         harness.select_row(dialog, ids.RIDERS_LIST, 0)
-        harness.type_text(dialog, ids.FIRST_NAME_INPUT, "Samuel")
-        harness.type_text(dialog, ids.LAST_NAME_INPUT, "Ellis")
-        harness.click(dialog, ids.SAVE_BTN)
+        harness.click(dialog, ids.EDIT_BTN)
         rows = _rider_list_rows(dialog)
     finally:
         harness.close_window(dialog)

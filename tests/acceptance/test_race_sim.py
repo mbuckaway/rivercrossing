@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -166,6 +167,15 @@ def test_race_sim_full_breadth_race_matches_the_algorithm(
             plate_model=store_staging.PlateModel.TEAM_RELAY,
         ),
     )
+    # W4's short-lap policy defaults to "always deal" (hold_short_laps
+    # = 0, ride.py/RideConfig), but the sim script's two short-lap pairs
+    # exist to exercise confirm_held/void_held -- so the staged ride
+    # opts into the hold policy before it is launched. A direct row
+    # write, deliberately not Store.open: opening a store would insert
+    # an app_session row and corrupt the session sequence under test
+    # (the same constraint test_full_race_r74.py documents).
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE ride SET hold_short_laps = 1 WHERE id = ?", (ride_id,))
 
     envelope = _run_sim_race_child(
         support,

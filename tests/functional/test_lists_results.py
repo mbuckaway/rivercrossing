@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-toolkit tests for ``results_frame`` (E1.5.2, E5.4.2, E6.4.1).
+"""Real-toolkit tests for ``results_dlg`` (E1.5.2, E5.4.2, E6.4.1).
 
 Split out of ``test_lists_demo.py`` -- alongside
 ``test_lists_entry_detail.py`` -- so the two heaviest functional
@@ -18,7 +18,7 @@ until E6 wires real placed rows, so the fixture below wires
 ``EmptyDataSource`` and the canvas-row pin became an empty-state pin.
 E6.4.1 (P9) wires the real placed rows from a finished ride's live
 ``EngineDataSource`` (``finished_ride_view`` fixture) -- the same
-source shape app.py's D10 RESULTS_FRAME branch now hands the window
+source shape app.py's D10 RESULTS_DLG branch now hands the window
 -- plus the live-reorder and publish-option behavior. This suite is
 read-and-write verified only: it runs in the Tart VM (AGENTS.md), not
 on the macOS host.
@@ -82,7 +82,7 @@ class _FakeClock:
 @pytest.fixture(scope="module")
 def shared_results(xrc_resource: object) -> ResultsWindow:
     """One ``ResultsWindow``, reused by every read-only assertion."""
-    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window_verified(xrc_resource, ids.RESULTS_DLG, frame=True)
     try:
         window.Show()
         window.Layout()
@@ -103,16 +103,16 @@ def finished_ride_view(xrc_resource: object) -> ResultsWindow:
     E6.4.1's live state: a real ``RideEngine`` with two recorded
     crossings, finished, read through the production
     ``EngineDataSource`` -- the exact source shape app.py's D10
-    RESULTS_FRAME branch hands the window when a ride is open. The
+    RESULTS_DLG branch hands the window when a ride is open. The
     ride's stored ``tiebreak_order`` (the config default) seeds
     ``tiebreak_list``.
     """
     # load_window, not load_window_verified: this second module-scoped
     # results window coexists with the shared_results fixture's
-    # same-named ``results_frame`` (set up earlier in the module), so
+    # same-named ``results_dlg`` (set up earlier in the module), so
     # the verified loader's entry guard would refuse the coexistence
     # (Fault B / PR #45); access is reference-scoped, never name-based.
-    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window(xrc_resource, ids.RESULTS_DLG, frame=True)
     try:
         window.Show()
         window.Layout()
@@ -166,7 +166,7 @@ def _toggle_checkbox(view: ResultsWindow, control_name: str) -> None:
     harness.pump()
 
 
-# ------------------------------------------------------ results_frame
+# ------------------------------------------------------ results_dlg
 
 
 def test_results_window_given_an_empty_source_shows_no_standings(
@@ -210,7 +210,7 @@ def test_results_window_given_a_different_source_shows_its_rows_not_the_demo(
     # load_window, not load_window_verified: this test's own frame
     # coexists with the module-scoped shared_results fixture's
     # same-named window (Fault B / PR #45); access is reference-scoped.
-    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window(xrc_resource, ids.RESULTS_DLG, frame=True)
     try:
         window.Show()
         harness.pump()
@@ -278,7 +278,7 @@ def test_results_window_show_standings_repaints_the_list_after_associating_its_m
     # load_window, not load_window_verified: this test's own frame
     # coexists with the module-scoped shared_results fixture's
     # same-named window (Fault B / PR #45); access is reference-scoped.
-    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window(xrc_resource, ids.RESULTS_DLG, frame=True)
     try:
         window.Show()
         harness.pump()
@@ -347,7 +347,7 @@ def test_results_window_tie_rows_carry_the_warning_badge(xrc_resource: object) -
     # coexists with the module-scoped shared_results/finished_ride_view
     # fixtures' same-named windows (Fault B / PR #45); access is
     # reference-scoped.
-    window = harness.load_window(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window(xrc_resource, ids.RESULTS_DLG, frame=True)
     try:
         window.Show()
         window.Layout()

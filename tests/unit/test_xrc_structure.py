@@ -108,13 +108,16 @@ CARDS_MENU_ITEMS = (
     "mi_void_card",
     "mi_review_held",
 )
+# Part D: the single Preview in Browser row split per format -- each
+# new item gates on its own export existing (HTML / PDF).
 RESULTS_MENU_ITEMS = (
     "mi_standings",
     "mi_export_html",
     "mi_export_pdf",
     "mi_export_poster",
     "mi_export_results_csv",
-    "mi_preview_browser",
+    "mi_preview_html_browser",
+    "mi_preview_pdf_browser",
 )
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
@@ -189,16 +192,17 @@ NAME_CASES = tuple(
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
 # spec.md section 15's rows after D1/D4 (Results lost its tie-break row
-# in Part C): File 8 (mi_simulation added), Ride 9, Riders 5, Cards 7,
-# Results 6, View 1, Help 4. The single View row expands into the 8
-# items section 15b names for it (W13: hide-times + the seven zoom
-# radios; the theme trio left the View menu).
+# in Part C and split its Preview row per format): File 8 (mi_simulation
+# added), Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4. The
+# single View row expands into the 8 items section 15b names for it
+# (W13: hide-times + the seven zoom radios; the theme trio left the View
+# menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 5),
     ("&Cards", 7),
-    ("Re&sults", 6),
+    ("Re&sults", 7),
     ("&View", 8),
     ("&Help", 4),
 )
@@ -407,13 +411,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_four_menu_item_names() -> None:
-    """D1/D4/C6: 44 ``mi_*`` items; add_entry and tiebreak retired."""
+def test_main_menubar_declares_forty_five_menu_item_names() -> None:
+    """D1/D4/C6/Part D: 45 ``mi_*`` items -- Preview split."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 44
+    assert len(menu_item_names) == 45
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:

@@ -1,40 +1,37 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Real-wx tests for the E5.4.1 mock-first dialogs (R-76, §15b).
+"""Real-wx tests for the two mock-first ride confirms (E5.4.1, H2).
 
 File ▸ Duplicate Ride… and Ride ▸ Reopen Ride were the two §15 rows
-with no frozen window until E5.4.1: ``commands.py`` routed them to
-the E1.4.1 ``_UNAUTHORED_DIALOG`` sentinel, and the menu-coverage
-tests asserted that. This session authored both mock-first -- their
-control names are registered in spec.md §15b BEFORE any UI wiring
-(task-brief E5.4.1's plan §2) -- as non-destructive confirms:
+with no frozen window until E5.4.1. H2 then retired those two authored
+ride confirms for the native ``std_dialogs.show_prompt`` -- the
+non-destructive confirm whose OK is
+the default button, so a reflex Enter is safe (spec.md §13) -- shown
+through app.py's ``_open_ride_confirm``.
 
-* ``duplicate_ride_dlg`` -- ``message_lbl`` names the ride, ``wxID_OK``
-  "Duplicate" is the default + focused control, ``wxID_CANCEL`` cancels.
-* ``reopen_ride_dlg`` -- ``message_lbl`` names the ride, ``wxID_OK``
-  "Reopen" is the default + focused control, ``wxID_CANCEL`` cancels.
-
-Both are NON-destructive, so per spec.md §13 the primary button is
-the default and a reflex Enter is safe -- the exact opposite of the
-destructive confirms (delete/stop/finish), whose Cancel is default +
-focused. R-76's generic per-dialog machinery (Esc cancels, Enter =
-the marked default, a click on the default ends the modal) is
-asserted for every dialog by ``test_dialog_behavior.py``; this file
-pins the facts specific to these two new surfaces: the frozen names
-resolve, the message copy names the ride and is never blank, the
-default really is OK, and Escape genuinely cancels without acting.
+These tests pin the two rows' contract at that seam: the prompt's
+title and affirmative label come from app.py's own
+``_RIDE_CONFIRM_PROMPTS`` table, the message is the row's copy helper
+naming the ride and is never blank (UX-DESKTOP §4), and a cancelled
+prompt reports "not confirmed" without acting. The native dialog's own
+mechanics (Escape, default button, Cancel) belong to ``std_dialogs``
+and are pinned at the unit level; this harness cannot click a native
+message dialog programmatically (measured 2026-09-09), so the module
+function is swapped for a recorder -- the same seam
+``tests/acceptance/race_child.py``'s ``_native_confirm`` uses.
 
 Like the rest of ``tests/functional/``, these run only in the Tart VM
 -- never directly on the host (the suite opens real wx windows).
 """
 
+import types
 from typing import TYPE_CHECKING, Any
 
 import harness
-import pages
 import pytest
 import wx
 
-from rivercrossing.ui import ids
+from rivercrossing.ui import app as app_module
+from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.views import dialogs
 
 if TYPE_CHECKING:
@@ -44,151 +41,91 @@ pytestmark = pytest.mark.functional
 
 _RIDE_NAME = "GORBA EPIC 2026"
 
-_TIMEOUT_SENTINEL = -999
 
-
-def _show(xrc_resource: object, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Load, show and pump *name* from *resource*."""
-    dialog = harness.load_window_verified(xrc_resource, name, frame=False)
-    try:
-        dialog.Show()
-        harness.pump()
-    except Exception:
-        harness.close_window(dialog)
-        raise
-    return dialog
-
-
-def _send_escape(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Post a real Escape ``CHAR_HOOK`` at *dialog* (proven to work)."""
-    event = wx.KeyEvent(wx.wxEVT_CHAR_HOOK)
-    event.SetKeyCode(wx.WXK_ESCAPE)
-    dialog.GetEventHandler().ProcessEvent(event)
-
-
-def _end_modal_if_undecided(dialog: Any) -> None:  # noqa: ANN401
-    """Fire the safety-net ``EndModal`` only when nothing else has.
-
-    The return-code guard mirrors test_dialog_behavior.py: a decided
-    dialog carries its real result here even while ``IsModal()`` is
-    still true (measured on windows-latest CI).
-    """
-    if not dialog.IsModal() or dialog.GetReturnCode() != 0:
-        return
-    dialog.EndModal(_TIMEOUT_SENTINEL)
-
-
-def _run_with_action(dialog: Any, action: Callable[[], None]) -> int:  # noqa: ANN401
-    """Run *action* while scheduling it once the modal loop pumps.
-
-    A safety-net ``EndModal`` is armed right after *action* so a probe
-    that turns out not to end the dialog cannot hang the suite -- the
-    same ``_run_with_action`` shape test_dialog_behavior.py uses.
-    """
-    wx.CallAfter(action)
-    wx.CallAfter(_end_modal_if_undecided, dialog)
-    return int(dialog.ShowModal())
-
-
-# ---------------------------------------- §15b names resolve per dialog
+def _prompt_context(frame: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return a route-context stand-in owning the prompt's parent."""
+    return types.SimpleNamespace(frame=frame)
 
 
 @pytest.mark.parametrize(
-    ("dialog_name", "expected_controls"),
+    ("target", "helper", "title", "ok_label"),
     [
-        (ids.DUPLICATE_RIDE_DLG, (ids.MESSAGE_LBL, pages.WX_ID_OK, pages.WX_ID_CANCEL)),
-        (ids.REOPEN_RIDE_DLG, (ids.MESSAGE_LBL, pages.WX_ID_OK, pages.WX_ID_CANCEL)),
+        ("duplicate_ride", dialogs.duplicate_ride_message, "Duplicate Ride", "Duplicate"),
+        ("reopen_ride", dialogs.reopen_ride_message, "Reopen Ride", "Reopen"),
     ],
-    ids=lambda name: name,
+    ids=["duplicate_ride", "reopen_ride"],
 )
-def test_e541_dialog_resolves_its_frozen_controls(
-    dialog_name: str,
-    expected_controls: tuple[str, ...],
-    xrc_resource: object,
+def test_ride_confirm_asks_the_native_prompt_with_the_rows_copy(  # noqa: PLR0913, PLR0917 -- parametrize row + fixture
+    target: str,
+    helper: Callable[[str], str],
+    title: str,
+    ok_label: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Every §15b-registered name resolves inside the new dialog."""
-    dialog = _show(xrc_resource, dialog_name)
+    """E5.4.1/H2: the native prompt gets the row's own frozen copy."""
+    frame = wx.Frame(None)
+    calls: list[tuple[Any, ...]] = []
+
+    def _record(  # noqa: PLR0913, PLR0917 -- mirrors std_dialogs.show_prompt's signature
+        parent: object,
+        prompt_title: str,
+        message: str,
+        prompt_ok_label: str,
+        cancel_label: str,
+    ) -> int:
+        calls.append((parent, prompt_title, message, prompt_ok_label, cancel_label))
+        return int(wx.ID_OK)
 
     try:
-        resolved = {
-            name: harness.find_control(dialog, name).GetName() for name in expected_controls
-        }
+        monkeypatch.setattr(std_dialogs, "show_prompt", _record)
+        confirmed = app_module._open_ride_confirm(
+            _prompt_context(frame), target, helper(_RIDE_NAME)
+        )
     finally:
-        harness.close_window(dialog)
+        harness.close_window(frame)
 
-    assert resolved == {name: name for name in expected_controls}
+    assert confirmed is True
+    assert calls[0][0] is frame
+    assert calls[0][1:] == (title, helper(_RIDE_NAME), ok_label, "Cancel")
 
 
-# ------------------- both are non-destructive: OK is the default
-
-
-@pytest.mark.parametrize("dialog_name", [ids.DUPLICATE_RIDE_DLG, ids.REOPEN_RIDE_DLG])
-def test_e541_dialog_default_is_ok_not_cancel(dialog_name: str, xrc_resource: object) -> None:
-    """spec.md §13: a non-destructive confirm defaults to its primary.
-
-    The brief's "Reopen is non-destructive so Enter-ok is fine;
-    Duplicate likewise" is a frozen XRC fact here: ``wxID_OK`` is both
-    the marked default and the initially focused control (its XRC
-    co-declares ``<default>`` + ``<focused>``), the opposite of the
-    destructive confirms' Cancel-default.
-    """
-    dialog = _show(xrc_resource, dialog_name)
+def test_ride_confirm_cancelled_reports_not_confirmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R-76: a cancelled prompt reports False and never acts."""
+    frame = wx.Frame(None)
 
     try:
-        default_item = dialog.GetDefaultItem()
-        default_name = default_item.GetName() if default_item is not None else None
+        monkeypatch.setattr(
+            std_dialogs, "show_prompt", lambda *_args, **_kwargs: int(wx.ID_CANCEL)
+        )
+        confirmed = app_module._open_ride_confirm(
+            _prompt_context(frame),
+            "duplicate_ride",
+            dialogs.duplicate_ride_message(_RIDE_NAME),
+        )
     finally:
-        harness.close_window(dialog)
+        harness.close_window(frame)
 
-    assert default_name == pages.WX_ID_OK
-
-
-# ----------------------- Escape cancels (R-76, negative)
-
-
-@pytest.mark.parametrize("dialog_name", [ids.DUPLICATE_RIDE_DLG, ids.REOPEN_RIDE_DLG])
-def test_e541_dialog_escape_cancels_without_acting(dialog_name: str, xrc_resource: object) -> None:
-    """R-76: Esc cancels -- never the (non-destructive) primary path."""
-    dialog = _show(xrc_resource, dialog_name)
-
-    try:
-        result = _run_with_action(dialog, lambda: _send_escape(dialog))
-    finally:
-        harness.close_window(dialog)
-
-    assert result == wx.ID_CANCEL
-
-
-# ----------------------------- the naming copy is never blank (§4, UX)
+    assert confirmed is False
 
 
 @pytest.mark.parametrize(
-    ("helper", "dialog_name"),
-    [
-        (dialogs.duplicate_ride_message, ids.DUPLICATE_RIDE_DLG),
-        (dialogs.reopen_ride_message, ids.REOPEN_RIDE_DLG),
-    ],
+    "helper",
+    [dialogs.duplicate_ride_message, dialogs.reopen_ride_message],
     ids=lambda value: getattr(value, "__name__", value),
 )
-def test_e541_message_helper_never_blank_and_names_the_ride(
+def test_ride_message_helper_never_blank_and_names_the_ride(
     helper: Callable[[str], str],
-    dialog_name: str,
-    xrc_resource: object,
 ) -> None:
     """UX-DESKTOP §4: the confirm names its ride; a blank line fails.
 
-    The message helper's output is what the app writes into
-    ``message_lbl`` (``_open_ride_confirm``), so a blank return here
-    would render a blank confirmation -- a failed assertion, never a
-    cosmetic one (the same rule E5.2.2 pinned for resume_dlg).
+    The message helper's output is what ``_open_ride_confirm`` hands
+    the native prompt, so a blank return here would render a blank
+    confirmation -- a failed assertion, never a cosmetic one (the same
+    rule E5.2.2 pinned for resume_dlg).
     """
-    dialog = _show(xrc_resource, dialog_name)
-
-    try:
-        harness.find_control(dialog, ids.MESSAGE_LBL).SetLabel(helper(_RIDE_NAME))
-        label = harness.find_control(dialog, ids.MESSAGE_LBL).GetLabelText()
-    finally:
-        harness.close_window(dialog)
+    label = helper(_RIDE_NAME)
 
     assert label != ""
     assert _RIDE_NAME in label
