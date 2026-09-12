@@ -414,6 +414,7 @@ def test_correction_actions_is_the_e7_audited_correction_vocabulary() -> None:
         frozenset(
             {
                 "add_crossing_at",
+                "assign_plate_to_miss",
                 "edit_crossing",
                 "reassign",
                 "deal_manual",
@@ -425,6 +426,7 @@ def test_correction_actions_is_the_e7_audited_correction_vocabulary() -> None:
         == CORRECTION_ACTIONS
     )
     assert "record_crossing" not in CORRECTION_ACTIONS
+    assert "record_miss" not in CORRECTION_ACTIONS
     assert "undo" not in CORRECTION_ACTIONS
     assert "set_start_time" not in CORRECTION_ACTIONS
 

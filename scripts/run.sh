@@ -86,8 +86,8 @@ config = user_config_dir("RiverCrossing")
 print(f"  database : {data}/rides.db")
 print(f"  exports  : {data}/exports")
 print(f"  settings : {config}/settings.json")
-print(f"  logs     : {config}/rivercrossing.log")
-print(f"             {config}/rivercrossing-verbose.log")
+print(f"  logs     : {config}")
+print("             rivercrossing-<YYYYMMDD-HHMMSS>.log (one per launch)")
 PY
 }
 

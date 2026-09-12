@@ -22,7 +22,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing.ride import RideStatus
-from rivercrossing.roster import EntryType, Roster
+from rivercrossing.roster import Entry, EntryType, Roster
 from rivercrossing.standings import (
     DEFAULT_TIEBREAK_ORDER,
     TieBreak,
@@ -33,7 +33,7 @@ from rivercrossing.standings import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from rivercrossing.ride import Crossing, Event, RideEngine
+    from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine
     from rivercrossing.standings import Placed
 
 __all__ = [
@@ -63,7 +63,13 @@ class FeedRow:
     ``flagged`` drives the bold per-row attribute xrc-windows.md calls
     out as code-side for a held/short-lap crossing. ``edited`` (E7.2.2)
     is the same visual channel for a crossing a correction touched
-    (spec §3 design 8c: "edits highlighted in the feed").
+    (spec §3 design 8c: "edits highlighted in the feed"). ``missed``
+    (K) marks a pending miss: the row renders Plate ``-``, Name
+    ``missed`` and blank Card/Lap/Lap-time/Total until the miss is
+    assigned a real plate. ``miss_seq`` is that pending miss's own
+    ride-wide ordinal -- set only on a ``missed`` row, so the app can
+    resolve an activated row back to the ``PendingMiss`` it stands for
+    (a real crossing row leaves it ``None``).
     """
 
     time: str
@@ -75,6 +81,8 @@ class FeedRow:
     card: str
     flagged: bool = False
     edited: bool = False
+    missed: bool = False
+    miss_seq: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -322,15 +330,17 @@ def _event_time(event: Event) -> str:
 # correction commands the app's correction routes dispatch
 # (``add_crossing_at``, ``edit_crossing``, ``reassign``,
 # ``deal_manual``, ``dnf``, ``void_card`` -- plus ``void_crossing``,
-# the edit dialog's void mode). Live-entry mutators that are not
-# corrections -- ``record_crossing``, ``undo``, ``set_start_time``,
-# ``confirm_held``, ``void_held``, ``stop``/``finish``/``reopen`` --
-# never trip the flag (doc-silence resolution, pinned here: the flag
-# is about the E7 correction surface, not every standings-changing
-# event).
+# the edit dialog's void mode, and K's ``assign_plate_to_miss``,
+# which records a crossing and deals its card). Live-entry mutators
+# that are not corrections -- ``record_crossing``, ``record_miss``,
+# ``undo``, ``set_start_time``, ``confirm_held``, ``void_held``,
+# ``stop``/``finish``/``reopen`` -- never trip the flag (doc-silence
+# resolution, pinned here: the flag is about the E7 correction
+# surface, not every standings-changing event).
 CORRECTION_ACTIONS: frozenset[str] = frozenset(
     {
         "add_crossing_at",
+        "assign_plate_to_miss",
         "edit_crossing",
         "reassign",
         "deal_manual",
@@ -379,6 +389,9 @@ def corrected_crossing_keys(
     - ``add_crossing_at`` -- the added crossing is resolved by its
       (entry_id, crossed_at) instant against the live crossings, which
       is the one identity the event carries beyond the entry.
+    - ``assign_plate_to_miss`` (K) -- the same resolution as
+      ``add_crossing_at``: the edit records the crossing at the miss's
+      (entry_id, crossed_at), so its feed row renders edited.
     - ``reassign`` -- the moved crossing lands on ``new_entry_id`` as
       the destination's next lap (``seq = laps + 1`` at the time of
       the move), so it is the destination's highest-seq live crossing.
@@ -408,7 +421,7 @@ def corrected_crossing_keys(
         payload = event.payload
         if action == "edit_crossing":
             keys.add((str(payload["entry_id"]), int(str(payload["seq"]))))
-        elif action == "add_crossing_at":
+        elif action in {"add_crossing_at", "assign_plate_to_miss"}:
             resolved = _crossing_key_at(
                 crossings, str(payload["entry_id"]), str(payload["crossed_at"])
             )
@@ -454,6 +467,64 @@ def _latest_crossing_key(crossings: Sequence[Crossing], entry_id: str) -> tuple[
     return result
 
 
+def _rider_name_for(entry: Entry | None, rider_plate: str | None) -> str | None:
+    """Return the name of *entry*'s rider owning *rider_plate*.
+
+    J1's attribution seam: ``Crossing.rider_plate`` holds the plate the
+    operator typed, so a ``rider_pooled`` team's feed and lap rows name
+    the rider who actually crossed. ``None`` covers a missing *entry*,
+    a crossing with no recorded rider plate, and a ``team_relay`` ride
+    -- whose riders carry no plate (S1) -- so the caller falls back to
+    the entry's own plate and display name.
+    """
+    if entry is None or rider_plate is None:
+        return None
+    for rider in entry.riders:
+        if rider.plate == rider_plate:
+            return rider.full_name
+    return None
+
+
+def _miss_feed_row(miss: PendingMiss) -> FeedRow:
+    """Build the feed row for one pending miss (K).
+
+    Plate ``-`` / Name ``missed`` with blank card/lap-time/total: a
+    miss has no entry, no lap and no dealt card. ``missed`` lets the
+    view blank the Lap cell too (``feed_model.lap_text``); ``miss_seq``
+    carries the miss's own ordinal so an activated row resolves back to
+    it (``app._feed_row_target``).
+    """
+    return FeedRow(
+        time=_feed_time(miss.crossed_at),
+        plate="-",
+        entry="missed",
+        lap=0,
+        lap_time="",
+        total="",
+        card="",
+        missed=True,
+        miss_seq=miss.miss_seq,
+    )
+
+
+def _insert_newest_first(
+    rows: list[tuple[datetime, FeedRow]], candidate: tuple[datetime, FeedRow]
+) -> None:
+    """Insert *candidate* into *rows* (newest first) at its instant.
+
+    Crossings keep their record order (a correction appends to the
+    record, so it shows newest -- the feed's pre-miss semantics); a
+    miss slots in before the first row at or older than its own
+    instant, so the merged feed reads newest-first without re-ordering
+    the crossings.
+    """
+    for index, (crossed_at, _row) in enumerate(rows):
+        if crossed_at <= candidate[0]:
+            rows.insert(index, candidate)
+            return
+    rows.append(candidate)
+
+
 class EngineDataSource:
     """Real ``DataSource`` over ``(engine, roster)`` (E4.4.1).
 
@@ -481,10 +552,12 @@ class EngineDataSource:
       an entry that never credited a card) has no rank to name, so
       ``hand_name``'s own ``ValueError`` is caught and the cell
       renders ``""`` (the 0-card guard).
-    - **entry-detail ``rider`` shows the entry's display name.**
-      ``Crossing`` stores only ``entry_id``, not which team rider
-      crossed (the event payload keeps the typed plate); per-rider
-      attribution is E7's correction surface.
+    - **entry-detail ``rider`` names the typing rider.** J1 put the
+      typed plate on ``Crossing.rider_plate`` (ride.py), so a
+      rider_pooled team's lap rows and feed rows name the rider whose
+      plate the operator typed. When no roster rider owns that plate
+      -- a ``team_relay`` ride's riders carry none (S1) -- the entry's
+      own display name stands, unchanged from before J1.
     """
 
     def __init__(self, engine: RideEngine, roster: Roster) -> None:
@@ -499,6 +572,12 @@ class EngineDataSource:
         events in the engine's event log
         (:func:`corrected_crossing_keys`) -- the feed's visual marker
         for spec §3 design 8c's "edits highlighted in the feed".
+
+        K: pending misses are synthesised into the same feed as
+        ``-``/``missed`` rows, interleaved newest-first with the
+        crossings (a miss is not a crossing, so it never reaches the
+        counters or standings). The 30-row cap applies to the merged
+        list.
         """
         engine = self._engine
         held = frozenset(held.crossing for held in engine.held_crossings())
@@ -515,38 +594,49 @@ class EngineDataSource:
                 running.append(total)
             totals_by_entry[entry.plate] = running
 
-        rows: list[FeedRow] = []
-        for crossing in reversed(engine.crossings[-FEED_CAP:]):
+        rows: list[tuple[datetime, FeedRow]] = []
+        # The crossing slice matches the pre-miss feed's own cost: only
+        # the newest FEED_CAP crossings survive the merged cap below.
+        for crossing in engine.crossings[-FEED_CAP:]:
             feed_entry = self._roster.resolve_plate(crossing.entry_id)
             times = times_by_entry.get(crossing.entry_id, ())
             totals = totals_by_entry.get(crossing.entry_id, [])
             flagged = crossing in held
             held_card = engine.held_card_for(crossing)
+            rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
+            entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
             rows.append(
-                FeedRow(
-                    time=_feed_time(crossing.crossed_at),
-                    plate=crossing.entry_id,
-                    entry=feed_entry.display_name if feed_entry is not None else crossing.entry_id,
-                    lap=crossing.seq,
-                    lap_time=_format_lap_time(
-                        times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+                (
+                    crossing.crossed_at,
+                    FeedRow(
+                        time=_feed_time(crossing.crossed_at),
+                        plate=crossing.rider_plate or crossing.entry_id,
+                        entry=rider_name or entry_name,
+                        lap=crossing.seq,
+                        lap_time=_format_lap_time(
+                            times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+                        ),
+                        total=format_duration(
+                            totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
+                        ),
+                        # W9: every row carries the real dealt
+                        # code -- the held card's own when this lap's
+                        # card is held (R-34), the credited card
+                        # otherwise.
+                        card=(
+                            held_card.code()
+                            if held_card is not None
+                            else engine.card_for(crossing).code()
+                        ),
+                        flagged=flagged,
+                        edited=(crossing.entry_id, crossing.seq) in edited,
                     ),
-                    total=format_duration(
-                        totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
-                    ),
-                    # W9: every row carries the real dealt code -- the
-                    # held card's own when this lap's card is held
-                    # (R-34), the credited card otherwise.
-                    card=(
-                        held_card.code()
-                        if held_card is not None
-                        else engine.card_for(crossing).code()
-                    ),
-                    flagged=flagged,
-                    edited=(crossing.entry_id, crossing.seq) in edited,
                 )
             )
-        return rows
+        rows.reverse()  # newest first: crossings keep their record order
+        for miss in reversed(engine.pending_misses()):
+            _insert_newest_first(rows, (miss.crossed_at, _miss_feed_row(miss)))
+        return [row for _crossed_at, row in rows[:FEED_CAP]]
 
     def counters(self) -> Counters:
         """Return the six console counter values (R-32, W12).
@@ -644,7 +734,7 @@ class EngineDataSource:
                 lap_time=_format_lap_time(
                     times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
                 ),
-                rider=entry.display_name,  # doc-silence: per-rider is E7
+                rider=_rider_name_for(entry, crossing.rider_plate) or entry.display_name,
                 card=engine.card_for(crossing).code(),
             )
             for crossing in engine.crossings

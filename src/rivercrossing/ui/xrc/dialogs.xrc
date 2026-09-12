@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  The ten small dialogs of spec.md 15b's dialogs.xrc entry:
+  The eleven small dialogs of spec.md 15b's dialogs.xrc entry:
   set_start_dlg, resume_dlg, exit_running_dlg
   (xrc-windows.md section B),
   edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg,
   void_card_confirm_dlg (section C), about_dlg, selftest_dlg,
-  shortcuts_dlg (section E).
+  shortcuts_dlg (section E), crossing_detail_dlg (section F, J2).
   stop_confirm_dlg (section B) retired in W5: the Stop flow now asks
   through the native confirm (ui.std_dialogs.show_confirm) instead of
   an XRC dialog.
@@ -853,6 +853,224 @@
               <default>1</default>
             </object>
           </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <!-- ============================ section F ============================ -->
+
+  <!-- J2: the read-only Crossing Detail dialog, opened by double-clicking
+       a row of the console's crossings feed. Every value label is empty
+       here and written by views/crossing_detail.py's CrossingDetailView
+       (the view-model is code-side, like every other DataView/label
+       content on this canvas); the captions are fixed copy and carry no
+       frozen name.
+
+       edit_plate_input is the dialog's one editable control: it starts
+       disabled at the crossing's current plate and Edit unlocks it, so
+       OK only ever commits a plate the operator deliberately changed.
+       It is deliberately not wxTE_READONLY: a read-only control cannot
+       be unlocked, and the disabled state is what says "press Edit".
+
+       edit_btn and delete_btn sit in a sibling wxBoxSizer beside the
+       stock button sizer: wxStdDialogButtonSizer positions only
+       OK/Yes/Save/Apply/No/Cancel/Close/Help, so a custom button placed
+       inside it is created but left at (-1,-1) (measured). The window
+       has no wxID_CANCEL, so CrossingDetailView points Escape at OK with
+       SetEscapeId, since wx's own Escape handling only ever looks for
+       wxID_CANCEL. -->
+  <object class="wxDialog" name="crossing_detail_dlg">
+    <title>Crossing Detail</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Rider</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_rider_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Team</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_team_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_plate_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Lap #</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_lap_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Crossing time</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_time_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Lap time</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_lap_time_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Total time</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_total_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Card</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_card_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Held / flagged</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="crossing_held_lbl">
+              <label></label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>New plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="edit_plate_input"/>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="edit_btn">
+              <label>Edit</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="delete_btn">
+              <label>Delete</label>
+            </object>
+          </object>
+
+          <!-- Absorbs the row's slack so the stock OK button, the only
+               remaining item, stays right-aligned however wide the
+               dialog is (rider_issues_dlg's spacer pattern). -->
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStdDialogButtonSizer">
+              <object class="button">
+                <object class="wxButton" name="wxID_OK">
+                  <label>OK</label>
+                  <default>1</default>
+                  <focused>1</focused>
+                </object>
+              </object>
+            </object>
+          </object>
+
         </object>
       </object>
 

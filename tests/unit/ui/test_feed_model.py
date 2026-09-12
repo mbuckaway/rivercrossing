@@ -18,7 +18,6 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.demo import DemoDataSource
-from rivercrossing.ui.cards_imagelist import CARD_KEYS
 from rivercrossing.ui.feed_model import (
     COL_CARD,
     COL_LAP,
@@ -30,10 +29,11 @@ from rivercrossing.ui.feed_model import (
     COLUMN_LABELS,
     COLUMN_WIDTHS,
     TIME_COLUMNS,
-    card_asset_key_or_none,
+    card_text_or_blank,
     edited_row_indexes,
     flagged_row_indexes,
     flash_crossing_label,
+    lap_text,
 )
 from rivercrossing.ui.presenters.data_source import FeedRow
 
@@ -108,65 +108,76 @@ def test_time_columns_is_exactly_lap_time_and_total() -> None:
     assert TIME_COLUMNS == (COL_LAP_TIME, COL_TOTAL)
 
 
-# --- card_asset_key_or_none ---------------------------------------
+# --- card_text_or_blank -------------------------------------------
 
-DEALT_CARD_CASES = (
-    ("9H", "9h"),
-    ("KS", "Ks"),
-    ("4D", "4d"),
-    ("JK", "joker"),
+DEALT_CARD_TEXT_CASES = (
+    ("9H", "9♥"),
+    ("6H", "6♥"),
+    ("KS", "K♠"),
+    ("TD", "T♦"),
+    ("JK", "JK★"),
 )
 
 # W9: the feed never emits a literal "held" cell any more -- the card
 # column always carries a real dealt code -- so the seam's old
 # placeholder case is retired. Any other unmappable text still maps
-# to None (empty string boundary included, T-4).
-NON_CARD_CASES = ("", "ZZ", "A")
+# to "" (empty string boundary included, T-4); "A" and "ZZ" exercise
+# the unknown-suit KeyError arm, "" the empty-code IndexError arm.
+NON_CARD_TEXT_CASES = ("", "ZZ", "A")
 
 
-@pytest.mark.parametrize(("card", "key"), DEALT_CARD_CASES)
-def test_card_asset_key_or_none_given_a_dealt_code_returns_its_asset_key(
-    card: str, key: str
+@pytest.mark.parametrize(("card", "text"), DEALT_CARD_TEXT_CASES)
+def test_card_text_or_blank_given_a_dealt_code_returns_its_canvas_text(
+    card: str, text: str
 ) -> None:
-    """A real dealt code resolves to the imagelist key it maps to."""
-    assert card_asset_key_or_none(card) == key
+    """A real dealt code resolves to ``format_card``'s canvas text."""
+    assert card_text_or_blank(card) == text
 
 
-@pytest.mark.parametrize("card", NON_CARD_CASES)
-def test_card_asset_key_or_none_given_a_non_card_string_returns_none(card: str) -> None:
-    """Any unmappable text is None -- the blank cell seam (W9).
+@pytest.mark.parametrize("card", NON_CARD_TEXT_CASES)
+def test_card_text_or_blank_given_a_non_card_string_returns_blank(card: str) -> None:
+    """Any unmappable text is "" -- the blank cell seam (W9).
 
     ``""`` is the empty-string boundary case (T-4): a missing card
     value must not be mistaken for a dealt one either.
     """
-    assert card_asset_key_or_none(card) is None
+    assert card_text_or_blank(card) == ""
 
 
 @given(st.text(max_size=4))
-def test_card_asset_key_or_none_given_arbitrary_text_never_raises_and_stays_in_the_deck(
+def test_card_text_or_blank_given_arbitrary_text_never_raises_and_returns_display_or_blank(
     text: str,
 ) -> None:
-    """Property: every input is either None or a real imagelist key."""
-    key = card_asset_key_or_none(text)
+    """Property: every input is either "" or a real glyph display."""
+    display = card_text_or_blank(text)
 
-    assert key is None or key in CARD_KEYS
+    assert display == "" or display[-1] in {"♠", "♥", "♦", "♣"} or display == "JK★"
 
 
 # --- flagged_row_indexes -------------------------------------------
 
 
-def _feed_row(*, plate: str = "1", flagged: bool = False, edited: bool = False) -> FeedRow:
+def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
+    *,
+    plate: str = "1",
+    entry: str = "Rider",
+    lap: int = 1,
+    flagged: bool = False,
+    edited: bool = False,
+    missed: bool = False,
+) -> FeedRow:
     """Build a minimal ``FeedRow`` varying only what a test needs."""
     return FeedRow(
         time="14:00:00",
         plate=plate,
-        entry="Rider",
-        lap=1,
+        entry=entry,
+        lap=lap,
         lap_time="10:00",
         total="10:00",
         card="9H",
         flagged=flagged,
         edited=edited,
+        missed=missed,
     )
 
 
@@ -330,3 +341,33 @@ def test_flash_crossing_label_given_any_natural_code_renders_the_matching_glyph(
     suffix = " (held)" if flagged else ""
     assert label.endswith(f"dealt {rank}{glyphs[suit]}{suffix}")
     assert label.startswith("✓ ")
+
+
+# --- missed rows (K: a pass whose number the scorer missed) ----------
+
+
+def test_lap_text_given_a_missed_row_returns_blank() -> None:
+    """A miss shows no lap number -- the numeric row is blank."""
+    row = _feed_row(plate="-", entry="missed", lap=0, missed=True)
+
+    assert lap_text(row) == ""
+
+
+def test_lap_text_given_a_crossing_row_returns_the_lap_number() -> None:
+    """A normal crossing renders its 1-based lap number."""
+    assert lap_text(_feed_row(lap=3)) == "3"
+
+
+@given(lap=st.integers(min_value=0, max_value=10_000), missed=st.booleans())
+def test_lap_text_given_any_row_is_blank_exactly_when_missed(lap: int, *, missed: bool) -> None:
+    """Property: blank iff missed; otherwise the lap number as text."""
+    row = _feed_row(lap=lap, missed=missed)
+
+    assert lap_text(row) == ("" if missed else str(lap))
+
+
+def test_flash_crossing_label_given_a_missed_row_names_the_plate_and_miss() -> None:
+    """A miss flashes Plate "-" / Name "missed", with no card or lap."""
+    row = _feed_row(plate="-", entry="missed", lap=0, missed=True)
+
+    assert flash_crossing_label(row) == "- · missed"

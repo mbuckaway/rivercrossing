@@ -85,9 +85,9 @@ class _FakeConsoleView:
         """Record the rendered ride-identity header (C1)."""
         self.calls.append(("show_ride_header", fields))
 
-    def set_state(self, status: RideStatus) -> None:
-        """Record the rendered lifecycle state."""
-        self.calls.append(("set_state", status))
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the rendered lifecycle state and stop guard (W6)."""
+        self.calls.append(("set_state", (status, stopped)))
 
     def show_feed(self, rows: list[object]) -> None:
         """Record the number of rendered feed rows."""
@@ -358,7 +358,7 @@ def test_run_launch_flow_continue_resumes_the_ride_and_keeps_the_active_marker(
             "entry_mode": EntryMode.MIXED,
         },
     ) in view.calls
-    assert ("set_state", RideStatus.RUNNING) in view.calls
+    assert ("set_state", (RideStatus.RUNNING, False)) in view.calls
     swapped = next(arg for name, arg in view.calls if name == "set_presenter")
     assert isinstance(swapped, ConsolePresenter)
     assert swapped.engine.state is RideStatus.RUNNING

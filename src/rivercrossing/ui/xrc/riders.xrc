@@ -461,17 +461,18 @@
         <object class="wxDataViewCtrl" name="issues_list"/>
       </object>
 
-      <!-- The two custom buttons sit in a sibling sizer next to the
+      <!-- The four custom buttons sit in a sibling sizer next to the
            stock button sizer (teams.xrc's save_btn pattern), so they
            keep a real position instead of the (-1,-1) a
-           wxStdDialogButtonSizer leaves custom buttons at. -->
+           wxStdDialogButtonSizer leaves custom buttons at. None of
+           them carries an option, so each sizes to its own label
+           rather than stretching. -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxALL</flag>
         <border>10</border>
         <object class="wxBoxSizer">
           <orient>wxHORIZONTAL</orient>
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="open_editor_btn">
@@ -479,7 +480,6 @@
             </object>
           </object>
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="convert_solo_btn">
@@ -487,7 +487,6 @@
             </object>
           </object>
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="assign_plate_btn">
@@ -495,13 +494,21 @@
             </object>
           </object>
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="renumber_btn">
               <label>Renumber</label>
             </object>
           </object>
+
+          <!-- Absorbs the row's slack so the stock Close button, the
+               only remaining item, stays right-aligned however wide
+               the dialog is (settings.xrc's spacer pattern). -->
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
           <object class="sizeritem">
             <flag>wxEXPAND</flag>
             <object class="wxStdDialogButtonSizer">

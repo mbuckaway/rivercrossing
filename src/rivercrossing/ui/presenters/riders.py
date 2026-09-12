@@ -96,10 +96,11 @@ __all__ = [
     "RidersView",
 ]
 
-# team_choice's frozen first entry (xrc-windows.md's Rider Editor
-# mock: "-- solo --" first, then team display names -- the retired
-# "New team…" sentinel is gone, ux-polish).
-SOLO_TEAM_CHOICE = "— solo —"
+# team_choice's frozen first entry: the bare word "solo" first, then
+# every team's display name. The "-- solo --" wording of
+# xrc-windows.md's Rider Editor mock is retired (ux-polish), as is
+# its "New team…" sentinel.
+SOLO_TEAM_CHOICE = "solo"
 
 # ``SOLO_TEAM_TEXT`` above is imported from ``ui.rider_columns``
 # (Phase 3): the one wx-free home for the rider lists' shared cell

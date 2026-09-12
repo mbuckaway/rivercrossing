@@ -26,9 +26,10 @@
 
   F1 (verbose logging): verbose_log_chk is a stored setting like
   sound_chk - AppSettings.verbose_logging, rendered at open and
-  collected on OK. The app feeds it to ui.logging.VerboseLog, the
-  opt-out NDJSON trace (rivercrossing-verbose.log) that mirrors the
-  always-on plain-text crash log (rivercrossing.log).
+  collected on OK. The app feeds it to ui.logging.Logging: it gates the
+  trace methods of the single per-invocation structured log
+  (rivercrossing-<timestamp>.log); the always-on launch/exception
+  records and the log file itself ignore it.
 
   W13 (testing notes #12): the text-zoom choice (zoom_choice) left
   this dialog - View > Zoom is the single zoom surface, its seven

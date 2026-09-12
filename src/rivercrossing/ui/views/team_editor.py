@@ -56,7 +56,7 @@ import wx
 import wx.dataview
 
 from rivercrossing.ui import ids, std_dialogs
-from rivercrossing.ui.feed_model import card_asset_key_or_none
+from rivercrossing.ui.cards_imagelist import UnknownCardCodeError, asset_key
 from rivercrossing.ui.presenters.teams import (
     AddTeamPresenter,
     TeamFormValues,
@@ -64,7 +64,12 @@ from rivercrossing.ui.presenters.teams import (
     TeamsPresenter,
 )
 from rivercrossing.ui.views import dialogs
-from rivercrossing.ui.views._support import associate_model, default_card_images, find_control
+from rivercrossing.ui.views._support import (
+    associate_model,
+    clamp_to_display,
+    default_card_images,
+    find_control,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -73,6 +78,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADD_TEAM_INFOBAR",
+    "ADD_TEAM_MIN_SIZE",
     "CARD_LOGO_BOX",
     "COLUMN_LABELS",
     "COL_MEMBER",
@@ -135,11 +141,12 @@ ADD_MODE_LABEL = "Add"
 EDIT_MODE_LABEL = "Save"
 
 # Logo-preview bounds (px): the Add/Edit dialog's card preview renders
-# the packaged card bitmap at the card's 3:4 ratio scaled into a 96x128
-# box. logo_bmp itself carries SetMaxSize(LOGO_PREVIEW_BOX) so no
-# bitmap can push the dialog's button row off the dialog.
+# the packaged card bitmap at the card's ~3:4 ratio scaled into a 32x43
+# box -- the former 96x128 preview at a third of its size. logo_bmp
+# itself carries SetMaxSize(LOGO_PREVIEW_BOX) so no bitmap can push the
+# dialog's button row off the dialog.
 LOGO_PREVIEW_BOX = (128, 128)
-CARD_LOGO_BOX = (96, 128)
+CARD_LOGO_BOX = (32, 43)
 
 # The Notes box's code-side floor (teams.xrc declares the style):
 # wxTE_MULTILINE plus a minimum tall enough for three text lines, so
@@ -158,6 +165,13 @@ MEMBERS_MIN_HEIGHT = 120
 # list columns + the record form) to stay usable on a 1366x768 field
 # laptop (UX-DESKTOP §6).
 MIN_SIZE = (940, 560)
+
+# add_team_dlg's own code-side floor (px), the min-size counterpart of
+# MIN_SIZE above and *not* the same window's: a plain Fit() opened that
+# dialog at ~228x314 measured on macOS, too cramped for its record
+# form, so it opens at the operator's own 2x-width / 1.5x-height floor
+# (UX-DESKTOP §6).
+ADD_TEAM_MIN_SIZE = (456, 471)
 
 
 class TeamsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -302,7 +316,10 @@ def _logo_bitmap(card: str | None) -> Any:  # noqa: ANN401
     and no code at all render a blank ``wx.NullBitmap``.
     """
     if card is not None:
-        key = card_asset_key_or_none(card)
+        try:
+            key = asset_key(card)
+        except UnknownCardCodeError:
+            key = None
         if key is not None:
             return _scaled_bitmap(
                 default_card_images().bitmap(key), within=CARD_LOGO_BOX, upscale=True
@@ -583,11 +600,15 @@ class TeamEditor:
         ``show_teams`` replaces the model, which drops the sort key the
         control was holding; setting it on the column again and asking
         the model to resort restores exactly the order the operator
-        left the list in.
+        left the list in. The ``UnsetAsSortKey()`` is load-bearing on
+        macOS: ``SetSortOrder`` is a no-op when the direction is
+        unchanged (measured), so the rebuilt model would otherwise
+        revert to source order.
         """
         column = self.teams_list.GetColumn(self._sort_column)
         if column is None:
             return
+        column.UnsetAsSortKey()
         column.SetSortOrder(self._sort_ascending)
         self._teams_model.Resort()
 
@@ -703,6 +724,7 @@ class AddTeamDialog:
         self.presenter = AddTeamPresenter(self, roster, editing=editing)
 
         self._bind_events()
+        self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -716,6 +738,31 @@ class AddTeamDialog:
                 after settling.
         """
         return find_control(self.dialog, name, expected_type)
+
+    def _apply_min_size(self) -> None:
+        """Floor *and* open the dialog at :data:`ADD_TEAM_MIN_SIZE`.
+
+        XRC gives a window neither a minsize nor a default size, so
+        this dialog otherwise opened at whatever the form's own narrow
+        best size measured (~228x314 on macOS). ``Fit()`` first, so the
+        size being floored is whatever this platform actually
+        measured; the floor is the component-wise larger of that
+        measurement and :data:`ADD_TEAM_MIN_SIZE`, bounded by
+        :func:`~rivercrossing.ui.views._support.clamp_to_display` so it
+        can never exceed the display work area. That same size is both
+        the floor (``SetMinSize``) and the size the dialog opens at
+        (``SetSize``) -- a floor alone would still let the loaded
+        window keep the size XRC gave it (``CsvPreviewDialog``'s own
+        note).
+        """
+        self.dialog.Fit()
+        fitted = self.dialog.GetSize()
+        width, height = clamp_to_display(
+            max(ADD_TEAM_MIN_SIZE[0], fitted.width),
+            max(ADD_TEAM_MIN_SIZE[1], fitted.height),
+        )
+        self.dialog.SetMinSize(wx.Size(width, height))
+        self.dialog.SetSize(wx.Size(width, height))
 
     def _bind_events(self) -> None:
         """Forward every control event straight to the presenter."""

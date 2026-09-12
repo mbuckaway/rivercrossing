@@ -64,8 +64,8 @@ column and spans the shared
 :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`, rendered
 by the shared :class:`~rivercrossing.ui.views._support.
 RiderRowListModel`. ``add_rider_dlg`` gains a Sex dropdown
-(``sex_choice``: blank, M, F) and opens three times wider than its
-fitted size.
+(``sex_choice``: blank, M, F) and opens no narrower than
+:data:`ADD_RIDER_MIN_WIDTH` pixels.
 
 **Native sorting.** Each column is appended with
 :data:`RIDERS_LIST_COLUMN_FLAGS` (sortable *and* resizable, since an
@@ -110,6 +110,7 @@ from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
     RiderRowListModel,
     associate_model,
+    clamp_to_display,
     find_control,
 )
 
@@ -122,6 +123,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADD_RIDER_INFOBAR",
+    "ADD_RIDER_MIN_WIDTH",
     "COLUMN_LABELS",
     "COLUMN_WIDTHS",
     "COL_DEFAULT_WIDTH",
@@ -136,7 +138,6 @@ __all__ = [
     "CSV_INFOBAR",
     "CSV_PREVIEW_HEIGHT_SCALE",
     "CSV_PREVIEW_WIDTH_SCALE",
-    "DIALOG_WIDTH_SCALE",
     "MIN_SIZE",
     "OK_BUTTON_SCALE",
     "RIDERS_LIST_COLUMN_FLAGS",
@@ -147,13 +148,13 @@ __all__ = [
     "CsvConflictsListModel",
     "CsvPreviewDialog",
     "RiderEditor",
+    "add_rider_width_floor",
     "ok_button_min_size",
     "run_add_rider_flow",
     "run_csv_export_flow",
     "run_csv_import_flow",
     "run_edit_rider_flow",
     "sex_from_choice",
-    "wider_default_size",
 ]
 
 # riders_list's columns come from the shared, wx-free
@@ -226,10 +227,12 @@ OK_BUTTON_SCALE = 3
 
 # Phase 3: add_rider_dlg's own default width is the sizer's narrow
 # best width, which reads cramped beside its field labels; the view
-# opens it this many times wider (XRC has no window minsize, so
-# _apply_min_size applies it in code). The height stays whatever the
-# platform fitted.
-DIALOG_WIDTH_SCALE = 3
+# opens it no narrower than this many pixels (XRC has no window
+# minsize, so _apply_min_size applies it in code). The height stays
+# whatever the platform fitted. 700 is the operator's own request --
+# the dialog used to open at ~1056 (its fitted ~352 scaled by 3),
+# and 1056 / 1.5 rounds to 700.
+ADD_RIDER_MIN_WIDTH = 700
 
 # Phase 6 (3e): csv_preview_dlg's own default size is the conflicts
 # list's narrow best size; CsvPreviewDialog._apply_min_size opens it
@@ -273,16 +276,17 @@ def ok_button_min_size(best: tuple[int, int]) -> tuple[int, int]:
     return (width * OK_BUTTON_SCALE, height)
 
 
-def wider_default_size(fitted: tuple[int, int]) -> tuple[int, int]:
-    """Return add_rider_dlg's 3x-wider default size for *fitted*.
+def add_rider_width_floor(fitted: tuple[int, int]) -> tuple[int, int]:
+    """Return add_rider_dlg's default size for a fitted *fitted*.
 
     *fitted* is the width/height ``Fit()`` measured for the built
-    dialog; only the width scales (see :data:`DIALOG_WIDTH_SCALE`) --
-    the form's rows are laid out vertically, so a wider window needs no
-    extra height.
+    dialog. Only the width is floored (:data:`ADD_RIDER_MIN_WIDTH`):
+    the form's rows are laid out vertically, so a wider window needs
+    no extra height. A width already above the floor is left alone --
+    the floor never narrows a window.
     """
     width, height = fitted
-    return (width * DIALOG_WIDTH_SCALE, height)
+    return (max(ADD_RIDER_MIN_WIDTH, width), height)
 
 
 def sex_from_choice(selection: str) -> str | None:
@@ -616,12 +620,15 @@ class RiderEditor:
         the model to resort restores exactly the order the operator
         left the list in. No column is remembered until a header is
         clicked, so the first render keeps the presenter's own order.
+        The ``UnsetAsSortKey()`` is load-bearing on macOS:
+        ``SetSortOrder`` is a no-op when the direction is unchanged.
         """
         if self._sort_column is None:
             return
         column = self.riders_list.GetColumn(self._sort_column)
         if column is None:
             return
+        column.UnsetAsSortKey()
         column.SetSortOrder(self._sort_ascending)
         self._model.Resort()
 
@@ -805,20 +812,23 @@ class AddRiderDialog:
         self.ok_btn.SetMinSize(wx.Size(width, height))
 
     def _apply_min_size(self) -> None:
-        """Open the dialog 3x wider than its fitted width (Phase 3).
+        """Open the dialog no narrower than ADD_RIDER_MIN_WIDTH.
 
         XRC gives a window no minsize and no default size, so the
         dialog would otherwise open at the flex grid's own narrow best
         width -- cramped beside its labels and too short for a real
         team name in ``team_choice``. ``Fit()`` first, so the width
-        being tripled is whatever this platform actually measured;
+        being floored is whatever this platform actually measured;
         the height is left alone (the form is laid out vertically).
         Only the *width* is floored: ``-1`` means "no minimum height"
         to wx, so a taller-than-fitted row can still grow the window.
+        The floored width is clamped to the display's work area, so a
+        window can never open wider than the screen.
         """
         self.dialog.Fit()
         fitted = self.dialog.GetSize()
-        width, height = wider_default_size((fitted.width, fitted.height))
+        floored = add_rider_width_floor((fitted.width, fitted.height))
+        width, height = clamp_to_display(*floored)
         self.dialog.SetMinSize(wx.Size(width, -1))
         self.dialog.SetSize(wx.Size(width, height))
 

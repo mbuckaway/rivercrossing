@@ -59,6 +59,8 @@ rivercrossing/
 │       ├── theme.py            # appearance modes via wx.App.SetAppearance (R-03);
 │       │                       #   token table deferred — no consumer yet (open item O2)
 │       ├── sound.py            # three WAV cues per §10 (recorded/flagged/error)
+│       ├── logging.py          # per-invocation NDJSON log (F1): one file per launch, pruned
+│       │                       #   to the last 20; the app's one crash log (A2)
 │       ├── ids.py              # mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)
 │       ├── xrc/                # canonical UI: main, setup, riders, detail, results,
 │       │                       #   library, audit, settings, dialogs (.xrc — Spec §15b)
@@ -278,6 +280,11 @@ class ConsolePresenter:        on_plate_entered(text) · on_undo() · on_arm_sto
 app.main() -> int              # wx.App; resume dialog per session_state (4a/1h)
 theme.apply(app, mode) -> AppearanceResult   # light|dark|system via wx.App.SetAppearance (R-03);
                                # tokens(mode) deferred — no custom-drawn consumer yet (O2)
+logging.Logging(path, *, verbose=True) -> Logging   # per-invocation NDJSON log (F1): one file per launch;
+                               # .startup()/.launch()/.ride_loaded()/.exception() always write, the
+                               # .marker()/.menu()/.dialog()/.button()/.control() trace honours verbose
+logging.build_log_path(directory, now) -> Path      # rivercrossing-<YYYYmmdd-HHMMSS>.log inside directory
+logging.prune_logs(directory, *, keep=20) -> None   # keep only the most recent invocation logs
 ids.py: PLATE_INPUT = "plate_input" …   # = XRC names, generated from xrc/ (§15b)
 sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   # §10 cues, settings toggle
 ```

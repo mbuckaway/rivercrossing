@@ -366,6 +366,7 @@ class _SortColumn:
         self.model_column = model_column
         self.ascending = ascending
         self.sort_orders: list[bool] = []
+        self.operations: list[str] = []
 
     def GetModelColumn(self) -> int:  # noqa: N802 -- wx API name the double mirrors
         """Return the model column this header sorts."""
@@ -375,8 +376,13 @@ class _SortColumn:
         """Return the header arrow's direction."""
         return self.ascending
 
+    def UnsetAsSortKey(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record that the view cleared the native sort key first."""
+        self.operations.append("unset")
+
     def SetSortOrder(self, ascending: bool) -> None:  # noqa: N802, FBT001 -- wx API name
         """Record the direction the view re-applied."""
+        self.operations.append("set")
         self.sort_orders.append(ascending)
 
 
@@ -493,7 +499,11 @@ def test_rider_editor_apply_sort_given_a_remembered_column_restores_it_and_resor
 
     rider_editor.RiderEditor._apply_sort(shell)
 
-    assert (column.sort_orders, shell._model.resorts) == ([False], 1)
+    assert (column.operations, column.sort_orders, shell._model.resorts) == (
+        ["unset", "set"],
+        [False],
+        1,
+    )
 
 
 def test_rider_editor_apply_sort_given_no_remembered_column_leaves_the_order_alone() -> None:
@@ -528,7 +538,7 @@ def test_rider_editor_show_riders_given_a_remembered_sort_re_applies_it() -> Non
 
     rider_editor.RiderEditor.show_riders(shell, [_ROW])
 
-    assert column.sort_orders == [True]
+    assert (column.operations, column.sort_orders) == (["unset", "set"], [True])
     assert shell._model.GetCount() == 1
 
 

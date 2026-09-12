@@ -320,6 +320,8 @@ def test_action_buckets_cover_the_correction_vocabulary_without_overlap() -> Non
         "void_crossing",
         "add_crossing_at",
         "reassign",
+        "record_miss",
+        "assign_plate_to_miss",
         "deal_manual",
         "confirm_held",
         "void_held",
@@ -336,3 +338,18 @@ def test_action_buckets_cover_the_correction_vocabulary_without_overlap() -> Non
     assert sum(len(actions) for actions in ACTION_BUCKETS.values()) == len(union)
     assert ALL_ACTIONS not in ACTION_BUCKETS
     assert all(ACTION_BUCKETS.values())
+
+
+def test_audit_action_choice_given_crossing_edits_keeps_the_miss_actions() -> None:
+    """The two miss actions filter through the Crossing edits bucket."""
+    rows = [
+        _row("record_miss", ""),
+        _row("assign_plate_to_miss", "45", reason="rider identified"),
+        _row("dnf", "45", reason="mechanical"),
+    ]
+    view = FakeAuditView()
+    presenter = AuditPresenter(view, _AuditSource(rows), roster=_roster())
+
+    presenter.on_action_selected("Crossing edits")
+
+    assert [row.action for row in view.shown[-1]] == ["record_miss", "assign_plate_to_miss"]

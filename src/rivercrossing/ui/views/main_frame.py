@@ -43,14 +43,13 @@ import wx.xrc  # Submodule: plain `import wx` does not load it.
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import feed_model, ids, sound, std_dialogs
-from rivercrossing.ui.presenters.console import stop_light_mode
+from rivercrossing.ui.presenters.console import status_text, stop_light_mode
 from rivercrossing.ui.presenters.data_source import Counters
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
     RiderRowListModel,
     associate_model,
-    default_card_images,
     find_control,
 )
 from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_bundle
@@ -61,7 +60,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rivercrossing.roster import EntryMode
-    from rivercrossing.ui.cards_imagelist import CardImageList
     from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import (
         DataSource,
@@ -108,7 +106,7 @@ _TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
     feed_model.COL_TIME: lambda row: row.time,
     feed_model.COL_PLATE: lambda row: row.plate,
     feed_model.COL_NAME: lambda row: row.entry,
-    feed_model.COL_LAP: lambda row: str(row.lap),
+    feed_model.COL_LAP: feed_model.lap_text,
     feed_model.COL_LAP_TIME: lambda row: row.lap_time,
     feed_model.COL_TOTAL: lambda row: row.total,
 }
@@ -235,8 +233,8 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
 
     The wx-facing half of the crossings feed; ``ui/feed_model.py``
     holds the column layout and the two decisions this class
-    delegates to (``card_asset_key_or_none``, the flagged-row
-    lookup), so those stay testable without ``wx``
+    delegates to (``card_text_or_blank``, the flagged-row lookup), so
+    those stay testable without ``wx``
     (``tests/unit/ui/test_feed_model.py``). This class has exactly
     one consumer, :class:`MainFrame`, which is why it lives here
     rather than in its own file (SIMPLECODE Rule 7).
@@ -248,11 +246,10 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
     notifications entirely.
     """
 
-    def __init__(self, rows: Sequence[FeedRow], card_images: CardImageList) -> None:
-        """Wrap *rows*, newest first; render cards via *card_images*."""
+    def __init__(self, rows: Sequence[FeedRow]) -> None:
+        """Wrap *rows*, newest first."""
         super().__init__(len(rows))
         self._rows = tuple(rows)
-        self._card_images = card_images
         self._flagged = feed_model.flagged_row_indexes(self._rows)
         self._edited = feed_model.edited_row_indexes(self._rows)
 
@@ -260,19 +257,15 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         """Return the feed's fixed seven columns."""
         return len(feed_model.COLUMN_LABELS)
 
-    def GetColumnType(self, col: int) -> str:
-        """Return each column's wx variant type.
-
-        ``"wxBitmap"`` for the card column -- see :class:`MainFrame`'s
-        ``_build_columns`` for why not the newer ``"wxBitmapBundle"``.
-        """
-        return "wxBitmap" if col == feed_model.COL_CARD else "string"
+    def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- the model has one type
+        """Return the wx variant type (plain text for every column)."""
+        return "string"
 
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Return the cell value at *row*/*col*."""
         feed_row = self._rows[row]
         if col == feed_model.COL_CARD:
-            return self._card_bitmap(feed_row.card)
+            return feed_model.card_text_or_blank(feed_row.card)
         return _TEXT_ACCESSORS[col](feed_row)
 
     def GetAttrByRow(self, row: int, col: int, attr: Any) -> bool:  # noqa: ANN401, ARG002
@@ -289,19 +282,6 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
             return False
         attr.SetBold(True)  # noqa: FBT003 -- wx API takes a positional bool
         return True
-
-    def _card_bitmap(self, card: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the dealt card's bitmap, or a blank cell otherwise.
-
-        W9: every feed row's ``card`` is a real dealt code (a held
-        crossing's row carries the held card's own code), so the
-        blank ``wx.NullBitmap`` path is the seam for text that maps
-        to no asset (``""``, corrupt strings), not for held cards.
-        """
-        key = feed_model.card_asset_key_or_none(card)
-        if key is None:
-            return wx.NullBitmap
-        return self._card_images.bitmap(key)
 
 
 class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -465,12 +445,11 @@ class MainFrame:
     call it after construction.
     """
 
-    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source, card_images) + E4.4.2/E8.1.1 seams + every control it resolves
+    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source) + E4.4.2/E8.1.1 seams + every control it resolves
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
-        card_images: CardImageList | None = None,
         initial_sash: int | None = None,
         initial_geometry: tuple[int, int, int, int] | None = None,
         on_layout_changed: Callable[[int | None, tuple[int, int, int, int] | None], None]
@@ -488,8 +467,6 @@ class MainFrame:
                 implementation applies (``EngineDataSource`` from
                 E4.4.1; ``rivercrossing.demo`` is test-only fixture
                 data since E5.4.2).
-            card_images: The card bitmaps for the feed's Card column;
-                defaults to the packaged deck at 1x.
             initial_sash: The persisted splitter sash position to
                 restore at construction (E8.1.1); ``None`` keeps the
                 XRC default.
@@ -503,7 +480,6 @@ class MainFrame:
         """
         self.frame = frame
         self.data_source = data_source
-        self.card_images = card_images if card_images is not None else default_card_images()
         self._on_layout_changed = on_layout_changed
 
         # Every name resolved below is also in module-level
@@ -552,7 +528,9 @@ class MainFrame:
         self.remaining_clock = self._build_clock_dial(self.remaining_clock_panel, REMAINING_CLOCK)
         self.ride_status_light = StopLight(self.ride_status_panel)
         self.ride_status_light.SetName(RIDE_STATUS_LIGHT)
-        self.ride_status_panel.GetSizer().Insert(0, self.ride_status_light)
+        self.ride_status_panel.GetSizer().Insert(
+            0, self.ride_status_light, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8
+        )
         # WS-D GO/STOP glyphs. The labels are re-applied because the
         # XRC bitmap-button handler ignores <label> text (measured);
         # without them the buttons would be icon-only and unnamed to
@@ -591,7 +569,14 @@ class MainFrame:
         # activating a flagged row opens entry detail, not the rider
         # editor, so the two lists keep separate callbacks).
         self._on_open_flagged: Callable[[str], None] | None = None
+        # J2: the crossings feed's activation seam. Its own slot too:
+        # the feed is keyed by row index (the app resolves that back to
+        # the live Crossing), not by plate like the other two lists.
+        self._on_open_crossing: Callable[[int], None] | None = None
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
+        self.crossings_list.Bind(
+            wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_crossing_activated
+        )
         self.console_riders_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_rider_activated
         )
@@ -785,24 +770,14 @@ class MainFrame:
         the platform default; the widths live in the wx-free module
         so the values stay headlessly pinned.
 
-        The Card column uses an explicit
-        ``DataViewBitmapRenderer("wxBitmap")`` rather than
-        ``AppendBitmapColumn``'s default: this wx build (4.3.1 /
-        wxWidgets 3.3.3, probed with a throwaway script per this
-        repo's convention) registers that default renderer against
-        ``"wxBitmapBundle"``, which silently drops a plain
-        ``wx.Bitmap`` value. The explicit ``"wxBitmap"`` renderer
-        accepts ``CardImageList.bitmap()``'s values unchanged.
+        Every column is text: the Card column renders the dealt
+        card's glyph display (``feed_model.card_text_or_blank``), not
+        a bitmap, so all seven share the one renderer.
         """
         hideable = []
         for col, label in enumerate(feed_model.COLUMN_LABELS):
             width = feed_model.COLUMN_WIDTHS[col]
-            if col == feed_model.COL_CARD:
-                renderer = wx.dataview.DataViewBitmapRenderer("wxBitmap")
-                column = wx.dataview.DataViewColumn(label, renderer, col, width=width)
-                self.crossings_list.AppendColumn(column)
-            else:
-                column = self.crossings_list.AppendTextColumn(label, col, width=width)
+            column = self.crossings_list.AppendTextColumn(label, col, width=width)
             if col in feed_model.TIME_COLUMNS:
                 hideable.append(column)
         return tuple(hideable)
@@ -862,6 +837,19 @@ class MainFrame:
         """
         self._on_open_flagged = callback
 
+    def set_on_open_crossing(self, callback: Callable[[int], None]) -> None:
+        """Register the crossings feed's activation seam (J2).
+
+        The app wires this to its Crossing Detail flow; the console
+        itself only fires ``callback(row)`` when a feed row is
+        activated (double-click or Enter with the list focused).
+        *row* is the activated row's index into the rendered feed
+        model -- the feed is newest-first and capped at ``FEED_CAP``
+        rows, so resolving it back to a live crossing is the app's
+        job, not this view's.
+        """
+        self._on_open_crossing = callback
+
     def focus_review_panel(self) -> None:
         """Focus the review notebook's "Needs Review" tab (WS-H).
 
@@ -910,6 +898,12 @@ class MainFrame:
         the order the operator left the tab in. No column is
         remembered until a header is clicked, so the first render
         keeps the source's own order.
+
+        The ``UnsetAsSortKey`` first is load-bearing on macOS
+        (measured): ``SetSortOrder`` is a no-op when the direction is
+        unchanged, so without the clear the rebuilt model keeps the
+        source's order and the operator's sort silently reverts on
+        the next tick.
         """
         model = self._riders_model
         if model is None or self._riders_sort_column is None:
@@ -917,6 +911,7 @@ class MainFrame:
         column = self.console_riders_list.GetColumn(self._riders_sort_column)
         if column is None:
             return
+        column.UnsetAsSortKey()
         column.SetSortOrder(self._riders_sort_ascending)
         model.Resort()
 
@@ -983,6 +978,22 @@ class MainFrame:
         plate = self._flagged_model.GetValueByRow(row, FLAG_COL_PLATE)
         if self._on_open_flagged is not None:
             self._on_open_flagged(plate)
+
+    def _on_crossing_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Fire the open-crossing seam with the activated feed row (J2).
+
+        The feed's own model answers the row index, exactly as the
+        two review lists' handlers resolve theirs; the app turns that
+        index back into the live ``Crossing`` (the view holds no
+        crossings, only the rows the presenter rendered).
+        """
+        if self._crossings_model is None:
+            return
+        row = self._crossings_model.GetRow(event.GetItem())
+        if row == wx.NOT_FOUND:
+            return
+        if self._on_open_crossing is not None:
+            self._on_open_crossing(row)
 
     def set_hide_times(self, *, hide: bool) -> None:
         """Toggle the Lap time/Total columns per R-37.
@@ -1063,7 +1074,7 @@ class MainFrame:
         presenter (record/undo/tick are exactly the crossing-count
         changes the Start/Undo verdicts depend on).
         """
-        self._crossings_model = CrossingsFeedModel(rows, self.card_images)
+        self._crossings_model = CrossingsFeedModel(rows)
         self.crossings_list.AssociateModel(self._crossings_model)
         self._notify_ride_changed()
         if self._presenter is not None:
@@ -1129,7 +1140,7 @@ class MainFrame:
         """Highlight the just-recorded crossing (ConsoleView)."""
         self.last_crossing_lbl.SetLabel(feed_model.flash_crossing_label(r))
 
-    def set_state(self, status: RideStatus) -> None:
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
         """Reflect the ride's lifecycle state (ConsoleView).
 
         The status label and record-crossing row enablement (A4:
@@ -1147,12 +1158,14 @@ class MainFrame:
         every presenter state transition (start/stop/finish/reopen)
         lands here, and the binder re-applies the §15 enablement.
         WS-D adds the status lamp: the same state transition drives
-        the ``StopLight`` through ``console.stop_light_mode``. C2
+        the ``StopLight`` through ``console.stop_light_mode``. W6:
+        a stopped RUNNING ride's *stopped* flag renders the STOPPED
+        label and the amber lamp through ``console.status_text``. C2
         refreshes the Start/Stop/Undo button gates through the bound
         presenter (the single source for all three).
         """
-        self.ride_status_lbl.SetLabel(status.value.upper())
-        self.ride_status_light.set_mode(stop_light_mode(status))
+        self.ride_status_lbl.SetLabel(status_text(status, stopped=stopped))
+        self.ride_status_light.set_mode(stop_light_mode(status, stopped=stopped))
         running = status == RideStatus.RUNNING
         self.plate_input.Enable(running)
         self.record_btn.Enable(running)
@@ -1385,23 +1398,27 @@ class MainFrame:
             if not window.IsBeingDeleted():
                 window.Destroy()
 
-    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels + danger
         self,
         title: str,
         message: str,
         *,
         ok_label: str,
         cancel_label: str,
+        danger: bool = False,
     ) -> bool:
         """Ask a destructive confirm; return whether OK was chosen (W5).
 
         The native stop confirm behind ``ConsolePresenter.
         on_stop_requested``: the view owns the parent window and the
         modal call, returning only the boolean verdict to the
-        presenter.
+        presenter. *danger* selects the error-icon dialog
+        (``std_dialogs.show_danger``) for a data-losing question --
+        Undo Last Crossing (I); the ordinary caution confirm is the
+        default.
         """
-        result = std_dialogs.show_confirm(self.frame, title, message, ok_label, cancel_label)
-        return result == int(wx.ID_OK)
+        show = std_dialogs.show_danger if danger else std_dialogs.show_confirm
+        return show(self.frame, title, message, ok_label, cancel_label) == int(wx.ID_OK)
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Render the ride clock's numeric labels (ConsoleView, R-30).

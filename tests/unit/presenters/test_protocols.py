@@ -99,8 +99,8 @@ class FakeConsoleView:
     def flash_crossing(self, r: FeedRow) -> None:
         """Record the flashed crossing (unused here)."""
 
-    def set_state(self, status: RideStatus) -> None:
-        """Record the ride state (unused here)."""
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the ride state and stop guard (unused here)."""
 
     def focus_entry(self) -> None:
         """Record the focus request (unused here)."""
@@ -157,6 +157,7 @@ class FakeConsoleView:
         *,
         _ok_label: str,
         _cancel_label: str,
+        _danger: bool = False,
     ) -> bool:
         """Return the scripted confirm verdict (unused here)."""
         return False

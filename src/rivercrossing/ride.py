@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rivercrossing.cards import Shoe
-    from rivercrossing.roster import EntryMode, PlateModel, Roster
+    from rivercrossing.roster import Entry, EntryMode, PlateModel, Roster
 
 __all__ = [
     "DEFAULT_DECK_COUNT",
@@ -64,6 +64,7 @@ __all__ = [
     "Event",
     "HeldCrossing",
     "IllegalStateError",
+    "PendingMiss",
     "RideConfig",
     "RideConfigError",
     "RideEngine",
@@ -384,11 +385,19 @@ class Crossing:
     never stored -- spec §6 derives them from the entry's previous
     crossing (or ``actual_start`` for lap 1), so a ``set_start_time``
     retro-fix recomputes lap-1 automatically.
+
+    ``rider_plate`` is the plate the operator actually typed for this
+    crossing (J1). Under ``rider_pooled`` that is a team member's own
+    plate, which is what the console feed attributes the lap to; on a
+    solo or ``team_relay`` ride it is the entry's own plate. It is
+    appended last with a ``None`` default so every positional
+    construction still compiles.
     """
 
     entry_id: str
     seq: int
     crossed_at: datetime
+    rider_plate: str | None = None
 
 
 @dataclass(frozen=True)
@@ -434,6 +443,26 @@ class HeldCrossing:
 
     crossing: Crossing
     card: Card
+
+
+@dataclass(frozen=True)
+class PendingMiss:
+    """One recorded miss whose number was not captured (K, spec §13).
+
+    A miss is a passing whose plate the scorer did not catch: typing one
+    of the miss symbols instead of a plate records it here, *outside*
+    :attr:`RideEngine._crossings`. It is deliberately not a
+    :class:`Crossing` -- so it never enters ``card_for``/``undo_last``/
+    ``reassign_crossing``/the per-entry lap index, and deals no card.
+    ``miss_seq`` is the ride-wide 1-based ordinal in recording order
+    (like ``Crossing.seq``, but independent of any entry);
+    ``crossed_at`` is the instant the operator signalled the miss.
+    :meth:`RideEngine.assign_plate_to_miss` later removes it and records
+    the real crossing at that same instant.
+    """
+
+    miss_seq: int
+    crossed_at: datetime
 
 
 class RideEngine:
@@ -626,6 +655,18 @@ class RideEngine:
       placement/leaderboard exclusion -- never reimplemented here.
     - **undo reason label.** The ``undo`` event payload now carries
       ``reason="Undo last crossing"`` (fixed label, E7.1.1).
+
+    K's own resolution (record a miss):
+
+    - **A miss is not a Crossing.** ``record_miss`` records a passing
+      whose plate the scorer did not catch into ``_pending_misses``, a
+      separate queue, never ``_crossings`` -- so ``card_for``/
+      ``undo_last``/``reassign_crossing``/the ``_laps`` index/
+      ``feed_rows`` counters and ``snapshot()`` never see it, and no
+      card is dealt. ``assign_plate_to_miss`` removes the pending miss
+      and records (and deals) the real crossing at the miss's original
+      instant, so the card is assigned at edit time, never at record
+      time.
     """
 
     def __init__(  # noqa: PLR0913, PLR0917 -- frozen S4 API (config, shoe, clock, roster)
@@ -657,6 +698,13 @@ class RideEngine:
         # value, never the live clock. Cleared on continue.
         self._finished_at: datetime | None = None
         self._crossings: list[Crossing] = []
+        # K: pending misses -- passes whose number the scorer did not
+        # catch. Kept OUT of _crossings so no crossing-shaped consumer
+        # (card_for/undo_last/reassign_crossing/_laps/feed counters, all
+        # of which iterate _crossings) ever sees one, and no card is
+        # dealt until assign_plate_to_miss records the real crossing.
+        self._pending_misses: list[PendingMiss] = []
+        self._miss_counter = 0
         # Per-entry lap index (review fix): entry_id -> its live
         # crossings sorted by crossed_at, holding the SAME Crossing
         # objects _crossings holds. _laps_for reads this instead of
@@ -957,7 +1005,9 @@ class RideEngine:
         laps = self._laps_for(entry.plate)
         seq = len(laps) + 1
         card = self._deal_card()
-        crossing = Crossing(entry_id=entry.plate, seq=seq, crossed_at=crossed_at)
+        crossing = Crossing(
+            entry_id=entry.plate, seq=seq, crossed_at=crossed_at, rider_plate=plate
+        )
         self._insert_crossing(crossing)
         self._dealt[crossing] = card
         self._roster.mark_has_data(entry)
@@ -1034,6 +1084,58 @@ class RideEngine:
         the cards the entry actually holds.
         """
         return tuple(self._hand.get(plate, ()))
+
+    def pending_misses(self) -> tuple[PendingMiss, ...]:
+        """Return every pending miss, oldest first, read-only.
+
+        The console feed renders one ``-``/``missed`` row per pending
+        miss (newest first); :meth:`assign_plate_to_miss` removes one
+        and records the crossing it stands for. Read-only, like
+        :meth:`held_crossings`: a miss never enters ``_crossings``.
+        """
+        return tuple(self._pending_misses)
+
+    def record_miss(self, crossed_at: datetime, reason: str) -> Event:
+        """Record a miss -- a passing whose number was not captured (K).
+
+        The console path for a scorer who sees a rider cross but does
+        not catch the plate, so one of the miss symbols is typed
+        instead of a number. The miss is kept *outside*
+        :attr:`crossings` -- it is not a :class:`Crossing`, deals no
+        card and is ignored by :meth:`snapshot`/``on_course``/the
+        counters -- until :meth:`assign_plate_to_miss` resolves a real
+        plate, at which point the crossing and its card are recorded at
+        the miss's original instant. RUNNING or REOPENED only.
+
+        Args:
+            crossed_at: The instant the miss was signalled.
+            reason: Why the number was missed; carried in the audit
+                payload.
+
+        Returns:
+            The appended ``record_miss`` audit event.
+
+        Raises:
+            ValueError: *reason* is empty or whitespace-only.
+            IllegalStateError: the ride is not RUNNING or REOPENED.
+        """
+        _require_reason(reason)
+        if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+            raise IllegalStateError(f"cannot record miss from {self._state}")
+        self._miss_counter += 1
+        self._pending_misses.append(
+            PendingMiss(miss_seq=self._miss_counter, crossed_at=crossed_at)
+        )
+        return self._append(
+            Event(
+                action="record_miss",
+                payload={
+                    "miss_seq": self._miss_counter,
+                    "crossed_at": crossed_at.isoformat(),
+                    "reason": reason,
+                },
+            )
+        )
 
     def confirm_held(self, crossing: Crossing) -> Event:
         """Release *crossing*'s held card into its entry's hand (R-34).
@@ -1244,7 +1346,12 @@ class RideEngine:
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot edit crossing from {self._state}")
         crossing = self._require_crossing(entry_id, seq)
-        replacement = Crossing(entry_id=crossing.entry_id, seq=crossing.seq, crossed_at=crossed_at)
+        replacement = Crossing(
+            entry_id=crossing.entry_id,
+            seq=crossing.seq,
+            crossed_at=crossed_at,
+            rider_plate=crossing.rider_plate,
+        )
         self._replace_crossing(crossing, replacement)
         return self._append(
             Event(
@@ -1344,14 +1451,7 @@ class RideEngine:
         entry = self._roster.resolve_plate(plate)
         if entry is None:
             raise UnknownPlateError(f"unknown plate: {plate}")
-        laps = self._laps_for(entry.plate)
-        seq = len(laps) + 1
-        card = self._deal_card()
-        crossing = Crossing(entry_id=entry.plate, seq=seq, crossed_at=crossed_at)
-        self._insert_crossing(crossing)
-        self._dealt[crossing] = card
-        self._hand.setdefault(entry.plate, []).append(card)
-        self._roster.mark_has_data(entry)
+        self._record_crossing_at(entry, crossed_at, rider_plate=plate)
         return self._append(
             Event(
                 action="add_crossing_at",
@@ -1363,6 +1463,91 @@ class RideEngine:
                 },
             )
         )
+
+    def assign_plate_to_miss(self, miss_seq: int, new_plate: str, reason: str) -> Event:
+        """Resolve a pending miss to a real plate (K).
+
+        The follow-up to :meth:`record_miss`: the operator identifies
+        the rider whose number was missed, so the pending miss is
+        removed (newest first) and the crossing is recorded -- *and its
+        card dealt* -- at the miss's original ``crossed_at``. The card
+        is deliberately assigned at edit time, never at miss time, so a
+        miss held across a finish/reopen still deals from the live
+        shoe. The crossing credits straight into the hand and never
+        routes through R-34's hold queue (a correction, not live
+        entry), and ``new_plate`` is resolved like a crossing's (R-16),
+        so a rider_pooled member's plate attributes the team (J1).
+        RUNNING or REOPENED only.
+
+        Args:
+            miss_seq: The pending miss's 1-based ``miss_seq``.
+            new_plate: The now-known plate.
+            reason: Why/how the number was recovered; carried in the
+                audit payload.
+
+        Returns:
+            The appended ``assign_plate_to_miss`` audit event.
+
+        Raises:
+            ValueError: *reason* is empty or whitespace-only.
+            IllegalStateError: the ride is not RUNNING or REOPENED, or
+                no pending miss matches *miss_seq*.
+            UnknownPlateError: *new_plate* resolves to no entry.
+        """
+        _require_reason(reason)
+        if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
+            raise IllegalStateError(f"cannot assign plate to miss from {self._state}")
+        miss = next(
+            (candidate for candidate in self._pending_misses if candidate.miss_seq == miss_seq),
+            None,
+        )
+        if miss is None:
+            raise IllegalStateError(f"no pending miss with miss_seq {miss_seq}")
+        entry = self._roster.resolve_plate(new_plate)
+        if entry is None:
+            raise UnknownPlateError(f"unknown plate: {new_plate}")
+        self._pending_misses.remove(miss)
+        self._record_crossing_at(entry, miss.crossed_at, rider_plate=new_plate)
+        return self._append(
+            Event(
+                action="assign_plate_to_miss",
+                payload={
+                    "miss_seq": miss_seq,
+                    "new_plate": new_plate,
+                    "entry_id": entry.plate,
+                    "crossed_at": miss.crossed_at.isoformat(),
+                    "reason": reason,
+                },
+            )
+        )
+
+    def _record_crossing_at(
+        self, entry: Entry, crossed_at: datetime, *, rider_plate: str | None = None
+    ) -> Crossing:
+        """Record one crossing at *crossed_at*, dealing a card.
+
+        The shared deal+insert body of :meth:`add_crossing_at` and
+        :meth:`assign_plate_to_miss`: the caller resolves *entry*, this
+        method assigns the entry's next lap number, deals the next shoe
+        card straight into the credited hand (a deliberate correction
+        never routes through R-34's hold queue) and marks the entry
+        has_data. *rider_plate* is the plate the operator typed -- the
+        entry's own when omitted -- so a rider_pooled team's crossing
+        still attributes the member who actually crossed (J1).
+        """
+        seq = len(self._laps_for(entry.plate)) + 1
+        card = self._deal_card()
+        crossing = Crossing(
+            entry_id=entry.plate,
+            seq=seq,
+            crossed_at=crossed_at,
+            rider_plate=rider_plate if rider_plate is not None else entry.plate,
+        )
+        self._insert_crossing(crossing)
+        self._dealt[crossing] = card
+        self._hand.setdefault(entry.plate, []).append(card)
+        self._roster.mark_has_data(entry)
+        return crossing
 
     def reassign_crossing(self, seq: int, new_plate: str, reason: str) -> Event:
         """Reattribute one crossing -- and its card -- to another entry.
@@ -1421,7 +1606,12 @@ class RideEngine:
         self._remove_crossing(crossing)
         self._renumber_later(old_entry_id, old_seq)
         new_seq = len(self._laps_for(entry.plate)) + 1
-        replacement = Crossing(entry_id=entry.plate, seq=new_seq, crossed_at=crossing.crossed_at)
+        replacement = Crossing(
+            entry_id=entry.plate,
+            seq=new_seq,
+            crossed_at=crossing.crossed_at,
+            rider_plate=new_plate,
+        )
         self._insert_crossing(replacement)
         self._dealt[replacement] = card
         if held is not None:
@@ -1837,7 +2027,13 @@ class RideEngine:
         for crossing in list(self._crossings):
             if crossing.entry_id == entry_id and crossing.seq > after_seq:
                 self._replace_crossing(
-                    crossing, Crossing(entry_id, crossing.seq - 1, crossing.crossed_at)
+                    crossing,
+                    Crossing(
+                        crossing.entry_id,
+                        crossing.seq - 1,
+                        crossing.crossed_at,
+                        rider_plate=crossing.rider_plate,
+                    ),
                 )
 
     def _require_actual_start(self) -> datetime:
@@ -1864,7 +2060,7 @@ class RideEngine:
 
     # ------------------------------------- E5.1.2 replay seam: apply
 
-    # The replay dispatch is inherently one branch per action (17
+    # The replay dispatch is inherently one branch per action (19
     # mutations + the unknown-action guard); the cyclomatic count is
     # the event vocabulary's size, not a refactorable control-flow
     # tangle.
@@ -1937,6 +2133,14 @@ class RideEngine:
             self.add_crossing_at(
                 str(event.payload["plate"]),
                 _payload_dt(event, "crossed_at"),
+                reason=str(event.payload["reason"]),
+            )
+        elif action == "record_miss":
+            self.record_miss(_payload_dt(event, "crossed_at"), reason=str(event.payload["reason"]))
+        elif action == "assign_plate_to_miss":
+            self.assign_plate_to_miss(
+                int(str(event.payload["miss_seq"])),
+                str(event.payload["new_plate"]),
                 reason=str(event.payload["reason"]),
             )
         elif action == "reassign":

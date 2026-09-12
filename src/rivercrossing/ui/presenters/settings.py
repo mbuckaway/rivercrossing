@@ -61,10 +61,12 @@ class AppSettings:
     survive relaunch but have no dialog control. ``None`` means no
     saved value yet (a first launch or an older file).
 
-    F1 adds ``verbose_logging``: whether the NDJSON verbose log is
-    written (``rivercrossing-verbose.log``, ``ui.logging``). It
-    defaults on, so a support session has the trace without the
-    operator having to remember to enable it.
+    F1 adds ``verbose_logging``: whether the trace methods of the
+    structured per-invocation log (``ui.logging.Logging``,
+    ``rivercrossing-<timestamp>.log``) are written. The always-on
+    launch and exception records ignore it; the log file itself is
+    always created. Defaults on, so a support session has the trace
+    without the operator having to remember to enable it.
     """
 
     appearance: str

@@ -51,6 +51,7 @@ from rivercrossing.ride import (
     Crossing,
     Event,
     IllegalStateError,
+    PendingMiss,
     RideConfig,
     RideConfigError,
     RideEngine,
@@ -2406,3 +2407,410 @@ def test_engine_update_config_keeps_the_ride_state_and_its_events() -> None:
     assert engine.state is RideStatus.RUNNING
     assert engine.events == events_before
     assert engine.crossings == crossings_before
+
+
+# ============================ J1: per-rider crossing attribution
+
+
+def _pooled_team_roster() -> Roster:
+    """Build a rider_pooled team roster: Sarah (45), Priya (9)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[Rider(first_name="Sarah", plate="45"), Rider(first_name="Priya", plate="9")],
+    )
+    return roster
+
+
+def _pooled_team_engine() -> RideEngine:
+    """Build a RUNNING engine over the pooled team roster."""
+    engine, _ = _make_engine(roster=_pooled_team_roster(), config=_config(min_lap_s=1))
+    engine.start()
+    return engine
+
+
+def test_crossing_given_no_rider_plate_defaults_to_none() -> None:
+    """The field defaults last so positional builds still compile."""
+    assert Crossing("12", 1, _dt(10, 0)).rider_plate is None
+
+
+def test_record_crossing_given_pooled_rider_plate_stores_it_as_the_rider_plate() -> None:
+    """J1: the typed rider plate rides on the crossing itself."""
+    engine = _pooled_team_engine()
+
+    engine.record_crossing("45", at=_dt(10, 2))
+
+    assert engine.crossings[-1] == Crossing(
+        entry_id="9", seq=1, crossed_at=_dt(10, 2), rider_plate="45"
+    )
+
+
+def test_record_crossing_given_entry_plate_stores_it_as_the_rider_plate() -> None:
+    """A solo or relay crossing attributes the entry plate."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+
+    engine.record_crossing("12", at=_dt(10, 2))
+
+    assert engine.crossings[-1].rider_plate == "12"
+
+
+def test_edit_crossing_preserves_the_typing_riders_plate() -> None:
+    """A time-only correction never re-attributes the lap."""
+    engine = _pooled_team_engine()
+    engine.record_crossing("45", at=_dt(10, 2))
+
+    engine.edit_crossing("9", 1, _dt(10, 3), reason="mis-keyed time")
+
+    assert engine.crossings[-1].rider_plate == "45"
+
+
+def test_add_crossing_at_stores_the_typed_plate_as_the_rider_plate() -> None:
+    """A back-filled crossing attributes the typed plate."""
+    engine = _pooled_team_engine()
+
+    engine.add_crossing_at("45", _dt(10, 2), reason="missed crossing")
+
+    assert engine.crossings[-1].rider_plate == "45"
+
+
+def test_reassign_crossing_sets_the_new_plate_as_the_rider_plate() -> None:
+    """Reassign is the wrong-plate fix: attribute the new plate."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 2))
+
+    engine.reassign_crossing(1, "34", reason="mis-keyed plate")
+
+    moved = [crossing for crossing in engine.crossings if crossing.entry_id == "34"]
+    assert [crossing.rider_plate for crossing in moved] == ["34"]
+
+
+def test_void_crossing_renumbering_preserves_the_remaining_riders_plate() -> None:
+    """The renumber rebuild keeps each later lap's attributed rider."""
+    engine = _pooled_team_engine()
+    engine.record_crossing("9", at=_dt(10, 2))  # Priya, lap 1
+    engine.record_crossing("45", at=_dt(10, 4))  # Sarah, lap 2
+
+    engine.void_crossing("9", 1, reason="double entry")
+
+    assert [(crossing.seq, crossing.rider_plate) for crossing in engine.crossings] == [(1, "45")]
+
+
+def test_reassign_crossing_renumbering_preserves_the_remaining_riders_plate() -> None:
+    """The source entry's closed-up laps keep their attribution."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 4))
+    engine.record_crossing("34", at=_dt(10, 6))
+
+    engine.reassign_crossing(1, "34", reason="mis-keyed plate")
+
+    remaining = [crossing for crossing in engine.crossings if crossing.entry_id == "12"]
+    assert [(crossing.seq, crossing.rider_plate) for crossing in remaining] == [(1, "12")]
+
+
+def test_apply_record_crossing_event_rebuilds_the_typed_rider_plate() -> None:
+    """E5.1.2: the payload's plate rebuilds the attribution."""
+    roster = _pooled_team_roster()
+    engine, _ = _make_engine(roster=roster, config=_config(min_lap_s=1))
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="record_crossing",
+        payload={
+            "plate": "45",
+            "entry_id": "9",
+            "lap": 1,
+            "crossed_at": "2026-09-20T10:02:00",
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.crossings[-1].rider_plate == "45"
+
+
+# ================================ K: record a miss (pending miss)
+# A miss is a passing whose number the scorer did not catch: the
+# operator types one of the miss symbols instead of a plate. The engine
+# keeps it in a separate pending queue -- NOT in _crossings -- so no
+# crossing-shaped consumer (card_for/undo_last/reassign_crossing/_laps/
+# feed counters) sees it, and no card is dealt until
+# assign_plate_to_miss resolves a real plate.
+
+
+def test_pending_miss_is_frozen() -> None:
+    """A pending miss is an immutable record (frozen dataclass)."""
+    miss = PendingMiss(miss_seq=1, crossed_at=_dt(10, 5))
+
+    with pytest.raises(FrozenInstanceError):
+        miss.miss_seq = 2  # type: ignore[misc]
+
+
+def test_pending_misses_before_any_miss_returns_empty_tuple() -> None:
+    """A fresh engine holds no pending misses."""
+    engine, _ = _engine_in("running")
+
+    assert engine.pending_misses() == ()
+
+
+@pytest.mark.parametrize("state", ["running", "reopened"], ids=["running", "reopened"])
+def test_record_miss_given_a_live_state_appends_the_pending_miss_and_event(
+    state: str,
+) -> None:
+    """RUNNING/REOPENED record one miss and one audit event."""
+    engine, _ = _engine_in(state)
+
+    event = engine.record_miss(_dt(10, 5), reason="missed number")
+
+    assert event == Event(
+        action="record_miss",
+        payload={
+            "miss_seq": 1,
+            "crossed_at": "2026-09-20T10:05:00",
+            "reason": "missed number",
+        },
+    )
+    assert engine.pending_misses() == (PendingMiss(miss_seq=1, crossed_at=_dt(10, 5)),)
+    assert engine.events[-1] == event
+
+
+def test_record_miss_given_two_misses_numbers_them_in_recording_order() -> None:
+    """miss_seq is a ride-wide 1-based ordinal, like Crossing.seq."""
+    engine, _ = _engine_in("running")
+
+    first = engine.record_miss(_dt(10, 5), reason="missed number")
+    second = engine.record_miss(_dt(10, 6), reason="missed number")
+
+    assert (first.payload["miss_seq"], second.payload["miss_seq"]) == (1, 2)
+    assert [miss.miss_seq for miss in engine.pending_misses()] == [1, 2]
+
+
+def test_record_miss_deals_no_card_and_leaves_the_crossings_untouched() -> None:
+    """A miss is not a Crossing: no deal, no credited hand."""
+    engine, _ = _engine_in("running")
+    shoe_remaining = engine.shoe_remaining
+
+    engine.record_miss(_dt(10, 5), reason="missed number")
+
+    assert (engine.crossings, engine.shoe_remaining) == ((), shoe_remaining)
+    assert engine.credited_cards("12") == ()
+    assert engine.held_crossings() == ()
+
+
+def test_record_miss_is_ignored_by_the_snapshot() -> None:
+    """A pending miss contributes no laps, cards or total time."""
+    engine, _ = _engine_in("running")
+
+    engine.record_miss(_dt(10, 5), reason="missed number")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert (results["12"].laps, results["12"].cards, results["12"].total_time) == (0, (), 0.0)
+
+
+@pytest.mark.parametrize(
+    ("state", "match"),
+    [
+        ("draft", "cannot record miss from draft"),
+        ("finished", "cannot record miss from finished"),
+    ],
+    ids=["draft_refused", "finished_refused"],
+)
+def test_record_miss_from_a_non_live_state_raises_illegal_state_error(
+    state: str, match: str
+) -> None:
+    """A miss records only while RUNNING or REOPENED."""
+    engine, _ = _engine_in(state)
+
+    with pytest.raises(IllegalStateError, match=re.escape(match)):
+        engine.record_miss(_dt(10, 5), reason="missed number")
+
+
+@pytest.mark.parametrize("reason", ["", "   "], ids=["empty", "whitespace_only"])
+def test_record_miss_given_a_blank_reason_raises_value_error(reason: str) -> None:
+    """Every audited command requires a non-blank reason (R-33)."""
+    engine, _ = _engine_in("running")
+
+    with pytest.raises(ValueError, match=re.escape("reason must not be empty")):
+        engine.record_miss(_dt(10, 5), reason=reason)
+
+
+# ------------------------------------------- assign_plate_to_miss
+
+
+def test_assign_plate_to_miss_removes_the_miss_and_records_the_crossing() -> None:
+    """The edit turns a pending miss into a crossing at its instant."""
+    engine, _ = _engine_in("running")
+    engine.record_miss(_dt(10, 5), reason="missed number")
+
+    event = engine.assign_plate_to_miss(1, "12", reason="rider identified")
+
+    assert event == Event(
+        action="assign_plate_to_miss",
+        payload={
+            "miss_seq": 1,
+            "new_plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:05:00",
+            "reason": "rider identified",
+        },
+    )
+    assert engine.pending_misses() == ()
+    assert engine.crossings == (
+        Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 5), rider_plate="12"),
+    )
+    assert engine.events[-1] == event
+
+
+def test_assign_plate_to_miss_deals_exactly_one_card_into_the_hand() -> None:
+    """The card is assigned at edit time, never at miss time (R-40)."""
+    engine, _ = _engine_in("running")
+    engine.record_miss(_dt(10, 5), reason="missed number")
+    reference = Shoe(decks=8, jokers_per_deck=2, seed=20260920)
+
+    engine.assign_plate_to_miss(1, "12", reason="rider identified")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert engine._shoe.dealt == 1
+    assert results["12"].cards == (reference.deal()[0],)
+    assert results["12"].laps == 1
+
+
+def test_assign_plate_to_miss_records_the_crossing_at_the_miss_instant_not_now() -> None:
+    """The crossing keeps the miss's crossed_at, not the edit time."""
+    engine, clock = _engine_in("running")
+    engine.record_miss(_dt(10, 5), reason="missed number")
+    clock.advance(600)
+
+    engine.assign_plate_to_miss(1, "12", reason="rider identified")
+
+    assert engine.crossings[0].crossed_at == _dt(10, 5)
+
+
+def test_assign_plate_to_miss_given_an_unknown_plate_raises_and_keeps_the_miss() -> None:
+    """An unresolvable plate fails loudly, keeping the miss."""
+    engine, _ = _engine_in("running")
+    engine.record_miss(_dt(10, 5), reason="missed number")
+
+    with pytest.raises(UnknownPlateError, match=re.escape("unknown plate: 999")):
+        engine.assign_plate_to_miss(1, "999", reason="rider identified")
+
+    assert [miss.miss_seq for miss in engine.pending_misses()] == [1]
+    assert engine.crossings == ()
+
+
+@pytest.mark.parametrize("miss_seq", [0, 2], ids=["min-1", "max+1"])
+def test_assign_plate_to_miss_given_an_unknown_seq_raises_illegal_state_error(
+    miss_seq: int,
+) -> None:
+    """Only a real pending miss's miss_seq resolves (boundary rows)."""
+    engine, _ = _engine_in("running")
+    engine.record_miss(_dt(10, 5), reason="missed number")
+
+    with pytest.raises(
+        IllegalStateError, match=re.escape(f"no pending miss with miss_seq {miss_seq}")
+    ):
+        engine.assign_plate_to_miss(miss_seq, "12", reason="rider identified")
+
+
+@pytest.mark.parametrize(
+    ("state", "match"),
+    [
+        ("draft", "cannot assign plate to miss from draft"),
+        ("finished", "cannot assign plate to miss from finished"),
+    ],
+    ids=["draft_refused", "finished_refused"],
+)
+def test_assign_plate_to_miss_from_a_non_live_state_raises_illegal_state_error(
+    state: str, match: str
+) -> None:
+    """The edit records only while RUNNING or REOPENED."""
+    engine, _ = _engine_in(state)
+
+    with pytest.raises(IllegalStateError, match=re.escape(match)):
+        engine.assign_plate_to_miss(1, "12", reason="rider identified")
+
+
+@pytest.mark.parametrize("reason", ["", "   "], ids=["empty", "whitespace_only"])
+def test_assign_plate_to_miss_given_a_blank_reason_raises_value_error(reason: str) -> None:
+    """Every audited command requires a non-blank reason (R-33)."""
+    engine, _ = _engine_in("running")
+    engine.record_miss(_dt(10, 5), reason="missed number")
+
+    with pytest.raises(ValueError, match=re.escape("reason must not be empty")):
+        engine.assign_plate_to_miss(1, "12", reason=reason)
+
+
+# ----------------------------------------------- miss replay (E5.1.2)
+
+
+def test_apply_record_miss_event_replays_the_pending_miss() -> None:
+    """Replaying record_miss rebuilds the pending queue entry."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="record_miss",
+        payload={
+            "miss_seq": 1,
+            "crossed_at": "2026-09-20T10:05:00",
+            "reason": "missed number",
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.pending_misses() == (PendingMiss(miss_seq=1, crossed_at=_dt(10, 5)),)
+    assert engine.events[-1] == event
+
+
+def test_apply_assign_plate_to_miss_event_replays_the_crossing() -> None:
+    """Replaying assign_plate_to_miss rebuilds the recorded crossing."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.apply(
+        Event(
+            action="record_miss",
+            payload={
+                "miss_seq": 1,
+                "crossed_at": "2026-09-20T10:05:00",
+                "reason": "missed number",
+            },
+        )
+    )
+    event = Event(
+        action="assign_plate_to_miss",
+        payload={
+            "miss_seq": 1,
+            "new_plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:05:00",
+            "reason": "rider identified",
+        },
+    )
+
+    engine.apply(event)
+
+    assert engine.pending_misses() == ()
+    assert engine.crossings == (
+        Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 5), rider_plate="12"),
+    )
+    assert engine.events[-1] == event
+
+
+def test_apply_replay_record_miss_then_assign_is_equivalent() -> None:
+    """Replaying a miss and its edit reproduces the live state."""
+    live, _ = _make_engine()
+    live.start(at=_dt(10, 0))
+    live.record_miss(_dt(10, 5), reason="missed number")
+    live.assign_plate_to_miss(1, "12", reason="rider identified")
+
+    replayed, _ = _make_engine()
+    # logic-coverage-exempt: T-8 -- the loop is pure Arrange
+    # (re-applying the recorded log); assertions run after the loop.
+    for event in live.events:
+        replayed.apply(event)
+
+    assert replayed.snapshot() == live.snapshot()
+    assert replayed.pending_misses() == live.pending_misses()
+    assert replayed._shoe.dealt == live._shoe.dealt

@@ -34,6 +34,10 @@ ACTION_BUCKETS: dict[str, frozenset[str]] = {
             "void_crossing",
             "add_crossing_at",
             "reassign",
+            # K: a miss is a crossing-entry event -- recording it and
+            # resolving it to a real plate both live under this bucket.
+            "record_miss",
+            "assign_plate_to_miss",
         }
     ),
     "Card deals/voids": frozenset({"deal_manual", "confirm_held", "void_held", "void_card"}),

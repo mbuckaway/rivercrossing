@@ -110,8 +110,9 @@
                   <object class="sizeritem">
                     <object class="wxPanel" name="ride_status_panel">
                       <object class="wxBoxSizer">
-                        <orient>wxVERTICAL</orient>
+                        <orient>wxHORIZONTAL</orient>
                         <object class="sizeritem">
+                          <flag>wxALIGN_CENTRE_VERTICAL</flag>
                           <object class="wxStaticText" name="ride_status_lbl">
                             <label></label>
                           </object>

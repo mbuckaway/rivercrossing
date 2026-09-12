@@ -10,7 +10,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 - **Edit Ride… and Clear Ride…** — the Ride menu gains Edit Ride… (opens Ride Setup preloaded with the open ride's settings, titled "Edit Ride", and writes them back to the ride and the database) and Clear Ride… (resets the open ride to a fresh DRAFT in place — riders, crossings, cards and audit rows removed, setup and library entry kept — after a danger confirm) (D2/D3).
 - **Ride identity in the console header** — the header now shows the ride's own logo beside its name, with a `date · start · type` line standing in when the ride has no logo (C1).
-- **Verbose logging setting** — Settings gains a "Verbose logging" checkbox, on by default, that writes an NDJSON diagnostic log (`rivercrossing-verbose.log`) beside the always-on crash log (F1).
+- **Verbose logging setting** — Settings gains a "Verbose logging" checkbox, on by default, that gates the trace records of the app's single structured log: one NDJSON file per launch (`rivercrossing-<timestamp>.log`, pruned to the 20 most recent) that also carries the launch context and any crash (F1/F3).
 - **Finish publishes its own results** — Ride ▸ Finish Ride… writes the ride's HTML and PDF results into the per-user `exports` folder, so a finished ride always leaves its results behind instead of waiting for the Results menu (E2).
 - **Native `show_danger` and `show_prompt` dialogs** — `ui.std_dialogs` grows the two confirm shapes the finish/clear and duplicate/reopen questions need (H2).
 - **Rider sex** — riders carry a sex (`M`/`F`; blank means unknown) through the domain model, the rider editor (a Sex dropdown on the add/edit dialog), CSV import and export (a `Sex` header accepting `Male`/`M`/`Female`/`F`), the database, the console's Riders panel, and the results exports (HTML, PDF and the standings CSV; solo rows only).
@@ -46,7 +46,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 ### Notes
 
 - **Database schema version 1** — a database at any other version refuses to open, showing a "Database Mismatch" alert that tells the operator to rename or delete the database file.
-- **Verbose log format** — `rivercrossing-verbose.log` is NDJSON, one JSON object per line (`ts`, `level`, `file`, `line`, `func`, `msg`), so a support session can filter it with `jq` or a spreadsheet (F1).
+- **Verbose log format** — each launch writes its own `rivercrossing-<timestamp>.log`, an NDJSON file with one JSON object per line (`ts`, `level`, `event` plus the call's own fields, e.g. `file`, `line`, `func`), so a support session can filter it with `jq` or a spreadsheet; an uncaught exception adds a `traceback` array (F1).
 
 ## [1.0.11] - 2026-09-09
 

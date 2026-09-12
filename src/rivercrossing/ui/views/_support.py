@@ -45,6 +45,7 @@ __all__ = [
     "FIND_SETTLE_ATTEMPTS",
     "RiderRowListModel",
     "associate_model",
+    "clamp_to_display",
     "default_card_images",
     "find_control",
 ]
@@ -52,6 +53,17 @@ __all__ = [
 # See find_control's own docstring for the measured, address-reuse
 # stale-lookup hazard this retry bound settles.
 FIND_SETTLE_ATTEMPTS = 25
+
+
+def clamp_to_display(width: int, height: int) -> tuple[int, int]:
+    """Clamp a target window size so it never exceeds the work area.
+
+    Use ``wx.GetClientDisplayRect()``, not ``wx.GetDisplaySize()``: the
+    former excludes the menu bar and dock. Returns ``(width, height)``,
+    never growing the target.
+    """
+    _x, _y, display_width, display_height = wx.GetClientDisplayRect()
+    return (min(width, display_width), min(height, display_height))
 
 
 def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401

@@ -19,14 +19,18 @@ dialogs, so the ride-naming sentences those windows carried cannot
 go blank unnoticed (UX-DESKTOP §4: a confirm names its object).
 
 Phase 6 adds the two dialogs' own default size. XRC has no
-window-level minsize, so each view's ``_apply_min_size`` fits the
-built dialog and then floors *and* opens it at its own scale pair:
-Phase 3 narrowed ``csv_preview_dlg`` to 2x the fitted width and 2x
-the height, while ``rider_issues_dlg`` keeps 3x/2x. A real
-``wx.Dialog`` needs a desktop, so these tests drive the same kind of
-recording window double the seam tests above use and call the sizing
-step directly -- the constructor next to it binds every control the
-.xrc window carries.
+window-level minsize, so each view's ``_apply_min_size`` sets it from
+code. ``csv_preview_dlg`` floors *and* opens itself at 2x the size
+``Fit()`` measured. ``rider_issues_dlg`` no longer scales: it floors
+and opens itself at its own concrete ``MIN_SIZE`` (900x560), clamped to
+the display's work area so a small screen still shows the whole
+dialog. A real ``wx.Dialog`` needs a desktop, so these tests drive the
+same kind of recording window double the seam tests above use and call
+the sizing step directly -- the constructor next to it binds every
+control the .xrc window carries. ``clamp_to_display`` reads the live
+display through ``wx.GetClientDisplayRect``, which raises without a
+``wx.App``, so the rider-issues tests swap it for a recorder: that call
+is the sizing step's GUI I/O boundary (T-10), not its logic.
 """
 
 import json
@@ -38,8 +42,8 @@ import wx
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.ui.logging import VERBOSE_LOG_NAME, VerboseLog
-from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.logging import Logging
+from rivercrossing.ui.views import dialogs, rider_issues
 from rivercrossing.ui.views.rider_editor import CsvPreviewDialog, RiderEditor
 from rivercrossing.ui.views.rider_issues import RiderIssuesView
 
@@ -142,7 +146,7 @@ def tinted_dialogs(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     tinted: list[object] = []
     monkeypatch.setattr(dialogs, "wire_close_button", lambda _dialog: None)
     monkeypatch.setattr(dialogs.theme, "apply_light_mode_panel_bg", tinted.append)
-    monkeypatch.setattr(dialogs, "_active_verbose_log", lambda: None)
+    monkeypatch.setattr(dialogs, "_active_log", lambda: None)
     return tinted
 
 
@@ -228,23 +232,24 @@ def test_run_dialog_applies_the_light_mode_tint_before_showing(
 # --- F4: the verbose log's dialog record -----------------------------
 
 
-def test_run_dialog_given_a_verbose_log_records_the_dialog_open(
+def test_run_dialog_given_a_log_records_the_dialog_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tinted_dialogs: list[object],  # noqa: ARG001
 ) -> None:
     """F4: the one dialog seam records the dialog's name and opener."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
-    monkeypatch.setattr(dialogs, "_active_verbose_log", lambda: log)
+    log_path = tmp_path / "dialog.log"
+    log = Logging(log_path)
+    monkeypatch.setattr(dialogs, "_active_log", lambda: log)
 
     dialogs.run_dialog(_FakeDialog(name="settings_dlg"), _FakeOpener(name="mi_settings"))
 
     records = [
-        json.loads(line)
-        for line in (tmp_path / VERBOSE_LOG_NAME).read_text(encoding="utf-8").splitlines()
-        if line
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line
     ]
-    assert [record["msg"] for record in records] == ["dialog settings_dlg (from mi_settings)"]
+    assert [record["event"] for record in records] == ["dialog"]
+    assert records[0]["name"] == "settings_dlg"
+    assert records[0]["opener"] == "mi_settings"
 
 
 def test_run_dialog_without_a_verbose_log_still_shows_the_dialog(
@@ -337,14 +342,14 @@ class _SizingDialog:
         self.size = size
 
 
-# The two sizing dialogs, each with its own (width, height) scale
-# pair. Phase 3 narrows csv_preview_dlg from 3x to 2x; rider_issues_dlg
-# keeps Phase 6's 3x/2x.
-_DIALOG_VIEWS: list[tuple[type[CsvPreviewDialog | RiderIssuesView], int, int]] = [
+# The one scale-based sizing dialog left: Phase 3 narrows
+# csv_preview_dlg from 3x to 2x. rider_issues_dlg is no longer
+# scale-based -- it has its own concrete MIN_SIZE floor and its own
+# tests below.
+_DIALOG_VIEWS: list[tuple[type[CsvPreviewDialog], int, int]] = [
     (CsvPreviewDialog, 2, 2),
-    (RiderIssuesView, 3, 2),
 ]
-_DIALOG_VIEW_IDS = ["csv_preview_dlg", "rider_issues_dlg"]
+_DIALOG_VIEW_IDS = ["csv_preview_dlg"]
 
 
 def _view_over(
@@ -367,7 +372,7 @@ def _view_over(
     ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
 )
 def test_dialog_view_apply_min_size_given_a_fitted_size_floors_it_at_its_own_scale(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+    view_class: type[CsvPreviewDialog],
     width_scale: int,
     height_scale: int,
 ) -> None:
@@ -384,7 +389,7 @@ def test_dialog_view_apply_min_size_given_a_fitted_size_floors_it_at_its_own_sca
     ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
 )
 def test_dialog_view_apply_min_size_given_a_fitted_size_opens_it_at_its_own_scale(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+    view_class: type[CsvPreviewDialog],
     width_scale: int,
     height_scale: int,
 ) -> None:
@@ -401,7 +406,7 @@ def test_dialog_view_apply_min_size_given_a_fitted_size_opens_it_at_its_own_scal
     ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
 )
 def test_dialog_view_apply_min_size_measures_the_fitted_size_before_scaling_by_its_own_scale(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+    view_class: type[CsvPreviewDialog],
     width_scale: int,
     height_scale: int,
 ) -> None:
@@ -444,7 +449,7 @@ def test_csv_preview_dialog_apply_min_size_given_boundary_fitted_sizes_scales_by
     height=st.integers(min_value=0, max_value=10_000),
 )
 def test_dialog_view_apply_min_size_given_any_fitted_size_scales_by_its_own_pair(
-    case: tuple[type[CsvPreviewDialog | RiderIssuesView], int, int],
+    case: tuple[type[CsvPreviewDialog], int, int],
     width: int,
     height: int,
 ) -> None:
@@ -467,6 +472,65 @@ def test_rider_editor_apply_min_size_given_the_w7_canvas_keeps_its_own_floor() -
     _view_over(RiderEditor, dialog)._apply_min_size()
 
     assert (dialog.min_size.width, dialog.min_size.height) == (1280, 560)
+
+
+@pytest.mark.parametrize(
+    ("fitted", "expected"),
+    [
+        ((0, 0), (900, 560)),  # T-4 boundary: well below the floor
+        ((899, 559), (900, 560)),  # T-4 boundary: min - 1
+        ((900, 560), (900, 560)),  # T-4 boundary: min
+        ((901, 561), (901, 561)),  # T-4 boundary: min + 1, the fit wins
+        ((1200, 800), (1200, 800)),  # a realistic larger fitted dialog
+    ],
+)
+def test_rider_issues_view_apply_min_size_given_a_fitted_size_floors_it_at_min_size(
+    monkeypatch: pytest.MonkeyPatch,
+    fitted: tuple[int, int],
+    expected: tuple[int, int],
+) -> None:
+    """rider_issues_dlg floors and opens at MAX(MIN_SIZE, fitted)."""
+    monkeypatch.setattr(rider_issues, "clamp_to_display", lambda width, height: (width, height))
+    dialog = _SizingDialog(fitted=fitted)
+
+    _view_over(RiderIssuesView, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
+    assert (dialog.size.width, dialog.size.height) == expected
+
+
+def test_rider_issues_view_apply_min_size_given_a_fitted_size_clamps_its_floor_to_the_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fit() measures first; the floored size is what gets clamped."""
+    clamped: list[tuple[int, int]] = []
+
+    def _record(width: int, height: int) -> tuple[int, int]:
+        clamped.append((width, height))
+        return (width, height)
+
+    monkeypatch.setattr(rider_issues, "clamp_to_display", _record)
+    dialog = _SizingDialog(fitted=(10, 10))
+
+    _view_over(RiderIssuesView, dialog)._apply_min_size()
+
+    assert (dialog.calls, clamped) == (
+        ["Fit", "GetSize", "SetMinSize", "SetSize"],
+        [(900, 560)],
+    )
+
+
+def test_rider_issues_view_apply_min_size_given_a_small_display_opens_at_the_clamped_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The clamped size is both the floor and the opened size."""
+    monkeypatch.setattr(rider_issues, "clamp_to_display", lambda _width, _height: (800, 500))
+    dialog = _SizingDialog(fitted=(10, 10))
+
+    _view_over(RiderIssuesView, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == (800, 500)
+    assert (dialog.size.width, dialog.size.height) == (800, 500)
 
 
 # --- Phase D: RiderIssuesView's own selection reconcile --------------

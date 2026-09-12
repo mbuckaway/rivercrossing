@@ -31,7 +31,7 @@ import wx.xrc
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.rider_issues import RiderIssueRow, RiderIssuesPresenter
 from rivercrossing.ui.views import dialogs
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import associate_model, clamp_to_display, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -40,9 +40,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ISSUES_COLUMN_LABELS",
-    "ISSUES_HEIGHT_SCALE",
     "ISSUES_INFOBAR",
-    "ISSUES_WIDTH_SCALE",
+    "MIN_SIZE",
     "IssuesListModel",
     "RiderIssuesView",
     "run_rider_issues_flow",
@@ -57,11 +56,12 @@ ISSUES_COLUMN_LABELS: tuple[str, ...] = ("Plate", "Name", "Issue")
 ISSUES_INFOBAR = "issues_infobar"
 
 # Phase 6: XRC has no window-level minsize (riders.xrc's own header
-# notes this and defers to code), so _apply_min_size opens the report
-# this many times wider and taller than the size Fit() measured for
-# it -- the single issues list reads through a letterbox otherwise.
-ISSUES_WIDTH_SCALE = 3
-ISSUES_HEIGHT_SCALE = 2
+# notes this and defers to code), so _apply_min_size floors the report
+# here -- wide enough for the four action buttons on one row beside
+# Close, tall enough for the issues list to read as a list rather than
+# a letterbox. The height matches the sibling editors' 560
+# (rider_editor 1280x560, team_editor 940x560).
+MIN_SIZE = (900, 560)
 
 
 class IssuesListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -311,18 +311,24 @@ class RiderIssuesView:
         self.dialog.Layout()
 
     def _apply_min_size(self) -> None:
-        """Open the report 3x wider and 2x taller than its fitted size.
+        """Open the report at its own floor, clamped to the display.
 
-        ``Fit()`` first, so the size being scaled is whatever this
-        platform actually measured for the built window. That same
-        size is then both the floor (``SetMinSize``) and the size the
-        dialog opens at (``SetSize``): a floor alone would still let
-        the loaded window keep the narrow size XRC gave it.
+        ``Fit()`` first, so the size being floored is whatever this
+        platform actually measured for the built window, then the
+        larger of that and :data:`MIN_SIZE` is clamped to the display's
+        work area (:func:`~rivercrossing.ui.views._support.
+        clamp_to_display`), so a small screen still gets a fully
+        visible dialog. The clamped size is both the floor
+        (``SetMinSize``) and the size the dialog opens at
+        (``SetSize``): a floor alone would still let the loaded window
+        keep the narrow size XRC gave it.
         """
         self.dialog.Fit()
         fitted = self.dialog.GetSize()
-        width = fitted.width * ISSUES_WIDTH_SCALE
-        height = fitted.height * ISSUES_HEIGHT_SCALE
+        width, height = clamp_to_display(
+            max(MIN_SIZE[0], fitted.width),
+            max(MIN_SIZE[1], fitted.height),
+        )
         self.dialog.SetMinSize(wx.Size(width, height))
         self.dialog.SetSize(wx.Size(width, height))
 

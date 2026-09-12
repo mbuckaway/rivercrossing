@@ -5,10 +5,10 @@ The rider editor's form is display-only now: an edit goes through
 add_rider_dlg in its "Edit Rider…" mode, so the three text fields are
 ``wxTE_READONLY`` and the in-form Save button is gone. Everything the
 XRC declares is checked here as pure XML -- no ``wx`` import, no
-display -- alongside the one code-side number the XRC cannot express
-(a window has no minsize property), the Add/Edit primary button's
-width floor. Real-window geometry and click-through behaviour stay in
-the functional suite.
+display -- alongside the code-side numbers the XRC cannot express (a
+window has no minsize property): the Add/Edit dialog's own width floor
+and its primary button's width floor. Real-window geometry and
+click-through behaviour stay in the functional suite.
 """
 
 from pathlib import Path
@@ -234,37 +234,41 @@ def test_ok_button_min_size_scales_width_and_preserves_height(width: int, height
     assert scaled == (width * rider_editor.OK_BUTTON_SCALE, height)
 
 
-# ---------------------------------- the Add/Edit dialog's 3x width
+# -------------------------------- the Add/Edit dialog's width floor
 
 
-def test_wider_default_size_given_a_fitted_size_triples_only_the_width() -> None:
-    """The Add/Edit dialog opens 3x wider than its fitted size (B2)."""
-    assert rider_editor.wider_default_size((300, 180)) == (900, 180)
+def test_add_rider_width_floor_given_a_narrow_fitted_width_opens_at_the_floor() -> None:
+    """A cramped fitted width is floored at ADD_RIDER_MIN_WIDTH."""
+    assert rider_editor.add_rider_width_floor((300, 180)) == (700, 180)
 
 
 @pytest.mark.parametrize(
     ("fitted", "expected"),
     [
-        ((0, 0), (0, 0)),  # T-4 boundary: below any real fitted width
-        ((1, 1), (3, 1)),  # T-4 boundary: min
-        ((2, 5), (6, 5)),  # T-4 boundary: min + 1
-        ((640, 480), (1920, 480)),  # a realistic fitted dialog
+        ((0, 0), (700, 0)),  # T-4 boundary: below any real fitted width
+        ((1, 1), (700, 1)),  # T-4 boundary: min
+        ((699, 5), (700, 5)),  # T-4 boundary: min - 1
+        ((700, 7), (700, 7)),  # T-4 boundary: min
+        ((701, 9), (701, 9)),  # T-4 boundary: min + 1
+        ((1024, 480), (1024, 480)),  # a realistic fitted dialog, already wider
     ],
 )
-def test_wider_default_size_given_boundary_widths_scales_by_three(
+def test_add_rider_width_floor_given_boundary_widths_keeps_the_wider_of_floor_and_fitted(
     fitted: tuple[int, int],
     expected: tuple[int, int],
 ) -> None:
-    """Every width scales by exactly ``DIALOG_WIDTH_SCALE`` (T-4)."""
-    assert rider_editor.wider_default_size(fitted) == expected
+    """Every width is ``max(ADD_RIDER_MIN_WIDTH, fitted)`` (T-4)."""
+    assert rider_editor.add_rider_width_floor(fitted) == expected
 
 
 @given(
-    width=st.integers(min_value=1, max_value=10_000),
-    height=st.integers(min_value=1, max_value=400),
+    width=st.integers(min_value=0, max_value=10_000),
+    height=st.integers(min_value=0, max_value=400),
 )
-def test_wider_default_size_given_any_size_preserves_the_height(width: int, height: int) -> None:
-    """Property: widening never changes the dialog's height (T-7)."""
-    widened = rider_editor.wider_default_size((width, height))
+def test_add_rider_width_floor_given_any_size_preserves_the_height(
+    width: int, height: int
+) -> None:
+    """Property: the floor never changes the dialog's height (T-7)."""
+    floored = rider_editor.add_rider_width_floor((width, height))
 
-    assert widened == (width * rider_editor.DIALOG_WIDTH_SCALE, height)
+    assert floored == (max(rider_editor.ADD_RIDER_MIN_WIDTH, width), height)

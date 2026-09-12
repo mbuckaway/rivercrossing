@@ -410,7 +410,9 @@ class RideLibrary:
         ``show_rides`` replaces the model, which drops the sort key the
         control was holding; setting it on the column again and asking
         the model to resort restores exactly the order the operator
-        left the list in (the team editor's own shape).
+        left the list in (the team editor's own shape). Clearing the
+        column's native key first is load-bearing on macOS --
+        ``SetSortOrder`` is a no-op when the direction is unchanged.
         """
         column = self.rides_list.GetColumn(self._sort_column)
         if column is None:

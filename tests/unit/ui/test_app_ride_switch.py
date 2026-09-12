@@ -60,9 +60,9 @@ class _FakeConsoleView:
         """Record the rendered ride-identity header (C1)."""
         self.calls.append(("show_ride_header", fields))
 
-    def set_state(self, status: RideStatus) -> None:
-        """Record the rendered lifecycle state."""
-        self.calls.append(("set_state", status))
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the rendered lifecycle state and stop guard (W6)."""
+        self.calls.append(("set_state", (status, stopped)))
 
     def show_feed(self, rows: list[object]) -> None:
         """Record the number of rendered feed rows."""
@@ -186,7 +186,7 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
                 "entry_mode": EntryMode.MIXED,
             },
         ) in view.calls
-        assert ("set_state", RideStatus.DRAFT) in view.calls
+        assert ("set_state", (RideStatus.DRAFT, False)) in view.calls
         # W12/R-11: the presenter pushes the teams-chip verdict on
         # birth -- this mixed roster keeps the Teams chip visible.
         assert ("set_team_ui_visible", True) in view.calls

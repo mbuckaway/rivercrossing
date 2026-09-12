@@ -126,6 +126,7 @@ class _Column:
         self.model_column = model_column
         self.ascending = ascending
         self.sort_orders: list[bool] = []
+        self.operations: list[str] = []
 
     def GetModelColumn(self) -> int:  # noqa: N802 -- wx API name the double mirrors
         """Return the model column this header sorts."""
@@ -135,9 +136,14 @@ class _Column:
         """Return the header arrow's direction."""
         return self.ascending
 
+    def UnsetAsSortKey(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record the sort-key clear the macOS re-apply needs."""
+        self.operations.append("unset")
+
     def SetSortOrder(self, ascending: bool) -> None:  # noqa: N802, FBT001 -- wx API name
         """Record the direction the view re-applied."""
         self.sort_orders.append(ascending)
+        self.operations.append("set")
 
 
 class _SortEvent:
@@ -311,7 +317,12 @@ def test_on_column_sorted_given_no_sorting_column_keeps_the_state() -> None:
 
 
 def test_apply_sort_given_a_remembered_column_restores_it_and_resorts() -> None:
-    """The remembered column's arrow and order are re-applied."""
+    """The remembered column's arrow and order are re-applied.
+
+    Measured on macOS: ``SetSortOrder`` is a no-op when the direction
+    is unchanged, so ``_apply_sort`` must clear the sort key first --
+    the recorded order pins unset-then-set.
+    """
     column = _Column(main_frame.RIDERS_COL_NAME)
     control = _RidersListControl()
     control.columns[main_frame.RIDERS_COL_NAME] = column
@@ -321,7 +332,8 @@ def test_apply_sort_given_a_remembered_column_restores_it_and_resorts() -> None:
 
     main_frame.MainFrame._apply_sort(shell)
 
-    assert (column.sort_orders, model.resorts) == ([False], 1)
+    assert (column.operations, model.resorts) == (["unset", "set"], 1)
+    assert column.sort_orders == [False]
 
 
 def test_apply_sort_given_no_remembered_column_leaves_the_order_alone() -> None:
@@ -335,7 +347,7 @@ def test_apply_sort_given_no_remembered_column_leaves_the_order_alone() -> None:
 
     main_frame.MainFrame._apply_sort(shell)
 
-    assert (column.sort_orders, model.resorts) == ([], 0)
+    assert (column.sort_orders, column.operations, model.resorts) == ([], [], 0)
 
 
 def test_apply_sort_given_no_model_leaves_the_control_alone() -> None:

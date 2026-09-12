@@ -22,7 +22,10 @@ File ".../src/rivercrossing/store/migrations.py", line 97, in _migrate_v2_to_v3
 sqlite3.OperationalError: no such column: "logo_png"
 ```
 
-Outer frame, from the crash log (`~/Library/Application Support/RiverCrossing/rivercrossing.log`):
+Outer frame, from the per-invocation structured log
+(`~/Library/Application Support/RiverCrossing/rivercrossing-<YYYYMMDD-HHMMSS>.log` — one NDJSON log per
+launch, whose crash record carries the formatted traceback in a `traceback` array; the separate
+plain-text `rivercrossing.log` crash log no longer exists):
 
 ```
 File ".../src/rivercrossing/ui/app.py", line 4137, in main

@@ -79,6 +79,6 @@ def test_scaled_bitmap_given_a_bitmap_within_the_box_returns_it_unchanged(
     """A bitmap already inside the box comes back unchanged."""
     source = team_editor.default_card_images().bitmap("As")
 
-    result = team_editor._scaled_bitmap(source, within=(96, 128), upscale=False)
+    result = team_editor._scaled_bitmap(source, within=(32, 43), upscale=False)
 
     assert result is source
