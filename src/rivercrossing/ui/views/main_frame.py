@@ -633,6 +633,12 @@ class MainFrame:
         # gates through (set once wire_console/set_presenter runs;
         # constructions that never wire a presenter render no gates).
         self._presenter: ConsolePresenter | None = None
+        # D3: the tick timer and plate-submit callback wire_console/
+        # wire_entry install. Declared up front so clear_presenter can
+        # unbind a console that never wired them without an
+        # AttributeError.
+        self._tick_timer: wx.Timer | None = None
+        self._on_submit: Callable[[str], None] | None = None
 
         # Reflow now that the size and every sizer item are final, so
         # the splitter has its real client area before a sash position
@@ -1311,12 +1317,15 @@ class MainFrame:
         The callback is stored as :attr:`_on_submit` and every
         handler routes through it, so :meth:`set_presenter` can swap
         the console onto a new ride without rebinding (E5.4.1's
-        library Open).
+        library Open); :meth:`clear_presenter` returns it to ``None``
+        for the no-ride state.
         """
         self._on_submit = on_submit
 
         def _submit(_event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-            self._on_submit(self.plate_input.GetValue())
+            callback = self._on_submit
+            if callback is not None:
+                callback(self.plate_input.GetValue())
 
         self.plate_input.Bind(wx.EVT_TEXT_ENTER, _submit)
         self.record_btn.Bind(wx.EVT_BUTTON, _submit)
@@ -1498,7 +1507,9 @@ class MainFrame:
         :meth:`wire_entry`/:meth:`wire_console` binding (plate entry,
         lifecycle controls, tick timer). ``_presenter is None`` is the
         "never wired" sentinel, so those binds run exactly once and
-        later swaps stay the cheap reference replacement.
+        later swaps stay the cheap reference replacement;
+        :meth:`clear_presenter` returns the sentinel for a ride
+        removed from the screen, so the next attach re-runs them.
         """
         if self._presenter is None:
             self.wire_entry(presenter.on_plate_entered)
@@ -1506,6 +1517,25 @@ class MainFrame:
             return
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
+
+    def clear_presenter(self) -> None:
+        """Detach the console's presenter for a cleared ride (D3).
+
+        Ride ▸ Clear Ride… removes the ride from the screen only, so
+        the console must stop answering its old presenter: the tick
+        timer is stopped (its callback would otherwise call ``tick()``
+        on the cleared reference) and the plate-submit callback is
+        unbound. ``_presenter`` returns to its ``None`` "never wired"
+        sentinel, so the next attach through :meth:`set_presenter`
+        re-runs the one-time wiring against the stopped timer.
+
+        The timer itself is kept, not nulled: the frame's own
+        ``EVT_WINDOW_DESTROY`` handler still stops it at teardown.
+        """
+        if self._tick_timer is not None:
+            self._tick_timer.Stop()
+        self._presenter = None
+        self._on_submit = None
 
 
 def _page_index(notebook: wx.Notebook, label: str) -> int | None:
