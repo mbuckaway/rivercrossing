@@ -13,6 +13,7 @@ needed since this presenter touches no I/O boundary (T-10).
 """
 
 import re
+import tempfile
 from datetime import date, datetime, time
 from pathlib import Path
 
@@ -364,7 +365,7 @@ def test_setup_presenter_init_given_no_config_leaves_the_preload_seams_uncalled(
 def test_setup_presenter_init_given_a_stored_logo_preloads_its_path() -> None:
     """D2: logo_picker opens on the ride's own logo, when it has one."""
     view = RecordingSetupView()
-    logo = Path("/tmp/gorba-logo.png")  # noqa: S108 -- a stored value, never opened here
+    logo = Path(tempfile.gettempdir()) / "gorba-logo.png"
 
     SetupPresenter(view, _mixed_relay_roster(RideStatus.DRAFT), _stored_config(logo_path=logo))
 
@@ -560,7 +561,7 @@ def test_on_submit_combines_event_date_and_start_time_into_planned_start() -> No
 def test_on_submit_given_a_logo_path_carries_it_onto_the_config() -> None:
     """logo_picker's chosen path round-trips onto the built config."""
     presenter = SetupPresenter(RecordingSetupView(), Roster())
-    path = Path("/tmp/gorba-logo.png")  # noqa: S108 -- a stored value, never opened here
+    path = Path(tempfile.gettempdir()) / "gorba-logo.png"
 
     config = presenter.on_submit(_form(logo_path=path))
 

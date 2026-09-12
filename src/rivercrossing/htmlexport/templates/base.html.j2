@@ -24,11 +24,12 @@
       compiled_css / fonts_css  (production) CSS compiled once at package build
                    by the Tailwind CLI against this frozen template + the base64
                    Barlow/Barlow Condensed @font-face subsets. Trusted package
-                   assets — the only |safe values on the page.
+                   assets — the |safe values on the page, like racejson below.
     Filters: racejson = json.dumps(payload record) with every '</' escaped as
-    '<\/', returned as Markup. The <!-- j2: --> comments in the output name the
-    emitting macro for traceability. Golden pages regenerate from this template
-    only deliberately (Spec §8 tests). -#}
+    '<\/' — the <script>-breakout guard, not an escaper — whose plain-text
+    result the call site marks |safe. The <!-- j2: --> comments in the output
+    name the emitting macro for traceability. Golden pages regenerate from this
+    template only deliberately (Spec §8 tests). -#}
 {% import "macros.html.j2" as m with context -%}
 <!DOCTYPE html>
 <html lang="en">
@@ -133,6 +134,6 @@
 <!-- ══ Embedded data record — the exact payload this page was rendered from
      (all scoring computed by the app; round-trip tested; </ escaped as <\/).
      The markup above is static Jinja2 output — nothing reads this block. ══ -->
-<script type="application/json" id="race-data">{{ payload | racejson }}</script>
+<script type="application/json" id="race-data">{{ payload | racejson | safe }}</script>
 </body>
 </html>

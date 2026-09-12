@@ -12,13 +12,19 @@ click-through behaviour stay in the functional suite.
 """
 
 from pathlib import Path
-from xml.etree import ElementTree as ET
+from typing import TYPE_CHECKING
 
 import pytest
+from defusedxml.ElementTree import parse
 from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.ui.views import rider_editor
+
+if TYPE_CHECKING:
+    # Type-only: defusedxml does not re-export the Element class.
+    # Every parse goes through the defused facade above.
+    from xml.etree.ElementTree import Element
 
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
@@ -26,10 +32,9 @@ RIDER_EDITOR_DLG = "rider_editor_dlg"
 ADD_RIDER_DLG = "add_rider_dlg"
 
 
-def _dialog(name: str) -> ET.Element:
+def _dialog(name: str) -> Element:
     """Return the top-level dialog named *name* in riders.xrc."""
-    # S314: the project's own XRC, not untrusted input.
-    root = ET.parse(XRC_DIR / "riders.xrc").getroot()  # noqa: S314
+    root = parse(XRC_DIR / "riders.xrc").getroot()
     return next(
         obj
         for obj in root.findall("object")
@@ -37,26 +42,26 @@ def _dialog(name: str) -> ET.Element:
     )
 
 
-def _controls(dialog: ET.Element, name: str) -> list[ET.Element]:
+def _controls(dialog: Element, name: str) -> list[Element]:
     """Return every control object *dialog* declares under *name*."""
     return [obj for obj in dialog.iter("object") if obj.get("name") == name]
 
 
-def _style(dialog: ET.Element, name: str) -> str:
+def _style(dialog: Element, name: str) -> str:
     """Return the ``<style>`` text of the control named *name*."""
     control = _controls(dialog, name)[0]
     style = control.find("style")
     return style.text if style is not None and style.text is not None else ""
 
 
-def _button(dialog: ET.Element, name: str) -> ET.Element:
+def _button(dialog: Element, name: str) -> Element:
     """Return the ``wxButton`` named *name* inside *dialog*."""
     button = _controls(dialog, name)[0]
     assert button.get("class") == "wxButton"
     return button
 
 
-def _flex_grid_child_names(dialog: ET.Element) -> list[str]:
+def _flex_grid_child_names(dialog: Element) -> list[str]:
     """Return the named controls of the dialog's flex grid, in order."""
     grid = _flex_grid(dialog)
     return [
@@ -67,15 +72,14 @@ def _flex_grid_child_names(dialog: ET.Element) -> list[str]:
     ]
 
 
-def _flex_grid(dialog: ET.Element) -> ET.Element:
+def _flex_grid(dialog: Element) -> Element:
     """Return *dialog*'s own ``wxFlexGridSizer``."""
     return next(obj for obj in dialog.iter("object") if obj.get("class") == "wxFlexGridSizer")
 
 
 def _sizeritems_without_one_object() -> list[str]:
     """Return every sizeritem whose child object count is not one."""
-    # S314: the project's own XRC, not untrusted input.
-    root = ET.parse(XRC_DIR / "riders.xrc").getroot()  # noqa: S314
+    root = parse(XRC_DIR / "riders.xrc").getroot()
     return [
         item.get("class")
         for item in root.iter("object")

@@ -26,13 +26,19 @@ stays with the functional suite.
 from __future__ import annotations
 
 from pathlib import Path
-from xml.etree import ElementTree as ET
+from typing import TYPE_CHECKING
 
 import pytest
+from defusedxml.ElementTree import parse
 
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, SOLO_TEAM_TEXT
 from rivercrossing.ui.views import main_frame
+
+if TYPE_CHECKING:
+    # Type-only: defusedxml does not re-export the Element class.
+    # Every parse goes through the defused facade above.
+    from xml.etree.ElementTree import Element
 
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
@@ -42,16 +48,15 @@ MAIN_XRC = "main.xrc"
 # ------------------------------------------------------------ the XRC
 
 
-def _review_notebook() -> ET.Element:
+def _review_notebook() -> Element:
     """Return ``main.xrc``'s ``review_notebook`` object."""
-    # S314: the project's own XRC, not untrusted input.
-    root = ET.parse(XRC_DIR / MAIN_XRC).getroot()  # noqa: S314
+    root = parse(XRC_DIR / MAIN_XRC).getroot()
     return next(
         obj for obj in root.iter("object") if obj.get("name") == main_frame.REVIEW_NOTEBOOK
     )
 
 
-def _pages() -> list[ET.Element]:
+def _pages() -> list[Element]:
     """Return the notebook's own ``notebookpage`` children, in order.
 
     Direct children only, so the list is the page order the loaded
@@ -66,7 +71,7 @@ def _labels() -> list[str]:
     return [(page.findtext("label") or "") for page in _pages()]
 
 
-def _control_names(page: ET.Element) -> list[str]:
+def _control_names(page: Element) -> list[str]:
     """Return every named control declared inside *page*."""
     return [obj.get("name") or "" for obj in page.iter("object") if obj.get("name")]
 

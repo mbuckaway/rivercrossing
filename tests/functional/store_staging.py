@@ -126,6 +126,31 @@ def append_ride_events(store: Store, ride_id: int, spec: ResumeRideSpec) -> None
         store.append(ride_id, engine.reopen())
 
 
+_SESSION_ENDED_AT_SQL: dict[str, str] = {
+    "closed_at": (
+        "UPDATE app_session SET closed_at = ?"
+        " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)"
+    ),
+    "heartbeat_at": (
+        "UPDATE app_session SET heartbeat_at = ?"
+        " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)"
+    ),
+}
+
+
+def _session_ended_at_sql(column: str) -> str:
+    """Return the fixed UPDATE that stamps *column* on the newest row.
+
+    Raises:
+        ValueError: *column* is not one of the two session time columns.
+    """
+    try:
+        return _SESSION_ENDED_AT_SQL[column]
+    except KeyError:
+        msg = f"unknown app_session column: {column!r}"
+        raise ValueError(msg) from None
+
+
 def create_resumed_ride(db_path: Path, spec: ResumeRideSpec) -> int:
     """Create a store ride and a previous session that warrants resume.
 
@@ -151,8 +176,7 @@ def create_resumed_ride(db_path: Path, spec: ResumeRideSpec) -> int:
         column = "closed_at" if spec.quit_cleanly else "heartbeat_at"
         with sqlite3.connect(str(db_path)) as conn:  # commits on exit
             conn.execute(
-                f"UPDATE app_session SET {column} = ?"  # noqa: S608 -- column is a fixed literal, never input
-                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)",
+                _session_ended_at_sql(column),
                 (int(spec.ended_at.timestamp()),),
             )
     return ride_id

@@ -24,6 +24,7 @@ import base64
 import json
 import re
 import sqlite3
+import tempfile
 from contextlib import closing
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -2492,7 +2493,7 @@ def test_default_db_path_returns_rides_db_under_the_user_data_dir() -> None:
 
 def test_default_db_path_given_an_override_returns_it_verbatim() -> None:
     """An explicit path wins untouched (tests, diagnostics)."""
-    override = Path("/tmp/rc-custom/rides.db")  # noqa: S108 -- a stored value, never opened here
+    override = Path(tempfile.gettempdir()) / "rc-custom" / "rides.db"
 
     assert store_module.default_db_path(override) == override
 

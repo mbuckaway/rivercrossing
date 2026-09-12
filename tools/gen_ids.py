@@ -25,8 +25,14 @@ from collections.abc import (  # noqa: TC003 -- dev CLI, no perf-sensitive impor
     Sequence,
 )
 from pathlib import Path
-from typing import NamedTuple
-from xml.etree import ElementTree as ET
+from typing import TYPE_CHECKING, NamedTuple
+
+from defusedxml.ElementTree import parse
+
+if TYPE_CHECKING:
+    # Type-only: defusedxml does not re-export the Element class.
+    # Every parse goes through the defused facade above.
+    from xml.etree.ElementTree import Element
 
 STOCK_IDS: frozenset[str] = frozenset(
     {
@@ -120,7 +126,7 @@ def iter_xrc_files(xrc_dir: Path) -> list[Path]:
     return sorted(xrc_dir.glob("*.xrc"))
 
 
-def _top_level_windows(root: ET.Element) -> list[ET.Element]:
+def _top_level_windows(root: Element) -> list[Element]:
     """Return the direct ``<object>`` children of an XRC ``<resource>``.
 
     Each one is its own name namespace: a control name must be
@@ -129,7 +135,7 @@ def _top_level_windows(root: ET.Element) -> list[ET.Element]:
     return [child for child in root if child.tag == "object"]
 
 
-def _names_in_window(window: ET.Element) -> list[str]:
+def _names_in_window(window: Element) -> list[str]:
     """List every non-stock ``name`` attribute in *window*'s subtree."""
     names = []
     for elem in window.iter("object"):
@@ -170,7 +176,7 @@ def scan_xrc_directory(xrc_dir: Path) -> ScanResult:
     """
     all_names: set[str] = set()
     for path in iter_xrc_files(xrc_dir):
-        root = ET.parse(path).getroot()  # noqa: S314 -- our own .xrc, not attacker input
+        root = parse(path).getroot()
         for window in _top_level_windows(root):
             # logic-coverage-exempt: T-3 unreachable for loadable XRC
             # -- LoadFrame/LoadDialog/LoadMenuBar all require a name

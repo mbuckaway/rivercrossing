@@ -488,3 +488,40 @@ def test_append_ride_events_without_start_at_appends_no_ride_events(
         ).fetchone()[0]
 
     assert count == 0
+
+
+@pytest.mark.parametrize(
+    ("column", "expected"),
+    [
+        (
+            "closed_at",
+            (
+                "UPDATE app_session SET closed_at = ?"
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)"
+            ),
+        ),
+        (
+            "heartbeat_at",
+            (
+                "UPDATE app_session SET heartbeat_at = ?"
+                " WHERE id = (SELECT id FROM app_session ORDER BY id DESC LIMIT 1)"
+            ),
+        ),
+    ],
+)
+def test_session_ended_at_sql_known_column_returns_its_fixed_update(
+    store_staging_module: ModuleType, column: str, expected: str
+) -> None:
+    """Each session time column ships as a literal UPDATE."""
+    assert store_staging_module._session_ended_at_sql(column) == expected
+
+
+@pytest.mark.parametrize("column", ["closed", "heartbeat_at ", "id"])
+def test_session_ended_at_sql_unknown_column_raises_value_error(
+    store_staging_module: ModuleType, column: str
+) -> None:
+    """Anything but the two session time columns is refused."""
+    match = re.escape(f"unknown app_session column: {column!r}")
+
+    with pytest.raises(ValueError, match=match):
+        store_staging_module._session_ended_at_sql(column)

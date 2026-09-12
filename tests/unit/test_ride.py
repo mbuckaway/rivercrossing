@@ -31,6 +31,7 @@ the shoe front for the next deal to reproduce.
 """
 
 import re
+import tempfile
 import time
 from dataclasses import FrozenInstanceError
 from datetime import date, datetime, timedelta
@@ -149,7 +150,7 @@ def test_ride_config_bare_required_fields_defaults_hold_short_laps_to_false() ->
 
 def test_ride_config_given_a_logo_path_stores_it_verbatim() -> None:
     """A chosen logo_picker path round-trips exactly."""
-    path = Path("/tmp/gorba-logo.png")  # noqa: S108 -- a stored value, never opened here
+    path = Path(tempfile.gettempdir()) / "gorba-logo.png"
 
     config = _config(logo_path=path)
 
