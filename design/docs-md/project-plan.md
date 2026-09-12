@@ -183,7 +183,7 @@ Finish the ride, publish in minutes: standings with tie-breaks ①②③ (reorde
 
 - **E6.3 PDF** — E6.3.1 fpdf2 report per 5a–5c (deterministic bytes, R-62); E6.3.2 podium poster 5d.
 
-- **E6.4 Results window live** — E6.4.1 results_frame standings + publish checkboxes drive ExportOptions; E6.4.2 Results menu items (Generate HTML / Export PDF / Poster / Standings CSV / Preview in Browser) with FINISHED gating; E6.4.3 finish gate: evaluator self-test must be green (§2).
+- **E6.4 Results window live** — E6.4.1 results_dlg standings + publish checkboxes drive ExportOptions; E6.4.2 Results menu items (Generate HTML / Export PDF / Poster / Standings CSV / Preview in Browser) with FINISHED gating; E6.4.3 finish gate: evaluator self-test must be green (§2).
 
 Exit criteria goldens byte-identical · exports open offline from file:// · times appear only when the setting says (R-63) · poster + CSV ship · finish-to-published < 60 s on the acceptance race.
 
@@ -197,7 +197,7 @@ Every scorer's-table mistake is fixable with a reason and a trail: edit/void cro
 
 - **E7.2 Dialogs live** — E7.2.1 edit_crossing (edit/add-at-time titles), reassign, manual_deal, dnf_confirm, void flows from entry_detail; E7.2.2 REOPENED mode: entry off, corrections on, edited rows highlighted, "Finish again".
 
-- **E7.3 Audit viewer** — E7.3.1 audit_dlg filters (plate search + action choice), newest-first; E7.3.2 stale-export flag after corrections (stale_infobar in results_frame).
+- **E7.3 Audit viewer** — E7.3.1 audit_dlg filters (plate search + action choice), newest-first; E7.3.2 stale-export flag after corrections (stale_infobar in results_dlg).
 
 Exit criteria all §15 Cards-menu routes live with reasons enforced · reopen→correct→finish-again produces re-ranked, un-stale exports · audit rows for every mutation.
 
@@ -238,6 +238,10 @@ A post-E9 polish wave on `topic/ux-polish` (new requirements R-79…84; briefs i
 
 Exit criteria the ux-polish functional suite is green on both OSes: start-gate refusals, the no-ride prompt, the gauges/GO-STOP/stop-light state mapping, both notebook tabs and the rider open seam, the Teams Editor rework and duplicate rejection, and the About box.
 
+E11 · Rider simulator — delivered post-E9
+
+The **File ▸ Simulation…** dialog (new `simulation.xrc`: `simulation_dlg` → `sim_running_dlg`) is race-day rigging: generate `TEAM-####` teams and auto-plated riders into a DRAFT ride, then GO starts it and replays every lap through the console's own `RideEngine.record_crossing(plate, at=…)` seam, calling `RideEngine.stop()` at the end (the ride ends stopped-RUNNING); the modal progress dialog reports percent complete and can cancel.
+
 ### 6 · Traceability — EPIC ⇄ requirements ⇄ mockups
 
 | EPIC | Requirements | Design ground truth |
@@ -247,7 +251,7 @@ Exit criteria the ux-polish functional suite is green on both OSes: start-gate r
 | E3 | R-11/12/15/17, R-20/21/22 · R-16 plate shapes + R-13 setup UI (dealing and shoe wiring stay E4) | rider_editor_dlg, csv_preview_dlg, ride_setup_dlg · Spec §7 |
 | E4 | R-13/16, R-30…36 (undo = R-33; audio cues live in R-31) | main_frame states · Spec §2–§4 |
 | E5 | R-50…54, R-18 | resume/exit/continue dialogs, library · Spec §6/§9 |
-| E6 | R-14, R-60…63 | results_frame · golden samples + Jinja templates · UI Designs 5a–5d · Spec §8/§8b |
+| E6 | R-14, R-60…63 | results_dlg · golden samples + Jinja templates · UI Designs 5a–5d · Spec §8/§8b |
 | E7 | R-15/17, R-33/34, R-36 (REOPENED), R-38 | edit/reassign/deal/dnf dialogs, audit_dlg, entry_detail |
 | E8 | R-03/04, R-63 companion, help rows §15 | settings_dlg, shortcuts_dlg, about_dlg · UI Designs 6a |
 | E9 | R-01, R-74/75/77 · Spec §10 installers, §14 stages 5–6 | — |

@@ -30,7 +30,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 | Payload dataclasses (ExportOptions, records) | E1.2.2 | E6.2 renderers (fields frozen from E1) |
 | Evaluator finish-gate hook (self-test green?) | E2.4.1 | E6.4.3 finish flow |
 | Held-card release + manual-deal engine path | E4.3.2 (stub) | E7.2.1 wires dialogs to it |
-| stale_infobar in results_frame | E6.4.1 (hidden) | E7.3.2 triggers on corrections |
+| stale_infobar in results_dlg | E6.4.1 (hidden) | E7.3.2 triggers on corrections |
 | Accelerator table (single source) | E1.4.1 | E8.2.1 shortcuts_dlg rows |
 | PyInstaller dev-bundle specs | E1.6.1 | E9.1.1 hardens into release bundles + installers |
 | CI secrets contract (signing) | E1.1.2 (names them) | org supplies · E9.1.3 consumes |
@@ -164,7 +164,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 - **E6.3.1 PDF report / E6.3.2 poster** (two sessions) · Goal: fpdf2 renderer per UI Designs 5a–5c, then the one-page podium poster 5d; deterministic bytes (R-62). Tests first: fixed metadata → identical bytes across two runs and across OSes (CI artifact diff); section flags mirror ExportOptions; poster is a single page at Letter. Done when: byte-determinism green both OSes.
 
-- **E6.4.1 Results window live** · Goal: results_frame standings + publish checkboxes → ExportOptions; stale_infobar constructed in code and named with SetName(), present but hidden (E7 triggers) — XRC cannot author a wxInfoBar (§15b). Refs: #resultsframe. Tests first: harness — checkbox toggles change rendered exports (times case doubles as R-63 UI proof); tie rows badge. Done when: green.
+- **E6.4.1 Results window live** · Goal: results_dlg standings + publish checkboxes → ExportOptions; stale_infobar constructed in code and named with SetName(), present but hidden (E7 triggers) — XRC cannot author a wxInfoBar (§15b). Refs: #resultsframe. Tests first: harness — checkbox toggles change rendered exports (times case doubles as R-63 UI proof); tie rows badge. Done when: green.
 
 - **E6.4.2 Results menu** · Goal: §15 Results rows live (Standings F5, Generate HTML, Export PDF, Poster, Standings CSV, Preview in Browser, Tie-break Order) with FINISHED gating. Tests first: extend menu-coverage walk with the real actions writing tmp files. Done when: walk green.
 

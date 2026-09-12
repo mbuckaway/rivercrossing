@@ -4,6 +4,31 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.13] - 2026-09-12
+
+### Added
+
+- **Rider Simulator** — File ▸ Simulation… (`simulation_dlg`, DRAFT-only) configures riders, teams, solo riders, laps and the minutes between the first rider, generates `TEAM-####` teams and `FIRSTNAME-####`/`LASTNAME-####` riders (solo riders first, random M/F, random team assignment, auto plates), then replays the race on GO through the console's own `RideEngine.record_crossing(plate, at=…)` seam; a modal progress dialog (`sim_running_dlg`) reports percent complete and allows cancelling.
+- **Teams and Solo tabs on the results window** — a mixed ride splits its standings across a `results_notebook` (Teams · `teams_standings_list`, Solo · `solo_standings_list`); a solo ride hides the notebook and renders every rider in `standings_list`.
+- **Sortable, resizable standings columns** — the three results lists sort natively on a header click and resize their columns (`DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE`), and `StandingsRow` gains a `total_seconds` field so the Total column sorts numerically.
+- **A Close button on the results export row** — `wxID_CLOSE` joins the four publish buttons, and the window's minimum width is 755 so the five checkboxes do not wrap.
+
+### Changed
+
+- **The results window is a modal dialog** — `results_frame` (a modeless `wxFrame`) is now the `wxDialog` `results_dlg`, opened through `dialogs.run_dialog`.
+- **Results exports are gated to a FINISHED ride** — the four export buttons (`export_html_btn`, `export_pdf_btn`, `poster_btn`, `export_csv_btn`) stay disabled until the ride finishes, matching the Results-menu rows; Preview in Browser now needs a FINISHED ride and an export that exists.
+- **The Rider Editor's Add rider… moved to the list's button row** — `add_btn` sits beside Delete and Close, while Edit Rider… (`edit_btn`) stays in the form pane.
+
+### Removed
+
+- **The results window's tie-break panel and Reopen button** — `tiebreak_list` and `reopen_btn` are gone; the tie-break order lives only in Ride Setup (`setup.xrc`), and a ride reopens through Ride ▸ Reopen Ride (`mi_reopen_ride`).
+- **Results ▸ Tie-break Order… (`mi_tiebreak_order`)** — the Results-menu row is retired.
+- **The inline Teams/Solo section-header rows** — the notebook's pages replace the header rows that used to sit inside `standings_list`.
+
+### Fixed
+
+- **A new rider joins an existing team while the ride is running** — Add now folds through `Roster.add_rider_to_team`, so the pooled RUNNING/REOPENED carve-out comes from `can_move_rider` instead of the transient size-1 team the join used to build.
+
 ## [1.0.12] - 2026-09-11
 
 ### Added
