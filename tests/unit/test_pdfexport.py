@@ -374,6 +374,23 @@ def test_render_time_board_on_includes_fastest_section(tmp_path: Path) -> None:
     assert "Fastest — laps then time" in text
 
 
+def test_render_time_board_ignored_when_times_hidden(tmp_path: Path) -> None:
+    """R-63: times off drops the Fastest board even when requested.
+
+    The board is nothing but time data, so the per-kind podium/top-list
+    report still renders while no Fastest heading, no avg-lap text and
+    no time value appear anywhere.
+    """
+    opts = ExportOptions(show_times=False, time_board=True, full_field=False, laps_board=False)
+
+    text = _text(_render(tmp_path, _placed_mixed(), opts))
+
+    assert "Fastest" not in text
+    assert "avg " not in text
+    assert "5:32:00" not in text
+    assert "Best hands — teams" in text
+
+
 def test_render_show_times_off_omits_time_columns(tmp_path: Path) -> None:
     """R-63: times hidden means no total/best-lap text in any row."""
     opts = ExportOptions(show_times=False, full_field=True, laps_board=True)

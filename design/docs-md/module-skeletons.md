@@ -337,4 +337,4 @@ dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",
 [tool.coverage.report] fail_under = 90        # core modules (R-71)
 ```
 
-Companions: Spec (§11 module table, §12 tests, §14 CI) · Requirements (R-70…R-77) · UI Designs (ids referenced in views/). Any rename here must be reflected in Spec §11 the same day — the two documents are one contract.
+Companions: Spec (§11 module table, §12 tests, §14 CI) · Requirements (R-70…R-76) · UI Designs (ids referenced in views/). Any rename here must be reflected in Spec §11 the same day — the two documents are one contract.

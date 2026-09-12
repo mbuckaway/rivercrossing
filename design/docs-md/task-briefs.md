@@ -208,7 +208,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 - **E9.2.1 Full acceptance race** · Goal: R-74 verbatim — CSV in, hundreds of typed crossings, stop/continue, kill+relaunch, quit+relaunch, finish, all four exports verified vs fixtures. Done when: green both OSes in stage 4 (this is the release gate).
 
-- **E9.2.2 + E9.2.3 Nightly + release** · Goal: nightly seeded race filing the seed on failure (R-77); tag-triggered release drafting with artifacts. Tests first: forced-failure files seed in the issue body (dry-run); tag dry-run attaches installers + checksums. Done when: one real nightly green + v1.0 draft produced.
+- **E9.2.3 release** · Goal: tag-triggered release publishing with artifacts. Tests first: tag dry-run attaches installers + checksums. Done when: v1.0 draft produced.
 
 ### Review of the brief set — findings & resolutions
 

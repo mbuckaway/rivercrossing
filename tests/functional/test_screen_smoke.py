@@ -7,7 +7,7 @@ resolves, capture a screenshot artifact, close cleanly. It runs in
 every CI build forever after." This module is that test, plus the
 harness-isolation and negative-path proofs the brief calls for.
 
-Two frames (``main_frame``, ``results_frame``) load with
+Two frames (``main_frame``, ``results_dlg``) load with
 ``LoadFrame``; the other 21 load with ``LoadDialog`` --
 :data:`pages.WINDOWS` carries that distinction per window.
 ``main_menubar`` is a menu-bar resource, not a window: it is
@@ -232,7 +232,7 @@ def test_type_text_given_a_string_updates_the_controls_value(xrc_resource: objec
 
 def test_click_given_a_stock_button_fires_its_bound_handler(xrc_resource: object) -> None:
     """Direct event injection delivers a real EVT_BUTTON (measured)."""
-    dialog = harness.load_window_verified(xrc_resource, ids.FINISH_CONFIRM_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.DNF_CONFIRM_DLG, frame=False)
     dialog.Show()
     harness.pump()
     fired_ids = []
@@ -250,7 +250,7 @@ def test_click_given_a_stock_button_fires_its_bound_handler(xrc_resource: object
 
 def test_run_modal_given_a_dismiss_id_returns_it_from_showmodal(xrc_resource: object) -> None:
     """The dialog-hook: ShowModal ends on its own, no user present."""
-    dialog = harness.load_window_verified(xrc_resource, ids.FINISH_CONFIRM_DLG, frame=False)
+    dialog = harness.load_window_verified(xrc_resource, ids.DNF_CONFIRM_DLG, frame=False)
 
     try:
         result = harness.run_modal(dialog, dismiss_with=harness.wx.ID_CANCEL)
@@ -323,7 +323,7 @@ def test_screenshot_given_an_unwritable_destination_raises_naming_it(
 
 # ------------------------------- Fault B: the verified-load guard
 # (CI has measured the process-global XmlResource building a window
-# with a whole subtree skipped -- results_frame with an empty
+# with a whole subtree skipped -- results_dlg with an empty
 # staticbox, ride_setup_dlg missing its radio group, rider_editor_dlg
 # missing its action staticbox. load_window_verified detects the gap
 # against pages.WINDOWS' contract, rebuilds once from a fresh private
@@ -347,7 +347,7 @@ def test_load_window_returns_exactly_what_load_frame_constructed(
         LoadDialog=lambda _parent, _name: None,
     )
 
-    assert harness.load_window(resource, ids.RESULTS_FRAME, frame=True) is sentinel
+    assert harness.load_window(resource, ids.RESULTS_DLG, frame=True) is sentinel
 
 
 def test_load_window_verified_retries_once_when_the_first_frame_misses_deep_controls(
@@ -378,7 +378,7 @@ def test_load_window_verified_retries_once_when_the_first_frame_misses_deep_cont
 
     with monkeypatch.context() as patched:
         patched.setattr(harness.wx.Window, "FindWindowByName", _find)
-        window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+        window = harness.load_window_verified(xrc_resource, ids.RESULTS_DLG, frame=True)
 
     try:
         deep = harness.find_control(window, ids.SHOW_TIMES_CHK)
@@ -415,8 +415,8 @@ def test_load_window_verified_raises_with_the_child_inventory_when_the_retry_als
 
     with pytest.raises(
         harness.ControlNotFoundError,
-        match=re.escape("results_frame has no control named 'show_times_chk'"),
+        match=re.escape("results_dlg has no control named 'show_times_chk'"),
     ):
-        harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+        harness.load_window_verified(xrc_resource, ids.RESULTS_DLG, frame=True)
 
-    assert harness.wx.Window.FindWindowByName(ids.RESULTS_FRAME) is None
+    assert harness.wx.Window.FindWindowByName(ids.RESULTS_DLG) is None

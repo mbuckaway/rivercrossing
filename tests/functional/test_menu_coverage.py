@@ -26,8 +26,9 @@ What only this module can prove:
    Review Held Cards -- so the second section below drives them at a
    real ``build_main_window`` frame and pins what each does instead
    (the presenter start gate, the no-store guard, the review-tab
-   focus). The Results window's ``reopen_btn`` gets the same
-   treatment: clicking it runs the reopen flow the menu row runs.
+   focus). The reopen flow is menu-only now (H2 retired the results
+   window's Reopen button): the section also drives ``mi_reopen_ride``
+   through its native prompt.
 5. ux-polish's final dead-row audit wired the last two Ride ▸ rows
    (Stop Ride…, Set Start Time…) to real confirm/form flows; the
    wired-row section drives them at a real bound frame (Stop Ride…
@@ -360,7 +361,7 @@ def test_mi_review_held_returns_the_review_notebook_to_the_needs_review_tab(
     assert notebook.GetSelection() == 0
 
 
-# --- ux-polish: the results frame's reopen_btn ----------------------
+# --- ux-polish: the menu reopen flow (results Reopen button retired) --
 
 
 def _build_live_console(  # noqa: PLR0913 -- (xrc_resource, wx_app, store, venue, started, finished, reopened): the live-console builder's state knobs
@@ -467,42 +468,49 @@ def _build_live_console(  # noqa: PLR0913 -- (xrc_resource, wx_app, store, venue
     return context, engine
 
 
-def test_results_reopen_btn_runs_the_same_reopen_flow_as_the_menu(
+def test_mi_reopen_ride_confirmed_moves_a_finished_ride_to_reopened(
     xrc_resource: object,
     wx_app: object,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Clicking ``reopen_btn`` opens the confirm and reopens the ride.
+    """Ride ▸ Reopen Ride asks the native prompt and reopens the ride.
 
-    ux-polish wired the results frame's Reopen ride… button to the
-    same ``_handle_reopen_ride_route`` flow ``mi_reopen_ride`` runs:
-    the confirm dialog opens (auto-OK here -- ``ShowModal`` would
-    block with no user present, the suite's standard seam) and a
-    confirmed reopen moves the FINISHED console engine to REOPENED.
+    H2 retired the results window's Reopen button along with the
+    authored reopen confirm: a ride reopens only through the menu row,
+    which asks the native ``std_dialogs.show_prompt`` (scripted here
+    -- native message dialogs are not programmatically dismissible,
+    measured 2026-09-09) and, on a confirmed Reopen, runs
+    ``presenter.on_reopen`` -- moving the FINISHED console to REOPENED.
     """
     context, engine = _build_live_console(xrc_resource, wx_app, finished=True)
-    results_frame = None
-    opened: list[str] = []
+    asked: list[tuple[str, str, str, str]] = []
 
-    def _auto_ok(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        opened.append(dialog.GetName())
+    def _recording_prompt(  # noqa: PLR0913, PLR0917 -- mirrors std_dialogs.show_prompt's signature
+        _parent: object,
+        title: str,
+        message: str,
+        ok_label: str,
+        cancel_label: str,
+    ) -> int:
+        asked.append((title, message, ok_label, cancel_label))
         return wx.ID_OK
 
     try:
-        monkeypatch.setattr(dialogs, "run_dialog", _auto_ok)
-        harness.fire_menu_event(context.frame, ids.MI_STANDINGS)
-        results_frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-        assert results_frame is not None
-
-        harness.click(results_frame, ids.REOPEN_BTN)
+        monkeypatch.setattr(std_dialogs, "show_prompt", _recording_prompt)
+        harness.fire_menu_event(context.frame, "mi_reopen_ride")
 
         status_label = harness.find_control(context.frame, ids.RIDE_STATUS_LBL)
+        assert asked == [
+            (
+                "Reopen Ride",
+                dialogs.reopen_ride_message("GORBA EPIC 2026"),
+                "Reopen",
+                "Cancel",
+            )
+        ]
         assert engine.state is RideStatus.REOPENED
-        assert opened == [ids.REOPEN_RIDE_DLG]
         assert status_label.GetLabelText() == "REOPENED"
     finally:
-        if results_frame is not None:
-            harness.close_window(results_frame)
         harness.release_main_window(wx_app, context.frame)
 
 

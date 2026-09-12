@@ -69,17 +69,17 @@ def test_main_frame_empty_state_screenshot_captures_the_no_ride_console(
     assert saved.exists()
 
 
-def test_results_frame_empty_state_screenshot_captures_no_standings(
+def test_results_dlg_empty_state_screenshot_captures_no_standings(
     xrc_resource: object,
 ) -> None:
     """Results render zero standings rows until E6 wires real data."""
-    window = harness.load_window_verified(xrc_resource, ids.RESULTS_FRAME, frame=True)
+    window = harness.load_window_verified(xrc_resource, ids.RESULTS_DLG, frame=True)
     try:
         window.Show()
         window.Layout()
         harness.pump()
         view = ResultsWindow(window, data_source=EmptyDataSource())
-        saved = harness.screenshot(window, SCREENSHOT_DIR / "results_frame_empty_state.png")
+        saved = harness.screenshot(window, SCREENSHOT_DIR / "results_dlg_empty_state.png")
         row_count = view.standings_list.GetModel().GetCount()
     finally:
         del view

@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING
 import pytest
 import wx
 
+from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode
 from rivercrossing.ui.presenters.data_source import StandingsRow
@@ -370,6 +371,176 @@ def test_show_standings_given_empty_sections_renders_empty_models() -> None:
 
     assert shell.teams_standings_list.model.GetCount() == 0
     assert shell.solo_standings_list.model.GetCount() == 0
+
+
+# -------------------------------------- publish-checkbox gating (R-63)
+
+
+class _CheckBox:
+    """A ``wx.CheckBox`` double recording its tick and enablement."""
+
+    def __init__(self, *, checked: bool = False, enabled: bool = True) -> None:
+        """Start at *checked*/*enabled* (the XRC defaults)."""
+        self.checked = checked
+        self.enabled = enabled
+
+    def GetValue(self) -> bool:  # noqa: N802 -- wx API name the double mirrors
+        """Return the recorded tick state."""
+        return self.checked
+
+    def SetValue(self, value: bool) -> None:  # noqa: N802, FBT001 -- wx API name and bool
+        """Record a programmatic tick."""
+        self.checked = value
+
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name and bool
+        """Record the enablement."""
+        self.enabled = enabled
+
+
+class _CheckEvent:
+    """A checkbox event double naming the control it fired from."""
+
+    def __init__(self, source: _CheckBox) -> None:
+        """Store the control the event fired from."""
+        self.source = source
+        self.skipped = False
+
+    def Skip(self) -> None:  # noqa: N802 -- wx API name the double mirrors
+        """Record the event.Skip()."""
+        self.skipped = True
+
+    def GetEventObject(self) -> _CheckBox:  # noqa: N802 -- wx API name
+        """Return the control the event fired from."""
+        return self.source
+
+
+class _TogglePresenter:
+    """A ``ResultsPresenter`` double counting toggle forwards."""
+
+    def __init__(self) -> None:
+        """Start with no forwards."""
+        self.toggles = 0
+
+    def on_publish_toggled(self) -> None:
+        """Record one forward from the view."""
+        self.toggles += 1
+
+
+class _PublishShell:
+    """A ResultsWindow shell owning only the publish checkboxes."""
+
+    def __init__(self, *, show_times: bool, time_board: bool) -> None:
+        """Build the five boxes, the columns and the presenter."""
+        self.show_times_chk = _CheckBox(checked=show_times)
+        self.laps_board_chk = _CheckBox(checked=True)
+        self.time_board_chk = _CheckBox(checked=time_board)
+        self.full_field_chk = _CheckBox(checked=True)
+        self.all_cards_chk = _CheckBox(checked=True)
+        self._total_columns = (_Column(),)
+        self.presenter = _TogglePresenter()
+
+    def _apply_show_times_state(self) -> None:
+        """Delegate the gate to the real view method."""
+        ResultsWindow._apply_show_times_state(self)
+
+
+def test_apply_show_times_state_given_times_off_disables_and_clears_the_time_board() -> None:
+    """R-63: times off clears and disables the Fastest-time box."""
+    shell = _PublishShell(show_times=False, time_board=True)
+
+    ResultsWindow._apply_show_times_state(shell)
+
+    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (False, False)
+
+
+def test_apply_show_times_state_given_times_off_hides_every_total_column() -> None:
+    """Times off still hides the Total column on every list."""
+    shell = _PublishShell(show_times=False, time_board=False)
+
+    ResultsWindow._apply_show_times_state(shell)
+
+    assert shell._total_columns[0].hidden is True
+
+
+def test_apply_show_times_state_given_times_off_hides_all_three_total_columns() -> None:
+    """T-4: every list's Total column is hidden, not only the first."""
+    shell = _PublishShell(show_times=False, time_board=False)
+    shell._total_columns = (_Column(), _Column(), _Column())
+
+    ResultsWindow._apply_show_times_state(shell)
+
+    assert [column.hidden for column in shell._total_columns] == [True, True, True]
+
+
+def test_apply_show_times_state_given_times_on_reenables_the_time_board() -> None:
+    """Re-checking show_times restores the box and the column."""
+    shell = _PublishShell(show_times=True, time_board=False)
+    shell.time_board_chk.enabled = False  # the state while times were off
+    shell._total_columns[0].SetHidden(True)  # noqa: FBT003 -- wx's positional bool
+
+    ResultsWindow._apply_show_times_state(shell)
+
+    assert (shell.time_board_chk.enabled, shell._total_columns[0].hidden) == (True, False)
+
+
+def test_apply_show_times_state_given_times_on_keeps_a_checked_time_board() -> None:
+    """R-63(d): with times on a checked box is left alone."""
+    shell = _PublishShell(show_times=True, time_board=True)
+
+    ResultsWindow._apply_show_times_state(shell)
+
+    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (True, True)
+
+
+def test_publish_options_given_times_on_reports_a_checked_time_board() -> None:
+    """R-63(d): with times on the mapping keeps time_board."""
+    shell = _PublishShell(show_times=True, time_board=True)
+
+    options = ResultsWindow.publish_options(shell)
+
+    assert options == ExportOptions(show_times=True, time_board=True)
+
+
+def test_show_publish_options_given_times_on_restores_the_time_board_tick() -> None:
+    """Re-enabling times re-enables the box and its tick (R-63)."""
+    shell = _PublishShell(show_times=False, time_board=False)
+    shell.time_board_chk.enabled = False  # the state while times were off
+
+    ResultsWindow.show_publish_options(shell, ExportOptions(show_times=True, time_board=True))
+
+    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (True, True)
+
+
+def test_on_publish_toggle_given_times_off_clears_the_time_board_option() -> None:
+    """Unchecking times clears the box before the read."""
+    shell = _PublishShell(show_times=False, time_board=True)
+    event = _CheckEvent(shell.show_times_chk)
+
+    ResultsWindow._on_publish_toggle(shell, event)
+
+    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (False, False)
+    assert ResultsWindow.publish_options(shell).time_board is False
+    assert (shell.presenter.toggles, event.skipped) == (1, True)
+
+
+def test_on_publish_toggle_given_another_checkbox_still_forwards_and_skips() -> None:
+    """Only show_times_chk runs the gate; other toggles forward."""
+    shell = _PublishShell(show_times=True, time_board=True)
+    event = _CheckEvent(shell.laps_board_chk)
+
+    ResultsWindow._on_publish_toggle(shell, event)
+
+    assert (shell.presenter.toggles, event.skipped) == (1, True)
+    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (True, True)
+
+
+def test_show_publish_options_given_times_off_clears_a_reflected_time_board_tick() -> None:
+    """Reflected options can never show a tick while times are off."""
+    shell = _PublishShell(show_times=True, time_board=True)
+
+    ResultsWindow.show_publish_options(shell, ExportOptions(show_times=False, time_board=True))
+
+    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (False, False)
 
 
 # ------------------------------------------------- export-button gate

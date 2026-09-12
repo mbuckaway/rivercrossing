@@ -1,34 +1,38 @@
-# RiverCrossing CI — the six-stage gauntlet from design/docs-md/spec.md §14.
+# RiverCrossing CI — the static, unit, build and release stages from
+# design/docs-md/spec.md §14.
 #
-# Stages 3 (Functional UI) and 4 (Acceptance race) are removed pending UI
-# stabilization (2026-09-08): real-wx functional coverage is flaky in its
-# current form and does not map to end-user flows yet. It will be revisited
-# once the UI is stable. Release no longer gates on those stages.
+# No functional tests of any kind run here, and none may be added back.
+# The functional suite (tests/functional) and the acceptance race
+# (tests/acceptance) drive the real wx UI on a desktop; both are broken
+# and forbidden permanently (2026-09-12). Each directory's conftest exits
+# at collection, so pytest refuses before a single test or window runs.
+# Former stages 3 (Functional UI) and 4 (Acceptance race) are removed —
+# not pending anything — and the scheduled nightly acceptance workflow
+# (nightly.yml) was deleted the same day: no test runs on a schedule, and
+# no cron trigger may be reintroduced. The stage-5 packaging smoke
+# sessions (smoke, dmg_smoke, winsetup_smoke) were removed on 2026-09-10
+# for the same reason. CI builds and packages only.
 #
-# The stage-5 packaging smoke sessions (smoke, dmg_smoke, winsetup_smoke)
-# were removed on 2026-09-10: they run pytest against tests/functional,
-# whose suite is broken and is being rewritten from scratch. CI builds and
-# packages only -- it runs no functional tests at all.
-#
-# EPIC 1 wires stages 1, 2, 3 and 5. Stage 4 (Acceptance) needs the full race,
-# which arrives in EPIC 9. Phase 9 added the unsigned per-user NSIS installer
-# to the Windows stage-5 leg (the unsigned half of E9.1.2); Phase 11 added the
-# unsigned half of stage 6 -- a version tag runs every wired stage and, when
-# green, publishes the GitHub release with the macOS DMG, both Windows
-# installers (x64 + ARM64) and their checksums. E9.1.3 wires Developer ID
-# signing + notarization into the same tag release job (below), gated on
-# the APPLE_* secrets; the unsigned DMG is the fallback until they land.
-# Windows stays unsigned by decision (R-01 -- no Authenticode certificate).
+# EPIC 1 wired stages 1, 2, 3 and 5; EPIC 9 delivered stage 4 (the
+# acceptance race) and E9.2.2's nightly seeded replay. Stages 3-4 and the
+# nightly were removed permanently on 2026-09-12 (above). Phase 9 added
+# the unsigned per-user NSIS installer to the Windows stage-5 leg (the
+# unsigned half of E9.1.2); Phase 11 added the unsigned half of stage 6 --
+# a version tag runs every wired stage and, when green, publishes the
+# GitHub release with the macOS DMG, both Windows installers (x64 + ARM64)
+# and their checksums. E9.1.3 wires Developer ID signing + notarization
+# into the same tag release job (below), gated on the APPLE_* secrets; the
+# unsigned DMG is the fallback until they land. Windows stays unsigned by
+# decision (R-01 -- no Authenticode certificate).
 #
 # **Both platforms gate** (spec §14, R-75). The EPIC 1 deviation that made
 # macOS the only gate — no Windows test machine existed — was reversed in
 # Phase 10 after every known Windows failure was root-caused and fixed
 # (modal-harness sentinel clobber, MSW default-item focus, the scenario
 # close prompt, Fit()-derived sizing, mypy output color). Stages 1–2 run as
-# a three-OS matrix (macOS, Windows x64, Windows ARM64); stage 3 stays
-# macOS + Windows x64; stage 5 is one build job per OS/architecture because
-# the artifacts genuinely differ (unsigned DMG vs unsigned NSIS setup .exe
-# per Windows arch).
+# a three-OS matrix (macOS, Windows x64, Windows ARM64); stage 5 is one
+# build job per OS/architecture because the artifacts genuinely differ
+# (unsigned DMG vs unsigned NSIS setup .exe per Windows arch).
 
 name: CI
 
@@ -149,13 +153,15 @@ jobs:
 
   # ----------------------------------------------------- stage 5 · Windows
   # The unsigned half of E9.1.2 (Phase 9), blocking since Phase 10: build
-  # the dev bundle, smoke it, compile the unsigned per-user NSIS installer
-  # and drive the silent install -> launch -> silent uninstall suite. Two
+  # the dev bundle and compile the unsigned per-user NSIS installer. Two
   # jobs -- one per CPU architecture -- because PyInstaller cannot cross-
   # compile and each artifact is native to its runner. The x64 image has
   # no NSIS, so it installs it with Chocolatey (choco nsis 3.12.0 matches
   # the local brew makensis 3.12); the ARM64 image ships NSIS 3.10
-  # preinstalled. Authenticode signing remains stage 6 / E9.1.2.
+  # preinstalled. The silent install -> launch -> silent uninstall suite
+  # was removed on 2026-09-10 with the packaging smoke sessions -- CI
+  # builds and packages only, and no functional tests of any kind run.
+  # Authenticode signing remains stage 6 / E9.1.2.
   build-windows-x64:
     name: "5 · Build dev bundle + installer (Windows x64)"
     needs: [static, unit]

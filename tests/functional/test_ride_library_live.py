@@ -8,14 +8,14 @@ resume wiring), **Duplicate** copies setup + roster to a new DRAFT ride
 with no timing data (R-15) and refreshes the list, **New** opens the
 ride-setup flow, **Delete** keeps the E5.3 R-18 path, and the two menu
 routes that used to hit the E1.4.1 sentinel (File ▸ Duplicate Ride…,
-Ride ▸ Reopen Ride) now open the mock-first confirm dialogs and act.
+Ride ▸ Reopen Ride) now ask the native confirm prompts and act.
 
 Every flow mutates process-global state (the library is a modal, and
 Open rebuilds the console around the store engine), so each runs in a
 fresh, spawned interpreter via ``console_subprocess_scenarios.py`` --
-the same isolation the resume/quit scenarios use. The dialog-level
-R-76 facts (names resolve, Esc cancels, OK is the default) live in
-``test_duplicate_reopen_dialogs.py``; this file proves the flows.
+the same isolation the resume/quit scenarios use. The native prompts'
+copy contract lives in ``test_duplicate_reopen_dialogs.py``; this
+file proves the flows.
 
 Like the rest of ``tests/functional/``, these run only in the Tart VM
 -- never directly on the host (the suite opens real wx windows).
@@ -30,7 +30,7 @@ import scenario_runner
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import ids
+from rivercrossing.ui import ids, std_dialogs
 from rivercrossing.ui.presenters.data_source import RideSummary
 from rivercrossing.ui.views.ride_library import RideLibrary
 
@@ -101,10 +101,9 @@ def test_ride_library_duplicate_appears_as_new_draft_with_no_timing() -> None:
     """
     result = scenario_runner.run_scenario("library_live_duplicate_appears_as_new_draft")
     data = result["data"]
-    assert data["duplicate_dlg_shown"] is True, result["context"]
+    assert data["duplicate_confirm_shown"] is True, result["context"]
     assert data["duplicate_message"] != "", result["context"]
     assert "GORBA EPIC 2026" in data["duplicate_message"], result["context"]
-    assert data["duplicate_default"] == pages.WX_ID_OK, result["context"]
     assert data["rows_after"] == [
         ["GORBA EPIC 2026", "DRAFT"],
         ["GORBA EPIC 2026 (copy)", "DRAFT"],
@@ -127,10 +126,9 @@ def test_duplicate_ride_menu_route_opens_confirm_and_duplicates() -> None:
     result = scenario_runner.run_scenario("duplicate_ride_menu_route_opens_confirm_and_duplicates")
 
     data = result["data"]
-    assert data["duplicate_dlg_shown"] is True, result["context"]
+    assert data["duplicate_confirm_shown"] is True, result["context"]
     assert data["duplicate_message"] != "", result["context"]
     assert "GORBA EPIC 2026" in data["duplicate_message"], result["context"]
-    assert data["duplicate_default"] == pages.WX_ID_OK, result["context"]
     assert data["status_text"] == "Duplicated as GORBA EPIC 2026 (copy)", result["context"]
     assert data["ride_count"] == 2, result["context"]
     assert data["copy_name"] == "GORBA EPIC 2026 (copy)", result["context"]
@@ -138,11 +136,11 @@ def test_duplicate_ride_menu_route_opens_confirm_and_duplicates() -> None:
 
 
 def test_reopen_ride_menu_route_opens_confirm_and_reopens() -> None:
-    """Ride ▸ Reopen Ride resolves to the real dialog and reopens."""
+    """Ride ▸ Reopen Ride asks the native prompt and reopens."""
     result = scenario_runner.run_scenario("reopen_ride_menu_route_opens_confirm_and_reopens")
 
     data = result["data"]
-    assert data["reopen_dlg_shown"] is True, result["context"]
+    assert data["reopen_confirm_shown"] is True, result["context"]
     assert data["reopen_message"] != "", result["context"]
     assert "Club poker night" in data["reopen_message"], result["context"]
     assert data["status_label"] == "REOPENED", result["context"]
@@ -236,28 +234,32 @@ def test_ride_library_open_forwards_the_selected_ride(xrc_resource: object) -> N
     assert opened == [_draft_row()]
 
 
-def test_ride_library_duplicate_forwards_the_selected_ride(xrc_resource: object) -> None:
+def test_ride_library_duplicate_forwards_the_selected_ride(
+    xrc_resource: object, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Duplicate hands the selected row to the injected callback."""
     duplicated: list[RideSummary] = []
     window, _ = _library_for_rows(xrc_resource, [_draft_row()], on_duplicate=duplicated.append)
     found: dict[str, Any] = {}
 
-    def _confirm_duplicate(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        found["dialog_shown"] = True
-        harness.click(dialog, pages.WX_ID_OK)
+    def _record_and_ok(  # noqa: PLR0913, PLR0917 -- mirrors std_dialogs.show_prompt's signature
+        _parent: object,
+        title: str,
+        message: str,
+        ok_label: str,
+        cancel_label: str,
+    ) -> int:
+        found["prompt_shown"] = (title, message, ok_label, cancel_label)
+        return wx.ID_OK
 
     try:
+        monkeypatch.setattr(std_dialogs, "show_prompt", _record_and_ok)
         harness.select_row(window, ids.RIDES_LIST, 0)
-        harness.dismiss_modal(
-            ids.DUPLICATE_RIDE_DLG,
-            dismiss_with=wx.ID_OK,
-            drive=_confirm_duplicate,
-        )
         harness.click(window, ids.DUPLICATE_BTN)
     finally:
         harness.close_window(window)
 
-    assert found.get("dialog_shown") is True
+    assert found.get("prompt_shown") is not None
     assert duplicated == [_draft_row()]
 
 
@@ -266,17 +268,31 @@ def test_ride_library_duplicate_forwards_the_selected_ride(xrc_resource: object)
 
 def test_duplicate_ride_route_without_a_store_ride_posts_notice(
     wx_app: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Negative: no store ride open -- the route says so, opens nothing.
+    """Negative: no store ride open -- the route says so, asks nothing.
 
     The demo bootstrap has no ``active_ride_id`` (no store-backed ride
     was opened), so File ▸ Duplicate Ride… must post a notice rather
-    than open the confirm -- the honest no-op the E1.4.1 sentinel used
-    to be, kept for the no-ride case now that the dialog is real.
+    than raise the native prompt -- the honest no-op the E1.4.1
+    sentinel used to be, kept for the no-ride case now that the
+    confirm is real.
     """
     frame = app_module.build_main_window(wx_app)
+    prompts: list[tuple[str, str, str, str]] = []
+
+    def _record_prompt(  # noqa: PLR0913, PLR0917 -- mirrors std_dialogs.show_prompt's signature
+        _parent: object,
+        title: str,
+        message: str,
+        ok_label: str,
+        cancel_label: str,
+    ) -> int:
+        prompts.append((title, message, ok_label, cancel_label))
+        return wx.ID_OK
 
     try:
+        monkeypatch.setattr(std_dialogs, "show_prompt", _record_prompt)
         frame.Show()
         frame.Layout()
         harness.pump()
@@ -286,7 +302,7 @@ def test_duplicate_ride_route_without_a_store_ride_posts_notice(
         harness.release_main_window(wx_app, frame)
 
     assert status_text == "Duplicate Ride… — no store ride is open"
-    assert wx.Window.FindWindowByName(ids.DUPLICATE_RIDE_DLG) is None
+    assert prompts == []
 
 
 def test_reopen_ride_route_on_non_finished_ride_refuses_and_notices() -> None:
@@ -302,6 +318,6 @@ def test_reopen_ride_route_on_non_finished_ride_refuses_and_notices() -> None:
     result = scenario_runner.run_scenario("reopen_ride_route_on_non_finished_refuses")
 
     data = result["data"]
-    assert data["reopen_dlg_shown"] is True, result["context"]
+    assert data["reopen_confirm_shown"] is True, result["context"]
     assert data["reopen_message"] != "", result["context"]
     assert data["status_text"] == "Cannot reopen: cannot reopen from draft", result["context"]

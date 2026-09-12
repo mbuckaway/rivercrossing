@@ -30,7 +30,7 @@ Key facts:
 ### Where to look
 
 - `src/rivercrossing/ui/xrc/main.xrc` — `main_frame` (line 35) declares **no `<style>`** element. The XRC `wxFrame` handler's default style is the open question: if the default does not include `wxRESIZE_BORDER` on this wxWidgets pin (3.3.3), the console is not resizable on Windows.
-- `src/rivercrossing/ui/xrc/results.xrc` — `results_frame` (line 42) also declares no `<style>`; check it the same way.
+- `src/rivercrossing/ui/xrc/results.xrc` — `results_dlg` (line 42) also declares no `<style>`; check it the same way.
 - `src/rivercrossing/ui/views/main_frame.py` — the E8.1.1 geometry restore is at `__init__` (~line 258: `SetMinSize(MIN_SIZE)` → `SetSize(MIN_SIZE)` → restore `SetPosition`/`SetSize` from the saved geometry).
 
 ### Why it matters (the requirement)
@@ -50,7 +50,7 @@ Key facts:
    <style>wxDEFAULT_FRAME_STYLE</style>
    ```
 
-   on `main_frame` (and `results_frame` if affected). `wxDEFAULT_FRAME_STYLE` is the documented default, so declaring it is a no-op on platforms where the default already applies (macOS) and only changes behavior where the implicit default is deficient.
+   on `main_frame` (and `results_dlg` if affected). `wxDEFAULT_FRAME_STYLE` is the documented default, so declaring it is a no-op on platforms where the default already applies (macOS) and only changes behavior where the implicit default is deficient.
 5. Re-run the E8.1.1 persistence scenario on Windows and confirm the saved `(1200, 800)` restores exactly, and that a user-drag resize persists across relaunch.
 
 ### What was NOT changed, and why

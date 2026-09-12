@@ -16,7 +16,7 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 1. `docs-md/module-skeletons.md` — repo tree, pyproject, module boundaries (build this layout exactly)
 1. `docs-md/xrc-windows.md` — all 23 windows: control hierarchy, snake_case names, radio defaults, code-side notes
 1. `docs-md/spec.md §15 + §15b` — menu route map (38 rows) and the frozen name registry
-1. `docs-md/requirements.md R-01…R-05, R-70…R-77` — platform, XRC-first rule, CI gates
+1. `docs-md/requirements.md R-01…R-05, R-70…R-76` — platform, XRC-first rule, CI gates
 1. `docs-md/task-briefs.md → E1 briefs (E1.1.1 … E1.6.1)` — your test list
 1. `screenshots/windows/*.jpg` — visual reference for each window (native chrome will differ)
 

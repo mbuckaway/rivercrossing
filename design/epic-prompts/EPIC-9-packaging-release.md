@@ -14,14 +14,14 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 
 ## Step 1 — read these first, fully, in this order
 1. `docs-md/spec.md §10 (packaging), §14 (CI stages)`
-1. `docs-md/requirements.md R-01, R-74, R-77`
+1. `docs-md/requirements.md R-01, R-74`
 1. `docs-md/task-briefs.md → E9 briefs`
 
 Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E9.1 Bundles** — PyInstaller apps with assets/templates/guide/WAVs included; Inno Setup per-user .exe (unsigned in v1, SmartScreen documented); dmgbuild + codesign + notarize (unsigned dmg with an advisory gate until credentials land).
-- **E9.2 Release** — the full acceptance race (CSV in, hundreds of crossings, stop/continue, kill+relaunch, quit+relaunch, finish, all four exports verified) as the release gate; nightly seeded race that files its seed on failure; tag-triggered release drafting.
+- **E9.2 Release** — the full acceptance race (CSV in, hundreds of crossings, stop/continue, kill+relaunch, quit+relaunch, finish, all four exports verified) as the release gate; tag-triggered release drafting.
 
 Per-task test lists live in `docs-md/task-briefs.md` under EPIC 9 — those named test files and cases ARE the specification for this EPIC. Do not invent extra scope.
 

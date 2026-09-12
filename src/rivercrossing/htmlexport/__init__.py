@@ -684,7 +684,10 @@ def _boards_from_placed(
     other out; a solo field keeps the top ten. ``laps_board`` renders
     only when ``opts.laps_board`` (rows carry a ``total`` only when
     times are shown, R-63). ``time_board`` is times-only by contract
-    and stays one flat top ten (most laps, then shortest total time).
+    and stays one flat top ten (most laps, then shortest total time);
+    it is built only when times are shown -- a time board is nothing
+    but time data, so ``show_times`` off leaves it empty however
+    ``opts.time_board`` is set (R-63).
     """
     results = [p.result for p in placed]
     laps = _laps_record_board(placed, opts) if opts.laps_board else ()
@@ -701,7 +704,7 @@ def _boards_from_placed(
             )
             for p in time_leaderboard(results)
         )
-        if opts.time_board
+        if opts.time_board and opts.show_times
         else ()
     )
     return laps, times

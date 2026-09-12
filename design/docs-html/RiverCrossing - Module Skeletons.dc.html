@@ -191,6 +191,14 @@ backup.run(path, keep=20) · backup.schedule_hourly(…) · backup.restore(src, 
 csvio.commit(preview) -> ImportReport · csvio.export(ride, path) -> None
 <b>@dataclass</b> ExportOptions(show_times=False, laps_board=True, time_board=False,
                         full_field=True, all_cards=True, lap_km=8.0)  <i># times hidden by default (R-63)</i>
+htmlexport.build_payload(ride, placed, opts, generated, team_logos=None) -> RacePayload
+    <i># the shared results model both renderers consume (§8b); LapsBoardRow gains `type`</i>
+    <i># (TEAM/SOLO) so the boards split per kind — the record carries the key</i>
+htmlexport.sections(payload, placed) -> Sections
+    <i># per-kind partition + the counts: podium 3/3 (or 3), top lists 5/5 (or 10),</i>
+    <i># laps boards 5/5 (or 10); team rows render plate-less</i>
+htmlexport.format_generated(at) -> str
+    <i># "Generated H:MM, Mon D YYYY" — a pure function of its input, no tz conversion (R-62)</i>
 htmlexport.render(ride, placed, opts) -> str    <i># Jinja2 (autoescape, StrictUndefined),</i>
     <i># base.html.j2 + macros (event_header, podium_card, standings_row,</i>
     <i># laps_board, time_board, field_row, drawn_row) — STATIC markup, no page JS;</i>
@@ -250,7 +258,7 @@ dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",
 [tool.ruff] · [tool.mypy] strict = true · [tool.pytest.ini_options]
 [tool.coverage.report] fail_under = 90        <i># core modules (R-71)</i></pre></div>
 
-<p style="font-size:11px;color:var(--color-neutral-500);border-top:1px solid var(--color-divider);padding-top:10px;margin-top:22px">Companions: Spec (§11 module table, §12 tests, §14 CI) · Requirements (R-70…R-77) · UI Designs (ids referenced in views/). Any rename here must be reflected in Spec §11 the same day — the two documents are one contract.</p>
+<p style="font-size:11px;color:var(--color-neutral-500);border-top:1px solid var(--color-divider);padding-top:10px;margin-top:22px">Companions: Spec (§11 module table, §12 tests, §14 CI) · Requirements (R-70…R-76) · UI Designs (ids referenced in views/). Any rename here must be reflected in Spec §11 the same day — the two documents are one contract.</p>
 </div>
 </x-dc>
 </body>

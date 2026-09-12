@@ -9,8 +9,7 @@ while every file run alone in a fresh pytest process passes
 (docs/FUNCTIONAL-SUITE-INSTABILITY.md section 2.1, measured this
 session). The wrapper under test therefore runs one fresh pytest
 process per file, two at a time, with one fresh-process retry round
-for failed files as the backstop (tools/functional_rerun.py stays the
-whole-suite/acceptance backstop; this tool is self-contained).
+for failed files as its backstop (this tool is self-contained).
 
 ``tools/`` carries no ``__init__.py`` (module-skeletons.md: it is dev
 tooling), so it is only importable as an implicit PEP 420 namespace
@@ -18,8 +17,8 @@ package once the repo root is on ``sys.path``. The import is deferred
 into a fixture so a broken import stays confined to the tests that
 use the module instead of aborting collection for the whole suite.
 
-Orchestration is unit-tested through the same seam functional_rerun
-uses: ``run_file`` (and ``main``, which drives it) take an optional
+Orchestration is unit-tested through a runner seam: ``run_file`` (and
+``main``, which drives it) take an optional
 ``runner`` callable that returns a ``CompletedProcess``, so the argv
 shape, the exit-code decisions (all-green -> 0, failed-then-retried
 -> 0, still-failing -> 1, empty dir -> 0, usage error -> 2) and the

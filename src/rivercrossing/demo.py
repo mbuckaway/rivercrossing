@@ -4,7 +4,7 @@
 ``DemoDataSource`` implements ``rivercrossing.ui.presenters.
 data_source.DataSource`` with the exact values the frozen canvas
 (xrc-windows.md) shows for ``main_frame``, ``ride_library_dlg``,
-``rider_editor_dlg``, ``entry_detail_dlg``, ``results_frame`` and
+``rider_editor_dlg``, ``entry_detail_dlg``, ``results_dlg`` and
 ``audit_dlg`` -- letting D1 show a fully populated UI with no engine
 and no database (project-plan.md §5, E1.2.4).
 
@@ -159,7 +159,7 @@ class UnknownPlateError(LookupError):
 
 # -------------------------------------------------------- standings
 
-# Phase 3 (team/solo results split): the fixture's results_frame rows
+# Phase 3 (team/solo results split): the fixture's results_dlg rows
 # split by kind into a Teams section (Trail Blazers) and a Solo section
 # (Sam Ellis, R. Dubois), each numbered from 1 -- mirroring what
 # ``rank_by_kind`` produces for the canvas's mixed fixture ride.

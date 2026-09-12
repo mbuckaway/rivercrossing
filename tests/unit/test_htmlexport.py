@@ -698,6 +698,22 @@ def test_render_public_time_board_populated_when_option_on() -> None:
     assert "avg" in record["timeBoard"][0]
 
 
+def test_render_public_time_board_hidden_when_show_times_off() -> None:
+    """R-63: a time board is time data -- times off, no board.
+
+    The contradictory request (time_board on while times are off) must
+    render no "Fastest" heading, no avg-lap cells and no embedded
+    ``timeBoard`` rows; the record's ``timeBoard`` is ``[]``.
+    """
+    html = render(_StubRide(), _placed_pair(), ExportOptions(show_times=False, time_board=True))
+
+    assert "Fastest" not in html
+    assert "avg " not in html
+    assert "Moss Ridge Riders" in html
+    record = json.loads(race_data_block(html))
+    assert record["timeBoard"] == []
+
+
 def test_render_public_boards_empty_when_options_off() -> None:
     """Boards absent from markup and record when both flags are off."""
     html = render(_StubRide(), _placed_pair(), ExportOptions(laps_board=False, time_board=False))
@@ -988,6 +1004,45 @@ def test_build_payload_time_board_stays_flat_across_kinds() -> None:
         "Solo 3",
         "Solo 4",
     ]
+
+
+@pytest.mark.parametrize(
+    ("show_times", "time_board", "expected_entries"),
+    [
+        # T-13 decision table: the two flags decide the board.
+        (False, False, []),
+        (False, True, []),
+        (True, False, []),
+        (True, True, ["Moss Ridge Riders", "Luca Ferrari"]),
+    ],
+    ids=["both-off", "times-off-board-on", "times-on-board-off", "both-on"],
+)
+def test_build_payload_time_board_rows_follow_show_times_and_time_board(
+    show_times: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
+    time_board: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
+    expected_entries: list[str],
+) -> None:
+    """R-63: the shared build embeds time rows only with times shown."""
+    payload = build_payload(
+        _StubRide(),
+        _placed_pair(),
+        ExportOptions(show_times=show_times, time_board=time_board),
+        _FIXTURE_GENERATED,
+    )
+
+    assert [row.entry for row in payload.time_board] == expected_entries
+
+
+def test_build_payload_time_board_record_empty_when_times_hidden() -> None:
+    """R-63: the record's ``timeBoard`` is [] when times are off."""
+    payload = build_payload(
+        _StubRide(),
+        _placed_pair(),
+        ExportOptions(show_times=False, time_board=True),
+        _FIXTURE_GENERATED,
+    )
+
+    assert payload.to_record()["timeBoard"] == []
 
 
 # ============================================= format_generated (R-62)

@@ -76,23 +76,23 @@ def _sync_offloop(  # noqa: PLR0913 -- the seam mirrors _run_export_offloop.s in
     teams: object,
     solo: object,
     opts: object,
-    watermark: int | None = None,
+    watermark: int,
     team_logos: dict[str, str] | None = None,
 ) -> None:
     """Run the export synchronously; record it as completion does.
 
-    Mirrors ``_run_export_offloop``'s success-path side effects: the
-    recorded path, the advanced context watermark, and the open
-    results window's banner clear (E7.3.2) -- so the walk can assert
-    the file AND the stale flag in one call.
+    The same seam ``tests/acceptance/race_child.py`` uses after the
+    per-format refactor: the write runs, then the app's own
+    ``_record_export_completion`` records the target's path field and
+    advances the context watermark (re-applying the menu state), and
+    the open results window's banner clear (E7.3.2) follows -- so the
+    walk can assert the file AND the stale flag in one call.
     """
     app_module._write_export(  # type: ignore[arg-type]
         config, teams, solo, opts, target, path, team_logos=team_logos
     )
-    context.last_export_path = path  # type: ignore[attr-defined]
-    context.export_watermark = watermark  # type: ignore[attr-defined]
-    if watermark is not None:
-        app_module._clear_results_stale(watermark)
+    app_module._record_export_completion(context, target, path, watermark)  # type: ignore[arg-type]
+    app_module._clear_results_stale(watermark)
 
 
 @pytest.mark.parametrize(
@@ -122,10 +122,15 @@ def test_results_export_rows_write_real_files(  # noqa: PLR0913, PLR0917 -- para
         assert content in text, f"{item_id} file lacks {content!r}"
 
 
-def test_results_preview_browser_opens_the_last_export(
+def test_results_preview_html_browser_opens_the_last_export(
     firing_frame: object, tmp_path: object, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Preview in Browser opens the export the handler recorded."""
+    """Preview HTML in Browser opens the recorded HTML export.
+
+    Part D split the single preview row into the two per-format items
+    (HTML and PDF); each hands its own recorded path, so this pin
+    fires the HTML pair only.
+    """
     out = pathlib.Path(str(tmp_path)) / "results.html"
     opened: list[object] = []
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _suggested: out)
@@ -133,7 +138,7 @@ def test_results_preview_browser_opens_the_last_export(
     monkeypatch.setattr(app_module, "_open_in_browser", opened.append)
 
     harness.fire_menu_event(firing_frame, ids.MI_EXPORT_HTML)
-    harness.fire_menu_event(firing_frame, ids.MI_PREVIEW_BROWSER)
+    harness.fire_menu_event(firing_frame, ids.MI_PREVIEW_HTML_BROWSER)
 
     assert opened == [out]
 
@@ -180,13 +185,13 @@ def test_results_export_buttons_write_real_files(  # noqa: PLR0913, PLR0917 -- p
     monkeypatch.setattr(app_module, "_run_export_offloop", _sync_offloop)
 
     harness.fire_menu_event(firing_frame, ids.MI_STANDINGS)
-    results_frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    if results_frame is None:
-        raise AssertionError("mi_standings opened no results_frame for the button pin")
+    results_dlg = wx.FindWindowByName(ids.RESULTS_DLG)
+    if results_dlg is None:
+        raise AssertionError("mi_standings opened no results_dlg for the button pin")
     try:
-        harness.click(results_frame, button_name)
+        harness.click(results_dlg, button_name)
     finally:
-        harness.close_window(results_frame)
+        harness.close_window(results_dlg)
 
     assert out.exists(), f"{button_name} wrote no file at {out}"
     assert out.stat().st_size > 0
@@ -320,14 +325,14 @@ def _open_results(app_frame: object) -> Any:  # noqa: ANN401 -- wx ships no stub
     """Fire the Results menu row and return the frame it opened.
 
     Raises:
-        AssertionError: The row opened no ``results_frame`` -- the
+        AssertionError: The row opened no ``results_dlg`` -- the
             route failed, which is exactly what the caller is checking
             for before touching the stale banner.
     """
     harness.fire_menu_event(app_frame, ids.MI_STANDINGS)
-    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
+    frame = wx.FindWindowByName(ids.RESULTS_DLG)
     if frame is None:
-        raise AssertionError("mi_standings opened no results_frame")
+        raise AssertionError("mi_standings opened no results_dlg")
     return frame
 
 
@@ -351,8 +356,8 @@ def test_results_stale_banner_appears_after_a_post_export_correction_and_reexpor
     monkeypatch.setattr(app_module, "_pick_export_path", lambda _suggested: out)
     monkeypatch.setattr(app_module, "_run_export_offloop", _sync_offloop)
 
-    results_frame = _open_results(frame)
-    bar = harness.find_control(results_frame, STALE_INFOBAR)
+    results_dlg = _open_results(frame)
+    bar = harness.find_control(results_dlg, STALE_INFOBAR)
     assert bar.IsShown() is False
     assert context.export_watermark is None
 
@@ -360,7 +365,7 @@ def test_results_stale_banner_appears_after_a_post_export_correction_and_reexpor
     assert context.export_watermark == len(engine.events)
     assert bar.IsShown() is False
 
-    harness.close_window(results_frame)
+    harness.close_window(results_dlg)
     context.detail_plate = "12"
 
     def _drive_edit(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -372,13 +377,13 @@ def test_results_stale_banner_appears_after_a_post_export_correction_and_reexpor
     harness.fire_menu_event(frame, ids.MI_EDIT_CROSSING)
     assert engine.events[-1].action == "edit_crossing"
 
-    results_frame = _open_results(frame)
+    results_dlg = _open_results(frame)
     try:
-        bar = harness.find_control(results_frame, STALE_INFOBAR)
+        bar = harness.find_control(results_dlg, STALE_INFOBAR)
         assert bar.IsShown() is True
 
         harness.fire_menu_event(frame, ids.MI_EXPORT_HTML)
         assert context.export_watermark == len(engine.events)
         assert bar.IsShown() is False
     finally:
-        harness.close_window(results_frame)
+        harness.close_window(results_dlg)
