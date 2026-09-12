@@ -663,6 +663,14 @@ class MainFrame:
         # AttributeError.
         self._tick_timer: wx.Timer | None = None
         self._on_submit: Callable[[str], None] | None = None
+        # D3: the one-time wiring sentinel. set_presenter binds the
+        # entry/lifecycle controls and builds the tick timer on the
+        # first attach and never again; clear_presenter detaches a
+        # cleared ride's presenter WITHOUT resetting this, so a later
+        # attach swaps references and restarts the stopped timer
+        # instead of rebinding every control (a duplicate wx.Bind would
+        # deliver each later event twice).
+        self._wired = False
 
         # Reflow now that the size and every sizer item are final, so
         # the splitter has its real client area before a sash position
@@ -1552,18 +1560,21 @@ class MainFrame:
         W1: the no-ride bootstrap wires no presenter at all, so the
         first ride attach is what performs the one-time
         :meth:`wire_entry`/:meth:`wire_console` binding (plate entry,
-        lifecycle controls, tick timer). ``_presenter is None`` is the
-        "never wired" sentinel, so those binds run exactly once and
-        later swaps stay the cheap reference replacement;
-        :meth:`clear_presenter` returns the sentinel for a ride
-        removed from the screen, so the next attach re-runs them.
+        lifecycle controls, tick timer). :attr:`_wired` is the
+        "never wired" sentinel, so those binds run exactly once per
+        frame; :meth:`clear_presenter` detaches a cleared ride's
+        presenter without resetting it, so a later attach swaps the
+        references and restarts the stopped timer instead of rebinding.
         """
-        if self._presenter is None:
+        if not self._wired:
             self.wire_entry(presenter.on_plate_entered)
             self.wire_console(presenter)
+            self._wired = True
             return
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
+        if self._tick_timer is not None and not self._tick_timer.IsRunning():
+            self._tick_timer.Start(_TICK_MS)
 
     def clear_presenter(self) -> None:
         """Detach the console's presenter for a cleared ride (D3).
@@ -1572,9 +1583,10 @@ class MainFrame:
         the console must stop answering its old presenter: the tick
         timer is stopped (its callback would otherwise call ``tick()``
         on the cleared reference) and the plate-submit callback is
-        unbound. ``_presenter`` returns to its ``None`` "never wired"
-        sentinel, so the next attach through :meth:`set_presenter`
-        re-runs the one-time wiring against the stopped timer.
+        unbound. :attr:`_wired` deliberately stays set, so the next
+        attach through :meth:`set_presenter` swaps the references and
+        restarts the stopped timer -- the controls bind exactly once
+        per frame, however many clear/open cycles the operator runs.
 
         The timer itself is kept, not nulled: the frame's own
         ``EVT_WINDOW_DESTROY`` handler still stops it at teardown.
