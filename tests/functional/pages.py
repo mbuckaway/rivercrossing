@@ -54,12 +54,16 @@ MAIN_FRAME = WindowSpec(
     xrc_file="main.xrc",
     is_frame=True,
     controls=(
-        # C1: the ride-identity block -- ride_logo_bmp carries the
-        # ride's own logo, ride_details_lbl is the "date · start ·
-        # type" fallback.
+        # C1/§5: the ride-info group -- ride_logo_bmp carries the
+        # ride's own logo and the six ride_*_value read-outs carry its
+        # name, date, venue, organizer, scorer and lap length.
         ids.RIDE_LOGO_BMP,
-        ids.RIDE_NAME_LBL,
-        ids.RIDE_DETAILS_LBL,
+        ids.RIDE_NAME_VALUE,
+        ids.RIDE_DATE_VALUE,
+        ids.RIDE_VENUE_VALUE,
+        ids.RIDE_ORGANIZER_VALUE,
+        ids.RIDE_SCORER_VALUE,
+        ids.RIDE_LAP_KM_VALUE,
         ids.RIDE_STATUS_LBL,
         # WS-D/WS-H: the code-side gauge slots and the review notebook
         # (elapsed_clock_panel/remaining_clock_panel/ride_status_panel

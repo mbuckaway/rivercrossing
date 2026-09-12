@@ -134,6 +134,7 @@ def test_scan_xrc_directory_unknown_suffix_warns_and_known_suffixes_do_not() -> 
         "main_splitter",
         "review_notebook",
         "progress_gauge",
+        "ride_name_value",
     ],
 )
 def test_suffix_warnings_canvas_only_suffix_produces_no_warning(name: str) -> None:

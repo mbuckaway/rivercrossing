@@ -52,7 +52,7 @@
       </object>
 
       <!--
-        Ride identity, the two gauge-clock columns (WS-D) and the
+        The ride-info group, the two gauge-clock columns (WS-D) and the
         start/stop group. elapsed_clock_panel / remaining_clock_panel /
         ride_status_panel are code-side slots: XRC cannot author a
         wx.Control subclass, so RaceClock / StopLight (views/gauges.py)
@@ -78,45 +78,150 @@
               <orient>wxHORIZONTAL</orient>
 
               <!--
-                C1: the ride-identity block. ride_logo_bmp carries the
-                ride's own logo when it has one (main_frame's
-                show_ride_header sets the bitmap and hides the detail
-                line); ride_details_lbl is the "date · start · type"
-                fallback. The control is authored with no <bitmap>:
-                measured on wxPython 4.3.1, XRC yields a real
-                wxStaticBitmap that keeps its name and accepts
-                SetBitmap later (about_logo_bmp's own authored shape).
+                C1/§5: the ride-info group. A native wxStaticBoxSizer
+                carries the ride's own logo (ride_logo_bmp, rendered at
+                64x64) beside the six read-only value rows: Name,
+                Date, Venue, Organizer, Scorer and Lap length km. Each
+                row is an unnamed wxStaticText caption in column one and
+                a wxTE_READONLY wxTextCtrl in column two, the counter
+                chips' own caption convention; show_ride_header fills
+                all six from the open ride's config. The logo control is
+                authored with no <bitmap>: measured on wxPython 4.3.1,
+                XRC yields a real wxStaticBitmap that keeps its name and
+                accepts SetBitmap later (about_logo_bmp's own authored
+                shape).
               -->
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
                 <border>8</border>
-                <object class="wxStaticBitmap" name="ride_logo_bmp"/>
+                <object class="wxStaticBoxSizer">
+                  <label>Ride</label>
+                  <orient>wxHORIZONTAL</orient>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                    <border>8</border>
+                    <object class="wxStaticBitmap" name="ride_logo_bmp">
+                      <size>64,64</size>
+                    </object>
+                  </object>
+
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxFlexGridSizer">
+                      <cols>2</cols>
+                      <vgap>6</vgap>
+                      <hgap>6</hgap>
+
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxStaticText">
+                          <label>Name</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxTextCtrl" name="ride_name_value">
+                          <style>wxTE_READONLY</style>
+                          <size>240,-1</size>
+                          <value></value>
+                        </object>
+                      </object>
+
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxStaticText">
+                          <label>Date</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxTextCtrl" name="ride_date_value">
+                          <style>wxTE_READONLY</style>
+                          <size>240,-1</size>
+                          <value></value>
+                        </object>
+                      </object>
+
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxStaticText">
+                          <label>Venue</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxTextCtrl" name="ride_venue_value">
+                          <style>wxTE_READONLY</style>
+                          <size>240,-1</size>
+                          <value></value>
+                        </object>
+                      </object>
+
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxStaticText">
+                          <label>Organizer</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxTextCtrl" name="ride_organizer_value">
+                          <style>wxTE_READONLY</style>
+                          <size>240,-1</size>
+                          <value></value>
+                        </object>
+                      </object>
+
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxStaticText">
+                          <label>Scorer</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxTextCtrl" name="ride_scorer_value">
+                          <style>wxTE_READONLY</style>
+                          <size>240,-1</size>
+                          <value></value>
+                        </object>
+                      </object>
+
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxStaticText">
+                          <label>Lap length km</label>
+                        </object>
+                      </object>
+                      <object class="sizeritem">
+                        <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                        <object class="wxTextCtrl" name="ride_lap_km_value">
+                          <style>wxTE_READONLY</style>
+                          <size>240,-1</size>
+                          <value></value>
+                        </object>
+                      </object>
+                    </object>
+                  </object>
+                </object>
               </object>
 
+              <!--
+                The status column: ride_status_panel is a code-side slot
+                (the same XRC-cannot-author-a-wx.Control-subclass rule as
+                the two clock panels), holding the code-built StopLight
+                (ride_status_light) beside its own label.
+              -->
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxBoxSizer">
-                  <orient>wxVERTICAL</orient>
-                  <object class="sizeritem">
-                    <object class="wxStaticText" name="ride_name_lbl">
-                      <label></label>
-                    </object>
-                  </object>
-                  <object class="sizeritem">
-                    <object class="wxStaticText" name="ride_details_lbl">
-                      <label></label>
-                    </object>
-                  </object>
-                  <object class="sizeritem">
-                    <object class="wxPanel" name="ride_status_panel">
-                      <object class="wxBoxSizer">
-                        <orient>wxHORIZONTAL</orient>
-                        <object class="sizeritem">
-                          <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                          <object class="wxStaticText" name="ride_status_lbl">
-                            <label></label>
-                          </object>
-                        </object>
+                <object class="wxPanel" name="ride_status_panel">
+                  <object class="wxBoxSizer">
+                    <orient>wxHORIZONTAL</orient>
+                    <object class="sizeritem">
+                      <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                      <object class="wxStaticText" name="ride_status_lbl">
+                        <label></label>
                       </object>
                     </object>
                   </object>

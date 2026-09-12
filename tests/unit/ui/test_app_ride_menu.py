@@ -473,6 +473,10 @@ def test_apply_edited_ride_rewrites_the_stored_ride_and_the_live_engine(
                 "event_date": edited.event_date,
                 "planned_start": edited.planned_start,
                 "entry_mode": edited.entry_mode,
+                "venue": "New Venue",
+                "organizer": edited.organizer,
+                "scorer": edited.scorer,
+                "lap_km": edited.lap_km,
             },
         ) in view.calls
     finally:

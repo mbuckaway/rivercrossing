@@ -810,12 +810,12 @@ def _wire_store_append(  # noqa: PLR0913 -- (engine, store, ride_id) + the notic
 
 
 def _show_ride_header(context: _RouteContext, config: RideConfig) -> None:
-    """Render *config*'s identity block onto the console header (C1).
+    """Render *config*'s ride-info group onto the console header (C1).
 
-    One seam for every console switch: the ride's name, its logo when
-    it has one, and the date/start/type fallback line -- all read off
-    the config the console is running, so a store reload, a New Ride
-    and an Edit Ride cannot render different headers.
+    One seam for every console switch: the ride's name, date, venue,
+    organizer, scorer, lap length and its logo when it has one -- all
+    read off the config the console is running, so a store reload, a
+    New Ride and an Edit Ride cannot render different headers.
     """
     view = context.console_view
     if view is None:
@@ -826,6 +826,10 @@ def _show_ride_header(context: _RouteContext, config: RideConfig) -> None:
         event_date=config.event_date,
         planned_start=config.planned_start,
         entry_mode=config.entry_mode,
+        venue=config.venue,
+        organizer=config.organizer,
+        scorer=config.scorer,
+        lap_km=config.lap_km,
     )
 
 
