@@ -30,9 +30,30 @@ from typing import TYPE_CHECKING, NamedTuple
 from defusedxml.ElementTree import parse
 
 if TYPE_CHECKING:
-    # Type-only: defusedxml does not re-export the Element class.
-    # Every parse goes through the defused facade above.
-    from xml.etree.ElementTree import Element
+    from collections.abc import Iterator
+    from typing import Protocol
+
+    class XrcElement(Protocol):
+        """The XML element interface this tool reads after a parse.
+
+        A structural stand-in for the element defusedxml's ``parse``
+        returns, so the tool never imports ``xml.etree`` itself.
+        """
+
+        tag: str
+
+        def __iter__(self) -> Iterator[XrcElement]:
+            """Yield the element's direct children."""
+            ...
+
+        def iter(self, tag: str | None = None) -> Iterator[XrcElement]:
+            """Yield the element's descendants, filtered by *tag*."""
+            ...
+
+        def get(self, key: str) -> str | None:
+            """Return the *key* attribute, or ``None``."""
+            ...
+
 
 STOCK_IDS: frozenset[str] = frozenset(
     {
@@ -126,7 +147,7 @@ def iter_xrc_files(xrc_dir: Path) -> list[Path]:
     return sorted(xrc_dir.glob("*.xrc"))
 
 
-def _top_level_windows(root: Element) -> list[Element]:
+def _top_level_windows(root: XrcElement) -> list[XrcElement]:
     """Return the direct ``<object>`` children of an XRC ``<resource>``.
 
     Each one is its own name namespace: a control name must be
@@ -135,7 +156,7 @@ def _top_level_windows(root: Element) -> list[Element]:
     return [child for child in root if child.tag == "object"]
 
 
-def _names_in_window(window: Element) -> list[str]:
+def _names_in_window(window: XrcElement) -> list[str]:
     """List every non-stock ``name`` attribute in *window*'s subtree."""
     names = []
     for elem in window.iter("object"):
