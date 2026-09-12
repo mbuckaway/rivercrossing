@@ -35,6 +35,7 @@ from rivercrossing.ui.views.main_frame import MainFrame
 from rivercrossing.ui.views.results_win import ResultsWindow
 from rivercrossing.ui.views.ride_library import RideLibrary
 from rivercrossing.ui.views.rider_editor import RiderEditor
+from rivercrossing.ui.views.simulator import SimulatorDialog
 
 VIEWS_DIR = Path(inspect.getfile(MainFrame)).resolve().parent
 
@@ -113,3 +114,25 @@ def test_rider_editor_construction_without_roster_raises_type_error() -> None:
     """
     with pytest.raises(TypeError, match=re.escape("roster")):
         RiderEditor(object())
+
+
+_SIMULATOR_REQUIRED_KWARGS = (
+    pytest.param({}, "engine", id="no-kwargs"),
+    pytest.param({"roster": object()}, "engine", id="roster-only"),
+    pytest.param({"engine": object()}, "roster", id="engine-only"),
+)
+
+
+@pytest.mark.parametrize(("kwargs", "missing"), _SIMULATOR_REQUIRED_KWARGS)
+def test_simulator_dialog_construction_without_required_kwarg_raises_type_error(
+    kwargs: dict[str, object], missing: str
+) -> None:
+    """SimulatorDialog requires both engine and roster.
+
+    It drives the live engine through the roster, so neither seam has a
+    default -- Python's own signature enforcement is the proof.
+    *kwargs* is a placeholder, never a real wx window: the ``TypeError``
+    fires during argument binding, before the constructor body runs.
+    """
+    with pytest.raises(TypeError, match=re.escape(missing)):
+        SimulatorDialog(object(), **kwargs)

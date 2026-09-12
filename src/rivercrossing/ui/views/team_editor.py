@@ -22,10 +22,14 @@ both open through :func:`run_add_team_flow` (``editing=`` an entry for
 the edit route, with a row double-click as the second way in).
 
 **Native sorting.** Each column is appended with
-``wx.dataview.DATAVIEW_COL_SORTABLE`` and sorted through
+``TEAMS_LIST_COLUMN_FLAGS`` -- sortable *and* resizable, since an
+explicit ``flags=`` argument replaces rather than extends wx's
+default flags -- and sorted through
 :class:`TeamsListModel.Compare` -- the Team column by case-folded
 name, Riders numerically -- so the header arrows the platform draws
-actually reorder the rows. The dialog opens on an ascending Team
+actually reorder the rows. The Team column opens at
+:data:`COL_NAME_WIDTH` (double the platform's 80 DIP default); Riders
+keeps :data:`COL_RIDERS_WIDTH`. The dialog opens on an ascending Team
 sort, and :meth:`TeamEditor._apply_sort` re-applies the operator's
 current sort after every ``show_teams`` rebuild (replacing the model
 drops the control's sort key). Because the rows move under the
@@ -52,7 +56,7 @@ import wx
 import wx.dataview
 
 from rivercrossing.ui import ids, std_dialogs
-from rivercrossing.ui.feed_model import card_asset_key_or_none
+from rivercrossing.ui.cards_imagelist import UnknownCardCodeError, asset_key
 from rivercrossing.ui.presenters.teams import (
     AddTeamPresenter,
     TeamFormValues,
@@ -60,7 +64,12 @@ from rivercrossing.ui.presenters.teams import (
     TeamsPresenter,
 )
 from rivercrossing.ui.views import dialogs
-from rivercrossing.ui.views._support import associate_model, default_card_images, find_control
+from rivercrossing.ui.views._support import (
+    associate_model,
+    clamp_to_display,
+    default_card_images,
+    find_control,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -69,17 +78,21 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ADD_TEAM_INFOBAR",
+    "ADD_TEAM_MIN_SIZE",
     "CARD_LOGO_BOX",
     "COLUMN_LABELS",
     "COL_MEMBER",
     "COL_NAME",
+    "COL_NAME_WIDTH",
     "COL_RIDERS",
+    "COL_RIDERS_WIDTH",
     "LOGO_PREVIEW_BOX",
     "MEMBERS_COLUMN_LABELS",
     "MEMBERS_MIN_HEIGHT",
     "MIN_SIZE",
     "NOTES_MIN_LINES",
     "TEAMS_INFOBAR",
+    "TEAMS_LIST_COLUMN_FLAGS",
     "AddTeamDialog",
     "MembersListModel",
     "TeamEditor",
@@ -93,6 +106,20 @@ COL_RIDERS = 1
 
 # xrc-windows.md C (Teams Editor), reworked: "Team | Riders".
 COLUMN_LABELS: tuple[str, ...] = ("Team", "Riders")
+
+# Both columns default to wxDVC_DEFAULT_WIDTH (80 DIP). The first
+# ("Team") column carries the team name the operator reads, so it
+# opens at double that; the second ("Riders") keeps the platform
+# default -- it is the last column, which wx stretches to fill the
+# control, so it needs no width of its own.
+COL_NAME_WIDTH = 160
+COL_RIDERS_WIDTH = 80
+
+# AppendTextColumn's own default flags include
+# wxDATAVIEW_COL_RESIZABLE, but an explicit flags= argument *replaces*
+# the default rather than OR-ing into it -- macOS then sets the
+# column NSTableColumnNoResizing -- so both bits must be spelled out.
+TEAMS_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
 
 COL_MEMBER = 0
 MEMBERS_COLUMN_LABELS: tuple[str, ...] = ("Member",)
@@ -114,11 +141,12 @@ ADD_MODE_LABEL = "Add"
 EDIT_MODE_LABEL = "Save"
 
 # Logo-preview bounds (px): the Add/Edit dialog's card preview renders
-# the packaged card bitmap at the card's 3:4 ratio scaled into a 96x128
-# box. logo_bmp itself carries SetMaxSize(LOGO_PREVIEW_BOX) so no
-# bitmap can push the dialog's button row off the dialog.
+# the packaged card bitmap at the card's ~3:4 ratio scaled into a 32x43
+# box -- the former 96x128 preview at a third of its size. logo_bmp
+# itself carries SetMaxSize(LOGO_PREVIEW_BOX) so no bitmap can push the
+# dialog's button row off the dialog.
 LOGO_PREVIEW_BOX = (128, 128)
-CARD_LOGO_BOX = (96, 128)
+CARD_LOGO_BOX = (32, 43)
 
 # The Notes box's code-side floor (teams.xrc declares the style):
 # wxTE_MULTILINE plus a minimum tall enough for three text lines, so
@@ -137,6 +165,13 @@ MEMBERS_MIN_HEIGHT = 120
 # list columns + the record form) to stay usable on a 1366x768 field
 # laptop (UX-DESKTOP §6).
 MIN_SIZE = (940, 560)
+
+# add_team_dlg's own code-side floor (px), the min-size counterpart of
+# MIN_SIZE above and *not* the same window's: a plain Fit() opened that
+# dialog at ~228x314 measured on macOS, too cramped for its record
+# form, so it opens at the operator's own 2x-width / 1.5x-height floor
+# (UX-DESKTOP §6).
+ADD_TEAM_MIN_SIZE = (456, 471)
 
 
 class TeamsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -264,7 +299,7 @@ def _scaled_bitmap(
     is returned as-is; anything else rescales through ``wx.Image``
     with the high-quality filter so the preview never distorts.
     """
-    image = wx.Image(bitmap)
+    image = bitmap.ConvertToImage()
     width, height = image.GetWidth(), image.GetHeight()
     fitted = logo_fit_size(width, height, within=within, upscale=upscale)
     if fitted == (width, height):
@@ -281,7 +316,10 @@ def _logo_bitmap(card: str | None) -> Any:  # noqa: ANN401
     and no code at all render a blank ``wx.NullBitmap``.
     """
     if card is not None:
-        key = card_asset_key_or_none(card)
+        try:
+            key = asset_key(card)
+        except UnknownCardCodeError:
+            key = None
         if key is not None:
             return _scaled_bitmap(
                 default_card_images().bitmap(key), within=CARD_LOGO_BOX, upscale=True
@@ -418,9 +456,13 @@ class TeamEditor:
         _floor_notes_min_height(self.notes_input)
 
     def _build_team_columns(self) -> None:
-        """Append ``teams_list``'s two sortable columns."""
-        for col, label in enumerate(COLUMN_LABELS):
-            self.teams_list.AppendTextColumn(label, col, flags=wx.dataview.DATAVIEW_COL_SORTABLE)
+        """Append ``teams_list``'s two sortable, resizable columns."""
+        for col, (label, width) in enumerate(
+            zip(COLUMN_LABELS, (COL_NAME_WIDTH, COL_RIDERS_WIDTH), strict=True)
+        ):
+            self.teams_list.AppendTextColumn(
+                label, col, width=width, flags=TEAMS_LIST_COLUMN_FLAGS
+            )
 
     def _build_member_columns(self) -> None:
         """Append ``members_list``'s one column."""
@@ -522,6 +564,31 @@ class TeamEditor:
         row = self._teams_model.GetRow(item)
         self.presenter.on_row_selected(self._teams_model.GetValueByRow(row, COL_NAME))
 
+    def select_team_by_name(self, name: str) -> None:
+        """Select the ``teams_list`` row named *name*.
+
+        The rider-issues dialog's name-keyed preselect seam (mirrors
+        ``RiderEditor.select_rider_by_plate``): after opening this
+        editor on a team-of-one issue the operator lands on that
+        team's form instead of the blank add form. A no-op when no
+        row's Team cell matches -- a stale name from an earlier
+        roster state, say.
+
+        The form fills through the presenter's own ``on_row_selected``
+        directly, never by relying on the selection event alone: a
+        programmatic ``Select`` fires
+        ``EVT_DATAVIEW_SELECTION_CHANGED`` on macOS's generic control
+        but not on MSW's native one
+        (``RiderEditor.select_rider_by_plate``'s measured note). Where
+        macOS does fire the event, it re-runs the same idempotent
+        handler.
+        """
+        for row in range(self._teams_model.GetCount()):
+            if self._teams_model.GetValueByRow(row, COL_NAME) == name:
+                self.teams_list.Select(self._teams_model.GetItem(row))
+                self.presenter.select_by_name(name)
+                return
+
     def _on_toggle_single_member(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle the one-rider-teams filter checkbox."""
         event.Skip()
@@ -533,11 +600,15 @@ class TeamEditor:
         ``show_teams`` replaces the model, which drops the sort key the
         control was holding; setting it on the column again and asking
         the model to resort restores exactly the order the operator
-        left the list in.
+        left the list in. The ``UnsetAsSortKey()`` is load-bearing on
+        macOS: ``SetSortOrder`` is a no-op when the direction is
+        unchanged (measured), so the rebuilt model would otherwise
+        revert to source order.
         """
         column = self.teams_list.GetColumn(self._sort_column)
         if column is None:
             return
+        column.UnsetAsSortKey()
         column.SetSortOrder(self._sort_ascending)
         self._teams_model.Resort()
 
@@ -653,6 +724,7 @@ class AddTeamDialog:
         self.presenter = AddTeamPresenter(self, roster, editing=editing)
 
         self._bind_events()
+        self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -666,6 +738,31 @@ class AddTeamDialog:
                 after settling.
         """
         return find_control(self.dialog, name, expected_type)
+
+    def _apply_min_size(self) -> None:
+        """Floor *and* open the dialog at :data:`ADD_TEAM_MIN_SIZE`.
+
+        XRC gives a window neither a minsize nor a default size, so
+        this dialog otherwise opened at whatever the form's own narrow
+        best size measured (~228x314 on macOS). ``Fit()`` first, so the
+        size being floored is whatever this platform actually
+        measured; the floor is the component-wise larger of that
+        measurement and :data:`ADD_TEAM_MIN_SIZE`, bounded by
+        :func:`~rivercrossing.ui.views._support.clamp_to_display` so it
+        can never exceed the display work area. That same size is both
+        the floor (``SetMinSize``) and the size the dialog opens at
+        (``SetSize``) -- a floor alone would still let the loaded
+        window keep the size XRC gave it (``CsvPreviewDialog``'s own
+        note).
+        """
+        self.dialog.Fit()
+        fitted = self.dialog.GetSize()
+        width, height = clamp_to_display(
+            max(ADD_TEAM_MIN_SIZE[0], fitted.width),
+            max(ADD_TEAM_MIN_SIZE[1], fitted.height),
+        )
+        self.dialog.SetMinSize(wx.Size(width, height))
+        self.dialog.SetSize(wx.Size(width, height))
 
     def _bind_events(self) -> None:
         """Forward every control event straight to the presenter."""

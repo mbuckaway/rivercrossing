@@ -4,18 +4,45 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.13] - 2026-09-12
+
+### Added
+
+- **Rider Simulator** — File ▸ Simulation… (`simulation_dlg`, DRAFT-only) configures riders, teams, solo riders, laps and the minutes between the first rider, generates `TEAM-####` teams and `FIRSTNAME-####`/`LASTNAME-####` riders (solo riders first, random M/F, random team assignment, auto plates), then replays the race on GO through the console's own `RideEngine.record_crossing(plate, at=…)` seam; a modal progress dialog (`sim_running_dlg`) reports percent complete and allows cancelling.
+- **Teams and Solo tabs on the results window** — a mixed ride splits its standings across a `results_notebook` (Teams · `teams_standings_list`, Solo · `solo_standings_list`); a solo ride hides the notebook and renders every rider in `standings_list`.
+- **Sortable, resizable standings columns** — the three results lists sort natively on a header click and resize their columns (`DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE`), and `StandingsRow` gains a `total_seconds` field so the Total column sorts numerically.
+- **A Close button on the results export row** — `wxID_CLOSE` joins the four publish buttons, and the window's minimum width is 755 so the five checkboxes do not wrap.
+
+### Changed
+
+- **The results window is a modal dialog** — `results_frame` (a modeless `wxFrame`) is now the `wxDialog` `results_dlg`, opened through `dialogs.run_dialog`.
+- **Results exports are gated to a FINISHED ride** — the four export buttons (`export_html_btn`, `export_pdf_btn`, `poster_btn`, `export_csv_btn`) stay disabled until the ride finishes, matching the Results-menu rows; Preview in Browser now needs a FINISHED ride and an export that exists.
+- **The Rider Editor's Add rider… moved to the list's button row** — `add_btn` sits beside Delete and Close, while Edit Rider… (`edit_btn`) stays in the form pane.
+
+### Removed
+
+- **The results window's tie-break panel and Reopen button** — `tiebreak_list` and `reopen_btn` are gone; the tie-break order lives only in Ride Setup (`setup.xrc`), and a ride reopens through Ride ▸ Reopen Ride (`mi_reopen_ride`).
+- **Results ▸ Tie-break Order… (`mi_tiebreak_order`)** — the Results-menu row is retired.
+- **The inline Teams/Solo section-header rows** — the notebook's pages replace the header rows that used to sit inside `standings_list`.
+
+### Fixed
+
+- **A new rider joins an existing team while the ride is running** — Add now folds through `Roster.add_rider_to_team`, so the pooled RUNNING/REOPENED carve-out comes from `can_move_rider` instead of the transient size-1 team the join used to build.
+
 ## [1.0.12] - 2026-09-11
 
 ### Added
 
 - **Edit Ride… and Clear Ride…** — the Ride menu gains Edit Ride… (opens Ride Setup preloaded with the open ride's settings, titled "Edit Ride", and writes them back to the ride and the database) and Clear Ride… (resets the open ride to a fresh DRAFT in place — riders, crossings, cards and audit rows removed, setup and library entry kept — after a danger confirm) (D2/D3).
 - **Ride identity in the console header** — the header now shows the ride's own logo beside its name, with a `date · start · type` line standing in when the ride has no logo (C1).
-- **Verbose logging setting** — Settings gains a "Verbose logging" checkbox, on by default, that writes an NDJSON diagnostic log (`rivercrossing-verbose.log`) beside the always-on crash log (F1).
+- **Verbose logging setting** — Settings gains a "Verbose logging" checkbox, on by default, that gates the trace records of the app's single structured log: one NDJSON file per launch (`rivercrossing-<timestamp>.log`, pruned to the 20 most recent) that also carries the launch context and any crash (F1/F3).
 - **Finish publishes its own results** — Ride ▸ Finish Ride… writes the ride's HTML and PDF results into the per-user `exports` folder, so a finished ride always leaves its results behind instead of waiting for the Results menu (E2).
 - **Native `show_danger` and `show_prompt` dialogs** — `ui.std_dialogs` grows the two confirm shapes the finish/clear and duplicate/reopen questions need (H2).
 - **Rider sex** — riders carry a sex (`M`/`F`; blank means unknown) through the domain model, the rider editor (a Sex dropdown on the add/edit dialog), CSV import and export (a `Sex` header accepting `Male`/`M`/`Female`/`F`), the database, the console's Riders panel, and the results exports (HTML, PDF and the standings CSV; solo rows only).
-- **Sortable rider lists with a sort marker** — the Rider Editor list and the console's Riders panel sort by any column on a header click, with a ▲/▼ marker on the active column.
+- **Sortable rider lists** — the Rider Editor list and the console's Riders panel sort natively by any column on a header click: the platform's own header arrow marks the active column (not a ▲/▼ suffix on the title), and the Name column opens double-width.
 - **A dedicated "Cannot Start Ride" dialog** — Start Ride now lists each blocking issue on its own line in a custom dialog instead of a single-line warning.
+- **Check for Rider Issues… quick fixes and team-name checks** — the dialog gains "Assign Plate" (a missing-number rider takes the next free plate) and "Renumber" (a duplicate-number's later claimant is renumbered), both DRAFT-only and writing through the roster's shared plate dispatch; its report adds duplicate-team-name and near-duplicate-team-name (a warning), and Open Editor… now lands on the issue's own team or rider.
+- **Convert teams of 1 to solo on CSV import** — the import preview gains a "Convert teams of 1 to solo" checkbox (DRAFT-only, both plate models) that loads a one-rider team row as a solo entry instead of warning about a team of one.
 
 ### Changed
 
@@ -44,7 +71,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 ### Notes
 
 - **Database schema version 1** — a database at any other version refuses to open, showing a "Database Mismatch" alert that tells the operator to rename or delete the database file.
-- **Verbose log format** — `rivercrossing-verbose.log` is NDJSON, one JSON object per line (`ts`, `level`, `file`, `line`, `func`, `msg`), so a support session can filter it with `jq` or a spreadsheet (F1).
+- **Verbose log format** — each launch writes its own `rivercrossing-<timestamp>.log`, an NDJSON file with one JSON object per line (`ts`, `level`, `event` plus the call's own fields, e.g. `file`, `line`, `func`), so a support session can filter it with `jq` or a spreadsheet; an uncaught exception adds a `traceback` array (F1).
 
 ## [1.0.11] - 2026-09-09
 

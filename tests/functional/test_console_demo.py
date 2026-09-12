@@ -12,11 +12,12 @@ window's ``wxDataViewListCtrl``-family control the riskiest widget
 in EPIC 1; the bold-flagged-row assertions below are the test that
 retires that risk.
 
-E5.4.2 retired the demo seam from the app path: the app's console is
-the live ``EngineDataSource`` over a fresh engine (empty feed, zero
-counters). The empty-state facts are pinned through the production
-``app._build_console_engine`` twice: the ``empty_console`` fixture
-below (zero counters, full shoe) and the fresh-engine drive inside
+E5.4.2 retired the demo seam from the app path; W1 then gave the app
+bootstrap a true no-ride empty state (``MainFrame.show_no_ride`` over
+``_EMPTY_SOURCE``). The DRAFT-engine render path is still pinned
+through the production ``app._build_console_engine`` twice: the
+``empty_console`` fixture below (zero counters, full shoe) and the
+fresh-engine drive inside
 ``test_main_frame_given_a_fresh_engine_shows_an_empty_feed`` (empty
 feed at rest). The demo ``shared_console`` fixture stays for the
 view-capability assertions (bold mapping, card bitmap, the held
@@ -127,11 +128,13 @@ def shared_console(xrc_resource: object) -> MainFrame:
 def empty_console(xrc_resource: object) -> MainFrame:
     """One fresh-engine ``MainFrame`` for the E5.4.2 empty-state pins.
 
-    Wired exactly as the app bootstrap wires it: the production
+    Wired the way the pre-W1 bootstrap wired it: the production
     :func:`rivercrossing.ui.app._build_console_engine` over an empty
     mixed roster -- an unstarted (DRAFT) engine with zero entries and
     zero crossings, so the feed is empty and the counters read
-    zero/full-shoe.
+    zero/full-shoe. (W1: the app bootstrap itself now opens on
+    ``MainFrame.show_no_ride`` over ``_EMPTY_SOURCE``; this fixture
+    stays a stand-in so the DRAFT-engine render path keeps its pins.)
     """
     # load_window, not load_window_verified: this second module-scoped
     # console coexists with the shared_console fixture's same-named
@@ -181,11 +184,11 @@ def test_main_frame_given_a_fresh_engine_shows_an_empty_feed(
 ) -> None:
     """E5.4.2 empty state, then Start + a typed plate render (R-31/32).
 
-    The app's console reads a fresh live engine (no store-backed ride
-    open), so its feed is empty -- the demo rows are gone from the app
-    path. ``test_app_bootstrap``'s ``wires_the_console_to_the_live_
-    engine_feed`` pin is the same fact through ``build_main_window``;
-    this one drives the production ``_build_console_engine`` wiring.
+    A fresh live engine (no store-backed ride open) has an empty feed
+    -- the demo rows are gone from the app path. W1: the app bootstrap
+    now opens on the true no-ride state (``show_no_ride``), so this
+    test drives the production ``_build_console_engine`` wiring
+    directly to pin the DRAFT-engine render path.
 
     The read-only assertion would still pass if the console's start
     and entry bindings were dead: ``wire_entry``/``wire_console``
@@ -477,53 +480,53 @@ def test_main_frame_set_state_enables_or_disables_plate_input_and_record_btn_tog
     assert result["data"]["draft"] == [False, False], result["context"]
 
 
-def test_main_frame_plate_entry_given_no_ride_open_rejects_and_keeps_the_field() -> None:
-    """R-31/E5.4.2: with no ride open, a typed plate is refused.
+def test_main_frame_plate_entry_given_no_ride_open_binds_no_handler() -> None:
+    """W1: with no ride open the bootstrap binds no entry handler.
 
     Runs in its own spawned interpreter (module docstring): a real
-    app bootstrap and a real ``EVT_TEXT_ENTER`` cannot run against
-    the shared fixtures. E5.4.2 leaves the bootstrap console DRAFT --
-    no store-backed ride is open, and a fresh launch starts no ride --
-    so plate 123 is refused because the ride is not running: the
-    notice says so, the field is kept, focus returns, and no
-    crossing is recorded -- the console's correct empty state.
+    app bootstrap cannot run against the shared fixtures. W1 leaves
+    the bootstrap console with no ride and no presenter, so
+    ``wire_entry`` never ran: a typed plate reaches no handler, no
+    crossing is recorded, the field keeps its text and no notice is
+    posted -- the console's correct no-ride empty state.
     """
     result = scenario_runner.run_scenario("plate_entry_round_trip")
 
     assert result["ok"], result["context"]
     assert result["data"]["feed_plates"] == [], result["context"]
     assert result["data"]["field_value"] == "123", result["context"]
-    assert result["data"]["focused"] is True, result["context"]
+    assert result["data"]["focused"] is False, result["context"]
     assert result["data"]["crossings_label"] == "0", result["context"]
-    assert result["data"]["status_text"] == "The ride is not running", result["context"]
+    assert result["data"]["status_text"] == "", result["context"]
 
 
-def test_main_frame_record_btn_given_no_ride_open_rejects_and_keeps_the_field() -> None:
-    """R-31/E5.4.2: Record with no ride open refuses the plate too."""
+def test_main_frame_record_btn_given_no_ride_open_binds_no_handler() -> None:
+    """W1: with no ride open the bootstrap binds no Record handler."""
     result = scenario_runner.run_scenario("record_btn_click_records_once")
 
     assert result["ok"], result["context"]
     assert result["data"]["feed_plates"] == [], result["context"]
     assert result["data"]["field_value"] == "77", result["context"]
-    assert result["data"]["focused"] is True, result["context"]
+    assert result["data"]["focused"] is False, result["context"]
     assert result["data"]["crossings_label"] == "0", result["context"]
-    assert result["data"]["status_text"] == "The ride is not running", result["context"]
+    assert result["data"]["status_text"] == "", result["context"]
 
 
-def test_build_main_window_starts_the_console_in_the_draft_state() -> None:
-    """The bootstrap runs ``set_state(data_source.ride_status())`` (A4).
+def test_build_main_window_opens_the_console_on_the_no_ride_state() -> None:
+    """The bootstrap runs ``MainFrame.show_no_ride()`` (W1).
 
     Runs in its own spawned interpreter (module docstring): drives
     the real ``build_main_window`` bootstrap, not a bare ``MainFrame``.
-    A fresh launch starts no ride (E5.4.2, R-31), so the console
-    opens DRAFT with plate entry and Record disabled.
+    A fresh launch starts no ride at all (E5.4.2/W1), so the console
+    opens with plate entry and Record disabled and a blank status
+    label -- it holds no ride in memory.
     """
     result = scenario_runner.run_scenario("console_starts_in_draft_state")
 
     assert result["ok"], result["context"]
     assert result["data"]["plate_enabled"] is False, result["context"]
     assert result["data"]["record_enabled"] is False, result["context"]
-    assert result["data"]["status_label"] == "DRAFT", result["context"]
+    assert result["data"]["status_label"] == "", result["context"]
 
 
 # --- negative path: MainFrame._find (T-5) -----------------------------

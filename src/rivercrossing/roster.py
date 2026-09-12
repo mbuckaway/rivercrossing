@@ -98,6 +98,7 @@ __all__ = [
     "can_fix_name",
     "can_move_rider",
     "rider_name_key",
+    "team_name_key",
 ]
 
 MIN_TEAM_SIZE = 2
@@ -385,6 +386,30 @@ def rider_name_key(first_name: str, last_name: str = "") -> str:
     share the key "mary anne knibbe".
     """
     return " ".join(f"{first_name} {last_name}".casefold().split())
+
+
+_FUZZY_QUOTE_TRANSLATION = str.maketrans("", "", "'\"\u2018\u2019\u201c\u201d")
+
+
+def team_name_key(name: str) -> str:
+    """Return *name*'s fuzzy key for near-duplicate team detection.
+
+    The one shared home for the key both the CSV import preview
+    (:func:`rivercrossing.csvio._fuzzy_team_key`) and the rider-issues
+    report compare team names through, so the two cannot drift: fold
+    case, drop apostrophes/quotes, tokenize on whitespace and drop the
+    standalone ``and``/``&`` tokens, then strip every remaining
+    non-alphanumeric character, lowercase what is left and join -- so
+    "BNBA 1" and "BNBA1" key to "bnba1", "Good 2 Go" and "Good 2Go" to
+    "good2go", and "Win Win More Win" and "Win Win and more Win" to
+    "winwinmorewin". The final ``lower()`` closes the gap ``casefold``
+    leaves on this build for late-added case pairs (Cherokee: its fold
+    maps both cases onto the capital, whose own ``lower()`` still
+    differs), which would break the key's lowercase invariant.
+    """
+    folded = name.casefold().translate(_FUZZY_QUOTE_TRANSLATION)
+    tokens = [token for token in folded.split() if token not in ("and", "&")]
+    return "".join(char for token in tokens for char in token if char.isalnum()).lower()
 
 
 class Roster:
@@ -932,6 +957,48 @@ class Roster:
             {"display_name": entry.display_name, "old_plate": old_plate, "new_plate": plate},
         )
 
+    def change_plate(self, entry: Entry, rider: Rider | None, *, plate: str) -> None:
+        """Change a plate via the model-correct primitive.
+
+        The one dispatch for S1's plate-ownership shape, shared by the
+        rider editor's save and the rider-issues dialog's one-click
+        fixes so the three call sites cannot drift: a SOLO entry goes
+        through :meth:`change_solo_plate`; a ``rider_pooled`` TEAM
+        entry changes the member's own plate through
+        :meth:`change_pooled_rider_plate` (which refuses a solo); a
+        ``team_relay`` TEAM entry changes the entry's own plate through
+        :meth:`change_team_plate`. A no-op when *plate* already matches
+        the target's current value, so an unconditional save never
+        rewrites an unchanged plate (nor logs a spurious audit event).
+        A blank or whitespace-only *plate* reaches the primitive's own
+        non-empty guard (W7) and is refused there.
+
+        Raises:
+            RiderNotFoundError: *rider* is ``None`` while *entry* is a
+                ``rider_pooled`` TEAM entry, where the plate belongs to
+                a member and no member was named.
+            EntryNotFoundError: *entry* (or *rider*'s entry) is not a
+                member of this roster.
+            LockedError: the ride has left DRAFT.
+            PlateShapeError: the target shape or *plate* violates the
+                ride's model.
+            DuplicatePlateError: *plate* collides with an existing
+                entry's or rider's plate.
+        """
+        if entry.type is EntryType.SOLO:
+            if plate != entry.plate:
+                self.change_solo_plate(entry, plate=plate)
+            return
+        if self._plate_model is PlateModel.RIDER_POOLED:
+            if rider is None:
+                msg = "a rider_pooled team plate change requires the member rider"
+                raise RiderNotFoundError(msg)
+            if plate != rider.plate:
+                self.change_pooled_rider_plate(rider, plate=plate)
+            return
+        if plate != entry.plate:
+            self.change_team_plate(entry, plate=plate)
+
     def delete_entry(self, entry: Entry) -> None:
         """Delete *entry* if the lock matrix currently allows it.
 
@@ -1126,6 +1193,56 @@ class Roster:
         if not entry.riders:
             self._dissolve_entry(entry)
         return solo
+
+    def remove_rider(self, rider: Rider) -> None:
+        """Remove *rider* from this roster, leaving their entry intact.
+
+        The rider editor's Delete acts on the selected *rider*, never
+        on the row's whole entry (the 1.0.12 defect this closes): a
+        solo entry *is* its rider, so that case delegates to
+        :meth:`delete_entry` -- keeping ``_delete_refusal``'s message
+        verbatim -- while a TEAM entry loses only *rider* and survives
+        with the members left. A pooled team re-derives its own plate
+        from them (S1); a team with no riders left dissolves outright
+        (:meth:`_dissolve_entry`), exactly as a move's last rider does.
+
+        Dropping a two-rider team to one therefore leaves a transient
+        size-1 team: the 2..max_team_size floor is a start-time check
+        (:meth:`validate_for_start`), the same documented
+        :meth:`move_rider` behavior. There is no composed alternative
+        to this third copy of the remove -> recompute -> dissolve
+        idiom -- :meth:`extract_rider_to_solo` would leave a dangling
+        solo entry behind, and :meth:`move_rider` needs a destination
+        entry to move to.
+
+        Raises:
+            RiderNotFoundError: *rider* is not on any entry here.
+            LockedError: the rider's entry carries recorded data
+                (DNF or void it instead), or the ride has left DRAFT
+                (R-15).
+        """
+        entry = self._find_owning_entry(rider)
+        if entry is None:
+            msg = "rider is not on any entry in this roster"
+            raise RiderNotFoundError(msg)
+        if entry.type is EntryType.SOLO:
+            self.delete_entry(entry)
+            return
+        if not can_delete_entry(self._status, has_data=entry.has_data):
+            raise LockedError(self._delete_refusal(entry))
+        entry.riders.remove(rider)
+        if entry.riders:
+            self._recompute_pooled_plate(entry)
+        else:
+            self._dissolve_entry(entry)
+        self._log(
+            "remove_rider",
+            {
+                "rider_name": rider.full_name,
+                "plate": entry.plate,
+                "display_name": entry.display_name,
+            },
+        )
 
     def _empty_team_plate(self, plate: str | None) -> str:
         """Return the entry plate of a zero-rider team (W8).

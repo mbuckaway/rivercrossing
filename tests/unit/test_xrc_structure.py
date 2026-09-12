@@ -15,9 +15,15 @@ Verification through the real toolkit -- ``LoadFrame`` /
 
 from collections import Counter
 from pathlib import Path
-from xml.etree import ElementTree as ET
+from typing import TYPE_CHECKING
 
 import pytest
+from defusedxml.ElementTree import parse
+
+if TYPE_CHECKING:
+    # Type-only: defusedxml does not re-export the Element class.
+    # Every parse goes through the defused facade above.
+    from xml.etree.ElementTree import Element
 
 XRC_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" / "xrc"
 
@@ -66,6 +72,7 @@ FILE_MENU_ITEMS = (
     "mi_import_csv",
     "mi_export_csv",
     "mi_backup_now",
+    "mi_simulation",
     "wxID_PREFERENCES",
     "wxID_EXIT",
 )
@@ -108,7 +115,6 @@ RESULTS_MENU_ITEMS = (
     "mi_export_poster",
     "mi_export_results_csv",
     "mi_preview_browser",
-    "mi_tiebreak_order",
 )
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
@@ -182,16 +188,17 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4: File 7, Ride 9, Riders 5,
-# Cards 7, Results 7, View 1, Help 4. The single View row expands into
-# the 8 items section 15b names for it (W13: hide-times + the seven
-# zoom radios; the theme trio left the View menu).
+# spec.md section 15's rows after D1/D4 (Results lost its tie-break row
+# in Part C): File 8 (mi_simulation added), Ride 9, Riders 5, Cards 7,
+# Results 6, View 1, Help 4. The single View row expands into the 8
+# items section 15b names for it (W13: hide-times + the seven zoom
+# radios; the theme trio left the View menu).
 MENU_ITEM_COUNTS = (
-    ("&File", 7),
+    ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 5),
     ("&Cards", 7),
-    ("Re&sults", 7),
+    ("Re&sults", 6),
     ("&View", 8),
     ("&Help", 4),
 )
@@ -225,23 +232,23 @@ FEED_LIST_NAMES = ("crossings_list", "flagged_list")
 FORCED_DATAVIEW_NAME = "dataviewCtrl"
 
 
-def _parse(filename: str) -> ET.Element:
+def _parse(filename: str) -> Element:
     """Return the ``<resource>`` root element of one .xrc file."""
-    return ET.parse(XRC_DIR / filename).getroot()  # noqa: S314 -- our own .xrc
+    return parse(XRC_DIR / filename).getroot()
 
 
-def _top_level_windows(filename: str) -> dict[str, ET.Element]:
+def _top_level_windows(filename: str) -> dict[str, Element]:
     """Map each top-level ``<object name=...>`` to its element."""
     return {child.attrib["name"]: child for child in _parse(filename) if child.tag == "object"}
 
 
-def _window(window_name: str) -> ET.Element:
+def _window(window_name: str) -> Element:
     """Return the top-level window element called *window_name*."""
     filename = WINDOWS[window_name][0]
     return _top_level_windows(filename)[window_name]
 
 
-def _control_names_in(window: ET.Element) -> list[str]:
+def _control_names_in(window: Element) -> list[str]:
     """List every named ``<object>`` below *window*, excluding it."""
     return [
         obj.attrib["name"]
@@ -250,7 +257,7 @@ def _control_names_in(window: ET.Element) -> list[str]:
     ]
 
 
-def _objects_by_name(window: ET.Element) -> dict[str, ET.Element]:
+def _objects_by_name(window: Element) -> dict[str, Element]:
     """Map every named ``<object>`` in *window* to its element."""
     return {obj.attrib["name"]: obj for obj in window.iter("object") if "name" in obj.attrib}
 
@@ -260,18 +267,18 @@ def _classes_in(filename: str) -> list[str]:
     return [obj.attrib["class"] for obj in _parse(filename).iter("object")]
 
 
-def _param(obj: ET.Element, tag: str) -> str:
+def _param(obj: Element, tag: str) -> str:
     """Return the text of *obj*'s direct ``<tag>`` child, or ``""``."""
     child = obj.find(tag)
     return "" if child is None or child.text is None else child.text
 
 
-def _menus() -> list[ET.Element]:
+def _menus() -> list[Element]:
     """List the ``wxMenu`` children of main_menubar, in order."""
     return [child for child in _window("main_menubar") if child.attrib.get("class") == "wxMenu"]
 
 
-def _menu_items(menu: ET.Element) -> list[ET.Element]:
+def _menu_items(menu: Element) -> list[Element]:
     """List the ``wxMenuItem`` elements inside one menu."""
     return [obj for obj in menu.iter("object") if obj.attrib["class"] == "wxMenuItem"]
 
@@ -401,7 +408,7 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
 
 
 def test_main_menubar_declares_forty_four_menu_item_names() -> None:
-    """D1/D4: 44 ``mi_*`` items; mi_add_entry is retired."""
+    """D1/D4/C6: 44 ``mi_*`` items; add_entry and tiebreak retired."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
@@ -410,7 +417,7 @@ def test_main_menubar_declares_forty_four_menu_item_names() -> None:
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:
-    """D1: New Ride… left File; the other seven rows remain."""
+    """D1: New Ride… left File; the other eight rows remain."""
     file_menu = _menus()[0]
 
     names = [item.attrib["name"] for item in _menu_items(file_menu)]

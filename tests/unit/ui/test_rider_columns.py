@@ -4,9 +4,10 @@
 ``ui/rider_columns.py`` is the one home for what
 ``rider_editor_dlg``'s ``riders_list`` and the console's own
 ``console_riders_list`` genuinely share: the column order, each cell's
-text, each column's sort key, and the click-to-sort direction rule.
-The module imports no ``wx`` (R-71: presenters import it too), so
-everything here runs headless with no display.
+text and each column's sort key -- the key both lists' native header
+sort answers through ``RiderRowListModel.Compare``. The module imports
+no ``wx`` (R-71: presenters import it too), so everything here runs
+headless with no display.
 """
 
 from __future__ import annotations
@@ -24,7 +25,6 @@ from rivercrossing.ui.rider_columns import (
     EDITOR_RIDER_COLUMNS,
     SOLO_TEAM_TEXT,
     RiderColumn,
-    toggle_sort,
 )
 
 if TYPE_CHECKING:
@@ -222,40 +222,6 @@ def test_cards_sort_key_given_a_shared_first_card_orders_by_the_rest() -> None:
     ]
 
     assert _plates_in_sort_order("Cards", rows) == ["2", "1"]
-
-
-# -------------------------------------------------- click-to-sort rule
-
-
-def test_toggle_sort_given_a_new_column_sorts_it_ascending() -> None:
-    """Clicking a column other than the active one always sorts up."""
-    assert toggle_sort(2, column=0, ascending=False) == (2, True)
-
-
-def test_toggle_sort_given_the_active_column_ascending_reverses_it() -> None:
-    """Re-clicking the active column flips it to descending."""
-    assert toggle_sort(0, column=0, ascending=True) == (0, False)
-
-
-def test_toggle_sort_given_the_active_column_descending_restores_ascending() -> None:
-    """A third click flips back up again."""
-    assert toggle_sort(0, column=0, ascending=False) == (0, True)
-
-
-def test_toggle_sort_given_no_active_column_sorts_the_clicked_one_ascending() -> None:
-    """The first click after a clear (no active column) sorts up."""
-    assert toggle_sort(3, column=None, ascending=True) == (3, True)
-
-
-@given(column=st.integers(min_value=0, max_value=9), ascending=st.booleans())
-def test_toggle_sort_given_two_clicks_on_one_column_restores_its_direction(
-    column: int,
-    ascending: bool,  # noqa: FBT001 -- a generated property value
-) -> None:
-    """Property: a re-click is an involution -- twice restores (T-7)."""
-    once = toggle_sort(column, column=column, ascending=ascending)
-
-    assert toggle_sort(column, column=once[0], ascending=once[1]) == (column, ascending)
 
 
 @given(

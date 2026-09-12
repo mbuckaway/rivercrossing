@@ -33,7 +33,30 @@ numbers under ``rider_pooled``). SEX is the rider's sex: the
 registration forms' ``Male``/``Female`` and this app's own ``M``/``F``
 both normalize to the one canonical letter, blank (or an absent SEX
 column) means unknown, and any other non-blank cell is a per-row
-conflict -- never a silent guess at someone's sex.
+conflict -- never a silent guess at someone's sex. The one exception
+is :func:`preview`'s explicit ``map_unknown_sex_to_male`` opt-in: when
+the operator checks it, both a blank cell and an unrecognized
+non-blank one import as ``M``, so it is a deliberate operator choice
+rather than a guess.
+
+**Convert teams of one to solo (Phase E).** :func:`preview`'s second
+opt-in, ``convert_teams_of_one_to_solo``, reshapes a team group of
+exactly one rider into a SOLO :class:`ParsedEntry` under either plate
+model. It is DRAFT-only -- spec S1's "convert solo <-> team ...
+before start" -- so a started ride does not convert: a lone team at a
+brand-new plate keeps the team and its usual "team-under-min"
+conflict, while one matching an existing team member is reported
+through the same solo reshape gate a normal solo row uses (no entry,
+never an uncaught ``commit`` error). The DRAFT check is explicit
+because the per-group loops bypass the solo reshape gates the main
+row loop runs. A converted pooled entry keeps the rider's own plate
+and full name; a converted relay entry carries the solo's plate with
+its rider plateless, and its commit is the relay delete-and-recreate
+(which drops the old team's logo). A converted group is no longer a
+team, so its near-duplicate team-name warning is suppressed too.
+Because a converted entry is a SOLO :class:`ParsedEntry`,
+:func:`commit` needs no flag: it already dispatches standalone solos
+and solo reshape matches for both plate models.
 
 :func:`preview` reads the file and reports every conflict found without
 raising for content problems and without writing anything -- to the
@@ -145,6 +168,7 @@ from rivercrossing.roster import (
     can_edit_structure,
     can_move_rider,
     rider_name_key,
+    team_name_key,
 )
 from rivercrossing.standings import Placed, hand_name
 
@@ -378,7 +402,13 @@ class ImportReport:
     audit_events: tuple[AuditEvent, ...]
 
 
-def preview(path: Path, ride: Roster) -> ImportPreview:
+def preview(  # noqa: PLR0913 -- two independent operator opt-ins on top of path/ride
+    path: Path,
+    ride: Roster,
+    *,
+    map_unknown_sex_to_male: bool = False,
+    convert_teams_of_one_to_solo: bool = False,
+) -> ImportPreview:
     """Preview a CSV import against *ride*; write nothing (R-21).
 
     The file's header is resolved through :func:`_map_header`; unmapped
@@ -403,6 +433,19 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
         ride: The roster this import would apply to; its
             plate_model, max_team_size, status and existing entries
             drive every check below. Never mutated.
+        map_unknown_sex_to_male: Explicit operator opt-in: when
+            ``True``, a blank or unrecognized non-blank SEX cell
+            imports as ``"M"`` rather than staying unknown or raising
+            a per-row conflict. Defaults to ``False`` -- the
+            silent-guess-free behavior.
+        convert_teams_of_one_to_solo: Explicit operator opt-in: when
+            ``True`` and the ride is DRAFT, a team group of exactly one
+            rider parses as a SOLO entry instead (both plate models).
+            The conversion is DRAFT-only -- spec S1's "convert solo <->
+            team ... before start" -- so on a started ride a lone team
+            at a new plate keeps the team and its usual size conflict,
+            while one matching an existing team reports the refused
+            conversion as a conflict. Defaults to ``False``.
 
     Returns:
         An :class:`ImportPreview` naming every conflict found and
@@ -422,13 +465,20 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
             mapping = _map_header(header_row)
             if "FIRSTNAME" not in mapping and "LASTNAME" not in mapping:
                 return _whole_file_conflict(path, ride, _HEADER_PROBLEM)
-            rows, row_conflicts = _read_data_rows(reader, mapping)
+            rows, row_conflicts = _read_data_rows(
+                reader, mapping, map_unknown_sex_to_male=map_unknown_sex_to_male
+            )
         except UnicodeDecodeError:
             return _whole_file_conflict(path, ride, _NOT_UTF8_PROBLEM)
         except csv.Error as exc:
             return _whole_file_conflict(path, ride, f"malformed CSV data: {exc}")
     accepted_rows, solo_only_conflicts = _reject_team_rows(rows, ride)
-    entries, entry_conflicts, entry_warnings = _assemble(accepted_rows, ride)
+    converted_team_names = _converted_team_names(
+        accepted_rows, ride, convert_teams_of_one_to_solo=convert_teams_of_one_to_solo
+    )
+    entries, entry_conflicts, entry_warnings = _assemble(
+        accepted_rows, ride, convert_teams_of_one_to_solo=convert_teams_of_one_to_solo
+    )
     conflicts = sorted(
         (*row_conflicts, *solo_only_conflicts, *entry_conflicts),
         key=lambda conflict: conflict.row,
@@ -437,7 +487,9 @@ def preview(path: Path, ride: Roster) -> ImportPreview:
         (
             *entry_warnings,
             *_duplicate_rider_warnings(accepted_rows),
-            *_near_duplicate_team_warnings(accepted_rows),
+            *_near_duplicate_team_warnings(
+                accepted_rows, converted_team_names=converted_team_names
+            ),
         ),
         key=lambda warning: warning.row,
     )
@@ -620,7 +672,10 @@ def _cell(row: Sequence[str], mapping: Mapping[str, int], field: str) -> str:
 
 
 def _read_data_rows(
-    reader: Iterable[Sequence[str]], mapping: Mapping[str, int]
+    reader: Iterable[Sequence[str]],
+    mapping: Mapping[str, int],
+    *,
+    map_unknown_sex_to_male: bool = False,
 ) -> tuple[list[_DataRow], list[ImportConflict]]:
     """Parse every usable data row *reader* yields (Phase 2 spec).
 
@@ -630,7 +685,9 @@ def _read_data_rows(
     silently dropped). TYPE resolves to solo/team (blank derives from
     TEAMNAME); an unrecognized type value conflicts and is excluded.
     SEX normalizes to M/F/unknown; an unrecognized value conflicts and
-    is excluded the same way.
+    is excluded the same way -- unless *map_unknown_sex_to_male*, the
+    operator's explicit opt-in, which maps both blank and unrecognized
+    cells to ``"M"`` so no row is dropped for that reason.
     """
     rows: list[_DataRow] = []
     conflicts: list[ImportConflict] = []
@@ -645,7 +702,9 @@ def _read_data_rows(
             if number or team_raw or type_field:
                 conflicts.append(ImportConflict(row_num, _MISSING_NAME_PROBLEM))
             continue
-        sex, sex_problem = _classify_sex(_cell(raw_row, mapping, "SEX"))
+        sex, sex_problem = _classify_sex(
+            _cell(raw_row, mapping, "SEX"), map_unknown_sex_to_male=map_unknown_sex_to_male
+        )
         if sex_problem is not None:
             conflicts.append(ImportConflict(row_num, sex_problem))
             continue
@@ -675,21 +734,26 @@ def _read_data_rows(
     return rows, conflicts
 
 
-def _classify_sex(value: str) -> tuple[str | None, str | None]:
+def _classify_sex(
+    value: str, *, map_unknown_sex_to_male: bool = False
+) -> tuple[str | None, str | None]:
     """Return *value*'s canonical sex and any conflict text.
 
     ``Male``/``male``/``M``/``m`` map to ``"M"`` and
-    ``Female``/``female``/``F``/``f`` to ``"F"``; blank is
-    ``(None, None)`` -- unknown, not a conflict. Any other non-blank
-    value is ``(None, "invalid sex ...")``, the same shape as
-    :func:`_classify_row`'s unknown-TYPE conflict.
+    ``Female``/``female``/``F``/``f`` to ``"F"``. A blank cell is
+    ``(None, None)`` -- unknown, not a conflict -- and any other
+    non-blank value is ``(None, "invalid sex ...")``, the same shape
+    as :func:`_classify_row`'s unknown-TYPE conflict. When
+    *map_unknown_sex_to_male* is ``True`` (the operator's explicit
+    opt-in) both the blank and the unrecognized non-blank cell become
+    ``("M", None)`` instead; a recognized ``M``/``F`` is unaffected.
     """
     lowered = value.lower()
     if not lowered:
-        return None, None
+        return ("M", None) if map_unknown_sex_to_male else (None, None)
     canonical = _SEX_ALIASES.get(lowered)
     if canonical is None:
-        return None, f"invalid sex {value!r}"
+        return ("M", None) if map_unknown_sex_to_male else (None, f"invalid sex {value!r}")
     return canonical, None
 
 
@@ -734,12 +798,20 @@ def _reject_team_rows(
 
 
 def _assemble(
-    rows: Sequence[_DataRow], ride: Roster
+    rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool = False
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
-    """Turn parsed rows into entries, conflicts and warnings (S7)."""
+    """Turn parsed rows into entries, conflicts and warnings (S7).
+
+    *convert_teams_of_one_to_solo* is passed through unchanged: the
+    per-group loops own the explicit DRAFT check (spec S1's DRAFT-only
+    conversions), since they are the ones bypassing the solo reshape
+    gates the main row loop runs.
+    """
     if ride.plate_model is PlateModel.TEAM_RELAY:
-        return _assemble_relay(rows, ride)
-    return _assemble_pooled(rows, ride)
+        return _assemble_relay(
+            rows, ride, convert_teams_of_one_to_solo=convert_teams_of_one_to_solo
+        )
+    return _assemble_pooled(rows, ride, convert_teams_of_one_to_solo=convert_teams_of_one_to_solo)
 
 
 class _PlateAllocator:
@@ -800,25 +872,15 @@ def _team_size_problem(size: int, max_team_size: int) -> str | None:
     return None
 
 
-_FUZZY_QUOTE_TRANSLATION = str.maketrans("", "", "'\"\u2018\u2019\u201c\u201d")
-
-
 def _fuzzy_team_key(name: str) -> str:
     """Return *name*'s fuzzy key for near-duplicate team detection.
 
-    Fold case, drop apostrophes/quotes, tokenize on whitespace and drop
-    the standalone ``and``/``&`` tokens, then strip every remaining
-    non-alphanumeric character, lowercase what is left and join -- so
-    "BNBA 1" and "BNBA1" key to "bnba1", "Good 2 Go" and "Good 2Go" to
-    "good2go", and "Win Win More Win" and "Win Win and more Win" to
-    "winwinmorewin". The final ``lower()`` closes the gap ``casefold``
-    leaves on this build for late-added case pairs (Cherokee: its
-    fold maps both cases onto the capital, whose own ``lower()`` still
-    differs), which would break the key's lowercase invariant.
+    Delegates to :func:`~rivercrossing.roster.team_name_key`, the one
+    shared home the rider-issues report also compares team names
+    through -- this private csvio-local name is kept only so existing
+    call sites and tests do not have to move.
     """
-    folded = name.casefold().translate(_FUZZY_QUOTE_TRANSLATION)
-    tokens = [token for token in folded.split() if token not in ("and", "&")]
-    return "".join(char for token in tokens for char in token if char.isalnum()).lower()
+    return team_name_key(name)
 
 
 def _duplicate_rider_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:
@@ -848,17 +910,40 @@ def _duplicate_rider_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:
     return warnings
 
 
-def _near_duplicate_team_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:
+def _converted_team_names(
+    rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool
+) -> frozenset[str]:
+    """Return the names ``convert_teams_of_one_to_solo`` turns solo.
+
+    A name whose team group holds exactly one rider converts on a DRAFT
+    ride; an empty set otherwise. Used only to keep the raw-row
+    near-duplicate scan from naming a team the preview no longer holds.
+    """
+    if not convert_teams_of_one_to_solo or ride.status is not RideStatus.DRAFT:
+        return frozenset()
+    counts = Counter(row.team_name for row in rows if row.is_team)
+    return frozenset(name for name, count in counts.items() if count == 1)
+
+
+def _near_duplicate_team_warnings(
+    rows: Sequence[_DataRow], *, converted_team_names: frozenset[str] = frozenset()
+) -> list[ImportConflict]:
     """Return one warning per pair of near-duplicate team names.
 
     Two distinct normalized team names that share a fuzzy key
     (:func:`_fuzzy_team_key`) are near-duplicates; the warning names
-    both, first-seen first, at the second name's first row.
+    both, first-seen first, at the second name's first row. A name in
+    *converted_team_names* was reshaped to solo, so it is skipped --
+    the warning would otherwise name a team the preview no longer has.
     """
     first_row: dict[str, int] = {}
     order: list[str] = []
     for row in rows:
-        if row.is_team and row.team_name not in first_row:
+        if (
+            row.is_team
+            and row.team_name not in converted_team_names
+            and (row.team_name not in first_row)
+        ):
             first_row[row.team_name] = row.row
             order.append(row.team_name)
     fuzzy_groups: dict[str, list[str]] = {}
@@ -934,13 +1019,15 @@ def _plate_disagreement_problem(numbers: set[str]) -> str:
 
 
 def _assemble_relay(
-    rows: Sequence[_DataRow], ride: Roster
+    rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool = False
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
     """Build relay entries: solo rows plus normalized-name team groups.
 
     A team's member rows share the team's single plate: the rows must
     name one plate between them (or none, which auto-assigns); rows
     naming two plates are a shape conflict and contribute no entry.
+    *convert_teams_of_one_to_solo* reaches :func:`_relay_team_entry`
+    unchanged; that helper owns the explicit DRAFT check.
     """
     groups = _group_team_rows(rows)
     allocator = _PlateAllocator(ride, (row.number for row in rows))
@@ -958,14 +1045,20 @@ def _assemble_relay(
     seen_plates: set[str] = set()
     for anchor_row, payload in plan:
         if isinstance(payload, list):
-            parsed, team_conflicts, team_warnings = _relay_team_entry(payload, allocator, ride)
+            parsed, team_conflicts, team_warnings = _relay_team_entry(
+                payload,
+                allocator,
+                ride,
+                convert_teams_of_one_to_solo=convert_teams_of_one_to_solo,
+            )
         else:
             parsed, problem = _relay_solo_entry(payload, allocator, ride)
             team_conflicts = [problem] if problem is not None else []
             team_warnings = []
         if parsed is None:
-            # parsed is None exactly when the team's rows named several
-            # plates, and that producer always sets *team_conflicts*.
+            # parsed is None when the team's rows named several plates
+            # or its conversion was refused; either producer always
+            # sets *team_conflicts*.
             conflicts.append(ImportConflict(anchor_row, team_conflicts[0]))
             continue
         if parsed.plate in seen_plates:
@@ -996,8 +1089,12 @@ def _relay_solo_entry(
     return parsed, problem
 
 
-def _relay_team_entry(
-    group_rows: list[_DataRow], allocator: _PlateAllocator, ride: Roster
+def _relay_team_entry(  # noqa: PLR0913 -- (group_rows, allocator, ride, convert flag)
+    group_rows: list[_DataRow],
+    allocator: _PlateAllocator,
+    ride: Roster,
+    *,
+    convert_teams_of_one_to_solo: bool = False,
 ) -> tuple[ParsedEntry | None, list[str], list[str]]:
     """Build one relay team ParsedEntry from *group_rows* (S7).
 
@@ -1006,6 +1103,15 @@ def _relay_team_entry(
     non-DRAFT under-min size, or a structural reshape the ride's lock
     matrix forbids) and its non-blocking warnings (a DRAFT under-min
     size). The under-min case never skips the structural check.
+
+    With *convert_teams_of_one_to_solo* a one-row group becomes a
+    SOLO entry instead -- but only while DRAFT and only when
+    :func:`_relay_structural_problem` allows the reshape. The resolved
+    plate becomes the solo's and its one rider stays plateless, exactly
+    like :func:`_relay_solo_entry`, so a matched existing entry outside
+    DRAFT surfaces here as a conflict (no entry returned) rather than
+    as an uncaught error at commit. A started ride with no match keeps
+    the group's usual team entry and its size conflict.
     """
     numbers = {row.number for row in group_rows if row.number}
     if len(numbers) > 1:
@@ -1017,6 +1123,23 @@ def _relay_team_entry(
         ParsedRider(first_name=row.first_name, last_name=row.last_name, sex=row.sex)
         for row in group_rows
     )
+    if convert_teams_of_one_to_solo and len(riders) == 1:
+        parsed_rider = riders[0]
+        parsed_solo = ParsedEntry(
+            plate=plate,
+            display_name=parsed_rider.full_name,
+            type=EntryType.SOLO,
+            riders=(parsed_rider,),
+            notes=group_rows[0].notes,
+        )
+        existing = _find_entry_by_plate(ride, plate)
+        structural = _relay_structural_problem(existing, parsed_solo, ride.status)
+        if ride.status is RideStatus.DRAFT and structural is None:
+            return parsed_solo, [], []
+        if structural is not None:
+            # The conversion is refused (a matched existing entry
+            # outside DRAFT): report it, never a team/solo mismatch.
+            return None, [structural], []
     notes = "; ".join(row.notes for row in group_rows if row.notes)
     parsed = ParsedEntry(
         plate=plate,
@@ -1071,9 +1194,13 @@ def _pooled_solo_problem(
 
 
 def _assemble_pooled(
-    rows: Sequence[_DataRow], ride: Roster
+    rows: Sequence[_DataRow], ride: Roster, *, convert_teams_of_one_to_solo: bool = False
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
-    """Build pooled entries: every row keeps its own plate (S1)."""
+    """Build pooled entries: every row keeps its own plate (S1).
+
+    *convert_teams_of_one_to_solo* reaches the one-rider branch below
+    unchanged; that branch owns the explicit DRAFT check.
+    """
     existing_index = _pooled_owner_index(ride)
     allocator = _PlateAllocator(ride, (row.number for row in rows))
     solo_entries: list[ParsedEntry] = []
@@ -1109,7 +1236,9 @@ def _assemble_pooled(
                 notes=row.notes,
             )
         )
-    team_entries, team_conflicts, team_warnings = _assemble_pooled_teams(groups, ride)
+    team_entries, team_conflicts, team_warnings = _assemble_pooled_teams(
+        groups, ride, convert_teams_of_one_to_solo=convert_teams_of_one_to_solo
+    )
     conflicts.extend(team_conflicts)
     return [*solo_entries, *team_entries], conflicts, team_warnings
 
@@ -1131,7 +1260,10 @@ def _pooled_team_target(
 
 
 def _assemble_pooled_teams(
-    groups: Mapping[str, Sequence[tuple[int, ParsedRider, str]]], ride: Roster
+    groups: Mapping[str, Sequence[tuple[int, ParsedRider, str]]],
+    ride: Roster,
+    *,
+    convert_teams_of_one_to_solo: bool = False,
 ) -> tuple[list[ParsedEntry], list[ImportConflict], list[ImportConflict]]:
     """Build one team ParsedEntry per team_name group (spec S7, R-12).
 
@@ -1143,12 +1275,45 @@ def _assemble_pooled_teams(
     case never skips the team's structural-conflict checks. ``notes``
     joins every non-empty member's own row notes with "; "
     (2026-08-09, module docstring).
+
+    With *convert_teams_of_one_to_solo* that one-rider group becomes a
+    SOLO entry instead -- but only while DRAFT (this branch's own
+    explicit check) and only when :func:`_pooled_solo_problem` (the
+    same gate a normal solo row passes) allows it. The converted entry
+    keeps the rider's own plate
+    and full name. A matched existing team outside DRAFT is reported
+    as a preview conflict with no entry, rather than an uncaught
+    ``commit`` error; a started ride with no such match keeps the
+    group's usual team entry and its size conflict. A converted group
+    never reaches the size check, so its under-min warning is
+    suppressed by construction.
     """
     existing_index = _pooled_owner_index(ride)
     entries: list[ParsedEntry] = []
     conflicts: list[ImportConflict] = []
     warnings: list[ImportConflict] = []
     for team_name, rows in groups.items():
+        if convert_teams_of_one_to_solo and len(rows) == 1:
+            row_num, rider, note = rows[0]
+            plate = cast("str", rider.plate)
+            problem = _pooled_solo_problem(existing_index, plate, ride.status)
+            if ride.status is RideStatus.DRAFT and problem is None:
+                entries.append(
+                    ParsedEntry(
+                        plate=plate,
+                        display_name=rider.full_name,
+                        type=EntryType.SOLO,
+                        riders=(rider,),
+                        notes=note,
+                    )
+                )
+                continue
+            if problem is not None:
+                # The conversion the operator asked for is refused (a
+                # matched existing team outside DRAFT): report it, and
+                # emit no entry rather than the team the flag replaced.
+                conflicts.append(ImportConflict(row_num, problem))
+                continue
         riders = tuple(rider for _, rider, _ in rows)
         notes = "; ".join(note for _, _, note in rows if note)
         plate = _lowest_rider_plate(riders)

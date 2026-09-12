@@ -6,11 +6,12 @@
 Team | Sex, with a Cards column on the console's list only -- and
 both order them by clicking a column header. This module is that one
 description: each column's header label, the ``RiderRow`` field it
-renders and the key it sorts by, plus :func:`toggle_sort` for the
-click-to-sort direction rule the two presenters share.
+renders and the key it sorts by. The key is what both lists' native
+header sort answers through
+``ui.views._support.RiderRowListModel.Compare``.
 
 Pure Python -- no ``wx`` import may ever land here (R-71). Both the
-presenters (``ui.presenters.riders``, ordering rows) and the views
+presenters (``ui.presenters.riders``, filtering rows) and the views
 (``ui.views._support``, building columns and cells) import it, so it
 must stay importable headless. The Cards cell's text comes from
 ``ui.card_text``, the one formatter all three call sites share.
@@ -34,7 +35,6 @@ __all__ = [
     "SOLO_TEAM_TEXT",
     "RiderColumn",
     "plate_order_key",
-    "toggle_sort",
 ]
 
 # The canvas's own word for a solo rider's Team cell
@@ -151,20 +151,3 @@ CONSOLE_RIDER_COLUMNS: tuple[RiderColumn, ...] = (
     *EDITOR_RIDER_COLUMNS,
     RiderColumn(label="Cards", value=_cards_cell, sort_key=_cards_sort_key),
 )
-
-
-def toggle_sort(clicked: int, *, column: int | None, ascending: bool) -> tuple[int, bool]:
-    """Return the (column, ascending) sort state for a header click.
-
-    Args:
-        clicked: The column index the operator just clicked.
-        column: The currently sorted column index, or ``None``.
-        ascending: The current sort direction.
-
-    Returns:
-        Clicking a new column sorts it ascending; re-clicking the
-        active column reverses the current direction.
-    """
-    if column == clicked:
-        return clicked, not ascending
-    return clicked, True

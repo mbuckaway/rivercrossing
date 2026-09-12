@@ -8,16 +8,36 @@ in-memory :class:`~rivercrossing.roster.Roster` and reports every
 defect still present, in one stable order a UI can render and a test
 can assert:
 
-    1. team-of-one      -- a TEAM entry below MIN_TEAM_SIZE riders
-    2. missing-name     -- a rider whose full_name is empty
-    3. missing-number   -- a rider_pooled rider with a blank/None plate
-    4. duplicate-name   -- a case/whitespace-duplicate rider name
-    5. duplicate-number -- one plate value claimed more than once
+    1. team-of-one              -- a TEAM entry below MIN_TEAM_SIZE
+    2. missing-name             -- a rider whose full_name is empty
+    3. missing-number           -- a pooled rider with a blank plate
+    4. duplicate-name           -- a duplicate rider name
+    5. duplicate-team-name      -- two teams, one normalized name
+    6. near-duplicate-team-name -- two teams, one fuzzy key
+    7. duplicate-number         -- one plate claimed more than once
 
-The five checks are deliberately independent: one rider can carry
-several defects, and each check reports only its own. The order is the
-stable report order, cheapest structural problems first, plate-namespace
-collisions last.
+The checks are deliberately independent: one rider can carry several
+defects, and each check reports only its own. The order is the stable
+report order, cheapest structural problems first, plate-namespace
+collisions last. The team-name checks reuse the CSV importer's own
+identity rules -- :func:`~rivercrossing.roster.team_name_key` for the
+fuzzy key (its shared public home) and the same trim/collapse/lower
+normalization -- so the preview warnings and this report cannot drift.
+A near-duplicate team name is a *warning*, not a hard defect, and says
+so with the ``⚠ warning: `` message prefix the CSV preview renders
+warnings with rather than a separate severity field.
+
+Two further defects were found during this work but are deliberately
+not checked, because no path through the app can produce them. A
+**blank team name** never reaches a live roster: the Teams editor
+refuses to save one ("enter a team name"), and the CSV importer
+reports a nameless team row as a ``missing-name`` conflict. A team
+**over max_team_size** cannot be built either:
+:meth:`~rivercrossing.roster.Roster.create_team_entry` and
+:meth:`~rivercrossing.roster.Roster.move_rider` both enforce R-12's
+upper bound at mutation time, and
+:meth:`~rivercrossing.roster.Roster.validate_for_start` only ever has
+to re-check the lower bound.
 """
 
 from dataclasses import dataclass
@@ -31,6 +51,7 @@ from rivercrossing.roster import (
     Rider,
     Roster,
     rider_name_key,
+    team_name_key,
 )
 
 if TYPE_CHECKING:
@@ -71,6 +92,7 @@ def rider_issues(roster: Roster) -> tuple[RiderIssue, ...]:
     issues.extend(_missing_name_issues(roster))
     issues.extend(_missing_number_issues(roster))
     issues.extend(_duplicate_name_issues(roster))
+    issues.extend(_team_name_issues(roster))
     issues.extend(_duplicate_number_issues(roster))
     return tuple(issues)
 
@@ -142,6 +164,60 @@ def _duplicate_name_issues(roster: Roster) -> Iterator[RiderIssue]:
                 )
             else:
                 seen.add(key)
+
+
+def _normalized_team_name(name: str) -> str:
+    """Return *name*'s grouping identity, as the CSV importer forms it.
+
+    Trim, collapse every run of internal whitespace to one space, and
+    lowercase -- the same rule
+    :func:`~rivercrossing.csvio._normalize_team_name` applies, so the
+    importer's team grouping and this report's duplicate check agree on
+    when two names are one team.
+    """
+    return " ".join(name.split()).lower()
+
+
+def _team_name_issues(roster: Roster) -> Iterator[RiderIssue]:
+    """Yield one issue per duplicate or near-duplicate team name.
+
+    Two TEAM entries whose display names share one normalized form
+    (:func:`_normalized_team_name`) yield a hard ``duplicate-team-name``
+    on the later entry. The first entry of each normalized name is then
+    grouped by the CSV importer's fuzzy key
+    (:func:`~rivercrossing.roster.team_name_key`); a later name sharing
+    a key with a *distinct* normalized name yields a
+    ``near-duplicate-team-name`` warning, never also a hard duplicate.
+    Solo entries are out of scope -- their display name mirrors a rider
+    and is already covered by ``duplicate-name``.
+    """
+    first_by_name: dict[str, Entry] = {}
+    order: list[str] = []
+    for entry in roster.entries:
+        if entry.type is not EntryType.TEAM:
+            continue
+        normalized = _normalized_team_name(entry.display_name)
+        if normalized in first_by_name:
+            yield RiderIssue(
+                entry=entry,
+                rider=None,
+                kind="duplicate-team-name",
+                message=f'duplicate team name "{entry.display_name}"',
+            )
+            continue
+        first_by_name[normalized] = entry
+        order.append(normalized)
+    groups: dict[str, list[str]] = {}
+    for name in order:
+        groups.setdefault(team_name_key(name), []).append(name)
+    for names in groups.values():
+        for later in names[1:]:
+            yield RiderIssue(
+                entry=first_by_name[later],
+                rider=None,
+                kind="near-duplicate-team-name",
+                message=(f'⚠ warning: possible duplicate team name: "{names[0]}" and "{later}"'),
+            )
 
 
 def _duplicate_number_issues(roster: Roster) -> Iterator[RiderIssue]:

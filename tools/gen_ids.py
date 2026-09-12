@@ -25,8 +25,35 @@ from collections.abc import (  # noqa: TC003 -- dev CLI, no perf-sensitive impor
     Sequence,
 )
 from pathlib import Path
-from typing import NamedTuple
-from xml.etree import ElementTree as ET
+from typing import TYPE_CHECKING, NamedTuple
+
+from defusedxml.ElementTree import parse
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import Protocol
+
+    class XrcElement(Protocol):
+        """The XML element interface this tool reads after a parse.
+
+        A structural stand-in for the element defusedxml's ``parse``
+        returns, so the tool never imports ``xml.etree`` itself.
+        """
+
+        tag: str
+
+        def __iter__(self) -> Iterator[XrcElement]:
+            """Yield the element's direct children."""
+            ...
+
+        def iter(self, tag: str | None = None) -> Iterator[XrcElement]:
+            """Yield the element's descendants, filtered by *tag*."""
+            ...
+
+        def get(self, key: str) -> str | None:
+            """Return the *key* attribute, or ``None``."""
+            ...
+
 
 STOCK_IDS: frozenset[str] = frozenset(
     {
@@ -61,13 +88,14 @@ SPEC_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_infobar",
 )
 
-# In active use on the xrc-windows.md canvas (main_menubar,
+# In active use on a window's own XRC canvas (main_menubar,
 # main_statusbar, audit_search, about_logo_bmp, gorba_link,
 # selftest_output, main_splitter) but never named in section 15b's
 # own suffix sentence -- extension, not part of the frozen text.
 # _preview joined when Phase 4 registered logo_preview (team_editor_dlg)
 # in section 15b; _notebook joined when the ux-polish review notebook
-# registered review_notebook (main.xrc).
+# registered review_notebook (main.xrc); _gauge joined when the Rider
+# Simulator registered progress_gauge (simulation.xrc).
 CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_menubar",
     "_statusbar",
@@ -78,6 +106,7 @@ CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_splitter",
     "_preview",
     "_notebook",
+    "_gauge",
 )
 
 KNOWN_SUFFIXES: tuple[str, ...] = SPEC_KNOWN_SUFFIXES + CANVAS_KNOWN_SUFFIXES
@@ -120,7 +149,7 @@ def iter_xrc_files(xrc_dir: Path) -> list[Path]:
     return sorted(xrc_dir.glob("*.xrc"))
 
 
-def _top_level_windows(root: ET.Element) -> list[ET.Element]:
+def _top_level_windows(root: XrcElement) -> list[XrcElement]:
     """Return the direct ``<object>`` children of an XRC ``<resource>``.
 
     Each one is its own name namespace: a control name must be
@@ -129,7 +158,7 @@ def _top_level_windows(root: ET.Element) -> list[ET.Element]:
     return [child for child in root if child.tag == "object"]
 
 
-def _names_in_window(window: ET.Element) -> list[str]:
+def _names_in_window(window: XrcElement) -> list[str]:
     """List every non-stock ``name`` attribute in *window*'s subtree."""
     names = []
     for elem in window.iter("object"):
@@ -170,7 +199,7 @@ def scan_xrc_directory(xrc_dir: Path) -> ScanResult:
     """
     all_names: set[str] = set()
     for path in iter_xrc_files(xrc_dir):
-        root = ET.parse(path).getroot()  # noqa: S314 -- our own .xrc, not attacker input
+        root = parse(path).getroot()
         for window in _top_level_windows(root):
             # logic-coverage-exempt: T-3 unreachable for loadable XRC
             # -- LoadFrame/LoadDialog/LoadMenuBar all require a name

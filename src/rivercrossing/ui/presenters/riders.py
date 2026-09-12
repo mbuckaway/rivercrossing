@@ -24,17 +24,14 @@ the editor through :meth:`RidersPresenter.on_add_committed` /
 :meth:`RidersPresenter.on_edit_committed`, so the open editor never
 shows a stale roster.
 
-Add folds a new rider onto an existing team via
-:meth:`~rivercrossing.roster.Roster.create_team_entry_of_one`
-(a transient size-1 team, DRAFT-only, R-12's floor deferred to start
-time) followed by :meth:`~rivercrossing.roster.Roster.move_rider` --
-not ``create_solo_entry`` + ``move_rider`` as first proposed:
-``move_rider`` rejects a solo entry on either side unconditionally
-(``tests/unit/test_roster.py``'s
-``test_move_rider_into_a_solo_entry_raises_invalid_move_error`` and
-its two siblings), so the transient must itself be type TEAM. A
-refused join rolls the transient team back with ``delete_entry`` so
-the roster stays truly unchanged. The 2026-09-06 ux-polish follow-on
+Add folds a new rider onto an existing team through
+:meth:`~rivercrossing.roster.Roster.add_rider_to_team` directly. The
+rider attaches to the chosen team in place, so the pooled
+RUNNING/REOPENED carve-out comes from
+:func:`~rivercrossing.roster.can_move_rider`, and a team already at
+``max_team_size`` raises ``TeamSizeError`` before anything changes --
+the same primitive the Edit path's team change uses
+(:func:`_apply_team_change`). The 2026-09-06 ux-polish follow-on
 retired the "New team…" sentinel from this editor entirely:
 ``team_choice`` now offers solo or an existing team, and naming a
 brand-new team happens in the Teams editor, never here. A successful
@@ -60,7 +57,7 @@ Pure Python -- no ``wx`` import may ever land here (R-71).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from rivercrossing import csvio
 from rivercrossing.roster import (
@@ -74,12 +71,11 @@ from rivercrossing.roster import (
     can_delete_entry,
     can_edit_structure,
 )
-from rivercrossing.ui import rider_columns
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
 
     from rivercrossing.roster import Entry, Roster
@@ -97,10 +93,11 @@ __all__ = [
     "RidersView",
 ]
 
-# team_choice's frozen first entry (xrc-windows.md's Rider Editor
-# mock: "-- solo --" first, then team display names -- the retired
-# "New team…" sentinel is gone, ux-polish).
-SOLO_TEAM_CHOICE = "— solo —"
+# team_choice's frozen first entry: the bare word "solo" first, then
+# every team's display name. The "-- solo --" wording of
+# xrc-windows.md's Rider Editor mock is retired (ux-polish), as is
+# its "New team…" sentinel.
+SOLO_TEAM_CHOICE = "solo"
 
 # ``SOLO_TEAM_TEXT`` above is imported from ``ui.rider_columns``
 # (Phase 3): the one wx-free home for the rider lists' shared cell
@@ -158,16 +155,10 @@ class RidersView(Protocol):
     """
 
     def show_riders(self, rows: list[RiderRow]) -> None:
-        """Render riders_list."""
-        ...
+        """Render riders_list.
 
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Mark riders_list *column*'s header (▲/▼), or clear it.
-
-        ``None`` *column* means no active sort: every header returns
-        to its plain label. Column indexes are the shared
-        :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`
-        order.
+        Rows arrive in the roster's own (search-filtered) order; the
+        list's native header sort re-orders what it displays.
         """
         ...
 
@@ -262,30 +253,25 @@ def _pair_rows(roster: Roster, pairs: Sequence[tuple[Entry, Rider]]) -> list[Rid
     return [_pair_row(roster, entry, rider) for entry, rider in pairs]
 
 
-def _visible_pairs(  # noqa: PLR0913 -- the filter/order state bundle (text, column, direction)
+def _visible_pairs(
     roster: Roster,
     pairs: Sequence[tuple[Entry, Rider]],
     *,
     search_text: str,
-    column: int | None,
-    ascending: bool,
 ) -> list[tuple[Entry, Rider]]:
-    """Filter *pairs* by *search_text*, then order them (W7).
+    """Filter *pairs* by *search_text* (W7).
 
     *search_text* matches the row's Plate, Name or Team cell as a
     case-insensitive substring (the audit dialog's own precedent); a
     blank search filters nothing. A solo row's Team cell is the literal
     "solo" (:func:`_team_cell`), so searching "solo" finds every solo
-    rider. Ordering: ``None`` *column* keeps the pairs' given (roster)
-    order; otherwise the shared
-    :data:`~rivercrossing.ui.rider_columns.EDITOR_RIDER_COLUMNS`
-    column's own sort key orders the rows, so this editor and the
-    console's rider list can never order the same rows differently.
-    ``sorted`` is stable, so equal keys keep roster order;
-    *ascending* ``False`` reverses the comparison.
+    rider. The survivors keep the pairs' given (roster) order: the
+    list's own native header sort re-orders what it displays, from the
+    shared column's ``sort_key`` through
+    :meth:`~rivercrossing.ui.views._support.RiderRowListModel.Compare`.
     """
     needle = search_text.strip().casefold()
-    visible = [
+    return [
         pair
         for pair in pairs
         if not needle
@@ -293,31 +279,6 @@ def _visible_pairs(  # noqa: PLR0913 -- the filter/order state bundle (text, col
         or needle in pair[1].full_name.casefold()
         or needle in _team_cell(pair[0]).casefold()
     ]
-    if column is None:
-        return visible
-    key = _column_sort_key(roster, column)
-    return sorted(visible, key=key, reverse=not ascending)
-
-
-def _column_sort_key(roster: Roster, column: int) -> Callable[[tuple[Entry, Rider]], Any]:
-    """Return the sort-key callable for riders_list *column* (W7).
-
-    Columns are the shared ``EDITOR_RIDER_COLUMNS`` order (Plate |
-    Name | Team | Sex). Each (entry, rider) pair is projected onto its
-    own :class:`~rivercrossing.ui.presenters.data_source.RiderRow`
-    and handed to that column's shared ``sort_key``, so the editor's
-    ordering is genuinely the console list's ordering (Phase 3).
-
-    The ``Any`` return is the shared column's own key type (a per
-    column union -- digits pair, ``str`` or ``int``); ``sorted`` needs
-    a comparable type, which only ``Any`` supplies for that union.
-    """
-    sort_key = rider_columns.EDITOR_RIDER_COLUMNS[column].sort_key
-
-    def pair_key(pair: tuple[Entry, Rider]) -> Any:  # noqa: ANN401 -- the shared column's own key type
-        return sort_key(_pair_row(roster, *pair))
-
-    return pair_key
 
 
 def _team_choices(roster: Roster) -> list[str]:
@@ -372,27 +333,6 @@ def _rename_rider(  # noqa: PLR0913 -- (roster, entry, rider) + both name halves
         roster.update_entry(entry, display_name=rider.full_name)
 
 
-def _apply_plate_change(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + the plate
-    roster: Roster, entry: Entry, rider: Rider, plate: str
-) -> None:
-    """Change *entry*/*rider*'s plate to *plate*, if it differs.
-
-    A blank or whitespace-only *plate* reaches the roster's own
-    non-empty guard (``change_*_plate``), which raises
-    ``PlateShapeError`` with the "must not be empty" message -- W7's
-    central fix for the relay-blank hole, so no blank plate is ever
-    stored through this editor.
-    """
-    if entry.type is EntryType.SOLO:
-        if plate != entry.plate:
-            roster.change_solo_plate(entry, plate=plate)
-    elif roster.plate_model is PlateModel.RIDER_POOLED:
-        if plate != rider.plate:
-            roster.change_pooled_rider_plate(rider, plate=plate)
-    elif plate != entry.plate:
-        roster.change_team_plate(entry, plate=plate)
-
-
 def _apply_team_change(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + the choice
     roster: Roster, entry: Entry, rider: Rider, chosen: str
 ) -> Entry:
@@ -439,12 +379,20 @@ def _apply_form_changes(  # noqa: PLR0913, PLR0917 -- (roster, entry, rider) + t
     form's value over would rewrite the *destination* team's plate --
     then the names. A ``RosterError`` from an earlier step leaves the
     later ones untouched, so a refused edit never half-applies.
+
+    The plate step is the roster's own shared
+    :meth:`~rivercrossing.roster.Roster.change_plate` dispatch (the
+    same one the rider-issues fixes use), so the shape rule has one
+    home; a blank or whitespace-only *form.plate* reaches that
+    dispatch's non-empty guard (``change_*_plate``) and is refused
+    there -- W7's central fix for the relay-blank hole, so no blank
+    plate is ever stored through this editor.
     """
     team_changed = _team_value(entry) != form.team
     if team_changed:
         entry = _apply_team_change(roster, entry, rider, form.team)
     if not (team_changed and roster.plate_model is PlateModel.TEAM_RELAY):
-        _apply_plate_change(roster, entry, rider, form.plate)
+        roster.change_plate(entry, rider, plate=form.plate)
     _rename_rider(
         roster,
         entry,
@@ -568,10 +516,12 @@ class AddRiderPresenter:
     def _join_existing_team(self, form: RiderFormValues) -> None:
         """Fold a new rider onto the existing team named *form.team*.
 
-        Composed from shipped Roster primitives: a transient size-1
-        team is created, then folded in via move_rider (see the
-        module docstring). A refused fold-in rolls the transient
-        back so the roster stays unchanged.
+        Uses :meth:`~rivercrossing.roster.Roster.add_rider_to_team`
+        directly: the rider attaches to the chosen team in place, so
+        the pooled RUNNING/REOPENED carve-out comes from
+        :func:`~rivercrossing.roster.can_move_rider`, and a team
+        already at ``max_team_size`` raises ``TeamSizeError`` before
+        anything changes.
         """
         target = _find_team_entry(self.roster, form.team)
         rider = Rider(
@@ -580,15 +530,7 @@ class AddRiderPresenter:
             plate=form.plate,
             sex=form.sex,
         )
-        entry_plate = form.plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
-        transient = self.roster.create_team_entry_of_one(
-            display_name=form.team, rider=rider, plate=entry_plate
-        )
-        try:
-            self.roster.move_rider(rider, to_entry=target)
-        except RosterError:
-            self.roster.delete_entry(transient)
-            raise
+        self.roster.add_rider_to_team(rider, to_entry=target)
 
 
 class EditRiderPresenter:
@@ -666,8 +608,9 @@ class RidersPresenter:
     See the module docstring for how team growth composes from
     :class:`~rivercrossing.roster.Roster`'s shipped primitives; a
     relay team member's plate change routes through
-    :func:`_apply_plate_change` → ``change_team_plate`` (pinned by the
-    edit-presenter suite's relay-member case). 1.0.12: this presenter
+    :meth:`~rivercrossing.roster.Roster.change_plate` →
+    ``change_team_plate`` (pinned by the edit-presenter suite's
+    relay-member case). 1.0.12: this presenter
     no longer writes at all -- the Add/Edit dialog's own presenters
     do, and this one re-renders after them through
     :meth:`on_add_committed` / :meth:`on_edit_committed`.
@@ -684,8 +627,7 @@ class RidersPresenter:
                 (``_load()``) when ``True`` (the default, unchanged
                 for every existing caller). ``CsvPreviewDialog``
                 passes ``False``: its view never implements
-                ``show_riders``/``set_sort_indicator``/
-                ``set_team_ui_visible``/``show_form``/
+                ``show_riders``/``set_team_ui_visible``/``show_form``/
                 ``set_delete_enabled`` for real, so nothing may call
                 them.
         """
@@ -693,16 +635,23 @@ class RidersPresenter:
         self.roster = roster
         self._selected: tuple[Entry, Rider] | None = None
         self._csv_preview: csvio.ImportPreview | None = None
+        # Phase 3: csv_preview_dlg's "Map unknown sex to Male" checkbox.
+        # The picked path needs no field of its own -- it is already
+        # retained as ``self._csv_preview.source_path``.
+        self._map_unknown_sex_to_male = False
+        # Phase E: csv_preview_dlg's "Convert teams of 1 to solo"
+        # checkbox, the second opt-in _preview_csv threads into csvio.
+        self._convert_teams_of_one_to_solo = False
         # W7 close-persist flag: True once any add/edit/delete has
         # actually committed this session (app.py's editor-close save
         # consults :attr:`roster_changed`).
         self._roster_changed = False
-        # W7 search/sort state: what riders_list currently shows, and
-        # the two narrowings that decide it (_refresh_rows applies).
+        # W7 search state: what riders_list currently shows, and the
+        # one narrowing that decides it (_refresh_rows applies). Row
+        # order is the list's own native header sort, so this presenter
+        # holds no sort state at all.
         self._visible: list[tuple[Entry, Rider]] = []
         self._search_text = ""
-        self._sort_column: int | None = None
-        self._sort_ascending = True
         if load:
             self._load()
 
@@ -710,12 +659,15 @@ class RidersPresenter:
         """Fill the form from riders_list row *index* (R-20, W7).
 
         *index* addresses the currently *visible* rows -- the
-        search/sort narrowed list -- never the raw roster, so the
-        selection always lands on the row the operator can see. An
-        index outside that list is a stale event (the row it pointed
-        at was deleted or filtered out from under the view), so the
-        guard here is the presenter's own half of the view's selection
-        check, and it simply fills nothing.
+        search-filtered list -- never the raw roster, so the selection
+        always lands on the row the operator can see. It is the model
+        row index the view reads back, and the model's rows are this
+        same visible list, so the list's own native sort cannot move
+        the selection onto a different record. An index outside that
+        list is a stale event (the row it pointed at was deleted or
+        filtered out from under the view), so the guard here is the
+        presenter's own half of the view's selection check, and it
+        simply fills nothing.
         """
         if not 0 <= index < len(self._visible):
             return
@@ -728,29 +680,12 @@ class RidersPresenter:
         Matches the row's Plate, Name or Team cell case-insensitively
         (the audit dialog's own precedent) -- so a team name or the
         literal "solo" finds its rows too, not just name/plate. The
-        active sort, if any, keeps ordering the survivors; clearing
-        the text restores every row.
+        survivors keep the roster's own order (the list's native header
+        sort paints its own order on top); clearing the text restores
+        every row.
         """
         self._search_text = text
         self._refresh_rows()
-
-    def on_sort_by_column(self, column: int) -> None:
-        """Sort riders_list by *column*; re-clicking toggles (W7).
-
-        The presenter owns row order (a ``DataViewIndexListModel``
-        cannot sort itself -- see the W7 report note), so the view
-        forwards header clicks here and re-renders through
-        ``show_riders``. The direction rule is the shared
-        :func:`~rivercrossing.ui.rider_columns.toggle_sort`: the first
-        click on a column sorts it ascending, clicking the active
-        column again reverses it. The view then marks the active
-        column's header (▲/▼) from this same state.
-        """
-        self._sort_column, self._sort_ascending = rider_columns.toggle_sort(
-            column, column=self._sort_column, ascending=self._sort_ascending
-        )
-        self._refresh_rows()
-        self.view.set_sort_indicator(self._sort_column, ascending=self._sort_ascending)
 
     def on_add_committed(self) -> None:
         """Re-render after the Add dialog committed into this roster.
@@ -788,29 +723,34 @@ class RidersPresenter:
         self._show_record(entry, rider)
 
     def on_delete(self) -> None:
-        """Handle delete_btn: confirm, then remove the selection (R-15).
+        """Handle delete_btn: confirm, then remove that rider (R-15).
 
         1.0.12 B3: a delete is irreversible, so the view asks the
-        operator first (``RidersView.confirm``, naming the entry) and
-        this handler returns early on Cancel -- nothing is attempted,
-        no message shown, nothing flagged. A refusal from the roster
-        (recorded data, or the ride has left DRAFT) shows via
-        :meth:`RidersView.show_validation`, naming the reason, and
-        never raises past this handler. A no-op if nothing is selected
-        -- including the confirm, which never opens over an empty form.
+        operator first (``RidersView.confirm``, naming the *rider* --
+        a team-member row must not be confirmed as the team) and this
+        handler returns early on Cancel -- nothing is attempted, no
+        message shown, nothing flagged. The removal goes through
+        :meth:`~rivercrossing.roster.Roster.remove_rider`, so OK
+        deletes only the selected rider: a solo rider's own entry
+        goes, a team member leaves their team standing. A refusal
+        from the roster (recorded data, or the ride has left DRAFT)
+        shows via :meth:`RidersView.show_validation`, naming the
+        reason, and never raises past this handler. A no-op if nothing
+        is selected -- including the confirm, which never opens over
+        an empty form.
         """
         if self._selected is None:
             return
-        entry, _rider = self._selected
+        _, rider = self._selected
         if not self.view.confirm(
-            "Delete entry?",
-            f'Delete "{entry.display_name}" from this ride?',
+            "Delete rider?",
+            f'Delete "{rider.full_name}" from this ride?',
             ok_label="Delete",
             cancel_label="Cancel",
         ):
             return
         try:
-            self.roster.delete_entry(entry)
+            self.roster.remove_rider(rider)
         except LockedError as exc:
             self.view.show_validation(str(exc))
             return
@@ -820,6 +760,15 @@ class RidersPresenter:
 
     def on_pick_csv_import(self, path: Path) -> None:
         """Preview *path* against this roster; render it (E3.4, R-21).
+
+        The picker's entry point; the preview and render both live in
+        :meth:`_preview_csv`, which this delegates to (Phase 3 shared
+        it with :meth:`on_toggle_map_unknown_sex`).
+        """
+        self._preview_csv(path)
+
+    def _preview_csv(self, path: Path) -> None:
+        """Preview *path* and render the result (E3.4, R-21).
 
         Nothing is written -- :func:`~rivercrossing.csvio.preview`'s
         own contract. A file that cannot be read raises ``OSError``
@@ -833,9 +782,18 @@ class RidersPresenter:
         escapes the presenter's caller, which would leave the dialog
         open with nothing happening (the measured note
         ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+
+        Phase 3 threads :attr:`_map_unknown_sex_to_male` into every
+        preview, so the toggle's re-run and a fresh pick agree; Phase E
+        threads :attr:`_convert_teams_of_one_to_solo` the same way.
         """
         try:
-            self._csv_preview = csvio.preview(path, self.roster)
+            self._csv_preview = csvio.preview(
+                path,
+                self.roster,
+                map_unknown_sex_to_male=self._map_unknown_sex_to_male,
+                convert_teams_of_one_to_solo=self._convert_teams_of_one_to_solo,
+            )
         except (OSError, ValueError) as exc:
             self.view.show_validation(f"Could not read {path.name}: {exc}")
             self.view.set_import_enabled(enabled=False)
@@ -858,6 +816,32 @@ class RidersPresenter:
             CsvPreview(summary=summary, conflicts=conflicts, warnings=warnings)
         )
         self.view.set_import_enabled(enabled=len(conflicts) == 0)
+
+    def on_toggle_map_unknown_sex(self, *, enabled: bool) -> None:
+        """Handle ``map_unknown_sex_chk``; re-preview if one is open.
+
+        *enabled* is the checkbox's new state. With no preview yet
+        this only records the flag -- the next pick honours it. With
+        one, the same retained path is re-previewed, so the conflicts
+        list and Import button reflect the new mapping immediately
+        (``csvio.preview`` writes nothing; re-running it is free).
+        """
+        self._map_unknown_sex_to_male = enabled
+        if self._csv_preview is not None:
+            self._preview_csv(self._csv_preview.source_path)
+
+    def on_toggle_convert_teams_of_one(self, *, enabled: bool) -> None:
+        """Handle ``convert_teams_of_one_chk``; re-preview on toggle.
+
+        *enabled* is the checkbox's new state. With no preview yet this
+        only records the flag -- the next pick honours it. With one,
+        the same retained path is re-previewed, so the summary's
+        team count and the conflicts list reflect the DRAFT-only
+        conversion immediately (``csvio.preview`` writes nothing).
+        """
+        self._convert_teams_of_one_to_solo = enabled
+        if self._csv_preview is not None:
+            self._preview_csv(self._csv_preview.source_path)
 
     def on_confirm_csv_import(self) -> bool:
         """Commit the last previewed import (E3.4, R-21).
@@ -900,13 +884,11 @@ class RidersPresenter:
 
         No plate lock here any more (1.0.12 B1): the editor's own form
         is display-only, and the spec S3:46 lock moved with the editing
-        to :class:`AddRiderPresenter`/:class:`EditRiderPresenter`.
-        Phase 3 renders the sort indicator too -- it starts inactive
-        (``_sort_column`` is ``None``, set in ``__init__``), so every
-        header opens on its plain label.
+        to :class:`AddRiderPresenter`/:class:`EditRiderPresenter`. The
+        list opens in the roster's own order: the operator's header
+        sort belongs to the control, not this presenter.
         """
         self._refresh_rows()
-        self.view.set_sort_indicator(self._sort_column, ascending=self._sort_ascending)
         self.view.set_team_ui_visible(visible=self.roster.entry_mode is EntryMode.MIXED)
         self._show_add_form()
 
@@ -933,19 +915,17 @@ class RidersPresenter:
     def _refresh_rows(self) -> None:
         """Re-render riders_list from the roster.
 
-        The search/sort narrowings (:data:`_visible`) are recomputed
-        here, so every caller -- initial load, add/edit/delete, the
-        search and sort handlers themselves -- renders the same
-        filtered, ordered list the selection events index into. Phase
-        3 dropped the team_choice refresh: the editor's Team field is
-        a read-only display of the selected record, not a choice.
+        The search narrowing (:data:`_visible`) is recomputed here, so
+        every caller -- initial load, add/edit/delete and the search
+        handler itself -- renders the same filtered list the selection
+        events index into. Phase 3 dropped the team_choice refresh: the
+        editor's Team field is a read-only display of the selected
+        record, not a choice.
         """
         self._visible = _visible_pairs(
             self.roster,
             _rider_pairs(self.roster),
             search_text=self._search_text,
-            column=self._sort_column,
-            ascending=self._sort_ascending,
         )
         self.view.show_riders(_pair_rows(self.roster, self._visible))
 

@@ -50,11 +50,11 @@ there, not here).
 
 import gc
 import os
+import platform
 import re
 import sqlite3
 import sys
 import threading
-import traceback
 import webbrowser
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
@@ -63,11 +63,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from platformdirs import user_data_dir
 
-from rivercrossing import csvio, htmlexport, pdfexport
+from rivercrossing import __version__, csvio, htmlexport, pdfexport
 from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import (
     IllegalStateError,
+    PendingMiss,
     RideConfig,
     RideEngine,
     RideEngineError,
@@ -100,16 +101,22 @@ from rivercrossing.ui import (
 from rivercrossing.ui import (
     help as help_module,
 )
-from rivercrossing.ui.logging import VERBOSE_LOG_NAME, VerboseLog
+from rivercrossing.ui.logging import Logging, build_log_path, prune_logs
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
-from rivercrossing.ui.presenters.data_source import EmptyDataSource, EngineDataSource, RideSummary
+from rivercrossing.ui.presenters.data_source import (
+    FEED_CAP,
+    DataSource,
+    EmptyDataSource,
+    EngineDataSource,
+    RideSummary,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from types import TracebackType
 
-    from rivercrossing.ride import Event
+    from rivercrossing.ride import Crossing, Event
     from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
@@ -151,11 +158,6 @@ _VIEW_ROUTE_TARGET = "view_setting"
 # a temp rides.db (the packaged-app smoke stages one through it), with
 # an explicit ``main(db_path=...)`` argument taking precedence over it.
 _DB_PATH_ENV = "RIVERCROSSING_DB_PATH"
-
-# The per-user crash log's file name; it lives next to settings.json
-# (the same per-user config directory, E8.1.1) so both the operator
-# and a support session can find it in one place.
-_CRASH_LOG_NAME = "rivercrossing.log"
 
 
 @dataclass
@@ -846,7 +848,7 @@ def _swap_console_onto(  # noqa: PLR0913, PLR0917 -- (context, engine, roster, s
     presenter = ConsolePresenter(view, engine=engine, source=source)
     view.set_presenter(presenter)
     _show_ride_header(context, engine.config)
-    view.set_state(source.ride_status())
+    view.set_state(source.ride_status(), stopped=engine.stopped)
     view.show_feed(source.feed_rows())
     view.show_counters(source.counters())
     view.focus_entry()
@@ -875,6 +877,9 @@ def _switch_console_to_ride(
     _wire_store_append(engine, store, ride_id, notify=_status_notice(context))
     _swap_console_onto(context, engine, roster, EngineDataSource(engine, roster))
     context.active_ride_id = ride_id
+    log = _log(context)
+    if log is not None:
+        log.ride_loaded(ride_id=ride_id)
 
 
 def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
@@ -1058,10 +1063,10 @@ def _live_library_callbacks(
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs; a loaded wx.Dialog
     store: Store,
-) -> tuple[Callable[[RideSummary], None], Callable[[], None], Callable[[RideSummary], None]]:
-    """Return the store-backed library's Open/New/Duplicate callbacks.
+) -> tuple[Callable[[RideSummary], None], Callable[[RideSummary], None]]:
+    """Return the store-backed library's Open/Duplicate callbacks.
 
-    E5.4.1 wires the live library to the real DB through these three:
+    E5.4.1 wires the live library to the real DB through these two:
 
     - **Open** loads the selected ride and swaps the console onto it
       (:func:`_switch_console_to_ride`), then ends the library modal
@@ -1069,8 +1074,6 @@ def _live_library_callbacks(
       avoidance the resume flow's ``library_btn`` uses (measured
       there: a modal opened synchronously inside this one's unwind is
       not dismissible by the harness).
-    - **New** ends the library modal and opens File ▸ New Ride…'s
-      target (the ride setup flow), also deferred.
     - **Duplicate** shows the ride's name in the E5.4.1 mock-first
       confirm and, on OK, calls ``Store.duplicate_ride`` -- the view
       refreshes its own rows afterwards, so the new DRAFT ride
@@ -1079,9 +1082,13 @@ def _live_library_callbacks(
       swallowed by wx with zero signal (the measured note
       ``docs/EPIC3-SESSION-SUMMARY.md`` records).
 
+    W10 dropped the third callback (New): the library no longer has a
+    New button, so the ride-setup flow stays File ▸ New Ride…'s route
+    alone.
+
     ``window`` is the live ``ride_library_dlg``, used to end the
-    modal for Open/New. ``store`` is the live Store the callbacks
-    act on (:func:`_decorate` only calls this with one open).
+    modal for Open. ``store`` is the live Store the callbacks act on
+    (:func:`_decorate` only calls this with one open).
     """
     wx = require_wx()
 
@@ -1092,11 +1099,6 @@ def _live_library_callbacks(
             window.EndModal(wx.ID_CLOSE)
         wx.CallAfter(_switch_console_to_ride, context, selected.ride_id)
 
-    def _new() -> None:
-        if not window.IsBeingDeleted():
-            window.EndModal(wx.ID_CLOSE)
-        wx.CallAfter(_open_target, context, commands.route_for_id("mi_new_ride"))
-
     def _duplicate(selected: RideSummary) -> None:
         if selected.ride_id is None:
             return
@@ -1105,7 +1107,7 @@ def _live_library_callbacks(
         except (OSError, sqlite3.Error) as exc:
             context.frame.SetStatusText(f"Could not duplicate ride: {exc}")
 
-    return _open, _new, _duplicate
+    return _open, _duplicate
 
 
 def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
@@ -1124,9 +1126,9 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
     zoom applies only at startup from the persisted file and through
     the View-menu radios (``_handle_view_row``).
 
-    F3: ``verbose_logging`` (``verbose_log_chk``) is applied to the
-    live :class:`~rivercrossing.ui.logging.VerboseLog` the launch
-    constructed, so unticking it stops the NDJSON records at once.
+    F1/F3: ``verbose_logging`` (``verbose_log_chk``) is applied to the
+    live :class:`~rivercrossing.ui.logging.Logging` the launch
+    constructed, so unticking it stops the trace records at once.
     """
     try:
         settings_store.save_settings(settings, context.settings_path)
@@ -1143,9 +1145,9 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
         context.frame.SetStatusText(notice)
     _check_loaded_hide_times(context.frame.GetMenuBar(), hide=settings.hide_times)
     sound.set_muted(muted=not settings.sound_on)
-    log = _verbose_log(context)
+    log = _log(context)
     if log is not None:
-        log.set_enabled(settings.verbose_logging)
+        log.set_verbose(settings.verbose_logging)
     presenter = context.presenter
     if presenter is not None:
         presenter.on_hide_times(hide=settings.hide_times)
@@ -1244,6 +1246,8 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     version, ride-logo-or-app-icon). Phase 4 adds the teams editor:
     ``team_editor_dlg`` now binds the TeamEditor view over the live
     roster (team records -- name, relay plate, notes, logo). The
+    rider simulator joins them: ``simulation_dlg`` binds SimulatorDialog
+    over the same roster, driven by the live engine. The
     remaining plain XRC dialogs
     with no code-side view class (the correction dialogs) need
     nothing further here; they already carry their own canvas
@@ -1258,17 +1262,17 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
     from rivercrossing.ui.views.settings import SettingsDialog  # noqa: PLC0415
     from rivercrossing.ui.views.shortcuts import ShortcutsDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.simulator import SimulatorDialog  # noqa: PLC0415
     from rivercrossing.ui.views.team_editor import TeamEditor  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
         if context.store is not None:
-            on_open, on_new, on_duplicate = _live_library_callbacks(context, window, context.store)
+            on_open, on_duplicate = _live_library_callbacks(context, window, context.store)
             RideLibrary(
                 window,
                 data_source=_StoreLibrarySource(context.store),
                 on_delete=_library_delete_callback(context, window),
                 on_open=on_open,
-                on_new=on_new,
                 on_duplicate=on_duplicate,
             )
         else:
@@ -1313,24 +1317,31 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
             roster=context.roster,
             on_submitted=lambda config: _persist_created_ride(context, config),
         )
+    elif route.target == ids.SIMULATION_DLG:
+        # The simulator generates its placeholder field through the
+        # live roster and replays the race through the console's own
+        # engine, so it needs the threaded presenter. A route-level
+        # context with none opens the plain XRC dialog (its Generate
+        # and GO buttons inert); _open_target then has no view to
+        # persist, and the roster is untouched anyway.
+        if context.presenter is not None:
+            return SimulatorDialog(window, engine=context.presenter.engine, roster=context.roster)
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1 (shared with the W11 F2a flagged seam): the live
         # branch opens the selected entry over the live seams; the
         # empty branch keeps the E5.4.2 empty state. See
         # _open_entry_detail_dialog's own docstring.
         _open_entry_detail_dialog(context, window, context.detail_plate or "")
-    elif route.target == ids.RESULTS_FRAME:
+    elif route.target == ids.RESULTS_DLG:
         # E6.4.1 (D10): with a live console threaded, results render
         # the real placed rows from the console's EngineDataSource
         # (the same live source build_main_window wired, so the
         # roster always matches the engine -- the resume path never
-        # updates context.roster) and seed the tie-break list from
-        # the ride's stored order. The E5.4.2 empty state stays for
-        # the no-presenter path (route-level tests). ux-polish: the
-        # results frame's reopen_btn is wired to the same
-        # _handle_reopen_ride_route flow mi_reopen_ride runs; a
-        # results window with no live ride (the empty path) gets no
-        # callback and its button stays inert.
+        # updates context.roster) and rank them with the ride's
+        # stored order. entry_mode decides the MIXED notebook or the
+        # SOLO standalone list. The E5.4.2 empty state stays for the
+        # no-presenter path (route-level tests), where the export
+        # buttons stay disabled (DRAFT) and inert (no callback).
         presenter = context.presenter
         if presenter is not None:
             ResultsWindow(
@@ -1338,11 +1349,11 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
                 data_source=presenter.source,
                 tiebreak_order=presenter.engine.config.tiebreak_order,
                 export_watermark=context.export_watermark,
-                on_reopen=lambda: _handle_reopen_ride_route(context),
+                entry_mode=presenter.engine.config.entry_mode,
                 # W11: the four export buttons fire the same
                 # _handle_export_command route the matching mi_export_*
                 # menu row runs -- the dead synthetic-EVT_MENU
-                # forwarding is gone (the parentless results frame
+                # forwarding is gone (the parentless results window
                 # never reached the main frame's handlers).
                 on_export=lambda target: _handle_export_command(context, target),
             )
@@ -1538,14 +1549,19 @@ def _handle_export_csv(context: _RouteContext) -> None:
 def _handle_check_rider_issues(context: _RouteContext) -> None:
     """Riders ▸ Check for Rider Issues…: open the issues dialog (R-78).
 
-    A conversion made inside the dialog mutates the shared in-memory
-    roster; persist + rebuild after the modal ends, exactly like a CSV
-    import (persist first, then ``_switch_console_to_ride`` with the
-    live clock), so a converted team-of-one survives a relaunch. A
-    refused roster save surfaces as a status notice and skips the
-    rebuild -- the same guard :func:`_handle_import_csv` uses, for
-    the same wx-swallowed-raise reason (the measured note
-    ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+    Any roster change made inside the dialog -- a one-click fix, or an
+    edit made through the Open Editor button's nested rider/team
+    editor -- mutates the shared in-memory roster, so this persists +
+    rebuilds after the modal ends, exactly like a CSV import (persist
+    first, then ``_switch_console_to_ride`` with the live clock), so
+    the change survives a relaunch. ``run_rider_issues_flow`` reports
+    an audit-log length delta rather than the presenter's own
+    ``did_change``, so a nested editor's edit (which the presenter
+    never performs) is caught too. A refused roster save surfaces as a
+    status notice and skips the rebuild -- the same guard
+    :func:`_handle_import_csv` uses, for the same wx-swallowed-raise
+    reason (the measured note ``docs/EPIC3-SESSION-SUMMARY.md``
+    records).
     """
     from rivercrossing.ui.views import rider_issues  # noqa: PLC0415
 
@@ -1655,8 +1671,8 @@ def _export_options() -> ExportOptions:
     wx = require_wx()
     if wx.GetApp() is None:
         return ExportOptions()
-    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    presenter = getattr(frame, "presenter", None)
+    dialog = wx.FindWindowByName(ids.RESULTS_DLG)
+    presenter = getattr(dialog, "presenter", None)
     if presenter is not None:
         return cast("ExportOptions", presenter.export_options())
     return ExportOptions()
@@ -1811,8 +1827,8 @@ def _clear_results_stale(watermark: int) -> None:
     clean.
     """
     wx = require_wx()
-    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    presenter = getattr(frame, "presenter", None)
+    dialog = wx.FindWindowByName(ids.RESULTS_DLG)
+    presenter = getattr(dialog, "presenter", None)
     if presenter is not None:
         presenter.mark_exported(watermark)
 
@@ -1976,21 +1992,6 @@ def _handle_open_user_guide(context: _RouteContext) -> None:
     anchor = help_module.anchor_for(window_name)
     url = help_module.open_guide(anchor)
     context.frame.SetStatusText(f"Opened user guide: {url}")
-
-
-def _handle_focus_tiebreak(context: _RouteContext) -> None:
-    """Results ▸ Tie-break Order…: open Results and focus the list."""
-    wx = require_wx()
-    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    if frame is None:
-        _open_target(context, commands.route_for_id("mi_standings"))
-        frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    if frame is None:
-        context.frame.SetStatusText("Open Results to set the tie-break order")
-        return
-    control = frame.FindWindowByName(ids.TIEBREAK_LIST)
-    if control is not None:
-        control.SetFocus()
 
 
 def _handle_backup_database(context: _RouteContext) -> None:
@@ -2559,20 +2560,15 @@ _CORRECTION_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     """Open *route*'s target window, or notice its absence (D1).
 
-    ``LoadFrame``/``LoadDialog`` return ``None`` rather than raise
-    when *route.target* names no XRC resource at all (harness.py's
-    own measured note) -- no §15 route is un-authored anymore (E5.4.1
-    and E7 authored Duplicate Ride, Reopen Ride, Void Card), but the
+    ``LoadDialog`` returns ``None`` rather than raise when
+    *route.target* names no XRC resource at all (harness.py's own
+    measured note) -- no §15 route is un-authored anymore (E5.4.1 and
+    E7 authored Duplicate Ride, Reopen Ride, Void Card), but the
     branch stays as the safety net for any future route whose target
     is not yet authored, with no change needed here: a route never
     silently does nothing, it always says so on the status bar instead.
     """
-    is_frame = route.target == ids.RESULTS_FRAME
-    window = (
-        context.resource.LoadFrame(None, route.target)
-        if is_frame
-        else context.resource.LoadDialog(None, route.target)
-    )
+    window = context.resource.LoadDialog(None, route.target)
     if window is None:
         context.frame.SetStatusText(f"{route.label} — no window authored yet")
         return
@@ -2599,31 +2595,6 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         if not window.IsBeingDeleted():
             window.Destroy()
         raise
-    if is_frame:
-        # ux-polish: apply the light-mode panel tint to the results
-        # frame at open. The frame is modeless, so -- unlike the modal
-        # dialogs run_dialog tints -- it can stay open across a live
-        # macOS theme switch; re-applying (or clearing) the tint when
-        # the theme changes while it is open is deliberately out of
-        # scope (theme.apply_light_mode_panel_bg's docstring): closing
-        # and reopening re-tints. results.xrc carries its top sizer
-        # directly on the frame, so the frame background is the only
-        # surface.
-        theme.apply_light_mode_panel_bg(window)
-        # H1: the results frame is loaded parentless and modeless, so
-        # place it deliberately rather than letting the platform pick
-        # (top-left on MSW). CentreOnParent centres on screen when
-        # there is no parent, which is the console-less case.
-        window.CentreOnParent()
-        window.Show()
-        window.Raise()
-        # F4: the modeless frames (results) are opened here rather than
-        # through run_dialog, so their open is recorded here; a modal
-        # dialog's record belongs to run_dialog's own seam.
-        log = _verbose_log(context)
-        if log is not None:
-            log.dialog(route.target, route.label)
-        return
 
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
@@ -2641,6 +2612,8 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         _persist_rider_editor_changes(context, view)
     elif route.target == ids.TEAM_EDITOR_DLG and view is not None:
         _persist_team_editor_changes(context, view)
+    elif route.target == ids.SIMULATION_DLG and view is not None:
+        _persist_simulator_changes(context, view)
 
 
 def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
@@ -2704,6 +2677,35 @@ def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # 
         store.save_roster(context.active_ride_id, context.roster)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save teams: {exc}")
+
+
+def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
+    """Persist the roster after the simulator dialog closes.
+
+    The mirror of :func:`_persist_rider_editor_changes`: the simulator
+    generates placeholder riders and teams into the in-memory roster,
+    so with a store-backed ride open and any generated change (the
+    presenter's own ``roster_changed``), that roster is written back
+    so a crashed or abandoned simulated field survives a relaunch. A
+    refused save (a locked or unwritable database) surfaces as a status
+    notice -- the same guard idiom the rider editor uses, for the same
+    wx-swallowed-raise reason.
+
+    Args:
+        context: The route context whose store/roster to act on.
+        view: The closed ``SimulatorDialog`` (or a presenter-shaped
+            stand-in) whose ``presenter.roster_changed`` says whether
+            this session generated anything.
+    """
+    if not view.presenter.roster_changed:
+        return
+    store = context.store
+    if store is None or context.active_ride_id is None:
+        return
+    try:
+        store.save_roster(context.active_ride_id, context.roster)
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not save riders: {exc}")
 
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
@@ -2808,6 +2810,121 @@ def _wire_flagged_open_seam(context: _RouteContext) -> None:
     console_view.set_on_open_flagged(lambda plate: _open_entry_detail_for(context, plate))
 
 
+def _crossing_for_feed_row(engine: RideEngine, row: int) -> Crossing | None:
+    """Return the crossing the console feed's *row* shows, or ``None``.
+
+    The crossing rows are ``reversed(engine.crossings[-FEED_CAP:])``
+    (``EngineDataSource.feed_rows``: newest first, R-32's 30-row cap),
+    so row 0 is the newest crossing and the row index unwinds that same
+    window. The cap drops the *oldest* crossings while every recorded
+    crossing keeps its ride-wide ordinal, so an index outside the window
+    -- a stale activation after the feed shrank -- names no crossing.
+
+    K's misses interleave with the crossings, so this indexes the
+    *crossing* rows only; :func:`_feed_row_target` is the feed-aware
+    resolver the console's activation seam actually uses.
+    """
+    window = engine.crossings[-FEED_CAP:]
+    if not 0 <= row < len(window):
+        return None
+    return window[len(window) - 1 - row]
+
+
+def _feed_row_target(
+    source: DataSource, engine: RideEngine, row: int
+) -> Crossing | PendingMiss | None:
+    """Return the target the console feed's *row* shows, or ``None``.
+
+    K's interleaved feed (``EngineDataSource.feed_rows``) means a row
+    index no longer names a fixed crossing: the row's own ``missed``
+    flag decides. A miss row resolves to its :class:`PendingMiss` by
+    ``miss_seq`` against the engine's pending misses; a crossing row
+    resolves through :func:`_crossing_for_feed_row`, counting only the
+    crossing rows before it (the misses it skips do not shift the
+    30-row cap arithmetic). A row outside the feed -- a stale
+    activation after the feed shrank -- names nothing.
+    """
+    rows = source.feed_rows()
+    if not 0 <= row < len(rows):
+        return None
+    feed_row = rows[row]
+    if feed_row.missed:
+        return next(
+            (miss for miss in engine.pending_misses() if miss.miss_seq == feed_row.miss_seq),
+            None,
+        )
+    crossing_rows_before = sum(1 for earlier in rows[:row] if not earlier.missed)
+    return _crossing_for_feed_row(engine, crossing_rows_before)
+
+
+def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
+    """Open ``crossing_detail_dlg`` on the feed row *row* (J2/K2).
+
+    The console crossings feed's activation flow: wired as
+    :meth:`MainFrame.set_on_open_crossing`'s callback
+    (:func:`_wire_crossing_open_seam`), so a double-click (or Enter)
+    on a feed row opens the row's detail -- the same decoration idiom
+    :func:`_open_rider_editor_for` uses (zoom applied before
+    decoration, shown through ``dialogs.run_dialog``, destroyed in a
+    ``finally`` so a decoration raise cannot leak it).
+
+    Differences: the console view hands over a *row index*, resolved
+    here by :func:`_feed_row_target` to either the live ``Crossing``
+    or the pending miss the row stands for. A crossing opens
+    :class:`CrossingDetailView`, a miss opens
+    :class:`MissDetailView`, so the same window serves the "wrong plate
+    on the line" and "score the miss" corrections. The dialog commits
+    straight through the console's engine, whose event sink already
+    persists it, so nothing is read back afterwards.
+
+    A console with no ride behind it (W1's no-ride bootstrap) has no
+    presenter and no crossings, so there is nothing to show; the
+    startup empty feed renders no row a double-click could reach.
+    """
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+    from rivercrossing.ui.views.crossing_detail import (  # noqa: PLC0415 -- deferred
+        CrossingDetailView,
+        MissDetailView,
+    )
+
+    presenter = context.presenter
+    if presenter is None:
+        return
+    engine = presenter.engine
+    target = _feed_row_target(presenter.source, engine, row)
+    if target is None:
+        return
+    window = context.resource.LoadDialog(None, ids.CROSSING_DETAIL_DLG)
+    if window is None:
+        context.frame.SetStatusText("Crossing Detail — no window authored yet")
+        return
+    try:
+        zoom.apply_to(window)
+        if isinstance(target, PendingMiss):
+            MissDetailView(window, miss=target, engine=engine)
+        else:
+            CrossingDetailView(window, crossing=target, roster=context.roster, engine=engine)
+        dialogs.run_dialog(window, opener=context.frame)
+    finally:
+        if not window.IsBeingDeleted():
+            window.Destroy()
+
+
+def _wire_crossing_open_seam(context: _RouteContext) -> None:
+    """Wire the console crossings feed's activation to Crossing Detail.
+
+    J2: :meth:`MainFrame.set_on_open_crossing` is the view's pure seam
+    (it only fires ``callback(row)``); this is the app's half that
+    resolves the activated row to its live ``Crossing`` and opens the
+    detail dialog on it. A console-less route-level context has nothing
+    to wire.
+    """
+    console_view = context.console_view
+    if console_view is None:
+        return
+    console_view.set_on_open_crossing(lambda row: _open_crossing_detail_for(context, row))
+
+
 def _wire_finished_banner_actions(context: _RouteContext) -> None:
     """Wire the FINISHED banner's two buttons to the menu's flows.
 
@@ -2850,9 +2967,9 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     The live ride status and name come from the console's own
     presenter engine (E5.4.2: the ``data_source`` seam is gone; the
     quit flow asks the live console, never a display-data source).
-    Route-level tests construct ``_RouteContext`` without a live
-    presenter and never reach this path; the DRAFT/"The ride"
-    fallbacks mirror the finish route's own presenter-less stub.
+    W1: the no-ride bootstrap threads no presenter, so the
+    DRAFT/"The ride" fallbacks are the real empty-console path -- with
+    no ride open there is nothing to finish and no ride name to name.
 
     A confirmed ``QuitOutcome.QUIT`` stamps the open session's
     ``closed_at`` through :func:`_stamp_closed_session` (E5.2.1: a
@@ -2866,11 +2983,9 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     wx = require_wx()
 
     presenter = context.presenter
-    # logic-coverage-exempt: T-3 -- the DRAFT/"The ride" fallback arms
-    # are unreachable in every live construction: _confirm_quit runs
-    # only from post-bootstrap route handlers, which always have a
-    # live presenter threaded (build_main_window's replace), mirroring
-    # the finish route's own presenter-less stub exemption.
+    # W1: the bootstrap's no-ride console threads no presenter, so the
+    # DRAFT/"The ride" fallbacks below are the live empty-console path
+    # (quitting from the no-ride console), not a presenter-less stub.
     status = presenter.engine.state if presenter is not None else RideStatus.DRAFT
     dialog_name = quit_flow.dialog_for_status(status)
     if dialog_name is None:
@@ -3090,7 +3205,6 @@ _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
     target: _export_action(target) for target in _EXPORT_SUGGESTED_NAMES
 }
 _TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
-_TARGET_ACTIONS["focus_tiebreak_control"] = _handle_focus_tiebreak
 _TARGET_ACTIONS["backup_database"] = _handle_backup_database
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
 _TARGET_ACTIONS[ids.RIDER_ISSUES_DLG] = _handle_check_rider_issues
@@ -3246,7 +3360,7 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
 
 
 def _menu_logging_handler(  # noqa: PLR0913, PLR0917 -- (log, id, route, handler): the F3 wrapper's inputs
-    log: VerboseLog,
+    log: Logging,
     item_id: int,
     route: commands.MenuRoute,
     handler: Callable[[Any], None],
@@ -3274,15 +3388,15 @@ def _bind_routes(context: _RouteContext) -> None:
     route added later is bound automatically and cannot be missed
     (R-73).
 
-    F3: with a verbose log threaded, each bound handler is wrapped so
-    the operator's menu selection is recorded before it dispatches;
+    F3: with a structured log threaded, each bound handler is wrapped
+    so the operator's menu selection is recorded before it dispatches;
     without one the bare handler is bound, so a log-less construction
     behaves exactly as before.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
 
-    log = _verbose_log(context)
+    log = _log(context)
     for route in commands.ROUTE_TABLE:
         handler = _make_route_handler(context, route)
         for item_id in route.ids:
@@ -3559,6 +3673,13 @@ def _run_launch_flow(
         return
     previous = store.previous_session()
     choice = _launch_choice(previous, ride_open=context.active_ride_id is not None)
+    log = _log(context)
+    if log is not None:
+        log.launch(
+            previous_state=previous.state.value,
+            previous_ride_id=previous.ride_id,
+            choice=choice,
+        )
     if choice == "no_ride":
         _show_no_ride_info(context.frame)
         return
@@ -3598,9 +3719,9 @@ def build_main_window(
     the two process-quit paths ``EVT_CLOSE``/``wxEVT_QUERY_END_SESSION``
     (Phase 8, P8-D1/P8-D2/P8-D4). E5.4.2 retired the
     :class:`DemoDataSource` construction: the bootstrap roster is
-    empty (no store-backed ride is open), the console reads its own
-    live ``EngineDataSource``, and the E6/E7 windows read the
-    :data:`_EMPTY_SOURCE` empty state -- no production module imports
+    empty (no store-backed ride is open), and both the console (W1:
+    :data:`_EMPTY_SOURCE` + :meth:`MainFrame.show_no_ride`) and the
+    E6/E7 windows read the empty state -- no production module imports
     ``rivercrossing.demo`` any more (import-linter contract).
 
     E8.1.1 loads the per-user settings file at startup and applies
@@ -3608,15 +3729,16 @@ def build_main_window(
     :class:`~rivercrossing.ui.theme.ThemeController` (constructed with
     the loaded mode; W13 removed the View-menu theme trio, so there is
     no menu radio to tick), the sound
-    mute through :func:`~rivercrossing.ui.sound.set_muted`, hide-times
-    through the console presenter's ``on_hide_times`` (with the menu
-    check item synced, E8.1.3), zoom through
-    :func:`~rivercrossing.ui.zoom.set_percent` (with the menu radio
-    synced, E8.1.4), and the saved splitter sash / frame geometry
-    through :class:`MainFrame`'s layout seams. The settings file path
-    and current :class:`AppSettings` are kept on
-    :class:`_RouteContext`, and the layout save callback persists
-    sash/geometry changes back to the file.
+    mute through :func:`~rivercrossing.ui.sound.set_muted`, zoom
+    through :func:`~rivercrossing.ui.zoom.set_percent` (with the menu
+    radio synced, E8.1.4), and the saved splitter sash / frame
+    geometry through :class:`MainFrame`'s layout seams. Hide-times
+    (E8.1.3) applies with the first ride attach, since the no-ride
+    bootstrap has no presenter to call ``on_hide_times`` on (its menu
+    check item is still synced here). The settings file path and
+    current :class:`AppSettings` are kept on :class:`_RouteContext`,
+    and the layout save callback persists sash/geometry changes back
+    to the file.
 
     ux-polish adds one post-wiring step: the console Riders tab's
     double-click seam is wired to the rider editor
@@ -3624,8 +3746,11 @@ def build_main_window(
     activation seam the same way (:func:`_wire_flagged_open_seam` ->
     live entry detail at the flagged plate) and the FINISHED banner's
     two buttons (:func:`_wire_finished_banner_actions` -> the reopen
-    and results flows). W3 retired every launch modal
-    from this function -- ``resume_dlg``, the no-ride prompt and the
+    and results flows); J2 adds the crossings feed's own activation
+    seam (:func:`_wire_crossing_open_seam` -> the read-only Crossing
+    Detail dialog on the activated row's live crossing). W3 retired
+    every launch modal from this function -- ``resume_dlg``, the
+    no-ride prompt and the
     R-44 self-test all ran here, before the frame was shown, where a
     modal that cannot be presented blocks the launch invisibly (the
     "app never starts again" regression). The console always opens on
@@ -3669,12 +3794,12 @@ def build_main_window(
         REQUIRED_CONTROLS,
     )
 
-    # F3: the second ordered bootstrap step -- main() already built and
+    # F1: the second ordered bootstrap step -- main() already built and
     # installed the log; a construction without one (the functional
     # helpers build the window directly) logs nothing.
-    log = getattr(app, "verbose_log", None)
+    log = getattr(app, "log", None)
     if log is not None:
-        log.start("building the main window")
+        log.marker("building the main window")
     # logic-coverage-exempt: T-3 -- this guard's live arm runs only
     # under main() against a real wx.App (build_main_window loads XRC
     # and constructs the console), so the unit suite can exercise only
@@ -3685,9 +3810,6 @@ def build_main_window(
     # below reads the same loaded object, and the layout save callback
     # writes back through the same path.
     settings_path = settings_path if settings_path is not None else settings_store.default_path()
-    # The crash log follows the launch's real settings file (E8.1.1's
-    # directory), including a temp path injected by the test suites.
-    app.crash_log_path = Path(settings_path).with_name(_CRASH_LOG_NAME)
     loaded_settings = settings_store.load_settings(settings_path)
     loaded_mode = theme.ThemeMode(loaded_settings.appearance)
 
@@ -3731,13 +3853,15 @@ def build_main_window(
         # need the pieces already set here.
     )
 
-    # W3: no launch modal runs here. The console always opens on the
-    # empty DRAFT engine (E5.4.2); the post-Show launch flow
+    # W3/W1: no launch modal runs here, and no ride is built either.
+    # With no store-backed ride open the console holds a true empty
+    # state (no engine, no presenter); the post-Show launch flow
     # (main()'s _run_launch_flow) shows resume_dlg / the No Ride Open
     # alert over the visible frame, and Continue -- or the library's
     # Open -- swaps the console onto the store ride afterwards, so a
     # replay against a drifted roster can never take the build down.
-    engine, engine_source = _build_console_engine(roster)
+    # _build_console_engine stays for Clear Ride's no-store fallback
+    # (and the unit tests); the bootstrap no longer calls it.
 
     def _save_layout(sash: int | None, geometry: tuple[int, int, int, int] | None) -> None:
         """Persist the console's layout and keep the context current."""
@@ -3745,42 +3869,37 @@ def build_main_window(
 
     _console = MainFrame(
         frame,
-        data_source=engine_source,
+        data_source=_EMPTY_SOURCE,
         initial_sash=loaded_settings.splitter_sash,
         initial_geometry=loaded_settings.window_geometry,
         on_layout_changed=_save_layout,
     )
-
-    # _presenter is kept alive the same way: wire_entry/wire_console's
-    # closures hold its bound handlers, which wx's own event table and
-    # the tick timer then hold.
-    _presenter = ConsolePresenter(_console, engine=engine, source=engine_source)
-    _console.wire_entry(_presenter.on_plate_entered)
-    _console.wire_console(_presenter)
-    _console.set_state(engine_source.ride_status())
-    _console.focus_entry()
+    _console.show_no_ride()
 
     # E8.1.1-E8.1.4: apply the persisted settings that have live
     # paths -- appearance (the ThemeController, constructed with the
-    # loaded mode), sound, hide-times and zoom.
+    # loaded mode), sound and zoom. hide-times applies when a ride
+    # attaches (a new presenter renders it), not at the no-ride
+    # bootstrap where there is no presenter to call.
     sound.set_muted(muted=not loaded_settings.sound_on)
-    _presenter.on_hide_times(hide=loaded_settings.hide_times)
     zoom.set_percent(loaded_settings.zoom_percent)
 
     _apply_accelerators(frame, menubar)
     # theme_controller is kept alive by _RouteContext, threaded through
     # every route handler. console_view is threaded the same way so
-    # E5.4.1's library Open can swap the console's presenter;
-    # active_ride_id records the store ride the launch flow's Continue
-    # opened, if any (File ▸ Duplicate Ride… reads it).
+    # E5.4.1's library Open can swap the console's presenter; the
+    # presenter starts as None (W1) and _swap_console_onto sets it on
+    # the first ride attach. active_ride_id records the store ride the
+    # launch flow's Continue opened, if any (File ▸ Duplicate Ride…
+    # reads it).
     context = replace(
         context,
-        presenter=_presenter,
         console_view=_console,
     )
     _bind_routes(context)
     _wire_rider_open_seam(context)
     _wire_flagged_open_seam(context)
+    _wire_crossing_open_seam(context)
     _wire_finished_banner_actions(context)
     _bind_process_quit_paths(context)
     _bind_theme(context)
@@ -3788,9 +3907,9 @@ def build_main_window(
     # set_on_ride_changed fires on every ride-state change (the
     # console's own seam) and on every feed re-render, so the §15
     # "Enabled when" cells hold in the app -- the initial call below
-    # applies them to the bootstrap's DRAFT ride.
+    # applies them to the no-ride state (DRAFT, ride_open=False).
     _console.set_on_ride_changed(lambda status: _apply_menu_state(context, status))
-    _apply_menu_state(context, engine.state)
+    _apply_menu_state(context, RideStatus.DRAFT)
 
     # W3: the post-Show launch flow needs the assembled context, and
     # the app object is the one handle main() and the functional
@@ -3799,18 +3918,28 @@ def build_main_window(
     return frame
 
 
-def _verbose_log(context: _RouteContext) -> VerboseLog | None:
-    """Return the launch's verbose log, when the app carries one.
+def _log(context: _RouteContext) -> Logging | None:
+    """Return the launch's structured log, when the app carries one.
 
     ``None`` for a construction whose app predates the F1 log (a
     route-level test's ``app=None``, or the functional helpers that
     build a window without going through :func:`main`), so every
     logging call site is a silent no-op instead of a crash.
     """
-    return cast("VerboseLog | None", getattr(context.app, "verbose_log", None))
+    return cast("Logging | None", getattr(context.app, "log", None))
 
 
-def _make_verbose_event_filter(log: VerboseLog) -> Any:  # noqa: ANN401 -- wx ships no stubs
+def _log_file_name(log: Logging) -> str:
+    """Return the name of the NDJSON file *log* writes to.
+
+    The uncaught-exception notice names the file its traceback landed
+    in, so the operator can point a support session at the right one.
+    """
+    handler = log._handler  # noqa: SLF001 -- Logging exposes no path accessor
+    return Path(handler.baseFilename).name
+
+
+def _make_event_filter(log: Logging) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Build the whitelisted control-event filter the app installs (F4).
 
     The control-event half of F4: menu selections are logged by
@@ -3819,10 +3948,10 @@ def _make_verbose_event_filter(log: VerboseLog) -> Any:  # noqa: ANN401 -- wx sh
     radio button, choice and text -- and ignores everything else,
     paint/mouse/timer/idle traffic included. It always answers
     ``Event_Skip`` so a filter can never swallow an event, and a
-    disabled log short-circuits before any control is read.
+    non-verbose log short-circuits before any control is read.
 
     Args:
-        log: The live verbose log the whitelisted events are written to.
+        log: The live log the whitelisted events are written to.
 
     Returns:
         A ``wx.EventFilter`` ready for ``wx.App.AddFilter``.
@@ -3840,12 +3969,12 @@ def _make_verbose_event_filter(log: VerboseLog) -> Any:  # noqa: ANN401 -- wx sh
     # refuses to subclass Any (the same reasoning _build_app_class's own
     # ``wx.App`` subclass records, plus the dotted-Any base's
     # name-defined noise).
-    class _VerboseEventFilter(wx.EventFilter):  # type: ignore[misc, name-defined]
+    class _ControlEventFilter(wx.EventFilter):  # type: ignore[misc, name-defined]
         """Log whitelisted control events; never swallow one (F4)."""
 
         def FilterEvent(self, event: Any) -> int:  # noqa: ANN401, N802 -- wx's own override name
             """Log one whitelisted activation, or pass the event on."""
-            if log.enabled:
+            if log.verbose:
                 event_type = event.GetEventType()
                 control = event.GetEventObject()
                 if control is not None:
@@ -3855,40 +3984,11 @@ def _make_verbose_event_filter(log: VerboseLog) -> Any:  # noqa: ANN401 -- wx sh
                         log.control(control.GetName(), control_kinds[event_type])
             return wx.EventFilter.Event_Skip  # type: ignore[no-any-return]
 
-    return _VerboseEventFilter()
-
-
-def _append_exception_log(  # noqa: PLR0913, PLR0917 -- (type, value, traceback) is sys.excepthook's own triple, plus the target path
-    path: Path,
-    exc_type: type[BaseException],
-    exc_value: BaseException,
-    exc_tb: TracebackType | None,
-) -> Path:
-    """Append *exc*'s formatted traceback to the crash log at *path*.
-
-    The one writer the app's uncaught-exception handler and the
-    bootstrap hook use. A failed write (an unwritable log directory,
-    a full disk) is swallowed: crash logging must never replace the
-    original error with a second exception raised from inside
-    ``sys.excepthook`` -- the caller still surfaces its own notice.
-
-    Returns:
-        *path*.
-    """
-    header = f"\n===== {datetime.now(UTC).isoformat(timespec='seconds')} =====\n"
-    payload = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
-    try:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(header + payload)
-    except OSError:
-        # A crash log that cannot be written must not crash the app
-        # a second time from inside sys.excepthook.
-        return path
-    return path
+    return _ControlEventFilter()
 
 
 def _install_crash_excepthook(app: Any) -> None:  # noqa: ANN401 -- the live wx.App
-    """Route unhandled exceptions to *app*'s crash-log handler.
+    """Route unhandled exceptions to *app*'s exception handler.
 
     wxPython 4.3.1 swallows a Python exception that escapes an event
     handler only after routing it through ``sys.excepthook``
@@ -3897,9 +3997,9 @@ def _install_crash_excepthook(app: Any) -> None:  # noqa: ANN401 -- the live wx.
     hook is the one seam that sees both the pre-MainLoop bootstrap
     path and the handler exceptions the loop swallows. The windowed
     bundle has no console to show the default hook's stderr traceback,
-    so the app's own handler takes its place: full traceback to the
-    per-user crash log next to the settings file, plus a one-line
-    status notice (:func:`main` installs this before the bootstrap).
+    so the app's own handler takes its place: the exception record in
+    the launch's NDJSON log, plus a one-line status notice
+    (:func:`main` installs this before the bootstrap).
     """
 
     def _hook(
@@ -3938,24 +4038,19 @@ def _build_app_class() -> type[Any]:
         :func:`build_main_window`/:func:`_handle_exit_route`/
         :func:`_on_main_frame_close`/:func:`_on_query_end_session`
         once they exist; both default here so every attribute access
-        is safe even before then. ``crash_log_path`` (the
-        :meth:`_handle_uncaught_exception` writer's target) defaults
-        to the per-user config directory and is re-pointed at the
-        launch's actual settings_path by :func:`build_main_window`.
+        is safe even before then. ``log`` is this launch's NDJSON
+        :class:`~rivercrossing.ui.logging.Logging`, attached by
+        :func:`main`; ``None`` for an app a test or the functional
+        harness built without going through it.
         """
 
         main_frame: Any = None
         really_quitting: bool = False
-        # The per-user crash log, next to the settings file (E8.1.1's
-        # directory); ``build_main_window`` re-points this at the
-        # launch's actual settings_path when one is injected.
-        crash_log_path: Path = settings_store.default_path().with_name(_CRASH_LOG_NAME)
-        # F3/F4: the launch's verbose NDJSON log, constructed by main()
-        # next to settings.json. The crash log above stays separate and
-        # always-on -- this one is what the operator can opt out of.
-        # ``None`` for an app a test or the functional harness built
-        # without going through main().
-        verbose_log: VerboseLog | None = None
+        # F1: this launch's NDJSON log, attached by main() after it is
+        # built next to settings.json. ``None`` for an app a test or
+        # the functional harness built without going through main(),
+        # so every logging call site is a silent no-op.
+        log: Logging | None = None
 
         def MacReopenApp(self) -> None:  # noqa: N802 -- wx's own override name
             """Show and raise the hidden main frame (P8-D2).
@@ -3987,13 +4082,17 @@ def _build_app_class() -> type[Any]:
             the main-loop exceptions that would otherwise vanish with
             zero signal in the windowed bundle (the measured note
             ``docs/EPIC3-SESSION-SUMMARY.md`` records). Writes the
-            full traceback to :attr:`crash_log_path` and posts a
-            one-line notice on the status bar when a frame exists.
+            record to :attr:`log` and posts a one-line notice naming
+            that file on the status bar when a frame exists.
             """
-            _append_exception_log(self.crash_log_path, exc_type, exc_value, exc_tb)
+            if self.log is None:
+                return
+            self.log.exception(  # noqa: LOG004 -- the hook's own exception triple
+                exc_type, exc_value, exc_tb
+            )
             if self.main_frame is not None:
                 self.main_frame.SetStatusText(
-                    f"An unexpected error occurred — see {self.crash_log_path.name} for details"
+                    f"An unexpected error occurred — see {_log_file_name(self.log)} for details"
                 )
 
     return RiverCrossingApp
@@ -4077,11 +4176,18 @@ def main(db_path: Path | None = None) -> int:
     every §15 route bound (:func:`build_main_window`), then runs the
     event loop until the last top-level window closes.
 
-    F3/F4: the verbose NDJSON log is constructed here, next to
-    ``settings.json``, from the loaded settings' ``verbose_logging``
-    flag (:data:`~rivercrossing.ui.logging.VERBOSE_LOG_NAME`); the
-    whitelisted control-event filter is installed on the app, and the
-    always-on crash log stays separate.
+    F1/F3/F4: the per-invocation NDJSON log is constructed here, next
+    to ``settings.json``, from the loaded settings' ``verbose_logging``
+    flag (:func:`~rivercrossing.ui.logging.build_log_path`); the
+    launch context is recorded before anything can raise, and the
+    whitelisted control-event filter is installed on the app. The
+    separate plain-text crash log is gone (workstream A2).
+
+    F1 log ordering: load the settings, prune the old invocation logs
+    (:func:`~rivercrossing.ui.logging.prune_logs`), open this launch's
+    file and record the launch context, then build the app and attach
+    the log to it. The ``finally`` closes the log alongside the store,
+    so a start failure still flushes the launch record.
 
     W3 launch ordering (the "app never starts again" fixes): opens the
     rides database HERE -- a ``finally`` always owns the Store, so a
@@ -4092,11 +4198,11 @@ def main(db_path: Path | None = None) -> int:
     R-44 self-test to the running event loop, and enters
     ``MainLoop``. A raise anywhere before the loop shows a parentless
     error box (:func:`~rivercrossing.ui.std_dialogs.show_error`) and
-    is re-raised, so the crash excepthook still appends the crash
-    log -- except
+    is re-raised, so the crash excepthook still records the exception
+    -- except
     :class:`~rivercrossing.store.SchemaVersionMismatchError`, whose
     branch reports "Database Mismatch" and returns 1 without
-    re-raising, so no crash log is filed.
+    re-raising, so no exception record is filed.
 
     Args:
         db_path: The rides database to open; ``None`` uses the per-user
@@ -4112,28 +4218,35 @@ def main(db_path: Path | None = None) -> int:
     Raises:
         WxUnavailableError: If ``wx`` cannot be imported.
     """
+    settings = settings_store.load_settings()
+    log_dir = settings_store.default_path().parent
+    prune_logs(log_dir, keep=20)
+    log = Logging(
+        build_log_path(log_dir, datetime.now(UTC)),
+        verbose=settings.verbose_logging,
+    )
+    log.startup(
+        verbose=settings.verbose_logging,
+        started_at=datetime.now(UTC),
+        version=__version__,
+        platform=sys.platform,
+        python=platform.python_version(),
+        pid=os.getpid(),
+    )
+
     wx = require_wx()
     app = build_app()  # bound for this whole call -- an unbound App is collected immediately
-    # F3/F4: the verbose NDJSON log lives next to settings.json (the
-    # same per-user directory as the crash log), seeded from the loaded
-    # settings' own opt-out flag; the whitelisted control-event filter
-    # feeds it alongside the menu/dialog records the routes write.
-    log = VerboseLog(
-        settings_store.default_path().with_name(VERBOSE_LOG_NAME),
-        enabled=settings_store.load_settings().verbose_logging,
-    )
-    app.verbose_log = log
-    log.start("RiverCrossing launching")
+    app.log = log
+    # Route unhandled exceptions (bootstrap and main-loop alike) to
+    # this launch's log before anything can raise.
+    _install_crash_excepthook(app)
     # ``wx.App.AddFilter`` is ``wxEvtHandler.AddFilter``: it keeps a raw
     # C++ pointer, not a Python reference, so the filter has to stay
     # bound to the app -- a throwaway reference is collected and wx then
     # dispatches the first event into freed memory (the frozen bundle's
     # launch SIGSEGV). The app already retains its log the same way.
-    app.verbose_event_filter = _make_verbose_event_filter(log)
-    wx.App.AddFilter(app.verbose_event_filter)
-    # Route unhandled exceptions (bootstrap and main-loop alike) to
-    # the per-user crash log before anything can raise.
-    _install_crash_excepthook(app)
+    app.event_filter = _make_event_filter(log)
+    wx.App.AddFilter(app.event_filter)
     wx.Log.SetActiveTarget(wx.LogStderr())  # see module docstring: the exit-time modal hang
 
     store: Store | None = None
@@ -4152,7 +4265,7 @@ def main(db_path: Path | None = None) -> int:
         # A version mismatch is an expected condition, not a crash: the
         # database was written by a different build. Tell the operator
         # the way out (rename or delete the file) and exit without
-        # re-raising, so the crash excepthook files no crash log.
+        # re-raising, so the crash excepthook files no exception.
         from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
         std_dialogs.show_error(None, "Database Mismatch", str(exc))
@@ -4160,8 +4273,8 @@ def main(db_path: Path | None = None) -> int:
     except Exception as exc:
         # W3: a raise with no frame to own the notice (a store open or
         # bootstrap failure) still gets a parentless error box, then
-        # the raise propagates to the crash excepthook, which appends
-        # the crash log.
+        # the raise propagates to the crash excepthook, which records
+        # the exception in the log.
         from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
         std_dialogs.show_error(
@@ -4173,5 +4286,6 @@ def main(db_path: Path | None = None) -> int:
     finally:
         if store is not None:
             store.close()
+        log.close()
 
     return 0

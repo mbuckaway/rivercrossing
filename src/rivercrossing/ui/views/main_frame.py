@@ -43,14 +43,13 @@ import wx.xrc  # Submodule: plain `import wx` does not load it.
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import feed_model, ids, sound, std_dialogs
-from rivercrossing.ui.presenters.console import stop_light_mode
+from rivercrossing.ui.presenters.console import status_text, stop_light_mode
+from rivercrossing.ui.presenters.data_source import Counters
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
     RiderRowListModel,
-    apply_sort_indicator,
     associate_model,
-    default_card_images,
     find_control,
 )
 from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_bundle
@@ -61,10 +60,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rivercrossing.roster import EntryMode
-    from rivercrossing.ui.cards_imagelist import CardImageList
     from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import (
-        Counters,
         DataSource,
         FeedRow,
         RiderRow,
@@ -90,9 +87,11 @@ __all__ = [
     "RESUME_INFOBAR",
     "REVIEW_NOTEBOOK",
     "RIDERS_COLUMN_LABELS",
+    "RIDERS_COLUMN_WIDTHS",
     "RIDERS_COL_NAME",
     "RIDERS_COL_PLATE",
     "RIDERS_COL_TEAM",
+    "RIDERS_LIST_COLUMN_FLAGS",
     "RIDERS_PAGE_LABEL",
     "RIDE_STATUS_LIGHT",
     "RIDE_STATUS_PANEL",
@@ -107,7 +106,7 @@ _TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
     feed_model.COL_TIME: lambda row: row.time,
     feed_model.COL_PLATE: lambda row: row.plate,
     feed_model.COL_NAME: lambda row: row.entry,
-    feed_model.COL_LAP: lambda row: str(row.lap),
+    feed_model.COL_LAP: feed_model.lap_text,
     feed_model.COL_LAP_TIME: lambda row: row.lap_time,
     feed_model.COL_TOTAL: lambda row: row.total,
 }
@@ -160,6 +159,19 @@ RIDERS_COL_PLATE = 0
 RIDERS_COL_NAME = 1
 RIDERS_COL_TEAM = 2
 RIDERS_COLUMN_LABELS: tuple[str, ...] = tuple(column.label for column in CONSOLE_RIDER_COLUMNS)
+
+# AppendTextColumn's own default flags include
+# wxDATAVIEW_COL_RESIZABLE, but an explicit flags= argument *replaces*
+# the default rather than OR-ing into it -- macOS then sets the
+# column NSTableColumnNoResizing -- so both bits must be spelled out
+# (team_editor.py's measured note).
+RIDERS_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
+
+# One width per RIDERS_COLUMN_LABELS entry, in that order. Every
+# column defaults to wxDVC_DEFAULT_WIDTH (80 DIP); Name opens at
+# double that, the rider editor's own width for it (rider_editor.py's
+# COL_NAME_WIDTH).
+RIDERS_COLUMN_WIDTHS: tuple[int, ...] = (80, 160, 80, 80, 80)
 
 # flagged_list's columns (WS-H): the three cells of the canvas's
 # flagged-row line ("45 · lap 6 · 07:12") as sortable columns.
@@ -221,8 +233,8 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
 
     The wx-facing half of the crossings feed; ``ui/feed_model.py``
     holds the column layout and the two decisions this class
-    delegates to (``card_asset_key_or_none``, the flagged-row
-    lookup), so those stay testable without ``wx``
+    delegates to (``card_text_or_blank``, the flagged-row lookup), so
+    those stay testable without ``wx``
     (``tests/unit/ui/test_feed_model.py``). This class has exactly
     one consumer, :class:`MainFrame`, which is why it lives here
     rather than in its own file (SIMPLECODE Rule 7).
@@ -234,11 +246,10 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
     notifications entirely.
     """
 
-    def __init__(self, rows: Sequence[FeedRow], card_images: CardImageList) -> None:
-        """Wrap *rows*, newest first; render cards via *card_images*."""
+    def __init__(self, rows: Sequence[FeedRow]) -> None:
+        """Wrap *rows*, newest first."""
         super().__init__(len(rows))
         self._rows = tuple(rows)
-        self._card_images = card_images
         self._flagged = feed_model.flagged_row_indexes(self._rows)
         self._edited = feed_model.edited_row_indexes(self._rows)
 
@@ -246,19 +257,15 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         """Return the feed's fixed seven columns."""
         return len(feed_model.COLUMN_LABELS)
 
-    def GetColumnType(self, col: int) -> str:
-        """Return each column's wx variant type.
-
-        ``"wxBitmap"`` for the card column -- see :class:`MainFrame`'s
-        ``_build_columns`` for why not the newer ``"wxBitmapBundle"``.
-        """
-        return "wxBitmap" if col == feed_model.COL_CARD else "string"
+    def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- the model has one type
+        """Return the wx variant type (plain text for every column)."""
+        return "string"
 
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Return the cell value at *row*/*col*."""
         feed_row = self._rows[row]
         if col == feed_model.COL_CARD:
-            return self._card_bitmap(feed_row.card)
+            return feed_model.card_text_or_blank(feed_row.card)
         return _TEXT_ACCESSORS[col](feed_row)
 
     def GetAttrByRow(self, row: int, col: int, attr: Any) -> bool:  # noqa: ANN401, ARG002
@@ -275,19 +282,6 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
             return False
         attr.SetBold(True)  # noqa: FBT003 -- wx API takes a positional bool
         return True
-
-    def _card_bitmap(self, card: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the dealt card's bitmap, or a blank cell otherwise.
-
-        W9: every feed row's ``card`` is a real dealt code (a held
-        crossing's row carries the held card's own code), so the
-        blank ``wx.NullBitmap`` path is the seam for text that maps
-        to no asset (``""``, corrupt strings), not for held cards.
-        """
-        key = feed_model.card_asset_key_or_none(card)
-        if key is None:
-            return wx.NullBitmap
-        return self._card_images.bitmap(key)
 
 
 class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -451,12 +445,11 @@ class MainFrame:
     call it after construction.
     """
 
-    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source, card_images) + E4.4.2/E8.1.1 seams + every control it resolves
+    def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source) + E4.4.2/E8.1.1 seams + every control it resolves
         self,
         frame: wx.Frame,
         *,
         data_source: DataSource,
-        card_images: CardImageList | None = None,
         initial_sash: int | None = None,
         initial_geometry: tuple[int, int, int, int] | None = None,
         on_layout_changed: Callable[[int | None, tuple[int, int, int, int] | None], None]
@@ -474,8 +467,6 @@ class MainFrame:
                 implementation applies (``EngineDataSource`` from
                 E4.4.1; ``rivercrossing.demo`` is test-only fixture
                 data since E5.4.2).
-            card_images: The card bitmaps for the feed's Card column;
-                defaults to the packaged deck at 1x.
             initial_sash: The persisted splitter sash position to
                 restore at construction (E8.1.1); ``None`` keeps the
                 XRC default.
@@ -489,7 +480,6 @@ class MainFrame:
         """
         self.frame = frame
         self.data_source = data_source
-        self.card_images = card_images if card_images is not None else default_card_images()
         self._on_layout_changed = on_layout_changed
 
         # Every name resolved below is also in module-level
@@ -538,7 +528,9 @@ class MainFrame:
         self.remaining_clock = self._build_clock_dial(self.remaining_clock_panel, REMAINING_CLOCK)
         self.ride_status_light = StopLight(self.ride_status_panel)
         self.ride_status_light.SetName(RIDE_STATUS_LIGHT)
-        self.ride_status_panel.GetSizer().Insert(0, self.ride_status_light)
+        self.ride_status_panel.GetSizer().Insert(
+            0, self.ride_status_light, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8
+        )
         # WS-D GO/STOP glyphs. The labels are re-applied because the
         # XRC bitmap-button handler ignores <label> text (measured);
         # without them the buttons would be icon-only and unnamed to
@@ -564,6 +556,11 @@ class MainFrame:
         self._riders_columns = self._build_riders_columns()
         self._flagged_model: FlaggedListModel | None = None
         self._riders_model: RiderRowListModel | None = None
+        # The operator's current riders-tab header sort, re-applied
+        # whenever the model is rebuilt (a new model drops the
+        # control's sort key). No column sorts until a header click.
+        self._riders_sort_column: int | None = None
+        self._riders_sort_ascending = True
         # Phase 5: the blocked-start dialog's model, alive only while
         # that modal is up (show_start_blocked).
         self._start_blocked_model: StartBlockedListModel | None = None
@@ -572,17 +569,22 @@ class MainFrame:
         # activating a flagged row opens entry detail, not the rider
         # editor, so the two lists keep separate callbacks).
         self._on_open_flagged: Callable[[str], None] | None = None
+        # J2: the crossings feed's activation seam. Its own slot too:
+        # the feed is keyed by row index (the app resolves that back to
+        # the live Crossing), not by plate like the other two lists.
+        self._on_open_crossing: Callable[[int], None] | None = None
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
+        self.crossings_list.Bind(
+            wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_crossing_activated
+        )
         self.console_riders_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_rider_activated
         )
-        # Phase 4: the riders list's own sort. The presenter owns the
-        # row order (a DataViewIndexListModel cannot sort itself), so a
-        # header click is mapped back to its column index and forwarded
-        # -- wx's internal sort is never allowed to drive this list.
+        # Remember the operator's riders-tab header arrow, so the next
+        # show_riders rebuild can put it back.
         self.console_riders_list.Bind(
-            wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK,
-            self._on_riders_column_header_click,
+            wx.dataview.EVT_DATAVIEW_COLUMN_SORTED,
+            self._on_column_sorted,
         )
         self.flagged_list.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_flagged_activated)
 
@@ -768,24 +770,14 @@ class MainFrame:
         the platform default; the widths live in the wx-free module
         so the values stay headlessly pinned.
 
-        The Card column uses an explicit
-        ``DataViewBitmapRenderer("wxBitmap")`` rather than
-        ``AppendBitmapColumn``'s default: this wx build (4.3.1 /
-        wxWidgets 3.3.3, probed with a throwaway script per this
-        repo's convention) registers that default renderer against
-        ``"wxBitmapBundle"``, which silently drops a plain
-        ``wx.Bitmap`` value. The explicit ``"wxBitmap"`` renderer
-        accepts ``CardImageList.bitmap()``'s values unchanged.
+        Every column is text: the Card column renders the dealt
+        card's glyph display (``feed_model.card_text_or_blank``), not
+        a bitmap, so all seven share the one renderer.
         """
         hideable = []
         for col, label in enumerate(feed_model.COLUMN_LABELS):
             width = feed_model.COLUMN_WIDTHS[col]
-            if col == feed_model.COL_CARD:
-                renderer = wx.dataview.DataViewBitmapRenderer("wxBitmap")
-                column = wx.dataview.DataViewColumn(label, renderer, col, width=width)
-                self.crossings_list.AppendColumn(column)
-            else:
-                column = self.crossings_list.AppendTextColumn(label, col, width=width)
+            column = self.crossings_list.AppendTextColumn(label, col, width=width)
             if col in feed_model.TIME_COLUMNS:
                 hideable.append(column)
         return tuple(hideable)
@@ -798,25 +790,29 @@ class MainFrame:
         )
 
     def _build_riders_columns(self) -> list[Any]:
-        """Append ``console_riders_list``'s columns in canvas order.
+        """Append ``console_riders_list``'s sortable columns.
 
         The labels are the shared
         :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
-        ones (Plate | Name | Team | Sex | Cards), so the console's list
-        and the rider editor's own draw the same headers, and the
-        console adds the editor's four plus Cards.
+        ones (Plate | Name | Team | Sex | Cards) and the widths are
+        :data:`RIDERS_COLUMN_WIDTHS`, so the console's list and the
+        rider editor's own draw the same headers at the same widths
+        (plus Cards). Each column carries
+        :data:`RIDERS_LIST_COLUMN_FLAGS`, so the platform draws a
+        header arrow and sorts through
+        :meth:`~rivercrossing.ui.views._support.RiderRowListModel.
+        Compare` -- keyed by the shared column's own ``sort_key``.
 
         Returns:
-            The appended columns in order -- the list is what
-            :meth:`set_sort_indicator` retitles with the ▲/▼ marker
-            and what :meth:`_on_riders_column_header_click` compares a
-            click against to resolve its index (W7/Phase 4: a
-            ``DataViewIndexListModel`` cannot sort itself, so the
-            columns carry no wx sort flags and the presenter owns row
-            order).
+            The appended columns in order.
         """
         return [
-            self.console_riders_list.AppendTextColumn(column.label, index)
+            self.console_riders_list.AppendTextColumn(
+                column.label,
+                index,
+                width=RIDERS_COLUMN_WIDTHS[index],
+                flags=RIDERS_LIST_COLUMN_FLAGS,
+            )
             for index, column in enumerate(CONSOLE_RIDER_COLUMNS)
         ]
 
@@ -841,6 +837,19 @@ class MainFrame:
         """
         self._on_open_flagged = callback
 
+    def set_on_open_crossing(self, callback: Callable[[int], None]) -> None:
+        """Register the crossings feed's activation seam (J2).
+
+        The app wires this to its Crossing Detail flow; the console
+        itself only fires ``callback(row)`` when a feed row is
+        activated (double-click or Enter with the list focused).
+        *row* is the activated row's index into the rendered feed
+        model -- the feed is newest-first and capped at ``FEED_CAP``
+        rows, so resolving it back to a live crossing is the app's
+        job, not this view's.
+        """
+        self._on_open_crossing = callback
+
     def focus_review_panel(self) -> None:
         """Focus the review notebook's "Needs Review" tab (WS-H).
 
@@ -863,38 +872,48 @@ class MainFrame:
         self.review_notebook.SetSelection(page)
         self.flagged_list.SetFocus()
 
-    def _on_riders_column_header_click(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle a ``console_riders_list`` header click: sort by it.
+    def _on_column_sorted(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Remember the riders-tab header sort the operator just chose.
 
-        Phase 4, the console's half of the rider editor's own
-        ``_on_column_header_click``: the presenter owns the row order
-        (see :meth:`_build_riders_columns`), so the clicked column is
-        resolved to its index in ``self._riders_columns`` and forwarded
-        to ``presenter.on_sort_riders`` -- never wx's own internal
-        sort, which an index-list model cannot drive. A click on a
-        column this list never appended (and a console with no
-        presenter wired yet) forwards nothing.
+        wx's ``EVT_DATAVIEW_COLUMN_SORTED`` fires after the control has
+        already reordered its rows through
+        :meth:`~rivercrossing.ui.views._support.RiderRowListModel.
+        Compare`; this handler keeps the column and direction so
+        :meth:`_apply_sort` can restore both after the next
+        :meth:`show_riders` rebuild.
         """
         event.Skip()
-        if self._presenter is None:
+        column = self.console_riders_list.GetSortingColumn()
+        if column is None:
             return
-        index = _clicked_column_index(self._riders_columns, event.GetColumn())
-        if index is None:
-            return
-        self._presenter.on_sort_riders(index)
+        self._riders_sort_column = column.GetModelColumn()
+        self._riders_sort_ascending = column.IsSortOrderAscending()
 
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Mark the riders list *column*'s header ▲/▼, or clear it.
+    def _apply_sort(self) -> None:
+        """Re-apply the remembered riders-tab sort to the current model.
 
-        ``ConsoleView`` member, Phase 4: the presenter owns the riders
-        list's row order (a ``DataViewIndexListModel`` cannot sort
-        itself), so it hands its own sort state back here and
-        :func:`~rivercrossing.ui.views._support.apply_sort_indicator`
-        paints it -- the same shared marker the rider editor uses, so
-        the two lists can never disagree on the ▲/▼ glyphs. ``None``
-        *column* restores every plain label.
+        :meth:`show_riders` rebuilds the model on every tick, which
+        drops the sort key the control was holding; setting it on the
+        column again and asking the model to resort restores exactly
+        the order the operator left the tab in. No column is
+        remembered until a header is clicked, so the first render
+        keeps the source's own order.
+
+        The ``UnsetAsSortKey`` first is load-bearing on macOS
+        (measured): ``SetSortOrder`` is a no-op when the direction is
+        unchanged, so without the clear the rebuilt model keeps the
+        source's order and the operator's sort silently reverts on
+        the next tick.
         """
-        apply_sort_indicator(self._riders_columns, column, ascending=ascending)
+        model = self._riders_model
+        if model is None or self._riders_sort_column is None:
+            return
+        column = self.console_riders_list.GetColumn(self._riders_sort_column)
+        if column is None:
+            return
+        column.UnsetAsSortKey()
+        column.SetSortOrder(self._riders_sort_ascending)
+        model.Resort()
 
     def _on_review_clicked(self) -> None:
         """Handle ``review_btn``: the sidebar's "Review…" affordance.
@@ -959,6 +978,22 @@ class MainFrame:
         plate = self._flagged_model.GetValueByRow(row, FLAG_COL_PLATE)
         if self._on_open_flagged is not None:
             self._on_open_flagged(plate)
+
+    def _on_crossing_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Fire the open-crossing seam with the activated feed row (J2).
+
+        The feed's own model answers the row index, exactly as the
+        two review lists' handlers resolve theirs; the app turns that
+        index back into the live ``Crossing`` (the view holds no
+        crossings, only the rows the presenter rendered).
+        """
+        if self._crossings_model is None:
+            return
+        row = self._crossings_model.GetRow(event.GetItem())
+        if row == wx.NOT_FOUND:
+            return
+        if self._on_open_crossing is not None:
+            self._on_open_crossing(row)
 
     def set_hide_times(self, *, hide: bool) -> None:
         """Toggle the Lap time/Total columns per R-37.
@@ -1039,7 +1074,7 @@ class MainFrame:
         presenter (record/undo/tick are exactly the crossing-count
         changes the Start/Undo verdicts depend on).
         """
-        self._crossings_model = CrossingsFeedModel(rows, self.card_images)
+        self._crossings_model = CrossingsFeedModel(rows)
         self.crossings_list.AssociateModel(self._crossings_model)
         self._notify_ride_changed()
         if self._presenter is not None:
@@ -1060,15 +1095,18 @@ class MainFrame:
         """Render the review notebook's riders rows (ConsoleView).
 
         WS-H: fed by the presenter's ``_refresh_riders`` on the tick
-        (``DataSource.riders()``), and once at construction. Phase 4:
-        the model renders the shared
+        (``DataSource.riders()``), and once at construction. The model
+        renders the shared
         :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
         -- Plate | Name | Team | Sex | Cards -- so this list's cells are
         the rider editor's own plus the live credited card codes, and
-        the presenter's chosen row order comes in already sorted.
+        the rows keep the source's own order: the tab's native header
+        sort (answered by ``RiderRowListModel.Compare``) is re-applied
+        to this new model by :meth:`_apply_sort`.
         """
         self._riders_model = RiderRowListModel(rows, CONSOLE_RIDER_COLUMNS)
         self.console_riders_list.AssociateModel(self._riders_model)
+        self._apply_sort()
 
     def show_counters(self, c: Counters) -> None:
         """Render the six counter chips (ConsoleView)."""
@@ -1102,7 +1140,7 @@ class MainFrame:
         """Highlight the just-recorded crossing (ConsoleView)."""
         self.last_crossing_lbl.SetLabel(feed_model.flash_crossing_label(r))
 
-    def set_state(self, status: RideStatus) -> None:
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
         """Reflect the ride's lifecycle state (ConsoleView).
 
         The status label and record-crossing row enablement (A4:
@@ -1120,12 +1158,14 @@ class MainFrame:
         every presenter state transition (start/stop/finish/reopen)
         lands here, and the binder re-applies the §15 enablement.
         WS-D adds the status lamp: the same state transition drives
-        the ``StopLight`` through ``console.stop_light_mode``. C2
+        the ``StopLight`` through ``console.stop_light_mode``. W6:
+        a stopped RUNNING ride's *stopped* flag renders the STOPPED
+        label and the amber lamp through ``console.status_text``. C2
         refreshes the Start/Stop/Undo button gates through the bound
         presenter (the single source for all three).
         """
-        self.ride_status_lbl.SetLabel(status.value.upper())
-        self.ride_status_light.set_mode(stop_light_mode(status))
+        self.ride_status_lbl.SetLabel(status_text(status, stopped=stopped))
+        self.ride_status_light.set_mode(stop_light_mode(status, stopped=stopped))
         running = status == RideStatus.RUNNING
         self.plate_input.Enable(running)
         self.record_btn.Enable(running)
@@ -1145,6 +1185,46 @@ class MainFrame:
         self._notify_ride_changed()
         if self._presenter is not None:
             self._presenter.refresh_console_gates()
+
+    def show_no_ride(self) -> None:
+        """Render the true no-ride empty state (W1, R-55/R-80).
+
+        The app bootstrap calls this directly when no store-backed
+        ride is open, so it is deliberately not part of the
+        ``ConsoleView`` Protocol -- with no ride there is no presenter
+        to call it. The header is blank, the status lamp is dark
+        (``"off"``, no circle lit), every ride control is inert, all
+        three banners are dismissed, and the clocks/feed/counters
+        show their zero state. ``_status`` returns to DRAFT so the
+        menu binder's ride-state seam sees DRAFT; the app's own
+        ``ride_open=False`` state keeps the ride-gated rows off.
+        """
+        self.ride_name_lbl.SetLabel("")
+        self.ride_details_lbl.SetLabel("")
+        self.ride_logo_bmp.Hide()
+        self.ride_details_lbl.Show()
+        self.ride_status_lbl.SetLabel("")
+        self.ride_status_light.set_mode("off")
+        # W1: every ride control is inert with no ride to act on.
+        for control in (
+            self.plate_input,
+            self.record_btn,
+            self.start_btn,
+            self.stop_btn,
+            self.undo_btn,
+        ):
+            control.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+        self.resume_infobar.Dismiss()
+        self.reopened_infobar.Dismiss()
+        self.finished_infobar.Dismiss()
+        self.show_clock("0:00:00", "0:00:00")
+        self.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
+        self.show_feed([])
+        self.show_flagged([])
+        self.show_riders([])
+        self.show_counters(Counters(0, 0, 0, 0, 0, 0, 0))
+        self._status = RideStatus.DRAFT
+        self._notify_ride_changed()
 
     def show_ride_header(  # noqa: PLR0913 -- the identity block's five facts
         self,
@@ -1289,6 +1369,12 @@ class MainFrame:
 
         The model is held on the frame for the modal's lifetime, the
         same keep-alive ``show_feed``/``show_flagged`` give theirs.
+
+        After loading, the dialog is fitted and then opened at
+        :func:`_start_blocked_size`'s doubled width and height: XRC
+        gives a window no min-size, so the one "Issue" column would
+        otherwise clip its text (``CsvPreviewDialog._apply_min_size``'s
+        idiom).
         """
         window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.START_BLOCKED_DLG)
         # logic-coverage-exempt: T-3 -- a None window means the XRC
@@ -1301,6 +1387,10 @@ class MainFrame:
             issue_list.AppendTextColumn(START_BLOCKED_COLUMN_LABELS[0], 0)
             self._start_blocked_model = StartBlockedListModel(reasons)
             associate_model(issue_list, self._start_blocked_model)
+            window.Fit()
+            size = _start_blocked_size((window.GetSize().width, window.GetSize().height))
+            window.SetMinSize(wx.Size(*size))
+            window.SetSize(wx.Size(*size))
             dialogs.run_dialog(window, opener=self.frame)
         finally:
             # Fault A's close guard (rider_issues.py's own finally):
@@ -1308,23 +1398,27 @@ class MainFrame:
             if not window.IsBeingDeleted():
                 window.Destroy()
 
-    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels + danger
         self,
         title: str,
         message: str,
         *,
         ok_label: str,
         cancel_label: str,
+        danger: bool = False,
     ) -> bool:
         """Ask a destructive confirm; return whether OK was chosen (W5).
 
         The native stop confirm behind ``ConsolePresenter.
         on_stop_requested``: the view owns the parent window and the
         modal call, returning only the boolean verdict to the
-        presenter.
+        presenter. *danger* selects the error-icon dialog
+        (``std_dialogs.show_danger``) for a data-losing question --
+        Undo Last Crossing (I); the ordinary caution confirm is the
+        default.
         """
-        result = std_dialogs.show_confirm(self.frame, title, message, ok_label, cancel_label)
-        return result == int(wx.ID_OK)
+        show = std_dialogs.show_danger if danger else std_dialogs.show_confirm
+        return show(self.frame, title, message, ok_label, cancel_label) == int(wx.ID_OK)
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Render the ride clock's numeric labels (ConsoleView, R-30).
@@ -1399,25 +1493,20 @@ class MainFrame:
         start/arm/stop/undo, the tick timer -- without rebinding any
         control or starting a second timer. The caller then re-renders
         state/feed/counters from the new presenter's source.
+
+        W1: the no-ride bootstrap wires no presenter at all, so the
+        first ride attach is what performs the one-time
+        :meth:`wire_entry`/:meth:`wire_console` binding (plate entry,
+        lifecycle controls, tick timer). ``_presenter is None`` is the
+        "never wired" sentinel, so those binds run exactly once and
+        later swaps stay the cheap reference replacement.
         """
+        if self._presenter is None:
+            self.wire_entry(presenter.on_plate_entered)
+            self.wire_console(presenter)
+            return
         self._on_submit = presenter.on_plate_entered
         self._presenter = presenter
-
-
-def _clicked_column_index(columns: Sequence[object], clicked: object) -> int | None:
-    """Return *clicked*'s index in *columns*, or ``None`` when absent.
-
-    A ``wx.dataview.EVT_DATAVIEW_COLUMN_HEADER_CLICK`` hands over the
-    clicked ``DataViewColumn`` *object*, while the view holds its own
-    appended columns in order -- identity is the only link between the
-    two (wx exposes no index on the column itself), so the search is
-    ``is``, never ``==``. ``None`` means the click named a column this
-    list never appended, which is nothing to sort by.
-    """
-    for index, column in enumerate(columns):
-        if column is clicked:
-            return index
-    return None
 
 
 def _page_index(notebook: wx.Notebook, label: str) -> int | None:
@@ -1477,3 +1566,21 @@ def _format_count(value: int) -> str:
     Matches the canvas exactly: 1124 -> "1 124", 42 -> "42".
     """
     return f"{value:,}".replace(",", " ")
+
+
+def _start_blocked_size(fitted: tuple[int, int]) -> tuple[int, int]:
+    """Return the blocked-start dialog size from its fitted one.
+
+    ``start_blocked_dlg`` is loaded with no code-side min-size, so it
+    would otherwise open at the issue list's narrow best size and clip
+    the issue text. Doubling both dimensions gives the dialog's single
+    (and therefore stretched) "Issue" column room, mirroring
+    ``CsvPreviewDialog._apply_min_size``'s Fit-then-scale idiom.
+
+    Args:
+        fitted: The ``(width, height)`` ``Fit()`` measured.
+
+    Returns:
+        ``(width * 2, height * 2)``.
+    """
+    return (fitted[0] * 2, fitted[1] * 2)

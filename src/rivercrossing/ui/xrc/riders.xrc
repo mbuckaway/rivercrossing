@@ -97,8 +97,9 @@
             <object class="wxDataViewCtrl" name="riders_list"/>
           </object>
 
-          <!-- Delete sits bottom-left under riders_list with Close
-               beside it, equal-sized (W7 rework): the standard-dialog
+          <!-- Add rider…, Delete and Close anchor the list pane's
+               bottom, equal-sized (W7 rework, Add rider… moved here
+               from the form pane in 1.0.13): the standard-dialog
                sizer pattern cannot stretch stock buttons, so Close is
                a plain stock-id button like library.xrc's wxID_DELETE;
                dialogs.wire_close_button still finds it by name and
@@ -108,6 +109,14 @@
             <flag>wxEXPAND</flag>
             <object class="wxBoxSizer">
               <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxButton" name="add_btn">
+                  <label>Add rider…</label>
+                </object>
+              </object>
               <object class="sizeritem">
                 <option>1</option>
                 <flag>wxEXPAND|wxRIGHT</flag>
@@ -208,29 +217,22 @@
             </object>
           </object>
 
-          <!-- 1.0.12: the Rider box above is display-only, so the
-               pane's two buttons anchor its bottom-right: Edit
-               Rider… acts on the record shown above them, Add
-               rider… opens the blank dialog. Both use plain custom
-               ids (never wxID_OK), so wx never auto-closes on a
-               click and dialogs.run_dialog's stock-id wiring leaves
-               them alone. -->
+          <!-- 1.0.12/1.0.13: the Rider box above is display-only, so
+               the pane's single Edit Rider… button anchors its
+               bottom-right and acts on the record shown above it
+               (Add rider… moved to the list pane's bottom row).
+               It uses a plain custom id (never wxID_OK), so wx never
+               auto-closes on a click and dialogs.run_dialog's
+               stock-id wiring leaves it alone. -->
           <object class="sizeritem">
             <flag>wxALIGN_RIGHT|wxTOP</flag>
             <border>8</border>
             <object class="wxBoxSizer">
               <orient>wxHORIZONTAL</orient>
               <object class="sizeritem">
-                <flag>wxRIGHT|wxALIGN_CENTRE_VERTICAL</flag>
-                <border>6</border>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
                 <object class="wxButton" name="edit_btn">
                   <label>Edit Rider…</label>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxButton" name="add_btn">
-                  <label>Add rider…</label>
                 </object>
               </object>
             </object>
@@ -397,6 +399,28 @@
         </object>
       </object>
 
+      <!-- Phase 3: the explicit opt-in that maps blank AND
+           unrecognized non-blank SEX cells to "M" on import. It sits
+           unchecked; the operator chooses it deliberately. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="map_unknown_sex_chk">
+          <label>Map unknown sex to Male</label>
+        </object>
+      </object>
+
+      <!-- Phase E: the DRAFT-only opt-in that reshapes a team group of
+           exactly one rider into a solo entry on import. Unchecked by
+           default, like the sex mapping above. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="convert_teams_of_one_chk">
+          <label>Convert teams of 1 to solo</label>
+        </object>
+      </object>
+
       <!-- wxID_OK carries the canvas's "Import" label; the stock id is
            what keeps the button on the platform-correct side. -->
       <object class="sizeritem">
@@ -439,17 +463,18 @@
         <object class="wxDataViewCtrl" name="issues_list"/>
       </object>
 
-      <!-- The two custom buttons sit in a sibling sizer next to the
+      <!-- The four custom buttons sit in a sibling sizer next to the
            stock button sizer (teams.xrc's save_btn pattern), so they
            keep a real position instead of the (-1,-1) a
-           wxStdDialogButtonSizer leaves custom buttons at. -->
+           wxStdDialogButtonSizer leaves custom buttons at. None of
+           them carries an option, so each sizes to its own label
+           rather than stretching. -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxALL</flag>
         <border>10</border>
         <object class="wxBoxSizer">
           <orient>wxHORIZONTAL</orient>
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="open_editor_btn">
@@ -457,13 +482,35 @@
             </object>
           </object>
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="convert_solo_btn">
               <label>Convert to Solo</label>
             </object>
           </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="assign_plate_btn">
+              <label>Assign Plate</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="renumber_btn">
+              <label>Renumber</label>
+            </object>
+          </object>
+
+          <!-- Absorbs the row's slack so the stock Close button, the
+               only remaining item, stays right-aligned however wide
+               the dialog is (settings.xrc's spacer pattern). -->
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
           <object class="sizeritem">
             <flag>wxEXPAND</flag>
             <object class="wxStdDialogButtonSizer">

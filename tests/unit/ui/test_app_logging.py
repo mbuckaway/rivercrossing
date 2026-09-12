@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless tests for the app's verbose-log wiring (F3/F4).
+"""Headless tests for the app's structured-log wiring (F3/F4).
 
-``ui.logging.VerboseLog`` owns the NDJSON file; this module pins the
+``ui.logging.Logging`` owns the NDJSON file; this module pins the
 three seams ``app.py`` owns that feed it, all headless (no window is
 constructed):
 
@@ -13,14 +13,11 @@ constructed):
   :func:`~rivercrossing.ui.app._apply_settings_live` applies the
   dialog's ``verbose_logging`` checkbox to the live log.
 - **F4 control logging.**
-  :func:`~rivercrossing.ui.app._make_verbose_event_filter` records the
+  :func:`~rivercrossing.ui.app._make_event_filter` records the
   whitelisted control events and skips everything else, and never
   swallows an event.
-- **F4 modeless frames.** :func:`~rivercrossing.ui.app._open_target`
-  records the results frame it opens modeless (modal dialogs are
-  logged by ``views.dialogs.run_dialog`` instead).
 
-A real :class:`~rivercrossing.ui.logging.VerboseLog` over ``tmp_path``
+A real :class:`~rivercrossing.ui.logging.Logging` over ``tmp_path``
 is the assertion surface, so each test checks the record that would
 reach a support session rather than that a mock was called.
 """
@@ -28,6 +25,7 @@ reach a support session rather than that a mock was called.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -37,11 +35,23 @@ import wx.xrc
 from rivercrossing.roster import Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import commands
-from rivercrossing.ui.logging import VERBOSE_LOG_NAME, VerboseLog
+from rivercrossing.ui.logging import Logging, build_log_path
 from rivercrossing.ui.presenters.settings import AppSettings
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+# A fixed launch instant names every test's invocation log.
+_LAUNCH = datetime(2026, 9, 11, 12, 0, 0, tzinfo=UTC)
+
+# The per-run transport keys the formatter adds to every record; the
+# assertions compare each record's own event and fields only.
+_VOLATILE = frozenset({"ts", "file", "line", "func"})
+
+
+def _log_path(directory: Path) -> Path:
+    """Return this test's invocation log path inside *directory*."""
+    return build_log_path(directory, _LAUNCH)
 
 
 class _NoticeFrame:
@@ -62,11 +72,11 @@ class _NoticeFrame:
 
 
 class _AppWithLog:
-    """A minimal live-app double carrying the verbose log."""
+    """A minimal live-app double carrying the structured log."""
 
-    def __init__(self, log: VerboseLog | None) -> None:
-        """Store the app's verbose log (``None`` when un-wired)."""
-        self.verbose_log = log
+    def __init__(self, log: Logging | None) -> None:
+        """Store the app's log (``None`` when un-wired)."""
+        self.log = log
 
 
 def _records(path: Path) -> list[dict[str, object]]:
@@ -77,25 +87,44 @@ def _records(path: Path) -> list[dict[str, object]]:
     return [json.loads(line) for line in text.splitlines() if line]
 
 
-def _messages(path: Path) -> list[object]:
-    """Return the ``msg`` field of every record at *path*, in order."""
-    return [record["msg"] for record in _records(path)]
+def _entries(path: Path) -> list[dict[str, object]]:
+    """Return each record's event and fields, minus transport keys."""
+    return [
+        {key: value for key, value in record.items() if key not in _VOLATILE}
+        for record in _records(path)
+    ]
 
 
 def _context(
     *,
     frame: object,
-    log: VerboseLog | None,
-    resource: object = None,
+    log: Logging | None,
 ) -> app_module._RouteContext:
     """Build a route context over *frame* carrying *log* (or none)."""
     return app_module._RouteContext(
         frame=frame,
-        resource=resource,
+        resource=None,
         roster=Roster(),
         app=_AppWithLog(log),
         theme_controller=None,
     )
+
+
+class _AppWithoutLog:
+    """An app double carrying no ``log`` attribute at all."""
+
+
+def test_log_given_an_app_without_the_attribute_returns_none() -> None:
+    """F1: an app built without main() has no log to write to."""
+    context = app_module._RouteContext(
+        frame=_NoticeFrame(),
+        resource=None,
+        roster=Roster(),
+        app=_AppWithoutLog(),
+        theme_controller=None,
+    )
+
+    assert app_module._log(context) is None
 
 
 # ------------------------------------------------- F3: menu logging
@@ -106,11 +135,11 @@ def _bound_handler(frame: _NoticeFrame, item_id: str) -> object:
     return dict(frame.binds)[wx.xrc.XRCID(item_id)]
 
 
-def test_bind_routes_given_a_verbose_log_records_the_menu_selection(
+def test_bind_routes_given_a_log_records_the_menu_selection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """F3: the wrapper logs id/menu/label before the dispatch."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
+    """F3: the wrapper records id/menu/label before the dispatch."""
+    log = Logging(_log_path(tmp_path))
     frame = _NoticeFrame()
     context = _context(frame=frame, log=log)
     opened: list[object] = []
@@ -121,12 +150,18 @@ def test_bind_routes_given_a_verbose_log_records_the_menu_selection(
     _bound_handler(frame, "mi_open_library")(object())
 
     assert opened == [route]
-    assert _messages(tmp_path / VERBOSE_LOG_NAME) == [
-        f"menu {route.menu}: {route.label} (id={wx.xrc.XRCID('mi_open_library')})"
+    assert _entries(_log_path(tmp_path)) == [
+        {
+            "level": "DEBUG",
+            "event": "menu",
+            "item_id": wx.xrc.XRCID("mi_open_library"),
+            "menu": route.menu,
+            "label": route.label,
+        }
     ]
 
 
-def test_bind_routes_without_a_verbose_log_still_dispatches_the_route(
+def test_bind_routes_without_a_log_still_dispatches_the_route(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """F3: an app with no log bound still fires its routes unchanged."""
@@ -184,7 +219,7 @@ def test_apply_settings_live_given_the_verbose_flag_applies_it_to_the_log(
     tmp_path: Path, *, verbose_logging: bool
 ) -> None:
     """F3: the settings dialog's checkbox drives the live log."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME, enabled=not verbose_logging)
+    log = Logging(_log_path(tmp_path), verbose=not verbose_logging)
     context = app_module._RouteContext(
         frame=_SettingsFrame(),
         resource=None,
@@ -196,7 +231,7 @@ def test_apply_settings_live_given_the_verbose_flag_applies_it_to_the_log(
 
     app_module._apply_settings_live(context, _settings(verbose_logging=verbose_logging))
 
-    assert log.enabled is verbose_logging
+    assert log.verbose is verbose_logging
 
 
 def test_apply_settings_live_without_a_log_applies_the_rest(
@@ -255,16 +290,23 @@ class _FakeCommandEvent:
         return self._control
 
 
-def test_verbose_event_filter_given_a_button_event_logs_the_button(tmp_path: Path) -> None:
+def test_event_filter_given_a_button_event_logs_the_button(tmp_path: Path) -> None:
     """F4: a button activation records its frozen name and label."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
-    event_filter = app_module._make_verbose_event_filter(log)
+    log = Logging(_log_path(tmp_path))
+    event_filter = app_module._make_event_filter(log)
     event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("backup_now_btn", "Back up now"))
 
     result = event_filter.FilterEvent(event)
 
     assert result == wx.EventFilter.Event_Skip
-    assert _messages(tmp_path / VERBOSE_LOG_NAME) == ["button backup_now_btn: Back up now"]
+    assert _entries(_log_path(tmp_path)) == [
+        {
+            "level": "DEBUG",
+            "event": "button",
+            "name": "backup_now_btn",
+            "label": "Back up now",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -277,19 +319,21 @@ def test_verbose_event_filter_given_a_button_event_logs_the_button(tmp_path: Pat
     ],
     ids=["checkbox", "radiobutton", "choice", "text"],
 )
-def test_verbose_event_filter_given_a_whitelisted_control_logs_its_kind(
+def test_event_filter_given_a_whitelisted_control_logs_its_kind(
     tmp_path: Path,
     event_type: int,
     kind: str,
 ) -> None:
     """F4: each other whitelisted control logs its frozen name/kind."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
-    event_filter = app_module._make_verbose_event_filter(log)
+    log = Logging(_log_path(tmp_path))
+    event_filter = app_module._make_event_filter(log)
 
     result = event_filter.FilterEvent(_FakeCommandEvent(event_type, _FakeControl("sound_chk")))
 
     assert result == wx.EventFilter.Event_Skip
-    assert _messages(tmp_path / VERBOSE_LOG_NAME) == [f"control sound_chk: {kind}"]
+    assert _entries(_log_path(tmp_path)) == [
+        {"level": "DEBUG", "event": "control", "name": "sound_chk", "kind": kind}
+    ]
 
 
 @pytest.mark.parametrize(
@@ -297,116 +341,41 @@ def test_verbose_event_filter_given_a_whitelisted_control_logs_its_kind(
     [wx.EVT_PAINT.typeId, wx.EVT_MOTION.typeId, wx.EVT_TIMER.typeId, wx.EVT_IDLE.typeId],
     ids=["paint", "motion", "timer", "idle"],
 )
-def test_verbose_event_filter_given_a_noise_event_writes_nothing(
+def test_event_filter_given_a_noise_event_writes_nothing(
     tmp_path: Path,
     event_type: int,
 ) -> None:
     """F4: paint/mouse/timer/idle traffic never reaches the log."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
-    event_filter = app_module._make_verbose_event_filter(log)
+    log = Logging(_log_path(tmp_path))
+    event_filter = app_module._make_event_filter(log)
     event = _FakeCommandEvent(event_type, _FakeControl("plate_input"))
 
     result = event_filter.FilterEvent(event)
 
     assert result == wx.EventFilter.Event_Skip
-    assert _messages(tmp_path / VERBOSE_LOG_NAME) == []
+    assert _entries(_log_path(tmp_path)) == []
 
 
-def test_verbose_event_filter_given_a_disabled_log_writes_nothing(tmp_path: Path) -> None:
+def test_event_filter_given_a_non_verbose_log_writes_nothing(tmp_path: Path) -> None:
     """F4: an opted-out log skips before touching the control."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME, enabled=False)
-    event_filter = app_module._make_verbose_event_filter(log)
+    log = Logging(_log_path(tmp_path), verbose=False)
+    event_filter = app_module._make_event_filter(log)
     event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("backup_now_btn", "Back up now"))
 
     result = event_filter.FilterEvent(event)
 
     assert result == wx.EventFilter.Event_Skip
-    assert _messages(tmp_path / VERBOSE_LOG_NAME) == []
+    assert _entries(_log_path(tmp_path)) == []
 
 
-def test_verbose_event_filter_given_a_whitelisted_type_with_no_object_writes_nothing(
+def test_event_filter_given_a_whitelisted_type_with_no_object_writes_nothing(
     tmp_path: Path,
 ) -> None:
     """F4: an event naming no control is skipped, never raised on."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
-    event_filter = app_module._make_verbose_event_filter(log)
+    log = Logging(_log_path(tmp_path))
+    event_filter = app_module._make_event_filter(log)
 
     result = event_filter.FilterEvent(_FakeCommandEvent(wx.EVT_BUTTON.typeId))
 
     assert result == wx.EventFilter.Event_Skip
-    assert _messages(tmp_path / VERBOSE_LOG_NAME) == []
-
-
-# ------------------------------------------ F4: modeless frame opens
-
-
-class _ModelessWindow:
-    """A modeless-frame double recording its show calls."""
-
-    def __init__(self) -> None:
-        """Start unshown and uncentred."""
-        self.centred = 0
-        self.shown = False
-        self.raised = 0
-
-    def CentreOnParent(self) -> None:  # noqa: N802 -- wx API name
-        """Record one centring."""
-        self.centred += 1
-
-    def Show(self) -> None:  # noqa: N802 -- wx API name
-        """Record the show."""
-        self.shown = True
-
-    def Raise(self) -> None:  # noqa: N802 -- wx API name
-        """Record one raise."""
-        self.raised += 1
-
-
-class _FakeResource:
-    """A resource double whose LoadFrame hands back one window."""
-
-    def __init__(self, window: _ModelessWindow) -> None:
-        """Store the frame this resource loads."""
-        self._window = window
-
-    def LoadFrame(self, _parent: object, _name: str) -> _ModelessWindow:  # noqa: N802 -- wx API name
-        """Return the staged modeless frame."""
-        return self._window
-
-
-def test_open_target_given_a_modeless_frame_logs_the_dialog_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """F4: the modeless results frame records its name and opener."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
-    window = _ModelessWindow()
-    context = _context(frame=_NoticeFrame(), log=log, resource=_FakeResource(window))
-    route = commands.route_for_id("mi_standings")
-    monkeypatch.setattr(app_module, "_decorate", lambda _ctx, _win, _route: None)
-    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _win, _route: None)
-    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _win: None)
-    monkeypatch.setattr(app_module.theme, "apply_light_mode_panel_bg", lambda _win: None)
-
-    app_module._open_target(context, route)
-
-    assert (window.shown, window.raised) == (True, 1)
-    assert _messages(tmp_path / VERBOSE_LOG_NAME) == [
-        f"dialog {route.target} (from {route.label})"
-    ]
-
-
-def test_open_target_given_a_modeless_frame_without_a_log_still_opens(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """F4: a log-less app still opens the frame, with no crash."""
-    window = _ModelessWindow()
-    context = _context(frame=_NoticeFrame(), log=None, resource=_FakeResource(window))
-    route = commands.route_for_id("mi_standings")
-    monkeypatch.setattr(app_module, "_decorate", lambda _ctx, _win, _route: None)
-    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _win, _route: None)
-    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _win: None)
-    monkeypatch.setattr(app_module.theme, "apply_light_mode_panel_bg", lambda _win: None)
-
-    app_module._open_target(context, route)
-
-    assert (window.shown, window.raised) == (True, 1)
+    assert _entries(_log_path(tmp_path)) == []

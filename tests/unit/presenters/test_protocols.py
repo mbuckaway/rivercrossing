@@ -99,8 +99,8 @@ class FakeConsoleView:
     def flash_crossing(self, r: FeedRow) -> None:
         """Record the flashed crossing (unused here)."""
 
-    def set_state(self, status: RideStatus) -> None:
-        """Record the ride state (unused here)."""
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the ride state and stop guard (unused here)."""
 
     def focus_entry(self) -> None:
         """Record the focus request (unused here)."""
@@ -157,6 +157,7 @@ class FakeConsoleView:
         *,
         _ok_label: str,
         _cancel_label: str,
+        _danger: bool = False,
     ) -> bool:
         """Return the scripted confirm verdict (unused here)."""
         return False
@@ -173,12 +174,6 @@ class FakeConsoleView:
 
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the riders review rows (unused here)."""
-
-    # Phase 4: the Protocol grew the riders-list sort marker the
-    # presenter pushes after every render. Behavioral coverage lives in
-    # tests/unit/presenters/test_console.py; this stays a no-op.
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Record the riders-list sort marker (unused here)."""
 
 
 class FakeSetupView:
@@ -253,9 +248,6 @@ class FakeRidersView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """No-op fake."""
 
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """No-op fake."""
-
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """No-op fake."""
 
@@ -302,17 +294,6 @@ class FakeResultsView:
         """No-op fake."""
 
     def show_publish_options(self, options: ExportOptions) -> None:
-        """No-op fake."""
-
-    # E6.4.1: the Protocol grew the three members the live presenter
-    # actually calls (the same "add the member once the presenter
-    # calls it" precedent main_frame.py's own docstring records).
-    # Behavior is covered in tests/unit/presenters/test_results.py;
-    # these stay no-ops.
-    def set_tiebreak_labels(self, labels: list[str]) -> None:
-        """No-op fake."""
-
-    def show_notice(self, text: str) -> None:
         """No-op fake."""
 
     def publish_options(self) -> ExportOptions:

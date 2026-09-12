@@ -4,9 +4,9 @@
 With no store-backed ride open, every window the app can reach renders
 its correct EMPTY state instead of demo rows (results: no standings;
 library: no rides; rider editor: no riders; entry detail: an empty
-entry; console: a fresh engine feed). Each test drives one window with
-the same empty-state source the app bootstrap now wires
-(``app._build_console_engine`` over an empty roster for the console,
+entry; console: the true no-ride state, W1). Each test drives one
+window with the same empty-state source the app bootstrap now wires
+(``app._EMPTY_SOURCE`` + ``MainFrame.show_no_ride()`` for the console,
 ``EmptyDataSource`` for the E6/E7 windows, an empty mixed roster for
 the editor) and saves a screenshot under ``tests/functional/
 _screenshots/`` -- the repo's convention (``test_screen_smoke.py``),
@@ -46,17 +46,17 @@ def _empty_mixed_roster() -> Roster:
     )
 
 
-def test_main_frame_empty_state_screenshot_captures_the_empty_feed(
+def test_main_frame_empty_state_screenshot_captures_the_no_ride_console(
     xrc_resource: object,
 ) -> None:
-    """The console's real empty state: fresh engine, zero crossings."""
+    """The console's real empty state: ``show_no_ride()`` (W1)."""
     window = harness.load_window_verified(xrc_resource, ids.MAIN_FRAME, frame=True)
     try:
         window.Show()
         window.Layout()
         harness.pump()
-        _engine, source = app_module._build_console_engine(_empty_mixed_roster())
-        console = MainFrame(window, data_source=source)
+        console = MainFrame(window, data_source=app_module._EMPTY_SOURCE)
+        console.show_no_ride()
         saved = harness.screenshot(window, SCREENSHOT_DIR / "main_frame_empty_state.png")
         row_count = console.crossings_list.GetModel().GetCount()
     finally:

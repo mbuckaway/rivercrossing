@@ -56,7 +56,12 @@ from rivercrossing.standings import (
 from rivercrossing.ui import commands, ids
 from rivercrossing.ui.presenters import Cue, EngineDataSource
 from rivercrossing.ui.presenters import console as console_module
-from rivercrossing.ui.presenters.console import ConsolePresenter
+from rivercrossing.ui.presenters.console import (
+    MISS_SYMBOLS,
+    ConsolePresenter,
+    ConsoleView,
+    is_miss,
+)
 from rivercrossing.ui.presenters.data_source import (
     Counters,
     DataSource,
@@ -68,7 +73,6 @@ from rivercrossing.ui.presenters.data_source import (
     corrected_crossing_keys,
     format_duration,
 )
-from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 
 # -------------------------------------------------------------- helpers
 
@@ -152,20 +156,14 @@ def _solo_only_engine() -> tuple[RideEngine, _FakeDatetimeClock]:
     return engine, clock
 
 
-def _column_index(label: str) -> int:
-    """Return *label*'s index in the console's shared column order."""
-    return next(
-        index for index, column in enumerate(CONSOLE_RIDER_COLUMNS) if column.label == label
-    )
-
-
 def _name_order_roster() -> Roster:
     """Build a roster whose own order is no column's sort order.
 
     Two solo entries, "Zoe" (plate 34) first and "Amy" (plate 12)
     second: the source lists them 34, 12 -- so a Name sort (12, 34)
     and a Plate sort (12, 34) are both visibly different from the
-    unsorted source order.
+    source order, which is the order the presenters' rows must keep
+    (the riders tab's native header arrows do the ordering).
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_solo_entry(first_name="Zoe", last_name="", plate="34")
@@ -203,15 +201,13 @@ class FakeConsoleView:
         self.last_counters: Counters | None = None
         self.last_flash: FeedRow | None = None
         self.last_state: RideStatus | None = None
+        self.last_stopped: bool | None = None
         self.last_notice: str | None = None
         self.last_clock: tuple[str, str] | None = None
         self.last_clock_fractions: tuple[float, float] | None = None
         self.last_flagged: list[FeedRow] = []
         self.last_riders: list[RiderRow] = []
         self.last_hide: bool | None = None
-        # Phase 4: the riders list's ▲/▼ marker state the presenter
-        # pushes after every render (None == no active sort).
-        self.last_sort_indicator: tuple[int | None, bool] | None = None
         # W12: the teams-chip visibility verdict the presenter pushes
         # at construction (R-11: solo-only rides hide the Teams chip).
         self.team_visible: bool | None = None
@@ -226,10 +222,14 @@ class FakeConsoleView:
         # the dialog was never opened).
         self.last_start_blocked: list[str] | None = None
         self.last_confirm: tuple[str, str, str, str] | None = None
+        self.last_confirm_danger: bool | None = None
         self.confirm_result: bool = False
         self._presenter: ConsolePresenter | None = None
         self.focus_count = 0
         self.clear_count = 0
+        # H: the riders tab re-render count -- the tick skips an
+        # unchanged render so a native sort survives (macOS).
+        self.riders_calls = 0
 
     def show_feed(self, rows: list[FeedRow]) -> None:
         """Record the fed rows, then re-apply the console gates."""
@@ -249,9 +249,10 @@ class FakeConsoleView:
         """Record the flashed crossing."""
         self.last_flash = r
 
-    def set_state(self, status: RideStatus) -> None:
-        """Record the ride state, then re-apply the console gates."""
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the state and stop guard, then re-apply gates."""
         self.last_state = status
+        self.last_stopped = stopped
         if self._presenter is not None:
             self._presenter.refresh_console_gates()
 
@@ -315,9 +316,11 @@ class FakeConsoleView:
         *,
         ok_label: str,
         cancel_label: str,
+        danger: bool = False,
     ) -> bool:
         """Record the confirm and return the scripted verdict (W5)."""
         self.last_confirm = (title, message, ok_label, cancel_label)
+        self.last_confirm_danger = danger
         return self.confirm_result
 
     # WS-D/WS-H: the gauge clock and review-tab members the live
@@ -331,12 +334,9 @@ class FakeConsoleView:
         self.last_flagged = list(rows)
 
     def show_riders(self, rows: list[RiderRow]) -> None:
-        """Record the riders review rows (WS-H)."""
+        """Record the riders review rows and count the render (WS-H)."""
         self.last_riders = list(rows)
-
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Record the riders-list sort marker state (Phase 4)."""
-        self.last_sort_indicator = (column, ascending)
+        self.riders_calls += 1
 
 
 def _make_presenter(
@@ -984,19 +984,145 @@ def test_on_plate_entered_given_blank_text_only_refocuses(text: str) -> None:
     assert len(engine.crossings) == 0
 
 
+# --------------------------------------------------------- miss symbols
+# A miss is a passing whose number the scorer missed: typing one of the
+# miss symbols ("= / + - .") instead of a plate records a pending miss
+# and never goes near record_crossing.
+
+MISS_SYMBOL_CASES = ("=", "/", "+", "-", ".")
+EXPECTED_MISS_SYMBOLS = frozenset("=/+-.")
+
+
+def test_miss_symbols_are_exactly_the_documented_symbol_set() -> None:
+    """The miss vocabulary is the five typable symbols, nothing else."""
+    assert MISS_SYMBOLS == EXPECTED_MISS_SYMBOLS
+
+
+@pytest.mark.parametrize("symbol", MISS_SYMBOL_CASES)
+def test_is_miss_given_a_single_miss_symbol_returns_true(symbol: str) -> None:
+    """Every documented symbol is a miss."""
+    assert is_miss(symbol) is True
+
+
+@pytest.mark.parametrize("symbol", MISS_SYMBOL_CASES)
+def test_is_miss_given_a_padded_miss_symbol_returns_true(symbol: str) -> None:
+    """Surrounding whitespace never turns a symbol into a plate."""
+    assert is_miss(f"  {symbol}  ") is True
+
+
+def test_is_miss_given_repeated_symbols_returns_true() -> None:
+    """One or more symbols is still a miss (e.g. a double tap)."""
+    assert is_miss("=+.") is True
+
+
+@pytest.mark.parametrize("text", ["", "   "], ids=["empty", "whitespace_only"])
+def test_is_miss_given_blank_text_returns_false(text: str) -> None:
+    """A blank submission is not a miss -- it only refocuses (A3)."""
+    assert is_miss(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["12", "1-2", "12/34", "45+", "AB"],
+    ids=["numeric", "hyphenated", "slashed", "trailing_plus", "letters"],
+)
+def test_is_miss_given_any_other_text_returns_false(text: str) -> None:
+    """Any other text is a plate, never a miss."""
+    assert is_miss(text) is False
+
+
+@given(st.text())
+def test_is_miss_given_arbitrary_text_agrees_with_its_definition(text: str) -> None:
+    """Property: a miss is non-blank text drawn only from symbols."""
+    stripped = text.strip()
+    expected = bool(stripped) and set(stripped) <= MISS_SYMBOLS
+
+    assert is_miss(text) is expected
+
+
+@pytest.mark.parametrize("symbol", MISS_SYMBOL_CASES)
+def test_on_plate_entered_given_a_miss_symbol_records_a_miss_not_a_crossing(
+    symbol: str,
+) -> None:
+    """Every miss symbol routes to record_miss, crossings stay empty."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_plate_entered(symbol)
+
+    assert engine.crossings == ()
+    assert [miss.miss_seq for miss in engine.pending_misses()] == [1]
+    assert view.clear_count == 1
+    assert view.focus_count == 1
+
+
+def test_on_plate_entered_given_a_miss_symbol_audits_the_fixed_reason() -> None:
+    """The console records the miss with its own fixed reason label."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_plate_entered("=")
+
+    assert engine.events[-1].action == "record_miss"
+    assert engine.events[-1].payload["reason"] == "missed number"
+
+
+def test_on_plate_entered_given_a_miss_symbol_refreshes_the_feed_with_a_miss_row() -> None:
+    """The feed gains a "-"/"missed" row for the new pending miss."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_plate_entered("-")
+
+    assert [(row.plate, row.entry) for row in view.last_feed] == [("-", "missed")]
+
+
+def test_on_plate_entered_given_a_miss_symbol_plays_error_and_notifies() -> None:
+    """The symbol is not a plate: play ERROR and post a notice."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_plate_entered("+")
+
+    assert view.cues == [Cue.ERROR]
+    assert view.last_notice == "Number missed — logged for later entry"
+
+
+def test_on_plate_entered_given_a_miss_symbol_on_a_draft_ride_notifies_and_keeps_the_field() -> (
+    None
+):
+    """A state-refused miss surfaces as a notice, never a crash."""
+    engine, _clock = _make_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_plate_entered("-")
+
+    assert engine.pending_misses() == ()
+    assert view.cues == [Cue.ERROR]
+    assert view.clear_count == 0
+    assert view.focus_count == 1
+
+
 # ---------------------------------------------------------------- undo
 
 
 def test_on_undo_given_crossings_removes_last_refreshes_feed_and_notices() -> None:
-    """R-33: undo removes the newest crossing and re-renders feed."""
+    """R-33: a confirmed undo removes the crossing and re-renders."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     _record(engine, clock, "12", lap_time_s=100)
     view = FakeConsoleView()
+    view.confirm_result = True
     presenter = _make_presenter(engine, view)
 
     presenter.on_undo()
 
+    assert view.last_confirm_danger is True  # I: the destructive undo question
     assert len(engine.crossings) == 1
     assert len(view.last_feed) == 1
     assert view.last_notice == "Last crossing undone"
@@ -1010,8 +1136,75 @@ def test_on_undo_given_no_crossings_shows_a_notice_and_keeps_state() -> None:
 
     presenter.on_undo()
 
-    assert view.last_notice == "Undo unavailable: no crossings to undo"
+    assert view.last_notice == "Undo unavailable: nothing to undo"
+    assert view.last_confirm is None  # nothing to undo never asks
     assert len(engine.crossings) == 0
+
+
+def test_on_undo_given_a_legal_undo_asks_a_danger_confirm() -> None:
+    """I: the undo question is asked through the danger dialog seam."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    view.confirm_result = True
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert view.last_confirm == (
+        "Undo Last Crossing?",
+        "Undo the last recorded crossing? The newest lap and its dealt card are removed.",
+        "Undo",
+        "Cancel",
+    )
+    assert view.last_confirm_danger is True
+
+
+def test_on_undo_given_a_cancelled_confirm_keeps_the_crossing() -> None:
+    """I: Cancel is not an undo -- the newest crossing survives."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    view.confirm_result = False
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert len(engine.crossings) == 1
+    assert view.last_notice is None
+    assert view.last_feed == []  # a cancelled undo never re-renders
+
+
+def test_on_undo_given_a_finished_ride_shows_unavailable_and_never_confirms() -> None:
+    """I: a closed ride is not undoable, so no dialog is opened."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert view.last_notice == "Undo unavailable: nothing to undo"
+    assert view.last_confirm is None
+    assert len(engine.crossings) == 1
+
+
+def test_on_undo_given_a_reopened_ride_asks_the_confirm_and_undoes() -> None:
+    """I: a REOPENED corrections ride is still undoable."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    engine.finish()
+    engine.reopen()
+    view = FakeConsoleView()
+    view.confirm_result = True
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert view.last_confirm_danger is True
+    assert len(engine.crossings) == 0
+    assert view.last_notice == "Last crossing undone"
 
 
 # --------------------------------------------------------------- stop
@@ -1034,6 +1227,7 @@ def test_on_stop_confirmed_given_running_ride_stops_locks_entry_and_disables_sto
     assert view.start_enabled is True  # continue-after-stop stays offered
     assert view.entry_locked is True
     assert view.last_state is RideStatus.RUNNING  # stop is a guard, not a state
+    assert view.last_stopped is True  # W6: the status text reads STOPPED
     assert view.last_notice == "Ride stopped — continue to resume"
 
 
@@ -1062,6 +1256,7 @@ def test_on_start_given_draft_ride_starts_and_enables_entry() -> None:
 
     assert engine.state is RideStatus.RUNNING
     assert view.last_state is RideStatus.RUNNING
+    assert view.last_stopped is False  # a fresh start is not a stopped ride
     assert view.entry_locked is False
     assert view.last_notice == "Ride started"
     assert engine.events[-1].action == "start"
@@ -1345,6 +1540,7 @@ def test_on_undo_given_last_crossing_disables_undo_through_the_feed_render() -> 
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     view = FakeConsoleView()
+    view.confirm_result = True
     presenter = _make_presenter(engine, view)
 
     presenter.on_undo()
@@ -1381,11 +1577,16 @@ def test_on_hide_times_forwards_the_setting_to_the_view(hide: bool) -> None:  # 
     assert view.last_hide is hide
 
 
-# --------------------------------------------------------- riders sort
+# --------------------------------------------------------- riders order
 
 
-def test_refresh_riders_given_no_active_sort_keeps_the_source_order() -> None:
-    """Before any header click the rows keep the source's own order."""
+def test_refresh_riders_given_no_sort_keeps_the_source_order() -> None:
+    """Every render keeps the source's own order (Phase C).
+
+    The riders tab sorts through the list's own native header arrows
+    (``RiderRowListModel.Compare``), so the presenter never re-orders
+    what it renders -- the model's rows stay the presenter's own order.
+    """
     engine, _clock = _make_engine(roster=_name_order_roster())
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
@@ -1393,75 +1594,69 @@ def test_refresh_riders_given_no_active_sort_keeps_the_source_order() -> None:
     presenter.tick()
 
     assert [row.plate for row in view.last_riders] == ["34", "12"]
-    assert view.last_sort_indicator == (None, True)
 
 
-def test_on_sort_riders_given_a_first_click_sorts_that_column_ascending() -> None:
-    """Phase 4: a header click sorts by the shared column's key, up."""
-    engine, _clock = _make_engine(roster=_name_order_roster())
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-
-    presenter.on_sort_riders(_column_index("Name"))
-
-    assert [row.plate for row in view.last_riders] == ["12", "34"]
-    assert view.last_sort_indicator == (_column_index("Name"), True)
-
-
-def test_on_sort_riders_given_the_active_column_clicked_again_reverses_it() -> None:
-    """Re-clicking the active column flips the order and the marker."""
-    engine, _clock = _make_engine(roster=_name_order_roster())
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-    presenter.on_sort_riders(_column_index("Name"))
-
-    presenter.on_sort_riders(_column_index("Name"))
-
-    assert [row.plate for row in view.last_riders] == ["34", "12"]
-    assert view.last_sort_indicator == (_column_index("Name"), False)
-
-
-def test_on_sort_riders_given_a_different_column_restarts_ascending() -> None:
-    """A new column sorts up; its marker replaces the old one."""
-    engine, _clock = _make_engine(roster=_name_order_roster())
-    view = FakeConsoleView()
-    presenter = _make_presenter(engine, view)
-    presenter.on_sort_riders(_column_index("Name"))
-    presenter.on_sort_riders(_column_index("Name"))  # now descending
-
-    presenter.on_sort_riders(_column_index("Plate"))
-
-    assert [row.plate for row in view.last_riders] == ["12", "34"]
-    assert view.last_sort_indicator == (_column_index("Plate"), True)
-
-
-def test_on_sort_riders_given_the_cards_column_sorts_by_the_credited_codes() -> None:
-    """Phase 4: the Cards column sorts by the joined card codes."""
+def test_refresh_riders_given_credited_cards_keeps_the_source_order_too() -> None:
+    """A live Cards cell does not make the presenter order the rows."""
     engine, clock = _make_engine(roster=_name_order_roster())
     engine.start()
     result = _record(engine, clock, "34", lap_time_s=100)  # 34 credits a card
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
 
-    presenter.on_sort_riders(_column_index("Cards"))
+    presenter.tick()
 
     assert [(row.plate, row.cards) for row in view.last_riders] == [
-        ("12", ()),  # an empty hand's "" sorts before every real code
         ("34", (result.card.code(),)),
+        ("12", ()),
     ]
 
 
-def test_on_sort_riders_given_the_active_column_keeps_the_sort_on_the_next_tick() -> None:
-    """The tick re-render keeps the operator's chosen order."""
+def test_tick_given_unchanged_riders_does_not_re_render_them() -> None:
+    """H: a tick with identical rows skips the rebuild.
+
+    The rebuild drops the list's native sort key on macOS, so the
+    presenter only re-renders when the rows actually changed.
+    """
     engine, _clock = _make_engine(roster=_name_order_roster())
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
-    presenter.on_sort_riders(_column_index("Name"))
+    presenter.tick()
+    first_render_calls = view.riders_calls
 
     presenter.tick()
 
-    assert [row.plate for row in view.last_riders] == ["12", "34"]
-    assert view.last_sort_indicator == (_column_index("Name"), True)
+    assert (first_render_calls, view.riders_calls) == (1, 1)
+
+
+def test_tick_given_a_changed_cards_cell_re_renders_the_riders() -> None:
+    """H: a credited card changes the rows, so the tick re-renders."""
+    engine, clock = _make_engine(roster=_name_order_roster())
+    engine.start()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+    result = _record(engine, clock, "34", lap_time_s=100)
+
+    presenter.tick()
+
+    assert view.riders_calls == 2
+    assert [(row.plate, row.cards) for row in view.last_riders] == [
+        ("34", (result.card.code(),)),
+        ("12", ()),
+    ]
+
+
+def test_console_presenter_carries_no_riders_sort_state() -> None:
+    """The list's own native sort owns row order now (Phase C)."""
+    assert {"on_sort_riders", "_riders_sort_column", "_riders_sort_ascending"}.isdisjoint(
+        ConsolePresenter.__dict__
+    )
+
+
+def test_console_view_protocol_carries_no_sort_indicator_member() -> None:
+    """The ▲/▼ marker is retired; the platform draws the arrow."""
+    assert "set_sort_indicator" not in ConsoleView.__dict__
 
 
 # ----------------------------------------------------------------- tick
@@ -1634,6 +1829,7 @@ def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> 
     _record(engine, clock, "12", lap_time_s=5)  # flagged short lap
     _record(engine, clock, "34", lap_time_s=100)  # clean lap, newer
     view = FakeConsoleView()
+    view.confirm_result = True
     presenter = _make_presenter(engine, view)
 
     presenter.on_undo()
@@ -1655,20 +1851,95 @@ def test_on_tick_given_flagged_crossing_refreshes_the_review_lists() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "mode"),
+    ("status", "stopped", "mode"),
     [
-        (RideStatus.RUNNING, "green"),
-        (RideStatus.DRAFT, "yellow"),
-        (RideStatus.FINISHED, "red"),
-        (RideStatus.REOPENED, "yellow"),
+        (RideStatus.RUNNING, False, "green"),
+        (RideStatus.RUNNING, True, "yellow"),
+        (RideStatus.DRAFT, False, "yellow"),
+        (RideStatus.DRAFT, True, "yellow"),
+        (RideStatus.FINISHED, False, "red"),
+        (RideStatus.FINISHED, True, "red"),
+        (RideStatus.REOPENED, False, "yellow"),
+        (RideStatus.REOPENED, True, "yellow"),
     ],
-    ids=["running_green", "draft_yellow", "finished_red", "reopened_yellow"],
+    ids=[
+        "running_green",
+        "stopped_running_yellow",
+        "draft_yellow",
+        "stopped_draft_yellow",
+        "finished_red",
+        "stopped_finished_red",
+        "reopened_yellow",
+        "stopped_reopened_yellow",
+    ],
 )
 def test_stop_light_mode_given_ride_status_returns_the_semantic_colour(
-    status: RideStatus, mode: str
+    status: RideStatus, *, stopped: bool, mode: str
 ) -> None:
-    """WS-D: the console's status light follows the ride lifecycle."""
-    assert console_module.stop_light_mode(status) == mode
+    """WS-D/W6: RUNNING green, stopped RUNNING amber, the rest fixed.
+
+    W6: the light never carries meaning by colour alone, so a stopped
+    RUNNING ride joins DRAFT/REOPENED on amber while the label says
+    STOPPED.
+    """
+    assert console_module.stop_light_mode(status, stopped=stopped) == mode
+
+
+def test_stop_light_mode_given_no_ride_returns_off() -> None:
+    """WS-D/W1: no ride open leaves every lamp circle dark ("off")."""
+    assert console_module.stop_light_mode(None) == "off"
+
+
+def test_stop_light_mode_given_stopped_defaults_to_the_live_colour() -> None:
+    """The stopped guard defaults off -- callers stay unchanged."""
+    assert console_module.stop_light_mode(RideStatus.RUNNING) == "green"
+
+
+@given(status=st.sampled_from((*RideStatus, None)), stopped=st.booleans())
+def test_stop_light_mode_given_any_lifecycle_value_returns_a_known_mode(
+    status: RideStatus | None, *, stopped: bool
+) -> None:
+    """T-7: the status -> lamp mapping is total over every state."""
+    assert console_module.stop_light_mode(status, stopped=stopped) in {
+        "green",
+        "yellow",
+        "red",
+        "off",
+    }
+
+
+@pytest.mark.parametrize(
+    ("status", "stopped", "text"),
+    [
+        (RideStatus.DRAFT, False, "DRAFT"),
+        (RideStatus.RUNNING, False, "RUNNING"),
+        (RideStatus.RUNNING, True, "STOPPED"),
+        (RideStatus.FINISHED, False, "FINISHED"),
+        (RideStatus.REOPENED, False, "REOPENED"),
+        (RideStatus.REOPENED, True, "REOPENED"),
+    ],
+    ids=[
+        "draft",
+        "running",
+        "stopped_running",
+        "finished",
+        "reopened",
+        "stopped_reopened",
+    ],
+)
+def test_status_text_given_ride_status_returns_its_label(
+    status: RideStatus, *, stopped: bool, text: str
+) -> None:
+    """W6: a stopped RUNNING ride reads STOPPED; else upper case."""
+    assert console_module.status_text(status, stopped=stopped) == text
+
+
+@given(st.sampled_from(RideStatus))
+def test_status_text_given_any_live_status_is_upper_case(status: RideStatus) -> None:
+    """T-7: the default render is the status name in upper case."""
+    text = console_module.status_text(status)
+
+    assert text == status.value.upper()
 
 
 @pytest.mark.parametrize(

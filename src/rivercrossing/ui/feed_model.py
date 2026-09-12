@@ -18,7 +18,7 @@ split ``cards_imagelist.py`` draws between its pure helpers and
 
 from typing import TYPE_CHECKING
 
-from rivercrossing.ui.cards_imagelist import UnknownCardCodeError, asset_key
+from rivercrossing.ui.card_text import format_card
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -36,10 +36,11 @@ __all__ = [
     "COL_TIME",
     "COL_TOTAL",
     "TIME_COLUMNS",
-    "card_asset_key_or_none",
+    "card_text_or_blank",
     "edited_row_indexes",
     "flagged_row_indexes",
     "flash_crossing_label",
+    "lap_text",
 ]
 
 COL_TIME = 0
@@ -69,19 +70,23 @@ TIME_COLUMNS: tuple[int, ...] = (COL_LAP_TIME, COL_TOTAL)
 COLUMN_WIDTHS: tuple[int, ...] = (80, 50, 150, 60, 50, 80, 80)
 
 
-def card_asset_key_or_none(card: str) -> str | None:
-    """Return *card*'s imagelist key, or ``None`` if it names no card.
+def card_text_or_blank(card: str) -> str:
+    """Return *card*'s display text, or ``""`` if it names no card.
 
     W9: the feed's Card column always carries a real dealt code -- a
     held crossing's row shows the held card's own code, not the
-    retired literal placeholder -- so ``None`` is the blank-cell seam
-    for any unmappable text (``""``, corrupt strings) that does not
-    need a ``CardImageList`` (or ``wx``) to be detected.
+    retired literal placeholder -- so the blank cell is the seam for
+    any unmappable text (``""``, corrupt strings) that does not need a
+    ``CardImageList`` (or ``wx``) to be detected. Delegates the code
+    to text mapping to the shared
+    :func:`~rivercrossing.ui.card_text.format_card`, turning its
+    ``KeyError`` (unknown suit) and ``IndexError`` (empty code) into
+    the blank cell.
     """
     try:
-        return asset_key(card)
-    except UnknownCardCodeError:
-        return None
+        return format_card(card)
+    except KeyError, IndexError:
+        return ""
 
 
 def flagged_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
@@ -102,6 +107,16 @@ def edited_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
     return frozenset(index for index, row in enumerate(rows) if row.edited)
 
 
+def lap_text(row: FeedRow) -> str:
+    """Return the feed's Lap cell text for *row*.
+
+    A pending miss (``row.missed``, K) shows no lap number -- the whole
+    numeric part of its row is blank -- so its Lap cell is ``""``, not
+    the ``"0"`` its placeholder ``lap`` would otherwise render.
+    """
+    return "" if row.missed else str(row.lap)
+
+
 def flash_crossing_label(row: FeedRow) -> str:
     """Return the last-crossing label ``flash_crossing`` renders.
 
@@ -112,7 +127,12 @@ def flash_crossing_label(row: FeedRow) -> str:
     appends ``" (held)"``. The four-entry suit map is local to this
     helper: per-view maps already exist (``results_win``,
     ``dialogs``, ``pdfexport``) and this adds no shared structure.
+
+    K: a miss row has no card or lap, so its label is just the blank
+    plate ``-`` and the ``missed`` name.
     """
+    if row.missed:
+        return f"{row.plate} · {row.entry}"
     glyphs = {"H": "♥", "D": "♦", "C": "♣", "S": "♠"}
     code = row.card
     display = "JK★" if code == "JK" else f"{code[:-1]}{glyphs[code[-1]]}"

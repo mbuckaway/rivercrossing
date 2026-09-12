@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Results window (spec.md 15b file map, xrc-windows.md section D) - the
-  12 frozen controls the canvas annotates. Control names are frozen;
+  Results dialog (spec.md 15b file map, xrc-windows.md section D) - the
+  frozen controls the canvas annotates. Control names are frozen;
   tests find them with FindWindowByName and tools/gen_ids.py turns them
   into ui/ids.py (R-05, R-73).
 
@@ -13,9 +13,9 @@
       wx.InfoBar() in code and given its frozen name with SetName().
     * wxDataViewListCtrl cannot be authored here either: its XRC
       handler hard-forces the control name to "dataviewCtrl".
-      standings_list is a wxDataViewCtrl, whose name IS honoured;
-      columns, rows and the card bitmaps come from code (canvas
-      code-side items 1 and 2).
+      standings_list, teams_standings_list and solo_standings_list are
+      wxDataViewCtrl, whose name IS honoured; columns, rows and the
+      card bitmaps come from code (canvas code-side items 1 and 2).
     * <checked>1</checked> IS honoured on wxCheckBox - unlike the
       <checked> property of a wxITEM_RADIO menu item, which XRC
       silently ignores (wxWidgets src/xrc/xh_chckb.cpp calls SetValue
@@ -24,22 +24,24 @@
     * XRC has no minsize property for windows - only for sizeritem and
       wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). No
       minimum is documented for this window (spec.md 13 sizes the
-      console only), so it declares no <size> and the sizer handler
-      Fit()s the frame and applies SetSizeHints().
+      console only), so it declares no <size> and the view's
+      _apply_min_size measures and applies one in code.
 
-  This is a wxFrame, not a dialog: the canvas draws full window chrome
-  (minimise / maximise / close) and the window stays open beside the
-  console while the ride runs.
+  This is a wxDialog, not a wxFrame: Results is opened from the Results
+  menu as a transient window over the console. A MIXED ride shows its
+  Teams and Solo standings on the two results_notebook pages; a
+  SOLO-only ride hides the notebook and shows the standalone
+  standings_list (the view decides per entry_mode).
 
-  Code-side per the canvas footnote: standings_list rows, with
-  "draw required" tie rows carrying a warning badge column; the
-  stale-export banner after reopened corrections; tiebreak_list rows
-  and the live re-rank on reorder; show_times_chk also hiding the
-  Total column here.
+  Code-side per the canvas footnote: the round-robin standings rows,
+  with "draw required" tie rows carrying a warning badge in the Place
+  cell; the stale-export banner after reopened corrections;
+  show_times_chk also hiding the Total column on every list here.
 -->
 <resource>
 
-  <object class="wxFrame" name="results_frame">
+  <object class="wxDialog" name="results_dlg">
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
     <title>Results</title>
 
     <object class="wxBoxSizer">
@@ -54,30 +56,50 @@
         <size>0,0</size>
       </object>
 
-      <!-- The tie-break order re-ranks the standings live; the control
-           supplies its own caption and the reorder arrows. -->
+      <!--
+        The MIXED ride's two standings pages. The view shows this
+        notebook (and hides standings_list) only when the ride's
+        entry_mode is MIXED.
+      -->
       <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
+        <option>1</option>
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
         <border>10</border>
-        <object class="wxBoxSizer">
-          <orient>wxHORIZONTAL</orient>
-          <object class="sizeritem">
-            <option>1</option>
-            <flag>wxEXPAND|wxRIGHT</flag>
-            <border>12</border>
-            <object class="wxEditableListBox" name="tiebreak_list">
-              <label>Tie-break order</label>
+        <object class="wxNotebook" name="results_notebook">
+          <object class="notebookpage">
+            <label>Teams</label>
+            <object class="wxPanel">
+              <object class="wxBoxSizer">
+                <orient>wxVERTICAL</orient>
+                <object class="sizeritem">
+                  <option>1</option>
+                  <flag>wxEXPAND</flag>
+                  <object class="wxDataViewCtrl" name="teams_standings_list"/>
+                </object>
+              </object>
             </object>
           </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_BOTTOM</flag>
-            <object class="wxButton" name="reopen_btn">
-              <label>Reopen ride…</label>
+          <object class="notebookpage">
+            <label>Solo</label>
+            <object class="wxPanel">
+              <object class="wxBoxSizer">
+                <orient>wxVERTICAL</orient>
+                <object class="sizeritem">
+                  <option>1</option>
+                  <flag>wxEXPAND</flag>
+                  <object class="wxDataViewCtrl" name="solo_standings_list"/>
+                </object>
+              </object>
             </object>
           </object>
         </object>
       </object>
 
+      <!--
+        The SOLO ride's one standings list. The view shows this list
+        (and hides the notebook) only when the ride's entry_mode is
+        SOLO.
+      -->
       <object class="sizeritem">
         <option>1</option>
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
@@ -174,9 +196,14 @@
             </object>
           </object>
           <object class="sizeritem">
+            <flag>wxRIGHT</flag>
+            <border>6</border>
             <object class="wxButton" name="export_csv_btn">
               <label>Export CSV…</label>
             </object>
+          </object>
+          <object class="sizeritem">
+            <object class="wxButton" name="wxID_CLOSE"/>
           </object>
         </object>
       </object>

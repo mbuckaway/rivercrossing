@@ -40,7 +40,7 @@ class IncompleteConsoleView:
     def flash_crossing(self, r: FeedRow) -> None:
         """No-op fixture stub."""
 
-    def set_state(self, status: RideStatus) -> None:
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
         """No-op fixture stub."""
 
     def focus_entry(self) -> None:
@@ -86,6 +86,7 @@ class IncompleteConsoleView:
         *,
         _ok_label: str,
         _cancel_label: str,
+        _danger: bool = False,
     ) -> bool:
         """No-op fixture stub."""
         return False

@@ -15,12 +15,25 @@ are checked here, both cheap and headless:
 The presenter half (``on_start`` opening that dialog) lives in
 ``tests/unit/presenters/test_console.py``. Real window geometry and
 the modal show stay with the functional suite.
+
+A third, pure half is pinned at the end: the size rule the view
+applies after loading the dialog
+(:func:`main_frame._start_blocked_size`), so the one "Issue" column
+gets room instead of opening at the sizer's narrow best size.
 """
 
 from pathlib import Path
-from xml.etree import ElementTree as ET
+from typing import TYPE_CHECKING
+
+import pytest
+from defusedxml.ElementTree import parse
 
 from rivercrossing.ui.views import main_frame
+
+if TYPE_CHECKING:
+    # Type-only: defusedxml does not re-export the Element class.
+    # Every parse goes through the defused facade above.
+    from xml.etree.ElementTree import Element
 
 XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
@@ -29,10 +42,9 @@ START_BLOCKED_LIST = "start_blocked_list"
 WX_ID_OK = "wxID_OK"
 
 
-def _dialog() -> ET.Element:
+def _dialog() -> Element:
     """Return riders.xrc's top-level ``start_blocked_dlg`` object."""
-    # S314: the project's own XRC, not untrusted input.
-    root = ET.parse(XRC_DIR / "riders.xrc").getroot()  # noqa: S314
+    root = parse(XRC_DIR / "riders.xrc").getroot()
     return next(
         obj
         for obj in root.findall("object")
@@ -40,18 +52,18 @@ def _dialog() -> ET.Element:
     )
 
 
-def _controls(name: str) -> list[ET.Element]:
+def _controls(name: str) -> list[Element]:
     """Return every object named *name* inside ``start_blocked_dlg``."""
     return [obj for obj in _dialog().iter("object") if obj.get("name") == name]
 
 
-def _text(element: ET.Element, tag: str) -> str:
+def _text(element: Element, tag: str) -> str:
     """Return *element*'s ``<tag>`` text, or "" when absent/empty."""
     child = element.find(tag)
     return child.text if child is not None and child.text is not None else ""
 
 
-def _sizeritem_for(name: str) -> ET.Element:
+def _sizeritem_for(name: str) -> Element:
     """Return the ``sizeritem`` object holding the control named *name*.
 
     Sizer items are ``<object class="sizeritem">`` in XRC, so the
@@ -134,3 +146,25 @@ def test_start_blocked_list_model_given_many_reasons_keeps_their_order() -> None
     assert model.GetValueByRow(0, 0) == "venue is required"
     assert model.GetValueByRow(1, 0) == "scorer is required"
     assert model.GetValueByRow(2, 0) == "7: team size must be at least 2, got 1"
+
+
+# ------------------------------------------------------- the size rule
+
+
+@pytest.mark.parametrize(
+    ("fitted", "expected"),
+    [
+        ((0, 0), (0, 0)),
+        ((1, 1), (2, 2)),
+        ((400, 300), (800, 600)),
+        ((1920, 1080), (3840, 2160)),
+    ],
+    ids=["empty", "single_dip", "nominal", "large"],
+)
+def test_start_blocked_size_given_a_fitted_size_returns_double_both_dimensions(
+    fitted: tuple[int, int], expected: tuple[int, int]
+) -> None:
+    """The dialog opens at twice the fitted width and height."""
+    result = main_frame._start_blocked_size(fitted)
+
+    assert result == expected

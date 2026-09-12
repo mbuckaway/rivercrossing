@@ -86,9 +86,9 @@ class _FakeConsoleView:
         """Record the rendered ride-identity header (C1)."""
         self.calls.append(("show_ride_header", fields))
 
-    def set_state(self, status: RideStatus) -> None:
-        """Record the rendered lifecycle state."""
-        self.calls.append(("set_state", status))
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Record the rendered lifecycle state and stop guard (W6)."""
+        self.calls.append(("set_state", (status, stopped)))
 
     def show_feed(self, rows: list[object]) -> None:
         """Record the number of rendered feed rows."""
@@ -214,7 +214,7 @@ def test_handle_clear_ride_route_given_a_confirmed_danger_clears_the_ride(
 
         assert store.audit_rows(ride_id) == []
         assert store.roster_for(ride_id).entries == ()
-        assert ("set_state", RideStatus.DRAFT) in view.calls
+        assert ("set_state", (RideStatus.DRAFT, False)) in view.calls
         assert (
             "show_ride_header",
             {
@@ -295,7 +295,7 @@ def test_handle_clear_ride_route_without_a_store_resets_the_bootstrap_console(
     assert context.presenter is not None
     assert context.presenter.engine.state is RideStatus.DRAFT
     assert context.presenter.engine.crossings == ()
-    assert ("set_state", RideStatus.DRAFT) in view.calls
+    assert ("set_state", (RideStatus.DRAFT, False)) in view.calls
 
 
 def test_handle_clear_ride_route_without_a_presenter_posts_the_notice() -> None:

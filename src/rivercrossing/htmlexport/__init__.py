@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 from jinja2 import Environment, PackageLoader, StrictUndefined
-from markupsafe import Markup
 
 from rivercrossing.standings import hand_name, laps_leaderboard, time_leaderboard
 
@@ -345,23 +344,24 @@ class _RideLike(Protocol):
     def scorer(self) -> str: ...
 
 
-def racejson(payload: RacePayload) -> Markup:
+def racejson(payload: RacePayload) -> str:
     r"""Serialize *payload* as the page's embedded ``race-data`` JSON.
 
     ``json.dumps`` with the golden pages' indent and ``ensure_ascii``
     off, then every ``</`` escaped as a backslash-slash pair
     (``<\\/``) so no team name can terminate the ``<script>`` block
-    early (D7, TB-6). Returns :class:`markupsafe.Markup` so Jinja2's
-    autoescape does not re-escape the JSON it already wrote.
+    early (D7, TB-6). The result is plain text -- the template is the
+    one place that marks it safe (``| racejson | safe``), so no Python
+    module wraps it in :class:`markupsafe.Markup`.
 
     Args:
         payload: The payload to embed.
 
     Returns:
-        The JSON text as Markup, safe for the ``| racejson`` filter.
+        The escaped JSON text for the ``| racejson | safe`` filter.
     """
     record = json.dumps(payload.to_record(), indent=2, ensure_ascii=False)
-    return Markup(record.replace("</", "<\\/"))  # noqa: S704 -- D7: trusted escaped JSON, intentionally Markup
+    return record.replace("</", "<\\/")
 
 
 def _finalize_display(value: object) -> object:

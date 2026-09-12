@@ -52,6 +52,14 @@ class RecordingRiderIssuesView:
         """Record convert_solo_btn's enabled state."""
         self.calls.append(("set_convert_solo_enabled", (enabled,)))
 
+    def set_assign_plate_enabled(self, *, enabled: bool) -> None:
+        """Record assign_plate_btn's enabled state."""
+        self.calls.append(("set_assign_plate_enabled", (enabled,)))
+
+    def set_renumber_enabled(self, *, enabled: bool) -> None:
+        """Record renumber_btn's enabled state."""
+        self.calls.append(("set_renumber_enabled", (enabled,)))
+
     def show_validation(self, message: str) -> None:
         """Record a refused-operation message."""
         self.calls.append(("show_validation", (message,)))
@@ -79,6 +87,99 @@ def _team_of_one_and_duplicate_roster() -> Roster:
     return roster
 
 
+def _missing_number_roster() -> Roster:
+    """Return a pooled roster with one plateless solo rider."""
+    roster = Roster(plate_model=PlateModel.RIDER_POOLED)
+    roster.load_entries(
+        [
+            Entry(
+                plate="",
+                display_name="Alex Roy",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Alex", last_name="Roy", plate=None)],
+            )
+        ]
+    )
+    return roster
+
+
+def _missing_number_team_roster() -> Roster:
+    """Return a pooled mixed roster with one plateless team member."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.load_entries(
+        [
+            Entry(
+                plate="1",
+                display_name="Trail Blazers",
+                type=EntryType.TEAM,
+                riders=[
+                    Rider(first_name="Sam", last_name="Ellis", plate="1"),
+                    Rider(first_name="Alex", last_name="Roy", plate=None),
+                ],
+            )
+        ]
+    )
+    return roster
+
+
+def _pooled_duplicate_number_roster() -> Roster:
+    """Return a pooled roster whose two solo riders claim plate "7"."""
+    roster = Roster(plate_model=PlateModel.RIDER_POOLED)
+    roster.load_entries(
+        [
+            Entry(
+                plate="7",
+                display_name="Sam Ellis",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Sam", last_name="Ellis", plate="7")],
+            ),
+            Entry(
+                plate="7",
+                display_name="Alex Roy",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Alex", last_name="Roy", plate="7")],
+            ),
+        ]
+    )
+    return roster
+
+
+def _relay_duplicate_number_roster() -> Roster:
+    """Return a relay roster whose two entries claim plate "7"."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.load_entries(
+        [
+            Entry(
+                plate="7",
+                display_name="Sam Ellis",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Sam", last_name="Ellis", plate=None)],
+            ),
+            Entry(
+                plate="7",
+                display_name="Alex Roy",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Alex", last_name="Roy", plate=None)],
+            ),
+        ]
+    )
+    return roster
+
+
+class _PlateRefusingRoster(Roster):
+    """A real roster whose one shared plate write always refuses.
+
+    Every real-roster state the presenter's fix gates allow reaches
+    :meth:`Roster.change_plate` without raising, so the fix handlers'
+    ``except RosterError`` arms are only reachable when the write itself
+    fails defensively. This subclass stands in for that write failure.
+    """
+
+    def change_plate(self, entry: Entry, rider: Rider | None, *, plate: str) -> None:  # noqa: ARG002 -- override; the refusal never reads its arguments
+        """Refuse the shared write: raise a RosterError instead."""
+        raise RosterError("plate refused")
+
+
 class _ExtractRefusingRoster(Roster):
     """A real roster whose one solo-extraction write always refuses.
 
@@ -104,10 +205,12 @@ def test_presenter_init_given_empty_roster_renders_empty_issues_and_zero_summary
 
     RiderIssuesPresenter(view, Roster())
 
+    # The view's own reconcile owns button enablement now (it reads the
+    # list control's real selection), so construction loads the report
+    # without gating any button itself.
     assert view.calls == [
         ("show_issues", ([],)),
         ("show_summary", ("0 rider issue(s)",)),
-        ("set_convert_solo_enabled", (False,)),
     ]
 
 
@@ -254,6 +357,115 @@ def test_on_row_selected_given_team_of_one_after_start_disables_convert() -> Non
     assert ("set_convert_solo_enabled", (False,)) in view.calls
 
 
+def test_on_row_selected_given_a_negative_index_clears_and_disables_every_button() -> None:
+    """An out-of-range row is a stale event, not an IndexError (T-4)."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _team_of_one_and_duplicate_roster())
+    view.calls.clear()
+
+    presenter.on_row_selected(-1)
+
+    assert (presenter._selected, view.calls) == (
+        None,
+        [
+            ("set_convert_solo_enabled", (False,)),
+            ("set_assign_plate_enabled", (False,)),
+            ("set_renumber_enabled", (False,)),
+        ],
+    )
+
+
+def test_on_row_selected_given_a_row_past_the_end_clears_and_disables_every_button() -> None:
+    """One past the last row is a stale event too (T-4: max + 1)."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _team_of_one_and_duplicate_roster())
+    view.calls.clear()
+
+    presenter.on_row_selected(2)
+
+    assert (presenter._selected, view.calls) == (
+        None,
+        [
+            ("set_convert_solo_enabled", (False,)),
+            ("set_assign_plate_enabled", (False,)),
+            ("set_renumber_enabled", (False,)),
+        ],
+    )
+
+
+def test_on_row_selected_given_the_last_row_accepts_it() -> None:
+    """The last legal row is accepted (T-4: max)."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _team_of_one_and_duplicate_roster())
+    view.calls.clear()
+
+    presenter.on_row_selected(1)
+
+    assert ("set_convert_solo_enabled", (False,)) in view.calls
+    assert presenter._selected is not None
+
+
+def test_on_nothing_selected_clears_the_selection_and_disables_every_button() -> None:
+    """The reconcile's no-selection arm owns every disable."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _team_of_one_and_duplicate_roster())
+    view.calls.clear()
+
+    presenter.on_nothing_selected()
+
+    assert (presenter._selected, view.calls) == (
+        None,
+        [
+            ("set_convert_solo_enabled", (False,)),
+            ("set_assign_plate_enabled", (False,)),
+            ("set_renumber_enabled", (False,)),
+        ],
+    )
+
+
+def test_on_row_selected_given_missing_number_enables_assign_only() -> None:
+    """A missing-number row enables Assign Plate only."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _missing_number_roster())
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert view.calls == [
+        ("set_convert_solo_enabled", (False,)),
+        ("set_assign_plate_enabled", (True,)),
+        ("set_renumber_enabled", (False,)),
+    ]
+
+
+def test_on_row_selected_given_duplicate_number_enables_renumber_only() -> None:
+    """A duplicate-number row enables Renumber; the others stay off."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _pooled_duplicate_number_roster())
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert view.calls == [
+        ("set_convert_solo_enabled", (False,)),
+        ("set_assign_plate_enabled", (False,)),
+        ("set_renumber_enabled", (True,)),
+    ]
+
+
+def test_on_row_selected_given_missing_number_after_start_disables_assign() -> None:
+    """A started ride locks the missing-number fix."""
+    roster = _missing_number_roster()
+    roster.status = RideStatus.RUNNING
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, roster)
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert ("set_assign_plate_enabled", (False,)) in view.calls
+
+
 # --------------------------------------------------- on_open_editor
 
 
@@ -397,6 +609,207 @@ def test_on_convert_solo_given_roster_error_returns_false_and_validates() -> Non
     assert converted is False
     assert presenter.did_change is False
     assert view.calls == [("show_validation", ("extract refused",))]
+
+
+# --------------------------------------------------- on_assign_plate
+
+
+def test_on_assign_plate_given_pooled_solo_missing_number_assigns_the_next_plate() -> None:
+    """A plateless pooled solo rider gets the next free plate."""
+    roster = _missing_number_roster()
+    presenter = RiderIssuesPresenter(RecordingRiderIssuesView(), roster)
+    presenter.on_row_selected(0)
+
+    assigned = presenter.on_assign_plate()
+
+    assert assigned is True
+    assert presenter.did_change is True
+    assert (roster.entries[0].plate, roster.entries[0].riders[0].plate) == ("1", "1")
+
+
+def test_on_assign_plate_given_pooled_team_member_assigns_the_members_own_plate() -> None:
+    """A pooled member plate goes through the member primitive."""
+    roster = _missing_number_team_roster()
+    presenter = RiderIssuesPresenter(RecordingRiderIssuesView(), roster)
+    presenter.on_row_selected(0)
+
+    assigned = presenter.on_assign_plate()
+
+    assert assigned is True
+    assert roster.entries[0].riders[1].plate == "2"
+    # The team's derived plate stays the lowest member's.
+    assert roster.entries[0].plate == "1"
+
+
+def test_on_assign_plate_given_nothing_selected_returns_false_and_validates() -> None:
+    """With no selection the assign fix refuses cleanly."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _missing_number_roster())
+    view.calls.clear()
+
+    assigned = presenter.on_assign_plate()
+
+    assert assigned is False
+    assert view.calls == [
+        ("show_validation", ("select a missing-number issue to assign a plate",))
+    ]
+
+
+def test_on_assign_plate_given_duplicate_number_returns_false_and_validates() -> None:
+    """The assign fix refuses a row that is not a missing-number."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _pooled_duplicate_number_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    assigned = presenter.on_assign_plate()
+
+    assert assigned is False
+    assert presenter.did_change is False
+    assert view.calls == [
+        ("show_validation", ("select a missing-number issue to assign a plate",))
+    ]
+
+
+def test_on_assign_plate_given_a_started_ride_returns_false_and_validates() -> None:
+    """A post-DRAFT missing-number refuses, naming DRAFT."""
+    roster = _missing_number_roster()
+    roster.status = RideStatus.RUNNING
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    assigned = presenter.on_assign_plate()
+
+    assert assigned is False
+    assert view.calls == [
+        ("show_validation", ("plates can only be assigned while the ride is draft",))
+    ]
+
+
+def test_on_assign_plate_given_a_roster_error_returns_false_and_validates() -> None:
+    """A RosterError from the shared write surfaces cleanly."""
+    roster = _PlateRefusingRoster(plate_model=PlateModel.RIDER_POOLED)
+    roster.load_entries(
+        [
+            Entry(
+                plate="",
+                display_name="Alex Roy",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Alex", last_name="Roy", plate=None)],
+            )
+        ]
+    )
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    assigned = presenter.on_assign_plate()
+
+    assert assigned is False
+    assert presenter.did_change is False
+    assert view.calls == [("show_validation", ("plate refused",))]
+
+
+# ------------------------------------------------------- on_renumber
+
+
+def test_on_renumber_given_pooled_duplicate_number_renumbers_the_later_claimant() -> None:
+    """The later solo claimant moves to the next free plate."""
+    roster = _pooled_duplicate_number_roster()
+    presenter = RiderIssuesPresenter(RecordingRiderIssuesView(), roster)
+    presenter.on_row_selected(0)
+
+    renumbered = presenter.on_renumber()
+
+    assert renumbered is True
+    assert presenter.did_change is True
+    assert (roster.entries[0].plate, roster.entries[1].plate) == ("7", "8")
+    assert roster.entries[1].riders[0].plate == "8"
+
+
+def test_on_renumber_given_relay_duplicate_number_uses_change_team_plate() -> None:
+    """A relay duplicate renumbers the entry's own plate."""
+    roster = _relay_duplicate_number_roster()
+    presenter = RiderIssuesPresenter(RecordingRiderIssuesView(), roster)
+    presenter.on_row_selected(0)
+
+    renumbered = presenter.on_renumber()
+
+    assert renumbered is True
+    assert (roster.entries[0].plate, roster.entries[1].plate) == ("7", "8")
+    assert roster.entries[1].riders[0].plate is None
+
+
+def test_on_renumber_given_nothing_selected_returns_false_and_validates() -> None:
+    """With no selection the renumber fix refuses cleanly."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _pooled_duplicate_number_roster())
+    view.calls.clear()
+
+    renumbered = presenter.on_renumber()
+
+    assert renumbered is False
+    assert view.calls == [("show_validation", ("select a duplicate-number issue to renumber",))]
+
+
+def test_on_renumber_given_missing_number_returns_false_and_validates() -> None:
+    """The renumber fix refuses a row that is not a duplicate-number."""
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, _missing_number_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    renumbered = presenter.on_renumber()
+
+    assert renumbered is False
+    assert presenter.did_change is False
+    assert view.calls == [("show_validation", ("select a duplicate-number issue to renumber",))]
+
+
+def test_on_renumber_given_a_started_ride_returns_false_and_validates() -> None:
+    """A post-DRAFT duplicate-number refuses, naming DRAFT."""
+    roster = _pooled_duplicate_number_roster()
+    roster.status = RideStatus.RUNNING
+    view = RecordingRiderIssuesView()
+    presenter = RiderIssuesPresenter(view, roster)
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    renumbered = presenter.on_renumber()
+
+    assert renumbered is False
+    assert view.calls == [
+        ("show_validation", ("plates can only be changed while the ride is draft",))
+    ]
+
+
+# ------------------------------------------------------- preselect
+
+
+def test_selected_plate_given_a_rider_scoped_issue_returns_the_riders_plate() -> None:
+    """The rider editor preselects on the issue's own rider plate."""
+    presenter = RiderIssuesPresenter(RecordingRiderIssuesView(), _pooled_duplicate_number_roster())
+    presenter.on_row_selected(0)
+
+    assert presenter.selected_plate() == "7"
+
+
+def test_selected_plate_given_a_relay_duplicate_returns_the_entries_plate() -> None:
+    """A relay issue preselects on the entry's plate."""
+    presenter = RiderIssuesPresenter(RecordingRiderIssuesView(), _relay_duplicate_number_roster())
+    presenter.on_row_selected(0)
+
+    assert presenter.selected_plate() == "7"
+
+
+def test_selected_team_name_given_nothing_selected_returns_empty_string() -> None:
+    """With no selection there is no team to preselect."""
+    presenter = RiderIssuesPresenter(RecordingRiderIssuesView(), Roster())
+
+    assert presenter.selected_team_name() == ""
 
 
 # ------------------------------------------------------- protocol

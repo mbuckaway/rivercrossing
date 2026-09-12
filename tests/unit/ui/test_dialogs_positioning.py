@@ -19,12 +19,18 @@ dialogs, so the ride-naming sentences those windows carried cannot
 go blank unnoticed (UX-DESKTOP §4: a confirm names its object).
 
 Phase 6 adds the two dialogs' own default size. XRC has no
-window-level minsize, so each view's ``_apply_min_size`` fits the
-built dialog and then floors *and* opens it at 3x the fitted width
-and 2x the fitted height. A real ``wx.Dialog`` needs a desktop, so
-these tests drive the same kind of recording window double the seam
-tests above use and call the sizing step directly -- the constructor
-next to it binds every control the .xrc window carries.
+window-level minsize, so each view's ``_apply_min_size`` sets it from
+code. ``csv_preview_dlg`` floors *and* opens itself at 2x the size
+``Fit()`` measured. ``rider_issues_dlg`` no longer scales: it floors
+and opens itself at its own concrete ``MIN_SIZE`` (900x560), clamped to
+the display's work area so a small screen still shows the whole
+dialog. A real ``wx.Dialog`` needs a desktop, so these tests drive the
+same kind of recording window double the seam tests above use and call
+the sizing step directly -- the constructor next to it binds every
+control the .xrc window carries. ``clamp_to_display`` reads the live
+display through ``wx.GetClientDisplayRect``, which raises without a
+``wx.App``, so the rider-issues tests swap it for a recorder: that call
+is the sizing step's GUI I/O boundary (T-10), not its logic.
 """
 
 import json
@@ -36,8 +42,8 @@ import wx
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.ui.logging import VERBOSE_LOG_NAME, VerboseLog
-from rivercrossing.ui.views import dialogs
+from rivercrossing.ui.logging import Logging
+from rivercrossing.ui.views import dialogs, rider_issues
 from rivercrossing.ui.views.rider_editor import CsvPreviewDialog, RiderEditor
 from rivercrossing.ui.views.rider_issues import RiderIssuesView
 
@@ -140,7 +146,7 @@ def tinted_dialogs(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     tinted: list[object] = []
     monkeypatch.setattr(dialogs, "wire_close_button", lambda _dialog: None)
     monkeypatch.setattr(dialogs.theme, "apply_light_mode_panel_bg", tinted.append)
-    monkeypatch.setattr(dialogs, "_active_verbose_log", lambda: None)
+    monkeypatch.setattr(dialogs, "_active_log", lambda: None)
     return tinted
 
 
@@ -226,23 +232,24 @@ def test_run_dialog_applies_the_light_mode_tint_before_showing(
 # --- F4: the verbose log's dialog record -----------------------------
 
 
-def test_run_dialog_given_a_verbose_log_records_the_dialog_open(
+def test_run_dialog_given_a_log_records_the_dialog_open(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     tinted_dialogs: list[object],  # noqa: ARG001
 ) -> None:
     """F4: the one dialog seam records the dialog's name and opener."""
-    log = VerboseLog(tmp_path / VERBOSE_LOG_NAME)
-    monkeypatch.setattr(dialogs, "_active_verbose_log", lambda: log)
+    log_path = tmp_path / "dialog.log"
+    log = Logging(log_path)
+    monkeypatch.setattr(dialogs, "_active_log", lambda: log)
 
     dialogs.run_dialog(_FakeDialog(name="settings_dlg"), _FakeOpener(name="mi_settings"))
 
     records = [
-        json.loads(line)
-        for line in (tmp_path / VERBOSE_LOG_NAME).read_text(encoding="utf-8").splitlines()
-        if line
+        json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line
     ]
-    assert [record["msg"] for record in records] == ["dialog settings_dlg (from mi_settings)"]
+    assert [record["event"] for record in records] == ["dialog"]
+    assert records[0]["name"] == "settings_dlg"
+    assert records[0]["opener"] == "mi_settings"
 
 
 def test_run_dialog_without_a_verbose_log_still_shows_the_dialog(
@@ -335,12 +342,14 @@ class _SizingDialog:
         self.size = size
 
 
-# The two Phase 6 dialogs: both scale their fitted size the same way.
-_DIALOG_VIEWS: list[type[CsvPreviewDialog | RiderIssuesView]] = [
-    CsvPreviewDialog,
-    RiderIssuesView,
+# The one scale-based sizing dialog left: Phase 3 narrows
+# csv_preview_dlg from 3x to 2x. rider_issues_dlg is no longer
+# scale-based -- it has its own concrete MIN_SIZE floor and its own
+# tests below.
+_DIALOG_VIEWS: list[tuple[type[CsvPreviewDialog], int, int]] = [
+    (CsvPreviewDialog, 2, 2),
 ]
-_DIALOG_VIEW_IDS = ["csv_preview_dlg", "rider_issues_dlg"]
+_DIALOG_VIEW_IDS = ["csv_preview_dlg"]
 
 
 def _view_over(
@@ -359,59 +368,74 @@ def _view_over(
     return view
 
 
-@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
-def test_dialog_view_apply_min_size_given_a_fitted_size_floors_it_at_three_by_two(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+@pytest.mark.parametrize(
+    ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
+)
+def test_dialog_view_apply_min_size_given_a_fitted_size_floors_it_at_its_own_scale(
+    view_class: type[CsvPreviewDialog],
+    width_scale: int,
+    height_scale: int,
 ) -> None:
-    """Phase 6: the floor is 3x the fitted width and 2x its height."""
+    """Each dialog floors itself at its own (width, height) scale."""
     dialog = _SizingDialog(fitted=(400, 300))
 
     _view_over(view_class, dialog)._apply_min_size()
 
-    assert (dialog.min_size.width, dialog.min_size.height) == (1200, 600)
+    expected = (400 * width_scale, 300 * height_scale)
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
 
 
-@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
-def test_dialog_view_apply_min_size_given_a_fitted_size_opens_it_at_the_scaled_size(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+@pytest.mark.parametrize(
+    ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
+)
+def test_dialog_view_apply_min_size_given_a_fitted_size_opens_it_at_its_own_scale(
+    view_class: type[CsvPreviewDialog],
+    width_scale: int,
+    height_scale: int,
 ) -> None:
-    """The dialog opens at the floor, not merely bounded by it."""
+    """The dialog opens at its own floor, not merely bounded by it."""
     dialog = _SizingDialog(fitted=(400, 300))
 
     _view_over(view_class, dialog)._apply_min_size()
 
-    assert (dialog.size.width, dialog.size.height) == (1200, 600)
+    expected = (400 * width_scale, 300 * height_scale)
+    assert (dialog.size.width, dialog.size.height) == expected
 
 
-@pytest.mark.parametrize("view_class", _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS)
-def test_dialog_view_apply_min_size_measures_the_fitted_size_before_scaling(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+@pytest.mark.parametrize(
+    ("view_class", "width_scale", "height_scale"), _DIALOG_VIEWS, ids=_DIALOG_VIEW_IDS
+)
+def test_dialog_view_apply_min_size_measures_the_fitted_size_before_scaling_by_its_own_scale(
+    view_class: type[CsvPreviewDialog],
+    width_scale: int,
+    height_scale: int,
 ) -> None:
     """Scale what Fit() just measured, never a stale size."""
     dialog = _SizingDialog(fitted=(400, 300))
 
     _view_over(view_class, dialog)._apply_min_size()
 
+    expected = (400 * width_scale, 300 * height_scale)
     assert (dialog.calls, (dialog.min_size.width, dialog.min_size.height)) == (
         ["Fit", "GetSize", "SetMinSize", "SetSize"],
-        (1200, 600),
+        expected,
     )
 
 
-_SCALE_CASES = [
+_CSV_SCALE_CASES = [
     ((0, 0), (0, 0)),  # T-4 boundary: below any real fitted size
-    ((1, 1), (3, 2)),  # T-4 boundary: min
-    ((2, 3), (6, 6)),  # T-4 boundary: min + 1
-    ((640, 320), (1920, 640)),  # a realistic fitted dialog
+    ((1, 1), (2, 2)),  # T-4 boundary: min
+    ((2, 3), (4, 6)),  # T-4 boundary: min + 1
+    ((640, 320), (1280, 640)),  # a realistic fitted dialog
 ]
 
 
-@pytest.mark.parametrize(("fitted", "expected"), _SCALE_CASES)
-def test_dialog_view_apply_min_size_given_boundary_fitted_sizes_scales_by_three_and_two(
+@pytest.mark.parametrize(("fitted", "expected"), _CSV_SCALE_CASES)
+def test_csv_preview_dialog_apply_min_size_given_boundary_fitted_sizes_scales_by_two_and_two(
     fitted: tuple[int, int],
     expected: tuple[int, int],
 ) -> None:
-    """Every fitted size scales by exactly 3 and 2 (T-4)."""
+    """Phase 3: every fitted size scales by exactly 2 and 2 (T-4)."""
     dialog = _SizingDialog(fitted=fitted)
 
     _view_over(CsvPreviewDialog, dialog)._apply_min_size()
@@ -420,21 +444,25 @@ def test_dialog_view_apply_min_size_given_boundary_fitted_sizes_scales_by_three_
 
 
 @given(
-    view_class=st.sampled_from(_DIALOG_VIEWS),
+    case=st.sampled_from(_DIALOG_VIEWS),
     width=st.integers(min_value=0, max_value=10_000),
     height=st.integers(min_value=0, max_value=10_000),
 )
-def test_dialog_view_apply_min_size_given_any_fitted_size_scales_width_by_three(
-    view_class: type[CsvPreviewDialog | RiderIssuesView],
+def test_dialog_view_apply_min_size_given_any_fitted_size_scales_by_its_own_pair(
+    case: tuple[type[CsvPreviewDialog], int, int],
     width: int,
     height: int,
 ) -> None:
-    """T-7 property: the floor is always 3x width, 2x height."""
+    """T-7 property: the floor is the view's own scale pair."""
+    view_class, width_scale, height_scale = case
     dialog = _SizingDialog(fitted=(width, height))
 
     _view_over(view_class, dialog)._apply_min_size()
 
-    assert (dialog.min_size.width, dialog.min_size.height) == (width * 3, height * 2)
+    assert (dialog.min_size.width, dialog.min_size.height) == (
+        width * width_scale,
+        height * height_scale,
+    )
 
 
 def test_rider_editor_apply_min_size_given_the_w7_canvas_keeps_its_own_floor() -> None:
@@ -444,3 +472,185 @@ def test_rider_editor_apply_min_size_given_the_w7_canvas_keeps_its_own_floor() -
     _view_over(RiderEditor, dialog)._apply_min_size()
 
     assert (dialog.min_size.width, dialog.min_size.height) == (1280, 560)
+
+
+@pytest.mark.parametrize(
+    ("fitted", "expected"),
+    [
+        ((0, 0), (900, 560)),  # T-4 boundary: well below the floor
+        ((899, 559), (900, 560)),  # T-4 boundary: min - 1
+        ((900, 560), (900, 560)),  # T-4 boundary: min
+        ((901, 561), (901, 561)),  # T-4 boundary: min + 1, the fit wins
+        ((1200, 800), (1200, 800)),  # a realistic larger fitted dialog
+    ],
+)
+def test_rider_issues_view_apply_min_size_given_a_fitted_size_floors_it_at_min_size(
+    monkeypatch: pytest.MonkeyPatch,
+    fitted: tuple[int, int],
+    expected: tuple[int, int],
+) -> None:
+    """rider_issues_dlg floors and opens at MAX(MIN_SIZE, fitted)."""
+    monkeypatch.setattr(rider_issues, "clamp_to_display", lambda width, height: (width, height))
+    dialog = _SizingDialog(fitted=fitted)
+
+    _view_over(RiderIssuesView, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
+    assert (dialog.size.width, dialog.size.height) == expected
+
+
+def test_rider_issues_view_apply_min_size_given_a_fitted_size_clamps_its_floor_to_the_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fit() measures first; the floored size is what gets clamped."""
+    clamped: list[tuple[int, int]] = []
+
+    def _record(width: int, height: int) -> tuple[int, int]:
+        clamped.append((width, height))
+        return (width, height)
+
+    monkeypatch.setattr(rider_issues, "clamp_to_display", _record)
+    dialog = _SizingDialog(fitted=(10, 10))
+
+    _view_over(RiderIssuesView, dialog)._apply_min_size()
+
+    assert (dialog.calls, clamped) == (
+        ["Fit", "GetSize", "SetMinSize", "SetSize"],
+        [(900, 560)],
+    )
+
+
+def test_rider_issues_view_apply_min_size_given_a_small_display_opens_at_the_clamped_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The clamped size is both the floor and the opened size."""
+    monkeypatch.setattr(rider_issues, "clamp_to_display", lambda _width, _height: (800, 500))
+    dialog = _SizingDialog(fitted=(10, 10))
+
+    _view_over(RiderIssuesView, dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == (800, 500)
+    assert (dialog.size.width, dialog.size.height) == (800, 500)
+
+
+# --- Phase D: RiderIssuesView's own selection reconcile --------------
+
+
+class _FakeSelection:
+    """A ``wx.dataview.DataViewItem`` double answering ``IsOk``."""
+
+    def __init__(self, *, ok: bool) -> None:
+        """Report *ok* from IsOk."""
+        self._ok = ok
+
+    def IsOk(self) -> bool:  # noqa: N802 -- wx API name the SUT calls
+        """Report whether this is a real selection."""
+        return self._ok
+
+
+class _FakeIssuesList:
+    """An ``issues_list`` double returning one scripted selection."""
+
+    def __init__(self, selection: _FakeSelection) -> None:
+        """Return *selection* from every GetSelection call."""
+        self._selection = selection
+
+    def GetSelection(self) -> _FakeSelection:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted selection."""
+        return self._selection
+
+
+class _FakeIssuesModel:
+    """An ``IssuesListModel`` double with a scripted row and count."""
+
+    def __init__(self, *, row: int, count: int) -> None:
+        """Report *row* for the item and *count* rows overall."""
+        self._row = row
+        self._count = count
+
+    def GetRow(self, _item: object) -> int:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted row index."""
+        return self._row
+
+    def GetCount(self) -> int:  # noqa: N802 -- wx API name the SUT calls
+        """Report the scripted row count."""
+        return self._count
+
+
+class _RecordingIssuesPresenter:
+    """A presenter double recording selection notifications only."""
+
+    def __init__(self) -> None:
+        """Start with an empty call log."""
+        self.calls: list[tuple[str, int | None]] = []
+
+    def on_row_selected(self, row: int) -> None:
+        """Record a forwarded row selection."""
+        self.calls.append(("on_row_selected", row))
+
+    def on_nothing_selected(self) -> None:
+        """Record a forwarded no-selection notice."""
+        self.calls.append(("on_nothing_selected", None))
+
+    def refresh(self) -> None:
+        """Record a refresh; reconcile must never make one."""
+        self.calls.append(("refresh", None))
+
+
+def _issues_view(
+    *, selection_ok: bool, row: int, count: int
+) -> tuple[RiderIssuesView, _RecordingIssuesPresenter]:
+    """Return a real ``RiderIssuesView`` wired to recording doubles.
+
+    Built with ``object.__new__`` like ``_view_over``: the reconcile
+    seam touches only ``issues_list``, ``_model`` and ``presenter``,
+    so no desktop (and no ``__init__`` binding) is needed.
+    """
+    view = object.__new__(RiderIssuesView)
+    view.issues_list = _FakeIssuesList(_FakeSelection(ok=selection_ok))
+    view._model = _FakeIssuesModel(row=row, count=count)
+    presenter = _RecordingIssuesPresenter()
+    view.presenter = presenter
+    return view, presenter
+
+
+@pytest.mark.parametrize(("row", "count"), [(0, 1), (2, 3)])
+def test_issues_view_reconcile_given_a_valid_selection_forwards_the_row(
+    row: int, count: int
+) -> None:
+    """A live in-range selection is forwarded to the presenter."""
+    view, presenter = _issues_view(selection_ok=True, row=row, count=count)
+
+    view._reconcile_selection()
+
+    assert presenter.calls == [("on_row_selected", row)]
+
+
+@pytest.mark.parametrize(
+    ("selection_ok", "row", "count"),
+    [
+        (False, 0, 3),  # T-3: nothing selected
+        (True, -1, 3),  # T-4: min - 1
+        (True, 3, 3),  # T-4: max + 1
+    ],
+)
+def test_issues_view_reconcile_given_no_valid_row_notifies_nothing_selected(
+    selection_ok: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+    row: int,
+    count: int,
+) -> None:
+    """No live in-range row disables through on_nothing_selected."""
+    view, presenter = _issues_view(selection_ok=selection_ok, row=row, count=count)
+
+    view._reconcile_selection()
+
+    assert presenter.calls == [("on_nothing_selected", None)]
+
+
+def test_issues_view_reconcile_never_refreshes_the_report() -> None:
+    """Reconcile must not recurse through refresh (D1)."""
+    view, presenter = _issues_view(selection_ok=True, row=0, count=1)
+
+    view._reconcile_selection()
+
+    assert ("refresh", None) not in presenter.calls

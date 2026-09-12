@@ -325,7 +325,7 @@ def test_library_delete_callback_given_a_refused_delete_shows_an_error_dialog(
 def test_live_library_duplicate_given_a_failed_duplicate_posts_a_notice() -> None:
     """A refused duplicate surfaces on the status bar."""
     context = _context(store=_DuplicateFailsStore())
-    _open, _new, duplicate = app_module._live_library_callbacks(
+    _open, duplicate = app_module._live_library_callbacks(
         context, window=object(), store=_DuplicateFailsStore()
     )
     selected = RideSummary(
@@ -796,3 +796,61 @@ def test_open_target_given_team_editor_close_without_changes_skips_the_save(
     app_module._open_target(context, app_module.commands.route_for_id("mi_team_editor"))
 
     assert context.frame.notices == []
+
+
+# ---------------- Simulation: simulator close persists its roster
+
+
+def test_persist_simulator_changes_given_a_failed_save_posts_a_notice() -> None:
+    """The simulator's close-save refuses like the editor's."""
+    context = _context(store=_SaveRosterFailsStore())
+    context.active_ride_id = 5
+    context.roster = Roster()
+
+    app_module._persist_simulator_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert context.frame.notices == ["Could not save riders: disk full"]
+
+
+def test_persist_simulator_changes_given_no_change_is_a_silent_no_op() -> None:
+    """A session that generated nothing never touches the store."""
+    context = _context(store=_SaveMustNotRunStore())
+    context.active_ride_id = 5
+
+    app_module._persist_simulator_changes(context, _EditorViewStub(roster_changed=False))
+
+    assert context.frame.notices == []
+
+
+def test_persist_simulator_changes_given_no_store_is_a_silent_no_op() -> None:
+    """A store-less bootstrap session never touches a store."""
+    context = _context(store=None)
+    context.active_ride_id = None
+
+    app_module._persist_simulator_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert context.frame.notices == []
+
+
+def test_open_target_given_simulation_close_with_changes_saves_the_roster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The File route persists a changed simulator on close."""
+    store = _SaveRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster = Roster()
+    context.roster = roster
+    context.resource = _FakeResource(_FakeWindow())
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(
+        app_module, "_decorate", lambda _ctx, _w, _route: _EditorViewStub(roster_changed=True)
+    )
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
+    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam
+
+    monkeypatch.setattr(dialogs, "run_dialog", lambda _dialog, opener: 0)  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+
+    app_module._open_target(context, app_module.commands.route_for_id("mi_simulation"))
+
+    assert store.saved == [(5, roster)]

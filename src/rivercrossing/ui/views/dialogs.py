@@ -70,7 +70,7 @@ from rivercrossing.ui.card_text import format_card
 from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS
 
 if TYPE_CHECKING:
-    from rivercrossing.ui.logging import VerboseLog
+    from rivercrossing.ui.logging import Logging
 
 wx = require_wx()
 
@@ -403,15 +403,15 @@ def reassign_message(crossing_time: str, entry: str) -> str:
     return f"Crossing {crossing_time} · lap credited to {entry}"
 
 
-def _active_verbose_log() -> VerboseLog | None:
-    """Return the launch's verbose log from the live app, if any (F4).
+def _active_log() -> Logging | None:
+    """Return the launch's structured log from the live app (F4).
 
-    ``main`` builds the log and hangs it on the app
-    (``app.verbose_log``); an app that predates F1 -- a functional
-    harness's own ``wx.App``, or no app at all -- has none, so the
-    dialog seam logs nothing rather than raising.
+    ``main`` builds the log and hangs it on the app (``app.log``); an
+    app that predates F1 -- a functional harness's own ``wx.App``, or
+    no app at all -- has none, so the dialog seam logs nothing rather
+    than raising.
     """
-    return getattr(wx.GetApp(), "verbose_log", None)
+    return getattr(wx.GetApp(), "log", None)
 
 
 def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no stubs
@@ -478,8 +478,8 @@ def run_dialog(dialog: Any, opener: Any) -> int:  # noqa: ANN401 -- wx ships no 
         # No top-level window to centre over: screen-centring fallback.
         dialog.CentreOnParent()
     # F4: the one seam every XRC dialog shows through records the open
-    # (the dialog's frozen name and what opened it) for the verbose log.
-    log = _active_verbose_log()
+    # (the dialog's frozen name and what opened it) for the log.
+    log = _active_log()
     if log is not None:
         log.dialog(dialog.GetName(), opener.GetName())
     try:

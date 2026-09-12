@@ -11,13 +11,9 @@ every call, in order, with its exact arguments -- no
 ``unittest.mock`` is needed since this presenter touches no I/O
 boundary (T-10).
 
-Joining an existing team composes ``Roster.create_team_entry_of_one``
--- not ``create_solo_entry`` + ``move_rider`` as first proposed,
-since ``move_rider`` rejects a solo entry on either side
-unconditionally (see ``tests/unit/test_roster.py``'s
-``test_move_rider_into_a_solo_entry_raises_invalid_move_error`` and
-its two siblings) -- with ``Roster.move_rider`` to fold into the
-target team, rolling the transient team back on a refused move. The
+Joining an existing team calls ``Roster.add_rider_to_team`` directly,
+so the rider attaches to the chosen team in place and a pooled ride's
+RUNNING/REOPENED carve-out comes from ``can_move_rider``. The
 "New team..." sentinel is retired on topic/ux-polish: team_choice
 lists solo then every team, never a new-team entry, and this suite
 pins that sentinel-less shape (``_team_choices`` below).
@@ -55,6 +51,7 @@ from rivercrossing.roster import (
     Roster,
     TeamSizeError,
 )
+from rivercrossing.ui import rider_columns
 from rivercrossing.ui.presenters.data_source import RiderRow
 from rivercrossing.ui.presenters.riders import (
     SOLO_TEAM_CHOICE,
@@ -101,10 +98,6 @@ class RecordingRidersView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the rendered riders_list rows."""
         self.calls.append(("show_riders", (rows,)))
-
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Record the riders_list sort indicator (column, ascending)."""
-        self.calls.append(("set_sort_indicator", (column, ascending)))
 
     def set_delete_enabled(self, *, enabled: bool) -> None:
         """Record delete_btn's enabled state."""
@@ -205,7 +198,7 @@ def test_riders_presenter_init_given_empty_roster_shows_no_rows() -> None:
 
 
 def test_riders_presenter_init_given_mixed_roster_calls_view_in_order() -> None:
-    """Construction renders rows, team UI, choices, and the form."""
+    """Construction renders rows, the form, and the delete gate."""
     view = RecordingRidersView()
     roster = _draft_mixed_roster()
 
@@ -221,7 +214,6 @@ def test_riders_presenter_init_given_mixed_roster_calls_view_in_order() -> None:
                 ],
             ),
         ),
-        ("set_sort_indicator", (None, True)),
         ("set_team_ui_visible", (True,)),
         ("show_form", ("79", "", "", SOLO_TEAM_CHOICE)),
         ("set_delete_enabled", (False,)),
@@ -595,10 +587,26 @@ def test_add_rider_presenter_submit_given_an_existing_team_at_max_size_returns_f
     )
 
     assert created is False
-    assert view.calls == [
-        ("show_validation", ("move would exceed the destination team's max size",))
-    ]
+    assert view.calls == [("show_validation", ("team size must be at most 2, got 3",))]
     assert [e.display_name for e in roster.entries] == ["Trail Blazers"]
+
+
+def test_add_rider_presenter_submit_given_a_started_pooled_ride_joins_the_existing_team() -> None:
+    """A rider joins an existing team once the ride starts."""
+    roster = _draft_mixed_roster()
+    roster.status = RideStatus.RUNNING
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    created = presenter.on_submit(
+        RiderFormValues(plate="79", first_name="L.", last_name="Marchetti", team="Trail Blazers")
+    )
+
+    assert created is True
+    assert [r.full_name for r in roster.entries[0].riders] == [
+        "A. Roy",
+        "K. Singh",
+        "L. Marchetti",
+    ]
 
 
 # ----------------------------------------------- EditRiderPresenter
@@ -1018,8 +1026,8 @@ def test_on_delete_given_nothing_selected_is_a_no_op() -> None:
     assert view.calls == []
 
 
-def test_on_delete_given_a_draft_selection_asks_a_confirm_naming_the_entry() -> None:
-    """The destructive confirm names the entry it would remove (B3)."""
+def test_on_delete_given_a_draft_selection_asks_a_confirm_naming_the_rider() -> None:
+    """The destructive confirm names the rider it would remove (B3)."""
     view = RecordingRidersView()
     view.confirm_result = False
     presenter = RidersPresenter(view, _draft_solo_roster())
@@ -1029,8 +1037,38 @@ def test_on_delete_given_a_draft_selection_asks_a_confirm_naming_the_entry() -> 
     presenter.on_delete()
 
     assert view.calls == [
-        ("confirm", ("Delete entry?", 'Delete "Sam Ellis" from this ride?', "Delete", "Cancel"))
+        ("confirm", ("Delete rider?", 'Delete "Sam Ellis" from this ride?', "Delete", "Cancel"))
     ]
+
+
+def test_on_delete_given_a_team_member_asks_a_confirm_naming_the_rider() -> None:
+    """A team-member row confirms the rider, never the team."""
+    view = RecordingRidersView()
+    view.confirm_result = False
+    presenter = RidersPresenter(view, _draft_mixed_roster())
+    presenter.on_row_selected(0)
+    view.calls.clear()
+
+    presenter.on_delete()
+
+    assert view.calls == [
+        ("confirm", ("Delete rider?", 'Delete "A. Roy" from this ride?', "Delete", "Cancel"))
+    ]
+
+
+def test_on_delete_given_a_team_member_removes_only_that_rider() -> None:
+    """OK on a team-member row removes only that rider."""
+    roster = _draft_mixed_roster()
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, roster)
+    presenter.on_row_selected(0)
+
+    presenter.on_delete()
+
+    assert [
+        (entry.display_name, [rider.full_name for rider in entry.riders])
+        for entry in roster.entries
+    ] == [("Trail Blazers", ["K. Singh"])]
 
 
 def test_on_delete_given_a_declined_confirm_is_a_no_op() -> None:
@@ -1680,11 +1718,15 @@ def test_on_search_text_given_a_needle_keeps_the_matching_rows(
     assert [row.plate for row in _searched_rows(view)] == expected_plates
 
 
-def test_on_sort_by_column_given_a_team_search_applies_both_narrowings() -> None:
-    """The team-cell search composes with the active plate sort (W7)."""
+def test_on_search_text_given_a_team_name_keeps_the_roster_order() -> None:
+    """The presenter filters only; the list owns row order (W7).
+
+    The rows arrive in the roster's own order whatever the operator's
+    chosen header arrow says; the native control re-orders what it
+    displays from the model's ``Compare`` (Phase C).
+    """
     view = RecordingRidersView()
     presenter = RidersPresenter(view, _search_roster())
-    presenter.on_sort_by_column(0)
     view.calls.clear()
 
     presenter.on_search_text("blazers")
@@ -1704,204 +1746,44 @@ def test_on_row_selected_given_a_search_uses_the_filtered_row_order() -> None:
     assert ("show_form", ("2", "Bo", "Lindqvist", SOLO_TEAM_CHOICE)) in view.calls
 
 
-def test_on_sort_by_column_given_the_plate_column_sorts_numerically() -> None:
-    """Plate sort is numeric-aware: 2, 77, 123 -- not lexicographic."""
+def test_on_search_text_given_a_solo_needle_keeps_the_roster_order() -> None:
+    """Filtering never re-orders: survivors keep roster order."""
     view = RecordingRidersView()
     presenter = RidersPresenter(view, _three_solo_roster())
-    view.calls.clear()
-
-    presenter.on_sort_by_column(0)
-
-    assert [row.plate for row in _searched_rows(view)] == ["2", "77", "123"]
-
-
-def test_on_sort_by_column_given_a_second_click_toggles_descending() -> None:
-    """Re-clicking the active column reverses the order (W7)."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    presenter.on_sort_by_column(0)
-    view.calls.clear()
-
-    presenter.on_sort_by_column(0)
-
-    assert [row.plate for row in _searched_rows(view)] == ["123", "77", "2"]
-
-
-def test_on_sort_by_column_given_the_name_column_sorts_casefolded() -> None:
-    """Name sort is text order, case-insensitive (W7)."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    view.calls.clear()
-
-    presenter.on_sort_by_column(1)
-
-    assert [row.name for row in _searched_rows(view)] == [
-        "Alex Roy",
-        "Bo Lindqvist",
-        "Sam Ellis",
-    ]
-
-
-def test_on_sort_by_column_given_the_team_column_groups_solos_first() -> None:
-    """Team sort puts solo rows (no team) first, then team names."""
-    roster = Roster(entry_mode=EntryMode.MIXED)
-    roster.create_solo_entry(first_name="Sam", last_name="Ellis", plate="123")
-    roster.create_team_entry(
-        display_name="Zebras",
-        riders=[
-            Rider(first_name="A.", last_name="Roy", plate="77"),
-            Rider(first_name="K.", last_name="Singh", plate="78"),
-        ],
-    )
-    roster.create_team_entry(
-        display_name="Alpha",
-        riders=[
-            Rider(first_name="Bo", last_name="Lindqvist", plate="2"),
-            Rider(first_name="Cy", last_name="Nguyen", plate="3"),
-        ],
-    )
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, roster)
-    view.calls.clear()
-
-    presenter.on_sort_by_column(2)
-
-    assert _searched_rows(view) == [
-        RiderRow(plate="123", name="Sam Ellis", team=None),
-        RiderRow(plate="2", name="Bo Lindqvist", team="Alpha"),
-        RiderRow(plate="3", name="Cy Nguyen", team="Alpha"),
-        RiderRow(plate="77", name="A. Roy", team="Zebras"),
-        RiderRow(plate="78", name="K. Singh", team="Zebras"),
-    ]
-
-
-def test_on_sort_by_column_given_relay_plates_sorts_digits_then_strings() -> None:
-    """Non-numeric relay plates sort after every digit plate (W7)."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
-    for plate in ("10", "2", "K1", "9"):
-        roster.create_solo_entry(first_name=plate, last_name="Rider", plate=plate)
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, roster)
-    view.calls.clear()
-
-    presenter.on_sort_by_column(0)
-
-    assert [row.plate for row in _searched_rows(view)] == ["2", "9", "10", "K1"]
-
-
-# ------------------------ the Sex column + sort indicator (Phase 3)
-
-
-def _sexed_roster() -> Roster:
-    """Return three DRAFT solos with M, F and no sex, in that order."""
-    roster = Roster()
-    roster.create_solo_entry(first_name="Moe", last_name="Roy", plate="1", sex="M")
-    roster.create_solo_entry(first_name="Fay", last_name="Roy", plate="2", sex="F")
-    roster.create_solo_entry(first_name="Ash", last_name="Roy", plate="3", sex=None)
-    return roster
-
-
-def test_on_sort_by_column_given_the_sex_column_orders_m_then_f_then_blank() -> None:
-    """Shared sex rule: M, then F, then unknown last (Phase 3)."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _sexed_roster())
-    view.calls.clear()
-
-    presenter.on_sort_by_column(3)
-
-    assert [row.plate for row in _searched_rows(view)] == ["1", "2", "3"]
-
-
-def test_on_sort_by_column_given_the_sex_column_descending_reverses_it() -> None:
-    """The second click on Sex puts the unknowns first (T-3)."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _sexed_roster())
-    presenter.on_sort_by_column(3)
-    view.calls.clear()
-
-    presenter.on_sort_by_column(3)
-
-    assert [row.plate for row in _searched_rows(view)] == ["3", "2", "1"]
-
-
-def test_riders_presenter_init_given_a_fresh_editor_clears_the_sort_indicator() -> None:
-    """No sort is active on open, so the headers carry no marker."""
-    view = RecordingRidersView()
-
-    RidersPresenter(view, _three_solo_roster())
-
-    assert ("set_sort_indicator", (None, True)) in view.calls
-
-
-def test_on_sort_by_column_given_a_first_click_marks_it_ascending() -> None:
-    """The clicked column's header gets the ascending marker."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    view.calls.clear()
-
-    presenter.on_sort_by_column(1)
-
-    assert view.calls[-1] == ("set_sort_indicator", (1, True))
-
-
-def test_on_sort_by_column_given_a_second_click_marks_it_descending() -> None:
-    """Re-clicking flips both the order and the header marker."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    presenter.on_sort_by_column(1)
-    view.calls.clear()
-
-    presenter.on_sort_by_column(1)
-
-    assert view.calls[-1] == ("set_sort_indicator", (1, False))
-
-
-def test_on_sort_by_column_given_a_new_column_moves_the_marker() -> None:
-    """A different column becomes the only marked one."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    presenter.on_sort_by_column(1)
-    view.calls.clear()
-
-    presenter.on_sort_by_column(2)
-
-    assert view.calls[-1] == ("set_sort_indicator", (2, True))
-
-
-def test_on_search_text_given_an_active_sort_calls_nothing_but_show_riders() -> None:
-    """Searching re-renders the rows; it never touches the marker."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    presenter.on_sort_by_column(0)
-    view.calls.clear()
-
-    presenter.on_search_text("sam")
-
-    assert [name for name, _args in view.calls] == ["show_riders"]
-
-
-def test_on_row_selected_given_a_sort_uses_the_sorted_row_order() -> None:
-    """After a plate sort, row 0 is the lowest plate's rider."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    presenter.on_sort_by_column(0)
-    view.calls.clear()
-
-    presenter.on_row_selected(0)
-
-    assert ("show_form", ("2", "Bo", "Lindqvist", SOLO_TEAM_CHOICE)) in view.calls
-
-
-def test_on_sort_by_column_given_a_search_applies_both_narrowings() -> None:
-    """Search filters first; the active sort orders the survivors."""
-    view = RecordingRidersView()
-    presenter = RidersPresenter(view, _three_solo_roster())
-    presenter.on_sort_by_column(0)
     view.calls.clear()
 
     presenter.on_search_text("a")  # Sam and Alex carry an "a"; Bo does not
 
-    assert [row.plate for row in _searched_rows(view)] == ["77", "123"]
+    assert [row.plate for row in _searched_rows(view)] == ["123", "77"]
+
+
+def test_on_row_selected_given_no_sort_uses_the_filtered_row_order() -> None:
+    """A filtered row index maps through the visible list."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, _three_solo_roster())
+    presenter.on_search_text("alex")
+    view.calls.clear()
+
+    presenter.on_row_selected(0)
+
+    assert ("show_form", ("77", "Alex", "Roy", SOLO_TEAM_CHOICE)) in view.calls
+
+
+def test_riders_presenter_carries_no_sort_state() -> None:
+    """The list's own native sort owns row order now (Phase C)."""
+    assert {"on_sort_by_column", "_sort_column", "_sort_ascending"}.isdisjoint(
+        RidersPresenter.__dict__
+    )
+
+
+def test_riders_view_protocol_carries_no_sort_indicator_member() -> None:
+    """The ▲/▼ marker is retired; the platform draws the arrow."""
+    assert "set_sort_indicator" not in RidersView.__dict__
+
+
+def test_rider_columns_carries_no_click_to_sort_rule() -> None:
+    """The presenter no longer toggles direction; wx's arrows own it."""
+    assert not hasattr(rider_columns, "toggle_sort")
 
 
 def test_plate_order_key_given_mixed_plates_groups_digits_before_strings() -> None:
@@ -1935,15 +1817,22 @@ def test_pair_rows_given_a_riders_own_fields_carries_sex_into_the_row() -> None:
     ]
 
 
-def test_visible_pairs_given_no_filters_preserves_the_roster_order() -> None:
-    """No search and no sort column keep the roster's own order."""
+def test_visible_pairs_given_no_search_preserves_the_roster_order() -> None:
+    """No search keeps the roster order; the list sorts natively."""
     roster = _three_solo_roster()
 
-    visible = _visible_pairs(
-        roster, _rider_pairs(roster), search_text="", column=None, ascending=True
-    )
+    visible = _visible_pairs(roster, _rider_pairs(roster), search_text="")
 
     assert [pair[1].plate for pair in visible] == ["123", "2", "77"]
+
+
+def test_visible_pairs_given_a_search_keeps_only_the_matching_pairs() -> None:
+    """The one narrowing left in the presenter: the search filter."""
+    roster = _three_solo_roster()
+
+    visible = _visible_pairs(roster, _rider_pairs(roster), search_text="sam")
+
+    assert [pair[1].plate for pair in visible] == ["123"]
 
 
 # ------------------------- the dialogs' plate lock + change tracking
@@ -2035,30 +1924,6 @@ def test_plate_order_key_given_digit_plates_matches_integer_order(
 
 
 @given(
-    plates=st.lists(
-        st.text(alphabet=string.ascii_letters + string.digits, min_size=1, max_size=6),
-        min_size=1,
-        max_size=8,
-        unique=True,
-    )
-)
-def test_visible_pairs_plate_sorting_is_idempotent(plates: list[str]) -> None:
-    """Sorting the same rows twice yields the same order (T-7)."""
-    roster = Roster(plate_model=PlateModel.TEAM_RELAY)
-    # logic-coverage-exempt: T-8 -- the loop is pure Arrange (a
-    # Hypothesis-sized roster fixture); the Assert runs once after it.
-    for index, plate in enumerate(plates):
-        roster.create_solo_entry(first_name=f"R{index}", last_name="", plate=plate)
-
-    pairs = _rider_pairs(roster)
-    once = _visible_pairs(roster, pairs, search_text="", column=0, ascending=True)
-    twice = _visible_pairs(roster, pairs, search_text="", column=0, ascending=True)
-
-    assert [pair[0].plate for pair in once] == [pair[0].plate for pair in twice]
-    assert len(once) == len(pairs)
-
-
-@given(
     team_names=st.lists(
         st.text(alphabet=string.ascii_letters, min_size=1, max_size=8),
         min_size=0,
@@ -2122,10 +1987,10 @@ def test_rider_rows_given_n_teams_returns_one_row_per_rider(team_names: list[str
 def test_riders_presenter_given_load_false_skips_the_initial_render() -> None:
     """csv_preview_dlg's own pairing skips rider_editor's own render.
 
-    Its view never implements show_riders/set_sort_indicator/
-    set_team_ui_visible/show_form/set_delete_enabled for real (E3.4's
-    own NotImplementedError stubs, the mirror image of
-    RiderEditor's), so ``_load()`` must never call them.
+    Its view never implements show_riders/set_team_ui_visible/
+    show_form/set_delete_enabled for real (E3.4's own
+    NotImplementedError stubs, the mirror image of RiderEditor's), so
+    ``_load()`` must never call them.
     """
     view = RecordingRidersView()
 
@@ -2320,7 +2185,7 @@ def test_on_pick_csv_import_given_a_preview_value_error_shows_validation_not_cra
     measured note).
     """
 
-    def _preview_that_raises(_path: object, _ride: object) -> object:
+    def _preview_that_raises(_path: object, _ride: object, **_kwargs: object) -> object:
         raise ValueError("simulated parse failure")
 
     view = RecordingRidersView()
@@ -2334,6 +2199,130 @@ def test_on_pick_csv_import_given_a_preview_value_error_shows_validation_not_cra
     assert validation[0] == f"Could not read {picked.name}: simulated parse failure"
     assert view.calls[-1] == ("set_import_enabled", (False,))
     assert presenter.on_confirm_csv_import() is False
+
+
+# ------------------------------- mapping unknown sex to Male (Phase 3)
+
+
+def _write_sex_csv(directory: Path, rows: str) -> Path:
+    """Write a unified CSV carrying a SEX column; return its path."""
+    path = directory / "riders.csv"
+    path.write_text(f"firstname,lastname,type,teamname,number,sex\n{rows}", encoding="utf-8")
+    return path
+
+
+def test_on_toggle_map_unknown_sex_true_repreviews_the_picked_file_as_clean(
+    tmp_path: Path,
+) -> None:
+    """Checking the box re-previews the picked file cleanly."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    path = _write_sex_csv(tmp_path, "Alex,Ferreira,solo,,1,X\nBo,Lindqvist,solo,,2,\n")
+    presenter.on_pick_csv_import(path)
+    first = view.calls[0][1][0]
+    assert first.conflicts == (CsvConflict(row=2, problem="invalid sex 'X'"),)
+    view.calls.clear()
+
+    presenter.on_toggle_map_unknown_sex(enabled=True)
+
+    second = view.calls[0][1][0]
+    assert second.conflicts == ()
+    assert second.summary == "riders.csv → 2 riders · 0 teams · 0 conflicts"
+    assert view.calls[-1] == ("set_import_enabled", (True,))
+
+
+def test_on_toggle_map_unknown_sex_false_repreviews_with_the_conflict_restored(
+    tmp_path: Path,
+) -> None:
+    """Unchecking restores the unrecognized-sex conflict."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+    path = _write_sex_csv(tmp_path, "Alex,Ferreira,solo,,1,X\n")
+    presenter.on_pick_csv_import(path)
+    presenter.on_toggle_map_unknown_sex(enabled=True)
+    view.calls.clear()
+
+    presenter.on_toggle_map_unknown_sex(enabled=False)
+
+    preview = view.calls[0][1][0]
+    assert preview.conflicts == (CsvConflict(row=2, problem="invalid sex 'X'"),)
+    assert view.calls[-1] == ("set_import_enabled", (False,))
+
+
+def test_on_toggle_map_unknown_sex_before_any_pick_is_a_no_op() -> None:
+    """T-3: the toggle's own guard -- no preview yet renders nothing."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    presenter.on_toggle_map_unknown_sex(enabled=True)
+
+    assert view.calls == []
+
+
+# ---------------------------- converting teams of one to solo (Phase E)
+
+
+def _write_one_rider_team_csv(directory: Path) -> Path:
+    """Write a one-lone-team unified CSV; return its path."""
+    path = directory / "riders.csv"
+    path.write_text(
+        "firstname,lastname,type,teamname,number,notes\nAlex,Ellis,team,Solo Team,4,\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_on_toggle_convert_teams_of_one_repreviews_the_picked_file_as_solo(
+    tmp_path: Path,
+) -> None:
+    """Checking the box re-previews the lone team as a solo entry."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(entry_mode=EntryMode.MIXED), load=False)
+    presenter.on_pick_csv_import(_write_one_rider_team_csv(tmp_path))
+    view.calls.clear()
+
+    presenter.on_toggle_convert_teams_of_one(enabled=True)
+
+    preview = view.calls[0][1][0]
+    assert (preview.summary, preview.conflicts, preview.warnings) == (
+        "riders.csv → 1 riders · 0 teams · 0 conflicts",
+        (),
+        (),
+    )
+    assert view.calls[-1] == ("set_import_enabled", (True,))
+
+
+def test_on_toggle_convert_teams_of_one_false_restores_the_team(
+    tmp_path: Path,
+) -> None:
+    """Unchecking restores the team entry and its under-min warning."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(entry_mode=EntryMode.MIXED), load=False)
+    presenter.on_pick_csv_import(_write_one_rider_team_csv(tmp_path))
+    presenter.on_toggle_convert_teams_of_one(enabled=True)
+    view.calls.clear()
+
+    presenter.on_toggle_convert_teams_of_one(enabled=False)
+
+    preview = view.calls[0][1][0]
+    assert (preview.summary, preview.warnings) == (
+        "riders.csv → 1 riders · 1 teams · 0 conflicts · 1 warnings",
+        (
+            CsvConflict(
+                row=2, problem="team of 1 rider is below the minimum of 2 (team-under-min)"
+            ),
+        ),
+    )
+
+
+def test_on_toggle_convert_teams_of_one_before_any_pick_is_a_no_op() -> None:
+    """T-3: the toggle's own guard -- no preview yet renders nothing."""
+    view = RecordingRidersView()
+    presenter = RidersPresenter(view, Roster(), load=False)
+
+    presenter.on_toggle_convert_teams_of_one(enabled=True)
+
+    assert view.calls == []
 
 
 # -------------------------------------------- confirming a csv import
@@ -2386,8 +2375,8 @@ def test_on_confirm_csv_import_given_a_clean_preview_makes_no_further_view_call(
     """A successful commit calls no RidersView member at all (E3.4).
 
     ``CsvPreviewDialog`` -- the only real caller -- never implements
-    ``show_riders``/``set_sort_indicator`` (module docstring's own
-    mirror-image split), so this handler must not call them: a live
+    ``show_riders`` (module docstring's own mirror-image split), so
+    this handler must not call it: a live
     ``RiderEditor`` sees the imported roster next time it is
     (re)opened, ``RidersPresenter.__init__`` reading it fresh.
     """

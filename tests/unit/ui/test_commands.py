@@ -43,11 +43,11 @@ from rivercrossing.ui import commands, ids
 # --- route table shape (E1.4.1) ---------------------------------------
 
 ROUTE_COUNTS_BY_MENU = (
-    ("File", 7),  # D1: New Ride… moved to the Ride menu
+    ("File", 8),  # D1: New Ride… moved to the Ride menu; +mi_simulation
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
     ("Riders", 5),  # D4: mi_add_entry retired
     ("Cards", 7),
-    ("Results", 7),
+    ("Results", 6),  # C6: mi_tiebreak_order retired
     ("View", 1),
     ("Help", 4),
 )
@@ -66,6 +66,7 @@ ROUTE_TARGETS = (
     (commands.TargetKind.DIALOG, ids.CSV_PREVIEW_DLG),  # Import Riders CSV...
     (commands.TargetKind.COMMAND, None),  # Export Riders CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Back Up Database...: OS-native save dialog
+    (commands.TargetKind.DIALOG, ids.SIMULATION_DLG),  # Simulation...
     (commands.TargetKind.WINDOW, ids.SETTINGS_DLG),  # Settings...
     (commands.TargetKind.COMMAND, None),  # Exit: branches, no single fixed target
     (commands.TargetKind.WINDOW, ids.RIDE_SETUP_DLG),  # Ride > New Ride...
@@ -89,13 +90,12 @@ ROUTE_TARGETS = (
     (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Manual Card...
     (commands.TargetKind.DIALOG, ids.VOID_CARD_CONFIRM_DLG),  # Void Card... (E7)
     (commands.TargetKind.COMMAND, None),  # Review Held Cards: focuses an existing panel
-    (commands.TargetKind.WINDOW, ids.RESULTS_FRAME),  # Standings
+    (commands.TargetKind.DIALOG, ids.RESULTS_DLG),  # Standings (Part C: modal dialog)
     (commands.TargetKind.COMMAND, None),  # Generate HTML...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Podium Poster PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Preview in Browser: external browser
-    (commands.TargetKind.COMMAND, None),  # Tie-break Order...: focuses an existing control
     (commands.TargetKind.COMMAND, None),  # Hide Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
     (commands.TargetKind.DIALOG, ids.SHORTCUTS_DLG),  # Keyboard Shortcuts
@@ -120,7 +120,7 @@ def test_route_table_declares_exactly_the_forty_spec_15_rows() -> None:
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 7, Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4."""
+    """File 8, Ride 9, Riders 5, Cards 7, Results 6, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
@@ -189,6 +189,20 @@ def test_clear_ride_route_declares_the_d3_enablement_rule() -> None:
     assert rule.requires_ride_stopped is True
 
 
+def test_start_ride_route_declares_the_ride_open_gate() -> None:
+    """W1: Start Ride needs an open ride (no-ride console)."""
+    rule = commands.route_for_id(ids.MI_START_RIDE).enabled_when
+
+    assert rule.requires_ride_open is True
+
+
+def test_clear_ride_route_declares_the_ride_open_gate() -> None:
+    """W1: Clear Ride needs an open ride (no-ride console)."""
+    rule = commands.route_for_id(ids.MI_CLEAR_RIDE).enabled_when
+
+    assert rule.requires_ride_open is True
+
+
 # H2: the three ride-lifecycle confirms retired their XRC dialogs for
 # the native std_dialogs prompts, so each row becomes a COMMAND with a
 # symbolic action target rather than a frozen XRC dialog name.
@@ -241,6 +255,7 @@ ALLOWED_STATES = (
     None,  # File > Import Riders CSV...: "ride open (DRAFT-only edits)"
     None,  # File > Export Riders CSV...: "ride open"
     None,  # File > Back Up Database...: "always"
+    frozenset({RideStatus.DRAFT}),  # File > Simulation...: DRAFT only
     None,  # File > Settings...: "always"
     None,  # File > Exit: "always"
     None,  # Ride > New Ride...: "always"
@@ -274,8 +289,8 @@ ALLOWED_STATES = (
     frozenset({RideStatus.FINISHED}),  # Results > Export PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Podium Poster PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Export Standings CSV...
-    None,  # Results > Preview in Browser: "an export exists"
-    None,  # Results > Tie-break Order...: "ride open"
+    # Part D: Preview also requires FINISHED plus "an export exists".
+    frozenset({RideStatus.FINISHED}),
     None,  # View > Hide Times / Zoom: "always"
     None,  # Help > User Guide: "always"
     None,  # Help > Keyboard Shortcuts: "always"
@@ -337,7 +352,6 @@ CROSSINGS_BOUNDARY_CASES = (0, 1, 2)
 HELD_CARDS_BOUNDARY_CASES = (0, 1, 2)
 AUDIT_ROWS_BOUNDARY_CASES = (0, 1, 2)
 ENTRY_HAS_CARDS_CASES = ((False, False), (True, True))
-EXPORT_EXISTS_CASES = ((False, False), (True, True))
 # C2: Start Ride enables in DRAFT, in REOPENED (continue riding) and in
 # stopped-RUNNING (continue-after-stop); live RUNNING and FINISHED stay
 # off. The stopped clause only applies while the status is RUNNING.
@@ -449,16 +463,30 @@ def test_is_route_enabled_given_entry_has_cards_condition_matches_void_card(
     assert result is expected
 
 
-@pytest.mark.parametrize(("export_exists", "expected"), EXPORT_EXISTS_CASES)
-def test_is_route_enabled_given_export_exists_condition_matches_preview_in_browser(
-    *, export_exists: bool, expected: bool
+# Part D: Preview in Browser is now FINISHED-only as well as needing an
+# export -- a full status x export_exists decision table (T-13).
+PREVIEW_CASES = tuple(
+    (status, export_exists, status is RideStatus.FINISHED and export_exists)
+    for status in STATUSES
+    for export_exists in (False, True)
+)
+PREVIEW_CASE_IDS = [
+    f"{status.value}:export={export_exists}" for status, export_exists, _ in PREVIEW_CASES
+]
+
+
+@pytest.mark.parametrize(
+    ("status", "export_exists", "expected_enabled"), PREVIEW_CASES, ids=PREVIEW_CASE_IDS
+)
+def test_is_route_enabled_given_preview_requires_finished_and_an_export(
+    status: RideStatus, *, export_exists: bool, expected_enabled: bool
 ) -> None:
-    """T-3: both branches of Preview's export-exists guard."""
-    state = dataclasses.replace(_baseline_state(RideStatus.DRAFT), export_exists=export_exists)
+    """T-13: Preview enables only for FINISHED with an export."""
+    state = dataclasses.replace(_baseline_state(status), export_exists=export_exists)
 
     result = commands.is_route_enabled(PREVIEW_ROUTE, state)
 
-    assert result is expected
+    assert result is expected_enabled
 
 
 @pytest.mark.parametrize(("status", "ride_stopped", "expected_enabled"), START_RIDE_CASES)

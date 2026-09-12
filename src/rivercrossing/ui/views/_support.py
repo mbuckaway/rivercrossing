@@ -14,12 +14,15 @@ shared home; every view still exposes its own thin ``_find`` method
 :func:`associate_model` is not a duplication extraction -- see its
 own docstring for exactly what it does and does not claim to fix.
 
-Phase 3 adds the two rider-list pieces both rider lists need:
+Phase 3 adds the rider-list piece both rider lists need:
 :class:`RiderRowListModel` (a ``DataViewIndexListModel`` rendering
-``RiderRow`` cells through ``ui.rider_columns``) and
-:func:`apply_sort_indicator` (the ▲/▼ header marker for the
-presenter-owned sort ``riders_list`` and ``console_riders_list``
-share).
+``RiderRow`` cells through ``ui.rider_columns``). Both lists sort
+natively -- ``riders_list`` and ``console_riders_list`` append their
+columns with the sortable flag and answer wx's header sort through
+:meth:`RiderRowListModel.Compare`, exactly as the team editor and the
+ride library do. That retired the presenter-owned ▲/▼ marker
+(``apply_sort_indicator``): the platform's own header arrow replaces
+it.
 """
 
 from __future__ import annotations
@@ -41,8 +44,8 @@ if TYPE_CHECKING:
 __all__ = [
     "FIND_SETTLE_ATTEMPTS",
     "RiderRowListModel",
-    "apply_sort_indicator",
     "associate_model",
+    "clamp_to_display",
     "default_card_images",
     "find_control",
 ]
@@ -51,13 +54,16 @@ __all__ = [
 # stale-lookup hazard this retry bound settles.
 FIND_SETTLE_ATTEMPTS = 25
 
-# The two header markers. A marker is a suffix on the column's own
-# label, so apply_sort_indicator can strip it back off again -- which
-# is what keeps re-marking idempotent (never "Plate ▲ ▼").
-_SORT_ASCENDING = " ▲"
-_SORT_DESCENDING = " ▼"
 
-_SORT_MARKERS: tuple[str, ...] = (_SORT_ASCENDING, _SORT_DESCENDING)
+def clamp_to_display(width: int, height: int) -> tuple[int, int]:
+    """Clamp a target window size so it never exceeds the work area.
+
+    Use ``wx.GetClientDisplayRect()``, not ``wx.GetDisplaySize()``: the
+    former excludes the menu bar and dock. Returns ``(width, height)``,
+    never growing the target.
+    """
+    _x, _y, display_width, display_height = wx.GetClientDisplayRect()
+    return (min(width, display_width), min(height, display_height))
 
 
 def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
@@ -224,40 +230,49 @@ class RiderRowListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mis
         """Return the cell value at *row*/*col*."""
         return self._columns[col].value(self._rows[row])
 
+    def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
+        self,
+        item1: Any,  # noqa: ANN401 -- wx ships no stubs
+        item2: Any,  # noqa: ANN401 -- wx ships no stubs
+        col: int,
+        ascending: bool,  # noqa: FBT001 -- wx's own callback argument
+    ) -> int:
+        """Return the Ordering of *item1* versus *item2* on *col*.
 
-def apply_sort_indicator(
-    column_controls: Sequence[Any],
-    active_col: int | None,
-    *,
-    ascending: bool,
-) -> None:
-    """Mark *active_col*'s header with an arrow, clearing the rest.
+        The native header arrows' answer: the control hands this two
+        items and the model column, and the comparison runs on the
+        *rows* those items index (``DataViewIndexListModel.GetRow``),
+        keyed by the list's own column description
+        (``ui.rider_columns``), so the editor's list and the console's
+        cannot order the same rows differently. The keys are
+        heterogeneous between columns (Plate is an ``(int, int)``/
+        ``(int, str)`` pair, Sex an ``int``, the rest ``str``), so the
+        comparison goes through :func:`_ordering` -- never arithmetic.
 
-    The presenter owns each rider list's row order (a
-    ``DataViewIndexListModel`` cannot sort itself), so the header
-    marker is written here from the presenter's own state rather than
-    by wx: the active column reads ``"Plate ▲"``/``"Plate ▼"`` and
-    every other column gets its plain label back. ``None`` *active_col*
-    means no sort is active, so every label is plain.
+        Equal keys fall back to the row's own position, which is
+        unique: wx's control-side sort is not stable (unlike the
+        presenter's former ``sorted``), so without the tie-break two
+        rows showing the same cell could reorder freely between sorts.
+        The tie-break is deliberately *not* negated for the downward
+        arrow, so equal-key rows keep the presenter's own order in
+        both directions. *ascending* is the arrow's own direction.
+        """
+        first_row = self.GetRow(item1)
+        second_row = self.GetRow(item2)
+        sort_key = self._columns[col].sort_key
+        result = _ordering(sort_key(self._rows[first_row]), sort_key(self._rows[second_row]))
+        if result == 0:
+            return _ordering(first_row, second_row)
+        return result if ascending else -result
 
-    Idempotent by construction: a marker is stripped from the
-    column's current title before the new one is applied, so
-    re-marking the same column replaces a marker instead of stacking
-    a second one.
+
+def _ordering(first: Any, second: Any) -> int:  # noqa: ANN401 -- the shared column keys' own union
+    """Return -1, 0 or 1: how *first* orders against *second*.
+
+    ``Any``, not a TypeVar bound: the rider columns' keys differ in
+    type *between* columns (see :meth:`RiderRowListModel.Compare`), so
+    no single comparable type covers them all.
     """
-    for index, column in enumerate(column_controls):
-        title = _plain_label(column.GetTitle())
-        if index != active_col:
-            column.SetTitle(title)
-        elif ascending:
-            column.SetTitle(f"{title}{_SORT_ASCENDING}")
-        else:
-            column.SetTitle(f"{title}{_SORT_DESCENDING}")
-
-
-def _plain_label(title: str) -> str:
-    """Return *title* without a sort marker, if it carries one."""
-    for marker in _SORT_MARKERS:
-        if title.endswith(marker):
-            return title[: -len(marker)]
-    return title
+    if first == second:
+        return 0
+    return -1 if first < second else 1

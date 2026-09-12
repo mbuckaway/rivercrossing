@@ -9,12 +9,11 @@ presenter actually calls: ``set_stop_enabled`` (the Stop gate),
 display), ``set_entry_locked`` (R-35's "only confirming locks the
 entry field"), -- WS-D/WS-H -- ``set_clock_fractions`` (the
 gauge-clock dials), ``show_flagged`` and ``show_riders`` (the review
-notebook's two tabs), ``set_sort_indicator`` (the riders list's
-▲/▼ header marker), ``show_start_blocked`` (Phase 5's blocked-start
-issues dialog), and -- W12 -- ``set_team_ui_visible`` (the R-11
-Teams-chip visibility on the count chips), the same "add the member
-once the presenter calls it" precedent ``main_frame.py``'s own
-docstring records.
+notebook's two tabs), ``show_start_blocked`` (Phase 5's
+blocked-start issues dialog), and -- W12 --
+``set_team_ui_visible`` (the R-11 Teams-chip visibility on the count
+chips), the same "add the member once the presenter calls it"
+precedent ``main_frame.py``'s own docstring records.
 
 Pure Python -- no ``wx`` import may ever land here (R-71). The
 ``Cue`` enum it re-exports lives in ``rivercrossing.ui.sound``
@@ -75,13 +74,13 @@ rides:
   the design write-back lands in W15.
 """
 
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing import hands
 from rivercrossing.ride import IllegalStateError, RideStatus, StartBlockedError
 from rivercrossing.roster import EntryMode
 from rivercrossing.ui.presenters.data_source import format_duration
-from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS, toggle_sort
 from rivercrossing.ui.sound import Cue  # Re-exported; see module docstring
 
 if TYPE_CHECKING:
@@ -92,11 +91,32 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FINISH_GATE",
+    "MISS_SYMBOLS",
     "ConsolePresenter",
     "ConsoleView",
     "Cue",
+    "is_miss",
+    "status_text",
     "stop_light_mode",
 ]
+
+# K: the symbols a scorer types when a rider crosses but the number is
+# missed. Typing one (or a run of them) instead of a plate records a
+# pending miss; a plate containing any other character is a plate.
+MISS_SYMBOLS = frozenset("=/+-.")
+
+
+def is_miss(text: str) -> bool:
+    """Return whether *text* is one or more miss symbols, not a plate.
+
+    The scorer's shorthand for a passing whose number was not caught:
+    one or more characters drawn only from :data:`MISS_SYMBOLS`
+    (``= / + - .``). Whitespace around the symbol is ignored; a blank
+    submission is *not* a miss (it only refocuses the field, A3), and
+    any text containing another character is an ordinary plate.
+    """
+    stripped = text.strip()
+    return bool(stripped) and all(character in MISS_SYMBOLS for character in stripped)
 
 
 def _finish_gate_clear() -> bool:
@@ -113,8 +133,22 @@ def _finish_gate_clear() -> bool:
 FINISH_GATE: Callable[[], bool] = _finish_gate_clear
 
 
-def stop_light_mode(status: RideStatus) -> str:
-    """Return the ride-status light's mode for *status* (WS-D).
+def status_text(status: RideStatus, *, stopped: bool = False) -> str:
+    """Return the console's status label for *status* (W6).
+
+    RUNNING reads RUNNING, except while the engine is stopped
+    (R-35's guard, state still RUNNING) where it reads STOPPED so the
+    label and the amber lamp agree. Every other state is its own name
+    in upper case. Pure, so the label mapping is testable without wx
+    -- the presenter and ``views/main_frame.set_state`` share it.
+    """
+    if stopped and status is RideStatus.RUNNING:
+        return "STOPPED"
+    return status.value.upper()
+
+
+def stop_light_mode(status: RideStatus | None, *, stopped: bool = False) -> str:
+    """Return the ride-status light's mode for *status* (WS-D/W6).
 
     The console's code-side ``StopLight`` (``views/gauges.py``) lights
     one of three circles; this is the RideStatus -> mode mapping the
@@ -122,13 +156,19 @@ def stop_light_mode(status: RideStatus) -> str:
     so the mapping is testable without wx. REOPENED shares DRAFT's
     amber: the corrections banner and the status label carry the
     distinction -- the light never carries meaning by colour alone.
+    W1: ``None`` is the no-ride console -- no ride is open, so no
+    circle lights (``"off"``). W6: a stopped RUNNING ride is amber
+    too, matching its STOPPED label.
 
     Returns:
-        ``"green"`` RUNNING, ``"yellow"`` DRAFT/REOPENED, ``"red"``
-        FINISHED.
+        ``"green"`` live RUNNING, ``"yellow"`` DRAFT/REOPENED or a
+        stopped RUNNING ride, ``"red"`` FINISHED, ``"off"`` no ride
+        open (``None``).
     """
+    if status is None:
+        return "off"
     if status is RideStatus.RUNNING:
-        return "green"
+        return "yellow" if stopped else "green"
     if status is RideStatus.FINISHED:
         return "red"
     return "yellow"
@@ -170,8 +210,12 @@ class ConsoleView(Protocol):
         """Highlight the just-recorded crossing (last_crossing_lbl)."""
         ...
 
-    def set_state(self, status: RideStatus) -> None:
-        """Reflect the ride's lifecycle state (clock, entry, banner)."""
+    def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
+        """Reflect the ride's lifecycle state (clock, entry, banner).
+
+        *stopped* is R-35's guard while ``status`` is RUNNING: the
+        status label reads STOPPED and the lamp turns amber (W6).
+        """
         ...
 
     def focus_entry(self) -> None:
@@ -221,20 +265,10 @@ class ConsoleView(Protocol):
         ...
 
     def show_riders(self, rows: list[RiderRow]) -> None:
-        """Render the review notebook's riders rows (WS-H)."""
-        ...
+        """Render the review notebook's riders rows (WS-H).
 
-    def set_sort_indicator(self, column: int | None, *, ascending: bool) -> None:
-        """Mark the riders list *column*'s header (▲/▼), or clear it.
-
-        Phase 4 mirrors the rider editor's own marker: the presenter
-        owns the riders list's row order (a
-        ``DataViewIndexListModel`` cannot sort itself), so it hands its
-        own sort state back here and the view paints it -- ``None``
-        *column* restores every plain label. Column indexes are the
-        shared
-        :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
-        order.
+        Rows arrive in the source's own order; the list's native header
+        sort re-orders what it displays.
         """
         ...
 
@@ -274,19 +308,22 @@ class ConsoleView(Protocol):
         """
         ...
 
-    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels, mirroring std_dialogs.show_confirm
+    def confirm(  # noqa: PLR0913 -- (title, message) + 2 button labels + danger, mirroring std_dialogs.show_confirm
         self,
         title: str,
         message: str,
         *,
         ok_label: str,
         cancel_label: str,
+        danger: bool = False,
     ) -> bool:
         """Ask a destructive confirm; return whether OK was chosen.
 
         The view owns the parent window and opens the native confirm
-        (``ui.std_dialogs.show_confirm``); the presenter reads only
-        the boolean verdict, so the flow stays headless-testable.
+        (``ui.std_dialogs.show_confirm``, or ``show_danger`` when
+        *danger* is set -- the data-losing question, e.g. Undo Last
+        Crossing, I); the presenter reads only the boolean verdict, so
+        the flow stays headless-testable.
         """
         ...
 
@@ -329,27 +366,29 @@ class ConsolePresenter:
         # W6: the elapsed value shown while the engine is stopped;
         # None while live, so the first refresh after a stop captures.
         self._frozen_elapsed: float | None = None
-        # Phase 4: the riders list's own sort state (the view cannot
-        # sort a DataViewIndexListModel; see on_sort_riders). No
-        # active column until the operator clicks a header.
-        self._riders_sort_column: int | None = None
-        self._riders_sort_ascending = True
+        # H: the riders rows last rendered; None forces the first tick.
+        self._last_riders: list[RiderRow] | None = None
         # W12/R-11: the constructor-owned render (class docstring).
         self.view.set_team_ui_visible(visible=self.engine.config.entry_mode is EntryMode.MIXED)
 
     def on_plate_entered(self, text: str) -> None:
         """Handle Enter (or Record) with the plate entry's text.
 
-        A blank/whitespace-only submission only returns focus (A3).
-        Otherwise the plate goes to ``engine.record_crossing``:
-        accepted crossings refresh the feed and counters, flash the
-        new row, play RECORDED (or FLAGGED for a short lap, R-34),
-        clear the field and refocus; refusals play ERROR, post a
-        notice, and keep the field (R-31 -- pin).
+        A blank/whitespace-only submission only returns focus (A3). A
+        submission drawn only from the miss symbols (``= / + - .``) is a
+        miss, not a plate: it routes to :meth:`_record_miss` and never
+        reaches ``record_crossing`` (K). Otherwise the plate goes to
+        ``engine.record_crossing``: accepted crossings refresh the feed
+        and counters, flash the new row, play RECORDED (or FLAGGED for
+        a short lap, R-34), clear the field and refocus; refusals play
+        ERROR, post a notice, and keep the field (R-31 -- pin).
         """
         plate = text.strip()
         if not plate:
             self.view.focus_entry()
+            return
+        if is_miss(plate):
+            self._record_miss()
             return
         result = self.engine.record_crossing(plate)
         if not result.accepted:
@@ -364,13 +403,59 @@ class ConsolePresenter:
         self.view.clear_entry()
         self.view.focus_entry()
 
+    def _record_miss(self) -> None:
+        """Record the typed miss symbol and re-render the console (K).
+
+        The miss branch of :meth:`on_plate_entered`: the engine keeps
+        the miss outside its crossings, so no card is dealt, no counter
+        moves and the feed gains a ``-``/``missed`` row for later
+        entry. A state the engine refuses (not RUNNING/REOPENED)
+        surfaces as a notice and keeps the field, like any other
+        refusal. A recorded miss is an intentional signal rather than a
+        typo, so the field clears (unlike a rejected plate) and the
+        ERROR cue confirms the symbol was not taken as a plate.
+        """
+        try:
+            self.engine.record_miss(datetime.now(UTC), reason="missed number")
+        except IllegalStateError as exc:
+            self.view.play(Cue.ERROR)
+            self.view.show_notice(f"Miss not recorded: {exc}")
+            self.view.focus_entry()
+            return
+        self._refresh_feed()
+        self._refresh_counters()
+        self.view.play(Cue.ERROR)
+        self.view.show_notice("Number missed — logged for later entry")
+        self.view.clear_entry()
+        self.view.focus_entry()
+
     def on_undo(self) -> None:
         """Handle Undo last (Ctrl+Z / undo_btn / mi_undo_crossing).
 
-        Removes the newest crossing, refreshes the feed and counters,
-        and posts a notice; an illegal undo (nothing to undo, wrong
-        state) is caught and surfaced as a notice, never a crash.
+        Undo destroys the newest lap and its dealt card, so it asks
+        the view's danger confirm first (I). The engine's own
+        legality rule is pre-checked before the dialog -- a ride that
+        is not RUNNING/REOPENED, or has no crossings, only posts the
+        notice and never opens a dialog for an impossible undo.
+        A confirmed OK removes the crossing, refreshes the feed and
+        counters, and posts a notice; an engine refusal that slips
+        past the pre-check is still caught and surfaced as a notice,
+        never a crash.
         """
+        if (
+            self.engine.state not in (RideStatus.RUNNING, RideStatus.REOPENED)
+            or not self.engine.crossings
+        ):
+            self.view.show_notice("Undo unavailable: nothing to undo")
+            return
+        if not self.view.confirm(
+            "Undo Last Crossing?",
+            "Undo the last recorded crossing? The newest lap and its dealt card are removed.",
+            ok_label="Undo",
+            cancel_label="Cancel",
+            danger=True,
+        ):
+            return
         try:
             self.engine.undo_last()
         except IllegalStateError as exc:
@@ -404,7 +489,7 @@ class ConsolePresenter:
             return
         self._refresh_feed()
         self._refresh_counters()
-        self.view.set_state(self.engine.state)
+        self.view.set_state(self.engine.state, stopped=self.engine.stopped)
         self.view.set_entry_locked(locked=False)
         self._refresh_clock()  # W6: continue unfreezes and shows live elapsed now
         self.view.show_notice("Ride started")
@@ -480,32 +565,13 @@ class ConsolePresenter:
         except IllegalStateError as exc:
             self.view.show_notice(f"Cannot stop: {exc}")
             return
-        self.view.set_state(self.engine.state)
+        self.view.set_state(self.engine.state, stopped=self.engine.stopped)
         self.view.set_entry_locked(locked=True)
         self.view.show_notice("Ride stopped — continue to resume")
 
     def on_hide_times(self, *, hide: bool) -> None:
         """Handle the hide-times setting toggling live (R-37)."""
         self.view.set_hide_times(hide=hide)
-
-    def on_sort_riders(self, column: int) -> None:
-        """Sort the riders tab by *column*; re-clicking toggles it.
-
-        The view forwards a header click here with the clicked
-        column's index into the shared
-        :data:`~rivercrossing.ui.rider_columns.CONSOLE_RIDER_COLUMNS`
-        order. The presenter owns the row order (a
-        ``DataViewIndexListModel`` cannot sort itself), so the
-        direction rule is the shared
-        :func:`~rivercrossing.ui.rider_columns.toggle_sort`: the first
-        click on a column sorts it ascending, clicking the active
-        column again reverses it. ``_refresh_riders`` then re-renders
-        the rows and marks the active header ▲/▼.
-        """
-        self._riders_sort_column, self._riders_sort_ascending = toggle_sort(
-            column, column=self._riders_sort_column, ascending=self._riders_sort_ascending
-        )
-        self._refresh_riders()
 
     def on_finish(self) -> None:
         """Handle the Finish Ride flow (E4.4.2, gate hook E6.4.3).
@@ -528,7 +594,7 @@ class ConsolePresenter:
             return
         self._refresh_feed()
         self._refresh_counters()
-        self.view.set_state(self.engine.state)
+        self.view.set_state(self.engine.state, stopped=self.engine.stopped)
         self.view.show_notice("Ride finished again" if was_reopened else "Ride finished")
 
     def on_reopen(self) -> None:
@@ -548,7 +614,7 @@ class ConsolePresenter:
             return
         self._refresh_feed()
         self._refresh_counters()
-        self.view.set_state(self.engine.state)
+        self.view.set_state(self.engine.state, stopped=self.engine.stopped)
         self.view.show_notice("Ride reopened for corrections")
 
     def tick(self) -> None:
@@ -586,21 +652,22 @@ class ConsolePresenter:
         come from the engine's credited hand, so this same tick is what
         keeps the Cards cell live as laps are recorded.
 
-        Phase 4: the rows are ordered here, by the operator's chosen
-        column (``on_sort_riders``) -- a ``DataViewIndexListModel``
-        cannot sort itself -- and the active column's ▲/▼ marker is
-        pushed back with the rows, so a tick re-render can never lose
-        the operator's sort. ``sorted`` is stable, so equal keys keep
-        the source's own order.
+        The rows keep the source's own order: the tab sorts through
+        the list's native header arrows
+        (:meth:`~rivercrossing.ui.views._support.RiderRowListModel.
+        Compare`), which the periodic re-render never disturbs -- a new
+        model re-applies the operator's chosen sort in the view.
+
+        H: only a real row change re-renders. The view rebuilds the
+        model on every ``show_riders``, and the macOS rebuild drops
+        the native sort key, so an unchanged tick must not rebuild --
+        ``RiderRow`` is a frozen dataclass, so ``==`` compares by
+        value.
         """
         rows = self.source.riders()
-        if self._riders_sort_column is not None:
-            key = CONSOLE_RIDER_COLUMNS[self._riders_sort_column].sort_key
-            rows = sorted(rows, key=key, reverse=not self._riders_sort_ascending)
-        self.view.show_riders(rows)
-        self.view.set_sort_indicator(
-            self._riders_sort_column, ascending=self._riders_sort_ascending
-        )
+        if rows != self._last_riders:
+            self._last_riders = rows
+            self.view.show_riders(rows)
 
     def _refresh_counters(self) -> None:
         """Re-render the six counter chips from the source."""

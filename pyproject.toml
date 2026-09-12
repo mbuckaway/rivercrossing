@@ -50,6 +50,7 @@ dev = [
     "pytest-xdist",     # per-file worker processes for the functional suite; see noxfile
     "pytest-rerunfailures",  # project-plan §4's auto-retry flake control (2, PR #8's CI)
     "hypothesis",
+    "defusedxml",       # safe XML parsing for tools/gen_ids.py and the .xrc unit tests
     "coverage[toml]",
     "nox",              # the task runner; identical invocation on macOS and Windows
     "ruff>=0.15",       # floor for target-version = "py314" and PEP 758 handling

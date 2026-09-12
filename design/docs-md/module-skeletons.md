@@ -59,6 +59,8 @@ rivercrossing/
 │       ├── theme.py            # appearance modes via wx.App.SetAppearance (R-03);
 │       │                       #   token table deferred — no consumer yet (open item O2)
 │       ├── sound.py            # three WAV cues per §10 (recorded/flagged/error)
+│       ├── logging.py          # per-invocation NDJSON log (F1): one file per launch, pruned
+│       │                       #   to the last 20; the app's one crash log (A2)
 │       ├── ids.py              # mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)
 │       ├── xrc/                # canonical UI: main, setup, riders, detail, results,
 │       │                       #   library, audit, settings, dialogs (.xrc — Spec §15b)
@@ -198,15 +200,25 @@ class EntryMode(StrEnum): SOLO MIXED · class PlateModel(StrEnum): RIDER_POOLED 
 class Roster:                 # one ride's entries/riders; status set by the E4 engine
     __init__(*, entry_mode=SOLO, max_team_size=4, plate_model=RIDER_POOLED)
     create_solo_entry · create_team_entry · create_team_entry_of_one · add_rider_to_team
-    move_rider · extract_rider_to_solo · update_entry · delete_entry · mark_has_data
-    change_solo_plate · change_pooled_rider_plate · change_team_plate
+    move_rider · extract_rider_to_solo · remove_rider · update_entry · delete_entry · mark_has_data
+    change_solo_plate · change_pooled_rider_plate · change_team_plate · change_plate   # the model-correct dispatch the editors + fixes share
     next_free_plate() -> str                       # highest numeric + 1
     validate_for_start() -> list[StartViolation]   # R-12's floor, checked at start
     entries · audit_log · status                   # audit events persist via the E5 store
 can_edit_structure(status) · can_delete_entry(status, has_data)
 can_move_rider(status, plate_model) · can_add_entry() · can_fix_name()
+team_name_key(name) -> str                     # fuzzy team key; the CSV preview and rider_issues share it
 # one plate namespace per ride; a pooled team entry adopts its lowest rider plate;
 # teams may be size 1 while DRAFT — the floor is enforced at CSV commit and ride start
+```
+
+rivercrossing.rider_issues — the roster defect report (R-78 · rider_issues_dlg)
+
+```
+rider_issues(roster) -> tuple[RiderIssue, ...]
+    # stable report order: team-of-one · missing-name · missing-number · duplicate-name
+    #   · duplicate-team-name · near-duplicate-team-name (a ⚠ warning) · duplicate-number
+    # team-name checks reuse the CSV importer's identity rules (roster.team_name_key / the normalized name)
 ```
 
 rivercrossing.store — persistence (§2/§9 · R-50…54)
@@ -229,8 +241,9 @@ schema.py: rides · entries · riders · crossings · cards · audit · sessions
 rivercrossing.csvio / htmlexport / pdfexport (§7/§8/§8b · R-21/61/62/63)
 
 ```
-csvio.preview(path, ride) -> ImportPreview      # counts + conflicts; writes nothing;
+csvio.preview(path, ride, *, map_unknown_sex_to_male=False, convert_teams_of_one_to_solo=False) -> ImportPreview   # counts + conflicts; writes nothing;
                                                 #   ride = the Roster aggregate until E5's Store
+                                                #   convert_teams_of_one_to_solo imports a DRAFT one-rider team as a solo entry (both plate models)
 csvio.commit(preview) -> ImportReport · csvio.export(ride, path, *, placed=None) -> None
     # commit applies through the roster's own audited mutators, atomically;
     # ImportReport carries inserted/updated/moved/extracted/joined counts + the audit events
@@ -267,6 +280,11 @@ class ConsolePresenter:        on_plate_entered(text) · on_undo() · on_arm_sto
 app.main() -> int              # wx.App; resume dialog per session_state (4a/1h)
 theme.apply(app, mode) -> AppearanceResult   # light|dark|system via wx.App.SetAppearance (R-03);
                                # tokens(mode) deferred — no custom-drawn consumer yet (O2)
+logging.Logging(path, *, verbose=True) -> Logging   # per-invocation NDJSON log (F1): one file per launch;
+                               # .startup()/.launch()/.ride_loaded()/.exception() always write, the
+                               # .marker()/.menu()/.dialog()/.button()/.control() trace honours verbose
+logging.build_log_path(directory, now) -> Path      # rivercrossing-<YYYYmmdd-HHMMSS>.log inside directory
+logging.prune_logs(directory, *, keep=20) -> None   # keep only the most recent invocation logs
 ids.py: PLATE_INPUT = "plate_input" …   # = XRC names, generated from xrc/ (§15b)
 sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   # §10 cues, settings toggle
 ```

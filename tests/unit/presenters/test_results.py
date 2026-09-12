@@ -1,18 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Results presenter unit tests (E6.4.1 + E7.3.2), tests-first (R-70).
 
-``ResultsPresenter`` goes live in E6.4.1: it owns the tie-break
-label map, seeds ``tiebreak_list`` from the ride's stored
-``tiebreak_order``, re-ranks ``standings(order=...)`` live on a
-reorder, restores the last-good order on an unrecognised reorder, and
-builds the ``ExportOptions`` the export handlers (E6.4.2) read.
-E7.3.2 (the stale-export flag) adds the second live channel: the
-presenter holds the engine event count captured at the last export
-(the export watermark) and, on every refresh, asks the data source
-whether a correction event landed at/after that watermark, then
-drives ``ResultsView.set_stale`` -- ``True`` when published results
-are stale, ``False`` on a fresh export (``mark_exported``) or when no
-correction landed since.
+``ResultsPresenter`` goes live in E6.4.1: it ranks the
+``standings(order=...)`` from the ride's stored ``tiebreak_order``
+(set in Ride Setup) and builds the ``ExportOptions`` the export
+handlers (E6.4.2) read. E7.3.2 (the stale-export flag) adds the live
+channel: the presenter holds the engine event count captured at the
+last export (the export watermark) and, on the first render, asks the
+data source whether a correction event landed at/after that
+watermark, then drives ``ResultsView.set_stale`` -- ``True`` when
+published results are stale, ``False`` on a fresh export
+(``mark_exported``) or when no correction landed since.
 
 The presenter is pure Python (R-71), so every test drives it with a
 recording fake view and a recording ``DataSource`` -- no wx and no
@@ -26,27 +24,15 @@ test-configured value.
 
 from datetime import date, datetime
 
-import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.cards import Shoe
 from rivercrossing.htmlexport import ExportOptions
-from rivercrossing.ride import (
-    DEFAULT_TIEBREAK_ORDER as RIDE_DEFAULT_ORDER,
-)
-from rivercrossing.ride import (
-    TIEBREAK_HIGH_CARD,
-    TIEBREAK_LAPS,
-    TIEBREAK_TOTAL_TIME,
-    Event,
-    RideConfig,
-    RideEngine,
-)
+from rivercrossing.ride import Event, RideConfig, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import DEFAULT_TIEBREAK_ORDER, TieBreak
 from rivercrossing.ui.presenters import ResultsPresenter, StandingsRow
-from rivercrossing.ui.presenters import results as results_module
 from rivercrossing.ui.presenters.data_source import (
     CORRECTION_ACTIONS,
     EmptyDataSource,
@@ -74,8 +60,6 @@ class RecordingResultsView:
         """Start every channel empty."""
         self.shown_teams: list[StandingsRow] = []
         self.shown_solo: list[StandingsRow] = []
-        self.tiebreak_labels: list[str] = []
-        self.notices: list[str] = []
         self.reported_options = ExportOptions()
         self.publish_reads = 0
         self.stale_calls: list[bool] = []
@@ -97,14 +81,6 @@ class RecordingResultsView:
     def show_publish_options(self, options: ExportOptions) -> None:
         """Record the reflected checkbox states."""
         self.reported_options = options
-
-    def set_tiebreak_labels(self, labels: list[str]) -> None:
-        """Record the seeded/restored tiebreak_list rows."""
-        self.tiebreak_labels = list(labels)
-
-    def show_notice(self, text: str) -> None:
-        """Record one status notice."""
-        self.notices.append(text)
 
     def publish_options(self) -> ExportOptions:
         """Return the recorded checkbox states, and count the read."""
@@ -166,27 +142,6 @@ def _row(plate: str, *, place: int = 1) -> StandingsRow:
 # ------------------------------------------------------- construction
 
 
-@pytest.mark.parametrize(
-    ("stored", "labels"),
-    [
-        (RIDE_DEFAULT_ORDER, ["Most laps", "Total time", "High-card draw"]),
-        (("total_time", "laps", "high_card"), ["Total time", "Most laps", "High-card draw"]),
-        (("high_card", "total_time", "laps"), ["High-card draw", "Total time", "Most laps"]),
-    ],
-    ids=["default", "time_first", "draw_first"],
-)
-def test_results_presenter_init_seeds_the_tiebreak_list_from_the_stored_order(
-    stored: tuple[str, str, str], labels: list[str]
-) -> None:
-    """``set_tiebreak_labels`` is called once with the mapped labels."""
-    view = RecordingResultsView()
-    source = RecordingResultsSource()
-
-    ResultsPresenter(view, source, tiebreak_order=stored)
-
-    assert view.tiebreak_labels == labels
-
-
 def test_results_presenter_init_renders_the_initial_standings_with_the_stored_order() -> None:
     """The first standings render uses the ride's order, not default."""
     source = RecordingResultsSource()
@@ -225,64 +180,6 @@ def test_results_presenter_holds_the_view_and_data_source_it_was_given() -> None
     assert presenter.data_source is source
 
 
-# --------------------------------------------------- live re-ranking
-
-
-def test_on_tiebreak_reordered_given_valid_labels_re_ranks_and_shows_rows() -> None:
-    """A valid reorder re-ranks with the converted order, live."""
-    view = RecordingResultsView()
-    source = RecordingResultsSource()
-    presenter = ResultsPresenter(view, source)
-    reordered = (TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS, TieBreak.HIGH_CARD_DRAW)
-    source.rows_by_order[reordered] = [_row("34", place=1)]
-
-    presenter.on_tiebreak_reordered(["Total time", "Most laps", "High-card draw"])
-
-    assert source.standings_orders[-1] == reordered
-    assert view.shown_solo == [_row("34", place=1)]
-
-
-def test_on_tiebreak_reordered_given_an_unknown_label_restores_and_notices() -> None:
-    """An unrecognised label cannot be converted -- restore + notice."""
-    view = RecordingResultsView()
-    source = RecordingResultsSource()
-    presenter = ResultsPresenter(view, source)
-    source.standings_orders.clear()
-
-    presenter.on_tiebreak_reordered(["Most laps", "Bogus criterion", "High-card draw"])
-
-    assert view.tiebreak_labels == ["Most laps", "Total time", "High-card draw"]
-    assert view.notices == ["Unrecognised tie-break order — restored"]
-    assert source.standings_orders == []
-
-
-def test_on_tiebreak_reordered_given_a_wrong_row_count_restores_and_notices() -> None:
-    """A New/Delete-mangled row set is invalid -- restore + notice."""
-    view = RecordingResultsView()
-    source = RecordingResultsSource()
-    presenter = ResultsPresenter(view, source)
-    source.standings_orders.clear()
-
-    presenter.on_tiebreak_reordered(["Most laps", "Total time"])
-
-    assert view.tiebreak_labels == ["Most laps", "Total time", "High-card draw"]
-    assert view.notices == ["Unrecognised tie-break order — restored"]
-    assert source.standings_orders == []
-
-
-def test_on_tiebreak_reordered_restores_the_latest_good_order_after_a_success() -> None:
-    """Last-good advances on success, so a later failure restores it."""
-    view = RecordingResultsView()
-    source = RecordingResultsSource()
-    presenter = ResultsPresenter(view, source)
-    presenter.on_tiebreak_reordered(["Total time", "Most laps", "High-card draw"])
-    view.tiebreak_labels.clear()
-
-    presenter.on_tiebreak_reordered(["Total time", "Bogus criterion", "High-card draw"])
-
-    assert view.tiebreak_labels == ["Total time", "Most laps", "High-card draw"]
-
-
 # -------------------------------------------------- publish options
 
 
@@ -309,22 +206,6 @@ def test_export_options_defaults_to_the_canvas_flags_before_any_toggle() -> None
     presenter = ResultsPresenter(RecordingResultsView(), RecordingResultsSource())
 
     assert presenter.export_options() == ExportOptions()
-
-
-# --------------------------------------------- label-map invariant
-
-
-@given(order=st.permutations([TIEBREAK_LAPS, TIEBREAK_TOTAL_TIME, TIEBREAK_HIGH_CARD]))
-def test_tiebreak_label_map_round_trips_any_stored_order(order: list[str]) -> None:
-    """Invariant: labels -> spellings is the exact inverse of the seed.
-
-    The presenter's own 3-entry map is the only converter both the
-    seed and the reorder path share; this pins that label conversion
-    is invertible for every permutation of the stored spellings.
-    """
-    labels = [results_module._TIEBREAK_LABELS[spelling] for spelling in order]
-
-    assert [results_module._TIEBREAK_IDS_BY_LABEL[label] for label in labels] == order
 
 
 # --------------------------------------- E7.3.2 stale-export flag
@@ -377,34 +258,6 @@ def test_results_presenter_mark_exported_advances_the_watermark_and_clears_stale
     assert view.stale_calls == [True, False]
 
 
-def test_results_presenter_refresh_re_evaluates_stale_after_a_post_export_correction() -> None:
-    """A refresh sees a correction that landed since the watermark."""
-    view = RecordingResultsView()
-    source = RecordingResultsSource()
-    presenter = ResultsPresenter(view, source, export_watermark=2)
-    source.stale_result = True
-
-    presenter.on_tiebreak_reordered(["Total time", "Most laps", "High-card draw"])
-
-    assert view.stale_calls == [False, True]
-    assert source.stale_queries == [2, 2]
-
-
-def test_results_presenter_mark_exported_then_a_later_correction_marks_stale_again() -> None:
-    """A correction after re-export trips the flag again."""
-    view = RecordingResultsView()
-    source = RecordingResultsSource()
-    presenter = ResultsPresenter(view, source, export_watermark=2)
-    presenter.mark_exported(6)
-    source.stale_result = True
-
-    presenter.on_tiebreak_reordered(["Total time", "Most laps", "High-card draw"])
-
-    assert presenter.export_watermark == 6
-    assert view.stale_calls == [False, False, True]
-    assert source.stale_queries[-1] == 6
-
-
 # --------------------------- E7.3.2 correction-vs-watermark helper
 
 
@@ -414,6 +267,7 @@ def test_correction_actions_is_the_e7_audited_correction_vocabulary() -> None:
         frozenset(
             {
                 "add_crossing_at",
+                "assign_plate_to_miss",
                 "edit_crossing",
                 "reassign",
                 "deal_manual",
@@ -425,6 +279,7 @@ def test_correction_actions_is_the_e7_audited_correction_vocabulary() -> None:
         == CORRECTION_ACTIONS
     )
     assert "record_crossing" not in CORRECTION_ACTIONS
+    assert "record_miss" not in CORRECTION_ACTIONS
     assert "undo" not in CORRECTION_ACTIONS
     assert "set_start_time" not in CORRECTION_ACTIONS
 
