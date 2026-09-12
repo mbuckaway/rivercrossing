@@ -41,12 +41,12 @@ __all__ = [
     "COL_STATUS",
     "COL_STATUS_WIDTH",
     "MIN_SIZE",
+    "RIDES_LIST_COLUMN_FLAGS",
     "WX_ID_DELETE",
     "RideLibrary",
     "RidesListModel",
     "RidesSource",
     "format_ride_status",
-    "name_column_width",
 ]
 
 
@@ -85,45 +85,35 @@ COLUMN_LABELS: tuple[str, ...] = ("Ride", "Date", "Status", "Entries")
 
 # D16: the canvas draws this dialog at 520x182; XRC has no window-level
 # minsize (library.xrc's own header notes this and defers to code).
-# W10 doubles the canvas width (520 -> 1040) and triples its height
-# (182 -> 546). At the 520 px floor the four columns did not fit and
-# the last one clipped; the doubled width hands the elastic Ride
-# column the slack, and the tripled height stops the list collapsing
-# to the sizer's own small best height. Measured (this task's own
-# probe on 4.3.1 osx-cocoa): ``SetMinSize`` + ``Fit()`` honours BOTH
-# dimensions at this size, so no ``SetSize`` fallback is needed.
-MIN_SIZE = (1040, 546)
+# Plan 1b returns the floor close to that canvas size: the four
+# columns now open at their own pinned widths (530 px of these 560),
+# so W10's doubled 1040x546 floor is retired and the dialog sits
+# beside the console rather than dominating the screen. ``SetMinSize``
+# + ``Fit()`` is what actually grows the dialog to respect the floor
+# right now (W10's own measured note).
+MIN_SIZE = (560, 220)
 
-# W10 column-width plan. A DataViewCtrl column never sizes itself to
-# its content, and (measured on 4.3.1 osx-cocoa / wxWidgets 3.3.3)
-# the control stretches only its *last* column to fill the window --
-# the Ride column is first, so the old 80 px default clipped the
-# name at every window size while a widened dialog's slack stranded
-# past Entries. Date/Status/Entries therefore carry compact fixed
-# widths that their short canvas content never exceeds (measured with
-# ``GetFullTextExtent`` on the stock 13 px GUI font: "2026-09-20" =
-# 66 px, "REOPENED" = 59 px, the "Entries" header = 37 px; each width
-# keeps ~150% text-zoom headroom), and the Ride column is elastic:
-# :func:`name_column_width` gives it every pixel the compact columns
-# leave, re-applied on every size event so a widened dialog widens
-# the name column.
+# Plan 1b column defaults. A DataViewCtrl column never sizes itself to
+# its content, so an unpinned column keeps the platform's 80 DIP
+# default (measured on 4.3.1 osx-cocoa / wxWidgets 3.3.3: the control
+# stretches only its *last* column, and the Ride name is first) and
+# the name clipped at every window size. Each column now opens at its
+# own pinned width and stays resizable -- the operator tunes the
+# widths by hand, so nothing here is elastic. Date/Status/Entries
+# carry compact widths their short canvas content never exceeds
+# (measured with ``GetFullTextExtent`` on the stock 13 px GUI font:
+# "2026-09-20" = 66 px, "REOPENED" = 59 px, the "Entries" header =
+# 37 px; each width keeps ~150% text-zoom headroom).
 COL_DATE_WIDTH = 110
 COL_STATUS_WIDTH = 110
 COL_ENTRIES_WIDTH = 70
 
-# The Ride column's floor: 208 px is the fill the canvas's own 520 px
-# dialog gave it (the list's client measures ~498 px there on 4.3.1
-# osx-cocoa; 498 - 110 - 110 - 70 = 208) and fits the canvas's own
-# names plus the longest a duplicate creates, "GORBA EPIC 2026
-# (copy)" (135 px at the stock font). W10 widened the dialog's own
-# floor to MIN_SIZE's 1040 px, so this is now only what a
-# not-yet-laid-out list starts from -- :func:`name_column_width`
-# replaces it on the first size event.
-COL_NAME_WIDTH = 208
+# The Ride column's opening width: 3x wx's 80 DIP default, clearing
+# the canvas's own names plus the longest a duplicate creates, "GORBA
+# EPIC 2026 (copy)" (135 px at the stock font).
+COL_NAME_WIDTH = 240
 
-# One width per COLUMN_LABELS entry, in canvas order: the Ride column
-# starts at the elastic floor; the first size event re-fills it from
-# the live client width.
+# One width per COLUMN_LABELS entry, in canvas order.
 _COLUMN_WIDTHS: tuple[int, ...] = (
     COL_NAME_WIDTH,
     COL_DATE_WIDTH,
@@ -131,28 +121,14 @@ _COLUMN_WIDTHS: tuple[int, ...] = (
     COL_ENTRIES_WIDTH,
 )
 
-
-def name_column_width(client_width: int) -> int:
-    """Return the Ride column's width in a *client_width*-px list.
-
-    The elastic column: the width is every pixel the three compact
-    columns (Date/Status/Entries) leave, so a widened list widens the
-    Ride column rather than stranding the slack past Entries. Floored
-    at :data:`COL_NAME_WIDTH` so a not-yet-laid-out list (whose client
-    width is still a few pixels) keeps the canvas-minimum fill instead
-    of a negative width.
-
-    Args:
-        client_width: ``rides_list``'s own client width in pixels.
-
-    Returns:
-        The Ride column width: *client_width* minus the three compact
-        widths, never below :data:`COL_NAME_WIDTH`.
-    """
-    return max(
-        client_width - (COL_DATE_WIDTH + COL_STATUS_WIDTH + COL_ENTRIES_WIDTH),
-        COL_NAME_WIDTH,
-    )
+# ``AppendTextColumn``'s default flags already include
+# ``wxDATAVIEW_COL_RESIZABLE``, but an explicit ``flags=`` argument
+# *replaces* the default rather than OR-ing into it (wxWidgets 3.3.3
+# dataview.h: explicit flags are never merged) -- on macOS a
+# SORTABLE-only column is actively set NSTableColumnNoResizing -- so
+# both bits are spelled out (mirrors rider_editor's
+# RIDERS_LIST_COLUMN_FLAGS).
+RIDES_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
 
 
 def format_ride_status(status: RideStatus) -> str:
@@ -329,8 +305,6 @@ class RideLibrary:
         # Remember the operator's header arrow, so the next show_rides
         # rebuild can put it back.
         self.rides_list.Bind(wx.dataview.EVT_DATAVIEW_COLUMN_SORTED, self._on_column_sorted)
-        # W10: the elastic Ride column follows the list's own width.
-        self.rides_list.Bind(wx.EVT_SIZE, self._on_rides_list_resize)
         self.open_button.Bind(wx.EVT_BUTTON, self._on_open_clicked)
         self.duplicate_button.Bind(wx.EVT_BUTTON, self._on_duplicate_clicked)
         self.delete_button.Bind(wx.EVT_BUTTON, self._on_delete_clicked)
@@ -355,54 +329,29 @@ class RideLibrary:
         """Append ``rides_list``'s four columns in canvas order.
 
         Each column gets its explicit width from ``_COLUMN_WIDTHS``
-        (W10): a ``wxDataViewCtrl`` column never sizes itself to its
-        content, so the unpinned default clipped the Ride name at
-        every window size (measured on 4.3.1 osx-cocoa: the control
-        stretches only its last column, and the name is first).
-        Date/Status/Entries keep their compact fixed widths; the Ride
-        column starts at the elastic floor and
-        :meth:`_on_rides_list_resize` re-fills it from the live
-        client width on every size event.
+        (plan 1b): a ``wxDataViewCtrl`` column never sizes itself to
+        its content, so the unpinned 80 DIP default clipped the Ride
+        name at every window size (measured on 4.3.1 osx-cocoa: the
+        control stretches only its last column, and the name is
+        first). Every column stays resizable, so the operator tunes
+        the widths by hand -- nothing here is elastic.
 
-        Every column is SORTABLE (W10 -- the native header arrow,
-        answered by :meth:`RidesListModel.Compare`) and RESIZABLE. An
+        Every column is SORTABLE (the native header arrow, answered
+        by :meth:`RidesListModel.Compare`) and RESIZABLE -- both bits
+        in :data:`RIDES_LIST_COLUMN_FLAGS`, spelled out because an
         explicit ``flags`` argument *replaces* ``AppendTextColumn``'s
         RESIZABLE default rather than being OR'd with it (wxWidgets
-        3.3.3 ``dataview.h``: explicit flags are never merged), so
-        both are spelled out -- on macOS a SORTABLE-only column is
-        actively set ``NSTableColumnNoResizing``.
+        3.3.3 ``dataview.h``: explicit flags are never merged); on
+        macOS a SORTABLE-only column is actively set
+        ``NSTableColumnNoResizing``.
         """
         for col, label in enumerate(COLUMN_LABELS):
             self.rides_list.AppendTextColumn(
                 label,
                 col,
                 width=_COLUMN_WIDTHS[col],
-                flags=wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE,
+                flags=RIDES_LIST_COLUMN_FLAGS,
             )
-
-    def _on_rides_list_resize(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Re-fill the Ride column after this resize settles (W10).
-
-        Deferred through ``wx.CallAfter``: the native layout pass for
-        a resize runs after this handler returns, and a synchronous
-        ``SetWidth`` here is overwritten by the control's own
-        last-column stretch. The deferred call runs after that pass,
-        so the pinned widths win and the Ride column takes the exact
-        leftover (measured on 4.3.1 osx-cocoa).
-        """
-        event.Skip()
-        wx.CallAfter(self._stretch_name_column)
-
-    def _stretch_name_column(self) -> None:
-        """Give the Ride column every pixel the compact columns leave.
-
-        Re-pins the Entries column too: the native last-column stretch
-        moves it on every resize, and the Ride column's fill is exact
-        only while the other three widths are the pinned ones.
-        """
-        client_width = self.rides_list.GetClientSize().GetWidth()
-        self.rides_list.GetColumn(COL_ENTRIES).SetWidth(COL_ENTRIES_WIDTH)
-        self.rides_list.GetColumn(COL_NAME).SetWidth(name_column_width(client_width))
 
     def _apply_sort(self) -> None:
         """Re-apply the remembered header sort to the current model.
@@ -613,17 +562,15 @@ class RideLibrary:
                 dialog.Destroy()
 
     def _apply_min_size(self) -> None:
-        """Force :data:`MIN_SIZE`, then Fit() the rest (D16, W10).
+        """Force :data:`MIN_SIZE`, then Fit() the rest (D16, plan 1b).
 
         ``SetMinSize`` alone only stops *future* shrinking; ``Fit()``
-        is what actually grows the dialog to respect it right now.
-        W10 pins BOTH dimensions (the old call passed ``-1`` for the
-        height, so only the width was floored and the list collapsed
-        to the sizer's own small best height); ``Fit()`` honours both
-        -- measured on this task's own probe on 4.3.1 osx-cocoa, so no
-        ``SetSize`` fallback is needed. ``library.xrc``'s header
-        anticipates exactly this: "Code re-applies SetMinSize() if a
-        screen-fit minimum is ever specified".
+        is what actually grows the dialog to respect it right now
+        (W10's measured note). Both dimensions are pinned, so the list
+        never collapses to the sizer's own small best height.
+        ``library.xrc``'s header anticipates exactly this: "Code
+        re-applies SetMinSize() if a screen-fit minimum is ever
+        specified".
         """
         self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], MIN_SIZE[1]))
         self.dialog.Fit()

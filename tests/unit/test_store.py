@@ -773,6 +773,112 @@ def test_store_append_unknown_ride_raises_foreign_key_error(tmp_path: Path) -> N
         store.close()
 
 
+@pytest.mark.parametrize(
+    ("event", "expected"),
+    [
+        (
+            Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"}),
+            RideStatus.RUNNING,
+        ),
+        (
+            Event(action="continue", payload={"actual_start": "2026-09-20T10:00:00"}),
+            RideStatus.RUNNING,
+        ),
+        (
+            Event(action="finish", payload={"finished_at": "2026-09-20T12:00:00"}),
+            RideStatus.FINISHED,
+        ),
+        (
+            Event(action="reopen", payload={"reopened_at": "2026-09-20T12:05:00"}),
+            RideStatus.REOPENED,
+        ),
+    ],
+    ids=["start", "continue", "finish", "reopen"],
+)
+def test_store_append_lifecycle_action_writes_the_mapped_status(
+    tmp_path: Path, event: Event, expected: RideStatus
+) -> None:
+    """The lifecycle actions sync ride.status in append's transaction.
+
+    start and continue both mean RUNNING, finish FINISHED, reopen
+    REOPENED -- and ``rides()`` (the library's own read) shows it.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+
+        store.append(ride_id, event)
+
+        rows = store.rides()
+    finally:
+        store.close()
+
+    assert [(row.id, row.status) for row in rows] == [(ride_id, expected)]
+
+
+def test_store_append_record_crossing_leaves_status_unchanged(tmp_path: Path) -> None:
+    """A crossing is an audit append: status and updated_at stay put.
+
+    The ride starts DRAFT; ``record_crossing`` is not a lifecycle
+    action, so the row's status and its updated_at sentinel must both
+    survive the append untouched.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        with store._conn:
+            store._conn.execute("UPDATE ride SET updated_at = 1 WHERE id = ?", (ride_id,))
+
+        store.append(
+            ride_id,
+            Event(
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
+            ),
+        )
+
+        rows = store.rides()
+    finally:
+        store.close()
+
+    assert [(row.id, row.status) for row in rows] == [(ride_id, RideStatus.DRAFT)]
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        updated_at = conn.execute(
+            "SELECT updated_at FROM ride WHERE id = ?", (ride_id,)
+        ).fetchone()[0]
+    assert updated_at == 1  # the sentinel survived: no ride-row write happened
+
+
+def test_store_append_lifecycle_action_stamps_updated_at(tmp_path: Path) -> None:
+    """A lifecycle append writes updated_at = now on the ride row."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        with store._conn:
+            store._conn.execute("UPDATE ride SET updated_at = 1 WHERE id = ?", (ride_id,))
+        before = int(datetime.now(UTC).timestamp())
+
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        updated_at = conn.execute(
+            "SELECT updated_at FROM ride WHERE id = ?", (ride_id,)
+        ).fetchone()[0]
+    assert updated_at >= before
+
+
 def test_store_load_engine_missing_ride_raises_ride_not_found(tmp_path: Path) -> None:
     """Loading a ride id that never existed fails loudly."""
     db_path = tmp_path / "rides.db"
@@ -1529,7 +1635,9 @@ def test_store_delete_ride_removes_all_dependent_rows(tmp_path: Path) -> None:
 
     The schema declares plain ``REFERENCES`` (no ON DELETE CASCADE --
     recorded decision), so delete_ride must remove the dependents
-    itself, in FK-safe order, in one transaction.
+    itself, in FK-safe order, in one transaction. The audit row is a
+    crossing event: a start would sync the row to RUNNING and trip the
+    delete guard, and this test is about dependents, not lifecycle.
     """
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
@@ -1538,8 +1646,13 @@ def test_store_delete_ride_removes_all_dependent_rows(tmp_path: Path) -> None:
         store.append(
             ride_id,
             Event(
-                action="start",
-                payload={"actual_start": "2026-09-20T10:00:00"},
+                action="record_crossing",
+                payload={
+                    "plate": "12",
+                    "entry_id": "12",
+                    "lap": 1,
+                    "crossed_at": "2026-09-20T10:02:00",
+                },
             ),
         )
         with store._conn:
@@ -2138,7 +2251,11 @@ def _source_ride_with_timing_data(path: Path, roster: Roster) -> int:
 def test_store_duplicate_ride_copies_setup_and_roster_without_timing_data(
     tmp_path: Path,
 ) -> None:
-    """R-15: the copy is a new DRAFT ride with the roster, no timing."""
+    """R-15: the copy is a new DRAFT ride with the roster, no timing.
+
+    The source carries a start event, so its persisted status reads
+    RUNNING (the append lifecycle sync); the copy never inherits it.
+    """
     db_path = tmp_path / "rides.db"
     source_id = _source_ride_with_timing_data(db_path, _pooled_roster())
     store = Store.open(db_path)
@@ -2151,7 +2268,7 @@ def test_store_duplicate_ride_copies_setup_and_roster_without_timing_data(
 
     assert copy_id != source_id
     assert [row.id for row in rows] == [source_id, copy_id]
-    assert [row.status for row in rows] == [RideStatus.DRAFT, RideStatus.DRAFT]
+    assert [row.status for row in rows] == [RideStatus.RUNNING, RideStatus.DRAFT]
     assert rows[1].name == "GORBA EPIC 2026 (copy)"
     assert len(copied.entries) == 2
     assert [(entry.plate, entry.display_name) for entry in copied.entries] == [

@@ -10,7 +10,9 @@ other version is refused), and exposes the ride surface E5.1.1/E5.1.2
 own: :meth:`Store.create_ride`
 and :meth:`Store.rides` (E5.1.1) and the event log --
 :meth:`Store.append` persists one :class:`~rivercrossing.ride.Event`
-as one ``audit`` row and :meth:`Store.load_engine` rebuilds a
+as one ``audit`` row and syncs the ride row's ``status``/``updated_at``
+for the lifecycle actions (start/continue -> running, finish ->
+finished, reopen -> reopened); :meth:`Store.load_engine` rebuilds a
 :class:`~rivercrossing.ride.RideEngine` by replaying those events
 (E5.1.2). E5.2.1 adds the session bookkeeping: :meth:`Store.open`
 records one ``app_session`` row per launch (``active_ride_id`` when a
@@ -141,10 +143,10 @@ them open and later EPICs will build on them:
   ``app_session.active_ride_id``, then the ride row.
 - **delete guards read the stored row (E5.3.2)**: the RUNNING refusal
   reads the ``ride`` table's ``status`` column -- the persisted truth
-  the library shows. ``create_ride`` writes ``draft`` and today the
-  engine's ``start`` event lands in the audit log without the facade
-  syncing the row (E5.4's engine-sync writes it), so the delete guard
-  is correct against the stored value.
+  the library shows. ``create_ride`` writes ``draft`` and
+  :meth:`Store.append` syncs the row on the lifecycle actions
+  (start/continue -> running, finish -> finished, reopen -> reopened),
+  so the delete guard reads a status that tracks the event log.
 - **audit_rows projection (E7.3.1)**: :meth:`Store.audit_rows` returns
   the UI's own :class:`~rivercrossing.ui.presenters.data_source.
   AuditRow` view-model rather than a second, store-side row type --
@@ -416,6 +418,19 @@ def _audit_when(epoch: int) -> str:
     projection.
     """
     return datetime.fromtimestamp(epoch).strftime("%H:%M:%S")  # noqa: DTZ006 -- local display, _to_epoch's inverse
+
+
+# The lifecycle actions that move the ride row's status column in the
+# same transaction as their audit row (spec §3's four states). Every
+# other action -- crossings, holds, corrections -- is an audit-only
+# append: ``ride.status`` is the lifecycle truth the library and the
+# R-18 delete guard read, not a crossing log.
+_ACTION_STATUS: dict[str, RideStatus] = {
+    "start": RideStatus.RUNNING,
+    "continue": RideStatus.RUNNING,
+    "finish": RideStatus.FINISHED,
+    "reopen": RideStatus.REOPENED,
+}
 
 
 class RideNotFoundError(StoreError):
@@ -1185,7 +1200,11 @@ class Store:
         it carries one, else from ``now`` -- the audit viewer's "when"
         column (E7.3.1), never the replay source: replay reads the
         payload and orders by insert id (module docstring's E5.1.2
-        resolution). No return value.
+        resolution). The same transaction syncs the ride row's
+        lifecycle: ``start``/``continue`` write RUNNING, ``finish``
+        FINISHED, ``reopen`` REOPENED, each stamping ``updated_at``
+        with now; any other action appends to the audit log only,
+        leaving the row untouched. No return value.
 
         Args:
             ride_id: The ride the event belongs to.
@@ -1193,12 +1212,19 @@ class Store:
                 it.
         """
         stamp = _event_timestamp(event.payload)
-        at = _to_epoch(stamp) if stamp is not None else int(datetime.now(UTC).timestamp())
+        now = int(datetime.now(UTC).timestamp())
+        at = _to_epoch(stamp) if stamp is not None else now
+        status = _ACTION_STATUS.get(event.action)
         with self._conn:
             self._conn.execute(
                 "INSERT INTO audit (ride_id, at, action, payload_json) VALUES (?, ?, ?, ?)",
                 (ride_id, at, event.action, json.dumps(dict(event.payload))),
             )
+            if status is not None:
+                self._conn.execute(
+                    "UPDATE ride SET status = ?, updated_at = ? WHERE id = ?",
+                    (status, now, ride_id),
+                )
 
     def load_engine(
         self,

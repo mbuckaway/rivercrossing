@@ -1,27 +1,27 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless pins for ``ride_library``'s column-width plan (W10).
+"""Headless pins for ``ride_library``'s column defaults (plan 1b).
 
-The Ride-name column's 80 px default truncates the canvas's own names
-at every window size: the dialog is resizable, but a fixed 80 px
-column never uses the added width (xrc-windows.md D). Measured on
-wxPython 4.3.1 osx-cocoa / wxWidgets 3.3.3: wxDataViewCtrl stretches
-only its *last* column to fill the window, and the Ride column is
-first, so the slack a widened dialog creates strands past Entries
-while the name keeps clipping. The fix pins compact fixed widths for
-Date/Status/Entries -- wide enough for the canvas content at 150%
-text zoom, measured with ``GetFullTextExtent`` on the stock 13 px GUI
-font: "2026-09-20" = 66 px, "REOPENED" = 59 px, "Entries" = 37 px --
-and makes the Ride column elastic: ``name_column_width`` gives it
-every pixel the compact columns leave, and the view re-applies it on
-every size event, so a widened dialog widens the name column.
+A ``wxDataViewCtrl`` column never sizes itself to its content, so an
+unpinned column keeps the platform's 80 DIP default (measured on
+4.3.1 osx-cocoa / wxWidgets 3.3.3: the control stretches only its
+*last* column, and the Ride name is first) and the name clipped at
+every window size. Plan 1b retires W10's elastic Ride column: every
+column now opens at its own pinned width -- Ride 240 px, then compact
+fixed widths for Date/Status/Entries, wide enough for the canvas
+content at 150% text zoom (measured with ``GetFullTextExtent`` on the
+stock 13 px GUI font: "2026-09-20" = 66 px, "REOPENED" = 59 px,
+"Entries" = 37 px) -- and stays resizable, so the operator tunes the
+widths by hand instead of the view re-filling the Ride column on
+every size event.
 
-The dialog's own floor is now 2x the canvas width and 3x its height
-(:data:`MIN_SIZE`), so the four columns fit at the minimum size too.
-``RidesListModel.Compare`` backs the natively sortable headers: the
-base ``DataViewIndexListModel`` already sorts text columns by their
-displayed value, so the override only has to case-fold the Ride name
-and sort Entries as a number (its displayed value is ``str(entries)``,
-which would otherwise order "10" before "2").
+The dialog's own floor (:data:`MIN_SIZE`) returns to a canvas-close
+560x220: the four pinned widths total 530 px, so nothing needs W10's
+doubled 1040 px width. ``RidesListModel.Compare`` backs the
+still-sortable headers: the base ``DataViewIndexListModel`` already
+sorts text columns by their displayed value, so the override only has
+to case-fold the Ride name and sort Entries as a number (its
+displayed value is ``str(entries)``, which would otherwise order "10"
+before "2").
 
 Importing ``ride_library`` pulls ``wx`` in transitively (its
 ``RidesListModel`` needs it at class-definition time, the same
@@ -32,11 +32,13 @@ does for ``TeamsListModel``.
 """
 
 import pytest
+import wx
 from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui.presenters.data_source import RideSummary
+from rivercrossing.ui.views import ride_library
 from rivercrossing.ui.views.ride_library import (
     COL_DATE,
     COL_DATE_WIDTH,
@@ -48,95 +50,79 @@ from rivercrossing.ui.views.ride_library import (
     COL_STATUS_WIDTH,
     COLUMN_LABELS,
     MIN_SIZE,
+    RIDES_LIST_COLUMN_FLAGS,
     RidesListModel,
-    name_column_width,
 )
 
-# The canvas's exact column order (xrc-windows.md D), one width per
-# column in that order.
-_COLUMN_WIDTHS_BY_CANVAS_ORDER = (
-    COL_NAME_WIDTH,
-    COL_DATE_WIDTH,
-    COL_STATUS_WIDTH,
-    COL_ENTRIES_WIDTH,
-)
+# --- column defaults (plan 1b) ---------------------------------------
 
 
-def test_column_width_constants_line_up_with_the_canvas_column_order() -> None:
-    """Ride | Date | Status | Entries each carry one pinned width."""
-    assert len(_COLUMN_WIDTHS_BY_CANVAS_ORDER) == len(COLUMN_LABELS)
+def test_column_widths_given_the_canvas_column_order_are_the_plan_defaults() -> None:
+    """Ride | Date | Status | Entries open at 240 | 110 | 110 | 70.
+
+    ``_COLUMN_WIDTHS`` is what ``_build_columns`` applies to each
+    column, one entry per ``COLUMN_LABELS`` entry in canvas order.
+    """
+    assert ride_library._COLUMN_WIDTHS == (240, 110, 110, 70)
 
 
-def test_compact_column_widths_are_pinned_for_the_canvas_content() -> None:
-    """Date/Status/Entries never clip; the name column takes the slack.
+def test_column_widths_given_the_canvas_labels_carry_one_width_each() -> None:
+    """One width per label: the column index never misaligns."""
+    assert len(ride_library._COLUMN_WIDTHS) == len(COLUMN_LABELS)
+
+
+def test_column_widths_given_the_ride_column_position_use_the_name_width() -> None:
+    """Ride is first in canvas order, so its width is COL_NAME_WIDTH."""
+    assert ride_library._COLUMN_WIDTHS[COL_NAME] == COL_NAME_WIDTH
+
+
+def test_name_column_width_given_the_plan_default_is_240() -> None:
+    """240 px is 3x wx's 80 DIP default and clears the longest name.
+
+    "GORBA EPIC 2026 (copy)" measured 135 px at the stock 13 px GUI
+    font, so the pinned width leaves the operator's long names room.
+    """
+    assert COL_NAME_WIDTH == 240
+
+
+def test_compact_column_widths_given_the_canvas_content_never_clip() -> None:
+    """Date/Status/Entries keep compact widths that fit their content.
 
     The three compact columns are fixed so their short content (an ISO
-    date, a status word, an entry count) never truncates at any window
-    size; 110 px covers "2026-09-20" (66 px) and "REOPENED" (59 px)
-    even at the in-app 150% text zoom, and 70 px covers the "Entries"
-    header (37 px).
+    date, a status word, an entry count) never truncates; 110 px covers
+    "2026-09-20" (66 px) and "REOPENED" (59 px) even at the in-app 150%
+    text zoom, and 70 px covers the "Entries" header (37 px).
     """
     assert (COL_DATE_WIDTH, COL_STATUS_WIDTH, COL_ENTRIES_WIDTH) == (110, 110, 70)
 
 
-def test_name_column_width_floor_is_pinned_for_the_canvas_minimum() -> None:
-    """The name column never drops below its canvas-minimum fill.
+# --- RIDES_LIST_COLUMN_FLAGS (sortable + resizable, plan 1b) ---------
 
-    208 px is the fill the canvas's own 520 px dialog gave it (the
-    list's client measured ~498 px there on 4.3.1 osx-cocoa;
-    498 - 110 - 110 - 70 = 208) and fits the canvas's own longest name,
-    "GORBA EPIC 2026 (copy)" (135 px at the stock font). It is now a
-    floor seen only before the first layout: the dialog's own minimum
-    is :data:`MIN_SIZE`'s 1040 px, so a laid-out list always hands the
-    name column the leftover.
+
+def test_rides_list_column_flags_given_the_pinned_list_keep_it_resizable() -> None:
+    """The explicit flags retain the resizable bit wx drops."""
+    flags = RIDES_LIST_COLUMN_FLAGS
+
+    assert (flags & wx.dataview.DATAVIEW_COL_RESIZABLE) == wx.dataview.DATAVIEW_COL_RESIZABLE
+
+
+def test_rides_list_column_flags_given_the_pinned_list_keep_it_sortable() -> None:
+    """Native header sorting is what the flags are for."""
+    flags = RIDES_LIST_COLUMN_FLAGS
+
+    assert (flags & wx.dataview.DATAVIEW_COL_SORTABLE) == wx.dataview.DATAVIEW_COL_SORTABLE
+
+
+# --- MIN_SIZE (plan 1b: back to a canvas-close floor) ----------------
+
+
+def test_min_size_given_the_plan_floor_is_small_enough_to_sit_beside_the_console() -> None:
+    """Plan 1b: the floor returns from W10's 1040x546 to 560x220.
+
+    The four pinned widths total 530 px, inside the 560 px floor, so
+    the dialog opens small and the operator widens a column by hand.
     """
-    assert COL_NAME_WIDTH == 208
-
-
-_NAME_FILL_CASES = (
-    (497, COL_NAME_WIDTH),  # clamp floor: one px below the exact-fill point
-    (498, COL_NAME_WIDTH),  # exact fill at the 520 px dialog floor
-    (499, 209),  # one px above: every extra px widens the name column
-    (900, 610),
-    (1344, 1054),  # the 1366 px field-laptop floor's list width
-)
-
-
-@pytest.mark.parametrize(("client_width", "expected"), _NAME_FILL_CASES)
-def test_name_column_width_given_client_width_returns_leftover_or_floor(
-    client_width: int, expected: int
-) -> None:
-    """Name width = client minus the compact columns, floored at 208."""
-    assert name_column_width(client_width) == expected
-
-
-@given(st.integers(min_value=498, max_value=4000))
-def test_name_column_width_given_a_laid_out_list_takes_every_compact_leftover(
-    client_width: int,
-) -> None:
-    """Property: above the floor, the name takes the full leftover.
-
-    The exact-fill identity is what makes the column grow with the
-    window: widening the dialog by N px widens the Ride column by N px.
-    """
-    compact_total = COL_DATE_WIDTH + COL_STATUS_WIDTH + COL_ENTRIES_WIDTH
-
-    assert name_column_width(client_width) == client_width - compact_total
-
-
-# --- MIN_SIZE (W10: 2x canvas width, 3x canvas height) ---------------
-
-
-def test_min_size_given_the_canvas_dialog_floor_doubles_width_and_triples_height() -> None:
-    """D16/W10: the 520x182 canvas floor grows to 1040x546.
-
-    At 520 px the four columns did not fit (the last one clipped); the
-    doubled width gives the elastic Ride column the slack, and the
-    tripled height stops the list collapsing to the sizer's own tiny
-    best height. Measured: ``SetMinSize`` + ``Fit()`` honours both
-    dimensions at this size, so no ``SetSize`` fallback is needed.
-    """
-    assert MIN_SIZE == (1040, 546)
+    assert MIN_SIZE == (560, 220)
 
 
 # --- RidesListModel.Compare (native header sorting) ------------------
