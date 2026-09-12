@@ -22,7 +22,6 @@ from rivercrossing.ui.views.ride_library import RideLibrary
 from rivercrossing.ui.views.rider_editor import RiderEditor
 from rivercrossing.ui.views.simulator import SimulatorDialog
 
-
 # --- data_source is required: Python's own signature enforcement ---
 
 _VIEW_CONSTRUCTION_CASES = (

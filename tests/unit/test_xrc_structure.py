@@ -560,9 +560,7 @@ def test_ride_header_declares_the_ride_group_box() -> None:
 
 def test_ride_header_ride_box_holds_the_logo_and_the_six_values() -> None:
     """§5: the reused logo slot leads, then the six value controls."""
-    names = [
-        obj.attrib["name"] for obj in _ride_info_box().iter("object") if "name" in obj.attrib
-    ]
+    names = [obj.attrib["name"] for obj in _ride_info_box().iter("object") if "name" in obj.attrib]
 
     assert names == ["ride_logo_bmp", *RIDE_INFO_VALUE_NAMES]
 

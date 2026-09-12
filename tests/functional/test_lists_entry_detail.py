@@ -50,10 +50,10 @@ pytestmark = pytest.mark.functional
 
 
 class _PopulatedEntrySource:
-    """A test-only source returning one populated entry for plate "77"."""
+    """Test-only source returning one populated entry (plate 77)."""
 
     def entry_detail(self, plate: str) -> EntryDetail:
-        """Return the populated "77" entry; raise for any other plate."""
+        """Return the populated entry; raise for any other plate."""
         if plate != "77":
             raise LookupError(f"no entry detail for plate {plate!r}")
         return EntryDetail(
@@ -72,7 +72,7 @@ class _PopulatedEntrySource:
 
 @pytest.fixture(scope="module")
 def shared_entry_detail(xrc_resource: object) -> EntryDetailDialog:
-    """One ``EntryDetailDialog``, populated for the view-capability rows.
+    """One ``EntryDetailDialog`` populated for view-capability rows.
 
     Kept populated (test-only fixture) so the bitmap-rendering and
     card-imagelist assertions below have rows to render; the app-path

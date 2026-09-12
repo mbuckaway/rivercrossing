@@ -20,7 +20,7 @@ MAX_SCREEN_HEIGHT = 768
 
 # --- xrc-windows.md's own tables, transcribed independently of the
 # canvas so a transcription mistake in either place is caught by the
-# other disagreeing, not by this test checking itself against itself. ---
+# other disagreeing. ---
 CANVAS_LAPS_CARD_KEYS = ("Kc", "joker")  # KC -> Kc, JK -> joker (asset_key)
 CANVAS_CARDS_HELD_KEYS = ("9h", "Ks", "Kc", "joker", "4d")  # the 5-of-9 fixture
 
