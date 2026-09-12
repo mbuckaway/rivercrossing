@@ -164,11 +164,10 @@ def test_ride_slug_slugifies_and_never_empty() -> None:
 
 
 def test_target_actions_cover_every_results_export_row() -> None:
-    """Every export target + preview + focus resolves to a handler."""
+    """Every export target + preview resolves to a handler."""
     for target in ("export_html", "export_pdf", "export_poster", "export_results_csv"):
         assert target in app_module._TARGET_ACTIONS
     assert "preview_in_browser" in app_module._TARGET_ACTIONS
-    assert "focus_tiebreak_control" in app_module._TARGET_ACTIONS
 
 
 def test_write_export_html_writes_a_self_contained_page(tmp_path: Path) -> None:
@@ -499,8 +498,7 @@ def test_results_window_accepts_an_on_export_callback_seam() -> None:
 
     The callback replaces the dead synthetic-menu-event mechanism:
     each export button fires it with the button's route target, and
-    the app wires it to ``_handle_export_command`` at decoration time
-    (the same seam shape as ``on_reopen``).
+    the app wires it to ``_handle_export_command`` at decoration time.
     """
     # Source pin, not inspect.signature: the view's DataSource
     # annotation is TYPE_CHECKING-only and lazily evaluated (PEP 649

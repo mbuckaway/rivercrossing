@@ -1,16 +1,16 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""``ResultsWindow``: results_frame (1f), standings (E1.5.2/E6.4.1).
+"""``ResultsWindow``: results_dlg (1f), standings (E1.5.2/E6.4.1).
 
-xrc-windows.md section D's code-side footnote puts
-``standings_list``'s columns and rows in code -- ``results.xrc``'s
-own header explains why (``wxDataViewListCtrl`` would overwrite the
-frozen name). This module is that binding.
+xrc-windows.md section D's code-side footnote puts the standings
+lists' columns and rows in code -- ``results.xrc``'s own header
+explains why (``wxDataViewListCtrl`` would overwrite the frozen
+name). This module is that binding.
 
 The canvas's "Best 5" cell is plain text carrying suit glyphs ("K♠
 K♣ K♦ JK★ 9♥"), confirmed against ``design/docs-html``'s own table
 markup (a literal ``<td>`` string, not five drawn bitmaps) -- unlike
 ``main_frame.py``'s Card column or ``entry_detail.py``'s cards_list/
-laps_list, ``standings_list`` needs no ``DataViewBitmapRenderer``.
+laps_list, the standings lists need no ``DataViewBitmapRenderer``.
 :func:`format_best5` is the pure text formatter this column uses, and
 :func:`format_place` the E6.4.1 ⚠ badge formatter (a draw_required row
 renders ``"⚠ 2"`` in its Place cell -- this task's own reading of the
@@ -19,50 +19,47 @@ and shows no tie rows, so a new eighth column would shift every
 frozen column index; the badge instead leads the Place cell, where a
 scorer's eye lands first).
 
-E6.4.1 (P9) completes the E1.5.2 scope: ``show_publish_options`` sets
-the five publish checkboxes from an ``ExportOptions``; ``set_stale``
+Phase 3 split the standings by entry kind. A MIXED ride renders its
+Teams and Solo sections on the two ``results_notebook`` pages
+(``teams_standings_list``/``solo_standings_list``); a SOLO-only ride
+hides the notebook and shows the one standalone ``standings_list``.
+The view switches on the ``entry_mode`` the app threads in, so no
+eighth column and no merged header row is needed.
+
+E7.3.2's stale-export flag is the one live banner: ``set_stale``
 shows/hides the code-side ``stale_infobar`` (xrc-windows.md's
 code-side footnote; XRC cannot author a ``wxInfoBar`` -- results.xrc's
-own header); ``show_times_chk`` also toggles the Total column;
-``tiebreak_list`` is seeded from the ride's stored ``tiebreak_order``
-via the presenter's plain-label map, and its NATIVE up/down reorder
-buttons (``GetUpButton()``/``GetDownButton()`` -- no custom buttons
-are added) notify the presenter to re-read ``GetStrings()`` and
-re-rank live. The window's one presenter (``self.presenter``, built
-here like ``RideSetup`` builds its own) owns that label map and the
-``ExportOptions`` the export handlers (E6.4.2) read. ux-polish wires
-``reopen_btn``: the app threads an ``on_reopen`` callback (its own
-``_handle_reopen_ride_route`` flow, the same one ``mi_reopen_ride``
-fires) into the results frame, so the button and the menu row share
-one handler implementation. W11 wires the four export buttons the
-same way: the app threads an ``on_export(target)`` callback (its own
-``_handle_export_command`` route, the same one each ``mi_export_*``
-menu row runs) into the frame at decoration time. The old mechanism
-this replaces -- forwarding a synthetic ``EVT_MENU`` through the
-results frame's own handler chain -- was dead: the frame opens
-parentless (app.py's ``LoadFrame(None, ...)`` in the route opener),
-so command events never propagated up to the main frame where the
-``mi_export_*`` handlers are bound. Both callbacks are the
-one-surface-per-action pattern: one handler implementation serves the
-menu row and the results-frame button.
+own header). ``show_times_chk`` also toggles the Total column on
+every list here. The window's one presenter (``self.presenter``,
+built here like ``RideSetup`` builds its own) holds the
+``ExportOptions`` the export handlers (E6.4.2) read.
+
+W11 wires the four export buttons: the app threads an
+``on_export(target)`` callback (its own ``_handle_export_command``
+route, the same one each ``mi_export_*`` menu row runs) into the
+dialog at decoration time. This replaces the dead synthetic-event
+mechanism -- forwarding a synthetic ``EVT_MENU`` through the results
+window's own handler chain never reached the main frame where the
+``mi_export_*`` handlers are bound. The buttons are enabled only for
+a FINISHED ride, the same state gate the export menu rows carry. One
+handler implementation serves the menu row and the button.
 
 ``_find`` is now shared via ``ui.views._support.find_control`` --
 see that module's docstring for why it used to be duplicated here.
 """
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import wx
-import wx.adv
 import wx.dataview
 
 from rivercrossing.htmlexport import ExportOptions
-from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER
+from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER, RideStatus
+from rivercrossing.roster import EntryMode
 from rivercrossing.ui import ids
 from rivercrossing.ui.card_text import JOKER_CODE, JOKER_DISPLAY, format_card
 from rivercrossing.ui.presenters.results import ResultsPresenter
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import _ordering, associate_model, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -82,6 +79,7 @@ __all__ = [
     "JOKER_DISPLAY",
     "MIN_SIZE",
     "STALE_INFOBAR",
+    "STANDINGS_COLUMN_FLAGS",
     "TIE_BADGE",
     "ResultsWindow",
     "StandingsListModel",
@@ -106,11 +104,14 @@ COLUMN_LABELS: tuple[str, ...] = ("Place", "Plate", "Entry", "Laps", "Total", "B
 # docstring).
 TIE_BADGE = "⚠"
 
-# D16: the canvas draws this window at 720px; XRC has no window-level
-# minsize (results.xrc's own header notes this and defers to code).
-# Height is Fit()'s own measurement of the real sizer content -- see
-# this task's own report for how it was measured.
-MIN_SIZE = (720, 442)
+# D16: XRC has no window-level minsize (results.xrc's own header notes
+# this and defers to code). The width floor is measured on wxPython
+# 4.3.1 / wxWidgets 3.3.3: the publish-checkbox row's static box needs
+# 735px and the export-button+Close row 539px, so 735 + the two 10px
+# sizeritem borders = 755. At the old 720 the five checkboxes wrapped
+# onto a second row. Height is Fit()'s own measurement of the real
+# sizer content -- see this task's own report for how it was measured.
+MIN_SIZE = (755, 442)
 
 # The stale-export InfoBar's frozen name (xrc-windows.md D / spec.md
 # §15b). XRC cannot author a wxInfoBar at all (results.xrc's own
@@ -119,12 +120,18 @@ MIN_SIZE = (720, 442)
 # RESUME_INFOBAR/REOPENED_INFOBAR/FINISHED_INFOBAR precedent.
 STALE_INFOBAR = "stale_infobar"
 
+# AppendTextColumn's own default flags include
+# wxDATAVIEW_COL_RESIZABLE, but an explicit flags= argument *replaces*
+# the default rather than OR-ing into it -- macOS then sets the column
+# NSTableColumnNoResizing -- so both bits must be spelled out
+# (mirrors rider_editor.py's RIDERS_LIST_COLUMN_FLAGS).
+STANDINGS_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
 
-# E6.4.2: the results-frame export buttons and the route targets they
-# fire, so one handler implementation serves both surfaces (W11: the
-# values are the ``_handle_export_command`` route targets, matching the
-# Results menu rows' dispatch; the old menu-id values fed a synthetic
-# EVT_MENU that never reached the main frame).
+
+# E6.4.2: the export buttons and the route targets they fire, so one
+# handler implementation serves both surfaces (W11: the values are the
+# ``_handle_export_command`` route targets, matching the Results menu
+# rows' dispatch).
 _EXPORT_BUTTONS: tuple[tuple[str, str], ...] = (
     ("export_html_btn", "export_html"),
     ("export_pdf_btn", "export_pdf"),
@@ -134,7 +141,7 @@ _EXPORT_BUTTONS: tuple[tuple[str, str], ...] = (
 
 
 def format_best5(cards: Sequence[str]) -> str:
-    """Return ``standings_list``'s "Best 5" cell text for *cards*.
+    """Return the "Best 5" cell text for *cards*.
 
     Space-joined, canvas exact: ``("KS", "KC", "KD", "JK", "9H")`` ->
     ``"K♠ K♣ K♦ JK★ 9♥"``.
@@ -143,7 +150,7 @@ def format_best5(cards: Sequence[str]) -> str:
 
 
 def format_place(standing: StandingsRow) -> str:
-    """Return ``standings_list``'s Place cell text for *standing*.
+    """Return the Place cell text for *standing*.
 
     A ``draw_required`` row (R-43's unresolved hand tie) carries the
     ⚠ badge ahead of its place -- ``"⚠ 2"`` -- the E6.4.1 reading of
@@ -165,32 +172,30 @@ _TEXT_ACCESSORS: tuple[Callable[[StandingsRow], str], ...] = (
     lambda standing: standing.hand,
 )
 
-
-@dataclass(frozen=True, slots=True)
-class _SectionHeader:
-    """One standings_list section marker ("Teams" or "Solo").
-
-    Phase 3 (team/solo results split): the two lists
-    :meth:`ResultsWindow.show_standings` receives carry the kind
-    distinction, so the model renders a non-empty section as a header
-    row (the label in the Entry column, every other cell blank) in the
-    same seven columns -- never an eighth column (xrc-windows.md pins
-    the layout). An empty section is skipped, header and all.
-    """
-
-    label: str
+# The native header sort's per-column key, in ``COLUMN_LABELS`` order:
+# Place/Laps are ints, Total sorts on the stored numeric seconds (never
+# its rendered ``h:mm:ss`` text), and the rest are strings.
+_STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
+    lambda standing: standing.place,
+    lambda standing: standing.plate,
+    lambda standing: standing.entry,
+    lambda standing: standing.laps,
+    lambda standing: standing.total_seconds,
+    lambda standing: format_best5(standing.best5),
+    lambda standing: standing.hand,
+)
 
 
 class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
-    """Read-only model over ``StandingsRow`` rows, standings_list.
+    """Read-only model over ``StandingsRow`` rows for a standings list.
 
     ``# type: ignore[misc]``: wx ships no stubs, so mypy refuses to
     subclass ``Any`` -- the same unavoidable annotation
     ``CrossingsFeedModel`` carries in ``views/main_frame.py``.
     """
 
-    def __init__(self, rows: Sequence[StandingsRow | _SectionHeader]) -> None:
-        """Wrap *rows*: standings rows plus section-header markers."""
+    def __init__(self, rows: Sequence[StandingsRow]) -> None:
+        """Wrap *rows*."""
         super().__init__(len(rows))
         self._rows = tuple(rows)
 
@@ -203,87 +208,110 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return "string"
 
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the cell value at *row*/*col*.
+        """Return the cell value at *row*/*col*."""
+        return _TEXT_ACCESSORS[col](self._rows[row])
 
-        A :class:`_SectionHeader` row names its section in the Entry
-        column (``COL_ENTRY``) and leaves the other six blank, so the
-        section label never shifts the frozen column layout.
+    def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
+        self,
+        item1: Any,  # noqa: ANN401 -- wx ships no stubs
+        item2: Any,  # noqa: ANN401 -- wx ships no stubs
+        col: int,
+        ascending: bool,  # noqa: FBT001 -- wx's own callback argument
+    ) -> int:
+        """Return the Ordering of *item1* versus *item2* on *col*.
+
+        The native header arrows' answer: the control hands this two
+        items and the model column, and the comparison runs on the
+        rows those items index (``DataViewIndexListModel.GetRow``),
+        keyed per column by :data:`_STANDINGS_SORT_KEYS`. Place and
+        Laps compare as integers and Total as numeric seconds, so a
+        displayed ``"10:00:00"`` never sorts before ``"9:00:00"``.
+
+        Equal keys fall back to the row's own position, which is
+        unique: wx's control-side sort is not stable, so without the
+        tie-break two rows showing the same cell could reorder freely
+        between sorts. The tie-break is deliberately *not* negated for
+        the downward arrow, so equal-key rows keep their original
+        order in both directions (mirrors
+        ``RiderRowListModel.Compare`` in ``ui.views._support``).
+        *ascending* is the arrow's own direction.
         """
-        value = self._rows[row]
-        if isinstance(value, _SectionHeader):
-            if col == COL_ENTRY:
-                return value.label
-            return ""
-        return _TEXT_ACCESSORS[col](value)
+        first_row = self.GetRow(item1)
+        second_row = self.GetRow(item2)
+        sort_key = _STANDINGS_SORT_KEYS[col]
+        result = _ordering(sort_key(self._rows[first_row]), sort_key(self._rows[second_row]))
+        if result == 0:
+            return _ordering(first_row, second_row)
+        return result if ascending else -result
 
 
 class ResultsWindow:
-    """Code-side behaviour for ``results_frame`` (1f).
+    """Code-side behaviour for ``results_dlg`` (1f).
 
     Implements the :class:`~rivercrossing.ui.presenters.results.
-    ResultsView` contract in full (E6.4.1): ``show_standings``,
+    ResultsView` contract in full (E6.4.1): ``show_standings`` (the
+    MIXED notebook or the SOLO standalone list, per ``entry_mode``),
     ``set_stale`` (the code-side stale_export banner E7.3.2 triggers
-    after post-export corrections), ``show_publish_options``/
-    ``publish_options`` (the five publish checkboxes), and the
-    tie-break seed/restore channel (``set_tiebreak_labels``) plus a
-    status notice. The one live presenter is built here, the same
-    ``RideSetup`` precedent. ux-polish: ``reopen_btn`` fires the
-    app-supplied ``on_reopen`` callback -- the reopen flow the
-    ``mi_reopen_ride`` menu row runs -- when the app wired one.
+    after post-export corrections), and ``show_publish_options``/
+    ``publish_options`` (the five publish checkboxes). The one live
+    presenter is built here, the same ``RideSetup`` precedent.
     """
 
-    def __init__(  # noqa: PLR0913 -- (frame, data_source) + the tie-break order, export-watermark, reopen and export seams
+    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the tie-break order, export-watermark, entry-mode and export seams
         self,
-        frame: wx.Frame,
+        dialog: wx.Dialog,
         *,
         data_source: DataSource,
         tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER,
         export_watermark: int | None = None,
-        on_reopen: Callable[[], None] | None = None,
+        entry_mode: EntryMode = EntryMode.SOLO,
         on_export: Callable[[str], None] | None = None,
     ) -> None:
-        """Decorate an already-loaded ``results_frame`` window.
+        """Decorate an already-loaded ``results_dlg`` window.
 
         Args:
-            frame: The ``wx.Frame`` ``harness.load_window`` (or the
+            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
                 app bootstrap) already loaded from ``results.xrc``.
             data_source: The display-data seam. This view knows only
                 the :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
                 implementation applies.
             tiebreak_order: The ride's stored tie-break spellings, in
-                priority order; the presenter seeds ``tiebreak_list``
-                from them (``RideConfig.tiebreak_order``).
+                priority order (``RideConfig.tiebreak_order``); the
+                presenter ranks the standings with them.
             export_watermark: The engine event count at the last
                 export (E7.3.2); the presenter evaluates the stale
                 banner against it on the first render. ``None`` when
                 nothing was exported.
-            on_reopen: The app's reopen flow (ux-polish) -- the same
-                ``_handle_reopen_ride_route`` ``mi_reopen_ride``
-                fires. ``reopen_btn`` runs it; ``None`` (a results
-                window with no live ride) leaves the button inert.
+            entry_mode: The ride's entry mode (``RideConfig.
+                entry_mode``). MIXED shows the two-page notebook; SOLO
+                shows the standalone ``standings_list``.
             on_export: The app's export flow (W11) -- the same
                 ``_handle_export_command`` route each ``mi_export_*``
                 menu row runs. Each export button fires it with the
                 button's route target; ``None`` leaves the buttons
                 inert (a results window with no live ride).
         """
-        self.frame = frame
+        self.dialog = dialog
         self.data_source = data_source
-        self.on_reopen = on_reopen
+        self.entry_mode = entry_mode
         self.on_export = on_export
 
         self.standings_list = self._find(ids.STANDINGS_LIST, wx.dataview.DataViewCtrl)
+        self.teams_standings_list = self._find(ids.TEAMS_STANDINGS_LIST, wx.dataview.DataViewCtrl)
+        self.solo_standings_list = self._find(ids.SOLO_STANDINGS_LIST, wx.dataview.DataViewCtrl)
+        self.results_notebook = self._find(ids.RESULTS_NOTEBOOK, wx.Notebook)
         self.show_times_chk = self._find(ids.SHOW_TIMES_CHK, wx.CheckBox)
         self.laps_board_chk = self._find(ids.LAPS_BOARD_CHK, wx.CheckBox)
         self.time_board_chk = self._find(ids.TIME_BOARD_CHK, wx.CheckBox)
         self.full_field_chk = self._find(ids.FULL_FIELD_CHK, wx.CheckBox)
         self.all_cards_chk = self._find(ids.ALL_CARDS_CHK, wx.CheckBox)
-        self.tiebreak_list = self._find(ids.TIEBREAK_LIST, wx.adv.EditableListBox)
 
-        self._total_column = self._build_columns()
+        self._total_columns = self._build_columns()
         self._apply_show_times_column()
         self._model: StandingsListModel | None = None
+        self._teams_model: StandingsListModel | None = None
+        self._solo_model: StandingsListModel | None = None
 
         self.stale_infobar = self._build_infobar()
 
@@ -295,78 +323,78 @@ class ResultsWindow:
         )
         # E7.3.2: app.py's export completion (and E6.4.2's own
         # ``_export_options``) finds the open window's presenter through
-        # ``wx.FindWindowByName(RESULTS_FRAME).presenter`` -- the E6.4.2
+        # ``wx.FindWindowByName(RESULTS_DLG).presenter`` -- the E6.4.2
         # contract this view was always meant to fulfil. wxPython
         # wrapper objects hold instance attributes (the ``_spy_repaint``
         # precedent in _lists_common.py); the wrapper stays alive while
         # the window's event bindings hold this view, and a closed
         # window's lookup returns None, so the seam self-clears.
-        self.frame.presenter = self.presenter
+        self.dialog.presenter = self.presenter
 
         self._bind_events()
         self._bind_export_buttons()
-        self._bind_reopen_button()
         self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this frame's own child controls by name.
+        """Resolve one of this dialog's own child controls by name.
 
         See :func:`find_control`'s docstring (``ui.views._support``)
         for the full measured reasoning this mirrors.
 
         Raises:
             LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this frame, even
+                *expected_type* instance inside this dialog, even
                 after settling.
         """
-        return find_control(self.frame, name, expected_type)
+        return find_control(self.dialog, name, expected_type)
 
     def _bind_export_buttons(self) -> None:
         """Wire the four export buttons to the app's export flow (W11).
 
         ``on_export`` is the app's own ``_handle_export_command``
         (the flow each ``mi_export_*`` menu row runs), threaded at
-        decoration time -- the same callback seam ``reopen_btn``
-        uses. Each button fires it with its route target. This
-        replaces the dead synthetic-event mechanism: the results
-        frame opens parentless, so a forwarded ``EVT_MENU`` never
-        reached the main frame's ``mi_export_*`` handlers (module
-        docstring). A results window with no live ride (``None``)
-        leaves the buttons inert, mirroring ``reopen_btn``.
+        decoration time. Each button fires it with its route target.
+        A results window with no live ride (``None``) leaves the
+        buttons inert. Every button is enabled only while the ride is
+        FINISHED, matching the export menu rows' own state gate (Part
+        D: exports are gated on FINISHED).
         """
-        if self.on_export is None:
-            return
+        finished = self.data_source.ride_status() is RideStatus.FINISHED
+        on_export = self.on_export
         for button_name, target in _EXPORT_BUTTONS:
             button = self._find(button_name, wx.Button)
-            button.Bind(wx.EVT_BUTTON, lambda _event, t=target: self.on_export(t))
+            button.Enable(finished)
+            if on_export is not None:
+                button.Bind(wx.EVT_BUTTON, lambda _event, t=target: on_export(t))
 
-    def _bind_reopen_button(self) -> None:
-        """Wire ``reopen_btn`` to the app's reopen flow (ux-polish).
-
-        ``on_reopen`` is the app's own ``_handle_reopen_ride_route``
-        (the flow ``mi_reopen_ride`` runs), threaded at decoration
-        time -- the same callback seam the results window uses for
-        nothing else, and the way the export buttons serve one action
-        per surface. A results window with no live ride (``None``)
-        leaves the button inert: there is nothing a reopen could act
-        on, mirroring the app's no-ride route guards.
-        """
-        if self.on_reopen is None:
-            return
-        button = self._find(ids.REOPEN_BTN, wx.Button)
-        button.Bind(wx.EVT_BUTTON, lambda _event: self.on_reopen())
-
-    def _build_columns(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Append ``standings_list``'s seven columns in canvas order.
+    def _build_columns(self) -> tuple[Any, ...]:
+        """Build the seven columns on every standings list.
 
         Returns:
-            The Total column (``COL_TOTAL``), the one
-            ``show_times_chk`` toggles hidden (results.xrc's own
-            code-side footnote: "hides Total col here too").
+            The Total column (``COL_TOTAL``) of each list, in
+            (standalone, notebook Teams, notebook Solo) order -- the
+            columns ``show_times_chk`` toggles hidden (results.xrc's
+            own code-side footnote: "hides Total col here too").
+        """
+        return tuple(
+            self._build_columns_for(control)
+            for control in (
+                self.standings_list,
+                self.teams_standings_list,
+                self.solo_standings_list,
+            )
+        )
+
+    @staticmethod
+    def _build_columns_for(control: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
+        """Append one list's seven columns in canvas order.
+
+        Returns:
+            The Total column (``COL_TOTAL``) for *control*.
         """
         total: Any = None
         for col, label in enumerate(COLUMN_LABELS):
-            column = self.standings_list.AppendTextColumn(label, col)
+            column = control.AppendTextColumn(label, col, flags=STANDINGS_COLUMN_FLAGS)
             if col == COL_TOTAL:
                 total = column
         return total
@@ -380,14 +408,14 @@ class ResultsWindow:
         results.xrc reserves sizer index 0 (a zero-size spacer) for
         this bar; inserting at index 0 displaces the spacer.
         """
-        bar = wx.InfoBar(self.frame)
+        bar = wx.InfoBar(self.dialog)
         bar.SetName(STALE_INFOBAR)
         bar.SetShowHideEffects(wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
-        self.frame.GetSizer().Insert(0, bar, 0, wx.EXPAND)
+        self.dialog.GetSizer().Insert(0, bar, 0, wx.EXPAND)
         return bar
 
     def _bind_events(self) -> None:
-        """Forward every control event straight to the presenter."""
+        """Forward every publish-checkbox event to the presenter."""
         for checkbox in (
             self.show_times_chk,
             self.laps_board_chk,
@@ -395,14 +423,7 @@ class ResultsWindow:
             self.full_field_chk,
             self.all_cards_chk,
         ):
-            self.frame.Bind(wx.EVT_CHECKBOX, self._on_publish_toggle, checkbox)
-        # The EditableListBox's NATIVE up/down reorder buttons (no
-        # custom buttons added). Binding on the buttons and calling
-        # Skip lets the native reorder run during this same dispatch;
-        # the re-read is deferred through wx.CallAfter so GetStrings()
-        # reflects the post-reorder rows, not the pre-click ones.
-        self.tiebreak_list.GetUpButton().Bind(wx.EVT_BUTTON, self._on_tiebreak_clicked)
-        self.tiebreak_list.GetDownButton().Bind(wx.EVT_BUTTON, self._on_tiebreak_clicked)
+            self.dialog.Bind(wx.EVT_CHECKBOX, self._on_publish_toggle, checkbox)
 
     def _on_publish_toggle(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a publish-checkbox click; forward it to the presenter.
@@ -416,41 +437,38 @@ class ResultsWindow:
             self._apply_show_times_column()
         self.presenter.on_publish_toggled()
 
-    def _on_tiebreak_clicked(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle a native Up/Down click: re-read rows after reorder."""
-        event.Skip()
-        wx.CallAfter(self._notify_tiebreak_reordered)
-
-    def _notify_tiebreak_reordered(self) -> None:
-        """Hand the control's post-reorder rows to the presenter."""
-        self.presenter.on_tiebreak_reordered(list(self.tiebreak_list.GetStrings()))
-
     def _apply_show_times_column(self) -> None:
         """Hide the Total column unless show_times_chk is checked."""
-        self._total_column.SetHidden(not self.show_times_chk.GetValue())
+        hidden = not self.show_times_chk.GetValue()
+        for column in self._total_columns:
+            column.SetHidden(hidden)
 
     def show_standings(self, teams: list[StandingsRow], solo: list[StandingsRow]) -> None:
-        """Render ``standings_list`` (``ResultsView``, Phase 3).
+        """Render the standings (``ResultsView``, Phase 3).
 
-        The two lists carry the kind distinction: a non-empty Teams
-        section renders as a "Teams" header row (the label in the Entry
-        column, other cells blank) followed by its rows, then the Solo
-        section the same way; an empty section is skipped, header and
-        all -- a solo-only ride shows only the Solo section. The frozen
-        seven-column layout never grows an eighth column.
+        A MIXED ride associates a flat model over *teams* with
+        ``teams_standings_list`` and one over *solo* with
+        ``solo_standings_list``, then shows the notebook and hides the
+        standalone list. A SOLO ride associates *solo* with
+        ``standings_list`` and hides the notebook. The list that is not
+        in use is hidden so its sizer slot collapses.
 
         See ``ui.views._support.associate_model``'s docstring for
         why this repaints explicitly (unverified remedy).
         """
-        rows: list[StandingsRow | _SectionHeader] = []
-        if teams:
-            rows.append(_SectionHeader("Teams"))
-            rows.extend(teams)
-        if solo:
-            rows.append(_SectionHeader("Solo"))
-            rows.extend(solo)
-        self._model = StandingsListModel(rows)
-        associate_model(self.standings_list, self._model)
+        if self.entry_mode is EntryMode.MIXED:
+            self._teams_model = StandingsListModel(teams)
+            self._solo_model = StandingsListModel(solo)
+            associate_model(self.teams_standings_list, self._teams_model)
+            associate_model(self.solo_standings_list, self._solo_model)
+            self.standings_list.Hide()
+            self.results_notebook.Show()
+        else:
+            self._model = StandingsListModel(solo)
+            associate_model(self.standings_list, self._model)
+            self.results_notebook.Hide()
+            self.standings_list.Show()
+        self.dialog.Layout()
 
     def set_stale(self, *, stale: bool) -> None:
         """Show/hide :data:`STALE_INFOBAR` (``ResultsView``, E6.4.1).
@@ -466,7 +484,7 @@ class ResultsWindow:
             )
         else:
             self.stale_infobar.Dismiss()
-        self.frame.Layout()
+        self.dialog.Layout()
 
     def show_publish_options(self, options: ExportOptions) -> None:
         """Reflect the five publish checkboxes (``ResultsView``).
@@ -480,27 +498,6 @@ class ResultsWindow:
         self.full_field_chk.SetValue(options.full_field)
         self.all_cards_chk.SetValue(options.all_cards)
         self._apply_show_times_column()
-
-    def set_tiebreak_labels(self, labels: list[str]) -> None:
-        """Seed ``tiebreak_list``'s rows (``ResultsView``, E6.4.1).
-
-        Called by the presenter at construction (the ride's stored
-        order, as plain labels) and on an unrecognised reorder (the
-        last-known-good order).
-        """
-        self.tiebreak_list.SetStrings(labels)
-
-    def show_notice(self, text: str) -> None:
-        """Show a transient status notice (``ResultsView``, E6.4.1).
-
-        The results frame declares no status bar in results.xrc, so
-        ``wx.Frame.SetStatusText`` is a silent no-op today -- the
-        notice channel exists for the presenter's unrecognised-reorder
-        path (the same New/Delete gap ride_setup.py documents); a
-        follow-up that adds a status bar to the window makes it
-        visible without changing this method.
-        """
-        self.frame.SetStatusText(text)
 
     def publish_options(self) -> ExportOptions:
         """Return the five publish checkboxes as ``ExportOptions``.
@@ -518,11 +515,11 @@ class ResultsWindow:
         )
 
     def _apply_min_size(self) -> None:
-        """Force the canvas's 720px floor, then Fit() the rest (D16).
+        """Force the measured width floor, then Fit() the rest (D16).
 
         See :meth:`ride_library.RideLibrary._apply_min_size`'s
         docstring for the measured ``SetMinSize`` + ``Fit()``
         reasoning this mirrors.
         """
-        self.frame.SetMinSize(wx.Size(MIN_SIZE[0], -1))
-        self.frame.Fit()
+        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
+        self.dialog.Fit()

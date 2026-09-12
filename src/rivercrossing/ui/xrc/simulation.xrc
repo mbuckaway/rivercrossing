@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Rider Simulator: simulation_dlg + sim_running_dlg. Control names are
+  frozen; tests find them with FindWindowByName and tools/gen_ids.py
+  turns them into ui/ids.py (R-05, R-73).
+
+  Measured on wxPython 4.3.1 / wxWidgets 3.3.3 (tools/toolkit_probe.py):
+
+    * wxInfoBar cannot be authored here. XRC yields a generic wx.Control
+      and silently drops the name attribute, so FindWindowByName returns
+      None. sim_infobar is built with wx.InfoBar() in code and given its
+      frozen name with SetName().
+
+  Two dialogs in one file per the one-file-per-dialog convention's
+  sibling rule: both belong to the one simulator flow, and the runner is
+  only ever opened by the setup dialog. File order follows the flow:
+  configure first, then run.
+
+  simulation_dlg sizes the placeholder field, then generates it.
+  gen_teams_btn/gen_riders_btn are custom ids, so the bottom row is a
+  plain wxBoxSizer rather than a wxStdDialogButtonSizer (which only
+  places the ids it recognises); wxID_CANCEL stays a stock id so wx
+  keeps its own Escape and click handling.
+
+  sim_running_dlg is intentionally fixed: the progress gauge and the
+  status line are the only content, and the run is modal while it is
+  up. Its cancel_btn carries a custom id, so the view points Escape at
+  it explicitly (wxDialog::SetEscapeId + a button binding).
+-->
+<resource>
+
+  <object class="wxDialog" name="simulation_dlg">
+    <title>Rider Simulator</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Number of riders</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxSpinCtrl" name="riders_spin">
+              <min>1</min>
+              <max>1000</max>
+              <value>10</value>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Number of teams</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxSpinCtrl" name="teams_spin">
+              <min>1</min>
+              <max>100</max>
+              <value>2</value>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Solo riders</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxSpinCtrl" name="solo_spin">
+              <min>0</min>
+              <max>1000</max>
+              <value>2</value>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Number of laps</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxSpinCtrl" name="laps_spin">
+              <min>1</min>
+              <max>1000</max>
+              <value>1</value>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Minutes between first rider</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxSpinCtrl" name="interval_spin">
+              <min>1</min>
+              <max>240</max>
+              <value>1</value>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxBoxSizer">
+          <orient>wxHORIZONTAL</orient>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="gen_teams_btn">
+              <label>Generate Teams</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="gen_riders_btn">
+              <label>Generate Riders</label>
+            </object>
+          </object>
+
+          <object class="spacer">
+            <option>1</option>
+            <size>0,0</size>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+            <border>6</border>
+            <object class="wxButton" name="go_btn">
+              <label>GO</label>
+              <default>1</default>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxButton" name="wxID_CANCEL">
+              <label>Cancel</label>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+  <object class="wxDialog" name="sim_running_dlg">
+    <title>Simulating…</title>
+    <style>wxDEFAULT_DIALOG_STYLE</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="sim_status_lbl">
+          <label></label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxGauge" name="progress_gauge">
+          <size>320,16</size>
+          <range>100</range>
+          <value>0</value>
+          <style>wxGA_HORIZONTAL</style>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxALIGN_RIGHT|wxLEFT|wxRIGHT|wxBOTTOM</flag>
+        <border>10</border>
+        <object class="wxButton" name="cancel_btn">
+          <label>Cancel</label>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
+</resource>

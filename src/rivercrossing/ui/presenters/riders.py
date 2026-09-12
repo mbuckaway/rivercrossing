@@ -24,17 +24,14 @@ the editor through :meth:`RidersPresenter.on_add_committed` /
 :meth:`RidersPresenter.on_edit_committed`, so the open editor never
 shows a stale roster.
 
-Add folds a new rider onto an existing team via
-:meth:`~rivercrossing.roster.Roster.create_team_entry_of_one`
-(a transient size-1 team, DRAFT-only, R-12's floor deferred to start
-time) followed by :meth:`~rivercrossing.roster.Roster.move_rider` --
-not ``create_solo_entry`` + ``move_rider`` as first proposed:
-``move_rider`` rejects a solo entry on either side unconditionally
-(``tests/unit/test_roster.py``'s
-``test_move_rider_into_a_solo_entry_raises_invalid_move_error`` and
-its two siblings), so the transient must itself be type TEAM. A
-refused join rolls the transient team back with ``delete_entry`` so
-the roster stays truly unchanged. The 2026-09-06 ux-polish follow-on
+Add folds a new rider onto an existing team through
+:meth:`~rivercrossing.roster.Roster.add_rider_to_team` directly. The
+rider attaches to the chosen team in place, so the pooled
+RUNNING/REOPENED carve-out comes from
+:func:`~rivercrossing.roster.can_move_rider`, and a team already at
+``max_team_size`` raises ``TeamSizeError`` before anything changes --
+the same primitive the Edit path's team change uses
+(:func:`_apply_team_change`). The 2026-09-06 ux-polish follow-on
 retired the "New team…" sentinel from this editor entirely:
 ``team_choice`` now offers solo or an existing team, and naming a
 brand-new team happens in the Teams editor, never here. A successful
@@ -519,10 +516,12 @@ class AddRiderPresenter:
     def _join_existing_team(self, form: RiderFormValues) -> None:
         """Fold a new rider onto the existing team named *form.team*.
 
-        Composed from shipped Roster primitives: a transient size-1
-        team is created, then folded in via move_rider (see the
-        module docstring). A refused fold-in rolls the transient
-        back so the roster stays unchanged.
+        Uses :meth:`~rivercrossing.roster.Roster.add_rider_to_team`
+        directly: the rider attaches to the chosen team in place, so
+        the pooled RUNNING/REOPENED carve-out comes from
+        :func:`~rivercrossing.roster.can_move_rider`, and a team
+        already at ``max_team_size`` raises ``TeamSizeError`` before
+        anything changes.
         """
         target = _find_team_entry(self.roster, form.team)
         rider = Rider(
@@ -531,15 +530,7 @@ class AddRiderPresenter:
             plate=form.plate,
             sex=form.sex,
         )
-        entry_plate = form.plate if self.roster.plate_model is PlateModel.TEAM_RELAY else None
-        transient = self.roster.create_team_entry_of_one(
-            display_name=form.team, rider=rider, plate=entry_plate
-        )
-        try:
-            self.roster.move_rider(rider, to_entry=target)
-        except RosterError:
-            self.roster.delete_entry(transient)
-            raise
+        self.roster.add_rider_to_team(rider, to_entry=target)
 
 
 class EditRiderPresenter:

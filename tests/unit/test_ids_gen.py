@@ -133,14 +133,15 @@ def test_scan_xrc_directory_unknown_suffix_warns_and_known_suffixes_do_not() -> 
         "selftest_output",
         "main_splitter",
         "review_notebook",
+        "progress_gauge",
     ],
 )
 def test_suffix_warnings_canvas_only_suffix_produces_no_warning(name: str) -> None:
     """Canvas suffixes absent from section 15b's own list are known.
 
-    Each of these appears as a backticked control name on the
-    xrc-windows.md canvas but isn't in section 15b's suffix
-    sentence; the generator must not flag any of them.
+    Each of these appears as a backticked control name on a window's
+    own XRC canvas but isn't in section 15b's suffix sentence; the
+    generator must not flag any of them.
     """
     warnings = gen_ids._suffix_warnings([name])
 

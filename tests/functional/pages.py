@@ -367,14 +367,15 @@ DNF_CONFIRM_DLG = WindowSpec(
 
 # --- xrc-windows section D: results, library, audit -------------------
 
-RESULTS_FRAME = WindowSpec(
-    name=ids.RESULTS_FRAME,
+RESULTS_DLG = WindowSpec(
+    name=ids.RESULTS_DLG,
     xrc_file="results.xrc",
-    is_frame=True,
+    is_frame=False,
     controls=(
-        ids.TIEBREAK_LIST,
-        ids.REOPEN_BTN,
         ids.STANDINGS_LIST,
+        ids.TEAMS_STANDINGS_LIST,
+        ids.SOLO_STANDINGS_LIST,
+        ids.RESULTS_NOTEBOOK,
         ids.SHOW_TIMES_CHK,
         ids.LAPS_BOARD_CHK,
         ids.TIME_BOARD_CHK,
@@ -384,13 +385,14 @@ RESULTS_FRAME = WindowSpec(
         ids.EXPORT_PDF_BTN,
         ids.POSTER_BTN,
         ids.EXPORT_CSV_BTN,
+        WX_ID_CLOSE,
     ),
     buttons=(
-        ids.REOPEN_BTN,
         ids.EXPORT_HTML_BTN,
         ids.EXPORT_PDF_BTN,
         ids.POSTER_BTN,
         ids.EXPORT_CSV_BTN,
+        WX_ID_CLOSE,
     ),
 )
 
@@ -486,7 +488,7 @@ WINDOWS: tuple[WindowSpec, ...] = (
     REASSIGN_DLG,
     MANUAL_DEAL_DLG,
     DNF_CONFIRM_DLG,
-    RESULTS_FRAME,
+    RESULTS_DLG,
     RIDE_LIBRARY_DLG,
     DELETE_RIDE_DLG,
     AUDIT_DLG,

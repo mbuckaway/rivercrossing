@@ -296,17 +296,6 @@ class FakeResultsView:
     def show_publish_options(self, options: ExportOptions) -> None:
         """No-op fake."""
 
-    # E6.4.1: the Protocol grew the three members the live presenter
-    # actually calls (the same "add the member once the presenter
-    # calls it" precedent main_frame.py's own docstring records).
-    # Behavior is covered in tests/unit/presenters/test_results.py;
-    # these stay no-ops.
-    def set_tiebreak_labels(self, labels: list[str]) -> None:
-        """No-op fake."""
-
-    def show_notice(self, text: str) -> None:
-        """No-op fake."""
-
     def publish_options(self) -> ExportOptions:
         """No-op fake."""
         return ExportOptions()

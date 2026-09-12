@@ -11,13 +11,9 @@ every call, in order, with its exact arguments -- no
 ``unittest.mock`` is needed since this presenter touches no I/O
 boundary (T-10).
 
-Joining an existing team composes ``Roster.create_team_entry_of_one``
--- not ``create_solo_entry`` + ``move_rider`` as first proposed,
-since ``move_rider`` rejects a solo entry on either side
-unconditionally (see ``tests/unit/test_roster.py``'s
-``test_move_rider_into_a_solo_entry_raises_invalid_move_error`` and
-its two siblings) -- with ``Roster.move_rider`` to fold into the
-target team, rolling the transient team back on a refused move. The
+Joining an existing team calls ``Roster.add_rider_to_team`` directly,
+so the rider attaches to the chosen team in place and a pooled ride's
+RUNNING/REOPENED carve-out comes from ``can_move_rider``. The
 "New team..." sentinel is retired on topic/ux-polish: team_choice
 lists solo then every team, never a new-team entry, and this suite
 pins that sentinel-less shape (``_team_choices`` below).
@@ -591,10 +587,26 @@ def test_add_rider_presenter_submit_given_an_existing_team_at_max_size_returns_f
     )
 
     assert created is False
-    assert view.calls == [
-        ("show_validation", ("move would exceed the destination team's max size",))
-    ]
+    assert view.calls == [("show_validation", ("team size must be at most 2, got 3",))]
     assert [e.display_name for e in roster.entries] == ["Trail Blazers"]
+
+
+def test_add_rider_presenter_submit_given_a_started_pooled_ride_joins_the_existing_team() -> None:
+    """A rider joins an existing team once the ride starts."""
+    roster = _draft_mixed_roster()
+    roster.status = RideStatus.RUNNING
+    presenter = AddRiderPresenter(RecordingAddRiderView(), roster)
+
+    created = presenter.on_submit(
+        RiderFormValues(plate="79", first_name="L.", last_name="Marchetti", team="Trail Blazers")
+    )
+
+    assert created is True
+    assert [r.full_name for r in roster.entries[0].riders] == [
+        "A. Roy",
+        "K. Singh",
+        "L. Marchetti",
+    ]
 
 
 # ----------------------------------------------- EditRiderPresenter

@@ -97,8 +97,9 @@
             <object class="wxDataViewCtrl" name="riders_list"/>
           </object>
 
-          <!-- Delete sits bottom-left under riders_list with Close
-               beside it, equal-sized (W7 rework): the standard-dialog
+          <!-- Add rider…, Delete and Close anchor the list pane's
+               bottom, equal-sized (W7 rework, Add rider… moved here
+               from the form pane in 1.0.13): the standard-dialog
                sizer pattern cannot stretch stock buttons, so Close is
                a plain stock-id button like library.xrc's wxID_DELETE;
                dialogs.wire_close_button still finds it by name and
@@ -108,6 +109,14 @@
             <flag>wxEXPAND</flag>
             <object class="wxBoxSizer">
               <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <option>1</option>
+                <flag>wxEXPAND|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxButton" name="add_btn">
+                  <label>Add rider…</label>
+                </object>
+              </object>
               <object class="sizeritem">
                 <option>1</option>
                 <flag>wxEXPAND|wxRIGHT</flag>
@@ -208,29 +217,22 @@
             </object>
           </object>
 
-          <!-- 1.0.12: the Rider box above is display-only, so the
-               pane's two buttons anchor its bottom-right: Edit
-               Rider… acts on the record shown above them, Add
-               rider… opens the blank dialog. Both use plain custom
-               ids (never wxID_OK), so wx never auto-closes on a
-               click and dialogs.run_dialog's stock-id wiring leaves
-               them alone. -->
+          <!-- 1.0.12/1.0.13: the Rider box above is display-only, so
+               the pane's single Edit Rider… button anchors its
+               bottom-right and acts on the record shown above it
+               (Add rider… moved to the list pane's bottom row).
+               It uses a plain custom id (never wxID_OK), so wx never
+               auto-closes on a click and dialogs.run_dialog's
+               stock-id wiring leaves it alone. -->
           <object class="sizeritem">
             <flag>wxALIGN_RIGHT|wxTOP</flag>
             <border>8</border>
             <object class="wxBoxSizer">
               <orient>wxHORIZONTAL</orient>
               <object class="sizeritem">
-                <flag>wxRIGHT|wxALIGN_CENTRE_VERTICAL</flag>
-                <border>6</border>
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
                 <object class="wxButton" name="edit_btn">
                   <label>Edit Rider…</label>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxButton" name="add_btn">
-                  <label>Add rider…</label>
                 </object>
               </object>
             </object>

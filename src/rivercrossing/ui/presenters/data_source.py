@@ -172,10 +172,13 @@ class EntryDetail:
 
 @dataclass(frozen=True, slots=True)
 class StandingsRow:
-    """One row of the results standings (results_frame, standings_list).
+    """One row of the results standings (results_dlg).
 
     ``draw_required`` backs the ⚠ badge column xrc-windows.md calls
     out as code-side for byte-identical tied hands (Spec §5).
+    ``total_seconds`` is the numeric companion to the rendered
+    ``total`` text, so the Total column's native header sort orders by
+    time rather than by its ``h:mm:ss`` string.
     """
 
     place: int
@@ -186,6 +189,7 @@ class StandingsRow:
     best5: tuple[str, ...]
     hand: str
     draw_required: bool = False
+    total_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -764,9 +768,9 @@ class EngineDataSource:
         """Return the results standings as (teams, solo) row lists.
 
         ``rank_by_kind`` runs over the engine's current snapshot with
-        *order* (E6.4.1: the results window re-ranks live by passing
-        the reordered tie-break criteria), so a MIXED ride's teams and
-        solos each rank from 1 (Phase 3). ``hand`` is the human prose
+        *order* (the ride's stored tie-break criteria), so a MIXED
+        ride's teams and solos each rank from 1 (Phase 3). ``hand`` is
+        the human prose
         name (``standings.hand_name``), with the 0-card guard from the
         class docstring: an entry that never credited a card has no
         rank to name and renders ``""`` instead of crashing.
@@ -790,6 +794,7 @@ class EngineDataSource:
                         best5=tuple(card.code() for card in item.result.hand.best5),
                         hand=hand,
                         draw_required=item.draw_required,
+                        total_seconds=item.result.total_time,
                     )
                 )
             return built

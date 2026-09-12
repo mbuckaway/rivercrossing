@@ -1246,6 +1246,8 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     version, ride-logo-or-app-icon). Phase 4 adds the teams editor:
     ``team_editor_dlg`` now binds the TeamEditor view over the live
     roster (team records -- name, relay plate, notes, logo). The
+    rider simulator joins them: ``simulation_dlg`` binds SimulatorDialog
+    over the same roster, driven by the live engine. The
     remaining plain XRC dialogs
     with no code-side view class (the correction dialogs) need
     nothing further here; they already carry their own canvas
@@ -1260,6 +1262,7 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
     from rivercrossing.ui.views.settings import SettingsDialog  # noqa: PLC0415
     from rivercrossing.ui.views.shortcuts import ShortcutsDialog  # noqa: PLC0415
+    from rivercrossing.ui.views.simulator import SimulatorDialog  # noqa: PLC0415
     from rivercrossing.ui.views.team_editor import TeamEditor  # noqa: PLC0415
 
     if route.target == ids.RIDE_LIBRARY_DLG:
@@ -1314,24 +1317,31 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
             roster=context.roster,
             on_submitted=lambda config: _persist_created_ride(context, config),
         )
+    elif route.target == ids.SIMULATION_DLG:
+        # The simulator generates its placeholder field through the
+        # live roster and replays the race through the console's own
+        # engine, so it needs the threaded presenter. A route-level
+        # context with none opens the plain XRC dialog (its Generate
+        # and GO buttons inert); _open_target then has no view to
+        # persist, and the roster is untouched anyway.
+        if context.presenter is not None:
+            return SimulatorDialog(window, engine=context.presenter.engine, roster=context.roster)
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1 (shared with the W11 F2a flagged seam): the live
         # branch opens the selected entry over the live seams; the
         # empty branch keeps the E5.4.2 empty state. See
         # _open_entry_detail_dialog's own docstring.
         _open_entry_detail_dialog(context, window, context.detail_plate or "")
-    elif route.target == ids.RESULTS_FRAME:
+    elif route.target == ids.RESULTS_DLG:
         # E6.4.1 (D10): with a live console threaded, results render
         # the real placed rows from the console's EngineDataSource
         # (the same live source build_main_window wired, so the
         # roster always matches the engine -- the resume path never
-        # updates context.roster) and seed the tie-break list from
-        # the ride's stored order. The E5.4.2 empty state stays for
-        # the no-presenter path (route-level tests). ux-polish: the
-        # results frame's reopen_btn is wired to the same
-        # _handle_reopen_ride_route flow mi_reopen_ride runs; a
-        # results window with no live ride (the empty path) gets no
-        # callback and its button stays inert.
+        # updates context.roster) and rank them with the ride's
+        # stored order. entry_mode decides the MIXED notebook or the
+        # SOLO standalone list. The E5.4.2 empty state stays for the
+        # no-presenter path (route-level tests), where the export
+        # buttons stay disabled (DRAFT) and inert (no callback).
         presenter = context.presenter
         if presenter is not None:
             ResultsWindow(
@@ -1339,11 +1349,11 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
                 data_source=presenter.source,
                 tiebreak_order=presenter.engine.config.tiebreak_order,
                 export_watermark=context.export_watermark,
-                on_reopen=lambda: _handle_reopen_ride_route(context),
+                entry_mode=presenter.engine.config.entry_mode,
                 # W11: the four export buttons fire the same
                 # _handle_export_command route the matching mi_export_*
                 # menu row runs -- the dead synthetic-EVT_MENU
-                # forwarding is gone (the parentless results frame
+                # forwarding is gone (the parentless results window
                 # never reached the main frame's handlers).
                 on_export=lambda target: _handle_export_command(context, target),
             )
@@ -1661,8 +1671,8 @@ def _export_options() -> ExportOptions:
     wx = require_wx()
     if wx.GetApp() is None:
         return ExportOptions()
-    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    presenter = getattr(frame, "presenter", None)
+    dialog = wx.FindWindowByName(ids.RESULTS_DLG)
+    presenter = getattr(dialog, "presenter", None)
     if presenter is not None:
         return cast("ExportOptions", presenter.export_options())
     return ExportOptions()
@@ -1817,8 +1827,8 @@ def _clear_results_stale(watermark: int) -> None:
     clean.
     """
     wx = require_wx()
-    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    presenter = getattr(frame, "presenter", None)
+    dialog = wx.FindWindowByName(ids.RESULTS_DLG)
+    presenter = getattr(dialog, "presenter", None)
     if presenter is not None:
         presenter.mark_exported(watermark)
 
@@ -1982,21 +1992,6 @@ def _handle_open_user_guide(context: _RouteContext) -> None:
     anchor = help_module.anchor_for(window_name)
     url = help_module.open_guide(anchor)
     context.frame.SetStatusText(f"Opened user guide: {url}")
-
-
-def _handle_focus_tiebreak(context: _RouteContext) -> None:
-    """Results ▸ Tie-break Order…: open Results and focus the list."""
-    wx = require_wx()
-    frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    if frame is None:
-        _open_target(context, commands.route_for_id("mi_standings"))
-        frame = wx.FindWindowByName(ids.RESULTS_FRAME)
-    if frame is None:
-        context.frame.SetStatusText("Open Results to set the tie-break order")
-        return
-    control = frame.FindWindowByName(ids.TIEBREAK_LIST)
-    if control is not None:
-        control.SetFocus()
 
 
 def _handle_backup_database(context: _RouteContext) -> None:
@@ -2565,20 +2560,15 @@ _CORRECTION_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     """Open *route*'s target window, or notice its absence (D1).
 
-    ``LoadFrame``/``LoadDialog`` return ``None`` rather than raise
-    when *route.target* names no XRC resource at all (harness.py's
-    own measured note) -- no §15 route is un-authored anymore (E5.4.1
-    and E7 authored Duplicate Ride, Reopen Ride, Void Card), but the
+    ``LoadDialog`` returns ``None`` rather than raise when
+    *route.target* names no XRC resource at all (harness.py's own
+    measured note) -- no §15 route is un-authored anymore (E5.4.1 and
+    E7 authored Duplicate Ride, Reopen Ride, Void Card), but the
     branch stays as the safety net for any future route whose target
     is not yet authored, with no change needed here: a route never
     silently does nothing, it always says so on the status bar instead.
     """
-    is_frame = route.target == ids.RESULTS_FRAME
-    window = (
-        context.resource.LoadFrame(None, route.target)
-        if is_frame
-        else context.resource.LoadDialog(None, route.target)
-    )
+    window = context.resource.LoadDialog(None, route.target)
     if window is None:
         context.frame.SetStatusText(f"{route.label} — no window authored yet")
         return
@@ -2605,31 +2595,6 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         if not window.IsBeingDeleted():
             window.Destroy()
         raise
-    if is_frame:
-        # ux-polish: apply the light-mode panel tint to the results
-        # frame at open. The frame is modeless, so -- unlike the modal
-        # dialogs run_dialog tints -- it can stay open across a live
-        # macOS theme switch; re-applying (or clearing) the tint when
-        # the theme changes while it is open is deliberately out of
-        # scope (theme.apply_light_mode_panel_bg's docstring): closing
-        # and reopening re-tints. results.xrc carries its top sizer
-        # directly on the frame, so the frame background is the only
-        # surface.
-        theme.apply_light_mode_panel_bg(window)
-        # H1: the results frame is loaded parentless and modeless, so
-        # place it deliberately rather than letting the platform pick
-        # (top-left on MSW). CentreOnParent centres on screen when
-        # there is no parent, which is the console-less case.
-        window.CentreOnParent()
-        window.Show()
-        window.Raise()
-        # F4: the modeless frames (results) are opened here rather than
-        # through run_dialog, so their open is recorded here; a modal
-        # dialog's record belongs to run_dialog's own seam.
-        log = _log(context)
-        if log is not None:
-            log.dialog(route.target, route.label)
-        return
 
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
 
@@ -2647,6 +2612,8 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         _persist_rider_editor_changes(context, view)
     elif route.target == ids.TEAM_EDITOR_DLG and view is not None:
         _persist_team_editor_changes(context, view)
+    elif route.target == ids.SIMULATION_DLG and view is not None:
+        _persist_simulator_changes(context, view)
 
 
 def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
@@ -2710,6 +2677,35 @@ def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # 
         store.save_roster(context.active_ride_id, context.roster)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save teams: {exc}")
+
+
+def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
+    """Persist the roster after the simulator dialog closes.
+
+    The mirror of :func:`_persist_rider_editor_changes`: the simulator
+    generates placeholder riders and teams into the in-memory roster,
+    so with a store-backed ride open and any generated change (the
+    presenter's own ``roster_changed``), that roster is written back
+    so a crashed or abandoned simulated field survives a relaunch. A
+    refused save (a locked or unwritable database) surfaces as a status
+    notice -- the same guard idiom the rider editor uses, for the same
+    wx-swallowed-raise reason.
+
+    Args:
+        context: The route context whose store/roster to act on.
+        view: The closed ``SimulatorDialog`` (or a presenter-shaped
+            stand-in) whose ``presenter.roster_changed`` says whether
+            this session generated anything.
+    """
+    if not view.presenter.roster_changed:
+        return
+    store = context.store
+    if store is None or context.active_ride_id is None:
+        return
+    try:
+        store.save_roster(context.active_ride_id, context.roster)
+    except (OSError, sqlite3.Error) as exc:
+        context.frame.SetStatusText(f"Could not save riders: {exc}")
 
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
@@ -3209,7 +3205,6 @@ _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
     target: _export_action(target) for target in _EXPORT_SUGGESTED_NAMES
 }
 _TARGET_ACTIONS["preview_in_browser"] = _handle_preview_browser
-_TARGET_ACTIONS["focus_tiebreak_control"] = _handle_focus_tiebreak
 _TARGET_ACTIONS["backup_database"] = _handle_backup_database
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
 _TARGET_ACTIONS[ids.RIDER_ISSUES_DLG] = _handle_check_rider_issues

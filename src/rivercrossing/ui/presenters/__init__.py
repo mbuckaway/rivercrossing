@@ -68,6 +68,7 @@ from rivercrossing.ui.presenters.riders import (
 from rivercrossing.ui.presenters.selftest import SelfTestPresenter, SelfTestView
 from rivercrossing.ui.presenters.settings import AppSettings, SettingsView
 from rivercrossing.ui.presenters.setup import SetupFormValues, SetupPresenter, SetupView
+from rivercrossing.ui.presenters.simulator import SimOutcome, SimulatorPresenter
 
 __all__ = [
     "SOLO_TEAM_CHOICE",
@@ -107,5 +108,7 @@ __all__ = [
     "SetupFormValues",
     "SetupPresenter",
     "SetupView",
+    "SimOutcome",
+    "SimulatorPresenter",
     "StandingsRow",
 ]

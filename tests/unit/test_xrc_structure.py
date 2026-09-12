@@ -72,6 +72,7 @@ FILE_MENU_ITEMS = (
     "mi_import_csv",
     "mi_export_csv",
     "mi_backup_now",
+    "mi_simulation",
     "wxID_PREFERENCES",
     "wxID_EXIT",
 )
@@ -114,7 +115,6 @@ RESULTS_MENU_ITEMS = (
     "mi_export_poster",
     "mi_export_results_csv",
     "mi_preview_browser",
-    "mi_tiebreak_order",
 )
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
@@ -188,16 +188,17 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4: File 7, Ride 9, Riders 5,
-# Cards 7, Results 7, View 1, Help 4. The single View row expands into
-# the 8 items section 15b names for it (W13: hide-times + the seven
-# zoom radios; the theme trio left the View menu).
+# spec.md section 15's rows after D1/D4 (Results lost its tie-break row
+# in Part C): File 8 (mi_simulation added), Ride 9, Riders 5, Cards 7,
+# Results 6, View 1, Help 4. The single View row expands into the 8
+# items section 15b names for it (W13: hide-times + the seven zoom
+# radios; the theme trio left the View menu).
 MENU_ITEM_COUNTS = (
-    ("&File", 7),
+    ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 5),
     ("&Cards", 7),
-    ("Re&sults", 7),
+    ("Re&sults", 6),
     ("&View", 8),
     ("&Help", 4),
 )
@@ -407,7 +408,7 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
 
 
 def test_main_menubar_declares_forty_four_menu_item_names() -> None:
-    """D1/D4: 44 ``mi_*`` items; mi_add_entry is retired."""
+    """D1/D4/C6: 44 ``mi_*`` items; add_entry and tiebreak retired."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
@@ -416,7 +417,7 @@ def test_main_menubar_declares_forty_four_menu_item_names() -> None:
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:
-    """D1: New Ride… left File; the other seven rows remain."""
+    """D1: New Ride… left File; the other eight rows remain."""
     file_menu = _menus()[0]
 
     names = [item.attrib["name"] for item in _menu_items(file_menu)]

@@ -88,13 +88,14 @@ SPEC_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_infobar",
 )
 
-# In active use on the xrc-windows.md canvas (main_menubar,
+# In active use on a window's own XRC canvas (main_menubar,
 # main_statusbar, audit_search, about_logo_bmp, gorba_link,
 # selftest_output, main_splitter) but never named in section 15b's
 # own suffix sentence -- extension, not part of the frozen text.
 # _preview joined when Phase 4 registered logo_preview (team_editor_dlg)
 # in section 15b; _notebook joined when the ux-polish review notebook
-# registered review_notebook (main.xrc).
+# registered review_notebook (main.xrc); _gauge joined when the Rider
+# Simulator registered progress_gauge (simulation.xrc).
 CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_menubar",
     "_statusbar",
@@ -105,6 +106,7 @@ CANVAS_KNOWN_SUFFIXES: tuple[str, ...] = (
     "_splitter",
     "_preview",
     "_notebook",
+    "_gauge",
 )
 
 KNOWN_SUFFIXES: tuple[str, ...] = SPEC_KNOWN_SUFFIXES + CANVAS_KNOWN_SUFFIXES

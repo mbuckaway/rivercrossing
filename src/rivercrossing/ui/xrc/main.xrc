@@ -483,9 +483,14 @@
 
   <!--
     Seven menus, 44 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 7 - Ride 9 - Riders 5 - Cards 7 - Results 7 -
+    spec.md 15 table (File 8 - Ride 9 - Riders 5 - Cards 7 - Results 6 -
     View 1 row, 8 items - Help 4). File order follows the 15 table
-    (Import CSV, Export CSV, Back Up), not 15b's listing order.
+    (Import CSV, Export CSV, Back Up, Simulation), not 15b's listing
+    order.
+
+    Results 6: mi_tiebreak_order retired; the tie-break order now comes
+    only from the ride's stored config, set in Ride Setup. File 8:
+    mi_simulation opens the Rider Simulator after Back Up Database.
 
     W14: mi_ride_setup left the Ride menu with its spec.md 15 row; the
     "edit this ride" setup semantics it implied were never built.
@@ -526,6 +531,9 @@
       </object>
       <object class="wxMenuItem" name="mi_backup_now">
         <label>&amp;Back Up Database…</label>
+      </object>
+      <object class="wxMenuItem" name="mi_simulation">
+        <label>&amp;Simulation…</label>
       </object>
       <object class="separator"/>
       <object class="wxMenuItem" name="wxID_PREFERENCES"/>
@@ -630,9 +638,6 @@
       </object>
       <object class="wxMenuItem" name="mi_preview_browser">
         <label>Preview in &amp;Browser</label>
-      </object>
-      <object class="wxMenuItem" name="mi_tiebreak_order">
-        <label>&amp;Tie-break Order…</label>
       </object>
     </object>
 

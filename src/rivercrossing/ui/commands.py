@@ -5,7 +5,9 @@ spec.md section 15 is one table with two jobs: which target each of
 the 40 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
 once, so both jobs read off the same 40 :class:`MenuRoute` rows
-instead of two tables that could drift apart.
+instead of two tables that could drift apart. (Results lost its
+mi_tiebreak_order row: the tie-break order now comes only from the
+ride's stored config, set in Ride Setup.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -55,6 +57,7 @@ class TargetKind(Enum):
     COMMAND = "command"
 
 
+_DRAFT = frozenset({RideStatus.DRAFT})
 _RUNNING = frozenset({RideStatus.RUNNING})
 _RUNNING_REOPENED = frozenset({RideStatus.RUNNING, RideStatus.REOPENED})
 _FINISHED = frozenset({RideStatus.FINISHED})
@@ -133,10 +136,11 @@ class MenuRoute:
 
 
 ROUTE_TABLE: tuple[MenuRoute, ...] = (
-    # --- File: 7 rows ---
+    # --- File: 8 rows ---
     # D1: New Ride… left the File menu for the Ride menu (the ride
     # lifecycle lives on one surface); the remaining seven rows keep
-    # spec.md 15's own order.
+    # spec.md 15's own order. The rider simulator adds the eighth,
+    # after Back Up Database.
     MenuRoute(
         menu="File",
         label="Ride Library",
@@ -186,6 +190,16 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         kind=TargetKind.COMMAND,
         target="backup_database",
         enabled_when=ALWAYS,  # "always"
+    ),
+    MenuRoute(
+        menu="File",
+        label="Simulation…",
+        ids=("mi_simulation",),
+        # The Rider Simulator generates a placeholder field, so it only
+        # makes sense on a ride whose roster is still open for edits.
+        kind=TargetKind.DIALOG,
+        target=ids.SIMULATION_DLG,
+        enabled_when=Enablement(requires_ride_open=True, allowed_states=_DRAFT),
     ),
     MenuRoute(
         menu="File",
@@ -443,13 +457,13 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="focus_review_panel",
         enabled_when=Enablement(min_held_cards=1),  # "held cards > 0 (shows count)"
     ),
-    # --- Results: 7 rows ---
+    # --- Results: 6 rows ---
     MenuRoute(
         menu="Results",
         label="Standings",
         ids=("mi_standings",),
-        kind=TargetKind.WINDOW,
-        target=ids.RESULTS_FRAME,
+        kind=TargetKind.DIALOG,
+        target=ids.RESULTS_DLG,
         enabled_when=Enablement(requires_ride_open=True),  # "ride open (live while running)"
     ),
     MenuRoute(
@@ -490,16 +504,9 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         ids=("mi_preview_browser",),
         kind=TargetKind.COMMAND,  # opens the external, OS-default browser
         target="preview_in_browser",
-        enabled_when=Enablement(requires_export_exists=True),  # "an export exists"
-    ),
-    MenuRoute(
-        menu="Results",
-        label="Tie-break Order…",
-        ids=("mi_tiebreak_order",),
-        # "Focuses the tie-break control in Results" -- no new window.
-        kind=TargetKind.COMMAND,
-        target="focus_tiebreak_control",
-        enabled_when=Enablement(requires_ride_open=True),  # "ride open"
+        # "an export exists", and only for a FINISHED ride -- Part D
+        # gates every Results export on FINISHED.
+        enabled_when=Enablement(allowed_states=_FINISHED, requires_export_exists=True),
     ),
     # --- View: 1 row, 8 ids (W13: the theme trio left the View menu;
     # the Settings appearance radios are the single theme surface) ---

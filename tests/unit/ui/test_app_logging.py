@@ -16,9 +16,6 @@ constructed):
   :func:`~rivercrossing.ui.app._make_event_filter` records the
   whitelisted control events and skips everything else, and never
   swallows an event.
-- **F4 modeless frames.** :func:`~rivercrossing.ui.app._open_target`
-  records the results frame it opens modeless (modal dialogs are
-  logged by ``views.dialogs.run_dialog`` instead).
 
 A real :class:`~rivercrossing.ui.logging.Logging` over ``tmp_path``
 is the assertion surface, so each test checks the record that would
@@ -102,12 +99,11 @@ def _context(
     *,
     frame: object,
     log: Logging | None,
-    resource: object = None,
 ) -> app_module._RouteContext:
     """Build a route context over *frame* carrying *log* (or none)."""
     return app_module._RouteContext(
         frame=frame,
-        resource=resource,
+        resource=None,
         roster=Roster(),
         app=_AppWithLog(log),
         theme_controller=None,
@@ -383,83 +379,3 @@ def test_event_filter_given_a_whitelisted_type_with_no_object_writes_nothing(
 
     assert result == wx.EventFilter.Event_Skip
     assert _entries(_log_path(tmp_path)) == []
-
-
-# ------------------------------------------ F4: modeless frame opens
-
-
-class _ModelessWindow:
-    """A modeless-frame double recording its show calls."""
-
-    def __init__(self) -> None:
-        """Start unshown and uncentred."""
-        self.centred = 0
-        self.shown = False
-        self.raised = 0
-
-    def CentreOnParent(self) -> None:  # noqa: N802 -- wx API name
-        """Record one centring."""
-        self.centred += 1
-
-    def Show(self) -> None:  # noqa: N802 -- wx API name
-        """Record the show."""
-        self.shown = True
-
-    def Raise(self) -> None:  # noqa: N802 -- wx API name
-        """Record one raise."""
-        self.raised += 1
-
-
-class _FakeResource:
-    """A resource double whose LoadFrame hands back one window."""
-
-    def __init__(self, window: _ModelessWindow) -> None:
-        """Store the frame this resource loads."""
-        self._window = window
-
-    def LoadFrame(self, _parent: object, _name: str) -> _ModelessWindow:  # noqa: N802 -- wx API name
-        """Return the staged modeless frame."""
-        return self._window
-
-
-def test_open_target_given_a_modeless_frame_logs_the_dialog_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """F4: the modeless results frame records its name and opener."""
-    log = Logging(_log_path(tmp_path))
-    window = _ModelessWindow()
-    context = _context(frame=_NoticeFrame(), log=log, resource=_FakeResource(window))
-    route = commands.route_for_id("mi_standings")
-    monkeypatch.setattr(app_module, "_decorate", lambda _ctx, _win, _route: None)
-    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _win, _route: None)
-    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _win: None)
-    monkeypatch.setattr(app_module.theme, "apply_light_mode_panel_bg", lambda _win: None)
-
-    app_module._open_target(context, route)
-
-    assert (window.shown, window.raised) == (True, 1)
-    assert _entries(_log_path(tmp_path)) == [
-        {
-            "level": "DEBUG",
-            "event": "dialog",
-            "name": route.target,
-            "opener": route.label,
-        }
-    ]
-
-
-def test_open_target_given_a_modeless_frame_without_a_log_still_opens(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """F4: a log-less app still opens the frame, with no crash."""
-    window = _ModelessWindow()
-    context = _context(frame=_NoticeFrame(), log=None, resource=_FakeResource(window))
-    route = commands.route_for_id("mi_standings")
-    monkeypatch.setattr(app_module, "_decorate", lambda _ctx, _win, _route: None)
-    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _win, _route: None)
-    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _win: None)
-    monkeypatch.setattr(app_module.theme, "apply_light_mode_panel_bg", lambda _win: None)
-
-    app_module._open_target(context, route)
-
-    assert (window.shown, window.raised) == (True, 1)
