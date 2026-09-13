@@ -91,10 +91,12 @@ _RIDER_COUNT = 20
 _WAVE_CROSSINGS = 300
 _RESUME_EXTRA_CROSSINGS = 5
 _ADDED_CROSSINGS = 1
-# The console feed is capped at the designed "latest 30" (R-32,
-# data_source.FEED_CAP), so feed_rows reads 30 after any wave past the
-# cap -- the audit count is the real proof, feed_rows proves rendering.
-_FEED_CAP = 30
+# Phase 4 retired R-32's "latest 30" cap, so the console feed renders
+# every crossing of the ride: feed_rows equals the recorded crossing
+# count at the instant it is read. The audit count remains the real
+# proof of what was recorded; feed_rows proves what was rendered.
+_FEED_ROWS_AFTER_WAVE = _WAVE_CROSSINGS
+_FEED_ROWS_AFTER_RESUME = _WAVE_CROSSINGS + _RESUME_EXTRA_CROSSINGS
 
 # The children self-terminate (os._exit 124) after their own bound;
 # heavy children (300 typed crossings + CSV import) get 120 s, the
@@ -415,7 +417,7 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     staged_plates = [entry.plate for entry in store_staging.library_roster().entries]
     assert data_a["imported_plates"] == _imported_plates(staged_plates), report_a["context"]
     assert data_a["crossings_typed"] == _WAVE_CROSSINGS, report_a["context"]
-    assert data_a["feed_rows"] == _FEED_CAP, report_a["context"]  # feed caps at 30 (R-32)
+    assert data_a["feed_rows"] == _FEED_ROWS_AFTER_WAVE, report_a["context"]
     assert data_a["recorded_crossings"] == _WAVE_CROSSINGS, report_a["context"]
     assert data_a["entry_locked_when_stopped"] is True, report_a["context"]
     assert data_a["entry_reenabled_after_continue"] is True, report_a["context"]
@@ -443,10 +445,10 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     assert data_b["resume_state"] == "crashed", report_b["context"]
     assert "closed unexpectedly" in data_b["resume_message"], report_b["context"]
     assert data_b["status_label"] == "RUNNING", report_b["context"]
-    assert data_b["feed_rows_before"] == _FEED_CAP, report_b["context"]  # cap 30 (R-32)
+    assert data_b["feed_rows_before"] == _FEED_ROWS_AFTER_WAVE, report_b["context"]
     assert data_b["recorded_crossings_before"] == _WAVE_CROSSINGS, report_b["context"]
     assert data_b["crossings_recorded"] == _RESUME_EXTRA_CROSSINGS, report_b["context"]
-    assert data_b["feed_rows_after"] == _FEED_CAP, report_b["context"]  # cap 30 (R-32)
+    assert data_b["feed_rows_after"] == _FEED_ROWS_AFTER_RESUME, report_b["context"]
     assert data_b["recorded_crossings_after"] == _WAVE_CROSSINGS + _RESUME_EXTRA_CROSSINGS, (
         report_b["context"]
     )
@@ -474,7 +476,7 @@ def test_full_race_r74_scripted_race_runs_end_to_end_through_the_real_ui(  # noq
     assert data_c["resume_dlg_shown"] is True, report_c["context"]
     assert data_c["resume_state"] == "running_at_exit", report_c["context"]
     assert "You quit at" in data_c["resume_message"], report_c["context"]
-    assert data_c["feed_rows"] == _FEED_CAP, report_c["context"]  # cap 30 (R-32)
+    assert data_c["feed_rows"] == _FEED_ROWS_AFTER_RESUME, report_c["context"]
     assert data_c["status_after_finish_1"] == "FINISHED", report_c["context"]
     assert data_c["reopened"] is True, report_c["context"]
     assert data_c["add_crossing_plate"] in {

@@ -16,6 +16,13 @@ GO/STOP glyphs on the converted bitmap start/stop buttons, and the
 review notebook's columns, rows and open-rider seam
 (``flagged_list``/``console_riders_list``).
 
+Phase 6 adds three more of the same kind, each one something XRC
+cannot express: the frame's screen fit
+(:func:`~rivercrossing.ui.views._support.fit_frame_to_screen` -- XRC
+cannot know the display a window will open on), the Status box's fixed
+width and the Current Lap reading's two-digit width pin (XRC cannot
+measure a font), and the ``EVT_DISPLAY_CHANGED`` re-fit.
+
 :class:`MainFrame` decorates an already-XRC-loaded ``wx.Frame`` -- it
 never calls ``LoadFrame`` itself. Loading stays the caller's job
 (``harness.load_window`` in tests, the app bootstrap in production),
@@ -49,8 +56,10 @@ from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 from rivercrossing.ui.views import dialogs, team_editor
 from rivercrossing.ui.views._support import (
     RiderRowListModel,
+    _ordering,
     associate_model,
     find_control,
+    fit_frame_to_screen,
 )
 from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_bundle
 
@@ -69,14 +78,18 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONSOLE_RIDERS_LIST",
+    "CROSSINGS_SEARCH",
+    "DEFAULT_FEED_SORT",
     "DEFAULT_SASH",
     "ELAPSED_CLOCK",
     "ELAPSED_CLOCK_PANEL",
+    "FEED_COLUMN_FLAGS",
     "FINISHED_INFOBAR",
     "FLAG_COLUMN_LABELS",
     "FLAG_COL_LAP",
     "FLAG_COL_LAP_TIME",
     "FLAG_COL_PLATE",
+    "MAX_CURRENT_LAP",
     "MIN_SIZE",
     "NEEDS_REVIEW_PAGE_LABEL",
     "REMAINING_CLOCK",
@@ -98,6 +111,7 @@ __all__ = [
     "RIDE_STATUS_LIGHT",
     "RIDE_STATUS_PANEL",
     "START_BLOCKED_COLUMN_LABELS",
+    "STATUS_LABEL_WORDS",
     "CrossingsFeedModel",
     "FlaggedListModel",
     "MainFrame",
@@ -107,7 +121,7 @@ __all__ = [
 _TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
     feed_model.COL_TIME: lambda row: row.time,
     feed_model.COL_PLATE: lambda row: row.plate,
-    feed_model.COL_NAME: lambda row: row.entry,
+    feed_model.COL_NAME: feed_model.entry_text,
     feed_model.COL_LAP: feed_model.lap_text,
     feed_model.COL_LAP_TIME: lambda row: row.lap_time,
     feed_model.COL_TOTAL: lambda row: row.total,
@@ -141,6 +155,22 @@ ELAPSED_CLOCK = "elapsed_clock"
 REMAINING_CLOCK = "remaining_clock"
 RIDE_STATUS_LIGHT = "ride_status_light"
 
+# Phase 6: the Current Lap reading's own numbers. ``MAX_CURRENT_LAP`` is
+# what keeps the two-digit reading two digits, so a third character can
+# never widen the pinned column. The reading's colour and font are
+# authored in main.xrc (XRC's <fg> and <font> are both honoured on this
+# build -- main.xrc's header notes the measurement).
+MAX_CURRENT_LAP = 99
+
+# Phase 6: every word ``ride_status_lbl`` can ever show -- each live
+# state's own label plus the stopped-RUNNING reading -- so the Status
+# column's label is floored at the widest of them and a state
+# transition can never resize the column.
+STATUS_LABEL_WORDS: tuple[str, ...] = (
+    *(status_text(status) for status in RideStatus),
+    status_text(RideStatus.RUNNING, stopped=True),
+)
+
 # §5: the ride-info group's two sizes. main.xrc declares the same 64x64
 # logo slot and 240-wide value rows; these are the code-side copies the
 # render reads (``_ride_logo_bitmap``'s fit box), recorded here so the
@@ -159,6 +189,20 @@ REMAINING_CLOCK_PANEL = ids.REMAINING_CLOCK_PANEL
 RIDE_STATUS_PANEL = ids.RIDE_STATUS_PANEL
 REVIEW_NOTEBOOK = ids.REVIEW_NOTEBOOK
 CONSOLE_RIDERS_LIST = ids.CONSOLE_RIDERS_LIST
+CROSSINGS_SEARCH = ids.CROSSINGS_SEARCH
+
+# The feed columns' own flags (Phase 4): every column sorts through
+# ``CrossingsFeedModel.Compare`` and resizes. As with
+# RIDERS_LIST_COLUMN_FLAGS below, an explicit flags= argument *replaces*
+# AppendTextColumn's default rather than OR-ing into it, so both bits
+# must be spelled out or macOS sets NSTableColumnNoResizing.
+FEED_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL_RESIZABLE
+
+# The feed's opening sort (Phase 4): Time ascending, so the first row is
+# the first crossing of the ride (elapsed 0) and the list reads as the
+# ride clock. Re-applied by ``_apply_feed_sort`` after every rebuild;
+# an operator's header click replaces it (``_on_feed_column_sorted``).
+DEFAULT_FEED_SORT: tuple[int, bool] = (feed_model.COL_TIME, True)
 
 # console_riders_list's columns (Phase 4): the console draws every
 # shared column (``ui.rider_columns.CONSOLE_RIDER_COLUMNS`` -- Plate |
@@ -213,12 +257,14 @@ REOPENED_BANNER = (
 
 # xrc-windows.md section A: "Min frame 1100x700, fits 1366x768."
 # W9 raises the floor to 1100x780 (still 1366x768-safe on macOS and
-# Windows with a taskbar): the extra 80 px of feed-pane height keeps
-# the full 30-row feed (R-32's cap) visible at 100% zoom without
-# scrolling. XRC has no window-level minsize property (main.xrc's own
-# header) -- only <size>, which sets the *initial* size, not the
-# floor. The frozen canvas drawing still shows 1100x700; W15's canvas
-# amendment records the raised size in xrc-windows.md.
+# Windows with a taskbar) so the feed pane opens at a working height.
+# Phase 4 retires the 30-row cap that height was originally sized
+# around -- crossings_list scrolls the whole ride now, so the number is
+# a pane area, not a row count. XRC has no window-level minsize
+# property (main.xrc's own header) -- only <size>, which sets the
+# *initial* size, not the floor. The frozen canvas drawing still shows
+# 1100x700; W15's canvas amendment records the raised size in
+# xrc-windows.md.
 MIN_SIZE = (1100, 780)
 
 # W9: the fresh-launch splitter position (no persisted sash): the
@@ -243,18 +289,21 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
     base class this codebase subclasses; nothing to fix here.
 
     The wx-facing half of the crossings feed; ``ui/feed_model.py``
-    holds the column layout and the two decisions this class
-    delegates to (``card_text_or_blank``, the flagged-row lookup), so
-    those stay testable without ``wx``
+    holds the column layout and the decisions this class delegates to
+    (``card_text_or_blank``, ``entry_text``, the flagged-row lookup),
+    so those stay testable without ``wx``
     (``tests/unit/ui/test_feed_model.py``). This class has exactly
     one consumer, :class:`MainFrame`, which is why it lives here
     rather than in its own file (SIMPLECODE Rule 7).
 
     Rows are supplied once at construction -- :class:`MainFrame`
     builds a fresh model each time ``show_feed`` runs rather than
-    mutating this one in place, which keeps the 30-row cap (R-32)
-    trivial and avoids ``DataViewIndexListModel``'s row-count-change
-    notifications entirely.
+    mutating this one in place, which avoids
+    ``DataViewIndexListModel``'s row-count-change notifications
+    entirely. Phase 4 retired R-32's 30-row cap, so a long ride's
+    model holds every crossing and the list scrolls; the presenter
+    only rebuilds it when the ride's own data changed
+    (``ConsolePresenter._feed_state``).
     """
 
     def __init__(self, rows: Sequence[FeedRow]) -> None:
@@ -279,6 +328,41 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
             return feed_model.card_text_or_blank(feed_row.card)
         return _TEXT_ACCESSORS[col](feed_row)
 
+    def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
+        self,
+        item1: Any,  # noqa: ANN401 -- wx ships no stubs
+        item2: Any,  # noqa: ANN401 -- wx ships no stubs
+        col: int,
+        ascending: bool,  # noqa: FBT001 -- wx's own callback argument
+    ) -> int:
+        """Return the Ordering of *item1* versus *item2* on *col*.
+
+        The native header arrows' answer, exactly as
+        :meth:`~rivercrossing.ui.views._support.RiderRowListModel.
+        Compare` answers the two rider lists': the comparison runs on
+        the *rows* the items index (``DataViewIndexListModel.GetRow``)
+        through ``feed_model.COLUMN_SORT_KEYS``, so the feed and the
+        riders tab order the same way. The keys are heterogeneous
+        between columns (Plate is an ``(int, int)``/``(int, str)``
+        pair, three are ``float``, Lap an ``int``, two ``str``), so the
+        comparison goes through :func:`_ordering` -- never arithmetic.
+
+        Equal keys fall back to the row's own position, which is
+        unique: wx's control-side sort is not stable, so without the
+        tie-break two rows showing the same cell could reorder freely
+        between sorts. The tie-break is deliberately *not* negated for
+        the downward arrow, so equal-key rows keep the feed's own
+        (newest-first) order in both directions. *ascending* is the
+        arrow's own direction.
+        """
+        first_row = self.GetRow(item1)
+        second_row = self.GetRow(item2)
+        sort_key = feed_model.COLUMN_SORT_KEYS[col]
+        result = _ordering(sort_key(self._rows[first_row]), sort_key(self._rows[second_row]))
+        if result == 0:
+            return _ordering(first_row, second_row)
+        return result if ascending else -result
+
     def GetAttrByRow(self, row: int, col: int, attr: Any) -> bool:  # noqa: ANN401, ARG002
         """Bold the whole row when its crossing is flagged or edited.
 
@@ -287,7 +371,10 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         (E7.2.2, one a correction touched -- spec §3 design 8c's
         "edits highlighted in the feed") both bold the entire row.
         *col* is unused: xrc-windows.md's code-side note bolds the
-        whole flagged row, not one cell.
+        whole flagged row, not one cell. A DNF row is *not* a third
+        bold channel -- it carries a text marker instead
+        (``feed_model.entry_text``), so meaning never rides on weight
+        or colour alone.
         """
         if row not in self._flagged and row not in self._edited:
             return False
@@ -381,6 +468,7 @@ class StartBlockedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore
 # ``__init__`` cannot silently drift apart -- keep the two in lockstep.
 REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.CROSSINGS_LIST,
+    CROSSINGS_SEARCH,
     ids.MAIN_SPLITTER,
     ids.PLATE_INPUT,
     ids.RECORD_BTN,
@@ -395,6 +483,8 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     ids.RIDE_SCORER_VALUE,
     ids.RIDE_LAP_KM_VALUE,
     ids.RIDE_STATUS_LBL,
+    # Phase 6: the header's Current Lap reading.
+    ids.CURRENT_LAP_LBL,
     ids.CROSSINGS_COUNT_LBL,
     ids.CARDS_COUNT_LBL,
     ids.ON_COURSE_LBL,
@@ -426,6 +516,7 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
 # (tests/unit/test_main_frame_guard.py pins both transcriptions).
 REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.CROSSINGS_LIST: wx.dataview.DataViewCtrl,
+    CROSSINGS_SEARCH: wx.SearchCtrl,
     ids.MAIN_SPLITTER: wx.SplitterWindow,
     ids.PLATE_INPUT: wx.TextCtrl,
     ids.RECORD_BTN: wx.Button,
@@ -438,6 +529,7 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.RIDE_SCORER_VALUE: wx.TextCtrl,
     ids.RIDE_LAP_KM_VALUE: wx.TextCtrl,
     ids.RIDE_STATUS_LBL: wx.StaticText,
+    ids.CURRENT_LAP_LBL: wx.StaticText,
     ids.CROSSINGS_COUNT_LBL: wx.StaticText,
     ids.CARDS_COUNT_LBL: wx.StaticText,
     ids.ON_COURSE_LBL: wx.StaticText,
@@ -471,6 +563,35 @@ def _pin_stop_light(light: StopLight) -> wx.Size:
     best = light.DoGetBestSize()
     light.SetMinSize(best)
     return best
+
+
+def _pin_status_label_width(label: wx.StaticText) -> int:
+    """Floor *label* at the widest status word and return that width.
+
+    Phase 6: the Status box has a fixed width, so the label's own text
+    must never decide it -- a DRAFT -> REOPENED transition would
+    otherwise widen the column and shove the boxes beside it. The floor
+    is measured from :data:`STATUS_LABEL_WORDS` (the same words
+    ``set_state`` renders, ``STOPPED`` included), in the label's own
+    current font, so it follows the platform's metrics.
+    """
+    width: int = max(label.GetTextExtent(word).width for word in STATUS_LABEL_WORDS)
+    label.SetMinSize(wx.Size(width, -1))
+    return width
+
+
+def _pin_current_lap_width(label: wx.StaticText) -> int:
+    """Floor *label* at its own two-digit extent and return that width.
+
+    Phase 6: the reading is always two digits (``show_current_lap``
+    caps at :data:`MAX_CURRENT_LAP`), so pinning the label's width to
+    that extent keeps the Current Lap box a fixed size -- the largest
+    text it can ever show is what it is measured for, in its own
+    2x-relative font.
+    """
+    width: int = label.GetTextExtent(f"{MAX_CURRENT_LAP:02d}").width
+    label.SetMinSize(wx.Size(width, -1))
+    return width
 
 
 class MainFrame:
@@ -529,6 +650,9 @@ class MainFrame:
         # ui.app._load_frame_verified verifies before this constructor
         # runs. Keep the two in lockstep.
         self.crossings_list = self._find(ids.CROSSINGS_LIST, wx.dataview.DataViewCtrl)
+        # Phase 4: the search row main.xrc declares above the list (the
+        # rider editor's own label + wxSearchCtrl pair).
+        self.crossings_search = self._find(CROSSINGS_SEARCH, wx.SearchCtrl)
         self.main_splitter = self._find(ids.MAIN_SPLITTER, wx.SplitterWindow)
         self.plate_input = self._find(ids.PLATE_INPUT, wx.TextCtrl)
         self.record_btn = self._find(ids.RECORD_BTN, wx.Button)
@@ -543,6 +667,7 @@ class MainFrame:
         self.ride_scorer_value = self._find(ids.RIDE_SCORER_VALUE, wx.TextCtrl)
         self.ride_lap_km_value = self._find(ids.RIDE_LAP_KM_VALUE, wx.TextCtrl)
         self.ride_status_lbl = self._find(ids.RIDE_STATUS_LBL, wx.StaticText)
+        self.current_lap_lbl = self._find(ids.CURRENT_LAP_LBL, wx.StaticText)
         self.crossings_count_lbl = self._find(ids.CROSSINGS_COUNT_LBL, wx.StaticText)
         self.cards_count_lbl = self._find(ids.CARDS_COUNT_LBL, wx.StaticText)
         self.on_course_lbl = self._find(ids.ON_COURSE_LBL, wx.StaticText)
@@ -571,6 +696,14 @@ class MainFrame:
         clock_width = self.clock_elapsed_lbl.GetTextExtent("23:59:59").width
         self.clock_elapsed_lbl.SetMinSize(wx.Size(clock_width, -1))
         self.clock_remaining_lbl.SetMinSize(wx.Size(clock_width, -1))
+        # Phase 6: the Current Lap reading's width is pinned to its own
+        # two-digit extent -- the reading is capped at MAX_CURRENT_LAP,
+        # so nothing wider can ever be rendered into it.
+        _pin_current_lap_width(self.current_lap_lbl)
+        # Phase 6: and the Status box's label is floored at the widest
+        # status word, so its fixed column never resizes on a state
+        # change.
+        _pin_status_label_width(self.ride_status_lbl)
         self.elapsed_clock = self._build_clock_dial(self.elapsed_clock_panel, ELAPSED_CLOCK)
         self.remaining_clock = self._build_clock_dial(self.remaining_clock_panel, REMAINING_CLOCK)
         self.ride_status_light = StopLight(self.ride_status_panel)
@@ -629,6 +762,17 @@ class MainFrame:
         self.crossings_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_crossing_activated
         )
+        # Phase 4: the feed's own header sort (every column is
+        # sortable) and the search box above it. Both are view-local
+        # state; the search text is forwarded to the presenter, which
+        # owns the filter.
+        self.crossings_list.Bind(
+            wx.dataview.EVT_DATAVIEW_COLUMN_SORTED,
+            self._on_feed_column_sorted,
+        )
+        self.crossings_search.Bind(wx.EVT_TEXT, self._on_search_text)
+        self.crossings_search.Bind(wx.EVT_SEARCHCTRL_SEARCH_BTN, self._on_search_text)
+        self.crossings_search.Bind(wx.EVT_SEARCHCTRL_CANCEL_BTN, self._on_search_text)
         self.console_riders_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_rider_activated
         )
@@ -642,18 +786,18 @@ class MainFrame:
 
         # LoadFrame does not honour main.xrc's <size> -- measured: the
         # frame comes back sized to the sizer's own computed minimum
-        # (~429x373), not the canvas's 1100x700. SetMinSize alone only
-        # stops *future* shrinking below the floor; SetSize is what
+        # (~429x373), not the canvas's 1100x700. SetSize is what
         # actually grows this window (and the splitter's client area)
-        # to the canvas's documented size right now. A persisted
-        # geometry (E8.1.1) replaces that default right after, so a
-        # relaunch opens where the operator left the frame.
-        self.frame.SetMinSize(wx.Size(*MIN_SIZE))
-        self.frame.SetSize(wx.Size(*MIN_SIZE))
-        if initial_geometry is not None:
-            x, y, width, height = initial_geometry
-            self.frame.SetPosition((x, y))
-            self.frame.SetSize((width, height))
+        # to the canvas's documented size right now; a persisted
+        # geometry (E8.1.1) replaces that default, so a relaunch opens
+        # where the operator left the frame. Either way the size and
+        # position then go through the screen fit (Phase 6), so a
+        # geometry saved on a larger display -- or on a display that is
+        # no longer attached -- comes back fully visible.
+        self._apply_frame_geometry(initial_geometry)
+        # Phase 6: a monitor change re-fits. wx fires this on the frame
+        # when the display arrangement changes, on both platforms.
+        self.frame.Bind(wx.EVT_DISPLAY_CHANGED, self._on_display_changed)
 
         # The console-view handle the app (and scenarios) reach the
         # view's own methods through -- the results window's
@@ -672,6 +816,12 @@ class MainFrame:
 
         self._hideable_columns = self._build_columns()
         self._crossings_model: CrossingsFeedModel | None = None
+        # Phase 4: the feed's current header sort, re-applied whenever
+        # the model is rebuilt (a new model drops the control's sort
+        # key). Unlike the riders tab, the feed always has one: Time
+        # ascending, so the oldest crossing is the first row.
+        self._feed_sort_column: int = DEFAULT_FEED_SORT[0]
+        self._feed_sort_ascending: bool = DEFAULT_FEED_SORT[1]
 
         # E7.2.1: the menu-enablement binder's seam. set_state fires it
         # on every ride-state change (the epic's "existing ride-state-
@@ -836,6 +986,11 @@ class MainFrame:
         the platform default; the widths live in the wx-free module
         so the values stay headlessly pinned.
 
+        Phase 4: every column also carries :data:`FEED_COLUMN_FLAGS`
+        (sortable + resizable), so the platform draws a header arrow
+        and orders through :meth:`CrossingsFeedModel.Compare`'s own
+        per-column keys.
+
         Every column is text: the Card column renders the dealt
         card's glyph display (``feed_model.card_text_or_blank``), not
         a bitmap, so all seven share the one renderer.
@@ -843,7 +998,9 @@ class MainFrame:
         hideable = []
         for col, label in enumerate(feed_model.COLUMN_LABELS):
             width = feed_model.COLUMN_WIDTHS[col]
-            column = self.crossings_list.AppendTextColumn(label, col, width=width)
+            column = self.crossings_list.AppendTextColumn(
+                label, col, width=width, flags=FEED_COLUMN_FLAGS
+            )
             if col in feed_model.TIME_COLUMNS:
                 hideable.append(column)
         return tuple(hideable)
@@ -913,9 +1070,9 @@ class MainFrame:
         itself only fires ``callback(row)`` when a feed row is
         activated (double-click or Enter with the list focused).
         *row* is the activated row's index into the rendered feed
-        model -- the feed is newest-first and capped at ``FEED_CAP``
-        rows, so resolving it back to a live crossing is the app's
-        job, not this view's.
+        model -- the presenter's own search-filtered, newest-first
+        row list -- so resolving it back to a live crossing is the
+        app's job, not this view's.
         """
         self._on_open_crossing = callback
 
@@ -957,6 +1114,50 @@ class MainFrame:
             return
         self._riders_sort_column = column.GetModelColumn()
         self._riders_sort_ascending = column.IsSortOrderAscending()
+
+    def _on_feed_column_sorted(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Remember the crossings header sort the operator just chose.
+
+        The feed's own half of :meth:`_on_column_sorted`: every feed
+        column is sortable (Phase 4), and
+        :meth:`_apply_feed_sort` re-applies the remembered column
+        after the next :meth:`show_feed` rebuild. The default
+        (:data:`DEFAULT_FEED_SORT`) stands until a header is clicked.
+        """
+        event.Skip()
+        column = self.crossings_list.GetSortingColumn()
+        if column is None:
+            return
+        self._feed_sort_column = column.GetModelColumn()
+        self._feed_sort_ascending = column.IsSortOrderAscending()
+
+    def _apply_feed_sort(self) -> None:
+        """Re-apply the feed's current sort to the freshly built model.
+
+        Called from every :meth:`show_feed`: the rebuild associates a
+        new model, which drops the sort key the control was holding,
+        so the arrow and the row order are restored from
+        :attr:`_feed_sort_column`/:attr:`_feed_sort_ascending` (Time
+        ascending until an operator clicks a header). The
+        ``UnsetAsSortKey`` first is the load-bearing macOS step
+        :meth:`_apply_sort` documents: ``SetSortOrder`` is a no-op
+        when the direction is unchanged, so without the clear the
+        rebuilt model would keep the presenter's own order and the
+        sort would silently revert.
+
+        Unlike the riders tab's own sort, this one always applies: the
+        feed opens sorted by Time ASCENDING (the ride's own reading
+        order), so there is no "nothing sorted yet" state.
+        """
+        model = self._crossings_model
+        if model is None:
+            return
+        column = self.crossings_list.GetColumn(self._feed_sort_column)
+        if column is None:
+            return
+        column.UnsetAsSortKey()
+        column.SetSortOrder(self._feed_sort_ascending)
+        model.Resort()
 
     def _apply_sort(self) -> None:
         """Re-apply the remembered riders-tab sort to the current model.
@@ -1074,7 +1275,9 @@ class MainFrame:
         The feed's own model answers the row index, exactly as the
         two review lists' handlers resolve theirs; the app turns that
         index back into the live ``Crossing`` (the view holds no
-        crossings, only the rows the presenter rendered).
+        crossings, only the rows the presenter rendered) -- resolved
+        against the rows actually rendered, search filter included
+        (``ConsolePresenter.rendered_feed_rows``).
         """
         if self._crossings_model is None:
             return
@@ -1083,6 +1286,23 @@ class MainFrame:
             return
         if self._on_open_crossing is not None:
             self._on_open_crossing(row)
+
+    def _on_search_text(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Forward the ``crossings_search`` box's current text.
+
+        ``crossings_search`` is a ``wxSearchCtrl``: text changes
+        (typing, the harness's ``SetValue``, the native clear X) all
+        re-run the filter, and the search button (Enter) does too --
+        every path reads the control's current value, so one handler
+        serves all three events (the rider editor's own precedent).
+
+        The presenter owns the filter, so this only forwards. A
+        console with no presenter (the no-ride bootstrap) has no feed
+        to narrow, and the box simply does nothing.
+        """
+        event.Skip()
+        if self._presenter is not None:
+            self._presenter.on_search_text(self.crossings_search.GetValue())
 
     def set_hide_times(self, *, hide: bool) -> None:
         """Toggle the Lap time/Total columns per R-37.
@@ -1093,7 +1313,39 @@ class MainFrame:
         for column in self._hideable_columns:
             column.SetHidden(hide)
 
-    # -------------------------------------------------------- splitter
+    # --------------------------------------------- frame size, splitter
+
+    def _apply_frame_geometry(self, initial_geometry: tuple[int, int, int, int] | None) -> None:
+        """Size and place the frame, then fit it to its display.
+
+        ``initial_geometry`` is E8.1.1's persisted placement and always
+        wins when present; ``None`` (no saved layout yet) opens at the
+        canvas's own :data:`MIN_SIZE`. Either way
+        :func:`~rivercrossing.ui.views._support.fit_frame_to_screen`
+        then clamps the result to the current display's work area --
+        so a geometry saved on a larger display, or on one that is no
+        longer attached, opens whole and on screen, and the frame's
+        minimum size is never taller or wider than the screen itself
+        (CODINGSTANDARDS-UX-DESKTOP.md section 6).
+        """
+        if initial_geometry is not None:
+            x, y, width, height = initial_geometry
+            self.frame.SetPosition((x, y))
+            self.frame.SetSize((width, height))
+        else:
+            self.frame.SetSize(wx.Size(*MIN_SIZE))
+        fit_frame_to_screen(self.frame, MIN_SIZE)
+
+    def _on_display_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Re-fit the frame when the display arrangement changes.
+
+        Dragging the console to a smaller monitor, unplugging the one
+        it was on, or changing the resolution re-runs the same fit the
+        constructor ran, so the window can never be left larger than --
+        or entirely off -- the display it is now on.
+        """
+        event.Skip()
+        fit_frame_to_screen(self.frame, MIN_SIZE)
 
     def _restore_sash_position(self, initial_sash: int | None) -> None:
         """Apply the persisted sash position, or the W9 default.
@@ -1162,9 +1414,16 @@ class MainFrame:
         re-applies the W5 console-button gates through the bound
         presenter (record/undo/tick are exactly the crossing-count
         changes the Start/Undo verdicts depend on).
+
+        Phase 4: the renderer is told the row order the *presenter*
+        chose -- the feed's newest-first order, narrowed by the search
+        box; the list's own header sort is then re-applied
+        (:meth:`_apply_feed_sort`), which is what actually paints the
+        operator's chosen order onto the new model.
         """
         self._crossings_model = CrossingsFeedModel(rows)
         self.crossings_list.AssociateModel(self._crossings_model)
+        self._apply_feed_sort()
         self._notify_ride_changed()
         if self._presenter is not None:
             self._presenter.refresh_console_gates()
@@ -1173,9 +1432,11 @@ class MainFrame:
         """Render the review notebook's flagged rows (ConsoleView).
 
         WS-H: the presenter feeds the flagged subset of the feed here
-        (its ``_refresh_feed``) -- every short lap, held or credited --
+        (its ``refresh_feed``) -- every short lap, held or credited --
         and the view rebuilds the model like :meth:`show_feed` does:
         fresh rows each call keeps the row-count bookkeeping trivial.
+        The phase-4 search box narrows the crossings list only, so this
+        tab keeps every flagged row whatever the box holds.
         """
         self._flagged_model = FlaggedListModel(rows)
         self.flagged_list.AssociateModel(self._flagged_model)
@@ -1205,6 +1466,19 @@ class MainFrame:
         self.shoe_lbl.SetLabel(f"{c.shoe_remaining}/{c.shoe_total}")
         self.riders_count_lbl.SetLabel(_format_count(c.riders))
         self.teams_count_lbl.SetLabel(_format_count(c.teams))
+
+    def show_current_lap(self, lap: int) -> None:
+        """Render the header's two-digit Current Lap reading (Phase 6).
+
+        ``ConsoleView.show_current_lap``: *lap* is the highest lap
+        number any entry has recorded (``console.current_lap``), so the
+        first rider crossing moves the reading 00 -> 01. The value is
+        always two digits and capped at :data:`MAX_CURRENT_LAP` -- the
+        label is width-pinned to that two-digit extent
+        (``__init__``), so a third character could not be shown without
+        reflowing the box beside it.
+        """
+        self.current_lap_lbl.SetLabel(f"{min(max(lap, 0), MAX_CURRENT_LAP):02d}")
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Show or hide the Teams chip with its caption (R-11, W12).
@@ -1282,12 +1556,14 @@ class MainFrame:
         ride is open, so it is deliberately not part of the
         ``ConsoleView`` Protocol -- with no ride there is no presenter
         to call it. The ride-info group is blank (every value row
-        cleared, the logo slot hidden), the status lamp is dark
-        (``"off"``, no circle lit), every ride control is inert, all
-        three banners are dismissed, and the clocks/feed/counters
-        show their zero state. ``_status`` returns to DRAFT so the
-        menu binder's ride-state seam sees DRAFT; the app's own
-        ``ride_open=False`` state keeps the ride-gated rows off.
+        cleared, the logo slot hidden), the status column reads DRAFT
+        with its lamp lit red (Phase 6 -- a labelled state is never
+        carried by colour alone, UX-DESKTOP section 7), every ride
+        control is inert, all three banners are dismissed, and the
+        clocks/feed/counters/lap show their zero state. ``_status``
+        returns to DRAFT so the menu binder's ride-state seam sees
+        DRAFT; the app's own ``ride_open=False`` state keeps the
+        ride-gated rows off.
         """
         for value in (
             self.ride_name_value,
@@ -1299,8 +1575,8 @@ class MainFrame:
         ):
             value.SetValue("")
         self.ride_logo_bmp.Hide()
-        self.ride_status_lbl.SetLabel("")
-        self.ride_status_light.set_mode("off")
+        self.ride_status_lbl.SetLabel(status_text(RideStatus.DRAFT))
+        self.ride_status_light.set_mode(stop_light_mode(RideStatus.DRAFT))
         # W1: every ride control is inert with no ride to act on.
         for control in (
             self.plate_input,
@@ -1319,6 +1595,7 @@ class MainFrame:
         self.show_flagged([])
         self.show_riders([])
         self.show_counters(Counters(0, 0, 0, 0, 0, 0, 0))
+        self.show_current_lap(0)
         self._status = RideStatus.DRAFT
         self._notify_ride_changed()
 

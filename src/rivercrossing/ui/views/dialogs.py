@@ -126,12 +126,15 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
 # first input field, never the default button (set_initial_focus's
 # own docstring). add_rider_dlg (W7) starts on its plate field, the
 # same first input the editor itself opens on; add_team_dlg (W8)
-# starts on its name field, like team_editor_dlg.
+# starts on its name field, like team_editor_dlg. dnf_confirm_dlg
+# (Phase 3) became a form when it gained its plate_input: the operator
+# types the rider number there, so that is where the caret starts.
 FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.SET_START_DLG, ids.START_DATE_PICKER),
     (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
     (ids.REASSIGN_DLG, ids.NEW_PLATE_INPUT),
     (ids.MANUAL_DEAL_DLG, ids.PLATE_INPUT),
+    (ids.DNF_CONFIRM_DLG, ids.PLATE_INPUT),
     (ids.RIDE_SETUP_DLG, ids.NAME_INPUT),
     (ids.RIDER_EDITOR_DLG, ids.PLATE_INPUT),
     (ids.ADD_RIDER_DLG, ids.PLATE_INPUT),

@@ -124,9 +124,7 @@ RIDE_SETUP_DLG = WindowSpec(
         ids.POOLED_RADIO,
         ids.RELAY_RADIO,
         ids.DECKS_SPIN,
-        ids.JOKERS_0_RADIO,
-        ids.JOKERS_2_RADIO,
-        ids.JOKERS_4_RADIO,
+        ids.JOKERS_CHOICE,
         ids.CAP_CHK,
         ids.CAP_SPIN,
         ids.TIEBREAK_LIST,
@@ -367,7 +365,7 @@ DNF_CONFIRM_DLG = WindowSpec(
     name=ids.DNF_CONFIRM_DLG,
     xrc_file="dialogs.xrc",
     is_frame=False,
-    controls=(ids.ENTRY_LBL, ids.REASON_INPUT, WX_ID_OK, WX_ID_CANCEL),
+    controls=(ids.ENTRY_LBL, ids.PLATE_INPUT, ids.REASON_INPUT, WX_ID_OK, WX_ID_CANCEL),
     buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
@@ -440,11 +438,13 @@ SETTINGS_DLG = WindowSpec(
         ids.HIDE_TIMES_CHK,
         # S7: verbose logging writes the support diagnostic log.
         ids.VERBOSE_LOG_CHK,
-        ids.BACKUP_NOW_BTN,
+        # Phase 1: the decimal average-speed entry (the "Back up now"
+        # button left with it; File ▸ Back Up Database… keeps R-54).
+        ids.AVG_SPEED_SPIN,
         WX_ID_OK,
         WX_ID_CANCEL,
     ),
-    buttons=(ids.BACKUP_NOW_BTN, WX_ID_OK, WX_ID_CANCEL),
+    buttons=(WX_ID_OK, WX_ID_CANCEL),
 )
 
 ABOUT_DLG = WindowSpec(

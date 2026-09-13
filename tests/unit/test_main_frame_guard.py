@@ -45,7 +45,7 @@ class _FakeControl:
 
 
 def test_required_controls_lists_exactly_the_init_find_controls() -> None:
-    """The verify tuple is the single source for __init__'s 31 finds.
+    """The verify tuple is the single source for __init__'s 33 finds.
 
     Pins the contract so the guard can never silently drift from
     ``MainFrame.__init__``: if a control is added/removed there without
@@ -53,6 +53,8 @@ def test_required_controls_lists_exactly_the_init_find_controls() -> None:
     """
     assert REQUIRED_CONTROLS == (
         ids.CROSSINGS_LIST,
+        # Phase 4: the crossings search box joins the init finds.
+        ids.CROSSINGS_SEARCH,
         ids.MAIN_SPLITTER,
         ids.PLATE_INPUT,
         ids.RECORD_BTN,
@@ -67,6 +69,8 @@ def test_required_controls_lists_exactly_the_init_find_controls() -> None:
         ids.RIDE_SCORER_VALUE,
         ids.RIDE_LAP_KM_VALUE,
         ids.RIDE_STATUS_LBL,
+        # Phase 6: the header's Current Lap reading.
+        ids.CURRENT_LAP_LBL,
         ids.CROSSINGS_COUNT_LBL,
         ids.CARDS_COUNT_LBL,
         ids.ON_COURSE_LBL,
@@ -100,6 +104,7 @@ def test_required_control_classes_transcribe_the_init_find_calls() -> None:
     """The map pins the ctor's ``_find`` calls verbatim."""
     expected = {
         ids.CROSSINGS_LIST: wx.dataview.DataViewCtrl,
+        ids.CROSSINGS_SEARCH: wx.SearchCtrl,
         ids.MAIN_SPLITTER: wx.SplitterWindow,
         ids.PLATE_INPUT: wx.TextCtrl,
         ids.RECORD_BTN: wx.Button,
@@ -112,6 +117,7 @@ def test_required_control_classes_transcribe_the_init_find_calls() -> None:
         ids.RIDE_SCORER_VALUE: wx.TextCtrl,
         ids.RIDE_LAP_KM_VALUE: wx.TextCtrl,
         ids.RIDE_STATUS_LBL: wx.StaticText,
+        ids.CURRENT_LAP_LBL: wx.StaticText,
         ids.CROSSINGS_COUNT_LBL: wx.StaticText,
         ids.CARDS_COUNT_LBL: wx.StaticText,
         ids.ON_COURSE_LBL: wx.StaticText,

@@ -264,7 +264,11 @@ def reconstruct_shoe_deals(facts: RaceFacts) -> list[str]:
 
 
 def expected_feed_rows(engine: RideEngine, roster: Roster) -> list[FeedRow]:
-    """Return the console feed for *engine*, newest first (cap 30)."""
+    """Return the console feed for *engine*, newest first, every row.
+
+    Phase 4 retired R-32's 30-row cap: the list scrolls the whole ride,
+    so the oracle compares every row the child's own feed rendered.
+    """
     return EngineDataSource(engine, roster).feed_rows()
 
 

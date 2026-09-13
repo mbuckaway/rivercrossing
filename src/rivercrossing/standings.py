@@ -15,7 +15,7 @@ Phase 3 adds :func:`rank_by_kind`, the team/solo split for MIXED
 rides: a team's pooled cards would dominate most solo hands, so the
 two kinds never compete for one place -- the function runs :func:`rank`
 once per kind (``"team"``, then ``"solo"``), each section numbered
-from 1 with its own DNF tail.
+from 1 with its own ACTIVE field.
 
 Handling rules, in order of application:
 
@@ -35,13 +35,14 @@ Handling rules, in order of application:
   total time -- is the order ``EngineDataSource.standings`` applies
   while a ride is not yet FINISHED.
 
-- DNF entries keep all laps/cards (spec §6 "DNF keeps all laps/cards,
-  listed and marked"), appear after every ACTIVE entry, and never
-  displace an ACTIVE placing. Their places continue from
-  ``len(ACTIVE) + 1`` in input order -- pinned by
-  ``test_rank_dnf_entries_listed_last_with_continuing_place_numbers``
-  and ``test_rank_all_dnf_results_keep_input_order_numbered_from_one``
-  -- and they carry no tie note (their DNF state is the mark).
+- DNF entries are EXCLUDED: they are not listed, placed or exported
+  at all, so the ranked list is exactly the ACTIVE field. The ride
+  itself keeps every lap and card a DNF entry recorded (spec §6's
+  "DNF keeps all laps/cards" is the engine's contract), and a team
+  with a DNF rider keeps the survivors' cards -- but nothing that
+  reaches these ranking functions from the excluded entry does.
+  Test_standings' exclusion group pins the three shapes: a mixed
+  field, a laps-leading DNF and an all-DNF field.
 
 - The two leaderboards share spec §6's board rule, "laps DESC, then
   total ASC", capped at ``top``, ACTIVE entries only; a (laps, time)
@@ -289,10 +290,9 @@ def rank(
     sequence -- ``MOST_LAPS`` more laps wins, ``TOTAL_TIME`` shorter
     total time wins -- until ``HIGH_CARD_DRAW``, where an unresolved
     pair is flagged ``draw_required`` and never silently ordered
-    (R-43). DNF entries keep all laps/cards, appear after every ACTIVE
-    entry with places continuing from ``len(ACTIVE) + 1``, and never
-    displace an ACTIVE placing (spec §6; module docstring pins the
-    exact numbering).
+    (R-43). DNF entries are excluded outright: nothing is placed
+    after the last ACTIVE entry, and an all-DNF field ranks to
+    ``[]`` -- a DNF rider never appears in the results at all.
 
     Args:
         results: The ride's finished snapshots, in any order.
@@ -301,7 +301,7 @@ def rank(
             so a hand tie flags for the venue (R-14).
 
     Returns:
-        One :class:`Placed` per result, best hand first, DNFs last.
+        One :class:`Placed` per ACTIVE result, best hand first.
 
     Raises:
         TypeError: *order* contains something other than a
@@ -309,7 +309,6 @@ def rank(
     """
     _validate_order(order)
     active = [result for result in results if not result.dnf]
-    dnf = [result for result in results if result.dnf]
 
     active.sort(key=cmp_to_key(_compare_hands), reverse=True)
     hand_groups: list[list[EntryResult]] = []
@@ -320,13 +319,7 @@ def rank(
             hand_groups.append([result])
 
     runs = [run for group in hand_groups for run in _resolved_runs(group, order)]
-    placed = _place_runs(runs)
-
-    dnf_place = len(active) + 1
-    for result in dnf:
-        placed.append(Placed(place=dnf_place, result=result, tie_note=None, draw_required=False))
-        dnf_place += 1
-    return placed
+    return _place_runs(runs)
 
 
 def rank_by_kind(
@@ -340,7 +333,7 @@ def rank_by_kind(
     for one place -- :func:`rank` runs once over the ``"team"``
     results and once over the ``"solo"`` results (``kind`` is
     ``entry.type.value``, module docstring), each section re-numbering
-    places from 1 and carrying its own DNF tail. A section with no
+    places from 1 and dropping its own DNF entries. A section with no
     results is empty.
 
     Args:
@@ -351,7 +344,7 @@ def rank_by_kind(
 
     Returns:
         ``(teams, solo)`` -- each a :func:`rank` output over that
-        kind's results, best hand first, DNFs last.
+        kind's ACTIVE results, best hand first.
 
     Raises:
         TypeError: *order* contains something other than a

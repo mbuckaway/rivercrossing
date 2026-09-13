@@ -22,7 +22,7 @@ Work strictly from the documents in `design/`. They are the contract: if somethi
 Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-html/` is a browsable mirror that has not been re-rendered since the EPIC 1 amendments, so where the two differ the markdown is right.
 
 ## Step 2 — the work (phases and tasks, in order)
-- **E6.1 Standings** — tie-break rules ①②③ reorderable with instant re-rank; laps and fastest leaderboards; DNF block last.
+- **E6.1 Standings** — tie-break rules ①②③ reorderable with instant re-rank; laps and fastest leaderboards; DNF entrants excluded from the ranking (per-rider DNF).
 - **E6.2 HTML** — CI build step compiling Tailwind + vendoring base64 Barlow subsets (staleness-gated); Jinja2 render with autoescape + StrictUndefined; golden-file and JSON round-trip tests; the `</script>`-in-a-team-name injection case; no-times variant omits time markup AND time JSON.
 - **E6.3 PDF** — fpdf2 multi-section report and the one-page podium poster, byte-deterministic across runs and OSes.
 - **E6.4 Results window** — publish checkboxes → ExportOptions, Results menu live with FINISHED gating, finish blocked unless the evaluator self-test is green.

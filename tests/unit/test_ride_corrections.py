@@ -26,6 +26,7 @@ import pytest
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.hands import best_hand
 from rivercrossing.ride import (
+    DEFAULT_JOKERS_PER_DECK,
     Event,
     IllegalStateError,
     RideConfig,
@@ -83,6 +84,25 @@ def _roster_with_entries(*plates: str) -> Roster:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     for plate in plates:
         roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
+    return roster
+
+
+def _pooled_team_roster() -> Roster:
+    """Build a MIXED rider_pooled roster: one team, Sarah, Priya.
+
+    The team's own plate is the lowest rider's -- S1's "adopts the
+    lowest-numbered rider's plate" -- so the team's plate and Priya's
+    number coincide; the per-rider rule resolves that in the rider's
+    favour.
+    """
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Sarah", last_name="", plate="45"),
+            Rider(first_name="Priya", last_name="", plate="9"),
+        ],
+    )
     return roster
 
 
@@ -337,7 +357,7 @@ def test_add_crossing_at_deals_next_card_and_credits_the_hand() -> None:
     roster = _roster_with_entries("12", "34")
     engine, _ = _make_engine(roster=roster)
     engine.start()
-    reference = Shoe(decks=8, jokers_per_deck=2, seed=20260920)
+    reference = Shoe(decks=8, jokers_per_deck=DEFAULT_JOKERS_PER_DECK, seed=20260920)
 
     engine.add_crossing_at("12", _dt(10, 15), reason="missed crossing")
 
@@ -557,15 +577,23 @@ def test_reassign_crossing_unknown_ordinal_raises_illegal_state_error(seq: int) 
 # ========================================================= mark_dnf
 
 
-def test_mark_dnf_audits_entry_and_reason() -> None:
-    """mark_dnf writes exactly one event naming the entry."""
+def test_mark_dnf_audits_entry_plate_scope_and_reason() -> None:
+    """A solo plate writes one event: whole-entry scope, entry id."""
     engine, _ = _make_engine()
     engine.start()
     before = len(engine.events)
 
     event = engine.mark_dnf("12", reason="mechanical failure")
 
-    assert event == Event(action="dnf", payload={"entry_id": "12", "reason": "mechanical failure"})
+    assert event == Event(
+        action="dnf",
+        payload={
+            "entry_id": "12",
+            "plate": "12",
+            "rider": False,
+            "reason": "mechanical failure",
+        },
+    )
     assert len(engine.events) == before + 1
 
 
@@ -585,24 +613,48 @@ def test_mark_dnf_keeps_laps_and_cards_and_flips_snapshot_dnf() -> None:
     assert results["34"].dnf is False
 
 
-def test_mark_dnf_pooled_rider_plate_marks_the_team_entry() -> None:
-    """A rider's plate marks the owning team entry DNF (R-16)."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+def test_mark_dnf_pooled_rider_plate_marks_that_rider_not_the_team() -> None:
+    """DNF is per rider: a team member's plate never sinks the team."""
+    engine, _ = _make_engine(roster=_pooled_team_roster(), config=_config(min_lap_s=1))
+    engine.start()
+    engine.record_crossing("45", at=_dt(10, 2))
+
+    event = engine.mark_dnf("45", reason="mechanical failure")
+
+    assert event.payload == {
+        "entry_id": "9",
+        "plate": "45",
+        "rider": True,
+        "reason": "mechanical failure",
+    }
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["9"].dnf is False
+
+
+def test_mark_dnf_relay_team_plate_marks_the_whole_entry() -> None:
+    """Relay riders carry no plate (S1): a typed plate is the team's."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
     roster.create_team_entry(
-        display_name="Dirt Dynamos",
+        display_name="Trail Blazers",
+        plate="77",
         riders=[
-            Rider(first_name="Sarah", last_name="", plate="45"),
-            Rider(first_name="Priya", last_name="", plate="9"),
+            Rider(first_name="A.", last_name="Roy"),
+            Rider(first_name="K.", last_name="Singh"),
         ],
     )
     engine, _ = _make_engine(roster=roster)
     engine.start()
 
-    event = engine.mark_dnf("45", reason="mechanical failure")
+    event = engine.mark_dnf("77", reason="mechanical failure")
 
-    assert event.payload["entry_id"] == "9"
-    results = {entry.plate: entry for entry in engine.snapshot()}
-    assert results["9"].dnf is True
+    assert event.payload == {
+        "entry_id": "77",
+        "plate": "77",
+        "rider": False,
+        "reason": "mechanical failure",
+    }
+    results = {result.plate: result for result in engine.snapshot()}
+    assert results["77"].dnf is True
 
 
 def test_mark_dnf_empty_reason_is_refused() -> None:
@@ -866,13 +918,35 @@ def test_apply_dnf_event_marks_the_entry() -> None:
     """apply("dnf") sets the entry's DNF state from the payload."""
     engine, _ = _make_engine()
     engine.start(at=_dt(10, 0))
-    event = Event(action="dnf", payload={"entry_id": "12", "reason": "mechanical failure"})
+    event = Event(
+        action="dnf",
+        payload={"entry_id": "12", "plate": "12", "rider": False, "reason": "mechanical failure"},
+    )
 
     engine.apply(event)
 
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].dnf is True
     assert engine.events[-1] == event
+
+
+def test_apply_dnf_rider_event_marks_the_rider_scope_from_the_payload() -> None:
+    """The payload's rider scope -- not a roster re-resolve -- replays.
+
+    The event stream is the only place a rider DNF survives a restart
+    (the persisted rider table has no dnf column), so replay must land
+    on the identical snapshot: the team stays in, the rider's cards go.
+    """
+    live, _ = _make_engine(roster=_pooled_team_roster(), config=_config(min_lap_s=1))
+    live.start()
+    live.record_crossing("45", at=_dt(10, 2))
+    live.record_crossing("9", at=_dt(10, 4))
+    live.mark_dnf("45", reason="mechanical failure")
+    replayed, _ = _make_engine(roster=_pooled_team_roster(), config=_config(min_lap_s=1))
+    for event in live.events:
+        replayed.apply(event)
+
+    assert replayed.snapshot() == live.snapshot()
 
 
 def test_apply_void_card_event_removes_the_card_from_the_hand() -> None:

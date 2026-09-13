@@ -18,8 +18,8 @@ all without a display:
   ``object.__new__`` (``test_dialogs_positioning.py``'s precedent).
 * **The two seams this workstream adds** -- ``MainFrame.
   set_on_open_crossing`` / ``_on_crossing_activated`` and the app's
-  ``_crossing_for_feed_row``, whose feed-cap arithmetic the 30-row
-  console feed depends on.
+  ``_crossing_for_feed_row`` / ``_feed_row_target``, whose row
+  arithmetic unwinds the whole-ride (uncapped, Phase 4) console feed.
 
 Real-window geometry, the loaded dialog's controls and click-through
 behaviour stay with the functional suite.
@@ -41,11 +41,13 @@ from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids, std_dialogs
 from rivercrossing.ui.card_text import format_card
-from rivercrossing.ui.presenters.data_source import FEED_CAP, EngineDataSource
+from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import crossing_detail, dialogs, main_frame
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from rivercrossing.ui.presenters.data_source import FeedRow
 
 
 # ------------------------------------------------------- builders
@@ -1241,10 +1243,9 @@ def test_on_crossing_activated_given_no_callback_is_a_no_op() -> None:
 
 # ------------------------------------------- the feed-row resolution
 #
-# The console feed renders ``reversed(engine.crossings[-FEED_CAP:])``
-# newest first, so the app's row -> crossing arithmetic has to unwind
-# that window -- and honour the 30-row cap, which drops the *oldest*
-# crossings while their ordinals stay ride-wide.
+# The console feed renders ``reversed(engine.crossings)`` newest first
+# over the *whole* ride (Phase 4 retired R-32's 30-row cap), so the
+# app's row -> crossing arithmetic is a straight unwind of that list.
 
 
 def test_crossing_for_feed_row_given_a_short_feed_maps_row_zero_to_the_newest() -> None:
@@ -1258,7 +1259,7 @@ def test_crossing_for_feed_row_given_a_short_feed_maps_row_zero_to_the_newest() 
 
 
 def test_crossing_for_feed_row_given_a_short_feed_maps_the_last_row_to_the_oldest() -> None:
-    """The last rendered row is the oldest crossing in the window."""
+    """The last rendered row is the oldest crossing on the ride."""
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
@@ -1274,7 +1275,7 @@ def test_crossing_for_feed_row_given_an_empty_engine_returns_none() -> None:
     assert app_module._crossing_for_feed_row(engine, 0) is None
 
 
-@pytest.mark.parametrize("row", [-1, 2, 30], ids=["min_minus_one", "max_plus_one", "past_cap"])
+@pytest.mark.parametrize("row", [-1, 2, 30], ids=["min_minus_one", "max_plus_one", "past_ride"])
 def test_crossing_for_feed_row_given_an_out_of_range_row_returns_none(row: int) -> None:
     """T-4 boundaries: a stale activation resolves to nothing."""
     roster = _solo_roster()
@@ -1285,34 +1286,34 @@ def test_crossing_for_feed_row_given_an_out_of_range_row_returns_none(row: int) 
     assert app_module._crossing_for_feed_row(engine, row) is None
 
 
-def test_crossing_for_feed_row_given_more_than_the_cap_maps_row_zero_to_the_newest() -> None:
-    """The cap drops old crossings; row 0 is still the newest."""
+def test_crossing_for_feed_row_given_past_the_old_cap_maps_row_zero_to_the_newest() -> None:
+    """No cap: row 0 is the newest even with 31 crossings recorded."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    for minute in range(FEED_CAP + 1):
+    for minute in range(31):
         engine.record_crossing("12", at=_dt(11, minute))
 
-    assert app_module._crossing_for_feed_row(engine, 0) is engine.crossings[FEED_CAP]
+    assert app_module._crossing_for_feed_row(engine, 0) is engine.crossings[-1]
 
 
-def test_crossing_for_feed_row_given_more_than_the_cap_maps_the_last_row_into_the_window() -> None:
-    """The oldest rendered row is crossings[1] at 31 recorded."""
+def test_crossing_for_feed_row_given_past_the_old_cap_still_maps_the_oldest_crossing() -> None:
+    """The oldest crossing is rendered now: row 30 resolves to it."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    for minute in range(FEED_CAP + 1):
+    for minute in range(31):
         engine.record_crossing("12", at=_dt(11, minute))
 
-    assert app_module._crossing_for_feed_row(engine, FEED_CAP - 1) is engine.crossings[1]
+    assert app_module._crossing_for_feed_row(engine, 30) is engine.crossings[0]
 
 
-def test_crossing_for_feed_row_given_more_than_the_cap_drops_the_oldest() -> None:
-    """crossings[0] is outside the 30-row window: row 30 is none."""
+def test_crossing_for_feed_row_given_past_the_old_cap_has_no_row_past_the_ride() -> None:
+    """T-4 max + 1: row 31 is outside the 31-crossing ride."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    for minute in range(FEED_CAP + 1):
+    for minute in range(31):
         engine.record_crossing("12", at=_dt(11, minute))
 
-    assert app_module._crossing_for_feed_row(engine, FEED_CAP) is None
+    assert app_module._crossing_for_feed_row(engine, 31) is None
 
 
 # ------------------------------------------- the miss field mapping
@@ -1531,8 +1532,10 @@ def test_on_ok_given_a_finished_ride_keeps_the_miss_dialog_open() -> None:
 #
 # The console feed interleaves pending misses with the crossings, so a
 # row index no longer names a fixed crossing: `_feed_row_target` reads
-# the feed's own `missed` flag and resolves the row to either the
-# pending miss or the crossing that row shows.
+# the row's own `missed` flag and resolves it to either the pending miss
+# or the crossing that row shows. Phase 4 makes it read the *rendered*
+# rows (the presenter's search-filtered list), so an index is resolved
+# against exactly what the operator sees.
 
 
 def test_feed_row_target_given_a_miss_row_resolves_the_pending_miss() -> None:
@@ -1540,9 +1543,9 @@ def test_feed_row_target_given_a_miss_row_resolves_the_pending_miss() -> None:
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, 0)
+    target = app_module._feed_row_target(rows, engine, 0)
 
     assert target is engine.pending_misses()[0]
 
@@ -1552,9 +1555,9 @@ def test_feed_row_target_given_a_crossing_row_resolves_the_crossing() -> None:
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, 0)
+    target = app_module._feed_row_target(rows, engine, 0)
 
     assert target is engine.crossings[0]
 
@@ -1566,9 +1569,9 @@ def test_feed_row_target_given_a_miss_between_crossings_maps_row_zero_to_the_new
     engine.record_crossing("12", at=_dt(10, 1))
     engine.record_miss(_dt(10, 2), reason="missed number")
     engine.record_crossing("12", at=_dt(10, 3))
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, 0)
+    target = app_module._feed_row_target(rows, engine, 0)
 
     assert target is engine.crossings[1]
 
@@ -1580,9 +1583,9 @@ def test_feed_row_target_given_a_miss_between_crossings_maps_row_one_to_the_miss
     engine.record_crossing("12", at=_dt(10, 1))
     engine.record_miss(_dt(10, 2), reason="missed number")
     engine.record_crossing("12", at=_dt(10, 3))
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, 1)
+    target = app_module._feed_row_target(rows, engine, 1)
 
     assert target is engine.pending_misses()[0]
 
@@ -1594,62 +1597,80 @@ def test_feed_row_target_given_a_miss_between_crossings_maps_row_two_to_the_olde
     engine.record_crossing("12", at=_dt(10, 1))
     engine.record_miss(_dt(10, 2), reason="missed number")
     engine.record_crossing("12", at=_dt(10, 3))
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, 2)
+    target = app_module._feed_row_target(rows, engine, 2)
 
     assert target is engine.crossings[0]
 
 
-def test_feed_row_target_given_a_capped_feed_maps_row_one_to_the_newest() -> None:
-    """A miss at the cap edge still leaves row 1 the newest crossing."""
+def test_feed_row_target_given_a_long_ride_maps_row_one_past_a_miss_to_the_newest() -> None:
+    """A miss on a 31-crossing ride still leaves row 1 the newest."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    for minute in range(FEED_CAP):
+    for minute in range(31):
         engine.record_crossing("12", at=_dt(11, minute))
     engine.record_miss(_dt(11, 59), reason="missed number")
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, 1)
+    target = app_module._feed_row_target(rows, engine, 1)
 
-    assert target is engine.crossings[FEED_CAP - 1]
+    assert target is engine.crossings[-1]
 
 
-def test_feed_row_target_given_a_capped_feed_drops_the_oldest_crossing() -> None:
-    """The miss still pushes crossings[0] from the window."""
+def test_feed_row_target_given_a_long_ride_still_reaches_the_oldest_crossing() -> None:
+    """No cap: the last miss-shifted row is the first crossing."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    for minute in range(FEED_CAP):
+    for minute in range(31):
         engine.record_crossing("12", at=_dt(11, minute))
     engine.record_miss(_dt(11, 59), reason="missed number")
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, FEED_CAP - 1)
+    target = app_module._feed_row_target(rows, engine, 31)
 
-    assert target is engine.crossings[1]
+    assert target is engine.crossings[0]
 
 
-def test_feed_row_target_given_a_capped_feed_has_no_row_at_the_cap() -> None:
-    """T-4 max + 1: row FEED_CAP is past the capped feed."""
+def test_feed_row_target_given_a_long_ride_has_no_row_past_the_last_one() -> None:
+    """T-4 max + 1: one row past the merged feed names nothing."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    for minute in range(FEED_CAP):
+    for minute in range(31):
         engine.record_crossing("12", at=_dt(11, minute))
     engine.record_miss(_dt(11, 59), reason="missed number")
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, FEED_CAP)
+    target = app_module._feed_row_target(rows, engine, 32)
 
     assert target is None
+
+
+def test_feed_row_target_given_a_search_filtered_feed_resolves_the_visible_row() -> None:
+    """Phase 4: row 0 of a narrowed feed is that feed's own first row.
+
+    The presenter renders the search-filtered rows, so the app must
+    resolve the activated index against those -- the unfiltered feed's
+    row 0 would open a different crossing entirely.
+    """
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 1))
+    engine.record_crossing("12", at=_dt(10, 3))
+    rendered = [row for row in EngineDataSource(engine, roster).feed_rows() if row.lap == 2]
+
+    target = app_module._feed_row_target(rendered, engine, 0)
+
+    assert (target, target is engine.crossings[1]) == (engine.crossings[1], True)
 
 
 def test_feed_row_target_given_an_empty_feed_returns_none() -> None:
     """T-4 boundary: an empty feed has no row to resolve."""
     roster = _solo_roster()
     engine = _running_engine(roster)
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, 0)
+    target = app_module._feed_row_target(rows, engine, 0)
 
     assert target is None
 
@@ -1660,26 +1681,22 @@ def test_feed_row_target_given_an_out_of_range_row_returns_none(row: int) -> Non
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
-    source = EngineDataSource(engine, roster)
+    rows = EngineDataSource(engine, roster).feed_rows()
 
-    target = app_module._feed_row_target(source, engine, row)
+    target = app_module._feed_row_target(rows, engine, row)
 
     assert target is None
 
 
-def test_feed_row_target_given_a_stale_miss_row_returns_none(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_feed_row_target_given_a_stale_miss_row_returns_none() -> None:
     """T-3: a miss assigned between the render and the click."""
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_miss(_dt(10, 2), reason="missed number")
     stale_row = EngineDataSource(engine, roster).feed_rows()[0]
     engine.assign_plate_to_miss(1, "12", reason="rider identified")
-    source = EngineDataSource(engine, roster)
-    monkeypatch.setattr(source, "feed_rows", lambda: [stale_row])
 
-    target = app_module._feed_row_target(source, engine, 0)
+    target = app_module._feed_row_target([stale_row], engine, 0)
 
     assert target is None
 
@@ -1694,6 +1711,15 @@ class _StubPresenter:
         """Store the two collaborators the open seam reads."""
         self.engine = engine
         self.source = source
+
+    def rendered_feed_rows(self) -> list[FeedRow]:
+        """Return the rows the double's console would be showing.
+
+        The real presenter returns the search-filtered list it last
+        rendered; this double has no search box, so it answers the
+        source's own feed (the unfiltered render).
+        """
+        return self.source.feed_rows()
 
 
 class _StubFrame:

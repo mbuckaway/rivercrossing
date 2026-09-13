@@ -12,7 +12,7 @@ Programmatic cross-checks over all documents, plus a manual read of the menu sys
 | Task coverage | Plan and briefs now agree on all 86 numbered tasks (see F-2). |
 | Stack baseline | wxPython 4.3.1 / wxWidgets 3.3.3 consistently stated as the baseline in all six docs — 4.3.0 shipped 2026-07-28 and 4.3.1 on 2026-07-30 with cp314 wheels, and `wx.App.SetAppearance` ships in them, so R-03 has no conditional Windows arm and no doc describes one. |
 | Export defaults | `ExportOptions` defaults identical in skeletons, briefs, results-window mockup and both golden pages (times off, laps board on, time board off, full field on, all cards on, lap 8 km). |
-| Radio defaults | Every radio group in the canvas has a stated default: solo-only entries, rider-plates-pooled, 2 jokers/deck, tie-break ① laps, appearance System, zoom 100%. |
+| Radio defaults | Every radio group in the canvas has a stated default: solo + teams, rider-plates-pooled, 1 joker/deck, tie-break ① high-card draw, appearance System, zoom 100%. |
 | Asset naming | `-2x` suffix (not `@2x`) stated in briefs and README, matching the shipped files. |
 
 ## Findings and resolutions

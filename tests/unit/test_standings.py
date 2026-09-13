@@ -6,8 +6,8 @@ specification: order a finished ride's :class:`EntryResult` snapshots
 by their precomputed best hand, resolve byte-identical hand ties by
 the ride's configured tie-break order (R-14), flag any pair still
 unresolved at the venue's high-card draw as "draw required" and never
-order it silently (R-43), and list DNF entries after every ACTIVE
-entry (spec §6).
+order it silently (R-43), and leave DNF entries out of the ranked
+list entirely -- a DNF rider never appears in the results.
 
 Written FIRST, against a module that does not exist yet: this file is
 red until rivercrossing/standings.py lands.
@@ -188,6 +188,80 @@ def test_rank_unresolved_hand_tie_flags_draw_required_and_shares_place() -> None
     ]
 
 
+# ------------------------ Phase 5 regression pins (results dialog)
+#
+# The results dialog shows what `rank`/`rank_by_kind` decide, so the
+# three shapes the dialog depends on are pinned here as one group: a
+# field of distinct hands numbers 1..N with no ⚠ anywhere, a field with
+# two identical hands flags the venue draw on that pair alone, and the
+# prior phase's DNF exclusion still holds (a DNF entry appears nowhere,
+# however strong its hand).
+
+
+def test_rank_given_distinct_hands_numbers_them_one_to_n_without_draws() -> None:
+    """Distinct hands: consecutive places, no ⚠, no shared place."""
+    results = [
+        _result("1", "AS QD 9H 5C 3S"),
+        _result("2", "AS KS QS JS TS"),
+        _result("3", "9H 8C 7D 6S 5H"),
+        _result("4", "JH JC JD 4H 4C"),
+    ]
+
+    placed = rank(results)
+
+    assert [(p.place, p.draw_required, p.tie_note) for p in placed] == [
+        (1, False, None),
+        (2, False, None),
+        (3, False, None),
+        (4, False, None),
+    ]
+
+
+def test_rank_given_distinct_hands_orders_them_by_strength_best_first() -> None:
+    """The same distinct field ranks by hand strength, not input order.
+
+    Royal flush, then full house (jacks over fours), then the 9-high
+    straight, then the ace-high nothing -- the four classes in the
+    order ``hands.HandClass`` values give.
+    """
+    results = [
+        _result("1", "AS QD 9H 5C 3S"),
+        _result("2", "AS KS QS JS TS"),
+        _result("3", "9H 8C 7D 6S 5H"),
+        _result("4", "JH JC JD 4H 4C"),
+    ]
+
+    placed = rank(results)
+
+    assert [p.result.entry_id for p in placed] == ["2", "4", "3", "1"]
+
+
+def test_rank_given_two_identical_hands_flags_only_that_pair_a_draw() -> None:
+    """Two identical hands share a place and carry the ⚠ note."""
+    twin_a = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
+    twin_b = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    other = _result("3", "9H 8C 7D 6S 5H", laps=4, total_time=50.0)
+
+    placed = rank([other, twin_b, twin_a])
+
+    assert [(p.place, p.draw_required, p.tie_note) for p in placed] == [
+        (1, True, "draw required"),
+        (1, True, "draw required"),
+        (3, False, None),
+    ]
+
+
+def test_rank_given_a_dnf_amid_distinct_hands_still_excludes_it() -> None:
+    """The prior phase's DNF exclusion survives: no place is issued."""
+    active_a = _result("1", "AS KS QS JS TS", laps=5)
+    dnf = _result("2", "KH KC 5H 5D AS", laps=9, dnf=True)
+    active_b = _result("3", "9H 8C 7D 6S 5H", laps=4)
+
+    placed = rank([active_a, dnf, active_b])
+
+    assert [(p.place, p.result.entry_id) for p in placed] == [(1, "1"), (2, "3")]
+
+
 def test_rank_draw_pair_share_place_and_next_place_uses_competition_numbering() -> None:
     """A two-way draw at joint 1st leaves the next entry at 3rd."""
     first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
@@ -284,10 +358,15 @@ def test_rank_omitted_order_uses_default_constant() -> None:
 
 
 # -------------------------------------------------------------- DNF
+#
+# A DNF rider/entry is EXCLUDED from the results outright: no trailing
+# block, no continuing places, nothing for the exports to render. The
+# ride itself keeps the laps and cards (spec §6); the ranked list does
+# not carry them.
 
 
-def test_rank_dnf_entries_listed_last_with_continuing_place_numbers() -> None:
-    """DNFs keep all laps/cards and appear after every ACTIVE entry."""
+def test_rank_excludes_dnf_entries_and_keeps_the_active_numbering() -> None:
+    """Two actives plus a DNF rank 1..2 -- no third place is issued."""
     active = [
         _result("1", "AS KS QS JS TS", laps=5),
         _result("2", "9H 8C 7D 6S 5H", laps=4),
@@ -296,31 +375,27 @@ def test_rank_dnf_entries_listed_last_with_continuing_place_numbers() -> None:
 
     placed = rank([*active, dnf])
 
-    assert [(p.place, p.result.entry_id, p.result.dnf) for p in placed] == [
-        (1, "1", False),
-        (2, "2", False),
-        (3, "3", True),
-    ]
+    assert [(p.place, p.result.entry_id) for p in placed] == [(1, "1"), (2, "2")]
 
 
-def test_rank_dnf_entries_never_displace_active_placings() -> None:
-    """A laps-leading DNF still ranks behind every ACTIVE entry."""
+def test_rank_given_a_laps_leading_dnf_excludes_it_entirely() -> None:
+    """A DNF never displaces, or sits beside, an ACTIVE placing."""
     dnf = _result("1", "AS KS QS JS TS", laps=99, dnf=True)
     active = _result("2", "9H 8C 7D 6S 5H", laps=4)
 
     placed = rank([dnf, active])
 
-    assert [(p.place, p.result.entry_id) for p in placed] == [(1, "2"), (2, "1")]
+    assert [(p.place, p.result.entry_id) for p in placed] == [(1, "2")]
 
 
-def test_rank_all_dnf_results_keep_input_order_numbered_from_one() -> None:
-    """With no ACTIVE entries, DNFs number 1..N in input order."""
+def test_rank_given_only_dnf_results_returns_an_empty_list() -> None:
+    """An all-DNF field publishes nothing at all."""
     first = _result("1", "AS KS QS JS TS", dnf=True)
     second = _result("2", "9H 8C 7D 6S 5H", dnf=True)
 
     placed = rank([second, first])
 
-    assert [(p.place, p.result.entry_id) for p in placed] == [(1, "2"), (2, "1")]
+    assert placed == []
 
 
 # ---------------------------------------- Phase 3 team/solo split
@@ -355,8 +430,8 @@ def test_rank_by_kind_renumbers_each_section_places_from_one() -> None:
     assert [p.place for p in solo] == [1, 2, 3]
 
 
-def test_rank_by_kind_each_section_carries_its_own_dnf_tail() -> None:
-    """A section's DNFs follow that section's actives, numbered on."""
+def test_rank_by_kind_excludes_dnf_entries_from_both_sections() -> None:
+    """Each section drops its DNF entries, numbering its actives."""
     team_active = _result("1", "AS KS QS JS TS", kind="team", laps=5)
     team_dnf = _result("2", "9H 8C 7D 6S 5H", kind="team", laps=9, dnf=True)
     solo_active = _result("3", "JH JC JD 4H 4C", kind="solo", laps=4)
@@ -364,14 +439,8 @@ def test_rank_by_kind_each_section_carries_its_own_dnf_tail() -> None:
 
     teams, solo = rank_by_kind([team_dnf, solo_active, team_active, solo_dnf])
 
-    assert [(p.place, p.result.entry_id, p.result.dnf) for p in teams] == [
-        (1, "1", False),
-        (2, "2", True),
-    ]
-    assert [(p.place, p.result.entry_id, p.result.dnf) for p in solo] == [
-        (1, "3", False),
-        (2, "4", True),
-    ]
+    assert [(p.place, p.result.entry_id) for p in teams] == [(1, "1")]
+    assert [(p.place, p.result.entry_id) for p in solo] == [(1, "3")]
 
 
 def test_rank_by_kind_solo_only_results_return_an_empty_teams_section() -> None:
@@ -599,13 +668,26 @@ def _entry_result(draw: st.DrawFn) -> EntryResult:
 @given(results=st.lists(_entry_result(), min_size=0, max_size=8))
 @settings(max_examples=50, deadline=None)
 def test_rank_output_orders_active_hands_best_first(results: list[EntryResult]) -> None:
-    """Hand strength never increases down the ACTIVE stretch."""
+    """Hand strength never increases down the ranked list.
+
+    The list holds ACTIVE entries only -- a DNF result is excluded
+    before ordering, so there is no trailing DNF stretch to skip over.
+    """
     placed = rank(results)
-    active_hands = [p.result.hand for p in placed if not p.result.dnf]
 
     assert all(
-        hands.compare(earlier, later) >= 0 for earlier, later in itertools.pairwise(active_hands)
+        hands.compare(earlier, later) >= 0
+        for earlier, later in itertools.pairwise([p.result.hand for p in placed])
     )
+
+
+@given(results=st.lists(_entry_result(), min_size=0, max_size=8))
+@settings(max_examples=50, deadline=None)
+def test_rank_never_places_a_dnf_result(results: list[EntryResult]) -> None:
+    """Property: no DNF snapshot ever reaches the ranked output."""
+    placed = rank(results)
+
+    assert [p.result.dnf for p in placed] == [False] * len(placed)
 
 
 @given(results=st.lists(_entry_result(), min_size=0, max_size=8))
@@ -651,25 +733,31 @@ def test_laps_leaderboard_orders_laps_desc_then_time_asc_and_respects_top(
 
 @given(results=st.lists(_entry_result(), min_size=0, max_size=8))
 @settings(max_examples=50, deadline=None)
-def test_rank_by_kind_partitions_every_result_into_its_kind_and_numbers_from_one(
+def test_rank_by_kind_partitions_every_active_result_into_its_kind_and_numbers_from_one(
     results: list[EntryResult],
 ) -> None:
-    """Invariant: teams-then-solo covers the field; each section from 1.
+    """Invariant: teams-then-solo covers the ACTIVE field, each from 1.
 
     The Phase 3 split renumbers each kind from 1, so the concatenated
-    teams-then-solo output covers exactly the input field with every
-    team before every solo and each section's places ascending from 1.
+    teams-then-solo output covers exactly the ACTIVE input -- every
+    team before every solo, each section's places ascending 1..n and
+    no DNF entry anywhere in the output.
     """
     teams, solo = rank_by_kind(results)
     placed = [*teams, *solo]
 
-    assert sorted(p.result.entry_id for p in placed) == sorted(r.entry_id for r in results)
+    assert sorted(p.result.entry_id for p in placed) == sorted(
+        result.entry_id for result in results if not result.dnf
+    )
+    assert [p.result.dnf for p in placed] == [False] * len(placed)
     assert all(p.result.kind == "team" for p in teams)
     assert all(p.result.kind == "solo" for p in solo)
-    for section in (teams, solo):
-        if section:
-            assert section[0].place == 1
-            assert [p.place for p in section] == sorted(p.place for p in section)
+    # Places ascend within a section and start at 1 -- never 1..n, since
+    # a draw run shares its place (competition numbering).
+    assert [p.place for p in teams] == sorted(p.place for p in teams)
+    assert [p.place for p in solo] == sorted(p.place for p in solo)
+    assert not teams or teams[0].place == 1
+    assert not solo or solo[0].place == 1
 
 
 # -------------------------------------------------- hand names (E6.1.1)

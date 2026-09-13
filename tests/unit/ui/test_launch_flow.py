@@ -93,9 +93,21 @@ class _FakeConsoleView:
         """Record the number of rendered feed rows."""
         self.calls.append(("show_feed", len(rows)))
 
+    def show_flagged(self, rows: list[object]) -> None:
+        """Record the number of rendered review-tab rows (WS-H).
+
+        The presenter's own ``refresh_feed`` feeds both lists, so a
+        console double of the swap path carries both channels.
+        """
+        self.calls.append(("show_flagged", len(rows)))
+
     def show_counters(self, counters: object) -> None:
         """Record the rendered counters."""
         self.calls.append(("show_counters", counters))
+
+    def show_current_lap(self, lap: int) -> None:
+        """Record the rendered Current Lap reading (Phase 6)."""
+        self.calls.append(("show_current_lap", lap))
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Record the R-11 teams-chip visibility push (W12 protocol)."""

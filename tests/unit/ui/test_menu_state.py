@@ -208,6 +208,27 @@ def test_enablement_table_edit_ride_follows_the_open_ride(status: RideStatus) ->
     assert table[ids.MI_EDIT_RIDE] is True
 
 
+@pytest.mark.parametrize(
+    ("status", "ride_open", "expected"),
+    [
+        (RideStatus.DRAFT, False, True),
+        (RideStatus.RUNNING, False, True),
+        (RideStatus.RUNNING, True, False),
+        (RideStatus.FINISHED, True, False),
+    ],
+    ids=["draft_no_ride", "running_no_ride", "running_ride_open", "finished_ride_open"],
+)
+def test_enablement_table_new_ride_follows_the_closed_ride(
+    status: RideStatus, *, ride_open: bool, expected: bool
+) -> None:
+    """D1: mi_new_ride is enabled exactly when no ride is loaded."""
+    state = commands.RideState(status=status, ride_open=ride_open)
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_NEW_RIDE] is expected
+
+
 def test_enablement_table_carries_no_row_for_the_retired_add_entry_id() -> None:
     """D4: mi_add_entry is no longer a routed (or bound) id."""
     table = menu_state.enablement_table(_baseline_state(RideStatus.RUNNING))

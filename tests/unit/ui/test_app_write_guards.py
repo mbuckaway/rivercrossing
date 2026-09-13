@@ -1021,12 +1021,14 @@ class _ConsoleViewStub:
 
 
 # The staged GO: four generated riders on two teams, replayed for two
-# laps, so one simulated race records exactly eight crossings.
+# laps. Each entry crosses once a lap (Phase 2's team-lap fix), so two
+# team entries over two laps record exactly four crossings.
 _SIM_RIDERS = 4
 _SIM_TEAMS = 2
+_SIM_ENTRIES = _SIM_TEAMS
 _SIM_LAPS = 2
 _SIM_INTERVAL_MINUTES = 1
-_SIM_CROSSINGS = _SIM_RIDERS * _SIM_LAPS
+_SIM_CROSSINGS = _SIM_ENTRIES * _SIM_LAPS
 
 
 class _SimulatedGo(NamedTuple):

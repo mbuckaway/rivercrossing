@@ -42,6 +42,7 @@ import wx
 from hypothesis import given
 from hypothesis import strategies as st
 
+from rivercrossing.ui import ids
 from rivercrossing.ui.logging import Logging
 from rivercrossing.ui.views import dialogs, rider_issues
 from rivercrossing.ui.views.rider_editor import CsvPreviewDialog, RiderEditor
@@ -261,6 +262,19 @@ def test_run_dialog_without_a_verbose_log_still_shows_the_dialog(
     result = dialogs.run_dialog(dialog, _FakeOpener())
 
     assert (result, dialog.show_modal_calls) == (_SCRIPTED_MODAL_RESULT, 1)
+
+
+# --- E1.5.3/spec.md 13: the recorded per-dialog form decisions --------
+
+
+def test_first_field_for_dnf_confirm_names_the_plate_input() -> None:
+    """DNF is now a form: it opens on the rider number it will mark.
+
+    The dialog's own ``plate_input`` is its first input (UX-DESKTOP §3
+    "form dialogs -> the first input field"); the menu route opens it
+    with nothing known, so the operator's first keystroke lands there.
+    """
+    assert dialogs.first_field_for(ids.DNF_CONFIRM_DLG) == ids.PLATE_INPUT
 
 
 # --- H2: the copy the four retired XRC dialogs carried ----------------

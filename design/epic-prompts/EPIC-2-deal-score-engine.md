@@ -22,7 +22,7 @@ Everything you need is in this bundle. **`docs-md/` is canonical** — `docs-htm
 
 ## Step 2 — the work (phases and tasks, in order)
 - **E2.1 Evaluator** — 7,462-rank table-driven eval5; joker/wild layer incl. five-of-a-kind above straight flush; best-5-of-N with cap X; Hypothesis properties (transitivity, permutation invariance, joker monotonicity).
-- **E2.2 Shoe** — seeded Fisher-Yates, deal_index audit, exhaustion → reshuffle cycle, undo restitution; deck count × jokers (0/2/4) config matrix.
+- **E2.2 Shoe** — seeded Fisher-Yates, deal_index audit, exhaustion → reshuffle cycle, undo restitution; deck count × jokers (0–4, dropdown default 1) config matrix.
 - **E2.3 Simulations** — seeded whole-ride sims (180 entries × 6 h; solo, pooled, relay) asserting shoe accounting and runtime budget.
 - **E2.4 Self-test dialog** — selftest_dlg runs the real suite and exposes the finish-gate hook consumed by E6.4.3.
 

@@ -7,6 +7,12 @@ fixed crossing order through a real ``RideEngine``. Every test
 therefore drives the real roster and the real engine -- no wx, no fake
 view, and no test double is needed.
 
+Phase 2 rewrote the schedule and the pooled plate rule: each entry
+crosses once a lap under one plate (a pooled team's representative
+rotates round-robin), lap 1 starts at ``actual_start`` and every
+offset is a whole minute inside the interval, so a team's lap count
+equals a solo's.
+
 The clock is the naive fixed instant ``test_results.py``'s
 ``_engine_source_with_correction`` uses: the engine's lap arithmetic
 subtracts naive timestamps, so an aware clock would ``TypeError``
@@ -16,7 +22,7 @@ well above the short-lap floor, so no crossing is flagged for review.
 
 import re
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from hypothesis import given
@@ -26,6 +32,7 @@ from conftest import gorba_config
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import RideEngine, RideStatus
 from rivercrossing.roster import (
+    DEFAULT_MAX_TEAM_SIZE,
     MIN_TEAM_SIZE,
     Entry,
     EntryMode,
@@ -38,6 +45,9 @@ from rivercrossing.ui.presenters.simulator import (
     SimOutcome,
     SimulatorPresenter,
     _plates_to_record,
+    check_message,
+    default_interval_minutes,
+    resolve_solo,
 )
 
 # The fixed naive clock every engine here is built with.
@@ -90,6 +100,213 @@ def _signature(roster: Roster) -> list[tuple[str, list[tuple[str, str, str | Non
         )
         for entry in roster.entries
     ]
+
+
+def _actual_start_of(engine: RideEngine) -> datetime:
+    """Return the instant the engine's own start event recorded."""
+    return datetime.fromisoformat(str(engine.events[0].payload["actual_start"]))
+
+
+# --------------------------------------------------------- resolve_solo
+
+
+@pytest.mark.parametrize(
+    ("riders", "teams", "expected"),
+    [
+        pytest.param(79, 40, None, id="floor-minus-one"),
+        pytest.param(80, 40, 0, id="floor"),
+        pytest.param(81, 40, 0, id="floor-plus-one"),
+        pytest.param(159, 40, 0, id="ceiling-minus-one"),
+        pytest.param(160, 40, 0, id="ceiling"),
+        pytest.param(161, 40, 1, id="ceiling-plus-one"),
+        pytest.param(175, 40, 15, id="dialog-defaults"),
+        pytest.param(800, 40, 640, id="well-above-ceiling"),
+        pytest.param(1, 1, None, id="one-team-floor-minus-one"),
+        pytest.param(2, 1, 0, id="one-team-floor"),
+        pytest.param(3, 1, 0, id="one-team-mid"),
+        pytest.param(4, 1, 0, id="one-team-ceiling"),
+        pytest.param(5, 1, 1, id="one-team-ceiling-plus-one"),
+    ],
+)
+def test_resolve_solo_given_a_rider_count_returns_its_boundary_value(
+    riders: int, teams: int, expected: int | None
+) -> None:
+    """T-4: each rider boundary resolves to its own solo."""
+    result = resolve_solo(riders, teams)
+
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    ("riders", "teams", "min_team_size", "max_team_size", "expected"),
+    [
+        pytest.param(8, 3, 3, 5, None, id="custom-floor-minus-one"),
+        pytest.param(9, 3, 3, 5, 0, id="custom-floor"),
+        pytest.param(10, 3, 3, 5, 0, id="custom-floor-plus-one"),
+        pytest.param(14, 3, 3, 5, 0, id="custom-ceiling-minus-one"),
+        pytest.param(15, 3, 3, 5, 0, id="custom-ceiling"),
+        pytest.param(16, 3, 3, 5, 1, id="custom-ceiling-plus-one"),
+    ],
+)
+def test_resolve_solo_given_explicit_team_bounds_resolves_against_them(  # noqa: PLR0913, PLR0917
+    riders: int, teams: int, min_team_size: int, max_team_size: int, expected: int | None
+) -> None:
+    """T-4: the caller's own team bounds replace the 2..4 defaults."""
+    result = resolve_solo(riders, teams, min_team_size=min_team_size, max_team_size=max_team_size)
+
+    assert result == expected
+
+
+@given(
+    riders=st.integers(min_value=1, max_value=500),
+    teams=st.integers(min_value=1, max_value=100),
+)
+def test_resolve_solo_given_any_counts_returns_an_inside_bounds_solo(
+    riders: int, teams: int
+) -> None:
+    """Property: a resolved solo sits inside the generator bounds."""
+    solo = resolve_solo(riders, teams)
+
+    if solo is None:
+        assert riders < MIN_TEAM_SIZE * teams
+    else:
+        assert MIN_TEAM_SIZE * teams <= riders - solo <= DEFAULT_MAX_TEAM_SIZE * teams
+
+
+# ---------------------------------------------------- check_message
+
+# The Check message's opening paragraph, spelled once: each test below
+# pins its own concrete numbers against it. RUF001: the multiplication,
+# en-dash and minus glyphs are the message's own display spelling.
+_CHECK_MESSAGE_HEAD = (
+    "Team riders = teams × riders per team (2–4 per team). "  # noqa: RUF001 -- display glyphs
+    "Solo riders = riders − team riders.\n"  # noqa: RUF001 -- display glyph
+)
+
+
+def test_check_message_given_full_teams_names_the_remainder_as_solo() -> None:
+    """The 175/40 defaults read back as 160 team riders plus 15 solo."""
+    message = check_message(175, 40)
+
+    assert message == (
+        _CHECK_MESSAGE_HEAD
+        + "With 175 riders and 40 teams, team riders must be between 80 and 160; "
+        + "this field fills the teams to 160, so solo riders = 15. Ready to generate."
+    )
+
+
+def test_check_message_given_teams_below_the_ceiling_clears_solo() -> None:
+    """A field that fits on teams alone reads back as zero solo."""
+    message = check_message(100, 40)
+
+    assert message == (
+        _CHECK_MESSAGE_HEAD
+        + "With 100 riders and 40 teams, team riders must be between 80 and 160; "
+        + "this field fills the teams to 100, so solo riders = 0. Ready to generate."
+    )
+
+
+def test_check_message_given_too_few_riders_names_both_corrections() -> None:
+    """An impossible field names both fixes with concrete counts."""
+    message = check_message(10, 8)
+
+    assert message == (
+        _CHECK_MESSAGE_HEAD
+        + "With 10 riders and 8 teams, team riders must be between 16 and 32, "
+        + "but the field has only 10 riders.\n"
+        + "Increase Number of riders to at least 16 or reduce Number of teams to 5."
+    )
+
+
+def test_check_message_given_riders_below_one_team_names_the_rider_fix_only() -> None:
+    """Below one team's floor, only adding riders helps."""
+    message = check_message(1, 2)
+
+    assert message == (
+        _CHECK_MESSAGE_HEAD
+        + "With 1 rider and 2 teams, team riders must be between 4 and 8, "
+        + "but the field has only 1 rider.\n"
+        + "Increase Number of riders to at least 4."
+    )
+
+
+def test_check_message_given_one_team_reads_the_team_noun_singular() -> None:
+    """A one-team field reads "1 team", never "1 teams"."""
+    message = check_message(2, 1)
+
+    assert message == (
+        _CHECK_MESSAGE_HEAD
+        + "With 2 riders and 1 team, team riders must be between 2 and 4; "
+        + "this field fills the teams to 2, so solo riders = 0. Ready to generate."
+    )
+
+
+def test_check_message_given_custom_team_bounds_names_them() -> None:
+    """The caller's own team bounds are the ones spelled out."""
+    message = check_message(16, 3, min_team_size=3, max_team_size=5)
+
+    assert message == (
+        "Team riders = teams × riders per team (3–5 per team). "  # noqa: RUF001 -- display glyphs
+        "Solo riders = riders − team riders.\n"  # noqa: RUF001 -- display glyph
+        "With 16 riders and 3 teams, team riders must be between 9 and 15; "
+        "this field fills the teams to 15, so solo riders = 1. Ready to generate."
+    )
+
+
+# ------------------------------------------- default_interval_minutes
+
+
+@pytest.mark.parametrize(
+    ("lap_km", "avg_speed_kmh", "expected"),
+    [
+        pytest.param(8.0, 12.0, 45, id="demo-ride"),
+        pytest.param(4.0, 12.0, 25, id="half-length-lap"),
+        pytest.param(8.0, 24.0, 25, id="double-speed"),
+        pytest.param(0.1, 60.0, 5, id="shortest-lap"),
+        pytest.param(30.0, 1.0, 240, id="clamped-at-the-ceiling"),
+    ],
+)
+def test_default_interval_minutes_given_speed_and_lap_returns_the_formula(
+    lap_km: float, avg_speed_kmh: float, expected: int
+) -> None:
+    """The demo ride (8 km at 12 km/h) opens on 40 + 5 = 45 minutes."""
+    result = default_interval_minutes(lap_km, avg_speed_kmh)
+
+    assert result == expected
+
+
+@pytest.mark.parametrize(
+    ("minimum", "maximum", "expected"),
+    [
+        pytest.param(1, 240, 45, id="spin-authored-bounds"),
+        pytest.param(45, 240, 45, id="floor-at-the-formula"),
+        pytest.param(46, 240, 46, id="floor-above-the-formula"),
+        pytest.param(1, 45, 45, id="ceiling-at-the-formula"),
+        pytest.param(1, 44, 44, id="ceiling-below-the-formula"),
+    ],
+)
+def test_default_interval_minutes_given_explicit_bounds_clamps_into_them(
+    minimum: int, maximum: int, expected: int
+) -> None:
+    """T-4: the result is clamped to the caller's own spin bounds."""
+    result = default_interval_minutes(8.0, 12.0, minimum=minimum, maximum=maximum)
+
+    assert result == expected
+
+
+@given(
+    lap_km=st.floats(min_value=0.1, max_value=5000.0, allow_nan=False, allow_infinity=False),
+    avg_speed_kmh=st.floats(
+        min_value=1.0, max_value=1000.0, allow_nan=False, allow_infinity=False
+    ),
+)
+def test_default_interval_minutes_given_any_ride_stays_inside_the_spin(
+    lap_km: float, avg_speed_kmh: float
+) -> None:
+    """Property: the default stays inside the spin's 1..240."""
+    result = default_interval_minutes(lap_km, avg_speed_kmh)
+
+    assert 1 <= result <= 240
 
 
 # ------------------------------------------------------- generate_teams
@@ -483,15 +700,127 @@ def test_validate_returns_none_exactly_when_both_values_are_positive(
 # ------------------------------------------------------- run_simulation
 
 
-def test_run_simulation_records_one_crossing_per_rider_per_lap() -> None:
-    """Two laps over ten riders record exactly twenty crossings."""
+def test_run_simulation_records_one_crossing_per_entry_per_lap() -> None:
+    """Two laps over six entries record exactly twelve crossings."""
     presenter, engine, _roster = _draft()
     presenter.generate_riders(10, 2, 4, seed=_SEED)
 
     outcome = presenter.run_simulation(laps=2, interval_minutes=1)
 
-    assert outcome == SimOutcome(cancelled=False, recorded=20, blocked=None)
-    assert len(engine.crossings) == 20
+    assert outcome == SimOutcome(cancelled=False, recorded=12, blocked=None)
+    assert len(engine.crossings) == 12
+    assert {result.laps for result in engine.snapshot()} == {2}
+
+
+def test_run_simulation_pooled_team_laps_equal_solo_laps() -> None:
+    """Phase 5: a pooled team and a solo cover the same 12 laps."""
+    presenter, engine, roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+    solo = _entries_of(roster, EntryType.SOLO)[0]
+    team = _entries_of(roster, EntryType.TEAM)[0]
+
+    presenter.run_simulation(laps=12, interval_minutes=45)
+
+    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    assert laps_by_entry[team.plate] == laps_by_entry[solo.plate] == 12
+
+
+def test_run_simulation_given_the_dialog_defaults_records_660_crossings() -> None:
+    """40 teams + 15 solos over 12 laps record 660 crossings."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(175, 40, 15, seed=_SEED)
+
+    outcome = presenter.run_simulation(laps=12, interval_minutes=45)
+
+    assert outcome == SimOutcome(cancelled=False, recorded=660, blocked=None)
+    assert {result.laps for result in engine.snapshot()} == {12}
+
+
+def test_run_simulation_first_lap_crossing_lands_on_actual_start() -> None:
+    """Lap 1's earliest crossing is the start instant itself."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    presenter.run_simulation(laps=1, interval_minutes=45)
+
+    first_lap = [crossing.crossed_at for crossing in engine.crossings if crossing.seq == 1]
+    assert min(first_lap) == _actual_start_of(engine)
+
+
+def test_run_simulation_lap_offsets_are_whole_minutes_inside_the_interval() -> None:
+    """Every lap-2 offset is a whole minute from 0 to interval - 1."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    presenter.run_simulation(laps=2, interval_minutes=45)
+
+    lap_two_base = _actual_start_of(engine) + timedelta(minutes=45)
+    offsets = [
+        (crossing.crossed_at - lap_two_base).total_seconds()
+        for crossing in engine.crossings
+        if crossing.seq == 2
+    ]
+    assert len(offsets) == 4
+    assert min(offsets) == 0.0
+    assert max(offsets) == 44 * 60
+    assert sorted(offsets) == offsets
+
+
+def test_run_simulation_last_crossing_sits_one_minute_before_the_next_lap() -> None:
+    """A lap's last crossing is a minute before the next lap."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    presenter.run_simulation(laps=3, interval_minutes=5)
+
+    by_lap = {
+        lap: sorted(crossing.crossed_at for crossing in engine.crossings if crossing.seq == lap)
+        for lap in (1, 2, 3)
+    }
+    assert max(by_lap[1]) + timedelta(minutes=1) == min(by_lap[2])
+    assert max(by_lap[2]) + timedelta(minutes=1) == min(by_lap[3])
+
+
+def test_run_simulation_second_lap_starts_one_interval_after_the_first() -> None:
+    """Lap 2's base sits exactly one interval after lap 1's own base."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    presenter.run_simulation(laps=2, interval_minutes=45)
+
+    lap_two_base = _actual_start_of(engine) + timedelta(minutes=45)
+    second_lap = [crossing.crossed_at for crossing in engine.crossings if crossing.seq == 2]
+    assert min(second_lap) == lap_two_base
+
+
+def test_run_simulation_pooled_team_rotates_its_representative_each_lap() -> None:
+    """A two-rider team alternates its riders' plates."""
+    presenter, engine, roster = _draft()
+    presenter.generate_riders(2, 1, 0, seed=_SEED)
+    team = _entries_of(roster, EntryType.TEAM)[0]
+
+    presenter.run_simulation(laps=3, interval_minutes=1)
+
+    assert [crossing.rider_plate for crossing in engine.crossings] == [
+        team.riders[0].plate,
+        team.riders[1].plate,
+        team.riders[0].plate,
+    ]
+
+
+def test_run_simulation_same_seed_replays_the_same_race() -> None:
+    """One seed reproduces the crossing order and every instant."""
+    first, first_engine, _first_roster = _draft()
+    second, second_engine, _second_roster = _draft()
+    first.generate_riders(10, 2, 4, seed=_SEED)
+    second.generate_riders(10, 2, 4, seed=_SEED)
+
+    first.run_simulation(laps=2, interval_minutes=45)
+    second.run_simulation(laps=2, interval_minutes=45)
+
+    first_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in first_engine.crossings]
+    second_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in second_engine.crossings]
+    assert first_race == second_race
 
 
 def test_run_simulation_leaves_the_ride_running_and_stopped() -> None:
@@ -515,20 +844,20 @@ def test_run_simulation_solo_lap_times_match_the_interval() -> None:
 
     lap_times = engine.lap_times(solo.plate)
     assert len(lap_times) == 3
-    assert 60.0 < lap_times[0] < 120.0
+    assert 0.0 <= lap_times[0] < 60.0
     assert lap_times[1:] == (60.0, 60.0)
 
 
-def test_run_simulation_reuses_one_ascending_order_for_every_lap() -> None:
-    """Every lap crosses in the same order, its own clock rising."""
+def test_run_simulation_reuses_one_entry_order_for_every_lap() -> None:
+    """Every lap crosses the same entries in order, clock rising."""
     presenter, engine, _roster = _draft()
     presenter.generate_riders(10, 2, 4, seed=_SEED)
 
     presenter.run_simulation(laps=3, interval_minutes=1)
 
-    plates = [crossing.rider_plate for crossing in engine.crossings]
-    assert plates[0:10] == plates[10:20] == plates[20:30]
-    first_lap = [crossing.crossed_at for crossing in engine.crossings[:10]]
+    entry_ids = [crossing.entry_id for crossing in engine.crossings]
+    assert entry_ids[0:6] == entry_ids[6:12] == entry_ids[12:18]
+    first_lap = [crossing.crossed_at for crossing in engine.crossings[:6]]
     assert first_lap == sorted(first_lap)
 
 
@@ -544,8 +873,8 @@ def test_run_simulation_reports_monotonic_progress_to_the_total() -> None:
         on_progress=lambda done, total: calls.append((done, total)),
     )
 
-    assert calls[-1] == (20, 20)
-    assert [done for done, _total in calls] == list(range(1, 21))
+    assert calls[-1] == (12, 12)
+    assert [done for done, _total in calls] == list(range(1, 13))
 
 
 def test_run_simulation_uncancelled_predicate_runs_to_the_end() -> None:
@@ -555,7 +884,7 @@ def test_run_simulation_uncancelled_predicate_runs_to_the_end() -> None:
 
     outcome = presenter.run_simulation(laps=1, interval_minutes=1, is_cancelled=lambda: False)
 
-    assert outcome == SimOutcome(cancelled=False, recorded=10, blocked=None)
+    assert outcome == SimOutcome(cancelled=False, recorded=6, blocked=None)
 
 
 def test_run_simulation_cancel_stops_after_the_first_crossing() -> None:
@@ -634,15 +963,53 @@ def test_plates_to_record_relay_returns_one_plate_per_entry() -> None:
     assert plates == [entry.plate for entry in roster.entries]
 
 
-def test_plates_to_record_pooled_returns_one_plate_per_rider() -> None:
-    """A pooled ride records one plate per rider, solos included."""
+def test_plates_to_record_relay_is_the_entry_plate_on_every_lap() -> None:
+    """A relay team's entry plate never changes lap to lap."""
+    presenter, _engine, roster = _draft(plate_model=PlateModel.TEAM_RELAY)
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    assert _plates_to_record(roster, 1) == _plates_to_record(roster, 0)
+    assert _plates_to_record(roster, 0) == [entry.plate for entry in roster.entries]
+
+
+def test_plates_to_record_pooled_returns_one_plate_per_entry() -> None:
+    """A pooled ride records one plate per entry, solos included."""
     presenter, _engine, roster = _draft()
     presenter.generate_riders(10, 2, 4, seed=_SEED)
 
     plates = _plates_to_record(roster)
 
-    assert plates == [rider.plate for entry in roster.entries for rider in entry.riders]
-    assert len(plates) == 10
+    assert len(plates) == 6
+    assert plates == [
+        entry.plate if entry.type is EntryType.SOLO else entry.riders[0].plate
+        for entry in roster.entries
+    ]
+
+
+def test_plates_to_record_pooled_rotates_the_team_representative_per_lap() -> None:
+    """A four-rider team sends each rider in turn, then starts again."""
+    presenter, _engine, roster = _draft()
+    presenter.generate_riders(6, 1, 2, seed=_SEED)
+    team = _entries_of(roster, EntryType.TEAM)[0]
+    position = list(roster.entries).index(team)
+
+    assert [_plates_to_record(roster, lap)[position] for lap in range(5)] == [
+        team.riders[0].plate,
+        team.riders[1].plate,
+        team.riders[2].plate,
+        team.riders[3].plate,
+        team.riders[0].plate,
+    ]
+
+
+def test_plates_to_record_pooled_riderless_team_uses_the_entry_plate() -> None:
+    """A zero-rider team falls back to its provisional claim."""
+    _presenter, _engine, roster = _draft()
+    team = roster.create_empty_team(display_name="TEAM-0001")
+
+    plates = _plates_to_record(roster)
+
+    assert plates == [team.plate]
 
 
 @pytest.mark.parametrize("plate_model", [PlateModel.RIDER_POOLED, PlateModel.TEAM_RELAY])
@@ -659,13 +1026,13 @@ def test_plates_to_record_empty_roster_returns_no_plates(plate_model: PlateModel
     ("plate_model", "expected"),
     [
         pytest.param(PlateModel.TEAM_RELAY, 1, id="single-entry-relay"),
-        pytest.param(PlateModel.RIDER_POOLED, 2, id="single-entry-pooled"),
+        pytest.param(PlateModel.RIDER_POOLED, 1, id="single-entry-pooled"),
     ],
 )
-def test_plates_to_record_single_team_returns_one_plate_per_model(
+def test_plates_to_record_single_team_records_one_plate_per_model(
     plate_model: PlateModel, expected: int
 ) -> None:
-    """One two-rider team yields one relay plate, two pooled plates."""
+    """One two-rider team yields one plate, relay or pooled."""
     presenter, _engine, roster = _draft(plate_model=plate_model)
     presenter.generate_riders(2, 1, 0, seed=_SEED)
 
@@ -695,14 +1062,13 @@ def test_plates_to_record_given_a_relay_ride_returns_one_plate_per_entry(
     total=st.integers(min_value=2, max_value=6),
     seed=st.integers(min_value=-1000, max_value=1000),
 )
-def test_plates_to_record_given_a_pooled_ride_returns_one_plate_per_rider(
+def test_plates_to_record_given_a_pooled_ride_returns_one_plate_per_entry(
     total: int, seed: int
 ) -> None:
-    """Property: one pooled plate per rider, none absent (T-7)."""
+    """Property: one pooled plate per entry, none absent (T-7)."""
     presenter, _engine, roster = _draft()
     presenter.generate_riders(total, 1, total - 2, seed=seed)
 
     plates = _plates_to_record(roster)
 
-    assert len(plates) == len(_riders_of(roster))
-    assert None not in plates
+    assert len(plates) == len(roster.entries)

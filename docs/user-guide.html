@@ -82,7 +82,7 @@
   <li><strong>Sound on crossing</strong> — three cues: a click when a crossing records, a two-tone alert when a ride set to hold short laps flags one, and a buzz for an unknown plate or empty entry.</li>
   <li><strong>Hide times on the console</strong> — hides lap/total times mid-ride (it's-not-a-race mode). Times are still recorded underneath. The ride clock stays.</li>
   <li><strong>Verbose logging</strong> — on by default; writes a diagnostic log for support. Each launch gets its own file, <code>rivercrossing-&lt;date-time&gt;.log</code>, in your per-user configuration folder (beside your settings — <code>~/Library/Application Support/RiverCrossing</code> on macOS; under <code>%LOCALAPPDATA%</code> on Windows). It records the launch, the ride loaded and any crash as one JSON record per line, plus — while this is on — the action trail of menu picks, dialogs opened, and button and control events. Turning it off stops the trail immediately; the newest 20 session files are kept.</li>
-  <li><strong>Back up now</strong> — writes a backup immediately.</li>
+  <li><strong>Avg Lap Time (kmh)</strong> — the rider field's average speed, a decimal entry, 12.0 by default; it sets the simulator's default minutes between laps.</li>
 </ul>
 <p>Appearance and text zoom each live on one surface: the theme radios are in <strong>Settings</strong> only (the View menu no longer mirrors them), and text zoom is <strong>View ▸ Zoom</strong> only (90–150%). Hide times on the console is the one setting with two controls — the Settings checkbox and the View-menu item — and they stay in sync.</p>
 
@@ -93,19 +93,23 @@
 
 <section id="setting-up-a-ride">
 <h2>2 · Setting up a ride</h2>
-<p><strong>Ride ▸ New Ride…</strong> opens the setup window for a new ride, and <strong>Ride ▸ Edit Ride…</strong> reopens the same window preloaded with the open ride's settings — the ride lifecycle lives on the Ride menu now (the old Ride Setup… row is gone). Existing rides open from the ride library.</p>
+<p><strong>Ride ▸ New Ride…</strong> opens the setup window for a new ride, and <strong>Ride ▸ Edit Ride…</strong> reopens the same window preloaded with the open ride's settings — the ride lifecycle lives on the Ride menu now (the old Ride Setup… row is gone). New Ride… is disabled while a ride is loaded (clear the open ride first with <strong>Ride ▸ Clear Ride…</strong>); Edit Ride… is enabled only while one is. Existing rides open from the ride library.</p>
 <ul>
   <li><strong>Name, date, venue, organizer, scorer, logo</strong> — the identity shown on the console and in published results. The logo file is embedded in exports.</li>
   <li><strong>Planned start &amp; duration</strong> — the riding window; the console counts down the time to close.</li>
   <li><strong>Lap length &amp; minimum lap time</strong> — a crossing faster than the minimum is flagged (a mistyped plate or a double entry usually explains it); the ride's short-lap policy — <em>always deal</em> (the default), or <em>hold short-lap cards for review</em> — decides what happens to its card.</li>
   <li><strong>Entries</strong> — solo only, or solo + teams (the default) with a max riders-per-team (2–10, default 4).</li>
   <li><strong>Plate model</strong> — <em>rider-pooled</em> (default): every rider has their own plate and draws one card per lap, uncapped; the team's hand scores from the pooled cards. <em>Team-relay</em>: one plate per team, one rider on course at a time.</li>
-  <li><strong>The shoe</strong> — decks (default 8) and jokers per deck (0, 2, or 4; default 2). All decks are shuffled together and dealt in order; the shoe reshuffles automatically if it empties.</li>
+  <li><strong>The shoe</strong> — decks (default 8) and jokers per deck (0–4; default 1). All decks are shuffled together and dealt in order; the shoe reshuffles automatically if it empties.</li>
   <li><strong>Card cap</strong> — optional cap on cards per entry; laps still count past the cap.</li>
-  <li><strong>Tie-break order</strong> — how identical best hands are resolved: ① most laps, ② shortest total time, ③ high-card draw at the venue. Set it here (or reopen this dialog with <strong>Ride ▸ Edit Ride…</strong> while the ride is still a draft); like the rest of the ride's format, it locks once the ride starts.</li>
+  <li><strong>Tie-break order</strong> — how identical best hands are resolved: ① high-card draw at the venue, ② most laps, ③ shortest total time. Set it here (or reopen this dialog with <strong>Ride ▸ Edit Ride…</strong> while the ride is still a draft); like the rest of the ride's format, it locks once the ride starts.</li>
 </ul>
 <p>The ride needs a <strong>name, venue, organizer, scorer</strong> and a <strong>lap length</strong> before the dialog accepts the setup — it lists exactly what is missing if you try to save without them — and the ride cannot start until those are set and the roster has at least one rider. Duration and minimum lap time must be valid H:MM and M:SS values; the planned start and date always carry a value, and the logo is optional.</p>
 <p>Setup locks tighten once the ride starts: the ride's format (entry mode, plate model, team size, the shoe, the card cap, the tie-break order) is frozen, while the name, date, start, venue, organizer and scorer fields stay editable in a running ride.</p>
+
+<h3 id="simulator">Filling a field with the simulator</h3>
+<p><strong>File ▸ Simulation…</strong> fills the open draft ride with a placeholder field and rehearses a race on it — the way to demo the app or practise the console before the real riders arrive. It defaults to 175 riders, 40 teams and 15 solo riders; the solo count fills itself in from the riders and teams you set, and <strong>Check</strong> answers "do these counts agree?" in an OK-only dialog that spells out how to fix them when they cannot.</p>
+<p><strong>Minutes between first rider</strong> opens on one lap at your <strong>Avg Lap Time (kmh)</strong> — the Settings value, 12.0 by default — plus a five-minute buffer, so 8 km at 12 km/h gives 45 minutes; the field stays editable. <strong>GO</strong> lays deterministic times into the ride: lap 1 starts at the ride start, riders cross at whole minutes within the interval, and the next lap opens a clear minute after the last crossing. A team records one rider per lap, so a team's lap count matches a solo rider's instead of multiplying by the team size.</p>
 </section>
 
 <section id="riders-entries">
@@ -122,10 +126,11 @@
 
 <section id="running-the-ride">
 <h2>4 · Running the ride</h2>
-<p>The console is keyboard-first: the operator types a plate and presses <kbd>Enter</kbd>. The header shows the ride's name and state: a stop light above the status word (green running · amber draft or corrections · red finished), the elapsed and remaining time as analog dials with numeric readouts, and the round GO / STOP buttons at the right.</p>
+<p>The console is keyboard-first: the operator types a plate and presses <kbd>Enter</kbd>. The header shows the ride's name and state: the stop light and the status word together in a fixed-width <strong>Status</strong> box (green running · amber stopped or reopened · red draft or finished), the elapsed and remaining time as analog dials with numeric readouts, a <strong>Current Lap</strong> reading — a light-green two-digit count that rises as riders cross — and the round GO / STOP buttons at the right.</p>
 <ul>
   <li><strong>Start</strong> — press the green GO button (or Ride ▸ Start Ride). A ride with no riders, or a setup missing a required field, cannot start — the app says what is missing. A stopped ride resumes with the same button and keeps all data. Missed the gun? <strong>Ride ▸ Set Start Time…</strong> back-dates the start and recomputes lap-1 times.</li>
-  <li><strong>Record a crossing</strong> — type the plate, press <kbd>Enter</kbd> (or click Record). The crossing commits instantly, a card is dealt from the shoe, and the feed updates.</li>
+  <li><strong>Record a crossing</strong> — type the plate, press <kbd>Enter</kbd> (or click Record). The crossing commits instantly, a card is dealt from the shoe, and the crossings list updates.</li>
+  <li><strong>The crossings list</strong> — every crossing the ride records, not just the latest; the list scrolls the whole ride. The search box above it narrows the list as you type, and its columns sort on a header click and resize from their edges — it opens sorted by <strong>Time</strong>. Time is the elapsed time since the ride start, counting from 0, and a DNF rider's row carries a "DNF" marker beside the name.</li>
   <li><strong>The sounds</strong> — a click on every recorded crossing, a two-tone alert when a ride set to hold short laps flags one, and a buzz for an unknown plate or an empty entry. Toggle them in Settings.</li>
   <li><strong>Undo</strong> — <kbd>Ctrl+Z</kbd> (or the Undo button) removes the last crossing and returns its card.</li>
   <li><strong>Short-lap review</strong> — in a ride set to hold short laps, a lap under the minimum is flagged and its card held until you confirm or void it; rides on the default "always deal" policy credit every lap immediately. The sidebar's <strong>Needs Review</strong> tab lists every flagged crossing; the <strong>Riders</strong> tab lists the whole roster — double-click a rider there (or select one and press Enter) to open the Rider Editor on that rider.</li>
@@ -143,7 +148,7 @@
   <li><strong>Add a crossing at time</strong> — a rider missed at the line; give the plate and the exact time.</li>
   <li><strong>Reassign a plate</strong> — move a crossing to the plate it belonged to; the card moves with it.</li>
   <li><strong>Deal / void a manual card</strong> — fix a mis-dealt card; a manual deal takes the next card from the shoe.</li>
-  <li><strong>Mark DNF</strong> — an entry that did not finish keeps its laps and cards and is listed in the DNF block. Reversible.</li>
+  <li><strong>Mark DNF</strong> — <strong>Riders ▸ Mark DNF…</strong> takes the rider's number (or a whole entry's plate) and marks that rider out: every lap and card they recorded is kept, a pooled team member can be marked without ending the team, and that rider's cards are forfeit from the team's hand. A team drops only when every one of its riders is out, and DNF riders are excluded from the results.</li>
   <li><strong>Audit trail</strong> — <strong>Ride ▸ Audit Trail…</strong> shows every action (who, when, what, entry, reason), newest first, with plate search and action filters.</li>
 </ul>
 <p id="entry-detail">The <strong>Entry Detail</strong> window shows one entry's laps, cards, and current hand, with the correction buttons (edit crossing, deal/void card, move rider, mark DNF) on the same screen.</p>
@@ -156,7 +161,7 @@
   <li><strong>Stop</strong> — press Stop (or <strong>Ride ▸ Stop Ride…</strong>) and confirm the native prompt. Stopping locks the entry field and freezes the clock display at the stop instant — the ride clock keeps counting on wall time underneath, so nothing is lost — and Start resumes whenever you are ready.</li>
   <li><strong>Quit with a ride running</strong> — the exit dialog offers Cancel, <em>Finish ride first…</em>, or <em>Quit — keep ride running</em>. Quitting keeps the ride live on the wall clock; the next launch asks you to continue it (the resume dialog says whether the last exit was a clean quit or a crash).</li>
   <li><strong>Crash recovery</strong> — every crossing commits as it happens, so a crash loses at most a keystroke. The clock is wall time, so elapsed time is never lost either.</li>
-  <li><strong>Backups</strong> — written on open and hourly while a ride runs, kept in a <code>&lt;db&gt;.backups/</code> folder (newest 20). <strong>File ▸ Back Up Database…</strong> or Settings ▸ Back up now writes one on demand.</li>
+  <li><strong>Backups</strong> — written on open and hourly while a ride runs, kept in a <code>&lt;db&gt;.backups/</code> folder (newest 20). <strong>File ▸ Back Up Database…</strong> writes one on demand.</li>
 </ul>
 </section>
 
@@ -164,12 +169,12 @@
 <h2>7 · Finishing &amp; standings</h2>
 <ul>
   <li><strong>Finish ride</strong> — <strong>Ride ▸ Finish Ride…</strong> locks entry, runs the hand evaluator's self-test (a red self-test blocks finishing, R-44), computes the final standings, and publishes the ride's HTML and PDF results into the <code>exports</code> folder in your user data directory. The finished banner's <strong>View results…</strong> button — or <strong>Results ▸ Standings</strong> (<kbd>F5</kbd>) — opens the results dialog.</li>
-  <li><strong>Finish gate</strong> — the evaluator self-test runs fresh on every finish; a red result blocks it. DNF entries stay in the standings, ranked last within their kind (and marked DNF in the published pages), and held cards never count until you confirm them.</li>
-  <li><strong>Ties</strong> — identical best hands are resolved by the ride's tie-break order (most laps, then total time, then high-card draw). The order is set in ride setup and locks once the ride starts; <strong>Ride ▸ Edit Ride…</strong> can still change it while the ride is a draft.</li>
-  <li><strong>Reopen for corrections</strong> — <strong>Ride ▸ Reopen Ride</strong> reopens a finished ride for corrections: entry is locked, edits are highlighted in the feed, and <em>Finish again</em> re-locks and re-ranks. After corrections, the results dialog flags the published results as stale until you export again.</li>
+  <li><strong>Finish gate</strong> — the evaluator self-test runs fresh on every finish; a red result blocks it. DNF riders are excluded from the results outright — not ranked, not listed, not exported — and held cards never count until you confirm them.</li>
+  <li><strong>Ties</strong> — identical best hands are resolved by the ride's tie-break order (it opens on high-card draw, then most laps, then shortest total time). The order is set in ride setup and locks once the ride starts; <strong>Ride ▸ Edit Ride…</strong> can still change it while the ride is a draft.</li>
+  <li><strong>Reopen for corrections</strong> — <strong>Ride ▸ Reopen Ride</strong> reopens a finished ride for corrections: entry is locked, edits are highlighted in the crossings list, and <em>Finish again</em> re-locks and re-ranks. After corrections, the results dialog flags the published results as stale until you export again.</li>
   <li><strong>Continue a reopened ride</strong> — Start stays live while a ride is reopened: pressing GO (or <strong>Ride ▸ Start Ride</strong>) continues it — entry unlocks, the clock (held at the recorded finish while reopened) goes live again from the ride's original start, and that recorded finish is discarded. Finish again when the riding is truly over.</li>
 </ul>
-<p id="results-window">The <strong>Results</strong> dialog shows the full field with place, plate, entry, laps, best-5 cards, and the hand name, plus the publish options (below); it is modal, so close it to get back to the console. On a mixed ride the standings sit on two notebook pages — <strong>Teams</strong> and <strong>Solo</strong> — each numbered from 1 with its own DNF tail, and every list here keeps its Plate column (the plate-less team style belongs to the exports). <strong>Results ▸ Standings</strong> (<kbd>F5</kbd>) opens the dialog at any time — even with no ride open, where it shows an empty state.</p>
+<p id="results-window">The <strong>Results</strong> dialog shows the full field with place, plate, entry, laps, best-5 cards, the hand name, and — with <strong>Show lap &amp; total times</strong> ticked (it starts off) — total time and <strong>Best lap</strong>, plus the publish options (below); it is modal, so close it to get back to the console. A ⚠ badge beside a tied place gives the tie's explanation on a double-click. On a mixed ride the standings sit on two notebook pages — <strong>Teams</strong> and <strong>Solo</strong> — each numbered from 1; on a rider-plated ride the Teams page drops its Plate column (a pooled team's plate is derived from its members — it stays on the Solo page, and on team-plate relay rides). <strong>Results ▸ Standings</strong> (<kbd>F5</kbd>) opens the dialog at any time — even with no ride open, where it shows an empty state.</p>
 </section>
 
 <section id="publishing-results">

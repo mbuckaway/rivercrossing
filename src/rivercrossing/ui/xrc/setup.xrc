@@ -6,11 +6,18 @@
 
   Radio defaults are drawn on the canvas and required by spec.md 13 ("radio
   groups always have a default"): always_deal_radio (short-lap policy,
-  W4), mixed_radio (teams), pooled_radio and jokers_2_radio start
-  selected. wxRB_GROUP opens each of the four groups - short-lap card
-  policy, entry mode, plate model and jokers-per-deck - and
-  <value>1</value> is honoured by XRC (measured:
+  W4), mixed_radio (teams) and pooled_radio start selected. wxRB_GROUP
+  opens each of the three groups - short-lap card policy, entry mode
+  and plate model - and <value>1</value> is honoured by XRC (measured:
   tools/toolkit_probe.py check_xrc_names).
+
+  Phase 1 re-shaped the jokers-per-deck group: the jokers_0/2/4_radio
+  trio became one wxChoice (jokers_choice) over 0..4, opening on 1
+  (<selection>1</selection>; measured honoured, like <content>'s item
+  list). spec.md 13's "radio groups always have a default" is why the
+  old trio carried one; the dropdown keeps the same rule - a fresh
+  dialog never opens unselected. ride.py's DEFAULT_JOKERS_PER_DECK is
+  that same 1, recorded so the two cannot drift.
 
   Code-side per the canvas footnote: field values are loaded from the ride
   record (this file declares structure and ranges only); the entry-mode and
@@ -24,9 +31,10 @@
   resizes the browsed file into LOGO_STANDARD_SIZE, writes the copy to a
   temp file and previews it.
 
-  Ranges: only max riders per team has documented bounds (spec.md 1 and 2 -
-  2 to 10, default 4). decks_spin and cap_spin get a floor of 1 and no
-  ceiling; lap_km_spin gets one decimal, matching the canvas's "8.0".
+  Ranges: max riders per team has documented bounds (spec.md 1 and 2 -
+  2 to 10, default 4), and jokers_choice's own item list fixes its
+  0..4 set. decks_spin and cap_spin get a floor of 1 and no ceiling;
+  lap_km_spin gets one decimal, matching the canvas's "8.0".
   Everything else is validated in code.
 -->
 <resource>
@@ -301,25 +309,16 @@
               </object>
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>6</border>
-                <object class="wxRadioButton" name="jokers_0_radio">
-                  <label>0</label>
-                  <style>wxRB_GROUP</style>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>6</border>
-                <object class="wxRadioButton" name="jokers_2_radio">
-                  <label>2</label>
-                  <value>1</value>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
                 <border>14</border>
-                <object class="wxRadioButton" name="jokers_4_radio">
-                  <label>4</label>
+                <object class="wxChoice" name="jokers_choice">
+                  <content>
+                    <item>0</item>
+                    <item>1</item>
+                    <item>2</item>
+                    <item>3</item>
+                    <item>4</item>
+                  </content>
+                  <selection>1</selection>
                 </object>
               </object>
               <object class="sizeritem">

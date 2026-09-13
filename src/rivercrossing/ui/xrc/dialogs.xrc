@@ -527,8 +527,14 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- The entry being marked ("212 · M. Chen"); the consequence
-           beside it is fixed wording and stays in XRC. -->
+      <!-- Phase 3: the target is typed in (a pooled rider's number, or
+           a whole entry's plate), so this dialog no longer needs an
+           entry to be open first. entry_lbl carries the consequence
+           copy; when a target is already known (the entry-detail
+           button, a menu route with an open entry) the runner
+           overwrites it with the naming sentence
+           (dialogs.dnf_message). plate_input comes first so it is the
+           form's initial focus (views/dialogs.py FORM_FIRST_FIELDS). -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
@@ -536,18 +542,24 @@
           <orient>wxHORIZONTAL</orient>
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxStaticText" name="entry_lbl">
-              <label></label>
+            <border>8</border>
+            <object class="wxStaticText">
+              <label>Rider number</label>
             </object>
           </object>
           <object class="sizeritem">
             <option>1</option>
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>— keeps laps and cards, ranked in the DNF block. Reversible.</label>
-            </object>
+            <flag>wxEXPAND</flag>
+            <object class="wxTextCtrl" name="plate_input"/>
           </object>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="entry_lbl">
+          <label>Excluded from the results; a team keeps its other riders.</label>
         </object>
       </object>
 

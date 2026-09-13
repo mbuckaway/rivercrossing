@@ -4,19 +4,27 @@
 ``SimulatorPresenter`` drives the future Rider Simulator window: it
 generates placeholder entries and riders from the app's own roster
 primitives, then replays one fixed crossing order lap after lap through
-a real :class:`~rivercrossing.ride.RideEngine`. The order holds the
-plates the operator would type -- one per entry on a relay ride, one
-per rider on a pooled ride (S1) -- so a relay team crosses once a lap,
-exactly as the console records it. No new business logic lands here --
-every mutation goes through the shipped ``Roster`` and ``RideEngine``
-methods, so a simulated ride is the same ride the console records, and
-one seed reproduces a whole run.
+a real :class:`~rivercrossing.ride.RideEngine`. The order holds one
+plate per *entry* on either plate model: a relay team crosses once a
+lap under the entry's own plate, and a pooled team crosses once a lap
+under the plate of the one rider on course that lap (rotating
+round-robin), so a team's lap count equals a solo's. No new business
+logic lands here -- every mutation goes through the shipped ``Roster``
+and ``RideEngine`` methods, so a simulated ride is the same ride the
+console records, and one seed reproduces a whole run.
 
 ``generate_riders`` serves MIXED rides (solo entries plus teams);
 ``generate_solo_riders`` serves SOLO-only rides, where every generated
 rider is their own entry. A solo-only roster refuses team creation
 itself, so ``generate_riders`` lets the roster's own
 ``SoloOnlyRideError`` out rather than inventing a second rule.
+
+The three pure helpers above the presenter are the dialog's own
+derivations: :func:`resolve_solo` (the solo field follows from the
+rider and team counts), :func:`default_interval_minutes` (GO's opening
+interval follows from the live ride's lap length and the operator's
+average speed) and :func:`check_message` (the Check button's
+explanation, which names the numbers).
 
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
@@ -30,6 +38,7 @@ from typing import TYPE_CHECKING, cast
 
 from rivercrossing.ride import StartBlockedError
 from rivercrossing.roster import (
+    DEFAULT_MAX_TEAM_SIZE,
     MIN_TEAM_SIZE,
     EntryType,
     PlateModel,
@@ -42,11 +51,157 @@ if TYPE_CHECKING:
     from rivercrossing.ride import RideEngine
     from rivercrossing.roster import Entry, Roster
 
-__all__ = ["SimOutcome", "SimulatorPresenter"]
+__all__ = [
+    "SimOutcome",
+    "SimulatorPresenter",
+    "check_message",
+    "default_interval_minutes",
+    "resolve_solo",
+]
 
 # The two sexes a generated rider is given; ``Rider.sex`` carries no
 # third value.
 _SEXES = ("M", "F")
+
+# simulation.xrc's interval_spin authored range (1..240 minutes):
+# default_interval_minutes clamps to it, so the seeded spin can never
+# open outside the control's own bounds.
+INTERVAL_MIN_MINUTES = 1
+INTERVAL_MAX_MINUTES = 240
+
+# One lap at the average speed, plus this buffer: GO's opening interval
+# leaves the field room to complete the lap before the next one starts
+# (the demo 8 km / 12 km/h ride opens on 40 + 5 = 45 minutes).
+_INTERVAL_BUFFER_MINUTES = 5
+
+
+def _team_rider_bounds(teams: int, *, min_team_size: int, max_team_size: int) -> tuple[int, int]:
+    """Return the lowest and highest team riders *teams* may hold."""
+    return (min_team_size * teams, max_team_size * teams)
+
+
+def resolve_solo(  # noqa: PLR0913 -- (riders, teams) + the two team-size bounds
+    riders: int,
+    teams: int,
+    *,
+    min_team_size: int = MIN_TEAM_SIZE,
+    max_team_size: int = DEFAULT_MAX_TEAM_SIZE,
+) -> int | None:
+    """Return the solo count *riders* and *teams* imply, else None.
+
+    The dialog's auto-fill rule, mirroring the generator's own bound
+    check: the team riders (``riders - solo``) must land in
+    ``min_team_size * teams .. max_team_size * teams``. Teams fill
+    first, so a field large enough for full teams leaves the remainder
+    solo (the 175-rider / 40-team defaults leave 15), a field that
+    fits on teams alone leaves none, and a field below the floor has
+    no valid solo count at all.
+
+    Args:
+        riders: The total number of riders.
+        teams: How many teams the riders split across.
+        min_team_size: The smallest legal team size.
+        max_team_size: The ride's own team ceiling.
+
+    Returns:
+        The solo count, or ``None`` when *riders* cannot fill *teams*.
+    """
+    lowest, highest = _team_rider_bounds(
+        teams, min_team_size=min_team_size, max_team_size=max_team_size
+    )
+    if riders >= highest:
+        return riders - highest
+    if riders >= lowest:
+        return 0
+    return None
+
+
+def default_interval_minutes(  # noqa: PLR0913 -- (lap, speed) + the spin's two bounds
+    lap_km: float,
+    avg_speed_kmh: float,
+    *,
+    minimum: int = INTERVAL_MIN_MINUTES,
+    maximum: int = INTERVAL_MAX_MINUTES,
+) -> int:
+    """Return GO's opening minutes between one lap and the next.
+
+    One lap at the field's average speed, rounded to the whole minute,
+    plus a five-minute buffer -- so a longer or slower lap opens on a
+    proportionally wider gap. The caller's own spin bounds clamp the
+    result.
+
+    Args:
+        lap_km: The live ride's lap length (``engine.config.lap_km``).
+        avg_speed_kmh: The operator's average rider speed, in km/h.
+        minimum: The smallest interval the spin accepts.
+        maximum: The largest interval the spin accepts.
+
+    Returns:
+        The clamped whole-minute default.
+    """
+    minutes = round(lap_km / avg_speed_kmh * 60) + _INTERVAL_BUFFER_MINUTES
+    return min(max(minutes, minimum), maximum)
+
+
+def check_message(  # noqa: PLR0913 -- (riders, teams) + the two team-size bounds
+    riders: int,
+    teams: int,
+    *,
+    min_team_size: int = MIN_TEAM_SIZE,
+    max_team_size: int = DEFAULT_MAX_TEAM_SIZE,
+) -> str:
+    """Return the Check button's riders/teams/solo explanation.
+
+    Says what the relationship is, names the bounds the current counts
+    imply, and -- when the counts cannot work -- how to fix them, in
+    the two field names the dialog shows.
+
+    Args:
+        riders: The current "Number of riders" value.
+        teams: The current "Number of teams" value.
+        min_team_size: The smallest legal team size.
+        max_team_size: The ride's own team ceiling.
+
+    Returns:
+        The message, one relationship line per paragraph.
+    """
+    lowest, highest = _team_rider_bounds(
+        teams, min_team_size=min_team_size, max_team_size=max_team_size
+    )
+    riders_word = "rider" if riders == 1 else "riders"
+    teams_word = "team" if teams == 1 else "teams"
+    # RUF001: the multiplication, en-dash and minus glyphs are this
+    # message's intended display spelling.
+    head = (
+        "Team riders = teams × riders per team "  # noqa: RUF001 -- display glyph
+        f"({min_team_size}–{max_team_size} per team). "  # noqa: RUF001 -- display glyph
+        "Solo riders = riders − team riders."  # noqa: RUF001 -- display glyph
+    )
+    with_counts = (
+        f"With {riders} {riders_word} and {teams} {teams_word}, team riders must be "
+        f"between {lowest} and {highest}"
+    )
+    solo = resolve_solo(riders, teams, min_team_size=min_team_size, max_team_size=max_team_size)
+    if solo is None:
+        fixes = [f"Increase Number of riders to at least {lowest}"]
+        if riders >= min_team_size:
+            fixes.append(f"or reduce Number of teams to {riders // min_team_size}")
+        return "\n".join(
+            (
+                head,
+                f"{with_counts}, but the field has only {riders} {riders_word}.",
+                " ".join(fixes) + ".",
+            )
+        )
+    return "\n".join(
+        (
+            head,
+            (
+                f"{with_counts}; this field fills the teams to {riders - solo}, so "
+                f"solo riders = {solo}. Ready to generate."
+            ),
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,16 +225,54 @@ def _team_entries(roster: Roster) -> list[Entry]:
     return [entry for entry in roster.entries if entry.type is EntryType.TEAM]
 
 
-def _plates_to_record(roster: Roster) -> list[str]:
-    """Return the plates one simulated lap records, in roster order.
+def _plates_to_record(roster: Roster, lap: int = 0) -> list[str]:
+    """Return the plates one simulated lap records, one per entry.
 
-    The simulator drives the console's own rule: a relay ride types the
-    entry's plate once per entry (S1), so an N-rider team crosses once a
-    lap; a pooled ride types every rider's own plate, solos included.
+    The console's own rule (S1): a relay ride types the entry's plate
+    once per entry, so an N-rider team crosses once a lap; a pooled
+    ride types one rider's own plate per entry -- a solo rider's, or,
+    for a team, the plate of the rider on course that lap. One
+    crossing per entry per lap is what keeps a team's lap count equal
+    to a solo's.
+
+    Args:
+        roster: The field to read.
+        lap: The zero-based lap whose team representatives cross.
     """
     if roster.plate_model is PlateModel.TEAM_RELAY:
         return [entry.plate for entry in roster.entries]
-    return [cast("str", rider.plate) for entry in roster.entries for rider in entry.riders]
+    return [_pooled_plate(entry, lap) for entry in roster.entries]
+
+
+def _pooled_plate(entry: Entry, lap: int) -> str:
+    """Return *entry*'s crossing plate on *lap* under RIDER_POOLED.
+
+    A solo entry crosses under its own plate; a team sends one rider
+    per lap, rotating round-robin through its members, so every team
+    rider's plate appears for roughly ``laps / team_size`` laps. A
+    riderless team -- refused at start, so reachable only through the
+    DRAFT-time zero-rider team -- falls back to the entry's own
+    provisional plate claim.
+    """
+    if entry.type is EntryType.SOLO or not entry.riders:
+        return entry.plate
+    return cast("str", entry.riders[lap % len(entry.riders)].plate)
+
+
+def _lap_offsets(entry_count: int, interval_minutes: int) -> list[int]:
+    """Return each entry position's whole-minute offset inside a lap.
+
+    The offsets spread evenly across ``0 .. interval_minutes - 1``: the
+    last position crosses one minute before the next lap's first, so
+    the field always has a minute's gap. A one-entry lap sits at its
+    own start instead -- the gap to the next lap is then the whole
+    interval, which is still at least a minute.
+    """
+    if entry_count <= 1:
+        return [0] * entry_count
+    span = interval_minutes - 1
+    last = entry_count - 1
+    return [index * span // last for index in range(entry_count)]
 
 
 def _actual_start(engine: RideEngine) -> datetime:
@@ -226,13 +419,18 @@ class SimulatorPresenter:
     ) -> SimOutcome:
         """Replay one scripted race of *laps* laps through the engine.
 
-        The crossing order is built once and reused for every lap, so
-        lap ``L``'s crossing ``i`` lands at ``actual_start + L *
-        interval + offset_i``, with the offsets one sorted draw. Every
-        later lap of an entry is therefore exactly one interval longer
-        than the one before it. A refusal to start -- an empty roster,
-        an incomplete setup, a team below the floor -- comes back as
-        ``blocked``, never a raise.
+        The entry order is built once and reused for every lap: lap 1's
+        crossings land at ``actual_start + offset``, lap ``L``'s at
+        ``actual_start + (L - 1) * interval + offset``, so every later
+        lap of an entry is exactly one interval after the one before
+        it. Each offset is a whole number of minutes spread across
+        ``0 .. interval_minutes - 1`` (:func:`_lap_offsets`), so a
+        lap's last crossing sits one minute before the next lap's
+        first. The plate each entry crosses under comes from that
+        lap's own :func:`_plates_to_record`, reproducing a pooled
+        team's rotating representative. A refusal to start -- an empty
+        roster, an incomplete setup, a team below the floor -- comes
+        back as ``blocked``, never a raise.
 
         Args:
             laps: How many laps to simulate.
@@ -252,19 +450,20 @@ class SimulatorPresenter:
             return SimOutcome(cancelled=False, recorded=0, blocked=tuple(exc.reasons))
         start = _actual_start(self.engine)
         rng = random.Random(self._seed)  # noqa: S311 -- replays one seed's run
-        order = _plates_to_record(self.roster)
+        order = list(range(len(self.roster.entries)))
         rng.shuffle(order)
         interval = timedelta(minutes=interval_minutes)
-        offsets = sorted(rng.random() * interval.total_seconds() for _ in range(len(order)))
+        offsets = _lap_offsets(len(order), interval_minutes)
         total = laps * len(order)
         recorded = 0
         completed = 0
         cancelled = False
-        for lap in range(1, laps + 1):
+        for lap in range(laps):
             lap_start = start + interval * lap
-            for index, plate in enumerate(order):
-                instant = lap_start + timedelta(seconds=offsets[index])
-                if self.engine.record_crossing(plate, at=instant).accepted:
+            plates = _plates_to_record(self.roster, lap)
+            for index, position in enumerate(order):
+                instant = lap_start + timedelta(minutes=offsets[index])
+                if self.engine.record_crossing(plates[position], at=instant).accepted:
                     recorded += 1
                 completed += 1
                 if on_progress is not None:
@@ -296,8 +495,9 @@ class SimulatorPresenter:
             msg = f"solo must be between 0 and {total}"
             raise ValueError(msg)
         team_riders = total - solo
-        lowest = MIN_TEAM_SIZE * teams
-        highest = self.roster.max_team_size * teams
+        lowest, highest = _team_rider_bounds(
+            teams, min_team_size=MIN_TEAM_SIZE, max_team_size=self.roster.max_team_size
+        )
         if not lowest <= team_riders <= highest:
             msg = f"team riders must be between {lowest} and {highest}, got {team_riders}"
             raise ValueError(msg)

@@ -12,16 +12,19 @@ A · Main frame
 
 RiverCrossing — GORBA EPIC & MTB Festival 2026`main_frame`— ▢ ✕
 
-FileRideRidersCardsResultsViewHelp`main_menubar (the resource id LoadMenuBar() loads by — wxMenuBar drops its name, so it never resolves through FindWindowByName) · items mi_* — see §15b`
+FileRideRidersCardsResultsViewHelp`main_menubar (the resource id LoadMenuBar() loads by — wxMenuBar drops its name, so it never resolves through FindWindowByName) · items mi_* — see §15b; per-ride-state enabling per §15 — `mi_new_ride` (New Ride…) is enabled only while no ride is open, `mi_edit_ride` (Edit Ride…) only while one is`
 
 ⓘ This ride was running when the app closed. Continue timing on wall clock?Continue rideOpen library`resume_infobar · reopened_infobar (wxInfoBar — built in code and named with SetName(); XRC cannot author one; hidden by default)`
 
-◉ ● ◉ — the lit lamp leads the header row, its own column left of the two ride groups
-`ride_status_panel · ride_status_light (StopLight · three stacked circles — green RUNNING · amber DRAFT/REOPENED · red FINISHED · built code-side into ride_status_panel and named with SetName(); colour is never the sole channel — the status label spells the state. ride_status_panel is the header's far-left column, and `main_frame._pin_stop_light` floors the lamp at its own `DoGetBestSize()`, since the leading column would otherwise squeeze it to nothing)`
+◉ ● ◉ — the lit lamp leads the header row, inside the fixed-width "Status" group box left of the ride groups
+`ride_status_panel · ride_status_light (StopLight · three stacked circles — green live RUNNING · amber REOPENED/stopped RUNNING · red DRAFT/FINISHED · built code-side into ride_status_panel and named with SetName(); colour is never the sole channel — the status label spells the state. ride_status_panel is the "Status" wxStaticBoxSizer's own column, far-left in the header, and `main_frame._pin_stop_light` floors the lamp at its own `DoGetBestSize()` while `_pin_status_label_width` floors `ride_status_lbl` at the widest state word, so the fixed-width box never resizes on a state change)`
 RUNNING `ride_status_lbl`
 
 ▣ Ride — Name / Date / Venue, each read-out labelled · ▣ Details — Organizer / Scorer / Lap length km
-`ride_name_value · ride_date_value · ride_venue_value (the "Ride" wxStaticBoxSizer group) · ride_organizer_value · ride_scorer_value · ride_lap_km_value (the "Details" wxStaticBoxSizer group) — read-only wxTextCtrl, <size>240,-1</size>, each preceded by its own unnamed label; the two native group boxes split C1's single "Ride" group into the ride's identity rows and its organizer rows, and each group's label is <label> text only, never a frozen name, so no constant in ui/ids.py changed. ⬛ `ride_logo_bmp` (wxStaticBitmap — the ride's own logo, fitted to 64×64 and hidden when the ride has none) closes the block, to the right of both groups and before the clock panels`
+`ride_name_value · ride_date_value · ride_venue_value (the "Ride" wxStaticBoxSizer group) · ride_organizer_value · ride_scorer_value · ride_lap_km_value (the "Details" wxStaticBoxSizer group) — read-only wxTextCtrl, <size>240,-1</size>, each preceded by its own unnamed label; the two native group boxes split C1's single "Ride" group into the ride's identity rows and its organizer rows, and each group's label is <label> text only, never a frozen name, so no constant in ui/ids.py changed. ⬛ `ride_logo_bmp` (wxStaticBitmap — the ride's own logo, fitted to 64×64 and hidden when the ride has none) closes the block, to the right of both groups, with the Lap box and the clock panels to its right`
+
+▣ Lap — 01, caption "Current Lap" below
+`current_lap_lbl (wxStaticText — the ride's current lap: the highest lap number recorded, 00 before any crossing; always two digits (capped at main_frame.MAX_CURRENT_LAP), light-green clock-sized type authored in main.xrc's <fg>/<font>, its width pinned to the two-digit extent code-side by main_frame._pin_current_lap_width. The "Lap" wxStaticBoxSizer sits between the ride-info block and the clock panels; its "Current Lap" caption is unnamed <label> text)`
 
 Elapsed — (dial) — 4:22:41      Remaining — (dial) — 1:37:19
 
@@ -38,15 +41,17 @@ Record (Enter)`record_btn`
 ✓ 123 · Sam Ellis · Lap 4 · 22:41 · dealt 9♥`last_crossing_lbl — W9: the dealt card's suit always renders as a glyph (the code is real, held or not) and a held crossing appends " (held)"`
 Undo last (Ctrl+Z)`undo_btn — gated RUNNING with ≥ 1 crossing (W5, the mi_undo_crossing rule mirrored on the button; REOPENED corrections are the dialogs' own job)`
 
+Search`crossings_search (wxSearchCtrl — Phase 4: narrows the feed to the rows whose cells carry the typed text; cleared/blank shows every crossing, mirroring the rider editor's own search)`
+
 | Time | Plate | Name | Card | Lap | Lap time | Total |
 |---|---|---|---|---|---|---|
-| 14:22:41 | 123 | Sam Ellis | 9♥ | 4 | 22:41 | 1:31:04 |
-| 14:22:18 | 77 | Trail Blazers (T) | K♠ | 9 | 19:55 | 3:02:11 |
-| 14:21:59 | 45 | J. Okafor | 9♦ | 6 | 07:12 ⚑ | 2:44:30 |
-| 14:21:30 | 212 | M. Chen | JK★ | 5 | 24:02 | 2:10:44 |
-| 14:20:52 | 8 | R. Dubois | 4♦ | 7 | 21:17 | 2:58:03 |
+| 4:20:52 | 8 | R. Dubois | 4♦ | 7 | 21:17 | 2:58:03 |
+| 4:21:30 | 212 | M. Chen | JK★ | 5 | 24:02 | 2:10:44 |
+| 4:21:59 | 45 | J. Okafor | 9♦ | 6 | 07:12 ⚑ | 2:44:30 |
+| 4:22:18 | 77 | Trail Blazers (T) | K♠ | 9 | 19:55 | 3:02:11 |
+| 4:22:41 | 123 | Sam Ellis | 9♥ | 4 | 22:41 | 1:31:04 |
 
-`crossings_list (wxDataViewCtrl · newest first · last 30 · columns in the W9 order Time · Plate · Name · Card · Lap · Lap time · Total with one pinned width per column (80, 50, 150, 60, 50, 80, 80 — DataView has no autosize-to-content, so the widths are data), the Lap time/Total pair R-37's hide-times setting removes. The Card column always renders a real dealt code: a held crossing's row carries the held card's own code — never a placeholder — and the row renders bold, the flagged channel (R-34)`
+`crossings_list (wxDataViewCtrl · every crossing of the ride — no cap, the list scrolls (Phase 4 retired R-32's 30-row window) — every column sortable and resizable through CrossingsFeedModel.Compare (both flags spelled out, since an explicit flags= replaces AppendTextColumn's own default; the platform's own header arrow), opening on the Time column ascending, so the first row is the ride's first crossing (elapsed 0) and the list reads as the ride clock. Columns in the W9 order Time · Plate · Name · Card · Lap · Lap time · Total with one pinned width per column (80, 50, 150, 60, 50, 80, 80 — DataView has no autosize-to-content, so the widths are data), the Lap time/Total pair R-37's hide-times setting removes. The Time cell is the *elapsed* reading since the gun (h:mm:ss from 0), never the wall-clock crossing instant, and Total is the entry's own running sum; a DNF rider's Name cell carries a " DNF" suffix. The Card column always renders a real dealt code: a held crossing's row carries the held card's own code — never a placeholder — and the row renders bold, the flagged channel (R-34)`
 
 Crossings
 1 124
@@ -82,7 +87,7 @@ Shoe cycle 1 · seed 8843
 
 `main_statusbar`
 
-⚠ code-side: feed columns/rows + flagged-row attrs (a DataViewIndexListModel subclass overriding GetAttrByRow — there is no setter); card column bitmaps from imagelist; InfoBar construction + text + show/hide; sash position (main_splitter); state variants — DRAFT: clock 0:00:00, start_btn enabled, plate_input disabled with "start the ride to record" hint (record_btn tracks plate_input's enablement in every state) · FINISHED: entry row hidden, result banner InfoBar (finished_infobar) with Reopen/Results buttons — W11: the two buttons are wx.InfoBar AddButton children, named code-side with SetName (`finished_reopen_btn`/`finished_results_btn`; the InfoBar rule — they never appear in ui/ids.py). The banner message is "Ride finished — results are ready." Reopen runs the mi_reopen_ride confirm flow; View results opens results_dlg · REOPENED: corrections banner, entry disabled, edited rows highlighted, Start enabled (continue riding — C2), and the clock frozen at the recorded finish (C3) as FINISHED's is. ux-polish header: the two `RaceClock` dials (`elapsed_clock`/`remaining_clock`) are inserted code-side between each clock column's caption and numeric readout in `elapsed_clock_panel`/`remaining_clock_panel` (fractions over planned duration — elapsed fills toward 1.0, remaining drains toward 0.0, both 0.0 in DRAFT), `ride_status_panel` is the header's far-left column — the `StopLight` (`ride_status_light`, pinned at its own `DoGetBestSize()` by `main_frame._pin_stop_light` so the leading column cannot squeeze it away) beside `ride_status_lbl` — green RUNNING · amber DRAFT/REOPENED · red FINISHED, `console.stop_light_mode`, and colour is never the sole channel; the two ride groups (Ride: Name/Date/Venue, Details: Organizer/Scorer/Lap length km) follow it, with `ride_logo_bmp` to their right before the clock panels — and `start_btn`/`stop_btn` are `wxBitmapButton`s carrying gauges.py's round green GO / red STOP SVG glyphs with "Start ride"/"Stop ride…" re-applied in code (the XRC handler ignores bitmap-button labels). Review sidebar: a two-tab `review_notebook` wxNotebook — "Needs Review" (index 0: `flagged_list` Plate | Lap | Lap time + `review_btn`) and "Riders" (`console_riders_list` Plate | Name | Team over the live roster, refreshed on the 1 s tick) — and the rider-row activation seam (double-click or Enter) opens `rider_editor_dlg` pre-selected at that rider's plate. Hide-times setting removes Lap time/Total columns + times in last_crossing_lbl; clock stays; clock_elapsed_lbl/clock_remaining_lbl reserve a fixed minimum width and re-layout on update so long elapsed/remaining text never overlaps the Start/Stop controls (R-55). W6 clock freeze: while the ride is stopped, the elapsed/remaining labels and the gauge dials freeze at a captured value (the first refresh after the stop captures it); Continue unfreezes and re-renders the live wall-clock elapsed immediately — the engine keeps counting underneath, the freeze is display-only. C3 extends the freeze to a closed ride: a FINISHED or REOPENED console renders `RideEngine.closed_elapsed()` — the recorded finish instant — never the live clock. W5 console gates, C2-extended (the engine is the single source of truth): start_btn mirrors the mi_start_ride rule (DRAFT, REOPENED, or stopped-RUNNING for continue), stop_btn mirrors the mi_stop_ride rule (a live RUNNING ride only — the Arm checkbox is gone), undo_btn mirrors mi_undo_crossing (RUNNING with ≥ 1 crossing). Min frame 1100×780, fits 1366×768 — declared as <size> and re-applied with SetMinSize(); Spec §13 states the same figure (W9 raised the canvas's earlier 1100×700 floor). The feed/list splitter's sash default is 850 px (`DEFAULT_SASH`, W9), applied when no saved position exists.
+⚠ code-side: feed columns/rows + flagged-row attrs (a DataViewIndexListModel subclass overriding GetAttrByRow — there is no setter); card column bitmaps from imagelist; InfoBar construction + text + show/hide; sash position (main_splitter); state variants — DRAFT: clock 0:00:00, start_btn enabled, plate_input disabled with "start the ride to record" hint (record_btn tracks plate_input's enablement in every state) · FINISHED: entry row hidden, result banner InfoBar (finished_infobar) with Reopen/Results buttons — W11: the two buttons are wx.InfoBar AddButton children, named code-side with SetName (`finished_reopen_btn`/`finished_results_btn`; the InfoBar rule — they never appear in ui/ids.py). The banner message is "Ride finished — results are ready." Reopen runs the mi_reopen_ride confirm flow; View results opens results_dlg · REOPENED: corrections banner, entry disabled, edited rows highlighted, Start enabled (continue riding — C2), and the clock frozen at the recorded finish (C3) as FINISHED's is. ux-polish header: the two `RaceClock` dials (`elapsed_clock`/`remaining_clock`) are inserted code-side between each clock column's caption and numeric readout in `elapsed_clock_panel`/`remaining_clock_panel` (fractions over planned duration — elapsed fills toward 1.0, remaining drains toward 0.0, both 0.0 in DRAFT), `ride_status_panel` is the fixed-width "Status" group box's own column, far-left in the header — the `StopLight` (`ride_status_light`, pinned at its own `DoGetBestSize()` by `main_frame._pin_stop_light` so the leading column cannot squeeze it away) beside `ride_status_lbl` (floored at the widest state word by `_pin_status_label_width`) — green live RUNNING · amber REOPENED/stopped RUNNING · red DRAFT/FINISHED, `console.stop_light_mode`, and colour is never the sole channel; the two ride groups (Ride: Name/Date/Venue, Details: Organizer/Scorer/Lap length km) follow it, with `ride_logo_bmp` to their right, then the Lap box (`current_lap_lbl`, its two-digit width pinned by `main_frame._pin_current_lap_width`) and the clock panels — and `start_btn`/`stop_btn` are `wxBitmapButton`s carrying gauges.py's round green GO / red STOP SVG glyphs with "Start ride"/"Stop ride…" re-applied in code (the XRC handler ignores bitmap-button labels). Review sidebar: a two-tab `review_notebook` wxNotebook — "Needs Review" (index 0: `flagged_list` Plate | Lap | Lap time + `review_btn`) and "Riders" (`console_riders_list` Plate | Name | Team over the live roster, refreshed on the 1 s tick) — and the rider-row activation seam (double-click or Enter) opens `rider_editor_dlg` pre-selected at that rider's plate. Hide-times setting removes Lap time/Total columns + times in last_crossing_lbl; clock stays; clock_elapsed_lbl/clock_remaining_lbl reserve a fixed minimum width and re-layout on update so long elapsed/remaining text never overlaps the Start/Stop controls (R-55). W6 clock freeze: while the ride is stopped, the elapsed/remaining labels and the gauge dials freeze at a captured value (the first refresh after the stop captures it); Continue unfreezes and re-renders the live wall-clock elapsed immediately — the engine keeps counting underneath, the freeze is display-only. C3 extends the freeze to a closed ride: a FINISHED or REOPENED console renders `RideEngine.closed_elapsed()` — the recorded finish instant — never the live clock. W5 console gates, C2-extended (the engine is the single source of truth): start_btn mirrors the mi_start_ride rule (DRAFT, REOPENED, or stopped-RUNNING for continue), stop_btn mirrors the mi_stop_ride rule (a live RUNNING ride only — the Arm checkbox is gone), undo_btn mirrors mi_undo_crossing (RUNNING with ≥ 1 crossing). Min frame 1100×780, fits 1366×768 — declared as <size> and re-applied with SetMinSize(); Spec §13 states the same figure (W9 raised the canvas's earlier 1100×700 floor). The feed/list splitter's sash default is 850 px (`DEFAULT_SASH`, W9), applied when no saved position exists.
 
 B · Ride setup & lifecycle dialogs
 
@@ -113,13 +118,12 @@ Max riders per team (2–10)
 
 Cards
 
-Decks Jokers/deck:
- 0 2 4
+Decks Jokers/deck: 1 ▾
  Card cap
 
 Tie-break order ① High-card draw ② Most laps ③ Total time ▲▼
 
-`decks_spin · jokers_0_radio · jokers_2_radio (default) · jokers_4_radio · cap_chk · cap_spin · tiebreak_list (wxEditableListBox — exactly the three rows above, three lines tall at <size>160,120</size> with the width sized to the longest row "High-card draw" plus its reorder arrows; the XRC declares no <style>, so it shows the arrows alone and no New/Edit/Delete buttons)`
+`decks_spin · jokers_choice (a wxChoice over 0, 1, 2, 3, 4, opening on 1 — `ride.DEFAULT_JOKERS_PER_DECK`, recorded so the two cannot drift; Phase 1 replaced the 0/2/4 radio trio, which had no 1 position) · cap_chk · cap_spin · tiebreak_list (wxEditableListBox — exactly the three rows above, three lines tall at <size>160,120</size> with the width sized to the longest row "High-card draw" plus its reorder arrows; the XRC declares no <style>, so it shows the arrows alone and no New/Edit/Delete buttons)`
 
 OKCancel
 
@@ -358,15 +362,19 @@ DealCancel
 
 Mark DNF`dnf_confirm_dlg`✕
 
-- **212 · M. Chen** — keeps laps and cards, ranked in the DNF block. Reversible. `entry_lbl`
+Rider number
+
+- **212 · M. Chen** — excluded from the results; a team keeps its other riders. Reversible. `entry_lbl`
 
 Reason
 
-`reason_input`
+`plate_input (the "Rider number" target typed in) · reason_input`
 
 Mark DNFCancel
 
 `wxID_OK "Mark DNF" · wxID_CANCEL (default)`
+
+⚠ code-side (per-rider DNF): the typed number resolves through the roster — a pooled team member's own number marks that rider alone (their cards forfeit from the team hand) and a team is out only when every rider is; a DNF subject is excluded from the results outright (no DNF block), while every lap and card stays in the record. With a target already known the runner overwrites `entry_lbl`'s consequence copy with the naming sentence (`dialogs.dnf_message`).
 
 Void Card`void_card_confirm_dlg`✕
 
@@ -388,19 +396,19 @@ Results — GORBA EPIC 2026 (FINISHED 16:02:11)`results_dlg`✕
 
 Teams Solo`results_notebook (wxNotebook — a MIXED ride's two standings pages; the XRC notebookpage nodes drop their own names, so the page names live on the two lists below. A SOLO-only ride hides the notebook and shows the standalone standings_list in its place)`
 
-| Place | Plate | Entry | Laps | Total | Best 5 | Hand |
-|---|---|---|---|---|---|---|
-| 1 | 77 | Trail Blazers | 9 | 5:44:02 | K♠ K♣ K♦ JK★ 9♥ | Four of a Kind — Kings |
-| 2 | 56 | Fat Tire Four | 9 | 5:12:44 | Q♥ Q♣ Q♠ 9♦ 9♠ | Full House — Queens over Nines |
+| Place | Plate | Entry | Laps | Total | Best lap | Best 5 | Hand |
+|---|---|---|---|---|---|---|---|
+| 1 | 77 | Trail Blazers | 9 | 5:44:02 | 19:55 | K♠ K♣ K♦ JK★ 9♥ | Four of a Kind — Kings |
+| 2 | 56 | Fat Tire Four | 9 | 5:12:44 | 21:40 | Q♥ Q♣ Q♠ 9♦ 9♠ | Full House — Queens over Nines |
 
 `teams_standings_list (wxDataViewCtrl — the Teams page)`
 
-| Place | Plate | Entry | Laps | Total | Best 5 | Hand |
-|---|---|---|---|---|---|---|
-| 1 | 123 | Sam Ellis | 8 | 5:51:17 | Q♥ J♥ T♥ 9♥ 8♥ | Straight Flush — Queen high |
-| 2 | 8 | R. Dubois | 7 | 5:38:44 | A♣ A♦ A♥ 4♦ 4♠ | Full House — Aces over Fours |
+| Place | Plate | Entry | Laps | Total | Best lap | Best 5 | Hand |
+|---|---|---|---|---|---|---|---|
+| 1 | 123 | Sam Ellis | 8 | 5:51:17 | 22:41 | Q♥ J♥ T♥ 9♥ 8♥ | Straight Flush — Queen high |
+| 2 | 8 | R. Dubois | 7 | 5:38:44 | 24:02 | A♣ A♦ A♥ 4♦ 4♠ | Full House — Aces over Fours |
 
-`solo_standings_list (wxDataViewCtrl — the Solo page, the notebook's second tab) · standings_list (wxDataViewCtrl — a SOLO-only ride's one list, standing in the notebook's place; the view shows the notebook or this list, never both. All three carry the same seven columns and rank their own kind from 1 with its own DNF tail — a kind absent from the ride simply has no rows. The three lists' columns are natively sortable and resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE — both bits spelled out, since an explicit flags= replaces AppendTextColumn's own default; the platform's own header arrow), and the Total column sorts on StandingsRow.total_seconds, never its rendered h:mm:ss text)`
+`solo_standings_list (wxDataViewCtrl — the Solo page, the notebook's second tab) · standings_list (wxDataViewCtrl — a SOLO-only ride's one list, standing in the notebook's place; the view shows the notebook or this list, never both. All three carry the same eight columns and rank their own kind from 1, DNF entrants excluded outright — a kind absent from the ride simply has no rows. The Teams list hides its Plate column on a `rider_pooled` ride (a pooled team's plate derives from its members, so the column would only repeat one); it stays visible under `team_relay` and on the solo list. The three lists' columns are natively sortable and resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE — both bits spelled out, since an explicit flags= replaces AppendTextColumn's own default; the platform's own header arrow), and the Total and Best lap columns sort on StandingsRow.total_seconds/best_lap_seconds, never their rendered h:mm:ss text)`
 Publish options
 
  Show lap & total times
@@ -409,13 +417,13 @@ Publish options
  Full field
  All cards drawn
 
-`show_times_chk (off default; hides Total col here too) · laps_board_chk · time_board_chk · full_field_chk · all_cards_chk`
+`show_times_chk (off default; hides the Total and Best lap columns here too) · laps_board_chk · time_board_chk · full_field_chk · all_cards_chk`
 
 Export HTML…Export PDF…Podium poster…Export CSV…Close
 
 `export_html_btn · export_pdf_btn · poster_btn · export_csv_btn — all four are disabled until the ride is FINISHED, the same gate the four Results-menu export rows carry (one handler serves the menu row and the button) · wxID_CLOSE (the four custom ids keep this row a plain sibling wxBoxSizer — wxStdDialogButtonSizer positions only the stock Close)`
 
-⚠ code-side: standings rows — the presenter feeds each list its own kind (the notebook's two pages on a MIXED ride, the lone standings_list on a SOLO one, Phase 3, R-65); "draw required" tie rows highlighted with a ⚠ badge in the Place cell (the canvas pins seven columns); stale-export flag banner (wxInfoBar stale_infobar — built in code, named with SetName()) after reopened corrections; show_times_chk hides the Total column on every list here too (R-63 UI proof). The window is a modal wxDialog opened through dialogs.run_dialog — a transient over the console, so its title bar carries the ✕ alone (no ▢), and the tie-break panel and Reopen ride button left with the frame: tie-break order is ride_setup_dlg's own tiebreak_list and nothing else, and reopening a ride is the menu's Ride ▸ Reopen Ride (mi_reopen_ride). Standings is always available — the Results ▸ Standings row (F5) is never gated on a ride open; with none open the dialog renders its empty state. The dialog's lists keep their Plate column: the plate-less Teams presentation is scoped to the exported pages (§8/§8b), never this window. It floors at 755 px wide (MIN_SIZE, code-side: the publish-checkbox row's static box needs 735 plus its two 10 px sizeritem borders — at the old 720 the five checkboxes wrapped onto a second row), with height left to Fit()'s own measurement of the sizer. The window lives in results.xrc (§15b).
+⚠ code-side: standings rows — the presenter feeds each list its own kind (the notebook's two pages on a MIXED ride, the lone standings_list on a SOLO one, Phase 3, R-65); "draw required" tie rows highlighted with a ⚠ badge in the Place cell (the canvas pins eight columns), the badge explained on activation — double-click or Enter opens an OK-only `std_dialogs.show_info` alert carrying the row's own tie note ("draw required" plus the venue-draw sentence), since a DataViewCtrl has no per-row tooltip and hover is keyboard-unreachable; stale-export flag banner (wxInfoBar stale_infobar — built in code, named with SetName()) after reopened corrections; show_times_chk hides the Total and Best lap columns on every list here too (R-63 UI proof). The window is a modal wxDialog opened through dialogs.run_dialog — a transient over the console, so its title bar carries the ✕ alone (no ▢), and the tie-break panel and Reopen ride button left with the frame: tie-break order is ride_setup_dlg's own tiebreak_list and nothing else, and reopening a ride is the menu's Ride ▸ Reopen Ride (mi_reopen_ride). Standings is always available — the Results ▸ Standings row (F5) is never gated on a ride open; with none open the dialog renders its empty state. The Teams list hides its Plate column under `rider_pooled` (a pooled team's plate is derived from its members, so the column would only repeat one) and keeps it under `team_relay`, where the plate is the entry's identity; the solo list keeps it always. It floors at 755 px wide (MIN_SIZE, code-side: the publish-checkbox row's static box needs 735 plus its two 10 px sizeritem borders — at the old 720 the five checkboxes wrapped onto a second row), with height left to Fit()'s own measurement of the sizer. The window lives in results.xrc (§15b).
 
 Ride Library`ride_library_dlg`✕
 
@@ -428,7 +436,7 @@ Ride Library`ride_library_dlg`✕
 
 OpenDuplicate…Delete…Close
 
-`wxID_OPEN · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b). wxID_NEW is removed (File ▸ New Ride… owns the setup flow); the dialog floors at 560×220 (MIN_SIZE, code-side — the four fixed default column widths plus the button row), and every row comes from the store, so the Status column shows each ride's persisted status (draft/running/finished/reopened) with no replay.`
+`wxID_OPEN · duplicate_btn · wxID_DELETE (never on RUNNING) · wxID_CLOSE — only wxID_CLOSE is positioned by wxStdDialogButtonSizer; the rest share a sibling wxBoxSizer (Spec §15b). wxID_NEW is removed (File ▸ New Ride… owns the setup flow); the dialog floors at 610×220 (MIN_SIZE, code-side — Phase 6 widened it from 560 so the four pinned column widths plus the button row fit), and every row comes from the store, so the Status column shows each ride's persisted status (draft/running/finished/reopened) with no replay.`
 
 Delete Ride`delete_ride_dlg`✕
 
@@ -451,9 +459,11 @@ All actionsCrossing editsCard deals/voidsMovesDNFShoe reshuffle
 | 14:23:02 | scorer | Void crossing | 45 | mis-key |
 | 14:21:40 | scorer | Manual deal 7♦ | 45 | flag confirmed |
 
-`audit_list (wxDataViewCtrl · newest first)`
+`audit_list (wxDataViewCtrl · newest first · fixed opening column widths When 90 · Who 120 · Action 180 · Entry 120 · Reason 330, every column still user-resizable)`
 
 Close
+
+⚠ code-side (Phase 6): the dialog floors at 1000×600 (`MIN_SIZE` — about 2× its measured content at the pinned widths above), applied with `SetMinSize` + `Fit` and clamped to the display's work area, since XRC has no window-level minsize (audit.xrc declares no <size>).
 
 E · System & help
 
@@ -469,11 +479,9 @@ Appearance
  Sound on crossing (recorded / flagged / error cues)
  Hide times on the console (toggle any time, even mid-ride)
  Verbose logging (write a diagnostic log for support)
- Average rider speed (km/h) 12
+ Avg Lap Time (kmh) 12.0
 
-Back up now
-
-`sound_chk · hide_times_chk · verbose_log_chk (F1 — a stored setting rendered at open and collected on OK, like sound_chk; on by default, it feeds ui.logging.Logging, the opt-out NDJSON trace rivercrossing-<timestamp>.log — one file per launch, pruned to the last 20, and the app's one log since the separate plain-text crash log retired in A2) · avg_speed_spin (a numeric wxSpinCtrl, "Average rider speed (km/h)", <min>1</min>, default 12 — the card-sufficiency estimate's speed, §4; the stored value's own 1 km/h floor lives in the presenter) · backup_now_btn`
+`sound_chk · hide_times_chk · verbose_log_chk (F1 — a stored setting rendered at open and collected on OK, like sound_chk; on by default, it feeds ui.logging.Logging, the opt-out NDJSON trace rivercrossing-<timestamp>.log — one file per launch, pruned to the last 20, and the app's one log since the separate plain-text crash log retired in A2) · avg_speed_spin (a decimal wxSpinCtrlDouble, captioned "Avg Lap Time (kmh)" — the authored caption, even though the value is the average rider speed in km/h — <min>1</min>, one decimal, <inc>0.1</inc>, opening on 12.0 — the card-sufficiency estimate's speed, §4; the stored value's own 1 km/h floor lives in the presenter). The "Back up now" button left this dialog in Phase 1: the manual backup keeps exactly one surface, File ▸ Back Up Database… (`mi_backup_now`, R-54), so the dialog's only buttons are the stock pair`
 
 `W13: the text-zoom choice (zoom_choice) left this dialog — View ▸ Zoom is the single zoom surface; the dialog's OK still carries zoom_percent through the settings file unchanged`
 
@@ -542,7 +550,7 @@ EditDeleteOK
 
 `edit_btn ("Edit" — crossing mode opens the crossing_number_dlg Save/Cancel Number prompt; miss mode unlocks the plate field) · delete_btn ("Delete" — any crossing of a RUNNING/REOPENED ride: the newest runs undo_last, any other void_crossing, both after the danger confirm) · wxID_OK (default, the only stock button — the window carries no wxID_CANCEL, so CrossingDetailView points Escape at OK with SetEscapeId) — edit_btn and delete_btn sit in a sibling wxBoxSizer beside the stock sizer, since wxStdDialogButtonSizer positions only OK/Yes/Save/Apply/No/Cancel/Close/Help`
 
-⚠ code-side (J2, the crossing-detail workstream): opened by double-clicking a row of the console's `crossings_list` — `MainFrame.set_on_open_crossing` fires that row's model index, and `app._crossing_for_feed_row` unwinds the feed's `reversed(engine.crossings[-FEED_CAP:])` window back to the live `Crossing` (a stale row outside the 30-row cap resolves to nothing). Every value label and the plate field are written by `views/crossing_detail.py`'s `CrossingDetailView` from the pure `build_fields(crossing, roster, engine)` view-model, `edit_plate_input` being a read-only echo of the crossing's current plate (miss mode is the only mode that unlocks it); the captions are fixed XRC copy and carry no frozen name. `edit_btn` opens the §9 `crossing_number_dlg` Save/Cancel Number prompt (`run_number_dialog`), pre-filled with the current plate, and Save hands the typed number to `RideEngine.reassign_crossing(ordinal, new_plate, reason="crossing detail edit")` — addressed by the crossing's **ride-wide ordinal** in `engine.crossings`, deliberately not `Crossing.seq`, which is the per-entry lap number (the engine's own E7.1.1 note) — with Cancel doing nothing and OK on an unchanged plate just closing. `delete_btn` deletes any crossing of a live ride — enabled whenever the ride is RUNNING or REOPENED — and which engine command runs depends on *which* crossing it is: the newest runs `RideEngine.undo_last()` (the console's own Undo, its card restituted) and any other runs `RideEngine.void_crossing()` with `reason="crossing detail delete"` (card voided, the entry's later laps renumbered); either way the native `std_dialogs.show_danger` confirm runs first, names the crossing, and words the question to match the command. A refusal (blank or unknown plate, a ride that is not RUNNING/REOPENED) shows on the code-side `crossing_detail_infobar` (an `wxInfoBar` built with `SetName()`, the InfoBar rule) and leaves the dialog open; every commit travels through the engine, whose `on_event` sink persists it, and the console re-renders the feed on its 1 s tick. A pending miss opens the same window in **miss mode** (`MissDetailView`, K2): `build_miss_fields` renders the feed row's own placeholders — Plate and Rider `-`, Team `missed`, the signal instant as the crossing time, blank lap/lap time/total/card and "Not yet scored" for the card state — and OK assigns the typed plate through `RideEngine.assign_plate_to_miss(miss_seq, plate, reason="miss detail edit")`, which records the crossing and deals its card at the miss's own instant; Delete stays disabled (a miss is not `engine.crossings[-1]`). The window lives in dialogs.xrc (§15b).
+⚠ code-side (J2, the crossing-detail workstream): opened by double-clicking a row of the console's `crossings_list` — `MainFrame.set_on_open_crossing` fires that row's model index, and `app._feed_row_target` resolves that index against the presenter's own rendered rows (`rendered_feed_rows()`, the search filter included) back to the live `Crossing` or pending miss — Phase 4 retired the 30-row cap, so any row of the ride resolves, and only a stale activation after the feed shrank names nothing. Every value label and the plate field are written by `views/crossing_detail.py`'s `CrossingDetailView` from the pure `build_fields(crossing, roster, engine)` view-model, `edit_plate_input` being a read-only echo of the crossing's current plate (miss mode is the only mode that unlocks it); the captions are fixed XRC copy and carry no frozen name. `edit_btn` opens the §9 `crossing_number_dlg` Save/Cancel Number prompt (`run_number_dialog`), pre-filled with the current plate, and Save hands the typed number to `RideEngine.reassign_crossing(ordinal, new_plate, reason="crossing detail edit")` — addressed by the crossing's **ride-wide ordinal** in `engine.crossings`, deliberately not `Crossing.seq`, which is the per-entry lap number (the engine's own E7.1.1 note) — with Cancel doing nothing and OK on an unchanged plate just closing. `delete_btn` deletes any crossing of a live ride — enabled whenever the ride is RUNNING or REOPENED — and which engine command runs depends on *which* crossing it is: the newest runs `RideEngine.undo_last()` (the console's own Undo, its card restituted) and any other runs `RideEngine.void_crossing()` with `reason="crossing detail delete"` (card voided, the entry's later laps renumbered); either way the native `std_dialogs.show_danger` confirm runs first, names the crossing, and words the question to match the command. A refusal (blank or unknown plate, a ride that is not RUNNING/REOPENED) shows on the code-side `crossing_detail_infobar` (an `wxInfoBar` built with `SetName()`, the InfoBar rule) and leaves the dialog open; every commit travels through the engine, whose `on_event` sink persists it, and the console re-renders the feed on its 1 s tick. A pending miss opens the same window in **miss mode** (`MissDetailView`, K2): `build_miss_fields` renders the feed row's own placeholders — Plate and Rider `-`, Team `missed`, the signal instant as the crossing time, blank lap/lap time/total/card and "Not yet scored" for the card state — and OK assigns the typed plate through `RideEngine.assign_plate_to_miss(miss_seq, plate, reason="miss detail edit")`, which records the crossing and deals its card at the miss's own instant; Delete stays disabled (a miss is not `engine.crossings[-1]`). The window lives in dialogs.xrc (§15b).
 
 Number`crossing_number_dlg (wxDialog)`
 
@@ -558,19 +566,19 @@ G · Rider Simulator
 
 Rider Simulator`simulation_dlg`✕
 
-Number of riders 10
-Number of teams 2
-Solo riders 2
+Number of riders 175
+Number of teams 40
+Solo riders 15
 Number of laps 1
-Minutes between first rider 1
+Minutes between first rider 45
 
-Generate RidersGOCancel
+Generate RidersCheckGOCancel
 
-`riders_spin · teams_spin · solo_spin · laps_spin · interval_spin — the five count fields (wxSpinCtrl: riders 1–1000 @ 10, teams 1–100 @ 2, solo 0–1000 @ 2, laps 1–1000 @ 1, interval 1–240 minutes @ 1) — each a stored setting (`sim_riders`/`sim_teams`/`sim_solo`/`sim_laps`/`sim_interval` in settings.json): the dialog seeds them from the stored values on open and the app persists them on close · gen_riders_btn ("Generate Riders") · go_btn ("GO" — the dialog's default button, so Enter runs the race) · wxID_CANCEL — the two custom ids (gen_riders_btn, go_btn) keep this row a plain sibling wxBoxSizer, since wxStdDialogButtonSizer positions only the stock Cancel (and leaves wx its own Escape)`
+`riders_spin · teams_spin · solo_spin · laps_spin · interval_spin — the five count fields (wxSpinCtrl: riders 1–1000 @ 175, teams 1–100 @ 40, solo 0–1000 @ 15, laps 1–1000 @ 1, interval 1–240 minutes @ 45) — each a stored setting (`sim_riders`/`sim_teams`/`sim_solo`/`sim_laps`/`sim_interval` in settings.json): the dialog seeds them from the stored values on open and the app persists them on close; solo is auto-computed from riders and teams (`resolve_solo` — teams fill first, the remainder rides solo) and the interval opens on the speed-derived default — one lap at the ride's average speed plus a five-minute buffer, `default_interval_minutes(lap_km, avg_speed_kmh)` seeding `round(lap_km / avg_speed_kmh × 60) + 5` minutes (the demo 8 km / 12 km/h ride opens on 40 + 5 = 45) · gen_riders_btn ("Generate Riders") · check_btn ("Check" — shows the riders/teams/solo relationship in a native OK-only `std_dialogs.show_info`, or `show_warning` naming how to fix it when the counts cannot work: the operator asked a question, so the answer is a system modal, never a transient InfoBar cue) · go_btn ("GO" — the dialog's default button, so Enter runs the race) · wxID_CANCEL — the three custom ids (gen_riders_btn, check_btn, go_btn) keep this row a plain sibling wxBoxSizer, since wxStdDialogButtonSizer positions only the stock Cancel (and leaves wx its own Escape)`
 
 ⚠ team riders must be between 4 and 20, got 3`sim_infobar (wxInfoBar — built in code and named with SetName(); the dialog reserves no slot, so the bar is inserted at sizer index 0 above the generator grid; XRC cannot author one; hidden by default)`
 
-⚠ code-side (Rider Simulator): the field generator and the scripted race. "Generate Riders" is the dialog's one generator (the Generate Teams button retired): it creates the requested `TEAM-0001`-style empty teams first when the roster holds none, then `FIRSTNAME-0001`/`LASTNAME-0001` placeholders off one shared counter (unique by construction) — the solo entries first, so their plates sit below every team rider's, then the team riders round-robin, each with a random M/F sex, an auto-assigned plate on a pooled ride and none on a relay one. A MIXED ride's "Generate Riders" reads all three count fields; a SOLO-only ride has no teams to create, so teams_spin/solo_spin leave the dialog and the button generates solo entries only. A successful generation closes the dialog; on a refused count the presenter's own message lands on `sim_infobar` and the dialog stays open for a correction. A roster that already holds entries was loaded from a ride, so every generator control is disabled — generating would collide with the real riders — while the lap and interval fields stay live. "GO" validates the race settings (laps ≥ 1, interval ≥ 1 minute; a refusal lands on `sim_infobar` too), then starts the DRAFT ride, records every lap through the console's own `RideEngine.record_crossing(plate, at=…)` seam — the crossing order built once and reused lap after lap, so lap L's crossing i lands at `actual_start + L * interval + offset_i` with one sorted offset draw — and calls `RideEngine.stop()` when the run ends, leaving the ride stopped-RUNNING; one seed reproduces a whole run, and every mutation goes through the shipped `Roster`/`RideEngine` methods, so a simulated ride is the same ride the console records. Opened from File ▸ Simulation… (`mi_simulation`), a route enabled only when a ride is open and in DRAFT — a generated field only makes sense while the roster is still open for edits; it floors at 425 px wide (MIN_WIDTH, code-side: the generator row is wider than the label/field grid, and below it the Generate and GO buttons would be squeezed); the window lives in simulation.xrc (§15b).
+⚠ code-side (Rider Simulator): the field generator and the scripted race. "Generate Riders" is the dialog's one generator (the Generate Teams button retired): it creates the requested `TEAM-0001`-style empty teams first when the roster holds none, then `FIRSTNAME-0001`/`LASTNAME-0001` placeholders off one shared counter (unique by construction) — the solo entries first, so their plates sit below every team rider's, then the team riders round-robin, each with a random M/F sex, an auto-assigned plate on a pooled ride and none on a relay one. A MIXED ride's "Generate Riders" reads all three count fields; a SOLO-only ride has no teams to create, so teams_spin/solo_spin leave the dialog and the button generates solo entries only. A successful generation closes the dialog; on a refused count the presenter's own message lands on `sim_infobar` and the dialog stays open for a correction. A roster that already holds entries was loaded from a ride, so every generator control is disabled — generating would collide with the real riders — while the lap and interval fields stay live. "GO" validates the race settings (laps ≥ 1, interval ≥ 1 minute; a refusal lands on `sim_infobar` too), then starts the DRAFT ride and records deterministic lap times through the console's own `RideEngine.record_crossing(plate, at=…)` seam: the entry order is shuffled once from the run's seed and every lap reuses it, with one crossing per entry per lap — a relay team under its own plate, a pooled team under the one rider on course that lap (rotating round-robin), so a 4-rider team's lap count equals a solo's — lap 1 at the ride's start (elapsed 0), riders spread across whole minutes 0 … interval − 1, and at least a minute before the next lap opens at `actual_start + (L − 1) * interval`; the run calls `RideEngine.stop()` when it ends, leaving the ride stopped-RUNNING. One seed reproduces a whole run, and every mutation goes through the shipped `Roster`/`RideEngine` methods, so a simulated ride is the same ride the console records. Opened from File ▸ Simulation… (`mi_simulation`), a route enabled only when a ride is open and in DRAFT — a generated field only makes sense while the roster is still open for edits; it floors at 425 px wide (MIN_WIDTH, code-side: the generator row is wider than the label/field grid, and below it the Generate and GO buttons would be squeezed); the window lives in simulation.xrc (§15b).
 
 Simulating…`sim_running_dlg`✕
 

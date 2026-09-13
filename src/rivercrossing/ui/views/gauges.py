@@ -16,7 +16,7 @@ so no erase event fights the paint, draw in ``EVT_PAINT`` through
 ``wx.GCDC(wx.BufferedPaintDC(self))`` for antialiasing, and cache the
 static face in a bitmap that is rebuilt only when the client size
 changes. The colour scheme follows the ride lifecycle's semantic
-colours (RUNNING green / DRAFT+REOPENED amber / FINISHED red) and is
+colours (RUNNING green / REOPENED amber / DRAFT+FINISHED red) and is
 never the sole channel: the status label, banner and clock always
 carry the same state in text (UX-DESKTOP section 7).
 
@@ -205,9 +205,9 @@ class StopLight(wx.Control):  # type: ignore[misc]
     """
 
     def __init__(self, parent: wx.Window) -> None:
-        """Build the lamp showing the pre-start (DRAFT) amber."""
+        """Build the lamp showing DRAFT's red, the pre-start state."""
         super().__init__(parent, size=wx.Size(*_stop_light_size()))
-        self.mode = "yellow"  # DRAFT's amber until set_state says otherwise
+        self.mode = "red"  # DRAFT's red until set_state says otherwise
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.CacheBestSize(wx.Size(*_stop_light_size()))
         self.Bind(wx.EVT_PAINT, self._on_paint)

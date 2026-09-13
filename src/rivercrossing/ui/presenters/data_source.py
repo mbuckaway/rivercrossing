@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CORRECTION_ACTIONS",
-    "FEED_CAP",
     "AuditRow",
     "Counters",
     "DataSource",
@@ -76,6 +75,16 @@ class FeedRow:
     ride-wide ordinal -- set only on a ``missed`` row, so the app can
     resolve an activated row back to the ``PendingMiss`` it stands for
     (a real crossing row leaves it ``None``).
+
+    ``time`` is the *elapsed* reading (the ride clock at the crossing,
+    ``format_duration`` of ``crossed_at - actual_start``), not the
+    wall-clock instant, so the column starts at the gun and matches the
+    console's Elapsed label; ``dnf`` marks a row whose rider -- or
+    whose whole entry -- is out of the results (the feed renders it as
+    a ``" DNF"`` suffix on the Name cell). ``elapsed_s``/``lap_time_s``/
+    ``total_s`` are the numeric companions to the three rendered times,
+    so the list's native header sort orders by time rather than by its
+    ``h:mm:ss`` text (``StandingsRow.total_seconds``' own rule).
     """
 
     time: str
@@ -90,6 +99,10 @@ class FeedRow:
     edited: bool = False
     missed: bool = False
     miss_seq: int | None = None
+    dnf: bool = False
+    elapsed_s: float = 0.0
+    lap_time_s: float = 0.0
+    total_s: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,10 +195,13 @@ class StandingsRow:
     """One row of the results standings (results_dlg).
 
     ``draw_required`` backs the ⚠ badge column xrc-windows.md calls
-    out as code-side for byte-identical tied hands (Spec §5).
-    ``total_seconds`` is the numeric companion to the rendered
-    ``total`` text, so the Total column's native header sort orders by
-    time rather than by its ``h:mm:ss`` string.
+    out as code-side for byte-identical tied hands (Spec §5), and
+    ``tie_note`` is the row's own explanation of that flag ("draw
+    required" when the venue draw must arbitrate) -- the results
+    window's double-click alert renders it. ``total_seconds``/
+    ``best_lap_seconds`` are the numeric companions to the rendered
+    ``total``/``best_lap`` text, so each time column's native header
+    sort orders by time rather than by its ``h:mm:ss`` string.
     """
 
     place: int
@@ -197,6 +213,9 @@ class StandingsRow:
     hand: str
     draw_required: bool = False
     total_seconds: float = 0.0
+    tie_note: str | None = None
+    best_lap: str = ""
+    best_lap_seconds: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,7 +240,12 @@ class DataSource(Protocol):
     """
 
     def feed_rows(self) -> list[FeedRow]:
-        """Return the console crossings feed, newest first, cap 30."""
+        """Return the console crossings feed, newest first.
+
+        The whole ride scrolls: no cap, no truncation (the list's own
+        scrollbar is the limit), so the newest row is row 0 and the
+        oldest crossing's row is the last.
+        """
         ...
 
     def counters(self) -> Counters:
@@ -278,9 +302,6 @@ class DataSource(Protocol):
 
 # =================================================== E4.4.1 live source
 
-# R-32's "latest 20-30 crossings" -- the console feed's cap.
-FEED_CAP = 30
-
 
 def format_duration(seconds: float) -> str:
     """Render *seconds* as ``h:mm:ss`` (the clock / feed Total format).
@@ -315,6 +336,24 @@ def _feed_time(crossed_at: datetime) -> str:
     """
     local = crossed_at.astimezone() if crossed_at.tzinfo is not None else crossed_at
     return local.strftime("%H:%M:%S")
+
+
+def _elapsed_seconds(crossed_at: datetime, start: datetime | None) -> float:
+    """Return *crossed_at*'s seconds since the ride's *start*.
+
+    The feed's own elapsed reading: ``crossed_at - actual_start``, the
+    same origin the console's Elapsed clock and ``format_duration``
+    serve. ``None`` -- an engine that never started -- has no origin to
+    measure from, so the reading is the clock's own zero (the DRAFT
+    console renders ``0:00:00`` there). The value is the true gap and
+    may be negative for a crossing that a back-dated
+    :meth:`~rivercrossing.ride.RideEngine.set_start_time` moved after
+    it; the rendered cell clamps, this does not -- the numeric
+    companion sorts by what actually happened.
+    """
+    if start is None:
+        return 0.0
+    return (crossed_at - start).total_seconds()
 
 
 def _event_time(event: Event) -> str:
@@ -494,17 +533,20 @@ def _rider_name_for(entry: Entry | None, rider_plate: str | None) -> str | None:
     return None
 
 
-def _miss_feed_row(miss: PendingMiss) -> FeedRow:
+def _miss_feed_row(miss: PendingMiss, start: datetime | None) -> FeedRow:
     """Build the feed row for one pending miss (K).
 
     Plate ``-`` / Name ``missed`` with blank card/lap-time/total: a
-    miss has no entry, no lap and no dealt card. ``missed`` lets the
-    view blank the Lap cell too (``feed_model.lap_text``); ``miss_seq``
-    carries the miss's own ordinal so an activated row resolves back to
-    it (``app._feed_row_target``).
+    miss has no entry, no lap and no dealt card, so it can never be a
+    DNF row either. ``missed`` lets the view blank the Lap cell too
+    (``feed_model.lap_text``); ``miss_seq`` carries the miss's own
+    ordinal so an activated row resolves back to it
+    (``app._feed_row_target``). Only its Time cell is real: the elapsed
+    reading *miss*'s own instant has against the ride's *start*.
     """
+    elapsed_s = _elapsed_seconds(miss.crossed_at, start)
     return FeedRow(
-        time=_feed_time(miss.crossed_at),
+        time=format_duration(elapsed_s),
         plate="-",
         entry="missed",
         lap=0,
@@ -513,6 +555,7 @@ def _miss_feed_row(miss: PendingMiss) -> FeedRow:
         card="",
         missed=True,
         miss_seq=miss.miss_seq,
+        elapsed_s=elapsed_s,
     )
 
 
@@ -581,7 +624,7 @@ class EngineDataSource:
         self._roster = roster
 
     def feed_rows(self) -> list[FeedRow]:
-        """Return the crossings feed, newest first, cap 30 (R-32).
+        """Return the crossings feed, newest first, every row of it.
 
         E7.2.2: a row's ``edited`` flag is driven by the correction
         events in the engine's event log
@@ -596,10 +639,21 @@ class EngineDataSource:
         K: pending misses are synthesised into the same feed as
         ``-``/``missed`` rows, interleaved newest-first with the
         crossings (a miss is not a crossing, so it never reaches the
-        counters or standings). The 30-row cap applies to the merged
-        list.
+        counters or standings).
+
+        Both the 30-row cap (R-32) and the feed's wall-clock Time are
+        retired: the list scrolls every crossing, and ``time`` renders
+        the ride clock's own elapsed reading at the crossing
+        (:func:`_elapsed_seconds`), so the column starts at 0 with the
+        ride. A row is ``dnf`` when the rider who crossed is marked out
+        or the whole entry is (Phase 4's marker).
         """
         engine = self._engine
+        start = engine.actual_start
+        dnf_riders = engine.dnf_riders
+        dnf_entries = frozenset(
+            entry.plate for entry in self._roster.entries if engine.entry_is_dnf(entry)
+        )
         held_crossings = frozenset(item.crossing for item in engine.held_crossings())
         edited = corrected_crossing_keys(engine.events, engine.crossings)
         times_by_entry: dict[str, tuple[float, ...]] = {}
@@ -615,9 +669,7 @@ class EngineDataSource:
             totals_by_entry[entry.plate] = running
 
         rows: list[tuple[datetime, FeedRow]] = []
-        # The crossing slice matches the pre-miss feed's own cost: only
-        # the newest FEED_CAP crossings survive the merged cap below.
-        for crossing in engine.crossings[-FEED_CAP:]:
+        for crossing in engine.crossings:
             feed_entry = self._roster.resolve_plate(crossing.entry_id)
             times = times_by_entry.get(crossing.entry_id, ())
             totals = totals_by_entry.get(crossing.entry_id, [])
@@ -625,28 +677,25 @@ class EngineDataSource:
             # policies), ``held`` the hold-mode card disposition. The
             # seq guard covers a stale crossing whose lap is past the
             # entry's recorded times.
-            short = (
-                crossing.seq <= len(times) and times[crossing.seq - 1] < engine.config.min_lap_s
-            )
-            flagged = short
+            lap_time_s = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+            total_s = totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
+            flagged = crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s
             held = crossing in held_crossings
             held_card = engine.held_card_for(crossing)
             rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
             entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
+            elapsed_s = _elapsed_seconds(crossing.crossed_at, start)
+            rider_plate = crossing.rider_plate
             rows.append(
                 (
                     crossing.crossed_at,
                     FeedRow(
-                        time=_feed_time(crossing.crossed_at),
-                        plate=crossing.rider_plate or crossing.entry_id,
+                        time=format_duration(elapsed_s),
+                        plate=rider_plate or crossing.entry_id,
                         entry=rider_name or entry_name,
                         lap=crossing.seq,
-                        lap_time=_format_lap_time(
-                            times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
-                        ),
-                        total=format_duration(
-                            totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
-                        ),
+                        lap_time=_format_lap_time(lap_time_s),
+                        total=format_duration(total_s),
                         # W9: every row carries the real dealt
                         # code -- the held card's own when this lap's
                         # card is held (R-34), the credited card
@@ -659,13 +708,18 @@ class EngineDataSource:
                         flagged=flagged,
                         held=held,
                         edited=(crossing.entry_id, crossing.seq) in edited,
+                        dnf=(rider_plate is not None and rider_plate in dnf_riders)
+                        or crossing.entry_id in dnf_entries,
+                        elapsed_s=elapsed_s,
+                        lap_time_s=lap_time_s,
+                        total_s=total_s,
                     ),
                 )
             )
         rows.reverse()  # newest first: crossings keep their record order
         for miss in reversed(engine.pending_misses()):
-            _insert_newest_first(rows, (miss.crossed_at, _miss_feed_row(miss)))
-        return [row for _crossed_at, row in rows[:FEED_CAP]]
+            _insert_newest_first(rows, (miss.crossed_at, _miss_feed_row(miss, start)))
+        return [row for _crossed_at, row in rows]
 
     def counters(self) -> Counters:
         """Return the six console counter values (R-32, W12).
@@ -803,6 +857,9 @@ class EngineDataSource:
         name (``standings.hand_name``), with the 0-card guard from the
         class docstring: an entry that never credited a card has no
         rank to name and renders ``""`` instead of crashing.
+        ``tie_note`` (R-43) is the placed row's own note -- the draws
+        dialog's body -- and ``best_lap`` renders the snapshot's
+        quickest lap beside its numeric seconds.
         """
         if self._engine.state is not RideStatus.FINISHED:
             order = LIVE_TIEBREAK_ORDER
@@ -826,6 +883,9 @@ class EngineDataSource:
                         hand=hand,
                         draw_required=item.draw_required,
                         total_seconds=item.result.total_time,
+                        tie_note=item.tie_note,
+                        best_lap=format_duration(item.result.best_lap),
+                        best_lap_seconds=item.result.best_lap,
                     )
                 )
             return built

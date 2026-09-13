@@ -354,13 +354,13 @@ def test_button_logs_the_name_and_label(tmp_path: Path) -> None:
     path = _log_path(tmp_path)
     log = Logging(path)
 
-    log.button("backup_now_btn", "Back up now")
+    log.button("record_btn", "Record (Enter)")
 
     record = _records(path)[0]
     assert (record["event"], record["name"], record["label"]) == (
         "button",
-        "backup_now_btn",
-        "Back up now",
+        "record_btn",
+        "Record (Enter)",
     )
 
 
@@ -570,7 +570,7 @@ _TRACE_CALLS: dict[str, Callable[[Logging], None]] = {
     "marker": lambda log: log.marker("ride opened"),
     "menu": lambda log: log.menu(5001, "File", "Settings…"),
     "dialog": lambda log: log.dialog("settings_dlg", "mi_settings"),
-    "button": lambda log: log.button("backup_now_btn", "Back up now"),
+    "button": lambda log: log.button("record_btn", "Record (Enter)"),
     "control": lambda log: log.control("plate_input", "TextCtrl"),
 }
 

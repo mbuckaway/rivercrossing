@@ -615,11 +615,12 @@ def export_standings(placed: Sequence[Placed], path: Path, *, show_times: bool =
     split: the caller feeds the two ranked groups Teams-then-Solo, so
     the kind column labels each section and the places are per-kind).
     ``sex`` (E7) is the solo rider's ``M``/``F`` and blank for a team,
-    which has no single sex. DNF entries keep their row with their
-    laps and cards (R-33); an entry that never crossed renders a blank
-    hand. The write is atomic (R-52), exactly like :func:`export`:
-    staged in a same-directory temp file, then swapped over *path*
-    with :func:`os.replace`.
+    which has no single sex. DNF rows never reach this function --
+    ``standings.rank`` excludes them outright (per-rider DNF) -- so
+    every row here is an active entry; an entry that never crossed
+    renders a blank hand. The write is atomic (R-52), exactly like
+    :func:`export`: staged in a same-directory temp file, then swapped
+    over *path* with :func:`os.replace`.
 
     Args:
         placed: Ranked standings, one row each (teams then solo).

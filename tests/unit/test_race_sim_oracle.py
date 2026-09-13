@@ -367,7 +367,7 @@ def test_expected_projections_internally_consistent(oracle: ModuleType, tmp_path
     assert counters.crossings == 5
 
     feed = oracle.expected_feed_rows(engine, roster)
-    assert len(feed) == 5  # under the 30-row feed cap
+    assert len(feed) == 5  # one row per crossing (Phase 4: no cap)
 
     standings = oracle.expected_standings(engine, roster)
     places = [row["place"] for row in standings]

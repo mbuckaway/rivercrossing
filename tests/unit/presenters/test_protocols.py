@@ -175,6 +175,12 @@ class FakeConsoleView:
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Record the riders review rows (unused here)."""
 
+    # Phase 6: the header's Current Lap reading (the "add the member
+    # once the presenter calls it" precedent above). Behavioural
+    # coverage: tests/unit/presenters/test_console.py.
+    def show_current_lap(self, lap: int) -> None:
+        """Record the Current Lap reading (unused here)."""
+
 
 class FakeSetupView:
     """A complete ``SetupView`` implementation for headless tests."""

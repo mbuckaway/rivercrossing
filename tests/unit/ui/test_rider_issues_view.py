@@ -29,11 +29,11 @@ from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider,
 from rivercrossing.ui.views import rider_issues
 from rivercrossing.ui.views.rider_issues import RiderIssuesView, run_rider_issues_flow
 
-# The default shoe: 8 decks x (52 + 2 jokers) = 432 cards. The roster
+# The default shoe: 8 decks x (52 + 1 joker) = 424 cards. The roster
 # and speed below are chosen with a 1 km lap at 3600 km/h (one second
 # per lap) so one pooled solo rider's expected count is exactly the
 # configured planned_duration_s.
-_DEFAULT_SHOE = 432
+_DEFAULT_SHOE = 424
 
 
 def _config(*, planned_duration_s: int = 21600) -> RideConfig:
@@ -109,19 +109,19 @@ def _view_with_label() -> tuple[RiderIssuesView, _FakeLabel]:
 @pytest.mark.parametrize(
     ("card_check", "expected_text"),
     [
-        # 433 > 432: one crossing past the shoe's own capacity.
+        # 425 > 424: one crossing past the shoe's own capacity.
         (
-            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=433, verdict=NOT_ENOUGH),
-            "Shoe holds 432 cards · estimated 433 crossings — NOT ENOUGH",
+            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=425, verdict=NOT_ENOUGH),
+            "Shoe holds 424 cards · estimated 425 crossings — NOT ENOUGH",
         ),
-        # 432 > 2 * 215: more than double the estimated demand.
+        # 424 > 2 * 211: more than double the estimated demand.
         (
-            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=215, verdict=FAR_TOO_MANY),
-            "Shoe holds 432 cards · estimated 215 crossings — far too many (2×+)",  # noqa: RUF001 -- the SUT's own display glyph
+            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=211, verdict=FAR_TOO_MANY),
+            "Shoe holds 424 cards · estimated 211 crossings — far too many (2×+)",  # noqa: RUF001 -- the SUT's own display glyph
         ),
         (
-            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=216, verdict=OK),
-            "Shoe holds 432 cards · estimated 216 crossings — OK",
+            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=212, verdict=OK),
+            "Shoe holds 424 cards · estimated 212 crossings — OK",
         ),
     ],
     ids=["not_enough", "far_too_many", "ok"],
@@ -151,7 +151,7 @@ def test_show_card_check_given_a_check_after_none_shows_the_label_again() -> Non
     view, label = _view_with_label()
     view.show_card_check(None)
 
-    view.show_card_check(CardCheck(shoe_cards=_DEFAULT_SHOE, expected=216, verdict=OK))
+    view.show_card_check(CardCheck(shoe_cards=_DEFAULT_SHOE, expected=212, verdict=OK))
 
     assert label.hidden is False
 

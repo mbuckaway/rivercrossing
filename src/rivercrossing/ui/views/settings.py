@@ -9,11 +9,13 @@ the sound/hide-times/verbose-log checkboxes and (plan §10) the
 persists + applies it). W13 (notes #12): the text-zoom choice left
 the dialog -- View ▸ Zoom is the single zoom surface -- so
 ``zoom_percent`` carries through OK unchanged, like the layout
-fields. ux-polish wires ``backup_now_btn``: the app hands this view
-an ``on_backup_now`` callback that runs the real R-54 manual backup
-(File ▸ Back Up Database…'s own action) and surfaces the written path
-or failure, so the button is no longer an inert fake (settings.xrc's
-own comment predates the wiring).
+fields. Phase 1 (2026-09-13) re-shaped two surfaces: ``avg_speed_spin``
+is a one-decimal ``wxSpinCtrlDouble`` now, so the collected value
+keeps its decimal (``collect_settings`` used to call
+``float(GetValue())`` on an integer spin, and ``show_settings``
+``round()``ed the stored speed); and the "Back up now" button -- and
+its app seam -- is gone, leaving File ▸ Back Up Database… as R-54's
+single manual-backup surface (``mi_backup_now``).
 """
 
 from typing import TYPE_CHECKING, Any
@@ -36,23 +38,19 @@ class SettingsDialog:
 
     Implements ``SettingsView`` (module-skeletons.md's presenter
     contract) directly on the dialog's own controls: ``show_settings``
-    renders the current :class:`AppSettings`, OK collects a fresh one
-    (carrying over the zoom and two layout fields, which have no
+    renders the current :class:`AppSettings`, and OK collects a fresh
+    one (carrying over the zoom and two layout fields, which have no
     control -- zoom lives on the View menu, W13) and hands it to
-    ``on_save``, and ``backup_now_btn`` fires the app's
-    ``on_backup_now`` seam (ux-polish: the R-54 manual backup File ▸
-    Back Up Database… runs; the dialog stays open so the operator can
-    keep editing). F1's ``verbose_log_chk`` is rendered and collected
+    ``on_save``. F1's ``verbose_log_chk`` is rendered and collected
     exactly like ``sound_chk``.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, settings, on_save, on_backup_now): the view's four construction seams
+    def __init__(
         self,
         dialog: wx.Dialog,
         *,
         settings: AppSettings,
         on_save: Callable[[AppSettings], None],
-        on_backup_now: Callable[[], None],
     ) -> None:
         """Decorate an already-loaded ``settings_dlg`` window.
 
@@ -65,13 +63,9 @@ class SettingsDialog:
                 dialog control; zoom lives on the View menu, W13).
             on_save: Called with the collected settings when OK is
                 clicked; the app bootstrap wires it to persist + apply.
-            on_backup_now: Called when ``backup_now_btn`` is clicked;
-                the app bootstrap wires it to run the manual database
-                backup and surface the written path (or failure).
         """
         self.dialog = dialog
         self.on_save = on_save
-        self.on_backup_now = on_backup_now
 
         self.system_radio = self._find(ids.APPEARANCE_SYSTEM_RADIO, wx.RadioButton)
         self.light_radio = self._find(ids.APPEARANCE_LIGHT_RADIO, wx.RadioButton)
@@ -79,12 +73,10 @@ class SettingsDialog:
         self.sound_chk = self._find(ids.SOUND_CHK, wx.CheckBox)
         self.hide_times_chk = self._find(ids.HIDE_TIMES_CHK, wx.CheckBox)
         self.verbose_log_chk = self._find(ids.VERBOSE_LOG_CHK, wx.CheckBox)
-        self.avg_speed_spin = self._find(ids.AVG_SPEED_SPIN, wx.SpinCtrl)
-        self.backup_now_btn = self._find(ids.BACKUP_NOW_BTN, wx.Button)
+        self.avg_speed_spin = self._find(ids.AVG_SPEED_SPIN, wx.SpinCtrlDouble)
 
         self.show_settings(settings)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_backup_now, self.backup_now_btn)
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -99,6 +91,9 @@ class SettingsDialog:
 
         Each radio is set explicitly (one true, the others false), so
         the render never depends on wx's radio-group auto-uncheck.
+        ``avg_speed_spin`` takes the stored float verbatim -- the
+        one-decimal control's own <digits>/<min> bound the rendering,
+        not a ``round()`` here (which used to drop the fraction).
         ``zoom_percent`` has no control since W13 (View ▸ Zoom is the
         single zoom surface); it is carried through OK untouched.
         """
@@ -109,12 +104,15 @@ class SettingsDialog:
         self.sound_chk.SetValue(settings.sound_on)
         self.hide_times_chk.SetValue(settings.hide_times)
         self.verbose_log_chk.SetValue(settings.verbose_logging)
-        self.avg_speed_spin.SetValue(round(settings.avg_speed_kmh))
+        self.avg_speed_spin.SetValue(settings.avg_speed_kmh)
 
     def collect_settings(self) -> AppSettings:
         """Read the controls into a fresh :class:`AppSettings`.
 
-        The zoom and two layout fields (``zoom_percent``/
+        ``avg_speed_kmh`` reads the entry's own float (``GetValue`` on
+        a ``wx.SpinCtrlDouble``); the control's <min> floors it at
+        1 km/h, mirroring the presenter's ``_MIN_AVG_SPEED_KMH``. The
+        zoom and two layout fields (``zoom_percent``/
         ``splitter_sash``/``window_geometry``) have no dialog control,
         so the current values carry over unchanged.
         """
@@ -131,16 +129,6 @@ class SettingsDialog:
             splitter_sash=self._settings.splitter_sash,
             window_geometry=self._settings.window_geometry,
         )
-
-    def _on_backup_now(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx handler signature
-        """Run the app's manual-backup seam (ux-polish, R-54).
-
-        The dialog stays open after the backup, exactly as a real
-        settings panel behaves: the app's callback writes the backup
-        and surfaces the path (or failure) on the main frame's status
-        bar, and the operator keeps or closes the dialog as usual.
-        """
-        self.on_backup_now()
 
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx handler signature; EndModal is explicit, no Skip needed
         """Collect the controls, fire ``on_save``, then end the modal.

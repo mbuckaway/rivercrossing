@@ -24,8 +24,9 @@ class IncompleteConsoleView:
     """Every ``ConsoleView`` member except ``play``.
 
     WS-D/WS-H members (``set_clock_fractions``, ``show_flagged``,
-    ``show_riders``) and Phase 5's ``show_start_blocked`` are included
-    so the mypy failure names ``play`` alone.
+    ``show_riders``), Phase 5's ``show_start_blocked`` and Phase 6's
+    ``show_current_lap`` are included so the mypy failure names
+    ``play`` alone.
     """
 
     def show_feed(self, rows: list[FeedRow]) -> None:
@@ -98,6 +99,9 @@ class IncompleteConsoleView:
         """No-op fixture stub."""
 
     def show_riders(self, rows: list[RiderRow]) -> None:
+        """No-op fixture stub."""
+
+    def show_current_lap(self, lap: int) -> None:
         """No-op fixture stub."""
 
 

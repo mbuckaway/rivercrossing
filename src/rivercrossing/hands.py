@@ -959,7 +959,10 @@ _FIELD_ENTRIES = 180
 _FIELD_CARDS_PER_ENTRY = 12
 _FIELD_TIMING_BUDGET_SECONDS = 1.0
 _FIELD_SEED = 20260807
-_FIELD_JOKER_PROBABILITY = 16 / 432
+# 8 jokers among the 424 cards of the default shoe (DEFAULT_DECK_COUNT
+# x (52 + DEFAULT_JOKERS_PER_DECK)) -- the shape RideConfig now
+# defaults to.
+_FIELD_JOKER_PROBABILITY = 8 / 424
 
 
 @dataclass(frozen=True)

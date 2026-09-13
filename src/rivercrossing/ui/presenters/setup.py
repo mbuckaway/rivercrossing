@@ -95,11 +95,12 @@ class SetupFormValues:
     its control holds it, never translated by the view (passive
     view) -- except ``entry_mode``/``plate_model``/``jokers_per_deck``/
     ``hold_short_laps``, which the view *must* translate (which radio
-    is checked -> which enum/int/bool value), since wx has no "enum
-    radio group" control of its own; the same kind of view-side
-    translation :class:`RiderEditor`'s own ``team_choice`` reading
-    already does. ``duration_text``/``min_lap_text`` stay raw
-    "H:MM"/"M:SS" strings -- ``duration_input``/``min_lap_input`` are
+    is checked / which dropdown item is selected -> which enum/int/bool
+    value), since wx has no "enum radio group" control of its own; the
+    same kind of view-side translation :class:`RiderEditor`'s own
+    ``team_choice`` reading already does. ``duration_text`` and
+    ``min_lap_text`` stay raw "H:MM"/"M:SS" strings --
+    ``duration_input``/``min_lap_input`` are
     plain ``wxTextCtrl``, so parsing them into seconds is this
     module's own job (:func:`_parse_duration`/:func:`_parse_min_lap`),
     not the view's. ``hold_short_laps`` mirrors the W4 radio pair:
@@ -207,7 +208,7 @@ class SetupView(Protocol):
         ...
 
     def show_jokers_per_deck(self, count: int) -> None:
-        """Check jokers_0/2/4_radio from the record (D2)."""
+        """Select jokers_choice's own item from the record (D2)."""
         ...
 
     def show_card_cap(self, max_cards: int | None) -> None:
@@ -232,7 +233,7 @@ class SetupView(Protocol):
         """Enable the D2 structural group (DRAFT-only edits).
 
         The entry-mode radios, the plate-model radios, decks_spin,
-        the jokers radios, cap_chk/cap_spin and tiebreak_list: the
+        the jokers choice, cap_chk/cap_spin and tiebreak_list: the
         ride-shape fields a started ride may no longer change. The
         name/date/start/venue/organizer/scorer fields stay editable in
         every state, and :meth:`set_entry_locked`'s relay lock is

@@ -77,8 +77,11 @@ class AppSettings:
     Plan §1 adds the five ``sim_*`` fields: the Rider Simulator
     dialog's spin values (``simulation.xrc``), persisted so the next
     open seeds the spins with what the operator last chose. Their
-    defaults mirror the XRC (riders 10, teams 2, solo 2, laps 1,
-    interval 1).
+    defaults mirror the XRC (riders 175, teams 40, solo 15, laps 1,
+    interval 45 -- plan §1's field and plan §3's demo-ride interval).
+    The dialog re-derives solo from the two team counts on open and
+    the interval from the live ride's lap length, so these are the
+    fallbacks for a dialog opened with no seeds.
 
     Plan §10 adds ``avg_speed_kmh``: the settings dialog's average
     rider speed, feeding the card-sufficiency estimate ``Riders ▸
@@ -96,11 +99,11 @@ class AppSettings:
     verbose_logging: bool = True
     # Plan §1: the Rider Simulator dialog's five spin values, seeded
     # back into simulation_dlg on the next open; defaults mirror XRC.
-    sim_riders: int = 10
-    sim_teams: int = 2
-    sim_solo: int = 2
+    sim_riders: int = 175
+    sim_teams: int = 40
+    sim_solo: int = 15
     sim_laps: int = 1
-    sim_interval: int = 1
+    sim_interval: int = 45
     # Plan §10: the card-sufficiency estimate's average rider speed.
     avg_speed_kmh: float = 12.0
 
@@ -120,11 +123,11 @@ def default_settings() -> AppSettings:
         splitter_sash=None,
         window_geometry=None,
         verbose_logging=True,
-        sim_riders=10,
-        sim_teams=2,
-        sim_solo=2,
+        sim_riders=175,
+        sim_teams=40,
+        sim_solo=15,
         sim_laps=1,
-        sim_interval=1,
+        sim_interval=45,
         avg_speed_kmh=12.0,
     )
 

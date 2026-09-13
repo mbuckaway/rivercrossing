@@ -31,8 +31,9 @@ from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import commands, ids, std_dialogs
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
+from rivercrossing.ui.presenters.detail import DnfMark
+from rivercrossing.ui.views import corrections, dialogs
 from rivercrossing.ui.views import crossing_detail as crossing_detail_module
-from rivercrossing.ui.views import dialogs
 
 _CORRECTION_ROUTES = (
     ids.MI_ADD_CROSSING_AT,
@@ -767,3 +768,120 @@ def test_wire_finished_banner_actions_without_a_console_view_is_a_no_op(
     app_module._wire_finished_banner_actions(_RouteStub(console_view=None))  # type: ignore[arg-type]
 
     assert called == []
+
+
+# ================================== Phase 3: Riders ▸ Mark DNF…
+#
+# The DNF row is the one correction whose target is typed into the
+# dialog itself: it works with nothing open (the operator types the
+# rider number), marks exactly the plate that comes back, and still
+# prefills the input from ``context.detail_plate`` when an entry is
+# loaded. ``corrections.run_dnf`` is the wx dialog boundary, so it is
+# swapped for a recorder here -- the same seam test_app_ride_menu.py's
+# ``_patch_ride_setup`` uses for the setup dialog.
+
+
+class _DnfFrame:
+    """Record the status-bar notices the DNF route posts."""
+
+    def __init__(self) -> None:
+        """Start with an empty notice log."""
+        self.notices: list[str] = []
+
+    def SetStatusText(self, text: str) -> None:  # noqa: N802 -- wx API name
+        """Record one status-bar notice."""
+        self.notices.append(text)
+
+
+class _DnfPresenter:
+    """Expose the engine and record the post-correction tick."""
+
+    def __init__(self, engine: RideEngine) -> None:
+        """Store the engine and start with a zero tick count."""
+        self.engine = engine
+        self.ticks = 0
+
+    def tick(self) -> None:
+        """Record the console refresh ``_apply_correction`` fires."""
+        self.ticks += 1
+
+
+class _DnfContext:
+    """The route-context surface ``_handle_mark_dnf_route`` reads."""
+
+    def __init__(self, engine: RideEngine, *, detail_plate: str | None) -> None:
+        """Wire the engine, its roster and the recording surfaces."""
+        self.resource = object()
+        self.roster = engine._roster
+        self.detail_plate = detail_plate
+        self.frame = _DnfFrame()
+        self.presenter = _DnfPresenter(engine)
+
+
+def _patch_run_dnf(monkeypatch: pytest.MonkeyPatch, result: DnfMark | None) -> dict[str, object]:
+    """Swap the dialog runner for a recorder returning *result*."""
+    captured: dict[str, object] = {}
+
+    def _fake_run_dnf(_resource: object, **kwargs: object) -> DnfMark | None:
+        captured.update(kwargs)
+        return result
+
+    monkeypatch.setattr(corrections, "run_dnf", _fake_run_dnf)
+    return captured
+
+
+def test_handle_mark_dnf_route_without_an_open_entry_asks_for_the_plate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 3: nothing has to be open -- the dialog asks the number."""
+    engine = _running_engine(hold_short_laps=False)
+    context = _DnfContext(engine, detail_plate=None)
+    captured = _patch_run_dnf(monkeypatch, DnfMark(plate="12", reason="mechanical failure"))
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert (captured["plate"], captured["entry"]) == ("", "")
+    assert [event.action for event in engine.events[-1:]] == ["dnf"]
+    assert context.frame.notices == ["DNF marked"]
+    assert context.presenter.ticks == 1
+
+
+def test_handle_mark_dnf_route_with_an_open_entry_prefills_its_plate_and_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The deep-linked entry is offered, never required."""
+    engine = _running_engine(hold_short_laps=False)
+    context = _DnfContext(engine, detail_plate="12")
+    captured = _patch_run_dnf(monkeypatch, DnfMark(plate="12", reason="mechanical failure"))
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert (captured["plate"], captured["entry"]) == ("12", "12 · Rider 12")
+    assert engine.snapshot()[0].dnf is True
+
+
+def test_handle_mark_dnf_route_given_a_cancelled_dialog_marks_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel is a silent no-op: no event, no notice, no refresh."""
+    engine = _running_engine(hold_short_laps=False)
+    context = _DnfContext(engine, detail_plate=None)
+    before = len(engine.events)
+    _patch_run_dnf(monkeypatch, None)
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert len(engine.events) == before
+    assert context.frame.notices == []
+    assert context.presenter.ticks == 0
+
+
+def test_handle_mark_dnf_route_without_a_ride_posts_the_no_ride_notice() -> None:
+    """With no engine the row says so; no dialog is opened."""
+    notices: list[str] = []
+    context = _StubContext()
+    context.frame = _NoticeFrame(notices)
+
+    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
+
+    assert notices == ["Mark DNF… — no ride open"]
