@@ -156,8 +156,9 @@ MAIN_MENUBAR_CONTROLS = (
 # button row. The standalone Logo row's wxFilePickerCtrl is retired
 # (plan §3d): the Cards box now carries the logo *column* beside
 # tiebreak_list -- logo_preview_bmp, logo_status_lbl and
-# logo_browse_btn. Phase 1 re-shaped the jokers-per-deck group: the
-# jokers_0/2/4_radio trio is one jokers_choice dropdown over 0..4.
+# logo_browse_btn. Phase 5 re-shaped the Cards controls: the
+# jokers_choice dropdown became jokers_spin plus the per-deck/total
+# radio pair, and cap_chk + cap_spin became one cap_choice dropdown.
 RIDE_SETUP_CONTROLS = (
     "name_input",
     "date_picker",
@@ -179,9 +180,10 @@ RIDE_SETUP_CONTROLS = (
     "pooled_radio",
     "relay_radio",
     "decks_spin",
-    "jokers_choice",
-    "cap_chk",
-    "cap_spin",
+    "jokers_spin",
+    "jokers_per_deck_radio",
+    "jokers_total_radio",
+    "cap_choice",
     "tiebreak_list",
     "wxID_OK",
     "wxID_CANCEL",
@@ -229,15 +231,22 @@ ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
 RADIO_MENU_ITEMS = ZOOM_MENU_ITEMS
 
-# Canvas defaults, and the first member of each of the dialog's three
-# radio groups (short-lap policy, entry mode, plate model -- the
-# jokers-per-deck group is Phase 1's jokers_choice dropdown now).
-SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio")
-GROUP_OPENING_RADIOS = ("hold_short_radio", "solo_radio", "pooled_radio")
+# Canvas defaults, and the first member of each of the dialog's four
+# radio groups (short-lap policy, entry mode, plate model, jokers mode
+# -- Phase 5's jokers_per_deck_radio opens it, jokers_total_radio is
+# the checked default).
+SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio", "jokers_total_radio")
+GROUP_OPENING_RADIOS = (
+    "hold_short_radio",
+    "solo_radio",
+    "pooled_radio",
+    "jokers_per_deck_radio",
+)
 GROUP_FOLLOWING_RADIOS = (
     "always_deal_radio",
     "mixed_radio",
     "relay_radio",
+    "jokers_total_radio",
 )
 
 FEED_LIST_NAMES = ("crossings_list", "flagged_list")
@@ -900,21 +909,40 @@ def test_radio_group_later_member_omits_rb_group(radio_name: str) -> None:
     assert "wxRB_GROUP" not in _param(radio, "style")
 
 
-def test_ride_setup_jokers_choice_declares_the_zero_to_four_items() -> None:
-    """Phase 1: the jokers-per-deck dropdown offers 0..4."""
-    choice = _objects_by_name(_window("ride_setup_dlg"))["jokers_choice"]
+def test_ride_setup_jokers_spin_declares_the_zero_to_ten_range() -> None:
+    """Phase 5: the jokers spinner offers 0..10, opening on 1."""
+    spin = _objects_by_name(_window("ride_setup_dlg"))["jokers_spin"]
 
-    assert (
-        choice.attrib["class"],
-        [item.text for item in choice.findall("content/item")],
-    ) == ("wxChoice", ["0", "1", "2", "3", "4"])
+    bounds = (_param(spin, "min"), _param(spin, "max"), _param(spin, "value"))
+
+    assert (spin.attrib["class"], bounds) == ("wxSpinCtrl", ("0", "10", "1"))
 
 
-def test_ride_setup_jokers_choice_opens_on_one_joker_per_deck() -> None:
-    """The dropdown's default is 1, not the retired trio's 2."""
-    choice = _objects_by_name(_window("ride_setup_dlg"))["jokers_choice"]
+def test_ride_setup_jokers_radios_declare_the_two_mode_labels() -> None:
+    """jokers_per_deck_radio/jokers_total_radio carry the mode copy."""
+    window = _window("ride_setup_dlg")
+    per_deck = _objects_by_name(window)["jokers_per_deck_radio"]
+    total = _objects_by_name(window)["jokers_total_radio"]
 
-    assert _param(choice, "selection") == "1"
+    assert (_param(per_deck, "label"), _param(total, "label")) == ("Per deck", "Total")
+
+
+def test_ride_setup_cap_choice_declares_disabled_then_five_to_twenty() -> None:
+    """Phase 5: one dropdown, "Disabled" first, then 5..20."""
+    choice = _objects_by_name(_window("ride_setup_dlg"))["cap_choice"]
+
+    items = [item.text for item in choice.findall("content/item")]
+
+    assert choice.attrib["class"] == "wxChoice"
+    assert items[0] == "Disabled"
+    assert items[1:] == [str(cap) for cap in range(5, 21)]
+
+
+def test_ride_setup_cap_choice_opens_on_disabled() -> None:
+    """The dropdown's default is no cap (R-13's uncapped default)."""
+    choice = _objects_by_name(_window("ride_setup_dlg"))["cap_choice"]
+
+    assert _param(choice, "selection") == "0"
 
 
 def test_ride_setup_ok_button_declares_the_save_label() -> None:

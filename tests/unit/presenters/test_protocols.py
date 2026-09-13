@@ -219,10 +219,10 @@ class FakeSetupView:
     def show_short_lap_policy(self, *, hold_short_laps: bool) -> None:
         """No-op fake."""
 
-    def show_jokers_per_deck(self, count: int) -> None:
+    def show_jokers(self, *, count: int, mode: str) -> None:
         """No-op fake."""
 
-    def show_card_cap(self, max_cards: int | None) -> None:
+    def show_max_cards(self, max_cards: int | None) -> None:
         """No-op fake."""
 
     def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:

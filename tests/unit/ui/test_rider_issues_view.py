@@ -29,11 +29,12 @@ from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider,
 from rivercrossing.ui.views import rider_issues
 from rivercrossing.ui.views.rider_issues import RiderIssuesView, run_rider_issues_flow
 
-# The default shoe: 8 decks x (52 + 1 joker) = 424 cards. The roster
-# and speed below are chosen with a 1 km lap at 3600 km/h (one second
-# per lap) so one pooled solo rider's expected count is exactly the
-# configured planned_duration_s.
-_DEFAULT_SHOE = 424
+# The default shoe: 8 decks x 52 + 1 joker = 417 cards (the config's
+# default jokers mode is total, so the jokers are spent once). The
+# roster and speed below are chosen with a 1 km lap at 3600 km/h (one
+# second per lap) so one pooled solo rider's expected count is exactly
+# the configured planned_duration_s.
+_DEFAULT_SHOE = 417
 
 
 def _config(*, planned_duration_s: int = 21600) -> RideConfig:
@@ -109,19 +110,19 @@ def _view_with_label() -> tuple[RiderIssuesView, _FakeLabel]:
 @pytest.mark.parametrize(
     ("card_check", "expected_text"),
     [
-        # 425 > 424: one crossing past the shoe's own capacity.
+        # 418 > 417: one crossing past the shoe's own capacity.
         (
-            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=425, verdict=NOT_ENOUGH),
-            "Shoe holds 424 cards · estimated 425 crossings — NOT ENOUGH",
+            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=418, verdict=NOT_ENOUGH),
+            "Shoe holds 417 cards · estimated 418 crossings — NOT ENOUGH",
         ),
-        # 424 > 2 * 211: more than double the estimated demand.
+        # 417 > 2 * 208: more than double the estimated demand.
         (
-            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=211, verdict=FAR_TOO_MANY),
-            "Shoe holds 424 cards · estimated 211 crossings — far too many (2×+)",  # noqa: RUF001 -- the SUT's own display glyph
+            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=208, verdict=FAR_TOO_MANY),
+            "Shoe holds 417 cards · estimated 208 crossings — far too many (2×+)",  # noqa: RUF001 -- the SUT's own display glyph
         ),
         (
-            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=212, verdict=OK),
-            "Shoe holds 424 cards · estimated 212 crossings — OK",
+            CardCheck(shoe_cards=_DEFAULT_SHOE, expected=209, verdict=OK),
+            "Shoe holds 417 cards · estimated 209 crossings — OK",
         ),
     ],
     ids=["not_enough", "far_too_many", "ok"],

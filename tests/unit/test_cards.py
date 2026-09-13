@@ -29,6 +29,8 @@ from collections import Counter
 from typing import TYPE_CHECKING
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
 
 from rivercrossing.cards import (
     Card,
@@ -516,3 +518,201 @@ def test_card_parse_round_trips_the_joker_code() -> None:
 
     assert parsed == Card(rank=None, suit=None, joker=True)
     assert parsed.code() == "JK"
+
+
+# ======================== Phase 5: jokers_total mode (S4 amendment)
+#
+# Two modes share one shuffle. Per-deck -- Shoe's own default, the
+# frozen S4 behaviour -- rebuilds ``decks x (52 + jokers_per_deck)``
+# every cycle. ``jokers_total=True`` builds cycle 1 as
+# ``decks x 52 + jokers_per_deck`` and spends that ride-wide budget as
+# jokers are dealt, so each later cycle carries only what the deals so
+# far left behind; once the budget reaches 0 the rest of the ride is
+# naturals only. restitute() (Ctrl+Z) puts an undone joker back into
+# the budget, so the accounting follows the shoe's real contents.
+
+_TOTAL_DECKS = 2
+_TOTAL_JOKERS = 3
+
+
+def _joker_count(cards: Sequence[Card]) -> int:
+    """Count how many of *cards* are jokers."""
+    return sum(1 for card in cards if card.joker)
+
+
+def _deal_until_joker(shoe: Shoe) -> list[Card]:
+    """Deal cards until the first joker lands; return them, in order."""
+    dealt: list[Card] = []
+    while True:
+        card, _ = shoe.deal()
+        dealt.append(card)
+        if card.joker:
+            return dealt
+
+
+@pytest.mark.parametrize(
+    ("decks", "jokers_per_deck"),
+    [(1, 0), (1, 1), (2, 2), (2, 4), (8, 10)],
+    ids=["no_jokers", "min_positive", "two_decks_two", "two_decks_four", "max_jokers"],
+)
+def test_shoe_total_mode_cycle_one_holds_exactly_the_configured_jokers(
+    decks: int, jokers_per_deck: int
+) -> None:
+    """T-4 bounds: cycle 1 is decks x 52 naturals + the budget, once."""
+    shoe = Shoe(decks=decks, jokers_per_deck=jokers_per_deck, seed=_SEED, jokers_total=True)
+
+    dealt = _deal_all(shoe)
+
+    assert (len(dealt), _joker_count(dealt)) == (decks * 52 + jokers_per_deck, jokers_per_deck)
+
+
+def test_shoe_total_mode_reshuffle_with_the_budget_unspent_keeps_the_jokers() -> None:
+    """A cycle reshuffled before any deal re-deals the whole budget."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED, jokers_total=True)
+
+    shoe.reshuffle()
+    dealt = _deal_all(shoe)
+
+    assert (len(dealt), _joker_count(dealt)) == (54, 2)
+
+
+def test_shoe_total_mode_dealing_a_joker_decrements_the_budget() -> None:
+    """Cycle 2 re-deals only the jokers the deals so far left behind."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED, jokers_total=True)
+    first = _deal_until_joker(shoe)
+
+    shoe.reshuffle()
+    second = _deal_all(shoe)
+
+    assert (_joker_count(first), len(second), _joker_count(second)) == (1, 53, 1)
+
+
+def test_shoe_total_mode_naturals_only_once_the_budget_is_spent() -> None:
+    """Cycle 1 exhausts the budget; later cycles deal no jokers."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED, jokers_total=True)
+    _deal_all(shoe)
+
+    shoe.reshuffle()
+    second = _deal_all(shoe)
+    shoe.reshuffle()
+    third = _deal_all(shoe)
+
+    assert (len(second), _joker_count(second)) == (52, 0)
+    assert (len(third), _joker_count(third)) == (52, 0)
+
+
+def test_shoe_total_mode_restitute_returns_the_undone_joker_to_the_budget() -> None:
+    """T-3: undo puts the joker back, so the next cycle carries it."""
+    shoe = Shoe(decks=1, jokers_per_deck=1, seed=_SEED, jokers_total=True)
+    dealt = _deal_until_joker(shoe)
+
+    shoe.restitute(dealt[-1])
+    shoe.reshuffle()
+    second = _deal_all(shoe)
+
+    assert (len(second), _joker_count(second)) == (53, 1)
+
+
+def test_shoe_per_deck_mode_ignores_the_total_budget() -> None:
+    """The S4 per-deck shape is unchanged: jokers return each cycle."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED)
+
+    _deal_all(shoe)
+    shoe.reshuffle()
+    second = _deal_all(shoe)
+
+    assert (len(second), _joker_count(second)) == (54, 2)
+
+
+def test_shoe_per_deck_mode_is_the_default_the_new_keyword_leaves_alone() -> None:
+    """Omitting jokers_total keeps the frozen S4 sequence exactly."""
+    implicit = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+    explicit = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED, jokers_total=False)
+
+    assert _codes(_deal_all(implicit)) == _codes(_deal_all(explicit))
+
+
+# ------------------------------------------------- total mode: replay
+
+
+def test_shoe_replay_total_mode_given_no_deals_matches_a_fresh_total_shoe() -> None:
+    """replay(deals=0, cycles=1) is a fresh total-mode shoe."""
+    replayed = Shoe.replay(
+        decks=_TOTAL_DECKS,
+        jokers_per_deck=_TOTAL_JOKERS,
+        seed=_SEED,
+        deals=0,
+        cycles=1,
+        jokers_total=True,
+    )
+
+    dealt = _deal_all(replayed)
+
+    assert (len(dealt), _joker_count(dealt)) == (_TOTAL_DECKS * 52 + _TOTAL_JOKERS, _TOTAL_JOKERS)
+
+
+@pytest.mark.parametrize("cycles", [1, 2, 3], ids=["cycle_1", "cycle_2", "cycle_3"])
+def test_shoe_replay_total_mode_reproduces_the_budget_state(cycles: int) -> None:
+    """T-4: replay() rebuilds the live remaining sequence exactly.
+
+    Each earlier cycle is dealt to exhaustion before its reshuffle --
+    the only way a reshuffle happens (spec §4: the caller reshuffles
+    after ShoeEmpty) -- which is what leaves the live total-mode budget
+    where the live shoe had it.
+    """
+    # logic-coverage-exempt: T-8 -- the cycle loops are the arrangement
+    # (a live shoe driven to cycle N); the assertion block below is the
+    # single Act+Assert, and the loop count is parametrized.
+    live = Shoe(decks=_TOTAL_DECKS, jokers_per_deck=_TOTAL_JOKERS, seed=_SEED, jokers_total=True)
+    for _ in range(cycles - 1):
+        _deal_all(live)
+        live.reshuffle()
+    for _ in range(7):
+        live.deal()
+
+    replayed = Shoe.replay(
+        decks=_TOTAL_DECKS,
+        jokers_per_deck=_TOTAL_JOKERS,
+        seed=_SEED,
+        deals=7,
+        cycles=cycles,
+        jokers_total=True,
+    )
+
+    assert (replayed.dealt, replayed.remaining, replayed.cycle) == (
+        live.dealt,
+        live.remaining,
+        live.cycle,
+    )
+    assert _codes(_deal_all(replayed)) == _codes(_deal_all(live))
+
+
+# ----------------------------------------------- total mode: invariant
+
+
+@given(
+    decks=st.integers(min_value=1, max_value=4),
+    jokers_per_deck=st.integers(min_value=0, max_value=10),
+    cycles=st.integers(min_value=1, max_value=4),
+    seed=st.integers(min_value=0, max_value=10**6),
+)
+def test_shoe_total_mode_never_deals_more_than_the_budget(  # noqa: PLR0913, PLR0917 -- 4 generated inputs
+    decks: int, jokers_per_deck: int, cycles: int, seed: int
+) -> None:
+    """T-7 invariant: the ride-wide joker allowance is never exceeded.
+
+    Per-deck mode repeats its jokers every cycle (decks x jokers per
+    cycle); total mode spends them once, so however many cycles a ride
+    runs, the jokers it ever deals cannot exceed jokers_per_deck.
+    """
+    shoe = Shoe(decks=decks, jokers_per_deck=jokers_per_deck, seed=seed, jokers_total=True)
+
+    # logic-coverage-exempt: T-8 -- the repeated cycle is the property's
+    # own subject (jokers dealt across cycles); Hypothesis generates the
+    # cycle count, so a parametrize row would only re-run one case.
+    dealt_jokers = 0
+    for _ in range(cycles):
+        dealt_jokers += _joker_count(_deal_all(shoe))
+        shoe.reshuffle()
+
+    assert dealt_jokers == jokers_per_deck

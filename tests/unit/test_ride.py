@@ -8,8 +8,9 @@ it here next to ``RideStatus``, mirroring how ``RideStatus`` itself was
 pre-created ahead of the state machine that consumes it. Boundary rows
 follow this repo's own T-4 convention (min-1, min, min+1, max-1, max,
 max+1) for every bounded field: ``max_team_size`` (2..10, R-12),
-``deck_count`` (>=1, spec.md §4), ``planned_duration_s``/``min_lap_s``
-(positive, spec.md §2/§6).
+``deck_count`` (>=1, spec.md §4), ``jokers_per_deck`` (0..10, Phase 5's
+jokers_spin) and ``planned_duration_s``/``min_lap_s`` (positive,
+spec.md §2/§6).
 
 RideEngine (E4.1, below) is the state machine + timing core: spec §3's
 DRAFT -> RUNNING -> FINISHED <-> REOPENED transitions with every
@@ -45,8 +46,11 @@ from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
+    DEFAULT_JOKERS_MODE,
     DEFAULT_JOKERS_PER_DECK,
     FAR_TOO_MANY,
+    JOKERS_MODE_PER_DECK,
+    JOKERS_MODE_TOTAL,
     NOT_ENOUGH,
     OK,
     TIEBREAK_HIGH_CARD,
@@ -124,14 +128,14 @@ def test_ride_config_bare_required_fields_defaults_deck_count_to_eight() -> None
 
 
 def test_ride_config_bare_required_fields_defaults_jokers_per_deck_to_one() -> None:
-    """jokers_choice's XRC default: 1 joker per deck (setup.xrc)."""
+    """jokers_spin's XRC value: 1 joker per deck (setup.xrc)."""
     config = _config()
 
     assert (config.jokers_per_deck, DEFAULT_JOKERS_PER_DECK) == (1, 1)
 
 
 def test_ride_config_bare_required_fields_defaults_max_cards_to_uncapped() -> None:
-    """cap_chk unticked by default: max_cards is None (uncapped)."""
+    """cap_choice defaults to "Disabled": max_cards is None (R-13)."""
     config = _config()
 
     assert config.max_cards is None
@@ -234,6 +238,59 @@ def test_ride_config_deck_count_at_or_above_one_is_accepted(deck_count: int) -> 
     config = _config(deck_count=deck_count)
 
     assert config.deck_count == deck_count
+
+
+# --------------------------------------- Phase 5: jokers mode + range
+# The setup dialog's Phase 5 Cards controls: a jokers_spin over
+# 0..10 and a per-deck/total radio pair (total checked, setup.xrc), so
+# the dialog
+# can neither build a count outside 0..10 nor store a mode spelling the
+# shoe does not know.
+
+
+def test_ride_config_bare_required_fields_defaults_jokers_mode_to_total() -> None:
+    """jokers_total_radio's XRC default: one ride-wide joker budget."""
+    config = _config()
+
+    assert (config.jokers_mode, DEFAULT_JOKERS_MODE) == (JOKERS_MODE_TOTAL, JOKERS_MODE_TOTAL)
+
+
+@pytest.mark.parametrize(
+    "jokers_mode", [JOKERS_MODE_PER_DECK, JOKERS_MODE_TOTAL], ids=["per_deck", "total"]
+)
+def test_ride_config_jokers_mode_given_a_known_spelling_is_accepted(jokers_mode: str) -> None:
+    """Both stored spellings round-trip onto the config unchanged."""
+    config = _config(jokers_mode=jokers_mode)
+
+    assert config.jokers_mode == jokers_mode
+
+
+@pytest.mark.parametrize(
+    "jokers_mode",
+    ["perdeck", "Per_Deck", "per-deck", "both", ""],
+    ids=["no_underscore", "mixed_case", "hyphen", "both", "empty"],
+)
+def test_ride_config_jokers_mode_given_an_unknown_spelling_raises(jokers_mode: str) -> None:
+    """T-5: a mode the shoe cannot read refuses loudly, not silently."""
+    with pytest.raises(RideConfigError, match=re.escape("jokers_mode")):
+        _config(jokers_mode=jokers_mode)
+
+
+@pytest.mark.parametrize("jokers_per_deck", [-1, 11], ids=["min-1", "max+1"])
+def test_ride_config_jokers_per_deck_out_of_range_raises(jokers_per_deck: int) -> None:
+    """T-4: jokers_spin's own 0..10 bound is enforced on the config."""
+    with pytest.raises(RideConfigError, match=re.escape("jokers_per_deck")):
+        _config(jokers_per_deck=jokers_per_deck)
+
+
+@pytest.mark.parametrize(
+    "jokers_per_deck", [0, 1, 2, 9, 10], ids=["min", "min+1", "two", "max-1", "max"]
+)
+def test_ride_config_jokers_per_deck_in_range_is_accepted(jokers_per_deck: int) -> None:
+    """Every value the spinner offers is accepted as given."""
+    config = _config(jokers_per_deck=jokers_per_deck)
+
+    assert config.jokers_per_deck == jokers_per_deck
 
 
 # ------------------------------------------- planned_duration_s bound
@@ -3021,12 +3078,15 @@ def test_apply_replay_record_miss_then_assign_is_equivalent() -> None:
 
 # A lap length of 1 km at 3600 km/h makes one lap exactly 1 second, so
 # ``planned_duration_s`` is the expected lap count verbatim -- the
-# verdict boundary rows below can then name the shoe's own 424 cards.
+# verdict boundary rows below can then name the default shoe's own 417
+# cards (8 decks x 52 + 1 joker: the default config's jokers mode is
+# ``total``).
 _ONE_SECOND_LAP_KM = 1.0
 _ONE_SECOND_LAP_SPEED_KMH = 3600.0
 
-# The default shoe: DEFAULT_DECK_COUNT x (52 + DEFAULT_JOKERS_PER_DECK).
-_DEFAULT_SHOE_CARDS = DEFAULT_DECK_COUNT * (52 + DEFAULT_JOKERS_PER_DECK)
+# The default shoe: DEFAULT_DECK_COUNT x 52 + DEFAULT_JOKERS_PER_DECK
+# (the total-mode capacity check_card_sufficiency reports).
+_DEFAULT_SHOE_CARDS = DEFAULT_DECK_COUNT * 52 + DEFAULT_JOKERS_PER_DECK
 
 
 def _card_check_roster(*, plate_model: PlateModel = PlateModel.RIDER_POOLED) -> Roster:
@@ -3199,10 +3259,10 @@ def test_estimate_cards_needed_given_any_two_speeds_is_monotonic_in_speed(
     ("planned_duration_s", "verdict"),
     [
         (1, FAR_TOO_MANY),  # T-4: far below the 2x boundary
-        (211, FAR_TOO_MANY),  # T-4: 2x boundary - 1
-        (212, OK),  # T-4: the 2x boundary itself
-        (424, OK),  # T-4: the 1x boundary (exactly the shoe)
-        (425, NOT_ENOUGH),  # T-4: 1x boundary + 1
+        (208, FAR_TOO_MANY),  # T-4: 2x boundary - 1
+        (209, OK),  # T-4: the 2x boundary itself
+        (417, OK),  # T-4: the 1x boundary (exactly the shoe)
+        (418, NOT_ENOUGH),  # T-4: 1x boundary + 1
     ],
     ids=["far_below", "below_2x", "at_2x", "at_1x", "above_1x"],
 )
@@ -3210,7 +3270,11 @@ def test_check_card_sufficiency_given_each_boundary_returns_its_verdict(
     planned_duration_s: int, verdict: str
 ) -> None:
     """The shoe's 1x/2x boundaries decide the three verdicts."""
-    config = _config(lap_km=_ONE_SECOND_LAP_KM, planned_duration_s=planned_duration_s)
+    config = _config(
+        lap_km=_ONE_SECOND_LAP_KM,
+        planned_duration_s=planned_duration_s,
+        jokers_mode=JOKERS_MODE_TOTAL,
+    )
 
     result = check_card_sufficiency(config, _single_rider_roster(), _ONE_SECOND_LAP_SPEED_KMH)
 
@@ -3221,18 +3285,29 @@ def test_check_card_sufficiency_given_each_boundary_returns_its_verdict(
     )
 
 
-def test_check_card_sufficiency_given_a_custom_shoe_counts_decks_and_jokers() -> None:
-    """shoe_cards is deck_count x (52 + jokers), not a constant."""
+@pytest.mark.parametrize(
+    ("jokers_mode", "expected_shoe_cards"),
+    [
+        (JOKERS_MODE_PER_DECK, 112),  # deck_count x (52 + jokers_per_deck)
+        (JOKERS_MODE_TOTAL, 108),  # deck_count x 52 + jokers_per_deck
+    ],
+    ids=["per_deck", "total"],
+)
+def test_check_card_sufficiency_given_a_custom_shoe_counts_the_rides_jokers_mode(
+    jokers_mode: str, expected_shoe_cards: int
+) -> None:
+    """shoe_cards follows the ride's own jokers mode, not one rule."""
     config = _config(
         lap_km=_ONE_SECOND_LAP_KM,
         planned_duration_s=100,
         deck_count=2,
         jokers_per_deck=4,
+        jokers_mode=jokers_mode,
     )
 
     result = check_card_sufficiency(config, _single_rider_roster(), _ONE_SECOND_LAP_SPEED_KMH)
 
-    assert (result.shoe_cards, result.expected, result.verdict) == (112, 100, OK)
+    assert (result.shoe_cards, result.expected, result.verdict) == (expected_shoe_cards, 100, OK)
 
 
 def test_check_card_sufficiency_given_no_estimate_returns_none() -> None:
