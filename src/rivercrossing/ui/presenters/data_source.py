@@ -83,6 +83,13 @@ class FeedRow:
     ``total_s`` are the numeric companions to the three rendered times,
     so the list's native header sort orders by time rather than by its
     ``h:mm:ss`` text (``StandingsRow.total_seconds``' own rule).
+
+    ``duplicate`` (Phase 3) marks one half of a live duplicate pair
+    (``RideEngine.duplicate_crossings``: same entry, identical
+    instant), so the Needs Review tab can list both halves -- the
+    earlier twin's derived lap time is real and so never sets
+    ``flagged`` on its own -- and the operator can open either one and
+    delete it.
     """
 
     time: str
@@ -101,6 +108,7 @@ class FeedRow:
     elapsed_s: float = 0.0
     lap_time_s: float = 0.0
     total_s: float = 0.0
+    duplicate: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -614,7 +622,9 @@ class EngineDataSource:
         the ride clock's own elapsed reading at the crossing
         (:func:`_elapsed_seconds`), so the column starts at 0 with the
         ride. A row is ``dnf`` when the rider who crossed is marked out
-        or the whole entry is (Phase 4's marker).
+        or the whole entry is (Phase 4's marker); a row is ``duplicate``
+        when the crossing is one half of a live duplicate pair (Phase
+        3, ``engine.duplicate_crossings``).
         """
         engine = self._engine
         start = engine.actual_start
@@ -624,6 +634,9 @@ class EngineDataSource:
         )
         held_crossings = frozenset(item.crossing for item in engine.held_crossings())
         edited = corrected_crossing_keys(engine.events, engine.crossings)
+        duplicates = frozenset(
+            crossing for pair in engine.duplicate_crossings() for crossing in pair
+        )
         times_by_entry: dict[str, tuple[float, ...]] = {}
         totals_by_entry: dict[str, list[float]] = {}
         for entry in self._roster.entries:
@@ -676,6 +689,7 @@ class EngineDataSource:
                         flagged=flagged,
                         held=held,
                         edited=(crossing.entry_id, crossing.seq) in edited,
+                        duplicate=crossing in duplicates,
                         dnf=(rider_plate is not None and rider_plate in dnf_riders)
                         or crossing.entry_id in dnf_entries,
                         elapsed_s=elapsed_s,

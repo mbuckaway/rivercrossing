@@ -2858,13 +2858,15 @@ def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, h
     plate: str,
     held: bool,  # noqa: FBT001 -- the seam's flag travels positionally
 ) -> Crossing | None:
-    """Resolve the crossing a flagged ``(plate, held)`` row names.
+    """Resolve the crossing a reviewed ``(plate, held)`` row names.
 
-    The Needs Review tab renders the feed's flagged rows (short laps),
-    so the newest such row for *plate* with the same disposition
-    identifies the lap: its ``FeedRow.lap`` is the crossing's own
-    ``seq``, searched in the pair's own half of the engine -- the hold
-    queue for a held row, every recorded crossing for a credited one.
+    The Needs Review tab renders the feed's flagged rows (short laps)
+    and, since Phase 3, its duplicate rows too, so the newest such row
+    for *plate* with the same disposition identifies the lap: its
+    ``FeedRow.lap`` is the crossing's own ``seq``, searched in the
+    pair's own half of the engine -- the hold queue for a held row,
+    every recorded crossing for a credited one (a duplicate is credited
+    unless its own short lap held it, exactly like any other lap).
     Both halves use the feed's own identity, ``crossing.rider_plate or
     crossing.entry_id``. ``None`` is a stale row: nothing in the feed
     matches the activated pair.
@@ -2873,7 +2875,7 @@ def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, h
         (
             candidate
             for candidate in source.feed_rows()
-            if candidate.flagged
+            if (candidate.flagged or candidate.duplicate)
             and not candidate.missed
             and candidate.plate == plate
             and candidate.held == held

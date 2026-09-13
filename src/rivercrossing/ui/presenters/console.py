@@ -745,11 +745,12 @@ class ConsolePresenter:
         """Re-render the crossings feed and its flagged subset.
 
         The flagged subset is the review notebook's "Needs Review" tab
-        (WS-H): exactly the feed's R-34 flag rows -- every short lap,
-        held or credited -- so a record/undo that changes the feed
-        re-renders the flagged list in the same synchronous call. Both
-        lists render the unfiltered rows; only the crossings list
-        itself applies the search box (:meth:`on_search_text`).
+        (WS-H): the feed's R-34 flag rows -- every short lap, held or
+        credited -- plus, in Phase 3, every duplicate row
+        (``FeedRow.duplicate``: one half of a live pair the operator
+        must delete one of). Both render the unfiltered rows; only the
+        crossings list itself applies the search box
+        (:meth:`on_search_text`).
 
         Public because the app's console swap
         (``app._swap_console_onto``) renders through it:
@@ -778,7 +779,7 @@ class ConsolePresenter:
         rows = self.source.feed_rows()
         self._rendered_feed = _visible_feed_rows(rows, self._search_text)
         self.view.show_feed(self._rendered_feed)
-        self.view.show_flagged([row for row in rows if row.flagged])
+        self.view.show_flagged([row for row in rows if row.flagged or row.duplicate])
         self.view.show_current_lap(current_lap(self.engine.crossings))
 
     def _feed_state(self) -> tuple[object, ...]:
