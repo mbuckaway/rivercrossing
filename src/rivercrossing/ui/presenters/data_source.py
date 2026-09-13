@@ -43,8 +43,6 @@ __all__ = [
     "DataSource",
     "EmptyDataSource",
     "EngineDataSource",
-    "EntryDetail",
-    "EntryLapRow",
     "FeedRow",
     "RideSummary",
     "RiderRow",
@@ -165,32 +163,6 @@ class RiderRow:
 
 
 @dataclass(frozen=True, slots=True)
-class EntryLapRow:
-    """One row of an entry's lap history (entry_detail_dlg's list)."""
-
-    lap: int
-    time: str
-    lap_time: str
-    rider: str
-    card: str
-
-
-@dataclass(frozen=True, slots=True)
-class EntryDetail:
-    """The entry detail view-model (entry_detail_dlg, 1e).
-
-    ``header``/``members`` are the two pre-rendered summary lines
-    (entry_header_lbl/members_lbl); ``cards_held`` is the
-    cards_list's icon-mode row content.
-    """
-
-    header: str
-    members: str
-    cards_held: tuple[str, ...]
-    laps: tuple[EntryLapRow, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class StandingsRow:
     """One row of the results standings (results_dlg).
 
@@ -236,7 +208,7 @@ class DataSource(Protocol):
     One seam, one shape, for every screen's real/empty data: the
     E4.4.1 ``EngineDataSource`` serves the live console; the E5.4.2
     ``EmptyDataSource`` serves the windows with no store-backed data
-    yet (results, entry detail, the no-store library).
+    yet (results, the audit trail, the no-store library).
     """
 
     def feed_rows(self) -> list[FeedRow]:
@@ -266,10 +238,6 @@ class DataSource(Protocol):
 
     def riders(self) -> list[RiderRow]:
         """Return the rider editor rows for the active ride."""
-        ...
-
-    def entry_detail(self, plate: str) -> EntryDetail:
-        """Return the detail view-model for the entry with ``plate``."""
         ...
 
     def standings(
@@ -584,10 +552,10 @@ class EngineDataSource:
     derives from a ``RideEngine`` (and its roster), never from a
     display-data seam (E4.4.1's "demo wiring line unused on this
     screen" requirement; the seam itself retired in E5.4.2). The
-    non-console methods (``rides``/``riders``/``entry_detail``/
-    ``standings``/``audit_rows``) are implemented simply and correctly
-    here for the windows that will consume them; E5/E6 replace them
-    with richer store-backed versions.
+    non-console methods (``rides``/``riders``/``standings``/
+    ``audit_rows``) are implemented simply and correctly here for the
+    windows that will consume them; E5/E6 replace them with richer
+    store-backed versions.
 
     Doc-silence resolutions (pinned here, this task's own):
 
@@ -799,48 +767,6 @@ class EngineDataSource:
                 )
         return rows
 
-    def entry_detail(self, plate: str) -> EntryDetail:
-        """Return the detail view-model for the entry with ``plate``.
-
-        Raises:
-            LookupError: If no roster entry owns *plate*.
-        """
-        entry = self._roster.resolve_plate(plate)
-        if entry is None:
-            raise LookupError(f"no entry detail for plate {plate!r}")
-        engine = self._engine
-        times = engine.lap_times(entry.plate)
-        laps = tuple(
-            EntryLapRow(
-                lap=crossing.seq,
-                time=_feed_time(crossing.crossed_at),
-                lap_time=_format_lap_time(
-                    times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
-                ),
-                rider=_rider_name_for(entry, crossing.rider_plate) or entry.display_name,
-                card=engine.card_for(crossing).code(),
-            )
-            for crossing in engine.crossings
-            if crossing.entry_id == entry.plate
-        )
-        held_cards = tuple(
-            held.card.code()
-            for held in engine.held_crossings()
-            if held.crossing.entry_id == entry.plate
-        )
-        kind = "Team" if entry.type is EntryType.TEAM else "Solo"
-        header = (
-            f"{kind} · {len(entry.riders)} riders · {len(laps)} laps · "
-            f"{format_duration(sum(times))}"
-        )
-        members = " · ".join(rider.full_name for rider in entry.riders)
-        return EntryDetail(
-            header=header,
-            members=members,
-            cards_held=held_cards,
-            laps=laps,
-        )
-
     def standings(
         self, order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER
     ) -> tuple[list[StandingsRow], list[StandingsRow]]:
@@ -957,16 +883,6 @@ class EmptyDataSource:
     def riders(self) -> list[RiderRow]:
         """Return no rider editor rows."""
         return []
-
-    def entry_detail(self, plate: str) -> EntryDetail:  # noqa: ARG002 -- DataSource's signature, unused by the empty state
-        """Return an empty detail view-model for any *plate*.
-
-        The entry-detail window opens with no entry selected; the view
-        renders the empty header/members/cards/laps rather than
-        crashing on a plate no store-backed entry owns yet (E7 wires
-        the real per-entry lookup, R-38's deep-link).
-        """
-        return EntryDetail(header="", members="", cards_held=(), laps=())
 
     def standings(
         self,

@@ -49,7 +49,6 @@ ANCHOR_BY_WINDOW: dict[str, str] = {
     ids.RIDE_SETUP_DLG: "setting-up-a-ride",
     ids.RIDER_EDITOR_DLG: "riders-entries",
     ids.CSV_PREVIEW_DLG: "appendix-b-csv-reference",
-    ids.ENTRY_DETAIL_DLG: "entry-detail",
     ids.RESULTS_DLG: "results-window",
     ids.RIDE_LIBRARY_DLG: "getting-started",
     ids.AUDIT_DLG: "fixing-mistakes",

@@ -21,7 +21,7 @@
       wxID_DELETE (5038) and a custom-named button.
       So the extra buttons live in a sibling wxBoxSizer and only
       wxID_CLOSE / wxID_CANCEL sit in a wxStdDialogButtonSizer - the
-      same shape rider_editor_dlg and entry_detail_dlg use.
+      same shape rider_editor_dlg and crossing_detail_dlg use.
     * <default>1</default> IS honoured on wxButton (dialog
       GetDefaultItem() returns it), inside a std sizer or a box sizer.
     * XRC has no minsize property for windows - only for sizeritem and

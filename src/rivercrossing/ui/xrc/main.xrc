@@ -796,9 +796,6 @@
       <object class="wxMenuItem" name="mi_mark_dnf">
         <label>&amp;Mark DNF…</label>
       </object>
-      <object class="wxMenuItem" name="mi_entry_detail">
-        <label>Entry &amp;Detail…</label>
-      </object>
     </object>
 
     <object class="wxMenu">
@@ -813,14 +810,8 @@
       <object class="wxMenuItem" name="mi_edit_crossing">
         <label>&amp;Edit Crossing…</label>
       </object>
-      <object class="wxMenuItem" name="mi_reassign_plate">
-        <label>&amp;Reassign Plate…</label>
-      </object>
       <object class="wxMenuItem" name="mi_deal_manual">
-        <label>&amp;Deal Manual Card…</label>
-      </object>
-      <object class="wxMenuItem" name="mi_void_card">
-        <label>&amp;Void Card…</label>
+        <label>&amp;Deal Bonus Card…</label>
       </object>
       <object class="wxMenuItem" name="mi_review_held">
         <label>Review &amp;Held Cards</label>

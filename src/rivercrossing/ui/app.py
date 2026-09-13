@@ -62,7 +62,7 @@ from typing import TYPE_CHECKING, Any, cast
 from platformdirs import user_data_dir
 
 from rivercrossing import __version__, csvio, htmlexport, pdfexport
-from rivercrossing.cards import Card, Shoe, ShoeClosedError
+from rivercrossing.cards import Shoe, ShoeClosedError
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import (
     IllegalStateError,
@@ -137,16 +137,10 @@ _SEEDED_MAX_TEAM_SIZE = 4
 _SEEDED_TEAM_LOGO_SEED = 20260906
 
 # The empty-state DataSource the windows E6/E7 have not wired to real
-# data yet read (E5.4.2): with no store-backed ride open, entry detail,
-# results and the no-store library render zero rows rather than demo
-# ones. Stateless, so one shared instance serves every route.
+# data yet read (E5.4.2): with no store-backed ride open, results, the
+# audit trail and the no-store library render zero rows rather than
+# demo ones. Stateless, so one shared instance serves every route.
 _EMPTY_SOURCE = EmptyDataSource()
-
-# Riders > Entry Detail... has no plate to open with until a real ride
-# exists (EPIC 4+); with demo retired the dialog opens the empty state
-# (``EmptyDataSource.entry_detail`` ignores the key and returns an
-# empty view-model), so the lookup key itself no longer matters.
-_ENTRY_DETAIL_DEFAULT_PLATE = ""
 
 # The View row's own commands.py target (P8-D8): its 8 ids share one
 # route, dispatched further by event id below -- mi_hide_times and the
@@ -256,15 +250,6 @@ class _RouteContext:
     # banner. ``None`` until a fresh export succeeds -- nothing
     # published yet, so nothing is stale.
     export_watermark: int | None = None
-    # E7.2.1: the entry detail currently open in the app (its plate),
-    # recorded when the entry-detail route opens one. The correction
-    # menu routes (Edit Crossing…, Reassign Plate…, Mark DNF…, Void
-    # Card…) read it as the entry they target -- the dialogs carry no
-    # plate field of their own (dialogs.xrc section C), so the "current
-    # entry" context is what lets a menu item correct the entry the
-    # scorer was just looking at. ``None`` until an entry detail is
-    # opened; a correction route with none posts a notice instead.
-    detail_plate: str | None = None
     # E8.1.1: the per-user settings file this launch loaded from and
     # the live AppSettings. The layout-save callback updates
     # :attr:`settings` as the sash/geometry persist, so a later
@@ -1051,7 +1036,6 @@ def _handle_clear_ride_route(context: _RouteContext) -> None:
     presenter.engine.on_event = None
     context.presenter = None
     context.active_ride_id = None
-    context.detail_plate = None
     context.html_export_path = None
     context.pdf_export_path = None
     context.export_watermark = None
@@ -1192,49 +1176,6 @@ def _save_layout_settings(
         context.frame.SetStatusText(f"Could not save settings: {exc}")
         return
     context.settings = updated
-
-
-def _open_entry_detail_dialog(context: _RouteContext, window: Any, plate: str) -> None:  # noqa: ANN401
-    """Decorate *window* as the entry detail for *plate* (E7.2.1).
-
-    The entry-detail decoration the ``mi_entry_detail`` menu route
-    performs (via :func:`_decorate`): with a live console
-    threaded AND a concrete entry (``context.detail_plate``, recorded
-    when entry detail opened), entry detail opens that entry over the
-    live engine/roster/resource, so the six action buttons act on real
-    data; with no selection the E5.4.2 empty state stays (a live
-    engine with an unset plate would raise LookupError from
-    ``entry_detail("")`` -- R-38's loud failure is for a deep-linked
-    plate, not the menu's no-selection default).
-
-    Args:
-        context: The route context whose live seams to thread.
-        window: The already-loaded ``entry_detail_dlg`` to decorate.
-        plate: The plate to open; ``""`` keeps the empty state.
-    """
-    from rivercrossing.ui.views.entry_detail import (  # noqa: PLC0415 -- deferred, see module docstring
-        EntryDetailDialog,
-    )
-
-    presenter = context.presenter
-    if presenter is not None and plate:
-        context.detail_plate = plate
-        engine = presenter.engine
-        EntryDetailDialog(
-            window,
-            plate,
-            data_source=presenter.source,
-            engine=engine,
-            roster=context.roster,
-            resource=context.resource,
-            notify=context.frame.SetStatusText,
-            on_corrected=lambda: _apply_menu_state(context, engine.state),
-            # W11 F2b: a plate_choice pick retargets the dialog AND
-            # becomes the current entry the correction routes target.
-            on_plate_picked=lambda plate: setattr(context, "detail_plate", plate),
-        )
-    else:
-        EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
 
 
 class _StoreAuditSource:
@@ -1386,12 +1327,6 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
                 sim_interval=context.settings.sim_interval,
                 avg_speed_kmh=context.settings.avg_speed_kmh,
             )
-    elif route.target == ids.ENTRY_DETAIL_DLG:
-        # E7.2.1 (shared with the W11 F2a flagged seam): the live
-        # branch opens the selected entry over the live seams; the
-        # empty branch keeps the E5.4.2 empty state. See
-        # _open_entry_detail_dialog's own docstring.
-        _open_entry_detail_dialog(context, window, context.detail_plate or "")
     elif route.target == ids.RESULTS_DLG:
         # E6.4.1 (D10): with a live console threaded, results render
         # the real placed rows from the console's EngineDataSource
@@ -1489,9 +1424,9 @@ def _menu_ride_state(context: _RouteContext, status: RideStatus) -> commands.Rid
     Every field the enablement rules consult comes from the console's
     live engine (or the no-ride empty state when none is threaded).
     ``entry_has_cards`` reads "at least one entry holds a credited
-    card" from the snapshot -- the global approximation of Void Card's
-    per-entry "entry has cards" until the entry-detail flow supplies
-    the concrete entry (E7.3.1's deep-link).
+    card" from the snapshot -- the generic "entry has cards" rule
+    input (no live menu row declares one since Phase 2 retired the
+    Void Card… row).
     """
     presenter = context.presenter
     engine = presenter.engine if presenter is not None else None
@@ -2353,19 +2288,18 @@ def _handle_set_start_time_route(context: _RouteContext) -> None:
 
 # ========================================== E7.2.1 correction routes
 #
-# The six Cards/Riders correction rows (Add Crossing at Time, Edit
-# Crossing, Reassign Plate, Deal Manual Card, Mark DNF, Void Card)
-# previously opened their dialogs through _open_target's generic
-# path -- plain XRC with no engine wiring. Each handler below mirrors
-# the _open_ride_confirm shape: run the dialog through
-# views.corrections' shared runner (which prefills, writes the named
-# labels and enforces the non-empty reason), then apply the confirmed
-# engine command, refresh the console (tick re-applies the menu
-# binder through the feed seam) and post a status notice. The
-# dialogs carry no plate field of their own (dialogs.xrc section C),
-# so the entry-detail context (_RouteContext.detail_plate) is the
-# entry they target; without one the handler posts a notice instead
-# of inventing a target.
+# The four Cards/Riders correction rows (Add Crossing at Time, Edit
+# Crossing, Deal Bonus Card, Mark DNF) previously opened their dialogs
+# through _open_target's generic path -- plain XRC with no engine
+# wiring. Each handler below mirrors the _open_ride_confirm shape: run
+# the dialog through views.corrections' shared runner (which prefills,
+# writes the named labels and enforces the non-empty reason), then
+# apply the confirmed engine command, refresh the console (tick
+# re-applies the menu binder through the feed seam) and post a status
+# notice. Phase 2 retired the Reassign Plate… and Void Card… rows --
+# Crossing Detail owns both corrections now -- so the dialogs here are
+# self-sufficient (the operator types the plate) and no longer read a
+# current-entry context.
 
 _CORRECTION_ERRORS = (IllegalStateError, UnknownPlateError, ValueError, ShoeClosedError)
 
@@ -2381,50 +2315,10 @@ def _now_time_text() -> str:
     return datetime.now(UTC).astimezone().strftime("%H:%M:%S")
 
 
-def _crossing_time_text(crossed_at: datetime) -> str:
-    """Render a crossing instant as local 24-hour ``HH:MM:SS``.
-
-    spec §13: "Times: stored UTC, displayed local 24-hour." An aware
-    UTC datetime converts to local; a naive one (tests) is shown as
-    stored -- the same rule ``data_source._feed_time`` applies.
-    """
-    local = crossed_at.astimezone() if crossed_at.tzinfo is not None else crossed_at
-    return local.strftime("%H:%M:%S")
-
-
-def _entry_label(context: _RouteContext, plate: str) -> str:
-    """Return a confirm label for *plate* (``plate · name``)."""
-    roster = context.roster
-    entry = roster.resolve_plate(plate) if roster is not None else None
-    name = entry.display_name if entry is not None else plate
-    return f"{plate} · {name}"
-
-
 def _latest_seq_for_plate(engine: RideEngine, plate: str) -> int | None:
     """Return *plate*'s highest crossing seq, or None."""
     seqs = [crossing.seq for crossing in engine.crossings if crossing.entry_id == plate]
     return max(seqs) if seqs else None
-
-
-def _latest_crossing_for_plate(engine: RideEngine, plate: str) -> Any:  # noqa: ANN401 -- a ride.Crossing, not imported at runtime
-    """Return *plate*'s latest recorded crossing, or None."""
-    for crossing in reversed(engine.crossings):
-        if crossing.entry_id == plate:
-            return crossing
-    return None
-
-
-def _latest_credited_card(engine: RideEngine, plate: str) -> Card | None:
-    """Return *plate*'s latest credited card, or None.
-
-    Reads the snapshot's credited sequence (never the held queue):
-    Void Card targets a dealt, credited card only -- a held card stays
-    the review surface's domain.
-    """
-    for result in engine.snapshot():
-        if result.plate == plate and result.cards:
-            return result.cards[-1]
-    return None
 
 
 def _apply_correction(
@@ -2465,7 +2359,7 @@ def _handle_add_crossing_at_route(context: _RouteContext) -> None:
         context.resource,
         frame=context.frame,
         adding=True,
-        plate=context.detail_plate or "",
+        plate="",
         time=_now_time_text(),
         base_date=engine.config.event_date,
     )
@@ -2500,7 +2394,7 @@ def _handle_edit_crossing_route(context: _RouteContext) -> None:
         context.resource,
         frame=context.frame,
         adding=False,
-        plate=context.detail_plate or "",
+        plate="",
         time=_now_time_text(),
         base_date=engine.config.event_date,
     )
@@ -2532,45 +2426,11 @@ def _handle_edit_crossing_route(context: _RouteContext) -> None:
     )
 
 
-def _handle_reassign_route(context: _RouteContext) -> None:
-    """Cards ▸ Reassign Plate…: move the current entry's latest lap."""
-    engine = _correction_engine(context)
-    if engine is None:
-        context.frame.SetStatusText("Reassign Plate… — no ride open")
-        return
-    plate = context.detail_plate
-    if plate is None:
-        context.frame.SetStatusText("Reassign Plate… — open an entry first")
-        return
-    crossing = _latest_crossing_for_plate(engine, plate)
-    if crossing is None:
-        context.frame.SetStatusText(f"Reassign Plate… — no crossing for {plate}")
-        return
-    seq = next(index for index, item in enumerate(engine.crossings, start=1) if item is crossing)
-    from rivercrossing.ui.views import (  # noqa: PLC0415 -- deferred, see module docstring
-        corrections,
-        dialogs,
-    )
-
-    request = corrections.run_reassign(
-        context.resource,
-        frame=context.frame,
-        crossing_label=dialogs.reassign_message(_crossing_time_text(crossing.crossed_at), plate),
-    )
-    if request is None:
-        return
-    _apply_correction(
-        context,
-        lambda: engine.reassign_crossing(seq, request.new_plate, request.reason),
-        "Crossing reassigned",
-    )
-
-
 def _handle_deal_manual_route(context: _RouteContext) -> None:
-    """Cards ▸ Deal Manual Card…: manual_deal_dlg, then deal_manual."""
+    """Cards ▸ Deal Bonus Card…: manual_deal_dlg, then deal_manual."""
     engine = _correction_engine(context)
     if engine is None:
-        context.frame.SetStatusText("Deal Manual Card… — no ride open")
+        context.frame.SetStatusText("Deal Bonus Card… — no ride open")
         return
     from rivercrossing.ui.views import (  # noqa: PLC0415 -- deferred, see module docstring
         corrections,
@@ -2579,7 +2439,7 @@ def _handle_deal_manual_route(context: _RouteContext) -> None:
     deal = corrections.run_manual_deal(
         context.resource,
         frame=context.frame,
-        plate=context.detail_plate or "",
+        plate="",
     )
     if deal is None:
         return
@@ -2595,27 +2455,18 @@ def _handle_mark_dnf_route(context: _RouteContext) -> None:
 
     Phase 3 makes this row self-sufficient: the dialog's ``plate_input``
     asks for the rider number (or a whole entry's plate), so no entry
-    has to be open first -- an already-open entry just prefills the
-    input and names itself in the confirm, exactly like the other
-    corrections' ``context.detail_plate`` deep-link. The engine's
-    ``mark_dnf`` decides whether the number scopes to one pooled rider
-    or to the whole entry.
+    has to be open first. The engine's ``mark_dnf`` decides whether the
+    number scopes to one pooled rider or to the whole entry.
     """
     engine = _correction_engine(context)
     if engine is None:
         context.frame.SetStatusText("Mark DNF… — no ride open")
         return
-    plate = context.detail_plate
     from rivercrossing.ui.views import (  # noqa: PLC0415 -- deferred, see module docstring
         corrections,
     )
 
-    dnf = corrections.run_dnf(
-        context.resource,
-        frame=context.frame,
-        plate=plate or "",
-        entry=_entry_label(context, plate) if plate is not None else "",
-    )
+    dnf = corrections.run_dnf(context.resource, frame=context.frame, plate="", entry="")
     if dnf is None:
         return
     _apply_correction(
@@ -2625,47 +2476,11 @@ def _handle_mark_dnf_route(context: _RouteContext) -> None:
     )
 
 
-def _handle_void_card_route(context: _RouteContext) -> None:
-    """Cards ▸ Void Card…: void the current entry's latest card."""
-    engine = _correction_engine(context)
-    if engine is None:
-        context.frame.SetStatusText("Void Card… — no ride open")
-        return
-    plate = context.detail_plate
-    if plate is None:
-        context.frame.SetStatusText("Void Card… — open an entry first")
-        return
-    card = _latest_credited_card(engine, plate)
-    if card is None:
-        context.frame.SetStatusText(f"Void Card… — no dealt card for {plate}")
-        return
-    from rivercrossing.ui.views import (  # noqa: PLC0415 -- deferred, see module docstring
-        corrections,
-    )
-
-    void = corrections.run_void_card(
-        context.resource,
-        frame=context.frame,
-        entry_id=plate,
-        card=card.code(),
-        entry=_entry_label(context, plate),
-    )
-    if void is None:
-        return
-    _apply_correction(
-        context,
-        lambda: engine.void_card(void.entry_id, Card.parse(void.card), void.reason),
-        "Card voided",
-    )
-
-
 _CORRECTION_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
     ids.MI_ADD_CROSSING_AT: _handle_add_crossing_at_route,
     ids.MI_EDIT_CROSSING: _handle_edit_crossing_route,
-    ids.MI_REASSIGN_PLATE: _handle_reassign_route,
     ids.MI_DEAL_MANUAL: _handle_deal_manual_route,
     ids.MI_MARK_DNF: _handle_mark_dnf_route,
-    ids.MI_VOID_CARD: _handle_void_card_route,
 }
 
 

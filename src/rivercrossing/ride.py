@@ -1460,14 +1460,17 @@ class RideEngine:
     def deal_manual(self, plate: str, reason: str) -> Event:
         """Deal one shoe card to *plate*'s entry by hand (spec §4).
 
-        The operator's "manual add" correction from the entry detail:
-        one card comes off the shoe and credits straight into the
-        entry's hand -- never the held queue, whose short-lap path
-        (R-34) a deliberate manual deal must not bypass -- the entry
-        is marked has_data, and an audit ``Event`` carrying *reason*
-        lands. The card joins the credited sequence, so it obeys
-        ``config.max_cards`` exactly like a crossing's card: a manual
-        card past the cap is dealt but non-scoring (R-13). A
+        The operator's bonus-card correction: one card comes off the
+        shoe and credits straight into the entry's hand -- never the
+        held queue, whose short-lap path (R-34) a deliberate manual
+        deal must not bypass -- the entry is marked has_data, and an
+        audit ``Event`` carrying *reason* lands. The card is
+        **entry-scoped** (no rider tag): a bonus card is not a lap
+        crossing, so a pooled rider's DNF never forfeits it, and the
+        typed *plate* rides in the audit payload only. The card joins
+        the credited sequence, so it obeys ``config.max_cards`` exactly
+        like a crossing's card: a manual card past the cap is dealt but
+        non-scoring (R-13). A
         ``ShoeEmpty`` mid-deal reshuffles and audits it, exactly as
         ``record_crossing``'s own deal does (R-40). REOPENED after
         Finish deals too: ``reopen()`` re-opens the shoe (spec §15),
@@ -1494,7 +1497,10 @@ class RideEngine:
             raise IllegalStateError(f"cannot deal manually from {self._state}")
         entry = self._require_entry(plate)
         card = self._deal_card()
-        self._credit(entry.plate, card, plate)
+        # Entry-scoped, not rider-tagged: a bonus card is not a lap
+        # crossing, so a pooled rider's DNF never forfeits it (the typed
+        # plate rides in the audit payload only).
+        self._credit(entry.plate, card, None)
         self._roster.mark_has_data(entry)
         return self._append(
             Event(

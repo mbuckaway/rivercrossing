@@ -4,17 +4,17 @@
 The six correction dialogs -- ``edit_crossing_dlg`` (add + edit modes),
 ``reassign_dlg``, ``manual_deal_dlg``, ``dnf_confirm_dlg`` and
 ``void_card_confirm_dlg`` -- are shared by two entry points: the
-Cards/Riders menu routes (app.py's handlers) and the entry-detail
-dialog's action buttons (``EntryDetailDialog``'s ``DetailView``
-implementation). Each ``run_*`` function is that shared wiring, in the
-``_open_ride_confirm`` shape: load the dialog from the resource,
-prefill / write its named labels (a blank label is a failed assertion,
-never cosmetic -- UX-DESKTOP §4), show it through
-:func:`~rivercrossing.ui.views.dialogs.run_dialog` -- the one seam
-every dialog in this codebase shows through -- and return the
-confirmed submission as a wx-free request dataclass (or ``None`` on
-cancel). The caller (the presenter or the app handler) performs the
-engine command, so this module never touches a ``RideEngine``.
+Cards/Riders menu routes (app.py's handlers) and Crossing Detail's own
+``edit_time_btn``/``void_card_btn`` corrections. Each ``run_*``
+function is that shared wiring, in the ``_open_ride_confirm`` shape:
+load the dialog from the resource, prefill / write its named labels (a
+blank label is a failed assertion, never cosmetic -- UX-DESKTOP §4),
+show it through :func:`~rivercrossing.ui.views.dialogs.run_dialog` --
+the one seam every dialog in this codebase shows through -- and return
+the confirmed submission as a wx-free request dataclass (or ``None`` on
+cancel). The request dataclasses themselves live here, beside the
+runners that build them; the caller performs the engine command, so
+this module never touches a ``RideEngine``.
 ux-polish's Ride ▸ Set Start Time… row runs through the same runner
 shape here (:func:`run_set_start_time`, section B's ``set_start_dlg``
 -- a form dialog whose route handler applies the confirmed instant to
@@ -31,13 +31,11 @@ unknown-plate refusal instead of the form's.
 The move-rider "team picker" has no XRC dialog (spec §15b authors
 none); :func:`run_move_rider` builds a small native picker in code.
 
-The audit button and the Cards/Riders menu row both open ``audit_dlg``
-through :func:`run_audit`, which E7.3.1 made real: it binds the
+The Cards/Riders menu row opens ``audit_dlg`` through
+:func:`run_audit`, which E7.3.1 made real: it binds the
 :class:`~rivercrossing.ui.views.audit.AuditDialog` view + presenter
-(the viewer, R-38) before showing it. The entry-detail deep-link
-passes its plate as *entry_filter* so the dialog opens pre-filtered to
-that entry; the menu route passes the live engine source and roster
-with no filter.
+(the viewer, R-38) before showing it, over the live engine source and
+roster with no filter.
 """
 
 from dataclasses import dataclass
@@ -47,13 +45,6 @@ from typing import TYPE_CHECKING, Any
 import wx.adv as _wx_adv  # submodule, not loaded by plain `import wx`
 
 from rivercrossing.ui import ids, require_wx
-from rivercrossing.ui.presenters.detail import (
-    CardVoid,
-    CrossingEdit,
-    DnfMark,
-    ManualDeal,
-    RiderMove,
-)
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import find_control
 
@@ -64,7 +55,12 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import DataSource
 
 __all__ = [
+    "CardVoid",
+    "CrossingEdit",
+    "DnfMark",
+    "ManualDeal",
     "ReassignRequest",
+    "RiderMove",
     "run_audit",
     "run_dnf",
     "run_edit_crossing",
@@ -76,6 +72,74 @@ __all__ = [
 ]
 
 wx = require_wx()
+
+
+@dataclass(frozen=True, slots=True)
+class CrossingEdit:
+    """One confirmed ``edit_crossing_dlg`` submission (E7.2.1).
+
+    ``entry_id`` is the confirmed plate (the operator may have changed
+    the prefill), ``seq`` the crossing's 1-based lap number within the
+    entry (or ``None`` when the caller resolves it from the engine's
+    latest crossing -- the menu flow), ``crossed_at`` the confirmed
+    instant, ``reason`` the audit reason, and ``void`` True when the
+    operator chose the dialog's ``void_btn`` instead of Save.
+    """
+
+    entry_id: str
+    seq: int | None
+    crossed_at: datetime | None
+    reason: str
+    void: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ManualDeal:
+    """One confirmed ``manual_deal_dlg`` submission (E7.2.1)."""
+
+    plate: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class CardVoid:
+    """One confirmed ``void_card_confirm_dlg`` submission (E7.2.1).
+
+    ``card`` is the dealt card's code (``Card.code()``); the caller
+    parses it back with :meth:`Card.parse` when it calls the engine.
+    """
+
+    entry_id: str
+    card: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class DnfMark:
+    """One confirmed ``dnf_confirm_dlg`` submission (E7.2.1).
+
+    ``plate`` is whatever the operator typed into the dialog's
+    ``plate_input`` -- a pooled rider's own number, or a whole entry's
+    plate -- and the engine's ``mark_dnf`` resolves the scope from the
+    roster; the dialog never decides which is which.
+    """
+
+    plate: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class RiderMove:
+    """One confirmed move-rider picker submission (E7.2.1).
+
+    ``rider_plate`` names the rider being moved (a ``Rider.plate`` on
+    a rider_pooled team); ``to_team`` names the destination entry by
+    ``display_name``. The caller resolves both through the roster
+    before calling :meth:`Roster.move_rider`.
+    """
+
+    rider_plate: str
+    to_team: str
 
 
 @dataclass(frozen=True, slots=True)
