@@ -22,6 +22,7 @@ import sqlite3
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
+import pytest
 import wx
 
 from conftest import gorba_config
@@ -29,7 +30,7 @@ from rivercrossing.ride import Event, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import std_dialogs
+from rivercrossing.ui import commands, ids, std_dialogs
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import EngineDataSource
 from rivercrossing.ui.views import ride_setup as ride_setup_module
@@ -37,8 +38,6 @@ from rivercrossing.ui.views.main_frame import MainFrame
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 _START = "2026-09-20T10:00:00"
 _CROSSING = {
@@ -520,3 +519,84 @@ def test_apply_edited_ride_without_a_presenter_posts_the_notice() -> None:
     app_module._apply_edited_ride(context, gorba_config())
 
     assert context.frame.notices == ["Edit Ride — no ride open"]
+
+
+# ------------------------- Ride ▸/Cards ▸ commands: fire-time presenter
+#
+# ``_bind_routes`` binds every route once at bootstrap, while
+# ``context.presenter`` is still ``None``; a ride is opened later by
+# mutating the same context in place (E5.4.1's console swap). The three
+# COMMAND routes that act on the live console -- Ride ▸ Start Ride, Ride
+# ▸ Stop Ride…, Cards ▸ Undo Last Crossing -- must therefore resolve
+# ``context.presenter`` when the menu item fires, never when the handler
+# is built: a bind-time snapshot leaves each row stuck on its fallback.
+# These tests build the handler first (presenter ``None``, the bootstrap
+# state), then set the presenter, then fire.
+
+
+class _RecordingRidePresenter:
+    """Record the three ride-command calls the menu routes fire."""
+
+    def __init__(self) -> None:
+        """Start with an empty call log."""
+        self.calls: list[str] = []
+
+    def on_start(self) -> None:
+        """Record the Ride ▸ Start Ride dispatch."""
+        self.calls.append("on_start")
+
+    def on_stop_requested(self) -> None:
+        """Record the Ride ▸ Stop Ride… dispatch."""
+        self.calls.append("on_stop_requested")
+
+    def on_undo(self) -> None:
+        """Record the Cards ▸ Undo Last Crossing dispatch."""
+        self.calls.append("on_undo")
+
+
+_RIDE_COMMAND_ROUTES = (
+    pytest.param(ids.MI_START_RIDE, "on_start", id="start_ride"),
+    pytest.param(ids.MI_STOP_RIDE, "on_stop_requested", id="stop_ride"),
+    pytest.param(ids.MI_UNDO_CROSSING, "on_undo", id="undo_last_crossing"),
+)
+
+_RIDE_COMMAND_NOTICES = (
+    pytest.param(ids.MI_START_RIDE, "Start Ride — no ride open", id="start_ride"),
+    pytest.param(ids.MI_STOP_RIDE, "Stop Ride… — not yet implemented", id="stop_ride"),
+    pytest.param(
+        ids.MI_UNDO_CROSSING,
+        "Undo Last Crossing — not yet implemented",
+        id="undo_last_crossing",
+    ),
+)
+
+
+@pytest.mark.parametrize(("item_id", "expected_call"), _RIDE_COMMAND_ROUTES)
+def test_make_route_handler_given_a_ride_opened_after_binding_fires_the_presenter(
+    item_id: str, expected_call: str
+) -> None:
+    """Plan §7: the bootstrap-bound handler reaches the opened ride."""
+    route = commands.route_for_id(item_id)
+    context = _context(store=None)
+    bound = app_module._make_route_handler(context, route)
+    presenter = _RecordingRidePresenter()
+    context.presenter = presenter  # type: ignore[assignment]
+
+    bound(None)
+
+    assert presenter.calls == [expected_call]
+    assert context.frame.notices == []
+
+
+@pytest.mark.parametrize(("item_id", "expected_notice"), _RIDE_COMMAND_NOTICES)
+def test_make_route_handler_given_no_ride_posts_the_route_notice(
+    item_id: str, expected_notice: str
+) -> None:
+    """Plan §7: with no ride open the route keeps its own notice."""
+    route = commands.route_for_id(item_id)
+    context = _context(store=None)
+
+    bound = app_module._make_route_handler(context, route)
+    bound(None)
+
+    assert context.frame.notices == [expected_notice]

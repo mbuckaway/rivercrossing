@@ -3463,6 +3463,32 @@ def _correction_route_handler(
     return None
 
 
+def _live_presenter_handler(
+    context: _RouteContext,
+    act: Callable[[ConsolePresenter], None],
+    fallback_notice: str,
+) -> Callable[[Any], None]:
+    """Return a handler running *act* on the fire-time presenter.
+
+    ``_bind_routes`` binds every route once at bootstrap, while
+    ``context.presenter`` is still ``None``; E5.4.1's console swap
+    fills the same context in later, so a handler must read
+    ``context.presenter`` when the menu item fires, not when it is
+    built. A bind-time snapshot would leave the row permanently on
+    *fallback_notice*. Mirrors the presenter-first shape
+    :func:`_handle_finish_route` uses.
+    """
+
+    def _fire(_event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        presenter = context.presenter
+        if presenter is None:
+            context.frame.SetStatusText(fallback_notice)
+            return
+        act(presenter)
+
+    return _fire
+
+
 def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per route special case; each is a real action
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
@@ -3477,18 +3503,19 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     (E3.4) is the one ``COMMAND`` row with a real action of its own,
     ahead of the generic stub. ``undo_last_crossing`` (E4.4.2) fires
     the live console presenter's ``on_undo`` (covering both the Cards
-    ▸ Undo menu item and its Ctrl+Z accelerator); when no live
-    presenter is threaded (route-level tests), it falls back to the
-    generic stub. ``start_ride`` (ux-polish) fires the live
-    presenter's ``on_start`` the same way -- the engine's own start
-    gate (empty roster, incomplete setup) refuses through
-    ``StartBlockedError`` and the presenter opens the blocked-start
-    issues dialog, one row per reason (Phase 5); with no presenter
-    the fallback posts "Start Ride — no ride open".
+    ▸ Undo menu item and its Ctrl+Z accelerator). ``start_ride``
+    (ux-polish) fires the live presenter's ``on_start`` the same way
+    -- the engine's own start gate (empty roster, incomplete setup)
+    refuses through ``StartBlockedError`` and the presenter opens the
+    blocked-start issues dialog, one row per reason (Phase 5).
     ``stop_ride`` (W5) fires the live presenter's native stop-confirm
     flow (``on_stop_requested``) the same way -- a riderless roster
-    gets a native warning from the flow itself; with no presenter the
-    fallback posts the generic stub. ``focus_review_panel``
+    gets a native warning from the flow itself. All three resolve
+    ``context.presenter`` through :func:`_live_presenter_handler` at
+    fire time, because :func:`_bind_routes` runs its one binding pass
+    before any ride is open; with no presenter threaded, each posts
+    its own notice ("Start Ride — no ride open" for the start row).
+    ``focus_review_panel``
     (ux-polish) focuses the console's
     review-panel "Needs Review" tab through the wired console view,
     with the generic stub standing in for a console-less route-level
@@ -3528,29 +3555,27 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     if route.target == "export_riders_csv":
         return lambda _event: _handle_export_csv(context)
     if route.target == "undo_last_crossing":
-        presenter = context.presenter
-        if presenter is not None:
-            return lambda _event: presenter.on_undo()
-        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
+        return _live_presenter_handler(
+            context,
+            lambda presenter: presenter.on_undo(),
+            f"{route.label} — not yet implemented",
+        )
     if route.target == "start_ride":
-        # A distinct local (not ``presenter``): the undo branch above
-        # narrows its own binding into a lambda, and a later
-        # reassignment of the same name would void that narrowing for
-        # mypy (closures capture the variable, not the value).
-        start_presenter = context.presenter
-        if start_presenter is not None:
-            return lambda _event: start_presenter.on_start()
-        return lambda _event: context.frame.SetStatusText("Start Ride — no ride open")
+        return _live_presenter_handler(
+            context,
+            lambda presenter: presenter.on_start(),
+            "Start Ride — no ride open",
+        )
     if route.target == "stop_ride":
         # W5: mi_stop_ride reaches the live presenter's native
         # stop-confirm flow (on_stop_requested) -- the identical
         # handler the console Stop button fires, so the menu row and
-        # the button cannot drift. Same distinct-local reason as the
-        # start branch above.
-        stop_presenter = context.presenter
-        if stop_presenter is not None:
-            return lambda _event: stop_presenter.on_stop_requested()
-        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
+        # the button cannot drift.
+        return _live_presenter_handler(
+            context,
+            lambda presenter: presenter.on_stop_requested(),
+            f"{route.label} — not yet implemented",
+        )
     if route.target == "clear_ride":
         # D3: confirm, then reset the open ride to a fresh DRAFT. The
         # row dispatches through its own handler (like the finish and
