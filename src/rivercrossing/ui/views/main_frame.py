@@ -1211,9 +1211,19 @@ class MainFrame:
         keeps its original focus-only behavior, which is also the
         ``Cards ▸ Review Held Cards`` menu route's
         :meth:`focus_review_panel` target.
+
+        ``flagged_list`` is a plain ``DataViewCtrl``, so its selection
+        arrives as a ``DataViewItem`` that the model resolves to a row;
+        the ``GetSelectedRow`` of ``wxDataViewListCtrl`` does not exist
+        here. Resolve it exactly as :meth:`_on_flagged_activated` does.
         """
         self.focus_review_panel()
-        row = self.flagged_list.GetSelectedRow()
+        if self._flagged_model is None:
+            return
+        item = self.flagged_list.GetSelection()
+        if not item.IsOk():
+            return
+        row = self._flagged_model.GetRow(item)
         if row == wx.NOT_FOUND:
             return
         self._fire_open_flagged(row)
