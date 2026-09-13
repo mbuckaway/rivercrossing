@@ -518,6 +518,20 @@ class _EditorViewStub:
         """No-op: the route-level test never drives a real list."""
 
 
+class _SimulatorViewStub:
+    """A SimulatorDialog-shaped stub: the change flag plus the spins."""
+
+    def __init__(
+        self,
+        *,
+        roster_changed: bool,
+        sim_values: tuple[int, int, int, int, int] = (10, 2, 2, 1, 1),
+    ) -> None:
+        """Hold a presenter stub and the five spin values to persist."""
+        self.presenter = _EditorPresenterStub(roster_changed=roster_changed)
+        self.sim_values = sim_values
+
+
 class _FakeWindow:
     """A wx-window-shaped stub: loadable, closable, nothing else."""
 
@@ -801,39 +815,105 @@ def test_open_target_given_team_editor_close_without_changes_skips_the_save(
 # ---------------- Simulation: simulator close persists its roster
 
 
-def test_persist_simulator_changes_given_a_failed_save_posts_a_notice() -> None:
+def test_persist_simulator_changes_given_a_failed_save_posts_a_notice(
+    tmp_path: Path,
+) -> None:
     """The simulator's close-save refuses like the editor's."""
     context = _context(store=_SaveRosterFailsStore())
     context.active_ride_id = 5
     context.roster = Roster()
+    context.settings_path = tmp_path / "settings.json"
 
-    app_module._persist_simulator_changes(context, _EditorViewStub(roster_changed=True))
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
 
     assert context.frame.notices == ["Could not save riders: disk full"]
 
 
-def test_persist_simulator_changes_given_no_change_is_a_silent_no_op() -> None:
+def test_persist_simulator_changes_given_no_change_is_a_silent_no_op(
+    tmp_path: Path,
+) -> None:
     """A session that generated nothing never touches the store."""
     context = _context(store=_SaveMustNotRunStore())
     context.active_ride_id = 5
+    context.settings_path = tmp_path / "settings.json"
 
-    app_module._persist_simulator_changes(context, _EditorViewStub(roster_changed=False))
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=False))
 
     assert context.frame.notices == []
 
 
-def test_persist_simulator_changes_given_no_store_is_a_silent_no_op() -> None:
+def test_persist_simulator_changes_given_no_store_is_a_silent_no_op(
+    tmp_path: Path,
+) -> None:
     """A store-less bootstrap session never touches a store."""
     context = _context(store=None)
     context.active_ride_id = None
+    context.settings_path = tmp_path / "settings.json"
 
-    app_module._persist_simulator_changes(context, _EditorViewStub(roster_changed=True))
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
 
     assert context.frame.notices == []
 
 
+def test_persist_simulator_changes_given_a_store_but_no_ride_skips_the_roster_save(
+    tmp_path: Path,
+) -> None:
+    """A generated roster with no open ride is not persisted."""
+    context = _context(store=_SaveMustNotRunStore())
+    context.active_ride_id = None
+    context.settings_path = tmp_path / "settings.json"
+
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
+
+    assert context.frame.notices == []
+
+
+def test_persist_simulator_changes_carries_the_spin_values_into_settings(
+    tmp_path: Path,
+) -> None:
+    """Plan §1: the closed dialog's spins persist to settings.json."""
+    context = _context(store=None)
+    context.settings_path = tmp_path / "settings.json"
+    view = _SimulatorViewStub(roster_changed=False, sim_values=(37, 6, 5, 4, 9))
+
+    app_module._persist_simulator_changes(context, view)
+
+    assert (
+        context.settings.sim_riders,
+        context.settings.sim_teams,
+        context.settings.sim_solo,
+        context.settings.sim_laps,
+        context.settings.sim_interval,
+    ) == (37, 6, 5, 4, 9)
+    assert app_module.settings_store.load_settings(context.settings_path) == context.settings
+
+
+@pytest.mark.parametrize(
+    "error",
+    [OSError("disk full"), sqlite3.OperationalError("database is locked")],
+)
+def test_persist_simulator_changes_given_a_failed_settings_save_posts_a_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """A refused settings write is a notice, keeping the live values."""
+
+    def _fail(_settings: object, _path: object) -> None:
+        raise error
+
+    context = _context(store=None)
+    context.settings_path = tmp_path / "settings.json"
+    monkeypatch.setattr(app_module.settings_store, "save_settings", _fail)
+
+    app_module._persist_simulator_changes(
+        context, _SimulatorViewStub(roster_changed=False, sim_values=(1, 2, 3, 4, 5))
+    )
+
+    assert context.frame.notices == [f"Could not save settings: {error}"]
+    assert context.settings.sim_riders == 1
+
+
 def test_open_target_given_simulation_close_with_changes_saves_the_roster(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The File route persists a changed simulator on close."""
     store = _SaveRecorderStore()
@@ -841,10 +921,13 @@ def test_open_target_given_simulation_close_with_changes_saves_the_roster(
     context.active_ride_id = 5
     roster = Roster()
     context.roster = roster
+    context.settings_path = tmp_path / "settings.json"
     context.resource = _FakeResource(_FakeWindow())
     monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
     monkeypatch.setattr(
-        app_module, "_decorate", lambda _ctx, _w, _route: _EditorViewStub(roster_changed=True)
+        app_module,
+        "_decorate",
+        lambda _ctx, _w, _route: _SimulatorViewStub(roster_changed=True),
     )
     monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _w, _route: None)
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- the patched modal seam

@@ -981,3 +981,35 @@ def test_crossing_number_dlg_declares_no_duplicate_control_name() -> None:
     repeated = sorted(name for name, count in counts.items() if count > 1)
 
     assert repeated == []
+
+
+# --------------------------------------------------------------------
+# Plan §1: the Rider Simulator's two Generate buttons collapse into the
+# one "Generate Riders" button, so gen_teams_btn leaves the XRC file
+# (and, with it, ui/ids.py).
+
+SIMULATION_XRC = "simulation.xrc"
+SIMULATION_DLG = "simulation_dlg"
+SIMULATION_DIALOG_CONTROLS = (
+    "riders_spin",
+    "teams_spin",
+    "solo_spin",
+    "laps_spin",
+    "interval_spin",
+    "gen_riders_btn",
+    "go_btn",
+    "wxID_CANCEL",
+)
+
+
+def _simulation_dialog() -> Element:
+    """Return simulation.xrc's ``simulation_dlg`` element."""
+    return _top_level_windows(SIMULATION_XRC)[SIMULATION_DLG]
+
+
+def test_simulation_dlg_declares_one_generate_button_and_no_gen_teams_btn() -> None:
+    """Plan §1: gen_riders_btn is the only Generate button now."""
+    names = _control_names_in(_simulation_dialog())
+
+    assert sorted(names) == sorted(SIMULATION_DIALOG_CONTROLS)
+    assert "gen_teams_btn" not in names

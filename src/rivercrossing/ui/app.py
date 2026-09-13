@@ -1326,7 +1326,18 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
         # and GO buttons inert); _open_target then has no view to
         # persist, and the roster is untouched anyway.
         if context.presenter is not None:
-            return SimulatorDialog(window, engine=context.presenter.engine, roster=context.roster)
+            # Plan §1: seed the five spins from the live settings, so
+            # the dialog opens on the operator's last-used counts.
+            return SimulatorDialog(
+                window,
+                engine=context.presenter.engine,
+                roster=context.roster,
+                sim_riders=context.settings.sim_riders,
+                sim_teams=context.settings.sim_teams,
+                sim_solo=context.settings.sim_solo,
+                sim_laps=context.settings.sim_laps,
+                sim_interval=context.settings.sim_interval,
+            )
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1 (shared with the W11 F2a flagged seam): the live
         # branch opens the selected entry over the live seams; the
@@ -2732,7 +2743,7 @@ def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # 
 
 
 def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
-    """Persist the roster after the simulator dialog closes.
+    """Persist the roster and spins after the simulator dialog closes.
 
     The mirror of :func:`_persist_rider_editor_changes`: the simulator
     generates placeholder riders and teams into the in-memory roster,
@@ -2743,21 +2754,41 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     notice -- the same guard idiom the rider editor uses, for the same
     wx-swallowed-raise reason.
 
+    Plan §1 adds the settings write: the dialog's five spin values
+    (``view.sim_values``, recorded before the modal closed) are stored
+    so the next open seeds the fields with them. This runs whichever
+    way the modal ended -- the window is already gone, so the values
+    are read from the view's plain tuple, never from a wx control.
+
     Args:
-        context: The route context whose store/roster to act on.
-        view: The closed ``SimulatorDialog`` (or a presenter-shaped
+        context: The route context whose store, roster and settings
+            to act on.
+        view: The closed ``SimulatorDialog`` (or a simulator-shaped
             stand-in) whose ``presenter.roster_changed`` says whether
-            this session generated anything.
+            this session generated anything and whose ``sim_values``
+            carry the five spin values to persist.
     """
-    if not view.presenter.roster_changed:
-        return
-    store = context.store
-    if store is None or context.active_ride_id is None:
-        return
+    if view.presenter.roster_changed:
+        store = context.store
+        if store is not None and context.active_ride_id is not None:
+            try:
+                store.save_roster(context.active_ride_id, context.roster)
+            except (OSError, sqlite3.Error) as exc:
+                context.frame.SetStatusText(f"Could not save riders: {exc}")
+    sim_riders, sim_teams, sim_solo, sim_laps, sim_interval = view.sim_values
+    updated = replace(
+        context.settings,
+        sim_riders=sim_riders,
+        sim_teams=sim_teams,
+        sim_solo=sim_solo,
+        sim_laps=sim_laps,
+        sim_interval=sim_interval,
+    )
     try:
-        store.save_roster(context.active_ride_id, context.roster)
+        settings_store.save_settings(updated, context.settings_path)
     except (OSError, sqlite3.Error) as exc:
-        context.frame.SetStatusText(f"Could not save riders: {exc}")
+        context.frame.SetStatusText(f"Could not save settings: {exc}")
+    context.settings = updated
 
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:

@@ -17,10 +17,10 @@
   configure first, then run.
 
   simulation_dlg sizes the placeholder field, then generates it.
-  gen_teams_btn/gen_riders_btn are custom ids, so the bottom row is a
-  plain wxBoxSizer rather than a wxStdDialogButtonSizer (which only
-  places the ids it recognises); wxID_CANCEL stays a stock id so wx
-  keeps its own Escape and click handling.
+  gen_riders_btn is a custom id, so the bottom row is a plain
+  wxBoxSizer rather than a wxStdDialogButtonSizer (which only places
+  the ids it recognises); wxID_CANCEL stays a stock id so wx keeps its
+  own Escape and click handling.
 
   sim_running_dlg is intentionally fixed: the progress gauge and the
   status line are the only content, and the run is modal while it is
@@ -128,14 +128,6 @@
         <border>10</border>
         <object class="wxBoxSizer">
           <orient>wxHORIZONTAL</orient>
-
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-            <border>6</border>
-            <object class="wxButton" name="gen_teams_btn">
-              <label>Generate Teams</label>
-            </object>
-          </object>
 
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
