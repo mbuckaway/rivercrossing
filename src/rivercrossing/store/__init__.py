@@ -69,6 +69,16 @@ them open and later EPICs will build on them:
   event replay reproduces each ride's own hold disposition. The column
   is part of the v1 baseline with a NOT NULL DEFAULT 0 (always deal,
   the W4 default), so a row written without it reads as "never hold".
+- **jokers_mode (Phase 5)**: the setup dialog's per-deck/total radio
+  pair is another config column the facade writes and reads
+  (``_INSERT_RIDE_SQL``/``create_ride``/``duplicate_ride``/
+  ``update_ride_config``/``load_engine``). The stored spelling reaches
+  :class:`~rivercrossing.cards.Shoe` as
+  ``jokers_total=(config.jokers_mode == "total")``, so a reloaded ride
+  rebuilds the same shoe -- the ride-wide budget mode, or the per-deck
+  mode that re-deals its jokers every cycle (spec §4). The column is
+  part of the v1 baseline with a NOT NULL DEFAULT 'total', so a row
+  written without it reads as the dialog's own default.
 - **roster boundary (E5.1.2)**: :meth:`Store.load_engine` took the
   roster from the caller -- the engine needs plate->entry resolution,
   and full roster-from-DB reconstruction was E5.4.1's job.
@@ -183,7 +193,14 @@ from typing import TYPE_CHECKING, cast
 from platformdirs import user_data_dir
 
 from rivercrossing.cards import Shoe
-from rivercrossing.ride import REPLAY_ACTIONS, Event, RideConfig, RideEngine, RideStatus
+from rivercrossing.ride import (
+    JOKERS_MODE_TOTAL,
+    REPLAY_ACTIONS,
+    Event,
+    RideConfig,
+    RideEngine,
+    RideStatus,
+)
 from rivercrossing.roster import (
     Entry,
     EntryMode,
@@ -269,10 +286,10 @@ _INSERT_RIDE_SQL = """
         name, event_date, venue, course_name, lap_km, organizer, scorer,
         logo_png, planned_start, planned_duration_s, actual_start,
         finished_at, status, entry_mode, max_team_size, plate_model,
-        min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
-        rng_seed, created_at, updated_at, hold_short_laps
+        min_lap_s, deck_count, jokers_per_deck, jokers_mode, max_cards,
+        tiebreak_order, rng_seed, created_at, updated_at, hold_short_laps
     ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
 """
 
@@ -284,8 +301,8 @@ _UPDATE_RIDE_SQL = """
         name = ?, event_date = ?, venue = ?, course_name = ?, lap_km = ?,
         organizer = ?, scorer = ?, planned_start = ?, planned_duration_s = ?,
         entry_mode = ?, max_team_size = ?, plate_model = ?, min_lap_s = ?,
-        deck_count = ?, jokers_per_deck = ?, max_cards = ?, tiebreak_order = ?,
-        hold_short_laps = ?, updated_at = ?
+        deck_count = ?, jokers_per_deck = ?, jokers_mode = ?, max_cards = ?,
+        tiebreak_order = ?, hold_short_laps = ?, updated_at = ?
     WHERE id = ?
 """
 
@@ -950,6 +967,7 @@ class Store:
             config.min_lap_s,
             config.deck_count,
             config.jokers_per_deck,
+            config.jokers_mode,
             config.max_cards,
             json.dumps(list(config.tiebreak_order)),
             (
@@ -1129,6 +1147,7 @@ class Store:
             config.min_lap_s,
             config.deck_count,
             config.jokers_per_deck,
+            config.jokers_mode,
             config.max_cards,
             json.dumps(list(config.tiebreak_order)),
             int(config.hold_short_laps),
@@ -1275,6 +1294,7 @@ class Store:
             max_team_size=row["max_team_size"],
             deck_count=row["deck_count"],
             jokers_per_deck=row["jokers_per_deck"],
+            jokers_mode=row["jokers_mode"],
             max_cards=row["max_cards"],
             tiebreak_order=cast("tuple[str, str, str]", tuple(json.loads(row["tiebreak_order"]))),
             logo_path=_materialize_ride_logo(ride_id, row["logo_png"]),
@@ -1286,6 +1306,7 @@ class Store:
                 decks=config.deck_count,
                 jokers_per_deck=config.jokers_per_deck,
                 seed=row["rng_seed"],
+                jokers_total=config.jokers_mode == JOKERS_MODE_TOTAL,
             ),
             clock=clock if clock is not None else datetime.now,
             roster=roster if roster is not None else self._load_roster(ride_id),
@@ -1411,6 +1432,7 @@ class Store:
             row["min_lap_s"],
             row["deck_count"],
             row["jokers_per_deck"],
+            row["jokers_mode"],
             row["max_cards"],
             row["tiebreak_order"],
             secrets.randbits(63),  # fresh seed (spec §4)

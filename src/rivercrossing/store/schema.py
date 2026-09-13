@@ -20,11 +20,15 @@ return after release. :data:`SCHEMA_VERSION` is 1;
 :func:`ensure_schema` creates this schema on an empty file and refuses
 any other stamped version.
 
-That flatten folded three migration-era changes back into the CREATE:
+That flatten folded four changes back into the CREATE:
 
 - ``ride.hold_short_laps`` -- the short-lap card policy -- is a real
   column (NOT NULL, DEFAULT 0 = always deal), in the same position
   ``_INSERT_RIDE_SQL`` lists it.
+- ``ride.jokers_mode`` -- the shoe's jokers mode (Phase 5: ``per_deck``
+  re-deals ``jokers_per_deck`` jokers every cycle, ``total`` spends
+  them once per ride) -- is a real column too, NOT NULL DEFAULT
+  ``'total'``, in the same position ``_INSERT_RIDE_SQL`` lists it.
 - ``entry.logo_png`` is gone: a team's logo is its ``logo_card`` code
   alone. The ride's own ``ride.logo_png`` organisation logo is a
   different column and stays.
@@ -42,7 +46,8 @@ Two schema decisions are recorded here because the spec is silent:
   list, so a wrong stored spelling can never land in the file:
   ``ride.status`` (the four :class:`RideStatus` spellings),
   ``ride.entry_mode`` (``solo``/``mixed``), ``ride.plate_model``
-  (``rider_pooled``/``team_relay``), ``entry.type``/``entry.status``,
+  (``rider_pooled``/``team_relay``), ``ride.jokers_mode``
+  (``per_deck``/``total``), ``entry.type``/``entry.status``,
   ``crossing.flag``, ``card.rank`` (0 = joker, else 2-14),
   ``card.suit`` and ``card.state``.
 
@@ -139,6 +144,8 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         min_lap_s          INTEGER NOT NULL,
         deck_count         INTEGER NOT NULL,
         jokers_per_deck    INTEGER NOT NULL,
+        jokers_mode        TEXT    NOT NULL DEFAULT 'total'
+                             CHECK (jokers_mode IN ('per_deck', 'total')),
         max_cards          INTEGER,
         tiebreak_order     TEXT    NOT NULL,
         rng_seed           INTEGER NOT NULL,

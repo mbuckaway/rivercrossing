@@ -546,8 +546,9 @@ class ResultsWindow:
 
         ``show_times_chk`` also toggles the two time columns and gates
         the Fastest-time board (results.xrc's own footnote) -- a
-        structural sibling-control fact the view owns, the same
-        ``RideSetup._on_cap_toggle`` precedent.
+        structural sibling-control fact the view owns and applies
+        itself, the same view-side enablement ``RideSetup.
+        set_structure_enabled`` performs.
         """
         event.Skip()
         if event.GetEventObject() is self.show_times_chk:

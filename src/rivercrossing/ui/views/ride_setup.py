@@ -13,9 +13,15 @@ Code-side per xrc-windows.md's own footnote: field values are loaded
 from the ride record (setup.xrc's own header repeats this); the
 entry-mode and plate-model groups lock after start for relay rides
 and stay editable for pooled ones (R-17); ``tiebreak_list``'s rows
-and their reorder are persisted. A submit whose built config fails
-the minimum-setup rule (blank name/venue/organizer/scorer or a non-
-positive lap length) is refused like any other -- the dialog stays
+and their reorder are persisted. The Cards box's own controls follow
+Phase 5's shape: ``jokers_spin``'s count and the per-deck/total radio
+pair become ``RideConfig.jokers_per_deck``/``jokers_mode`` (the pair's
+checked radio IS the spelling, wx having no enum control), and
+``cap_choice``'s item text is ``RideConfig.max_cards`` -- "Disabled"
+reads as ``None``, the item's number otherwise (R-13). A submit whose
+built config fails the minimum-setup rule (blank name/venue/
+organizer/scorer or a non-positive lap length) is refused like any
+other -- the dialog stays
 open on :data:`SETUP_INFOBAR`, and ``on_submitted`` never fires
 (``SetupPresenter.on_submit``'s own docstring). ``tiebreak_list`` (a
 ``wx.adv.EditableListBox``) carries no XRC rows at all -- this module
@@ -65,6 +71,8 @@ import wx.adv
 
 from rivercrossing.ride import (
     DEFAULT_TIEBREAK_ORDER,
+    JOKERS_MODE_PER_DECK,
+    JOKERS_MODE_TOTAL,
     TIEBREAK_HIGH_CARD,
     TIEBREAK_LAPS,
 )
@@ -87,6 +95,7 @@ if TYPE_CHECKING:
     from rivercrossing.roster import Roster
 
 __all__ = [
+    "CAP_DISABLED",
     "LOGO_PREVIEW_SIZE",
     "LOGO_STANDARD_SIZE",
     "LOGO_STATUS_NO_LOGO",
@@ -101,6 +110,11 @@ __all__ = [
 # (xrc-windows.md's own code-side footnote, rider_editor.py's
 # precedent for ROSTER_INFOBAR/CSV_INFOBAR).
 SETUP_INFOBAR = "setup_infobar"
+
+# cap_choice's own first item (setup.xrc's <content>), the uncapped
+# default: the same dropdown-text-as-domain-value reading the retired
+# jokers_choice used, so the view never depends on an item's index.
+CAP_DISABLED = "Disabled"
 
 # tiebreak_list's own plain-label seed (module docstring) -- the
 # labels a fresh dialog shows, and the ones _tiebreak_order() maps
@@ -257,9 +271,10 @@ class RideSetup:
         self.pooled_radio = self._find(ids.POOLED_RADIO, wx.RadioButton)
         self.relay_radio = self._find(ids.RELAY_RADIO, wx.RadioButton)
         self.decks_spin = self._find(ids.DECKS_SPIN, wx.SpinCtrl)
-        self.jokers_choice = self._find(ids.JOKERS_CHOICE, wx.Choice)
-        self.cap_chk = self._find(ids.CAP_CHK, wx.CheckBox)
-        self.cap_spin = self._find(ids.CAP_SPIN, wx.SpinCtrl)
+        self.jokers_spin = self._find(ids.JOKERS_SPIN, wx.SpinCtrl)
+        self.jokers_per_deck_radio = self._find(ids.JOKERS_PER_DECK_RADIO, wx.RadioButton)
+        self.jokers_total_radio = self._find(ids.JOKERS_TOTAL_RADIO, wx.RadioButton)
+        self.cap_choice = self._find(ids.CAP_CHOICE, wx.Choice)
         self.tiebreak_list = self._find(ids.TIEBREAK_LIST, wx.adv.EditableListBox)
         self.ok_btn = self._find("wxID_OK", wx.Button)
 
@@ -270,7 +285,6 @@ class RideSetup:
         self._apply_tiebreak_min_size()
         self.show_tiebreak_order(DEFAULT_TIEBREAK_ORDER)
         self.show_logo(None)
-        self.cap_spin.Enable(self.cap_chk.GetValue())
 
         self.setup_infobar = self._build_infobar()
 
@@ -316,7 +330,6 @@ class RideSetup:
         """Forward every control event straight to the presenter."""
         self.dialog.Bind(wx.EVT_RADIOBUTTON, self._on_entry_mode_radio, self.solo_radio)
         self.dialog.Bind(wx.EVT_RADIOBUTTON, self._on_entry_mode_radio, self.mixed_radio)
-        self.dialog.Bind(wx.EVT_CHECKBOX, self._on_cap_toggle, self.cap_chk)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_browse_logo, self.logo_browse_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, self.ok_btn)
 
@@ -363,19 +376,6 @@ class RideSetup:
         mode = EntryMode.MIXED if self.mixed_radio.GetValue() else EntryMode.SOLO
         self.presenter.on_entry_mode_changed(mode)
 
-    def _on_cap_toggle(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle cap_chk: gate cap_spin's own enabled state (R-20).
-
-        Purely mechanical (a control's own enabled state tracking a
-        sibling checkbox), so this stays in the view rather than
-        round-tripping the presenter -- ``RiderEditor``'s own
-        ``set_team_ui_visible`` is the one existing precedent for a
-        view computing a sibling-control visibility/enablement fact
-        structurally rather than through the presenter.
-        """
-        event.Skip()
-        self.cap_spin.Enable(self.cap_chk.GetValue())
-
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
         """Handle ``wxID_OK``: submit, then close if it committed.
 
@@ -397,10 +397,10 @@ class RideSetup:
     def _form_values(self) -> SetupFormValues:
         """Return this dialog's current fields, read verbatim (R-20).
 
-        ``entry_mode``/``plate_model``/``jokers_per_deck`` and the W4
-        radio pair are the exception each: wx has no "enum radio
-        group" control, so translating which radio is checked (or
-        which jokers_choice item is selected) into a domain value is
+        ``entry_mode``/``plate_model``/``jokers_mode`` and the W4 radio
+        pair are the exception each: wx has no "enum radio
+        group" control, so translating which radio is checked (or which
+        cap_choice item is selected) into a domain value is
         this method's own mechanical job (module docstring, mirroring
         ``RiderEditor._form_values``'s own note about
         ``team_choice``) -- ``hold_short_laps`` reads the pair's first
@@ -428,25 +428,39 @@ class RideSetup:
                 PlateModel.TEAM_RELAY if self.relay_radio.GetValue() else PlateModel.RIDER_POOLED
             ),
             deck_count=self.decks_spin.GetValue(),
-            jokers_per_deck=self._jokers_per_deck(),
-            cap_enabled=self.cap_chk.GetValue(),
-            max_cards=self.cap_spin.GetValue(),
+            jokers_per_deck=self.jokers_spin.GetValue(),
+            jokers_mode=self._jokers_mode(),
+            max_cards=self._max_cards(),
             tiebreak_order=self._tiebreak_order(),
             logo_path=self._logo_path,
         )
 
-    def _jokers_per_deck(self) -> int:
-        """Return the jokers_choice selection as its int value (0..4).
+    def _jokers_mode(self) -> str:
+        """Return the jokers radio pair as its domain spelling.
 
-        The dropdown's items ARE the domain values (setup.xrc's
-        ``<content>`` lists "0".."4"), so the selected item's own text
-        is the count -- reading it by text, not by index, keeps the
-        translation immune to a later reorder of the items. The XRC's
-        ``<selection>1</selection>`` guarantees a selection always
-        exists, the same structural-default rule the retired radio trio
-        followed.
+        Which radio is checked IS the value (wx has no enum control),
+        so this is the same mechanical translation
+        ``show_entry_settings``'s own callers make in the other
+        direction; ``jokers_total_radio`` is the XRC default, so a
+        fresh dialog answers ``total``.
         """
-        return int(self.jokers_choice.GetStringSelection())
+        if self.jokers_total_radio.GetValue():
+            return JOKERS_MODE_TOTAL
+        return JOKERS_MODE_PER_DECK
+
+    def _max_cards(self) -> int | None:
+        """Return cap_choice's item, ``None`` for "Disabled" (R-13).
+
+        The dropdown's items ARE the domain values, exactly as the
+        retired jokers_choice's were: ``Disabled`` means no cap at all
+        and every other item's own text is its number, so reading the
+        text (never the index) keeps the translation immune to a later
+        reorder of the items.
+        """
+        selection = self.cap_choice.GetStringSelection()
+        if selection == CAP_DISABLED:
+            return None
+        return int(selection)
 
     def _tiebreak_order(self) -> tuple[str, str, str]:
         """Return tiebreak_list's current row order as tiebreak ids.
@@ -555,21 +569,31 @@ class RideSetup:
         self.hold_short_radio.SetValue(hold_short_laps)
         self.always_deal_radio.SetValue(not hold_short_laps)
 
-    def show_jokers_per_deck(self, count: int) -> None:
-        """Select jokers_choice's own item from the record (D2).
+    def show_jokers(self, *, count: int, mode: str) -> None:
+        """Render jokers_spin and the per-deck/total radio pair (D2).
+
+        The count is a plain spinner value; the mode picks which radio
+        of the pair is checked (only one can be, so the other is
+        cleared explicitly rather than relying on the group).
+        """
+        self.jokers_spin.SetValue(count)
+        if mode == JOKERS_MODE_TOTAL:
+            self.jokers_total_radio.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+            self.jokers_per_deck_radio.SetValue(False)  # noqa: FBT003 -- wx API, positional bool
+        else:
+            self.jokers_total_radio.SetValue(False)  # noqa: FBT003 -- wx API, positional bool
+            self.jokers_per_deck_radio.SetValue(True)  # noqa: FBT003 -- wx API takes a positional bool
+
+    def show_max_cards(self, max_cards: int | None) -> None:
+        """Render cap_choice; ``None`` selects "Disabled" (D2).
 
         ``SetStringSelection`` is the choice-shaped preload the rest of
         this codebase uses (``rider_editor.show_team``'s own seam): a
-        stored count the dropdown does not offer leaves the current
-        selection alone rather than blanking it.
+        stored cap the dropdown does not offer (only "Disabled" and
+        5..20 ever do) leaves the current selection alone rather than
+        blanking it.
         """
-        self.jokers_choice.SetStringSelection(str(count))
-
-    def show_card_cap(self, max_cards: int | None) -> None:
-        """Render cap_chk/cap_spin; ``None`` means uncapped (D2)."""
-        self.cap_chk.SetValue(max_cards is not None)
-        self.cap_spin.SetValue(max_cards if max_cards is not None else 1)
-        self.cap_spin.Enable(self.cap_chk.GetValue())
+        self.cap_choice.SetStringSelection(CAP_DISABLED if max_cards is None else str(max_cards))
 
     def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
         """Render tiebreak_list's rows from the record (D2).
@@ -629,14 +653,13 @@ class RideSetup:
             self.pooled_radio,
             self.relay_radio,
             self.decks_spin,
-            self.jokers_choice,
-            self.cap_chk,
+            self.jokers_spin,
+            self.jokers_per_deck_radio,
+            self.jokers_total_radio,
+            self.cap_choice,
             self.tiebreak_list,
         ):
             control.Enable(enabled)
-        # cap_spin already tracks cap_chk (the view's own toggle); the
-        # structure gate only ever narrows that, never widens it.
-        self.cap_spin.Enable(enabled and self.cap_chk.GetValue())
 
     def show_validation(self, message: str) -> None:
         """Show *message* on :data:`SETUP_INFOBAR` (``SetupView``)."""

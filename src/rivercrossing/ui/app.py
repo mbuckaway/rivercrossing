@@ -65,6 +65,7 @@ from rivercrossing import __version__, csvio, htmlexport, pdfexport
 from rivercrossing.cards import Shoe, ShoeClosedError
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import (
+    JOKERS_MODE_TOTAL,
     IllegalStateError,
     PendingMiss,
     RideConfig,
@@ -295,7 +296,12 @@ def _build_console_engine(roster: Roster) -> tuple[RideEngine, EngineDataSource]
         plate_model=roster.plate_model,
         max_team_size=roster.max_team_size,
     )
-    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    shoe = Shoe(
+        decks=config.deck_count,
+        jokers_per_deck=config.jokers_per_deck,
+        seed=20260920,
+        jokers_total=config.jokers_mode == JOKERS_MODE_TOTAL,
+    )
     engine = RideEngine(
         config=config,
         shoe=shoe,

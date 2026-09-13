@@ -56,9 +56,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_DECK_COUNT",
+    "DEFAULT_JOKERS_MODE",
     "DEFAULT_JOKERS_PER_DECK",
     "DEFAULT_TIEBREAK_ORDER",
     "FAR_TOO_MANY",
+    "JOKERS_MODES",
+    "JOKERS_MODE_PER_DECK",
+    "JOKERS_MODE_TOTAL",
+    "MAX_JOKERS_PER_DECK",
     "NOT_ENOUGH",
     "OK",
     "REPLAY_ACTIONS",
@@ -161,12 +166,29 @@ _MAX_TEAM_SIZE_LIMIT = 10
 # text is updated in a later phase, not rewritten here).
 DEFAULT_DECK_COUNT = 8
 
-# setup.xrc's jokers_choice dropdown (a wxChoice over 0..4, opening on
-# <selection>1</selection>) is the dialog half of this default; Phase
-# 1 (2026-09-13) re-bound it from the retired jokers_2_radio's 2 to 1.
-# Recorded here so RideConfig's own default never drifts from the
-# authored control.
+# setup.xrc's jokers_spin (a wxSpinCtrl over 0..10, opening on 1) is the
+# dialog half of this default; Phase 1 (2026-09-13) re-bound it from the
+# retired jokers_2_radio's 2 to 1, and Phase 5 kept the same 1 when the
+# jokers_choice dropdown became the spinner. Recorded here so
+# RideConfig's own default never drifts from the authored control.
 DEFAULT_JOKERS_PER_DECK = 1
+
+# The two jokers_mode spellings (the ``ride.jokers_mode`` column,
+# spec §2 Phase 5). Per-deck re-deals jokers_per_deck jokers every
+# cycle; total spends that many jokers once, across the whole ride
+# (Shoe's own jokers_total mode).
+JOKERS_MODE_PER_DECK = "per_deck"
+JOKERS_MODE_TOTAL = "total"
+JOKERS_MODES: tuple[str, str] = (JOKERS_MODE_PER_DECK, JOKERS_MODE_TOTAL)
+
+# setup.xrc's jokers_total_radio is the checked default in the jokers
+# radio pair, so a fresh dialog builds a total-mode ride.
+DEFAULT_JOKERS_MODE = JOKERS_MODE_TOTAL
+
+# setup.xrc's jokers_spin declares the same 0..10 bound (xrc-windows.md
+# section B); recorded so the dialog's control and RideConfig's own
+# validation cannot drift.
+MAX_JOKERS_PER_DECK = 10
 
 # The canvas's lap_km_spin draws "8.0" (the GORBA reference ride's own
 # 8 km loop, spec.md §6) but XRC declares no <value>, so a fresh
@@ -205,6 +227,17 @@ class RideConfig:
     restoring R-34's hold-for-review behaviour
     (:meth:`RideEngine.record_crossing`).
 
+    ``jokers_per_deck``/``jokers_mode`` are the shoe's joker
+    configuration (spec §4, Phase 5's Cards controls). Both persist
+    (the ``ride.jokers_per_deck``/``ride.jokers_mode`` columns);
+    ``jokers_mode`` is :data:`JOKERS_MODE_PER_DECK` (every cycle
+    re-deals that many jokers per deck) or :data:`JOKERS_MODE_TOTAL`
+    (that many jokers for the whole ride, the dialog's checked
+    default), and the Store builds the ride's :class:`~rivercrossing.
+    cards.Shoe` with ``jokers_total=(jokers_mode == JOKERS_MODE_TOTAL)``
+    -- :func:`check_card_sufficiency` reads the same mode for the
+    shoe's capacity.
+
     ``event_date``/``planned_start`` both round-trip the ``ride``
     table's own two separate columns (spec §2): ``ride_setup_dlg``
     itself has only one ``date_picker`` and one time-only
@@ -229,6 +262,7 @@ class RideConfig:
     max_team_size: int = 4
     deck_count: int = DEFAULT_DECK_COUNT
     jokers_per_deck: int = DEFAULT_JOKERS_PER_DECK
+    jokers_mode: str = DEFAULT_JOKERS_MODE
     max_cards: int | None = None
     tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER
     logo_path: Path | None = None
@@ -239,7 +273,11 @@ class RideConfig:
 
         Raises:
             RideConfigError: ``max_team_size`` is outside 2..10
-                (R-12), ``deck_count`` is below 1 (spec §4), or
+                (R-12), ``deck_count`` is below 1 (spec §4),
+                ``jokers_per_deck`` is outside 0..10 (Phase 5's
+                jokers_spin), ``jokers_mode`` is neither
+                :data:`JOKERS_MODE_PER_DECK` nor
+                :data:`JOKERS_MODE_TOTAL`, or
                 ``planned_duration_s``/``min_lap_s`` is not positive
                 (spec §2/§6).
         """
@@ -251,6 +289,12 @@ class RideConfig:
             raise RideConfigError(msg)
         if self.deck_count < 1:
             msg = f"deck_count must be >= 1, got {self.deck_count}"
+            raise RideConfigError(msg)
+        if not 0 <= self.jokers_per_deck <= MAX_JOKERS_PER_DECK:
+            msg = f"jokers_per_deck must be 0..{MAX_JOKERS_PER_DECK}, got {self.jokers_per_deck}"
+            raise RideConfigError(msg)
+        if self.jokers_mode not in JOKERS_MODES:
+            msg = f"jokers_mode must be one of {JOKERS_MODES}, got {self.jokers_mode!r}"
             raise RideConfigError(msg)
         if self.planned_duration_s <= 0:
             msg = f"planned_duration_s must be positive, got {self.planned_duration_s}"
@@ -311,9 +355,11 @@ FAR_TOO_MANY = "far_too_many"
 class CardCheck:
     """One ride's shoe size against its estimated card demand.
 
-    ``shoe_cards`` is the shoe's own capacity (spec §4's
-    ``deck_count x (52 + jokers_per_deck)``); ``expected`` is the
-    crossing count :func:`estimate_cards_needed` predicts for the
+    ``shoe_cards`` is the shoe's own capacity at the ride's jokers mode
+    (spec §4): ``deck_count x (52 + jokers_per_deck)`` per deck, or
+    ``deck_count x 52 + jokers_per_deck`` when
+    :attr:`RideConfig.jokers_mode` spends the jokers once. ``expected``
+    is the crossing count :func:`estimate_cards_needed` predicts for the
     field. ``verdict`` is one of :data:`NOT_ENOUGH` (the shoe runs dry
     before the field stops drawing), :data:`OK`, or :data:`FAR_TOO_MANY`
     (the shoe holds more than twice the demand).
@@ -378,9 +424,12 @@ def check_card_sufficiency(
     prediction at the 1x boundary (demand above capacity is
     :data:`NOT_ENOUGH`) and the 2x boundary (capacity above twice the
     demand is :data:`FAR_TOO_MANY`); everything between is
-    :data:`OK`. ``max_cards`` (R-13) is deliberately not consulted --
-    it caps what an entry's hand scores, not how many cards the shoe
-    must hold.
+    :data:`OK`. The capacity itself follows the ride's jokers mode
+    (Phase 5): per-deck counts ``deck_count x (52 + jokers_per_deck)``,
+    total counts ``deck_count x 52 + jokers_per_deck`` -- the shoe the
+    Store actually builds from that config. ``max_cards`` (R-13) is
+    deliberately not consulted -- it caps what an entry's hand scores,
+    not how many cards the shoe must hold.
 
     Args:
         config: The ride's setup-time settings.
@@ -394,7 +443,10 @@ def check_card_sufficiency(
     expected = estimate_cards_needed(config, roster, avg_speed_kmh)
     if expected is None:
         return None
-    shoe_cards = config.deck_count * (52 + config.jokers_per_deck)
+    if config.jokers_mode == JOKERS_MODE_TOTAL:
+        shoe_cards = config.deck_count * 52 + config.jokers_per_deck
+    else:
+        shoe_cards = config.deck_count * (52 + config.jokers_per_deck)
     if expected > shoe_cards:
         verdict = NOT_ENOUGH
     elif shoe_cards > 2 * expected:

@@ -33,6 +33,20 @@ boolean ``SetupFormValues.hold_short_laps`` the view reads straight
 off the radio, and ``on_submit`` carries it onto
 :class:`~rivercrossing.ride.RideConfig`.
 
+Phase 5 gives the Cards box the same treatment. ``jokers_spin`` and the
+``jokers_per_deck_radio``/``jokers_total_radio`` pair carry a ride's
+joker count and mode; XRC declares their defaults (1, total), and
+:meth:`SetupPresenter._load` pushes
+:data:`~rivercrossing.ride.DEFAULT_JOKERS_PER_DECK`/
+:data:`~rivercrossing.ride.DEFAULT_JOKERS_MODE` through
+:meth:`SetupView.show_jokers` exactly as it pushes the deck count and
+lap length, so the dialog's opening state has one source of truth.
+``cap_choice`` replaces the retired ``cap_chk``+``cap_spin`` pair:
+:meth:`SetupView.show_max_cards` preloads it (``None`` selects
+"Disabled") and ``on_submit`` carries the form's own ``max_cards``
+straight onto the config -- there is no separate enabled flag for the
+presenter to fold in any more (R-13).
+
 :meth:`SetupPresenter.on_submit` refuses a form whose built config
 fails the minimum-setup rule -- blank name/venue/organizer/scorer or
 a non-positive lap length, :func:`rivercrossing.ride.
@@ -70,6 +84,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
+    DEFAULT_JOKERS_MODE,
+    DEFAULT_JOKERS_PER_DECK,
     DEFAULT_LAP_KM,
     RideConfig,
     RideConfigError,
@@ -93,10 +109,11 @@ class SetupFormValues:
     Mirrors :class:`~rivercrossing.ui.presenters.riders.
     RiderFormValues`'s own precedent: every field is read exactly as
     its control holds it, never translated by the view (passive
-    view) -- except ``entry_mode``/``plate_model``/``jokers_per_deck``/
-    ``hold_short_laps``, which the view *must* translate (which radio
-    is checked / which dropdown item is selected -> which enum/int/bool
-    value), since wx has no "enum radio group" control of its own; the
+    view) -- except ``entry_mode``/``plate_model``/``jokers_mode``/
+    ``max_cards``/``hold_short_laps``, which the view *must* translate
+    (which radio is checked / which dropdown item is selected -> which
+    enum/spelling/number value), since wx has no "enum radio group"
+    control of its own; the
     same kind of view-side translation :class:`RiderEditor`'s own
     ``team_choice`` reading already does. ``duration_text`` and
     ``min_lap_text`` stay raw "H:MM"/"M:SS" strings --
@@ -106,6 +123,11 @@ class SetupFormValues:
     not the view's. ``hold_short_laps`` mirrors the W4 radio pair:
     True when ``hold_short_radio`` is checked, False (always deal)
     when ``always_deal_radio`` is -- the pair's XRC default.
+    ``jokers_mode`` is the Phase 5 jokers radio pair's own spelling
+    (True/False from a radio is not a domain value, so the view reads
+    it) and ``max_cards`` is cap_choice's item -- ``None`` for
+    "Disabled", the item's number otherwise (R-13), never a separate
+    enabled flag.
     """
 
     name: str
@@ -123,8 +145,8 @@ class SetupFormValues:
     plate_model: PlateModel
     deck_count: int
     jokers_per_deck: int
-    cap_enabled: bool
-    max_cards: int
+    jokers_mode: str
+    max_cards: int | None
     tiebreak_order: tuple[str, str, str]
     logo_path: Path | None
 
@@ -207,12 +229,18 @@ class SetupView(Protocol):
         """Check hold_short_radio or always_deal_radio (D2 preload)."""
         ...
 
-    def show_jokers_per_deck(self, count: int) -> None:
-        """Select jokers_choice's own item from the record (D2)."""
+    def show_jokers(self, *, count: int, mode: str) -> None:
+        """Render jokers_spin + the per-deck/total radio pair (D2).
+
+        Phase 5's Cards controls: the count fills the spinner and
+        *mode* checks the matching radio of the pair (only one of them
+        can be checked), so the two controls that together make a
+        stored ride's joker setting always move as a pair.
+        """
         ...
 
-    def show_card_cap(self, max_cards: int | None) -> None:
-        """Render cap_chk/cap_spin (``None`` = uncapped, D2 preload)."""
+    def show_max_cards(self, max_cards: int | None) -> None:
+        """Render cap_choice (``None`` = "Disabled", D2 preload)."""
         ...
 
     def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
@@ -233,7 +261,7 @@ class SetupView(Protocol):
         """Enable the D2 structural group (DRAFT-only edits).
 
         The entry-mode radios, the plate-model radios, decks_spin,
-        the jokers choice, cap_chk/cap_spin and tiebreak_list: the
+        the jokers controls, cap_choice and tiebreak_list: the
         ride-shape fields a started ride may no longer change. The
         name/date/start/venue/organizer/scorer fields stay editable in
         every state, and :meth:`set_entry_locked`'s relay lock is
@@ -365,9 +393,11 @@ class SetupPresenter:
         self.view.set_structure_enabled(enabled=can_edit_structure(self.roster.status))
 
     def _load_defaults(self) -> None:
-        """Render a New Ride's own defaults (E3.5, W4)."""
+        """Render a New Ride's own defaults (E3.5, W4, Phase 5)."""
         self.view.show_deck_count(DEFAULT_DECK_COUNT)
         self.view.show_lap_km(DEFAULT_LAP_KM)
+        self.view.show_jokers(count=DEFAULT_JOKERS_PER_DECK, mode=DEFAULT_JOKERS_MODE)
+        self.view.show_max_cards(None)
         self.view.show_entry_settings(
             entry_mode=self.roster.entry_mode,
             max_team_size=self.roster.max_team_size,
@@ -392,8 +422,8 @@ class SetupPresenter:
             plate_model=config.plate_model,
         )
         self.view.show_deck_count(config.deck_count)
-        self.view.show_jokers_per_deck(config.jokers_per_deck)
-        self.view.show_card_cap(config.max_cards)
+        self.view.show_jokers(count=config.jokers_per_deck, mode=config.jokers_mode)
+        self.view.show_max_cards(config.max_cards)
         self.view.show_tiebreak_order(config.tiebreak_order)
         self.view.show_logo(config.logo_path)
 
@@ -451,7 +481,8 @@ class SetupPresenter:
                 plate_model=form.plate_model,
                 deck_count=form.deck_count,
                 jokers_per_deck=form.jokers_per_deck,
-                max_cards=form.max_cards if form.cap_enabled else None,
+                jokers_mode=form.jokers_mode,
+                max_cards=form.max_cards,
                 tiebreak_order=form.tiebreak_order,
                 logo_path=form.logo_path,
             )
