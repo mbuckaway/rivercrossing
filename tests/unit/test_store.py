@@ -2591,6 +2591,126 @@ def test_store_audit_rows_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
         store.close()
 
 
+# ----------------- plan §8: roster plate changes in the audit table
+
+
+def test_store_append_roster_event_inserts_an_audit_row_stamped_at_now(
+    tmp_path: Path,
+) -> None:
+    """A roster event lands as one audit row stamped at append time."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        before = int(datetime.now(UTC).timestamp())
+        store.append_roster_event(
+            ride_id,
+            "change_solo_plate",
+            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+        )
+        after = int(datetime.now(UTC).timestamp())
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT at, action, payload_json FROM audit WHERE ride_id = ?", (ride_id,)
+        ).fetchone()
+    assert row is not None
+    assert before <= row["at"] <= after
+    assert row["action"] == "change_solo_plate"
+    assert json.loads(row["payload_json"]) == {
+        "display_name": "Alice",
+        "old_plate": "12",
+        "new_plate": "13",
+    }
+
+
+def test_store_append_roster_event_leaves_the_ride_status_and_updated_at_untouched(
+    tmp_path: Path,
+) -> None:
+    """A plate change is audit-only: the ride row never moves."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        running = _fetch_ride_row(db_path, ride_id)
+        store.append_roster_event(ride_id, "change_team_plate", json.dumps({"new_plate": "9"}))
+        after = _fetch_ride_row(db_path, ride_id)
+    finally:
+        store.close()
+
+    assert after["status"] == RideStatus.RUNNING
+    assert after["status"] == running["status"]
+    assert after["updated_at"] == running["updated_at"]
+
+
+def test_store_append_roster_event_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
+    """T-5: a roster event for an unknown ride fails loudly."""
+    Store.open(tmp_path / "rides.db").close()
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.append_roster_event(999, "change_solo_plate", "{}")
+    finally:
+        store.close()
+
+
+def test_store_audit_rows_entry_falls_back_through_plate_change_payload_keys(
+    tmp_path: Path,
+) -> None:
+    """A plate-change row renders old_plate, new_plate, then name."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append_roster_event(
+            ride_id,
+            "change_solo_plate",
+            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+        )
+        store.append_roster_event(
+            ride_id, "change_team_plate", json.dumps({"display_name": "A", "new_plate": "77"})
+        )
+        store.append_roster_event(
+            ride_id, "change_pooled_rider_plate", json.dumps({"display_name": "Trail Blazers"})
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert [row.entry for row in rows] == ["Trail Blazers", "77", "12"]
+
+
+def test_store_load_engine_ignores_a_roster_plate_change_row(tmp_path: Path) -> None:
+    """Replay skips a plate-change row: ``apply`` never sees it."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        store.append_roster_event(
+            ride_id,
+            "change_team_plate",
+            json.dumps({"display_name": "A", "old_plate": "1", "new_plate": "2"}),
+        )
+
+        engine = store.load_engine(ride_id, roster=_replay_roster())
+    finally:
+        store.close()
+
+    assert [event.action for event in engine.events] == ["start"]
+    assert engine.state is RideStatus.RUNNING
+
+
 # ------------------------------------------------- default_db_path
 # E9.1.1: the bootstrap resolves the rides database path the same way
 # settings.py's default_path resolves settings.json -- platformdirs,

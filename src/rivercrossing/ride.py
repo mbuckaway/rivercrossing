@@ -60,6 +60,7 @@ __all__ = [
     "FAR_TOO_MANY",
     "NOT_ENOUGH",
     "OK",
+    "REPLAY_ACTIONS",
     "TIEBREAK_HIGH_CARD",
     "TIEBREAK_LAPS",
     "TIEBREAK_TOTAL_TIME",
@@ -443,6 +444,37 @@ class UnknownPlateError(RideEngineError):
     can flash its cue; E7's manual-deal dialog surfaces this as the
     error for a mistyped plate.
     """
+
+
+# The event actions :meth:`RideEngine.apply` dispatches -- and so the
+# only audit rows a replay may hand it. ``Store.load_engine`` filters on
+# this set (plan §8): the ``audit`` table also carries display-only
+# history such as roster plate changes, which a rebuild must skip rather
+# than trip ``apply``'s unknown-action guard.
+REPLAY_ACTIONS: frozenset[str] = frozenset(
+    {
+        "start",
+        "continue",
+        "set_start_time",
+        "record_crossing",
+        "confirm_held",
+        "void_held",
+        "undo",
+        "deal_manual",
+        "edit_crossing",
+        "void_crossing",
+        "add_crossing_at",
+        "record_miss",
+        "assign_plate_to_miss",
+        "reassign",
+        "dnf",
+        "void_card",
+        "stop",
+        "finish",
+        "reopen",
+        "shoe_reshuffle",
+    }
+)
 
 
 class UnknownEventActionError(RideEngineError):

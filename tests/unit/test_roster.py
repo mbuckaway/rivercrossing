@@ -855,6 +855,29 @@ def test_audit_log_records_events_in_the_order_the_mutations_happened() -> None:
     assert actions == ["create_solo_entry", "create_solo_entry"]
 
 
+def test_take_audit_log_on_a_fresh_roster_returns_empty_and_stays_empty() -> None:
+    """An empty log drains to ``()`` and a second drain repeats it."""
+    roster = Roster()
+
+    first, second = roster.take_audit_log(), roster.take_audit_log()
+
+    assert first == ()
+    assert second == ()
+    assert roster.audit_log == ()
+
+
+def test_take_audit_log_returns_the_events_in_order_then_clears_them() -> None:
+    """The snapshot keeps append order; the live log empties."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alex", last_name="", plate="1")
+    roster.create_solo_entry(first_name="Bo", last_name="", plate="2")
+
+    taken = roster.take_audit_log()
+
+    assert [event.action for event in taken] == ["create_solo_entry", "create_solo_entry"]
+    assert roster.audit_log == ()
+
+
 # ============================================================ E3.1.2
 # Lock matrix: editability by (status, plate_model, has_data), R-15/17.
 

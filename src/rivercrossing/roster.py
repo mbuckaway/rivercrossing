@@ -517,6 +517,21 @@ class Roster:
         """Return every audit event, oldest first, read-only."""
         return tuple(self._audit_log)
 
+    def take_audit_log(self) -> tuple[AuditEvent, ...]:
+        """Return the audit events in order, clearing the log.
+
+        The store-persistence seam (plan §8): after
+        ``Store.save_roster`` writes a roster edit the caller drains
+        the events into the ``audit`` table and forgets them here, so
+        a later drain persists only what was recorded since. The one
+        remaining reader -- ``run_rider_issues_flow``'s length delta --
+        compares lengths, not contents, so draining between dialogs
+        cannot change its answer.
+        """
+        events = tuple(self._audit_log)
+        self._audit_log.clear()
+        return events
+
     def load_entries(self, entries: Sequence[Entry]) -> None:
         """Restore persisted entries wholesale (EPIC 5's store seam).
 

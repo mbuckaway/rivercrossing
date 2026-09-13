@@ -46,6 +46,7 @@ there, not here).
 """
 
 import gc
+import json
 import os
 import platform
 import re
@@ -103,6 +104,7 @@ from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import (
     FEED_CAP,
+    AuditRow,
     DataSource,
     EmptyDataSource,
     EngineDataSource,
@@ -1229,6 +1231,43 @@ def _open_entry_detail_dialog(context: _RouteContext, window: Any, plate: str) -
         EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
 
 
+class _StoreAuditSource:
+    """The audit dialog's DB-backed source (plan §8).
+
+    The ``audit`` table holds both engine events and the roster
+    plate-change rows :func:`_persist_roster_audit` drains, so this
+    adapter serves the presenter from the store instead of the
+    console's :class:`EngineDataSource` -- whose ``audit_rows`` reads
+    only ``engine.events`` and would never show a plate change. Not a
+    full :class:`DataSource`: the audit presenter reads this one
+    method, and ``AuditDialog`` types the seam as ``DataSource``.
+    """
+
+    def __init__(self, store: Store, ride_id: int) -> None:
+        """Hold the open store and the ride whose trail to read."""
+        self._store = store
+        self._ride_id = ride_id
+
+    def audit_rows(self) -> list[AuditRow]:
+        """Return the stored audit rows, newest first."""
+        return self._store.audit_rows(self._ride_id)
+
+
+def _audit_source(context: _RouteContext) -> DataSource:
+    """Return the audit dialog's data source for *context*.
+
+    With a store-backed ride open the dialog reads the ``audit`` table
+    (engine events *and* roster plate changes); otherwise it keeps
+    E7.3.1's live-console source, or the E5.4.2 empty state when no
+    console is threaded either.
+    """
+    store = context.store
+    if store is not None and context.active_ride_id is not None:
+        return cast("DataSource", _StoreAuditSource(store, context.active_ride_id))
+    presenter = context.presenter
+    return presenter.source if presenter is not None else _EMPTY_SOURCE
+
+
 def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each binds a different view class
     context: _RouteContext,
     window: Any,  # noqa: ANN401 -- wx ships no stubs
@@ -1402,19 +1441,13 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
         AboutDialog(window, logo_path=logo_path)
     elif route.target == ids.AUDIT_DLG:
         # E7.3.1: Audit Trail… opens the real viewer -- newest-first
-        # audit_list plus the search/action filters -- over the live
-        # console's engine source when one is threaded (the store-backed
-        # ride's events), the E5.4.2 empty state otherwise. The roster
-        # lets the search resolve a plate to its entry's display name.
-        presenter = context.presenter
-        if presenter is not None:
-            AuditDialog(
-                window,
-                data_source=presenter.source,
-                roster=context.roster,
-            )
-        else:
-            AuditDialog(window, data_source=_EMPTY_SOURCE, roster=context.roster)
+        # audit_list plus the search/action filters. With a store-backed
+        # ride open the source reads the audit table itself (plan §8:
+        # engine events *and* the roster plate changes the console's
+        # engine-only source cannot show); otherwise it keeps the live
+        # console's source, or the E5.4.2 empty state. The roster lets
+        # the search resolve a plate to its entry's display name.
+        AuditDialog(window, data_source=_audit_source(context), roster=context.roster)
     return None
 
 
@@ -1594,6 +1627,7 @@ def _handle_check_rider_issues(context: _RouteContext) -> None:
         except (OSError, sqlite3.Error) as exc:
             context.frame.SetStatusText(f"Could not save riders: {exc}")
             return
+        _persist_roster_audit(context, store, context.active_ride_id, context.roster)
         clock = presenter.engine.clock if presenter is not None else None
         _switch_console_to_ride(context, context.active_ride_id, clock=clock)
 
@@ -2686,6 +2720,45 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         _persist_simulator_changes(context, view)
 
 
+# Plan §8 scopes the persisted roster audit to plate changes: the
+# ride's own events already reach the audit table through the engine's
+# append sink, so every other roster event (creates, renames, moves,
+# CSV imports) stays in memory only.
+_PLATE_CHANGE_ACTIONS = frozenset(
+    {"change_solo_plate", "change_pooled_rider_plate", "change_team_plate"}
+)
+
+
+def _persist_roster_audit(  # noqa: PLR0913, PLR0917 -- (context, store, ride_id, roster): one call per save site
+    context: _RouteContext, store: Store, ride_id: int, roster: Roster
+) -> None:
+    """Drain *roster*'s new plate-change events into the audit table.
+
+    Called right after a successful ``Store.save_roster`` at every
+    roster-edit site (plan §8). The events come from :meth:`Roster.
+    take_audit_log`, so only what was recorded since the previous
+    drain is written. Every event is consumed even when it is not a
+    plate change -- those are already persisted through the engine's
+    own append sink. A refused insert surfaces as a status notice, the
+    same guard idiom the roster saves use (wx swallows an unguarded
+    raise).
+
+    Args:
+        context: The route context whose frame takes the notice.
+        store: The open store to insert through.
+        ride_id: The ride the events belong to.
+        roster: The roster whose audit log to drain.
+    """
+    for event in roster.take_audit_log():
+        if event.action not in _PLATE_CHANGE_ACTIONS:
+            continue
+        try:
+            store.append_roster_event(ride_id, event.action, json.dumps(dict(event.payload)))
+        except (OSError, sqlite3.Error) as exc:
+            context.frame.SetStatusText(f"Could not save audit trail: {exc}")
+            return
+
+
 def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
     """Persist the roster after a rider-editor modal ends (W7).
 
@@ -2700,6 +2773,10 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
     reason (the measured note ``docs/EPIC3-SESSION-SUMMARY.md``
     records): worst case the operator is told nothing happened while
     the edit silently stayed unpersisted.
+
+    Plan §8: a committed plate change also reaches the ``audit`` table
+    through :func:`_persist_roster_audit`, so the Audit Trail dialog
+    shows it on the next open.
 
     Args:
         context: The route context whose store/roster to act on.
@@ -2716,6 +2793,8 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
         store.save_roster(context.active_ride_id, context.roster)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save riders: {exc}")
+        return
+    _persist_roster_audit(context, store, context.active_ride_id, context.roster)
 
 
 def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
@@ -2747,6 +2826,8 @@ def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # 
         store.save_roster(context.active_ride_id, context.roster)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save teams: {exc}")
+        return
+    _persist_roster_audit(context, store, context.active_ride_id, context.roster)
 
 
 def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401

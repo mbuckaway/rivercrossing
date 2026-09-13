@@ -23,14 +23,15 @@ window is constructed.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
 import wx.xrc
 
-from rivercrossing.ride import RideStatus
-from rivercrossing.roster import Roster
+from rivercrossing.ride import Event, RideStatus
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import (
     RideNameMismatchError,
     RideNotFoundError,
@@ -1129,3 +1130,208 @@ def test_persist_simulator_changes_without_a_presenter_leaves_the_menu_untouched
     assert menubar.enabled(ids.MI_FINISH_RIDE) is None
     assert menubar.enabled(ids.MI_STOP_RIDE) is None
     assert menubar.enabled(ids.MI_UNDO_CROSSING) is None
+
+
+# ------------- plan §8: roster plate changes reach the audit table
+
+
+class _RosterAuditRecorderStore(_SaveRecorderStore):
+    """A store recording roster saves and the audit rows they drain."""
+
+    def __init__(self) -> None:
+        """Start with no saved rides and no audit rows."""
+        super().__init__()
+        self.audit: list[tuple[int, str, str]] = []
+
+    def append_roster_event(self, ride_id: int, action: str, payload_json: str) -> None:
+        """Record one drained roster event."""
+        self.audit.append((ride_id, action, payload_json))
+
+
+class _RosterAuditFailsStore(_RosterAuditRecorderStore):
+    """A store whose audit-row insert fails like a full disk."""
+
+    def append_roster_event(self, _ride_id: int, _action: str, _payload_json: str) -> None:
+        """Refuse the audit insert."""
+        raise OSError("disk full")
+
+
+class _SourcePresenterStub:
+    """A stub carrying the one attribute the audit route reads."""
+
+    def __init__(self, source: object) -> None:
+        """Hold the display source the console would expose."""
+        self.source = source
+
+
+def _roster_with_solo_plate_change() -> tuple[Roster, object]:
+    """Build a DRAFT roster whose solo entry's plate moved 12 -> 13."""
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alice", plate="12")
+    roster.change_solo_plate(entry, plate="13")
+    return roster, entry
+
+
+def test_persist_rider_editor_changes_given_a_plate_change_persists_its_audit_row() -> None:
+    """A rider-editor plate edit persists to the audit table."""
+    store = _RosterAuditRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster, _entry = _roster_with_solo_plate_change()
+    context.roster = roster
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert store.saved == [(5, roster)]
+    assert store.audit == [
+        (
+            5,
+            "change_solo_plate",
+            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+        )
+    ]
+    assert roster.audit_log == ()
+
+
+def test_persist_team_editor_changes_given_a_rider_plate_change_persists_its_audit_row() -> None:
+    """A team-editor rider plate edit persists to the audit table."""
+    store = _RosterAuditRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    entry = roster.create_team_entry(
+        display_name="Trail Blazers",
+        riders=[
+            Rider(first_name="A.", last_name="Roy", plate="77"),
+            Rider(first_name="K.", last_name="Singh", plate="78"),
+        ],
+    )
+    roster.change_pooled_rider_plate(entry.riders[0], plate="79")
+    context.roster = roster
+
+    app_module._persist_team_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert store.saved == [(5, roster)]
+    assert store.audit == [
+        (
+            5,
+            "change_pooled_rider_plate",
+            json.dumps({"rider_name": "A. Roy", "old_plate": "77", "new_plate": "79"}),
+        )
+    ]
+    assert roster.audit_log == ()
+
+
+def test_handle_check_rider_issues_given_a_plate_change_persists_its_audit_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An issues-dialog plate fix persists to the audit table."""
+    from rivercrossing.ui.views import rider_issues  # noqa: PLC0415 -- the flow seam
+
+    store = _RosterAuditRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster = Roster()
+    entry = roster.create_solo_entry(first_name="Alice", plate="12")
+    context.roster = roster
+
+    def _fix_plate(_frame: object, live_roster: Roster, **_kwargs: object) -> bool:
+        live_roster.change_solo_plate(entry, plate="13")
+        return True
+
+    monkeypatch.setattr(rider_issues, "run_rider_issues_flow", _fix_plate)
+
+    app_module._handle_check_rider_issues(context)
+
+    assert store.saved == [(5, roster)]
+    assert store.audit == [
+        (
+            5,
+            "change_solo_plate",
+            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+        )
+    ]
+
+
+def test_persist_rider_editor_changes_given_a_non_plate_change_persists_no_audit_row() -> None:
+    """A non-plate roster event writes no audit row."""
+    store = _RosterAuditRecorderStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster = Roster()
+    roster.create_solo_entry(first_name="Alice", plate="12")
+    context.roster = roster
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert store.saved == [(5, roster)]
+    assert store.audit == []
+    assert roster.audit_log == ()
+
+
+def test_persist_rider_editor_changes_given_a_failed_audit_append_posts_a_notice() -> None:
+    """A refused audit insert surfaces as a status notice."""
+    store = _RosterAuditFailsStore()
+    context = _context(store=store)
+    context.active_ride_id = 5
+    roster, _entry = _roster_with_solo_plate_change()
+    context.roster = roster
+
+    app_module._persist_rider_editor_changes(context, _EditorViewStub(roster_changed=True))
+
+    assert store.saved == [(5, roster)]
+    assert context.frame.notices == ["Could not save audit trail: disk full"]
+
+
+def test_audit_source_given_a_store_backed_ride_returns_engine_and_plate_rows(
+    tmp_path: Path,
+) -> None:
+    """The audit source reads engine and plate-change rows."""
+    from conftest import gorba_config  # noqa: PLC0415 -- the shared live-config fixture
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        ride_id = store.create_ride(gorba_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        store.append_roster_event(
+            ride_id,
+            "change_team_plate",
+            json.dumps({"display_name": "A", "old_plate": "1", "new_plate": "2"}),
+        )
+        context = _context(store=store)
+        context.active_ride_id = ride_id
+
+        rows = app_module._audit_source(context).audit_rows()
+    finally:
+        store.close()
+
+    assert [(row.action, row.entry) for row in rows] == [
+        ("change_team_plate", "1"),
+        ("start", ""),
+    ]
+
+
+def test_audit_source_given_a_store_without_an_open_ride_returns_the_empty_source() -> None:
+    """A store with no ride open keeps the dialog's empty state."""
+    context = _context(store=_SaveRecorderStore())
+    context.active_ride_id = None
+
+    assert app_module._audit_source(context) is app_module._EMPTY_SOURCE
+
+
+def test_audit_source_given_no_store_returns_the_live_console_source() -> None:
+    """Without a store the dialog reads the live console."""
+    source = object()
+    context = _context(store=None)
+    context.presenter = _SourcePresenterStub(source)
+
+    assert app_module._audit_source(context) is source
+
+
+def test_audit_source_given_no_store_and_no_presenter_returns_the_empty_source() -> None:
+    """No store and no console: the E5.4.2 empty state stands."""
+    context = _context(store=None)
+
+    assert app_module._audit_source(context) is app_module._EMPTY_SOURCE
