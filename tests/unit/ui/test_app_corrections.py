@@ -429,6 +429,33 @@ def test_open_flagged_review_for_given_a_credited_row_resolves_the_crossing(
     assert routed == [engine.crossings[-1]]
 
 
+def test_open_flagged_review_for_given_a_duplicate_row_routes_to_the_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 3: a duplicate row opens Crossing Detail on its own lap.
+
+    The ride records 10:05, 10:06, then 10:05 again -- so the newest
+    crossing is the duplicate (its twin is lap 1) and it is not itself
+    a short-lap flag. Only the duplicate bit routes it here; a flagged
+    row is never what this activation names.
+    """
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 6))
+    engine.record_crossing("12", at=_dt(10, 5))
+    context = _review_context(engine, frame=_NoticeFrame([]))
+    routed: list[object] = []
+    monkeypatch.setattr(
+        app_module,
+        "_show_crossing_detail_dialog",
+        lambda _context, _engine, target: routed.append(target),
+    )
+
+    app_module._open_flagged_review_for(context, "12", False)  # noqa: FBT003 -- seam's flag
+
+    assert routed == [engine.crossings[-1]]
+
+
 @pytest.mark.parametrize("held", [True, False], ids=["held", "credited"])
 def test_open_flagged_review_for_given_an_unresolvable_plate_posts_a_notice(
     monkeypatch: pytest.MonkeyPatch, *, held: bool

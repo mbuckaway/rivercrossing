@@ -627,3 +627,58 @@ def test_feed_rows_given_a_pending_miss_since_a_dnf_is_never_marked() -> None:
     feed = source.feed_rows()
 
     assert feed[0].dnf is False
+
+
+# ---------------------------------------------------------- duplicates
+# Phase 3: a `duplicate` row is one half of a live pair sharing an entry
+# and an instant (``RideEngine.duplicate_crossings``). The feed marks
+# both halves so the Needs Review tab lists them and the operator can
+# delete one -- the earlier twin's lap time is real, so only this bit
+# surfaces it for review.
+
+
+def _solo_roster(plate: str = "12") -> Roster:
+    """Build a MIXED rider_pooled roster holding one solo entry."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Amy", plate=plate)
+    return roster
+
+
+def test_feed_rows_given_an_instant_recorded_twice_marks_both_rows_duplicate() -> None:
+    """Both halves of a double entry carry the duplicate bit."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 5))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.lap, row.duplicate) for row in feed] == [(2, True), (1, True)]
+
+
+def test_feed_rows_given_distinct_instants_leaves_every_row_clear() -> None:
+    """T-3 negative: two real laps are not duplicates."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 6))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert [row.duplicate for row in feed] == [False, False]
+
+
+def test_feed_rows_given_two_entries_at_one_instant_leaves_both_rows_clear() -> None:
+    """One instant on two entries is two riders, not a double entry."""
+    roster = _solo_roster("34")
+    roster.create_solo_entry(first_name="Bea", plate="12")
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("34", at=_dt(10, 5))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert [(row.plate, row.duplicate) for row in feed] == [("34", False), ("12", False)]

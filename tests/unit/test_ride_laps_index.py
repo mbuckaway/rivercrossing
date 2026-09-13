@@ -99,8 +99,9 @@ def _make_engine(
 def _engine_with_corrected_ride() -> RideEngine:
     """Build a ride exercising every mutator that touches the index.
 
-    Live crossings plus add-at-time (out-of-order past), edit re-time,
-    undo of an out-of-order crossing, reassign and void -- the mixed
+    Live crossings plus add-at-time (past the entry's own latest lap --
+    the engine refuses an instant at or before it, Phase 3), edit
+    re-time, undo of the added crossing, reassign and void -- the mixed
     history the replay/correction suites drive at random, fixed here
     so the expected index order is readable.
     """
@@ -108,8 +109,8 @@ def _engine_with_corrected_ride() -> RideEngine:
     engine.start()
     engine.record_crossing("12", at=_dt(10, 30))
     engine.record_crossing("12", at=_dt(10, 40))
-    engine.add_crossing_at("12", _dt(10, 25), reason="missed crossing")
-    engine.edit_crossing("12", 3, _dt(10, 22), reason="mis-keyed time")
+    engine.add_crossing_at("12", _dt(10, 50), reason="missed crossing")
+    engine.edit_crossing("12", 3, _dt(10, 45), reason="mis-keyed time")
     engine.undo_last()
     engine.record_crossing("12", at=_dt(10, 50))
     engine.record_crossing("34", at=_dt(10, 35))
@@ -168,17 +169,24 @@ def test_laps_for_entry_without_crossings_returns_empty_tuple() -> None:
 
 
 def test_laps_for_undo_of_out_of_order_crossing_keeps_chronological_order() -> None:
-    """undo_last pops the last record; the index stays time-sorted."""
+    """undo_last pops the last record; the index stays time-sorted.
+
+    A reassign is what can still put a crossing out of chronological
+    order (Phase 3 refuses an add-at-time at or before the entry's own
+    latest lap): the moved lap lands behind 34's later lap, and undoing
+    it leaves the index time-sorted.
+    """
     engine, _ = _make_engine(config=_config(min_lap_s=1))
     engine.start()
+    engine.record_crossing("34", at=_dt(10, 40))
     engine.record_crossing("12", at=_dt(10, 30))
-    engine.add_crossing_at("12", _dt(10, 25), reason="missed crossing")
+    engine.reassign_crossing(2, "34", reason="mis-keyed plate")
     engine.undo_last()
 
-    laps = engine._laps_for("12")
+    laps = engine._laps_for("34")
 
     assert laps == (engine.crossings[0],)
-    assert engine.lap_times("12") == (1800.0,)
+    assert engine.lap_times("34") == (2400.0,)
 
 
 def test_laps_index_tie_at_same_instant_keeps_record_order() -> None:

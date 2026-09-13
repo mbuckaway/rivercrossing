@@ -2273,6 +2273,36 @@ def test_on_plate_entered_given_a_credited_short_lap_lists_it_in_the_flagged_row
     )
 
 
+def test_tick_given_an_instant_recorded_twice_lists_both_rows_in_the_review_tab() -> None:
+    """Phase 3: both halves of a double entry land in Needs Review.
+
+    Only the later twin's derived lap time is zero (so only it flags);
+    the earlier twin's is real, so the duplicate bit is what lists it.
+    """
+    engine, _clock = _running_engine()
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 5))
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+
+    assert [(row.lap, row.duplicate) for row in view.last_flagged] == [(2, True), (1, True)]
+
+
+def test_tick_given_no_duplicates_leaves_the_review_tab_empty() -> None:
+    """T-3 negative: two real laps put nothing in Needs Review."""
+    engine, _clock = _running_engine()
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 6))
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+
+    assert view.last_flagged == []
+
+
 def test_on_undo_given_an_engine_refusal_after_the_confirm_posts_a_notice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
