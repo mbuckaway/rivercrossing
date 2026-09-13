@@ -4,10 +4,13 @@
 ``SimulatorPresenter`` drives the future Rider Simulator window: it
 generates placeholder entries and riders from the app's own roster
 primitives, then replays one fixed crossing order lap after lap through
-a real :class:`~rivercrossing.ride.RideEngine`. No new business logic
-lands here -- every mutation goes through the shipped ``Roster`` and
-``RideEngine`` methods, so a simulated ride is the same ride the
-console records, and one seed reproduces a whole run.
+a real :class:`~rivercrossing.ride.RideEngine`. The order holds the
+plates the operator would type -- one per entry on a relay ride, one
+per rider on a pooled ride (S1) -- so a relay team crosses once a lap,
+exactly as the console records it. No new business logic lands here --
+every mutation goes through the shipped ``Roster`` and ``RideEngine``
+methods, so a simulated ride is the same ride the console records, and
+one seed reproduces a whole run.
 
 ``generate_riders`` serves MIXED rides (solo entries plus teams);
 ``generate_solo_riders`` serves SOLO-only rides, where every generated
@@ -67,26 +70,16 @@ def _team_entries(roster: Roster) -> list[Entry]:
     return [entry for entry in roster.entries if entry.type is EntryType.TEAM]
 
 
-def _crossing_plate(roster: Roster, entry: Entry, rider: Rider) -> str:
-    """Return the plate one rider's crossing is recorded under.
+def _plates_to_record(roster: Roster) -> list[str]:
+    """Return the plates one simulated lap records, in roster order.
 
-    A relay rider has no plate of their own, so the entry's plate
-    crosses for them; a solo or pooled rider crosses on their own.
+    The simulator drives the console's own rule: a relay ride types the
+    entry's plate once per entry (S1), so an N-rider team crosses once a
+    lap; a pooled ride types every rider's own plate, solos included.
     """
     if roster.plate_model is PlateModel.TEAM_RELAY:
-        return entry.plate
-    return cast("str", rider.plate)
-
-
-def _crossing_order(roster: Roster, rng: random.Random) -> list[tuple[str, Rider]]:
-    """Return one shuffled (plate, rider) pair per roster rider."""
-    order = [
-        (_crossing_plate(roster, entry, rider), rider)
-        for entry in roster.entries
-        for rider in entry.riders
-    ]
-    rng.shuffle(order)
-    return order
+        return [entry.plate for entry in roster.entries]
+    return [cast("str", rider.plate) for entry in roster.entries for rider in entry.riders]
 
 
 def _actual_start(engine: RideEngine) -> datetime:
@@ -259,7 +252,8 @@ class SimulatorPresenter:
             return SimOutcome(cancelled=False, recorded=0, blocked=tuple(exc.reasons))
         start = _actual_start(self.engine)
         rng = random.Random(self._seed)  # noqa: S311 -- replays one seed's run
-        order = _crossing_order(self.roster, rng)
+        order = _plates_to_record(self.roster)
+        rng.shuffle(order)
         interval = timedelta(minutes=interval_minutes)
         offsets = sorted(rng.random() * interval.total_seconds() for _ in range(len(order)))
         total = laps * len(order)
@@ -268,7 +262,7 @@ class SimulatorPresenter:
         cancelled = False
         for lap in range(1, laps + 1):
             lap_start = start + interval * lap
-            for index, (plate, _rider) in enumerate(order):
+            for index, plate in enumerate(order):
                 instant = lap_start + timedelta(seconds=offsets[index])
                 if self.engine.record_crossing(plate, at=instant).accepted:
                     recorded += 1
