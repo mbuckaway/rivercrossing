@@ -14,6 +14,7 @@ stays wx-free like every other presenter.
 """
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, overload, runtime_checkable
@@ -50,6 +51,11 @@ DEFAULT_ZOOM_PERCENT = 100
 # The three ThemeMode spellings, as a tuple for membership tests.
 _THEME_SPELLINGS: tuple[str, ...] = tuple(mode.value for mode in ThemeMode)
 
+# Plan §10's floor for the stored average rider speed: a 0 km/h (or
+# negative) value would make the card-sufficiency estimate's lap time
+# infinite, so the loader raises it to 1 km/h.
+_MIN_AVG_SPEED_KMH = 1.0
+
 
 @dataclass(frozen=True, slots=True)
 class AppSettings:
@@ -73,6 +79,12 @@ class AppSettings:
     open seeds the spins with what the operator last chose. Their
     defaults mirror the XRC (riders 10, teams 2, solo 2, laps 1,
     interval 1).
+
+    Plan §10 adds ``avg_speed_kmh``: the settings dialog's average
+    rider speed, feeding the card-sufficiency estimate ``Riders ▸
+    Check for Rider Issues…`` shows. The 12 km/h default matches the
+    ``avg_speed_spin`` XRC authoring; the loader floors a stored value
+    at :data:`_MIN_AVG_SPEED_KMH`.
     """
 
     appearance: str
@@ -89,6 +101,8 @@ class AppSettings:
     sim_solo: int = 2
     sim_laps: int = 1
     sim_interval: int = 1
+    # Plan §10: the card-sufficiency estimate's average rider speed.
+    avg_speed_kmh: float = 12.0
 
 
 def default_settings() -> AppSettings:
@@ -111,6 +125,7 @@ def default_settings() -> AppSettings:
         sim_solo=2,
         sim_laps=1,
         sim_interval=1,
+        avg_speed_kmh=12.0,
     )
 
 
@@ -179,6 +194,7 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "sim_solo": settings.sim_solo,
         "sim_laps": settings.sim_laps,
         "sim_interval": settings.sim_interval,
+        "avg_speed_kmh": settings.avg_speed_kmh,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -229,6 +245,9 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         sim_solo=_int_or(raw.get("sim_solo"), defaults.sim_solo),
         sim_laps=_int_or(raw.get("sim_laps"), defaults.sim_laps),
         sim_interval=_int_or(raw.get("sim_interval"), defaults.sim_interval),
+        avg_speed_kmh=_float_or(
+            raw.get("avg_speed_kmh"), defaults.avg_speed_kmh, minimum=_MIN_AVG_SPEED_KMH
+        ),
     )
 
 
@@ -269,6 +288,22 @@ def _int_or(value: object, default: int | None) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return default
+
+
+def _float_or(value: object, default: float, *, minimum: float) -> float:
+    """Return *value* as a float floored at *minimum*, else *default*.
+
+    A JSON int is a valid float (``12`` stores as ``12.0``); a bool is
+    not. Non-finite values (``json.loads`` accepts the bare ``NaN``
+    literal) are corrupt for a numeric field and fall back to
+    *default*, so the loader's never-raises contract holds.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    coerced = float(value)
+    if not math.isfinite(coerced):
+        return default
+    return max(coerced, minimum)
 
 
 def _geometry_or(

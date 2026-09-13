@@ -1574,11 +1574,19 @@ def _handle_check_rider_issues(context: _RouteContext) -> None:
     status notice and skips the rebuild -- the same guard
     :func:`_handle_import_csv` uses, for the same wx-swallowed-raise
     reason (the measured note ``docs/EPIC3-SESSION-SUMMARY.md``
-    records).
+    records). Plan §10 threads the live ride's config and the stored
+    average rider speed so the dialog can show its card-sufficiency
+    line; both are read from the context, never cached here.
     """
     from rivercrossing.ui.views import rider_issues  # noqa: PLC0415
 
-    changed = rider_issues.run_rider_issues_flow(context.frame, context.roster)
+    presenter = context.presenter
+    changed = rider_issues.run_rider_issues_flow(
+        context.frame,
+        context.roster,
+        config=(presenter.engine.config if presenter is not None else None),
+        avg_speed_kmh=context.settings.avg_speed_kmh,
+    )
     store = context.store
     if changed and store is not None and context.active_ride_id is not None:
         try:
@@ -1586,7 +1594,6 @@ def _handle_check_rider_issues(context: _RouteContext) -> None:
         except (OSError, sqlite3.Error) as exc:
             context.frame.SetStatusText(f"Could not save riders: {exc}")
             return
-        presenter = context.presenter
         clock = presenter.engine.clock if presenter is not None else None
         _switch_console_to_ride(context, context.active_ride_id, clock=clock)
 

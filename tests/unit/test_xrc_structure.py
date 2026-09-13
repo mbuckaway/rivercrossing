@@ -1013,3 +1013,58 @@ def test_simulation_dlg_declares_one_generate_button_and_no_gen_teams_btn() -> N
 
     assert sorted(names) == sorted(SIMULATION_DIALOG_CONTROLS)
     assert "gen_teams_btn" not in names
+
+
+# --------------------------------------------------------------------
+# Plan §10: the card-sufficiency line in rider_issues_dlg and the
+# average rider speed spin in settings_dlg. Both are stored/supplied
+# settings, so neither declares an XRC default value.
+
+
+def _settings_dialog() -> Element:
+    """Return settings.xrc's ``settings_dlg`` element."""
+    return _top_level_windows("settings.xrc")["settings_dlg"]
+
+
+def _rider_issues_dialog() -> Element:
+    """Return riders.xrc's ``rider_issues_dlg`` element."""
+    return _top_level_windows("riders.xrc")["rider_issues_dlg"]
+
+
+def test_settings_dlg_declares_the_average_speed_spin() -> None:
+    """Plan §10: a 1..N km/h spin the presenter seeds, with no value."""
+    spin = _objects_by_name(_settings_dialog())["avg_speed_spin"]
+
+    assert (spin.attrib["class"], _param(spin, "min"), spin.find("value")) == (
+        "wxSpinCtrl",
+        "1",
+        None,
+    )
+
+
+def test_settings_avg_speed_spin_declares_its_kmh_label() -> None:
+    """The spin's own caption names the unit (km/h)."""
+    spin = _objects_by_name(_settings_dialog())["avg_speed_spin"]
+
+    assert _param(spin, "label") == "Average rider speed (km/h)"
+
+
+def test_settings_avg_speed_spin_precedes_the_backup_button_row() -> None:
+    """Plan §10 places the spin above the Back up now row."""
+    names = _control_names_in(_settings_dialog())
+
+    assert names.index("avg_speed_spin") < names.index("backup_now_btn")
+
+
+def test_rider_issues_dlg_declares_the_card_check_label() -> None:
+    """Plan §10: a static-text line, empty until the view renders it."""
+    label = _objects_by_name(_rider_issues_dialog())["card_check_lbl"]
+
+    assert (label.attrib["class"], _param(label, "label")) == ("wxStaticText", "")
+
+
+def test_rider_issues_card_check_label_precedes_the_issue_summary() -> None:
+    """The verdict reads above the issue-count summary."""
+    names = _control_names_in(_rider_issues_dialog())
+
+    assert names.index("card_check_lbl") < names.index("issues_summary_lbl")

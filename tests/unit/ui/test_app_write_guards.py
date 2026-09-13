@@ -382,7 +382,7 @@ def test_handle_check_rider_issues_given_a_failed_roster_save_posts_a_notice(
 
     context = _context(store=_SaveRosterFailsStore())
     context.active_ride_id = 5
-    monkeypatch.setattr(rider_issues, "run_rider_issues_flow", lambda _f, _r: True)
+    monkeypatch.setattr(rider_issues, "run_rider_issues_flow", lambda _f, _r, **_kwargs: True)
 
     app_module._handle_check_rider_issues(context)
 

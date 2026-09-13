@@ -33,6 +33,7 @@ reason as above); ``RideEngine``'s own docstring records the full
 doc-silence list.
 """
 
+import math
 from bisect import insort
 from contextlib import suppress
 from dataclasses import dataclass
@@ -56,9 +57,13 @@ __all__ = [
     "DEFAULT_DECK_COUNT",
     "DEFAULT_JOKERS_PER_DECK",
     "DEFAULT_TIEBREAK_ORDER",
+    "FAR_TOO_MANY",
+    "NOT_ENOUGH",
+    "OK",
     "TIEBREAK_HIGH_CARD",
     "TIEBREAK_LAPS",
     "TIEBREAK_TOTAL_TIME",
+    "CardCheck",
     "Crossing",
     "CrossingResult",
     "Event",
@@ -73,6 +78,8 @@ __all__ = [
     "StartBlockedError",
     "UnknownEventActionError",
     "UnknownPlateError",
+    "check_card_sufficiency",
+    "estimate_cards_needed",
     "setup_minimum_violations",
 ]
 
@@ -279,6 +286,115 @@ def setup_minimum_violations(config: RideConfig) -> list[str]:
     if config.lap_km <= 0:
         violations.append("lap length must be positive")
     return violations
+
+
+# --------------------------------- card-sufficiency check (plan §10)
+
+
+# The three verdicts check_card_sufficiency returns. The operator sees
+# a rendered sentence, but the machine-readable spelling is what a
+# caller keys on, so these are frozen strings rather than a StrEnum: no
+# module stores one, unlike RideStatus/PlateModel's persisted values.
+NOT_ENOUGH = "not_enough"
+OK = "ok"
+FAR_TOO_MANY = "far_too_many"
+
+
+@dataclass(frozen=True, slots=True)
+class CardCheck:
+    """One ride's shoe size against its estimated card demand.
+
+    ``shoe_cards`` is the shoe's own capacity (spec §4's
+    ``deck_count x (52 + jokers_per_deck)``); ``expected`` is the
+    crossing count :func:`estimate_cards_needed` predicts for the
+    field. ``verdict`` is one of :data:`NOT_ENOUGH` (the shoe runs dry
+    before the field stops drawing), :data:`OK`, or :data:`FAR_TOO_MANY`
+    (the shoe holds more than twice the demand).
+    """
+
+    shoe_cards: int
+    expected: int
+    verdict: str
+
+
+def estimate_cards_needed(config: RideConfig, roster: Roster, avg_speed_kmh: float) -> int | None:
+    """Estimate how many cards *roster*'s field will draw (plan §10).
+
+    One card per accepted crossing (R-40), so the estimate is the
+    crossing count an average-speed field of this size is expected to
+    record: the planned duration divided by the seconds one lap takes
+    at *avg_speed_kmh*, rounded up (a partial lap still deals), times
+    the number of draw units -- every rider on a ``rider_pooled`` ride,
+    every entry on a ``team_relay`` one (S1's one-card-per-plate-per-lap
+    rule).
+
+    The plate model is compared by its stored ``.value`` rather than
+    against ``PlateModel``: importing ``roster`` here at runtime would
+    close the import cycle the module docstring records, and
+    ``.value``'s spelling is the same persisted one
+    :meth:`RideEngine.on_course` already reads.
+
+    Args:
+        config: The ride's setup-time settings (lap length, duration).
+        roster: The field whose entries/riders are counted.
+        avg_speed_kmh: The operator's average rider speed in km/h.
+
+    Returns:
+        The estimated card count, or ``None`` when no estimate is
+        possible -- a non-positive ``lap_km``/``avg_speed_kmh``/
+        ``planned_duration_s``, or an empty roster.
+    """
+    if (
+        config.lap_km <= 0
+        or avg_speed_kmh <= 0
+        or config.planned_duration_s <= 0
+        or not roster.entries
+    ):
+        return None
+    lap_seconds = config.lap_km / avg_speed_kmh * 3600
+    laps_per_entry = math.ceil(config.planned_duration_s / lap_seconds)
+    draw_units = (
+        sum(len(entry.riders) for entry in roster.entries)
+        if config.plate_model.value == "rider_pooled"
+        else len(roster.entries)
+    )
+    return draw_units * laps_per_entry
+
+
+def check_card_sufficiency(
+    config: RideConfig, roster: Roster, avg_speed_kmh: float
+) -> CardCheck | None:
+    """Judge the ride's shoe against its estimated demand (plan §10).
+
+    The "Check for Rider Issues…" card-sufficiency line: the shoe's
+    own capacity is compared to :func:`estimate_cards_needed`'s
+    prediction at the 1x boundary (demand above capacity is
+    :data:`NOT_ENOUGH`) and the 2x boundary (capacity above twice the
+    demand is :data:`FAR_TOO_MANY`); everything between is
+    :data:`OK`. ``max_cards`` (R-13) is deliberately not consulted --
+    it caps what an entry's hand scores, not how many cards the shoe
+    must hold.
+
+    Args:
+        config: The ride's setup-time settings.
+        roster: The field whose entries/riders are counted.
+        avg_speed_kmh: The operator's average rider speed in km/h.
+
+    Returns:
+        The :class:`CardCheck`, or ``None`` when the estimate itself
+        is impossible (:func:`estimate_cards_needed` returned ``None``).
+    """
+    expected = estimate_cards_needed(config, roster, avg_speed_kmh)
+    if expected is None:
+        return None
+    shoe_cards = config.deck_count * (52 + config.jokers_per_deck)
+    if expected > shoe_cards:
+        verdict = NOT_ENOUGH
+    elif shoe_cards > 2 * expected:
+        verdict = FAR_TOO_MANY
+    else:
+        verdict = OK
+    return CardCheck(shoe_cards=shoe_cards, expected=expected, verdict=verdict)
 
 
 # ==================================================== E4.1 engine

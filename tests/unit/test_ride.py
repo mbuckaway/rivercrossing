@@ -46,9 +46,13 @@ from rivercrossing.hands import best_hand, compare
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
     DEFAULT_JOKERS_PER_DECK,
+    FAR_TOO_MANY,
+    NOT_ENOUGH,
+    OK,
     TIEBREAK_HIGH_CARD,
     TIEBREAK_LAPS,
     TIEBREAK_TOTAL_TIME,
+    CardCheck,
     Crossing,
     Event,
     IllegalStateError,
@@ -61,9 +65,19 @@ from rivercrossing.ride import (
     StartBlockedError,
     UnknownEventActionError,
     UnknownPlateError,
+    check_card_sufficiency,
+    estimate_cards_needed,
     setup_minimum_violations,
 )
-from rivercrossing.roster import EntryMode, EntryStatus, PlateModel, Rider, Roster
+from rivercrossing.roster import (
+    Entry,
+    EntryMode,
+    EntryStatus,
+    EntryType,
+    PlateModel,
+    Rider,
+    Roster,
+)
 
 # A minimal, always-valid kwarg set every test overrides from -- one
 # required field at a time, never guessing at a second field's own
@@ -2815,3 +2829,234 @@ def test_apply_replay_record_miss_then_assign_is_equivalent() -> None:
     assert replayed.snapshot() == live.snapshot()
     assert replayed.pending_misses() == live.pending_misses()
     assert replayed._shoe.dealt == live._shoe.dealt
+
+
+# ============================================================ plan §10
+# Card-sufficiency estimate: the crossing count a ride expects from its
+# field, and how the shoe's own card count compares to it. Pure helpers
+# on RideConfig + Roster (no wx, R-71), so they are tested here beside
+# ride.py's other pure surface.
+
+# A lap length of 1 km at 3600 km/h makes one lap exactly 1 second, so
+# ``planned_duration_s`` is the expected lap count verbatim -- the
+# verdict boundary rows below can then name the shoe's own 432 cards.
+_ONE_SECOND_LAP_KM = 1.0
+_ONE_SECOND_LAP_SPEED_KMH = 3600.0
+
+# The default shoe: DEFAULT_DECK_COUNT x (52 + DEFAULT_JOKERS_PER_DECK).
+_DEFAULT_SHOE_CARDS = DEFAULT_DECK_COUNT * (52 + DEFAULT_JOKERS_PER_DECK)
+
+
+def _card_check_roster(*, plate_model: PlateModel = PlateModel.RIDER_POOLED) -> Roster:
+    """Return a two-entry / four-rider roster for estimate tests."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=plate_model)
+    roster.load_entries(
+        [
+            Entry(
+                plate="1",
+                display_name="Luca Ferrari",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Luca", last_name="Ferrari", plate="1")],
+            ),
+            Entry(
+                plate="2",
+                display_name="Dirt Dynamos",
+                type=EntryType.TEAM,
+                riders=[
+                    Rider(first_name="Sarah", last_name="Okafor", plate="2"),
+                    Rider(first_name="Priya", last_name="Nair", plate="3"),
+                    Rider(first_name="Tom", last_name="Hale", plate="4"),
+                ],
+            ),
+        ]
+    )
+    return roster
+
+
+def _single_rider_roster() -> Roster:
+    """Return a pooled roster holding one solo entry, one rider."""
+    roster = Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED)
+    roster.load_entries(
+        [
+            Entry(
+                plate="7",
+                display_name="Luca Ferrari",
+                type=EntryType.SOLO,
+                riders=[Rider(first_name="Luca", last_name="Ferrari", plate="7")],
+            )
+        ]
+    )
+    return roster
+
+
+def _force_field(config: RideConfig, field: str, value: object) -> RideConfig:
+    """Return *config* with one field forced past ``__post_init__``.
+
+    ``RideConfig.__post_init__`` refuses a non-positive
+    ``planned_duration_s`` (spec §2), so the estimate's own guard for
+    that value is unreachable through a normally built config; forcing
+    the field is the only way to exercise it (T-3).
+    """
+    object.__setattr__(config, field, value)
+    return config
+
+
+# -------------------------------------- estimate_cards_needed
+
+
+def test_estimate_cards_needed_given_rider_pooled_counts_every_rider() -> None:
+    """A pooled ride deals per rider: 4 riders x 27 laps = 108."""
+    config = _config(lap_km=8.0, planned_duration_s=21600)
+
+    result = estimate_cards_needed(config, _card_check_roster(), 36.0)
+
+    assert result == 108
+
+
+def test_estimate_cards_needed_given_team_relay_counts_entries_only() -> None:
+    """A relay ride deals per entry: 2 entries x 27 laps = 54."""
+    config = _config(lap_km=8.0, planned_duration_s=21600, plate_model=PlateModel.TEAM_RELAY)
+    roster = _card_check_roster(plate_model=PlateModel.TEAM_RELAY)
+
+    result = estimate_cards_needed(config, roster, 36.0)
+
+    assert result == 54
+
+
+def test_estimate_cards_needed_given_a_partial_lap_rounds_up() -> None:
+    """T-3: a fractional lap count is a ceil (22.5 -> 23 laps x 4)."""
+    config = _config(lap_km=8.0, planned_duration_s=21600)
+
+    result = estimate_cards_needed(config, _card_check_roster(), 30.0)
+
+    assert result == 92
+
+
+def test_estimate_cards_needed_given_an_exact_lap_multiple_does_not_round_up() -> None:
+    """T-3: an exact division stays put (24 laps x 4)."""
+    config = _config(lap_km=8.0, planned_duration_s=21600)
+
+    result = estimate_cards_needed(config, _card_check_roster(), 32.0)
+
+    assert result == 96
+
+
+@pytest.mark.parametrize("lap_km", [0.0, -1.0], ids=["zero", "negative"])
+def test_estimate_cards_needed_given_a_nonpositive_lap_km_returns_none(lap_km: float) -> None:
+    """T-3: no lap length, no estimate."""
+    config = _config(lap_km=lap_km)
+
+    result = estimate_cards_needed(config, _card_check_roster(), 36.0)
+
+    assert result is None
+
+
+@pytest.mark.parametrize("speed", [0.0, -12.0], ids=["zero", "negative"])
+def test_estimate_cards_needed_given_a_nonpositive_speed_returns_none(speed: float) -> None:
+    """T-3: a stopped field never finishes a lap."""
+    config = _config(lap_km=8.0)
+
+    result = estimate_cards_needed(config, _card_check_roster(), speed)
+
+    assert result is None
+
+
+def test_estimate_cards_needed_given_a_nonpositive_duration_returns_none() -> None:
+    """T-3: zero planned duration has no laps to estimate."""
+    config = _force_field(_config(lap_km=8.0), "planned_duration_s", 0)
+
+    result = estimate_cards_needed(config, _card_check_roster(), 36.0)
+
+    assert result is None
+
+
+def test_estimate_cards_needed_given_an_empty_roster_returns_none() -> None:
+    """T-4: no entries, no estimate (collection min = empty)."""
+    config = _config(lap_km=8.0)
+
+    result = estimate_cards_needed(config, Roster(), 36.0)
+
+    assert result is None
+
+
+def test_estimate_cards_needed_given_a_single_rider_roster_returns_the_lap_count() -> None:
+    """T-4: the smallest non-empty roster (one entry, one rider)."""
+    config = _config(lap_km=8.0, planned_duration_s=21600)
+
+    result = estimate_cards_needed(config, _single_rider_roster(), 36.0)
+
+    assert result == 27
+
+
+@given(
+    speeds=st.lists(
+        st.floats(min_value=1.0, max_value=400.0, allow_nan=False, allow_infinity=False),
+        min_size=2,
+        max_size=4,
+    )
+)
+def test_estimate_cards_needed_given_any_two_speeds_is_monotonic_in_speed(
+    speeds: list[float],
+) -> None:
+    """T-7 property: a faster field never needs fewer cards."""
+    config = _config(lap_km=8.0, planned_duration_s=21600)
+    roster = _card_check_roster()
+
+    slower = min(speeds)
+    faster = max(speeds)
+
+    assert estimate_cards_needed(config, roster, slower) <= estimate_cards_needed(
+        config, roster, faster
+    )
+
+
+# ------------------------------------- check_card_sufficiency
+
+
+@pytest.mark.parametrize(
+    ("planned_duration_s", "verdict"),
+    [
+        (1, FAR_TOO_MANY),  # T-4: far below the 2x boundary
+        (215, FAR_TOO_MANY),  # T-4: 2x boundary - 1
+        (216, OK),  # T-4: the 2x boundary itself
+        (432, OK),  # T-4: the 1x boundary (exactly the shoe)
+        (433, NOT_ENOUGH),  # T-4: 1x boundary + 1
+    ],
+    ids=["far_below", "below_2x", "at_2x", "at_1x", "above_1x"],
+)
+def test_check_card_sufficiency_given_each_boundary_returns_its_verdict(
+    planned_duration_s: int, verdict: str
+) -> None:
+    """The shoe's 1x/2x boundaries decide the three verdicts."""
+    config = _config(lap_km=_ONE_SECOND_LAP_KM, planned_duration_s=planned_duration_s)
+
+    result = check_card_sufficiency(config, _single_rider_roster(), _ONE_SECOND_LAP_SPEED_KMH)
+
+    assert result == CardCheck(
+        shoe_cards=_DEFAULT_SHOE_CARDS,
+        expected=planned_duration_s,
+        verdict=verdict,
+    )
+
+
+def test_check_card_sufficiency_given_a_custom_shoe_counts_decks_and_jokers() -> None:
+    """shoe_cards is deck_count x (52 + jokers), not a constant."""
+    config = _config(
+        lap_km=_ONE_SECOND_LAP_KM,
+        planned_duration_s=100,
+        deck_count=2,
+        jokers_per_deck=4,
+    )
+
+    result = check_card_sufficiency(config, _single_rider_roster(), _ONE_SECOND_LAP_SPEED_KMH)
+
+    assert (result.shoe_cards, result.expected, result.verdict) == (112, 100, OK)
+
+
+def test_check_card_sufficiency_given_no_estimate_returns_none() -> None:
+    """T-3: an impossible estimate yields no card check at all."""
+    config = _config(lap_km=0.0)
+
+    result = check_card_sufficiency(config, _single_rider_roster(), 36.0)
+
+    assert result is None

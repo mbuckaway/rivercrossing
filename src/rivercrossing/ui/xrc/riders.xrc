@@ -448,6 +448,17 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
+      <!-- Plan §10: the card-sufficiency verdict line. Rendered from
+           the ride's shoe size and the settings' average rider speed
+           when both are threaded in; hidden when they are not. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText" name="card_check_lbl">
+          <label></label>
+        </object>
+      </object>
+
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>

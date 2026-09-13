@@ -48,6 +48,7 @@ _ALL_FIELDS = {
     "sim_solo",
     "sim_laps",
     "sim_interval",
+    "avg_speed_kmh",
 }
 
 # The simulator dialog's XRC spin defaults (simulation.xrc): riders 10,
@@ -62,7 +63,7 @@ _ZOOM_RUNGS = list(ZOOM_LADDER)
 
 
 def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
-    """All twelve fields survive a save/load round trip intact."""
+    """Every AppSettings field round-trips through save/load."""
     path = tmp_path / "settings.json"
     original = AppSettings(
         appearance="dark",
@@ -136,6 +137,72 @@ def test_load_settings_missing_sim_keys_falls_back_to_defaults(tmp_path: Path) -
         loaded.sim_laps,
         loaded.sim_interval,
     ) == _SIM_DEFAULTS
+
+
+# --- average rider speed (plan §10) --------------------------------
+
+
+def test_default_settings_defaults_avg_speed_to_twelve_kmh() -> None:
+    """Plan §10: a first launch seeds the speed at 12 km/h."""
+    assert default_settings().avg_speed_kmh == 12.0
+
+
+def test_save_then_load_round_trips_the_avg_speed(tmp_path: Path) -> None:
+    """A chosen average rider speed survives a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), avg_speed_kmh=17.5)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == 17.5
+
+
+def test_load_settings_missing_avg_speed_key_falls_back_to_the_default(tmp_path: Path) -> None:
+    """An older file with no avg_speed_kmh key keeps the default."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == 12.0
+
+
+@pytest.mark.parametrize(
+    ("saved_speed", "expected_speed"),
+    [
+        (0.5, 1.0),  # T-4: min - 1
+        (1.0, 1.0),  # T-4: the floor itself
+        (1.5, 1.5),  # T-4: min + 1
+        (12, 12.0),  # a stored JSON int is a valid speed
+        (99.0, 99.0),  # a realistic fast field
+    ],
+)
+def test_load_settings_clamps_avg_speed_to_the_one_kmh_floor(
+    tmp_path: Path, saved_speed: float, expected_speed: float
+) -> None:
+    """A below-floor speed rises to 1 km/h; the rest survive."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"avg_speed_kmh": saved_speed}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == expected_speed
+
+
+def test_load_settings_non_finite_avg_speed_uses_the_default(tmp_path: Path) -> None:
+    """A JSON NaN speed is corrupt for this field: the default applies.
+
+    ``json.loads`` accepts the bare ``NaN`` literal, and a NaN would
+    survive the floor clamp and reach ``math.ceil`` -- the loader's
+    never-raises contract needs it rejected here (T-3/T-4 nullable).
+    """
+    path = tmp_path / "settings.json"
+    path.write_text('{"avg_speed_kmh": NaN}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == 12.0
 
 
 def test_load_settings_missing_file_returns_defaults(tmp_path: Path) -> None:
@@ -214,6 +281,7 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
                 "sim_solo": 2.5,
                 "sim_laps": None,
                 "sim_interval": "1",
+                "avg_speed_kmh": "fast",
             }
         ),
         encoding="utf-8",
@@ -286,7 +354,7 @@ def test_save_settings_creates_missing_parent_directories(tmp_path: Path) -> Non
     assert load_settings(path) == default_settings()
 
 
-def test_save_settings_writes_json_with_all_twelve_fields(tmp_path: Path) -> None:
+def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     """The file is JSON carrying every AppSettings field by name."""
     path = tmp_path / "settings.json"
     save_settings(
@@ -303,6 +371,7 @@ def test_save_settings_writes_json_with_all_twelve_fields(tmp_path: Path) -> Non
             sim_solo=4,
             sim_laps=2,
             sim_interval=5,
+            avg_speed_kmh=17.5,
         ),
         path,
     )
@@ -314,6 +383,7 @@ def test_save_settings_writes_json_with_all_twelve_fields(tmp_path: Path) -> Non
     assert raw["verbose_logging"] is False
     assert raw["sim_riders"] == 12
     assert raw["sim_interval"] == 5
+    assert raw["avg_speed_kmh"] == 17.5
 
 
 # --- default-path wiring (path=None branches) ----------------------
@@ -394,6 +464,7 @@ _SETTINGS_STRATEGY = st.builds(
     sim_solo=st.integers(min_value=0, max_value=1000),
     sim_laps=st.integers(min_value=0, max_value=1000),
     sim_interval=st.integers(min_value=0, max_value=240),
+    avg_speed_kmh=st.floats(min_value=1.0, max_value=400.0, allow_nan=False, allow_infinity=False),
 )
 
 
