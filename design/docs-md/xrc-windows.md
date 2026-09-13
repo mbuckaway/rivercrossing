@@ -104,7 +104,7 @@ Always deal cards (default)
 
 Logo
 
-`name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · hold_short_radio · always_deal_radio — the W4 short-lap card policy pair sits between the timed-fields grid and the Entries box: Duration and Min lap are text fields that parse "H:MM"/"M:SS" (unparseable or non-positive values refuse on OK, W4), and hold_short_radio ("Hold short-lap cards for review") / always_deal_radio ("Always deal cards") read straight into RideConfig.hold_short_laps — always deal is the checked default (W4), so a fresh ride credits short-lap cards and never flags (R-34). The standalone Logo row (a `logo_picker` wxFilePickerCtrl with a path box) is retired: `logo_preview_bmp · logo_status_lbl · logo_browse_btn` now live in the Cards box beside `tiebreak_list` — a 96×96 wxStaticBitmap preview, the status label (default "NO LOGO"), and a "Browse…" button that picks a PNG, resizes it to fit the 256×256 standard logo size, previews it and stages the resized file as the ride's `logo_png` BLOB source`
+`name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · hold_short_radio · always_deal_radio — the W4 short-lap card policy pair sits between the timed-fields grid and the Entries box: Duration and Min lap are text fields that parse "H:MM"/"M:SS" (unparseable or non-positive values refuse on OK, W4), and hold_short_radio ("Hold short-lap cards for review") / always_deal_radio ("Always deal cards") read straight into RideConfig.hold_short_laps — always deal is the checked default (W4), so a fresh ride credits short-lap cards and never flags (R-34). The standalone Logo row (a `logo_picker` wxFilePickerCtrl with a path box) is retired: `logo_preview_bmp · logo_status_lbl · logo_browse_btn` now live in the Cards box beside `tiebreak_list` — a 240×240 wxStaticBitmap preview, the status label (default "NO LOGO"), and a "Browse…" button that picks a PNG, resizes it to fit the 256×256 standard logo size, previews it and stages the resized file as the ride's `logo_png` BLOB source`
 Entries
  Solo riders only
  Solo + teams (default)
@@ -118,12 +118,12 @@ Max riders per team (2–10)
 
 Cards
 
-Decks Jokers/deck: 1 ▾
- Card cap
+Decks Jokers 1 ▾ Per deck Total (checked)
+ Card cap Disabled ▾
 
 Tie-break order ① High-card draw ② Most laps ③ Total time ▲▼
 
-`decks_spin · jokers_choice (a wxChoice over 0, 1, 2, 3, 4, opening on 1 — `ride.DEFAULT_JOKERS_PER_DECK`, recorded so the two cannot drift; Phase 1 replaced the 0/2/4 radio trio, which had no 1 position) · cap_chk · cap_spin · tiebreak_list (wxEditableListBox — exactly the three rows above, three lines tall at <size>160,120</size> with the width sized to the longest row "High-card draw" plus its reorder arrows; the XRC declares no <style>, so it shows the arrows alone and no New/Edit/Delete buttons)`
+`decks_spin · jokers_spin (a wxSpinCtrl over 0..10, opening on 1 — `ride.DEFAULT_JOKERS_PER_DECK`/`ride.MAX_JOKERS_PER_DECK`, recorded so the control and the domain cannot drift) · jokers_per_deck_radio / jokers_total_radio (the jokers mode pair — "Per deck" re-deals that many jokers every cycle, "Total" (checked, `ride.DEFAULT_JOKERS_MODE`) spends them once across the ride; `ride.JOKERS_MODES` fixes the two spellings and the ride persists `ride.jokers_mode`) · cap_choice (a wxChoice whose "Disabled" first item is the default no-cap selection, then one item per cap 5..20; the view reads the item's text, so the numbers are domain values, not indices) · tiebreak_list (wxEditableListBox — exactly the three rows above, three lines tall at <size>120,120</size> with the width sized to the longest row "High-card draw" plus its reorder arrows; the XRC declares no <style>, so it shows the arrows alone and no New/Edit/Delete buttons)`
 
 OKCancel
 
@@ -301,7 +301,9 @@ Open Editor… Convert to Solo Assign Plate Renumber Close
 
 ⚠ code-side (R-78): issues_list columns/rows; the card-sufficiency line (`card_check_lbl`) sits above the summary — `run_rider_issues_flow` renders `ride.check_card_sufficiency(config, roster, avg_speed_kmh)` when it is handed both the live ride config and the stored average rider speed, and either missing hides the line (§4); the report covers the duplicate-team-name (hard) and near-duplicate-team-name (⚠ warning) kinds beside team-of-one/missing-name/missing-number/duplicate-name/duplicate-number; convert_solo_btn enabled only for a pooled DRAFT team-of-one — "Convert to Solo" extracts its lone rider to their own solo entry (extract_rider_to_solo); assign_plate_btn is enabled only for a missing-number issue (gives that rider the next free plate) and renumber_btn only for a duplicate-number issue (renumbers the later claimant), both DRAFT-only and writing through the roster's shared change_plate dispatch so each plate shape picks its model-correct primitive; "Open Editor…" opens the teams editor preselected on a team-of-one's team by name (select_team_by_name), the rider editor preselected on the issue's plate (select_rider_by_plate) otherwise, then re-lists; refusals show on issues_infobar (an wxInfoBar built code-side with SetName). The view reconciles the list selection after every render so the fix buttons derive from the post-render row, and the flow reports a change from the roster's audit-log delta, so a nested editor's edit counts too. Opened from Riders ▸ Check for Rider Issues… (mi_check_rider_issues), a ride-open route; the window lives in riders.xrc (§15b).
 
-Entry Detail — 77 Trail Blazers`entry_detail_dlg`✕
+~~Entry Detail — 77 Trail Blazers~~ `entry_detail_dlg` ✕ — **RETIRED (scoring-and-corrections)**
+
+⚠ Retirement: the Riders ▸ Entry Detail… row (`mi_entry_detail`) and its whole window left the app — `detail.xrc` is deleted and its controls retired with it: `plate_choice`, `entry_header_lbl`, `members_lbl`, `cards_list`, `laps_list`, `move_rider_btn`, `deal_card_btn`, `dnf_btn`, `edit_crossing_btn`, `audit_btn` (the shared `void_card_btn` moved to Crossing Detail instead). Its corrections now live on the console's per-row Crossing Detail window (F), which grew `edit_time_btn`/`void_card_btn`; the per-row plate reassign runs through the `crossing_number_dlg` prompt (§9). Historical canvas copy follows.
 
 Plate:77 ▾
 `plate_choice (wxChoice — the roster's entry plates, the shown entry selected; W11 F2b canvas addition: the six correction actions and the menu correction rows act on the shown entry, so the picker points the dialog at another entry without closing it. Loaded in code from the live roster; the no-store empty state leaves it empty and disabled)`
@@ -350,7 +352,7 @@ New plateReason
 
 OKCancel
 
-Deal Manual Card`manual_deal_dlg`✕
+Deal Bonus Card`manual_deal_dlg`✕
 
 PlateReason
 
@@ -405,7 +407,7 @@ Teams Solo`results_notebook (wxNotebook — a MIXED ride's two standings pages; 
 
 | Place | Plate | Entry | Laps | Total | Best lap | Best 5 | Hand |
 |---|---|---|---|---|---|---|---|
-| 1 | 123 | Sam Ellis | 8 | 5:51:17 | 22:41 | Q♥ J♥ T♥ 9♥ 8♥ | Straight Flush — Queen high |
+| 1 | 123 | Sam Ellis | 8 | 5:51:17 | 22:41 | Q♥ J♥ 10♥ 9♥ 8♥ | Straight Flush — Queen high |
 | 2 | 8 | R. Dubois | 7 | 5:38:44 | 24:02 | A♣ A♦ A♥ 4♦ 4♠ | Full House — Aces over Fours |
 
 `solo_standings_list (wxDataViewCtrl — the Solo page, the notebook's second tab) · standings_list (wxDataViewCtrl — a SOLO-only ride's one list, standing in the notebook's place; the view shows the notebook or this list, never both. All three carry the same eight columns and rank their own kind from 1, DNF entrants excluded outright — a kind absent from the ride simply has no rows. The Teams list hides its Plate column on a `rider_pooled` ride (a pooled team's plate derives from its members, so the column would only repeat one); it stays visible under `team_relay` and on the solo list. The three lists' columns are natively sortable and resizable (DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE — both bits spelled out, since an explicit flags= replaces AppendTextColumn's own default; the platform's own header arrow), and the Total and Best lap columns sort on StandingsRow.total_seconds/best_lap_seconds, never their rendered h:mm:ss text)`
@@ -513,12 +515,15 @@ Keyboard Shortcuts`shortcuts_dlg (Help ▸ mi_shortcuts)`✕
 | Ctrl+Z | Undo last crossing |
 | F5 | Standings (Results window) |
 | F1 | User guide |
+| F2 | Edit crossing (open detail) |
 
 `shortcuts_list (wxDataViewCtrl · read-only; rows filled in code from the accelerator table — cannot drift)`
 
 Close
 
 `wxID_CLOSE`
+
+⚠ code-side (Phase 6): the dialog pins its two columns to SHORTCUT_COLUMN_WIDTHS (120/320 px) — an unpinned DataView column keeps the platform's 80 DIP default and clips the Action text on first open — and floors itself at SHORTCUTS_MIN_SIZE (480×300) with SetMinSize + Fit() in code, since XRC declares no window-level minsize.
 
 Evaluator Self-Test`selftest_dlg`✕
 
@@ -546,9 +551,9 @@ Held / flagged`crossing_held_lbl` — "Held — short lap awaiting review" (R-34
 
 New plate`edit_plate_input (wxTextCtrl — a read-only current-plate echo in crossing mode, disabled at the crossing's current plate so OK can only ever commit a plate the operator deliberately changed; miss mode is the only mode that unlocks it, Edit then being the way to type the plate a miss needs. The current plate is the key the reassign resolves)`
 
-EditDeleteOK
+EditEdit Time…Void Card…DeleteOK
 
-`edit_btn ("Edit" — crossing mode opens the crossing_number_dlg Save/Cancel Number prompt; miss mode unlocks the plate field) · delete_btn ("Delete" — any crossing of a RUNNING/REOPENED ride: the newest runs undo_last, any other void_crossing, both after the danger confirm) · wxID_OK (default, the only stock button — the window carries no wxID_CANCEL, so CrossingDetailView points Escape at OK with SetEscapeId) — edit_btn and delete_btn sit in a sibling wxBoxSizer beside the stock sizer, since wxStdDialogButtonSizer positions only OK/Yes/Save/Apply/No/Cancel/Close/Help`
+`edit_btn ("Edit" — crossing mode opens the crossing_number_dlg Save/Cancel Number prompt; miss mode unlocks the plate field) · edit_time_btn ("Edit Time…" — opens edit_crossing_dlg in edit mode through run_edit_crossing and commits RideEngine.edit_crossing; the retired Reassign Plate…/Void Card… menu rows' real home, Phase 2) · void_card_btn ("Void Card…" — opens void_card_confirm_dlg through run_void_card and voids the crossing's own **credited** card; a held card stays the review surface's) · delete_btn ("Delete" — any crossing of a RUNNING/REOPENED ride: the newest runs undo_last, any other void_crossing, both after the danger confirm) · wxID_OK (default, the only stock button — the window carries no wxID_CANCEL, so CrossingDetailView points Escape at OK with SetEscapeId) — edit_btn, edit_time_btn, void_card_btn and delete_btn sit in a sibling wxBoxSizer beside the stock sizer, since wxStdDialogButtonSizer positions only OK/Yes/Save/Apply/No/Cancel/Close/Help`
 
 ⚠ code-side (J2, the crossing-detail workstream): opened by double-clicking a row of the console's `crossings_list` — `MainFrame.set_on_open_crossing` fires that row's model index, and `app._feed_row_target` resolves that index against the presenter's own rendered rows (`rendered_feed_rows()`, the search filter included) back to the live `Crossing` or pending miss — Phase 4 retired the 30-row cap, so any row of the ride resolves, and only a stale activation after the feed shrank names nothing. Every value label and the plate field are written by `views/crossing_detail.py`'s `CrossingDetailView` from the pure `build_fields(crossing, roster, engine)` view-model, `edit_plate_input` being a read-only echo of the crossing's current plate (miss mode is the only mode that unlocks it); the captions are fixed XRC copy and carry no frozen name. `edit_btn` opens the §9 `crossing_number_dlg` Save/Cancel Number prompt (`run_number_dialog`), pre-filled with the current plate, and Save hands the typed number to `RideEngine.reassign_crossing(ordinal, new_plate, reason="crossing detail edit")` — addressed by the crossing's **ride-wide ordinal** in `engine.crossings`, deliberately not `Crossing.seq`, which is the per-entry lap number (the engine's own E7.1.1 note) — with Cancel doing nothing and OK on an unchanged plate just closing. `delete_btn` deletes any crossing of a live ride — enabled whenever the ride is RUNNING or REOPENED — and which engine command runs depends on *which* crossing it is: the newest runs `RideEngine.undo_last()` (the console's own Undo, its card restituted) and any other runs `RideEngine.void_crossing()` with `reason="crossing detail delete"` (card voided, the entry's later laps renumbered); either way the native `std_dialogs.show_danger` confirm runs first, names the crossing, and words the question to match the command. A refusal (blank or unknown plate, a ride that is not RUNNING/REOPENED) shows on the code-side `crossing_detail_infobar` (an `wxInfoBar` built with `SetName()`, the InfoBar rule) and leaves the dialog open; every commit travels through the engine, whose `on_event` sink persists it, and the console re-renders the feed on its 1 s tick. A pending miss opens the same window in **miss mode** (`MissDetailView`, K2): `build_miss_fields` renders the feed row's own placeholders — Plate and Rider `-`, Team `missed`, the signal instant as the crossing time, blank lap/lap time/total/card and "Not yet scored" for the card state — and OK assigns the typed plate through `RideEngine.assign_plate_to_miss(miss_seq, plate, reason="miss detail edit")`, which records the crossing and deals its card at the miss's own instant; Delete stays disabled (a miss is not `engine.crossings[-1]`). The window lives in dialogs.xrc (§15b).
 

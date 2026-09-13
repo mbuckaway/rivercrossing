@@ -114,14 +114,18 @@ class Rank(IntEnum): TWO=2 … TEN=10 JACK=11 QUEEN=12 KING=13 ACE=14
     .code() -> str            # "AS", "10D", "JK" — the stored form
     Card.parse(code: str) -> Card
 class Shoe:                   # deterministic multi-deck shoe
-    __init__(decks: int, jokers_per_deck: int, seed: int)
+    __init__(decks: int, jokers_per_deck: int, seed: int, *, jokers_total: bool = False)
     deal() -> tuple[Card, int]          # (card, deal_index); raises ShoeEmpty
     reshuffle() -> None                 # new cycle; audit caller logs it (§4)
     remaining: int · dealt: int · cycle: int
-    Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int) -> Shoe
+    Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int, *,
+                jokers_total: bool = False) -> Shoe
     restitute(card: Card) -> None       # Ctrl+Z: the last-dealt card returns to the front (E2.2.1)
     close() -> None                     # ride Finish locks the shoe; deal/reshuffle/restitute
                                         # raise ShoeClosedError afterwards (E2.2.1)
+# jokers_total selects the mode (§4): False (the S4 default) re-deals jokers_per_deck
+#   jokers every cycle; True spends that many jokers once across the ride — the budget
+#   persists across reshuffles, and a spent budget deals naturals only
 # invariant: same (config, seed) ⇒ identical deal sequence (R-40)
 ```
 
@@ -162,7 +166,8 @@ rivercrossing.ride — state machine & timing (§3/§6 · R-30…36)
 class RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
 @dataclass RideConfig(name, event_date, venue, lap_km, organizer, scorer, planned_start,
                       planned_duration_s, min_lap_s, entry_mode, plate_model,
-                      max_team_size=4, deck_count=8, jokers_per_deck=1, max_cards=None,
+                      max_team_size=4, deck_count=8, jokers_per_deck=1, jokers_mode="total",
+                      max_cards=None,
                       tiebreak_order=("high_card","laps","total_time"), logo_path=None)
     # §2 ride-row setup fields; defined here since E3.5, built by ride_setup_dlg,
     # consumed by RideEngine below; EPIC 6's standings imports the tiebreak spellings
@@ -193,7 +198,8 @@ class RideEngine:             # pure; wall-clock injected for tests
 #   estimate_cards_needed(config, roster, avg_speed_kmh) -> int | None ·
 #   check_card_sufficiency(config, roster, avg_speed_kmh) -> CardCheck | None, where
 #   CardCheck(shoe_cards, expected, verdict) and verdict ∈ {NOT_ENOUGH, OK, FAR_TOO_MANY}
-#   compares the shoe size (deck_count × (52 + jokers_per_deck)) against the crossings a
+#   compares the shoe size at the ride's jokers mode (deck_count × (52 + jokers_per_deck)
+#   per deck, deck_count × 52 + jokers_per_deck total) against the crossings a
 #   field is expected to record (per rider pooled, per entry relay) — see Spec §4
 ```
 
