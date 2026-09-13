@@ -472,13 +472,15 @@ def _accelerator_entries(menubar: Any) -> list[Any]:  # noqa: ANN401 -- wx ships
     entry is rebuilt with the real id explicit -- otherwise every
     harvested entry would collapse onto the same (wrong) command.
 
-    Enter, ``accelerators.ACCELERATOR_TABLE``'s 4th row, is not a
+    Enter, ``accelerators.ACCELERATOR_TABLE``'s ``Enter`` row, is not a
     menu accelerator at all (that table's own docstring) and carries
     no ``menu_item_id`` to harvest, so it contributes no entry here:
     ``plate_input`` carries ``wxTE_PROCESS_ENTER`` (measured,
     ``main.xrc``) for :meth:`MainFrame.wire_entry`'s own console
     handler, and a frame-level accelerator on bare Enter would risk
-    shadowing it.
+    shadowing it. Phase 6's ``F2`` row is ``None``-id too, but it is a
+    real frame accelerator -- :meth:`MainFrame.accelerator_entries`
+    owns it, and :func:`_apply_accelerators` appends it.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -495,9 +497,16 @@ def _accelerator_entries(menubar: Any) -> list[Any]:  # noqa: ANN401 -- wx ships
 
 
 def _apply_accelerators(frame: Any, menubar: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-    """Apply the frozen accelerator table to *frame* (E1.4.1)."""
+    """Apply the frozen accelerator table to *frame* (E1.4.1).
+
+    The three menu-bound entries are harvested from *menubar*; the
+    console's own code-side entries (Phase 6's F2) are appended, so this
+    re-application cannot replace the frame-level table
+    :class:`MainFrame` bound in its constructor.
+    """
     wx = require_wx()
-    frame.SetAcceleratorTable(wx.AcceleratorTable(_accelerator_entries(menubar)))
+    entries = [*_accelerator_entries(menubar), *frame.accelerator_entries()]
+    frame.SetAcceleratorTable(wx.AcceleratorTable(entries))
 
 
 def _check_loaded_hide_times(menubar: Any, *, hide: bool) -> None:  # noqa: ANN401 -- wx ships no stubs

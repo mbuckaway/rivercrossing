@@ -44,7 +44,7 @@ label -- this task's own scope is the *reorder* case ("reorder
 persisted", not "row set editable"), and a New/Delete-caused mismatch
 is flagged here as a known, undefended gap for follow-up, not fixed
 outright. The list carries its own bounded box (plan section 3c):
-:data:`TIEBREAK_LIST_MIN_SIZE` is the same 160x120 setup.xrc authors,
+:data:`TIEBREAK_LIST_MIN_SIZE` is the same 120x120 setup.xrc authors,
 so the reorder control no longer stretches to the dialog's whole
 width.
 
@@ -127,18 +127,18 @@ _TIEBREAK_LABELS: dict[str, str] = {
 _TIEBREAK_IDS_BY_LABEL: dict[str, str] = {label: id_ for id_, label in _TIEBREAK_LABELS.items()}
 
 # tiebreak_list's own bounded box (plan section 3c): R-14 names exactly
-# three criteria, and setup.xrc authors the same 160x120 <size>. The
+# three criteria, and setup.xrc authors the same 120x120 <size>. The
 # control used to stretch to the Cards box's full width, which pushed
 # the logo column (section 3d) out of it.
 TIEBREAK_LIST_ROWS = 3
-TIEBREAK_LIST_MIN_SIZE = (160, 120)
+TIEBREAK_LIST_MIN_SIZE = (120, 120)
 
 # The logo column's two boxes (plan section 3d): a picked PNG is
 # resized into LOGO_STANDARD_SIZE -- aspect ratio preserved -- and that
 # resized copy is what gets staged and stored; logo_preview_bmp renders
 # it inside LOGO_PREVIEW_SIZE.
 LOGO_STANDARD_SIZE = (256, 256)
-LOGO_PREVIEW_SIZE = (96, 96)
+LOGO_PREVIEW_SIZE = (240, 240)
 
 # logo_status_lbl's own default, the same string setup.xrc authors:
 # a fresh dialog, and any dialog whose logo is cleared.
@@ -364,7 +364,7 @@ class RideSetup:
     def _apply_tiebreak_min_size(self) -> None:
         """Floor ``tiebreak_list`` at :data:`TIEBREAK_LIST_MIN_SIZE`.
 
-        setup.xrc authors the same 160x120 ``<size>``; the floor is
+        setup.xrc authors the same 120x120 ``<size>``; the floor is
         what stops the control collapsing below three readable rows
         when the Cards box is dragged small (R-05 resizes both ways).
         """

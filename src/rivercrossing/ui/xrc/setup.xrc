@@ -38,7 +38,7 @@
 
   Plan sections 3c/3d reshaped the Cards box: the standalone Logo row's
   wxFilePickerCtrl is retired, tiebreak_list carries its own bounded
-  160x120 box, and the logo column (preview bitmap, status label, Browse…
+  120x120 box, and the logo column (preview bitmap, status label, Browse…
   button) sits beside it. The staged PNG itself is code-side: the view
   resizes the browsed file into LOGO_STANDARD_SIZE, writes the copy to a
   temp file and previews it.
@@ -393,7 +393,7 @@
 
           <!-- Rows and their order come from the ride's tiebreak_order
                (spec.md 5); the control supplies the reorder arrows.
-               The list carries its own bounded 160x120 box (the view
+               The list carries its own bounded 120x120 box (the view
                floors it at the same size): full-width, the reorder
                control stretched to the whole dialog and pushed the
                logo column out of the Cards box.
@@ -417,7 +417,7 @@
                 <flag>wxEXPAND</flag>
                 <object class="wxEditableListBox" name="tiebreak_list">
                   <label>Tie-break order</label>
-                  <size>160,120</size>
+                  <size>120,120</size>
                 </object>
               </object>
 
@@ -430,7 +430,7 @@
                   <object class="sizeritem">
                     <flag>wxALIGN_CENTRE_HORIZONTAL</flag>
                     <object class="wxStaticBitmap" name="logo_preview_bmp">
-                      <size>96,96</size>
+                      <size>240,240</size>
                     </object>
                   </object>
 
