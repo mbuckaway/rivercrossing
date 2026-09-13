@@ -3,7 +3,7 @@
   The eleven small dialogs of spec.md 15b's dialogs.xrc entry:
   set_start_dlg, resume_dlg, exit_running_dlg
   (xrc-windows.md section B),
-  edit_crossing_dlg, reassign_dlg, manual_deal_dlg, dnf_confirm_dlg,
+  edit_crossing_dlg, manual_deal_dlg, dnf_confirm_dlg,
   void_card_confirm_dlg (section C), about_dlg, selftest_dlg,
   shortcuts_dlg (section E), crossing_detail_dlg (section F, J2).
   stop_confirm_dlg (section B) retired in W5: the Stop flow now asks
@@ -377,75 +377,6 @@
             </object>
           </object>
 
-        </object>
-      </object>
-
-    </object>
-  </object>
-
-  <object class="wxDialog" name="reassign_dlg">
-    <title>Reassign Plate</title>
-    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
-
-    <object class="wxBoxSizer">
-      <orient>wxVERTICAL</orient>
-
-      <!-- "Crossing 14:21:59 · lap credited to 45" - written by the
-           presenter from the selected crossing. -->
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxStaticText" name="crossing_lbl">
-          <label></label>
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
-        <border>10</border>
-        <object class="wxFlexGridSizer">
-          <cols>2</cols>
-          <vgap>6</vgap>
-          <hgap>8</hgap>
-          <growablecols>1</growablecols>
-
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>New plate</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxEXPAND</flag>
-            <object class="wxTextCtrl" name="new_plate_input"/>
-          </object>
-
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Reason</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxEXPAND</flag>
-            <object class="wxTextCtrl" name="reason_input"/>
-          </object>
-
-        </object>
-      </object>
-
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxALL</flag>
-        <border>10</border>
-        <object class="wxStdDialogButtonSizer">
-          <object class="button">
-            <object class="wxButton" name="wxID_OK">
-              <default>1</default>
-            </object>
-          </object>
-          <object class="button">
-            <object class="wxButton" name="wxID_CANCEL"/>
-          </object>
         </object>
       </object>
 

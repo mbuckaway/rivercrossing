@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """wx-side runners for the E7 correction dialogs (section C).
 
-The six correction dialogs -- ``edit_crossing_dlg`` (add + edit modes),
-``reassign_dlg``, ``manual_deal_dlg``, ``dnf_confirm_dlg`` and
+The four correction dialogs -- ``edit_crossing_dlg`` (add + edit
+modes), ``manual_deal_dlg``, ``dnf_confirm_dlg`` and
 ``void_card_confirm_dlg`` -- are shared by two entry points: the
 Cards/Riders menu routes (app.py's handlers) and Crossing Detail's own
 ``edit_time_btn``/``void_card_btn`` corrections. Each ``run_*``
@@ -18,7 +18,7 @@ this module never touches a ``RideEngine``.
 ux-polish's Ride ▸ Set Start Time… row runs through the same runner
 shape here (:func:`run_set_start_time`, section B's ``set_start_dlg``
 -- a form dialog whose route handler applies the confirmed instant to
-the engine afterwards, exactly like the six section-C rows).
+the engine afterwards, exactly like the section-C rows).
 
 Every form/confirm requires a non-empty ``reason``: the OK handler
 keeps the dialog open and refocuses ``reason_input`` when it is blank
@@ -59,14 +59,12 @@ __all__ = [
     "CrossingEdit",
     "DnfMark",
     "ManualDeal",
-    "ReassignRequest",
     "RiderMove",
     "run_audit",
     "run_dnf",
     "run_edit_crossing",
     "run_manual_deal",
     "run_move_rider",
-    "run_reassign",
     "run_set_start_time",
     "run_void_card",
 ]
@@ -142,14 +140,6 @@ class RiderMove:
     to_team: str
 
 
-@dataclass(frozen=True, slots=True)
-class ReassignRequest:
-    """One confirmed ``reassign_dlg`` submission (E7.2.1)."""
-
-    new_plate: str
-    reason: str
-
-
 # The address-reuse poison (views/_support.find_control's docstring)
 # wraps an XRC control in the wrong Python type (a generic
 # ``wx.Control`` whose ``SetValue`` does not exist); the settle-retry
@@ -158,13 +148,11 @@ class ReassignRequest:
 # view use. A raw ``wx.Window.FindWindowByName`` skips the check.
 _CONTROL_EXPECTED_TYPES: dict[str, type] = {
     ids.PLATE_INPUT: wx.TextCtrl,
-    ids.NEW_PLATE_INPUT: wx.TextCtrl,
     ids.REASON_INPUT: wx.TextCtrl,
     ids.TIME_PICKER: _wx_adv.TimePickerCtrl,
     ids.VOID_BTN: wx.Button,
     ids.CARD_LBL: wx.StaticText,
     ids.ENTRY_LBL: wx.StaticText,
-    ids.CROSSING_LBL: wx.StaticText,
     ids.START_DATE_PICKER: _wx_adv.DatePickerCtrl,
     ids.START_TIME_PICKER: _wx_adv.TimePickerCtrl,
 }
@@ -472,42 +460,6 @@ def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's f
             dialog.Destroy()
 
 
-def run_reassign(
-    resource: Any,  # noqa: ANN401 -- wx ships no stubs
-    *,
-    frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    crossing_label: str,
-) -> ReassignRequest | None:
-    """Open ``reassign_dlg``; return the confirmed reassign, or None.
-
-    Writes ``crossing_lbl`` naming the crossing being reassigned
-    (never blank -- ``dialogs.reassign_message``).
-    """
-    dialog = resource.LoadDialog(None, ids.REASSIGN_DLG)
-    if dialog is None:
-        return None
-    try:
-        crossing_lbl = _find(dialog, ids.CROSSING_LBL)
-        new_plate_input = _find(dialog, ids.NEW_PLATE_INPUT)
-        reason_input = _find(dialog, ids.REASON_INPUT)
-        crossing_lbl.SetLabel(crossing_label)
-        confirmed: ReassignRequest | None = None
-
-        def _commit() -> None:
-            nonlocal confirmed
-            confirmed = ReassignRequest(
-                new_plate=new_plate_input.GetValue().strip(),
-                reason=reason_input.GetValue().strip(),
-            )
-
-        _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
-        result = _run_dialog(dialog, frame)
-        return confirmed if result == wx.ID_OK else None
-    finally:
-        if not dialog.IsBeingDeleted():
-            dialog.Destroy()
-
-
 def _wx_datetime_for_date(value: date) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Return a ``wx.DateTime`` for *value* (wx months are 0-based)."""
     stamp = wx.DateTime()
@@ -531,7 +483,7 @@ def run_set_start_time(
     """Open ``set_start_dlg``; return the confirmed instant, or None.
 
     ux-polish's Ride ▸ Set Start Time… runner -- section B's sibling
-    of the six section-C runners above: loads ``set_start_dlg``,
+    of the section-C runners above: loads ``set_start_dlg``,
     prefills ``start_date_picker``/``start_time_picker`` from
     *prefill* (the app passes the ride's planned start, the value the
     operator is correcting; the pickers' bare defaults would show
@@ -540,8 +492,8 @@ def run_set_start_time(
     applied, and on a confirmed ``wx.ID_OK`` combines the two pickers
     into the naive local ``datetime`` the engine stores -- the same
     reading ``views/ride_setup.py`` performs for ``planned_start``.
-    No reason field, so no reason gate binds (unlike the six
-    section-C runners): the stock ``wxID_OK`` ends the modal itself.
+    No reason field, so no reason gate binds (unlike the section-C
+    runners): the stock ``wxID_OK`` ends the modal itself.
 
     Returns:
         The confirmed start instant, or ``None`` on cancel.

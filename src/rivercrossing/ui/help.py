@@ -54,7 +54,6 @@ ANCHOR_BY_WINDOW: dict[str, str] = {
     ids.AUDIT_DLG: "fixing-mistakes",
     # The correction dialogs all land on Fixing mistakes.
     ids.EDIT_CROSSING_DLG: "fixing-mistakes",
-    ids.REASSIGN_DLG: "fixing-mistakes",
     ids.MANUAL_DEAL_DLG: "fixing-mistakes",
     ids.DNF_CONFIRM_DLG: "fixing-mistakes",
     ids.VOID_CARD_CONFIRM_DLG: "fixing-mistakes",
