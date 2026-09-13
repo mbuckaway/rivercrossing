@@ -1179,30 +1179,53 @@ def test_record_crossing_short_lap_flags_holds_card_and_still_records_lap() -> N
     assert results["12"].cards == ()
 
 
-def test_record_crossing_short_lap_given_always_deal_default_credits_the_card() -> None:
-    """W4 default: a short lap's card deals; nothing flags or holds."""
+def test_record_crossing_short_lap_given_always_deal_flags_but_still_credits() -> None:
+    """W4 default: a short lap flags for review AND credits its card.
+
+    ``flagged`` is the review channel -- the FLAGGED audio cue and the
+    Needs Review panel -- not the hold decision. Always-deal therefore
+    flags the short lap while still crediting its card (R-34).
+    """
     engine, _ = _make_engine()
     engine.start()
 
     result = engine.record_crossing("12", at=_dt(10, 0, 30))
 
     assert result.accepted is True
-    assert result.flagged is False
+    assert result.flagged is True
     assert engine.held_crossings() == ()
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].laps == 1
     assert results["12"].cards == (result.card,)
 
 
+@pytest.mark.parametrize("hold_short_laps", [True, False], ids=["hold", "always_deal"])
+def test_record_crossing_short_lap_flags_under_both_card_policies(
+    hold_short_laps: bool,  # noqa: FBT001 -- parametrize passes the flag positionally
+) -> None:
+    """A lap under min_lap_s flags under both card policies.
+
+    The policy decides the card's disposition -- held or credited --
+    never whether the short lap is flagged for review.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=hold_short_laps))
+    engine.start()
+
+    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    assert result.flagged is True
+
+
 def test_record_crossing_given_always_deal_credits_every_accepted_lap() -> None:
     """E1 regression: Always Deal credits a card on every crossing.
 
-    With ``hold_short_laps=False`` (the W4 default) neither the lap
-    count nor a short lap time may park a card: the short-lap policy
-    gate is the only thing that ever holds one, so five crossings --
-    a very short opener, then laps one second under, exactly at, one
-    second over ``min_lap_s``, and a long one -- credit all five cards
-    and leave the hold queue empty.
+    With ``hold_short_laps=False`` (the W4 default) the short-lap
+    policy gate is the only thing that ever holds a card, so five
+    crossings -- a very short opener, then laps one second under,
+    exactly at, one second over ``min_lap_s``, and a long one --
+    credit all five cards and leave the hold queue empty. The short
+    laps are still flagged for review (the first two), which is a
+    display fact independent of the credit decision.
     """
     engine, _ = _make_engine(config=_config(hold_short_laps=False, min_lap_s=600))
     engine.start()
@@ -1212,7 +1235,7 @@ def test_record_crossing_given_always_deal_credits_every_accepted_lap() -> None:
 
     results_by_plate = {entry.plate: entry for entry in engine.snapshot()}
     assert [result.accepted for result in results] == [True] * len(times)
-    assert [result.flagged for result in results] == [False] * len(times)
+    assert [result.flagged for result in results] == [True, True, False, False, False]
     assert results_by_plate["12"].laps == len(times)
     assert results_by_plate["12"].cards == tuple(result.card for result in results)
     assert engine.held_crossings() == ()

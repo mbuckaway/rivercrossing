@@ -60,8 +60,14 @@ __all__ = [
 class FeedRow:
     """One row of the console crossings feed (main_frame's list).
 
-    ``flagged`` drives the bold per-row attribute xrc-windows.md calls
-    out as code-side for a held/short-lap crossing. ``edited`` (E7.2.2)
+    ``flagged`` is the short-lap review channel: a row whose lap came
+    in under ``config.min_lap_s`` flags in *both* card policies, which
+    is what bolds it in the feed and lists it in the console's Needs
+    Review tab. ``held`` is the card's disposition -- True only in hold
+    mode (R-34), where the card waits uncredited for a confirm/void
+    decision; an always-deal short lap flags while its card is credited
+    (``held`` False), so the review routing reads the two bits
+    separately. ``edited`` (E7.2.2)
     is the same visual channel for a crossing a correction touched
     (spec §3 design 8c: "edits highlighted in the feed"). ``missed``
     (K) marks a pending miss: the row renders Plate ``-``, Name
@@ -80,6 +86,7 @@ class FeedRow:
     total: str
     card: str
     flagged: bool = False
+    held: bool = False
     edited: bool = False
     missed: bool = False
     miss_seq: int | None = None
@@ -581,6 +588,11 @@ class EngineDataSource:
         (:func:`corrected_crossing_keys`) -- the feed's visual marker
         for spec §3 design 8c's "edits highlighted in the feed".
 
+        Plan §6: a row's ``flagged`` bit is the short-lap review flag
+        (true under both card policies) and its ``held`` bit the
+        hold-mode card disposition, so the Needs Review routing can
+        tell a credited short lap from a held one.
+
         K: pending misses are synthesised into the same feed as
         ``-``/``missed`` rows, interleaved newest-first with the
         crossings (a miss is not a crossing, so it never reaches the
@@ -588,7 +600,7 @@ class EngineDataSource:
         list.
         """
         engine = self._engine
-        held = frozenset(held.crossing for held in engine.held_crossings())
+        held_crossings = frozenset(item.crossing for item in engine.held_crossings())
         edited = corrected_crossing_keys(engine.events, engine.crossings)
         times_by_entry: dict[str, tuple[float, ...]] = {}
         totals_by_entry: dict[str, list[float]] = {}
@@ -609,7 +621,15 @@ class EngineDataSource:
             feed_entry = self._roster.resolve_plate(crossing.entry_id)
             times = times_by_entry.get(crossing.entry_id, ())
             totals = totals_by_entry.get(crossing.entry_id, [])
-            flagged = crossing in held
+            # Plan §6: ``flagged`` is the short-lap review channel (both
+            # policies), ``held`` the hold-mode card disposition. The
+            # seq guard covers a stale crossing whose lap is past the
+            # entry's recorded times.
+            short = (
+                crossing.seq <= len(times) and times[crossing.seq - 1] < engine.config.min_lap_s
+            )
+            flagged = short
+            held = crossing in held_crossings
             held_card = engine.held_card_for(crossing)
             rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
             entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
@@ -637,6 +657,7 @@ class EngineDataSource:
                             else engine.card_for(crossing).code()
                         ),
                         flagged=flagged,
+                        held=held,
                         edited=(crossing.entry_id, crossing.seq) in edited,
                     ),
                 )

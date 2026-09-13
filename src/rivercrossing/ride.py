@@ -1099,11 +1099,14 @@ class RideEngine:
         plate, or a rider_pooled rider's plate, credits the entry --
         uncapped, R-16), appends one lap with a timestamp, marks the
         entry has_data, and deals one card from the shoe (R-40). A lap
-        under ``config.min_lap_s`` is short; whether it flags depends
-        on the W4 policy: with ``config.hold_short_laps`` True the lap
-        still records but its card is held, not credited (R-34), with
-        the False default (always deal) the card is credited to the
-        hand like any other. Refusals come back as ``accepted=False``
+        under ``config.min_lap_s`` is short and always reports
+        ``flagged=True`` -- the review channel the console's FLAGGED
+        cue and Needs Review panel read. The W4 policy decides the
+        card's disposition alone: with ``config.hold_short_laps`` True
+        the lap still records but its card is held, not credited
+        (R-34); with the False default (always deal) the card is
+        credited to the hand like any other. Refusals come back as
+        ``accepted=False``
         results, never raises: not RUNNING, stopped (E4.1.3), or an
         unknown plate (``reason="unknown_plate"``, E4.2.4 -- the error
         cue is E4.4's UI concern).
@@ -1139,11 +1142,9 @@ class RideEngine:
         if short and self._config.hold_short_laps:
             # R-34 (W4 opt-in): the card waits for review, uncredited.
             self._held[crossing] = card
-            flagged = True
         else:
             # W4 default: always deal -- a short lap still credits.
             self._hand.setdefault(entry.plate, []).append(card)
-            flagged = False
         self._append(
             Event(
                 action="record_crossing",
@@ -1163,7 +1164,7 @@ class RideEngine:
             lap=seq,
             lap_time=lap_time,
             card=card,
-            flagged=flagged,
+            flagged=short,
         )
 
     def held_crossings(self) -> tuple[HeldCrossing, ...]:

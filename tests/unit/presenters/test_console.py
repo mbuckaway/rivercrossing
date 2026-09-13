@@ -457,7 +457,7 @@ def test_engine_data_source_feed_rows_given_crossings_returns_newest_first() -> 
     assert feed[0].lap_time == "1:40"  # 100 s between laps
     assert feed[0].total == "0:03:20"  # 200 s from the gun
     assert feed[0].card == engine.card_for(engine.crossings[-1]).code()
-    assert feed[0].flagged is False
+    assert (feed[0].flagged, feed[0].held) == (False, False)
 
 
 @pytest.mark.parametrize(
@@ -490,9 +490,41 @@ def test_engine_data_source_feed_rows_given_flagged_crossing_reports_the_held_ca
 
     feed = source.feed_rows()
 
-    assert feed[0].flagged is True
+    assert (feed[0].flagged, feed[0].held) == (True, True)
     assert feed[0].card == held.card.code()
     assert feed[0].card != "held"
+
+
+def test_engine_data_source_feed_rows_given_credited_short_lap_flags_without_holding() -> None:
+    """Always-deal: a short lap is flagged for review, yet not held.
+
+    The flagged/held split is what the Needs Review routing reads: a
+    credited short lap opens its crossing detail, a held one gets a
+    confirm/void decision.
+    """
+    engine, clock = _running_engine(min_lap_s=60)  # always-deal default
+    _record(engine, clock, "12", lap_time_s=5)  # 5 s < 60 s min lap
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert (feed[0].flagged, feed[0].held) == (True, False)
+    assert feed[0].card == engine.card_for(engine.crossings[-1]).code()
+    assert tuple(card.code() for card in engine.credited_cards("12")) == (feed[0].card,)
+
+
+def test_engine_data_source_feed_rows_given_lap_exactly_at_min_lap_flags_nothing() -> None:
+    """Boundary: ``min_lap_s`` itself is not short.
+
+    Neither flag nor hold: the threshold is exclusive.
+    """
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
+    _record(engine, clock, "12", lap_time_s=60)
+    source = EngineDataSource(engine, engine._roster)
+
+    feed = source.feed_rows()
+
+    assert (feed[0].flagged, feed[0].held) == (False, False)
 
 
 # ----------------------------------------------------------- counters
@@ -1005,6 +1037,25 @@ def test_on_plate_entered_given_flagged_crossing_plays_flagged_cue() -> None:
     assert view.last_feed[0].flagged is True
     assert view.clear_count == 1
     assert view.focus_count == 1
+
+
+def test_on_plate_entered_given_a_credited_short_lap_plays_flagged_cue() -> None:
+    """Plan §6: always-deal still flags the short lap for review.
+
+    The returned flag -- not the hold decision -- drives the cue and
+    the Needs Review row, so a credited short lap sounds FLAGGED too.
+    """
+    engine, clock = _running_engine(min_lap_s=60)  # always-deal default
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(5)  # 5 s < 60 s min lap
+
+    presenter.on_plate_entered("12")
+
+    flagged = [row.flagged for row in view.last_feed]
+    held = [row.held for row in view.last_feed]
+
+    assert (view.cues, flagged, held) == ([Cue.FLAGGED], [True], [False])
 
 
 def test_on_plate_entered_given_unknown_plate_plays_error_keeps_focus_and_keeps_text() -> None:
@@ -1894,6 +1945,25 @@ def test_on_plate_entered_given_flagged_crossing_lists_it_in_the_flagged_rows() 
 
     assert [row.plate for row in view.last_flagged] == ["12"]
     assert view.last_flagged[0].card == engine.held_crossings()[0].card.code()
+
+
+def test_on_plate_entered_given_a_credited_short_lap_lists_it_in_the_flagged_rows() -> None:
+    """Plan §6: always-deal short laps join the review list too.
+
+    The Needs Review tab is the *flagged* subset, so a credited short
+    lap appears there (as a credited, not held, row).
+    """
+    engine, clock = _running_engine(min_lap_s=60)  # always-deal default
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(5)  # 5 s < 60 s min lap
+
+    presenter.on_plate_entered("12")
+
+    assert [(row.plate, row.held) for row in view.last_flagged] == [("12", False)]
+    assert tuple(card.code() for card in engine.credited_cards("12")) == (
+        view.last_flagged[0].card,
+    )
 
 
 def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> None:

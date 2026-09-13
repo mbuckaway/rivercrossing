@@ -261,7 +261,7 @@ class ConsoleView(Protocol):
         ...
 
     def show_flagged(self, rows: list[FeedRow]) -> None:
-        """Render the review notebook's flagged-crossing rows (WS-H)."""
+        """Render the review notebook's short-lap rows (WS-H)."""
         ...
 
     def show_riders(self, rows: list[RiderRow]) -> None:
@@ -634,9 +634,9 @@ class ConsolePresenter:
         """Re-render the crossings feed and its flagged subset.
 
         The flagged subset is the review notebook's "Needs Review" tab
-        (WS-H): exactly the feed's R-34 flag rows, so a record/undo
-        that changes the feed re-renders the flagged list in the same
-        synchronous call.
+        (WS-H): exactly the feed's R-34 flag rows -- every short lap,
+        held or credited -- so a record/undo that changes the feed
+        re-renders the flagged list in the same synchronous call.
         """
         rows = self.source.feed_rows()
         self.view.show_feed(rows)
