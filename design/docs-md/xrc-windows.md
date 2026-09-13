@@ -342,15 +342,7 @@ Void crossing…OKCancel
 
 ⚠ one XRC dialog, two titles: Cards ▸ Edit / Add-at-Time set title + prefill in code; reason required, audit-logged.
 
-Reassign Plate`reassign_dlg`✕
-
-Crossing 14:21:59 · lap credited to **45** `crossing_lbl`
-
-New plateReason
-
-`new_plate_input · reason_input`
-
-OKCancel
+~~Reassign Plate~~ ✕ — **RETIRED (scoring-and-corrections):** the Cards ▸ Reassign Plate… route left with the retired Entry Detail window; Crossing Detail reassigns a plate through `crossing_number_dlg` + `reassign_crossing`.
 
 Deal Bonus Card`manual_deal_dlg`✕
 
