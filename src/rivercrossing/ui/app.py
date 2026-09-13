@@ -2760,6 +2760,17 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     way the modal ended -- the window is already gone, so the values
     are read from the view's plain tuple, never from a wx control.
 
+    Plan §2 adds the menu re-apply. GO drives the engine directly
+    (``SimulatorPresenter.run_simulation``), so no console ride-state
+    change fires and the menubar keeps the ride's pre-GO enablement --
+    Finish Ride / Stop Ride / Undo Last Crossing all stay disabled on
+    the ride the GO just left RUNNING (stopped). Re-applying the live
+    engine's own status, the same read
+    :func:`_record_export_completion` refreshes with, enables them on
+    the spot; a GO the engine refused leaves it DRAFT, so the menu
+    never claims a ride that never started. A route-level context with
+    no presenter has no live ride to re-apply.
+
     Args:
         context: The route context whose store, roster and settings
             to act on.
@@ -2789,6 +2800,9 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save settings: {exc}")
     context.settings = updated
+    presenter = context.presenter
+    if presenter is not None:
+        _apply_menu_state(context, presenter.engine.state)
 
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:

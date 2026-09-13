@@ -24,19 +24,28 @@ window is constructed.
 from __future__ import annotations
 
 import sqlite3
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import pytest
+import wx.xrc
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import Roster
-from rivercrossing.store import RideNameMismatchError, RideNotFoundError, RideRunningError
+from rivercrossing.store import (
+    RideNameMismatchError,
+    RideNotFoundError,
+    RideRunningError,
+    Store,
+)
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import std_dialogs
-from rivercrossing.ui.presenters.data_source import RideSummary
+from rivercrossing.ui import ids, std_dialogs
+from rivercrossing.ui.presenters.console import ConsolePresenter
+from rivercrossing.ui.presenters.data_source import EngineDataSource, RideSummary
 from rivercrossing.ui.presenters.settings import AppSettings
+from rivercrossing.ui.presenters.simulator import SimOutcome, SimulatorPresenter
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -61,10 +70,10 @@ class _RideRow:
         self.name = name
 
 
-def _context(*, store: object) -> app_module._RouteContext:
+def _context(*, store: object, frame: object | None = None) -> app_module._RouteContext:
     """Build a route context carrying *store* and a notice frame."""
     return app_module._RouteContext(
-        frame=_NoticeFrame(),
+        frame=frame if frame is not None else _NoticeFrame(),
         resource=None,
         roster=Roster(),
         app=None,
@@ -937,3 +946,186 @@ def test_open_target_given_simulation_close_with_changes_saves_the_roster(
     app_module._open_target(context, app_module.commands.route_for_id("mi_simulation"))
 
     assert store.saved == [(5, roster)]
+
+
+# ------- Simulation: the post-GO close re-applies the live menu state
+#
+# Plan §2: the simulator's GO leaves the ride RUNNING (stopped), but
+# its §15 menu enablement is computed from the live engine and only
+# refreshed on a console ride-state change -- which a simulated GO
+# never raises (it drives the engine directly, not through the
+# presenter). So Finish Ride / Stop Ride / Undo Last Crossing stay
+# disabled after the modal closes. The tests below stage the app's own
+# flow headless (real store, store-replayed engine with the store's
+# append as its event sink, a real console presenter) and drive the
+# close-persist the route runs once the modal has ended.
+
+
+class _FakeMenuItem:
+    """A recording menu item: ``Enable(bool)`` records the verdict."""
+
+    def __init__(self) -> None:
+        """Start with no recorded verdict."""
+        self.enabled: bool | None = None
+
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name; positional bool
+        """Record the enablement verdict."""
+        self.enabled = enabled
+
+
+class _FakeMenuBar:
+    """A recording menubar holding plan §2's three watched menu rows."""
+
+    _WATCHED = (ids.MI_FINISH_RIDE, ids.MI_STOP_RIDE, ids.MI_UNDO_CROSSING)
+
+    def __init__(self) -> None:
+        """Build one recording item per watched route id."""
+        self.items = {wx.xrc.XRCID(item_id): _FakeMenuItem() for item_id in self._WATCHED}
+
+    def FindItem(  # noqa: N802 -- wx API name
+        self, real_id: int
+    ) -> tuple[_FakeMenuItem | None, None]:
+        """Return the item for *real_id*, or a ``(None, None)`` miss."""
+        item = self.items.get(real_id)
+        return (item, None) if item is not None else (None, None)
+
+    def enabled(self, item_id: str) -> bool | None:
+        """Return the verdict recorded for one watched route id."""
+        return self.items[wx.xrc.XRCID(item_id)].enabled
+
+
+class _MenuFrame(_NoticeFrame):
+    """A notice frame answering ``GetMenuBar`` with a fake bar."""
+
+    def __init__(self, menubar: _FakeMenuBar) -> None:
+        """Hold the bar the menu binder flips."""
+        super().__init__()
+        self.menubar = menubar
+
+    def GetMenuBar(self) -> _FakeMenuBar:  # noqa: N802 -- wx API name
+        """Return the recording menubar."""
+        return self.menubar
+
+
+class _ConsoleViewStub:
+    """A console-view stub: only the presenter's constructor render."""
+
+    def __init__(self) -> None:
+        """Start with no chip render recorded."""
+        self.team_ui_visible: bool | None = None
+
+    def set_team_ui_visible(self, *, visible: bool) -> None:
+        """Record the R-11 teams-chip visibility push."""
+        self.team_ui_visible = visible
+
+
+# The staged GO: four generated riders on two teams, replayed for two
+# laps, so one simulated race records exactly eight crossings.
+_SIM_RIDERS = 4
+_SIM_TEAMS = 2
+_SIM_LAPS = 2
+_SIM_INTERVAL_MINUTES = 1
+_SIM_CROSSINGS = _SIM_RIDERS * _SIM_LAPS
+
+
+class _SimulatedGo(NamedTuple):
+    """One staged GO: the context, its store, ride id and bar."""
+
+    context: app_module._RouteContext
+    store: Store
+    ride_id: int
+    menubar: _FakeMenuBar
+
+
+@pytest.fixture
+def simulated_go(tmp_path: Path) -> Iterator[_SimulatedGo]:
+    """Stage the simulator's own flow: open a DRAFT ride, then GO.
+
+    The app's path, headless: the ride row is created over a real store,
+    its console presenter is threaded over the store-replayed engine
+    with the store's append wired as the engine's event sink (the sink
+    :func:`app._wire_store_append` attaches), the dialog's own
+    presenter generates the placeholder field and replays the race (the
+    dialog's GO), and the ride is left RUNNING+stopped with every event
+    persisted. Yields the pieces the three post-GO tests act on.
+    """
+    from conftest import gorba_config  # noqa: PLC0415 -- the shared live-config fixture
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        ride_id = store.create_ride(gorba_config())
+        roster = store.roster_for(ride_id)
+        engine = store.load_engine(ride_id, roster)
+        menubar = _FakeMenuBar()
+        context = _context(store=store, frame=_MenuFrame(menubar))
+        context.roster = roster
+        context.active_ride_id = ride_id
+        context.settings_path = tmp_path / "settings.json"
+        app_module._wire_store_append(
+            engine, store, ride_id, notify=app_module._status_notice(context)
+        )
+        context.presenter = ConsolePresenter(
+            _ConsoleViewStub(), engine=engine, source=EngineDataSource(engine, roster)
+        )
+        simulator = SimulatorPresenter(engine, roster)
+        simulator.generate_riders(_SIM_RIDERS, _SIM_TEAMS, 0, seed=1)
+        outcome = simulator.run_simulation(_SIM_LAPS, _SIM_INTERVAL_MINUTES)
+        assert outcome == SimOutcome(cancelled=False, recorded=_SIM_CROSSINGS, blocked=None)
+        yield _SimulatedGo(context=context, store=store, ride_id=ride_id, menubar=menubar)
+    finally:
+        store.close()
+
+
+def test_persist_simulator_changes_after_a_simulated_go_leaves_the_ride_running(
+    simulated_go: _SimulatedGo,
+) -> None:
+    """Plan §2: the close leaves the ride RUNNING and stopped."""
+    context, _store, _ride_id, _menubar = simulated_go
+
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
+
+    engine = context.presenter.engine  # type: ignore[union-attr] -- the fixture threads one
+    assert (engine.state, engine.stopped) == (RideStatus.RUNNING, True)
+
+
+def test_persist_simulator_changes_after_a_simulated_go_enables_the_running_rows(
+    simulated_go: _SimulatedGo,
+) -> None:
+    """Plan §2: Finish Ride / Stop / Undo enable on the ride."""
+    context, _store, _ride_id, menubar = simulated_go
+
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
+
+    assert menubar.enabled(ids.MI_FINISH_RIDE) is True
+    assert menubar.enabled(ids.MI_STOP_RIDE) is True
+    assert menubar.enabled(ids.MI_UNDO_CROSSING) is True
+
+
+def test_persist_simulator_changes_after_a_simulated_go_keeps_the_audit_trail(
+    simulated_go: _SimulatedGo,
+) -> None:
+    """Plan §2: the ride's start, crossings and stop all persist."""
+    context, store, ride_id, _menubar = simulated_go
+
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=True))
+
+    assert [row.action for row in store.audit_rows(ride_id)] == [
+        "stop",
+        *["record_crossing"] * _SIM_CROSSINGS,
+        "start",
+    ]
+
+
+def test_persist_simulator_changes_without_a_presenter_leaves_the_menu_untouched(
+    tmp_path: Path,
+) -> None:
+    """Plan §2: no live engine means no menu re-apply at all."""
+    menubar = _FakeMenuBar()
+    context = _context(store=None, frame=_MenuFrame(menubar))
+    context.settings_path = tmp_path / "settings.json"
+
+    app_module._persist_simulator_changes(context, _SimulatorViewStub(roster_changed=False))
+
+    assert menubar.enabled(ids.MI_FINISH_RIDE) is None
+    assert menubar.enabled(ids.MI_STOP_RIDE) is None
+    assert menubar.enabled(ids.MI_UNDO_CROSSING) is None
