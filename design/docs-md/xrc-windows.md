@@ -23,8 +23,8 @@ RUNNING `ride_status_lbl`
 ▣ Ride — Name / Date / Venue, each read-out labelled · ▣ Details — Organizer / Scorer / Lap length km
 `ride_name_value · ride_date_value · ride_venue_value (the "Ride" wxStaticBoxSizer group) · ride_organizer_value · ride_scorer_value · ride_lap_km_value (the "Details" wxStaticBoxSizer group) — read-only wxTextCtrl, <size>240,-1</size>, each preceded by its own unnamed label; the two native group boxes split C1's single "Ride" group into the ride's identity rows and its organizer rows, and each group's label is <label> text only, never a frozen name, so no constant in ui/ids.py changed. ⬛ `ride_logo_bmp` (wxStaticBitmap — the ride's own logo, fitted to 64×64 and hidden when the ride has none) closes the block, to the right of both groups, with the Lap box and the clock panels to its right`
 
-▣ Lap — 01, caption "Current Lap" below
-`current_lap_lbl (wxStaticText — the ride's current lap: the highest lap number recorded, 00 before any crossing; always two digits (capped at main_frame.MAX_CURRENT_LAP), light-green clock-sized type authored in main.xrc's <fg>/<font>, its width pinned to the two-digit extent code-side by main_frame._pin_current_lap_width. The "Lap" wxStaticBoxSizer sits between the ride-info block and the clock panels; its "Current Lap" caption is unnamed <label> text)`
+▣ (untitled) — 01, caption "Current Lap" below
+`current_lap_lbl (wxStaticText — the ride's current lap: the highest lap number recorded, 00 before any crossing; always two digits (capped at main_frame.MAX_CURRENT_LAP), light-green clock-sized type authored in main.xrc's <fg>/<font>, its width pinned to the two-digit extent code-side by main_frame._pin_current_lap_width. The untitled wxStaticBoxSizer (its label is empty — the caption names the box) sits between the ride-info block and the clock panels; its "Current Lap" caption is unnamed <label> text)`
 
 Elapsed — (dial) — 4:22:41      Remaining — (dial) — 1:37:19
 

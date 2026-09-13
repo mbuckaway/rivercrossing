@@ -9,7 +9,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 ### Added
 
 - **A screen-fitted main window** — the window now fits the display's work area on launch and re-fits when the monitor configuration changes (work area, not full monitor: the menu bar and Dock/taskbar are excluded), clamping both its size and its position, including a window geometry restored from the previous session.
-- **A Current Lap reading in the console header** — a new "Lap" group box shows the highest lap recorded as a two-digit light-green reading under a "Current Lap" caption; it counts up as the field crosses.
+- **A Current Lap reading in the console header** — a new group box in the header (no box title: the caption names it) shows the highest lap recorded as a two-digit light-green reading under a "Current Lap" caption; it counts up as the field crosses.
 - **A Check button in the Rider Simulator** — validates the riders / teams / solo counts and explains, in an OK-only dialog, how to fix a combination that cannot work. The simulator's defaults are now 175 riders, 40 teams and 15 solo riders; the solo count fills itself in so Generate always works, and "Minutes between first rider" opens on the lap length at the average speed plus a five-minute buffer.
 - **A search box and sortable, resizable columns on the crossings list** — the console feed now lists every crossing (the 30-row cap is gone) and scrolls the whole ride; it narrows as you type, sorts on a header click (Time ascending by default) and resizes from the column edges. A DNF rider's row carries a "DNF" marker.
 - **A Best lap column on the standings** — shown with Total under "Show lap & total times".

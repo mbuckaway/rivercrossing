@@ -555,7 +555,8 @@ def _child_summaries(sizer: Element) -> list[str]:
         if name:
             summaries.append(name)
         elif child.attrib.get("class") == "wxStaticBoxSizer":
-            summaries.append(f"wxStaticBoxSizer:{_param(child, 'label')}")
+            label = _param(child, "label")
+            summaries.append(f"wxStaticBoxSizer:{label}" if label else "wxStaticBoxSizer")
         else:
             summaries.append(child.attrib.get("class", child.tag))
     return summaries
@@ -644,7 +645,6 @@ def test_details_group_box_holds_the_organizer_rows_only() -> None:
 # Current Lap group in the top row.
 
 STATUS_GROUP_LABEL = "Status"
-CURRENT_LAP_GROUP_LABEL = "Lap"
 CURRENT_LAP_CAPTION = "Current Lap"
 
 
@@ -676,6 +676,17 @@ def _top_row() -> Element:
     return _containing_sizer(window, _nearest_sizer(window, "ride_logo_bmp"))
 
 
+def _lap_group_box() -> Element:
+    """Return the Current Lap group box, anchored on its value control.
+
+    The box carries no title (an empty ``<label>``), so ``_group_box``'s
+    label lookup cannot find it -- walk up from ``current_lap_lbl``
+    instead.
+    """
+    window = _window("main_frame")
+    return _containing_sizer(window, _objects_by_name(window)["current_lap_lbl"])
+
+
 def test_status_group_box_wraps_the_stop_light_panel_and_its_label() -> None:
     """Part 2: the lamp column and its label share one titled box."""
     names = [
@@ -700,7 +711,7 @@ def test_current_lap_group_is_a_static_box_in_the_header_row() -> None:
 
     assert row_children == [
         "wxBoxSizer",
-        f"wxStaticBoxSizer:{CURRENT_LAP_GROUP_LABEL}",
+        "wxStaticBoxSizer",
         "wxBoxSizer",
         "wxBoxSizer",
     ]
@@ -708,7 +719,7 @@ def test_current_lap_group_is_a_static_box_in_the_header_row() -> None:
 
 def test_current_lap_group_holds_the_two_digit_value_and_its_caption() -> None:
     """The value is first, its "Current Lap" caption below it."""
-    box = _group_box(CURRENT_LAP_GROUP_LABEL)
+    box = _lap_group_box()
     cells = [
         item.find("object")
         for item in box
@@ -722,13 +733,13 @@ def test_current_lap_group_holds_the_two_digit_value_and_its_caption() -> None:
 
 
 def test_current_lap_group_declares_no_box_title() -> None:
-    """The "Current Lap" caption already names the reading below it.
+    """The box carries no title -- the "Current Lap" caption names it.
 
-    The box carries the short title ``Lap`` -- the Ride/Details boxes'
-    own terse convention -- so the group never repeats the caption
-    inside it.
+    The word ``Lap`` is off the top of the control by request: the
+    caption under the reading already says what it is, and the empty
+    box label keeps the group from repeating it.
     """
-    assert _param(_group_box(CURRENT_LAP_GROUP_LABEL), "label") == CURRENT_LAP_GROUP_LABEL
+    assert _param(_lap_group_box(), "label") == ""
 
 
 def test_current_lap_label_declares_the_two_digit_default() -> None:
@@ -762,7 +773,7 @@ def test_current_lap_label_declares_a_relative_clock_sized_font() -> None:
 
 def test_current_lap_group_takes_the_column_style_caption_and_value_stack() -> None:
     """A vertical column, like the two clock panels beside it."""
-    box = _group_box(CURRENT_LAP_GROUP_LABEL)
+    box = _lap_group_box()
 
     assert _param(box, "orient") == "wxVERTICAL"
 
