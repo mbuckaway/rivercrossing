@@ -230,8 +230,11 @@ when `LANG`/`LC_ALL` are unset (NSIS bug 1165), so every invocation forces a UTF
 
 A version tag is the whole release procedure — the pipeline does the rest (spec §14 stage 6):
 
-1. Bump `__version__` in `src/rivercrossing/__init__.py` and add the version's CHANGELOG section.
-2. Merge to `master` through a PR (the tag must sit on gated code).
+1. **Create a `release/v<X.Y.Z>` branch** (e.g. `release/v1.0.15`) from an up-to-date `master`, and
+   bump `__version__` in `src/rivercrossing/__init__.py` there together with the version's CHANGELOG
+   section. The version bump MUST be made on this branch — never committed directly to `master`.
+2. **Open a PR from `release/v<X.Y.Z>` and merge it to `master`** (the tag must sit on gated code).
+   The `release/v<X.Y.Z>` branch and its PR are required, not optional.
 3. `git tag v<version> && git push origin v<version>` — the exact `v<version>` spelling matters:
    the release job fails on a tag that does not match `rivercrossing.__version__`.
 4. The tag runs the full gauntlet; when green, the `release` job publishes the GitHub release with
