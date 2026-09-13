@@ -23,7 +23,10 @@ the engine afterwards, exactly like the six section-C rows).
 Every form/confirm requires a non-empty ``reason``: the OK handler
 keeps the dialog open and refocuses ``reason_input`` when it is blank
 (``_bind_reason_gate``), so the engine's own empty-reason refusal is
-never the first line of defence in the UI.
+never the first line of defence in the UI. ``dnf_confirm_dlg`` gates
+on its ``plate_input`` as well (``_bind_plate_gate``) -- its target is
+typed in, and a blank plate would otherwise reach the engine's own
+unknown-plate refusal instead of the form's.
 
 The move-rider "team picker" has no XRC dialog (spec §15b authors
 none); :func:`run_move_rider` builds a small native picker in code.
@@ -154,6 +157,29 @@ def _bind_reason_gate(reason_input: Any) -> Callable[[], bool]:  # noqa: ANN401 
         return False
 
     return _reason_present
+
+
+def _bind_plate_gate(
+    plate_input: Any,  # noqa: ANN401 -- wx ships no stubs
+    reason_input: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> Callable[[], bool]:
+    """Return a gate requiring BOTH the plate and the reason.
+
+    ``dnf_confirm_dlg`` is the one correction form whose target is
+    typed in, so its OK gate covers two fields: with either blank the
+    dialog stays open and focus lands on the missing one, and the
+    engine's own empty-reason/unknown-plate refusals are never the
+    first line of defence in the UI.
+    """
+    reason_present = _bind_reason_gate(reason_input)
+
+    def _fields_present() -> bool:
+        if not plate_input.GetValue().strip():
+            plate_input.SetFocus()
+            return False
+        return reason_present()
+
+    return _fields_present
 
 
 def _bind_ok(dialog: Any, gate: Callable[[], bool], on_ok: Callable[[], None]) -> None:  # noqa: ANN401 -- wx ships no stubs
@@ -338,32 +364,43 @@ def run_void_card(  # noqa: PLR0913 -- (resource, frame, entry_id, card, entry)
             dialog.Destroy()
 
 
-def run_dnf(  # noqa: PLR0913 -- (resource, frame, entry_id, entry)
+def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's fixed shape
     resource: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
     frame: Any,  # noqa: ANN401 -- wx ships no stubs
-    entry_id: str,
-    entry: str,
+    plate: str = "",
+    entry: str = "",
 ) -> DnfMark | None:
     """Open ``dnf_confirm_dlg``; return the confirmed DNF mark.
 
-    Writes ``entry_lbl`` naming the entry (never blank --
-    ``dialogs.dnf_message``).
+    The dialog is a form: ``plate_input`` takes the rider number (or a
+    whole entry's plate) and ``reason_input`` the reason, both
+    non-empty before OK closes it -- the same gate every correction
+    form applies. *plate* prefills the input (the entry-detail button
+    passes its own entry plate; the menu route passes nothing and the
+    operator types the number). *entry* writes the ``entry_lbl``
+    naming sentence (``dialogs.dnf_message``) when a target is already
+    known; with none, XRC's own standing copy stays.
     """
     dialog = resource.LoadDialog(None, ids.DNF_CONFIRM_DLG)
     if dialog is None:
         return None
     try:
-        entry_lbl = _find(dialog, ids.ENTRY_LBL)
+        plate_input = _find(dialog, ids.PLATE_INPUT)
         reason_input = _find(dialog, ids.REASON_INPUT)
-        entry_lbl.SetLabel(entry)
+        plate_input.SetValue(plate)
+        if entry:
+            _find(dialog, ids.ENTRY_LBL).SetLabel(entry)
         confirmed: DnfMark | None = None
 
         def _commit() -> None:
             nonlocal confirmed
-            confirmed = DnfMark(entry_id=entry_id, reason=reason_input.GetValue().strip())
+            confirmed = DnfMark(
+                plate=plate_input.GetValue().strip(),
+                reason=reason_input.GetValue().strip(),
+            )
 
-        _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
+        _bind_ok(dialog, _bind_plate_gate(plate_input, reason_input), _commit)
         result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
     finally:

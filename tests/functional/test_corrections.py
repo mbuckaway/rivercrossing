@@ -63,7 +63,7 @@ _DIALOG_CONTROLS = (
     (ids.EDIT_CROSSING_DLG, (ids.PLATE_INPUT, ids.TIME_PICKER, ids.REASON_INPUT, ids.VOID_BTN)),
     (ids.REASSIGN_DLG, (ids.CROSSING_LBL, ids.NEW_PLATE_INPUT, ids.REASON_INPUT)),
     (ids.MANUAL_DEAL_DLG, (ids.PLATE_INPUT, ids.REASON_INPUT)),
-    (ids.DNF_CONFIRM_DLG, (ids.ENTRY_LBL, ids.REASON_INPUT)),
+    (ids.DNF_CONFIRM_DLG, (ids.ENTRY_LBL, ids.PLATE_INPUT, ids.REASON_INPUT)),
     (ids.VOID_CARD_CONFIRM_DLG, (ids.CARD_LBL, ids.REASON_INPUT)),
 )
 
@@ -446,10 +446,10 @@ def test_reassign_menu_route_reassigns_the_current_entrys_latest_lap(
     assert len(engine.events) == before + 1
 
 
-def test_mark_dnf_menu_route_marks_the_current_entry(
+def test_mark_dnf_menu_route_marks_the_typed_plate(
     live_context: tuple[app_module._RouteContext, RideEngine, Roster],
 ) -> None:
-    """Mark DNF… names the entry and flips its status."""
+    """Mark DNF… asks for the plate; its confirm names the target."""
     context, engine, roster = live_context
     frame = context.frame
     context.detail_plate = "12"
@@ -457,7 +457,8 @@ def test_mark_dnf_menu_route_marks_the_current_entry(
 
     def _drive(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         label = harness.find_control(dialog, ids.ENTRY_LBL).GetLabelText()
-        assert "12 · Rider 12" in label
+        assert "12 · Rider 12" in label  # the open entry prefills and names itself
+        harness.type_text(dialog, ids.PLATE_INPUT, "12")
         harness.type_text(dialog, ids.REASON_INPUT, "mechanical failure")
         harness.click(dialog, "wxID_OK")
 
@@ -465,7 +466,7 @@ def test_mark_dnf_menu_route_marks_the_current_entry(
     _schedule_end_modal_if_undecided(ids.DNF_CONFIRM_DLG)
     harness.fire_menu_event(frame, ids.MI_MARK_DNF)
 
-    assert frame.GetStatusBar().GetStatusText(0) == "Entry marked DNF"
+    assert frame.GetStatusBar().GetStatusText(0) == "DNF marked"
     assert engine.events[-1].action == "dnf"
     assert roster.resolve_plate("12").status.value == "dnf"
     assert len(engine.events) == before + 1

@@ -995,10 +995,9 @@ class Store:
     def backup_now(self) -> Path:
         """Write a manual backup of the open database now (R-54).
 
-        The File ▸ Back Up Database… command and the settings dialog's
-        ``backup_now_btn`` surface this: a plain ``backup.run`` call on
-        the store's own backing path -- the same write
-        :meth:`delete_ride` performs before a delete (R-18's
+        The File ▸ Back Up Database… command surfaces this: a plain
+        ``backup.run`` call on the store's own backing path -- the same
+        write :meth:`delete_ride` performs before a delete (R-18's
         backup-first), so the manual and the automatic paths share one
         implementation. Returns the new backup's path for the caller
         to surface.

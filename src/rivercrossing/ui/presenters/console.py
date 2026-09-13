@@ -10,9 +10,10 @@ display), ``set_entry_locked`` (R-35's "only confirming locks the
 entry field"), -- WS-D/WS-H -- ``set_clock_fractions`` (the
 gauge-clock dials), ``show_flagged`` and ``show_riders`` (the review
 notebook's two tabs), ``show_start_blocked`` (Phase 5's
-blocked-start issues dialog), and -- W12 --
+blocked-start issues dialog), -- W12 --
 ``set_team_ui_visible`` (the R-11 Teams-chip visibility on the count
-chips), the same "add the member once the presenter calls it"
+chips), and -- Phase 6 -- ``show_current_lap`` (the header's lap
+reading), the same "add the member once the presenter calls it"
 precedent ``main_frame.py``'s own docstring records.
 
 Pure Python -- no ``wx`` import may ever land here (R-71). The
@@ -72,9 +73,33 @@ rides:
   the live reading would make a reopened ride's clock start running
   again, the bug C3 fixes. The freeze is a display product decision;
   the design write-back lands in W15.
+
+Phase 4 reworks the crossings list itself:
+
+- ``refresh_feed`` is public and renders only when the ride's own
+  data changed (``_feed_state`` is the watermark), so the 1 s tick
+  keeps the clock and chips live without rebuilding a
+  multi-thousand-row model -- R-32's 30-row feed cap is retired, so
+  every crossing and pending miss is a row.
+- ``on_search_text`` narrows that list to the box's text, and
+  ``rendered_feed_rows`` is the row list the app resolves an
+  activated feed row against (the view's own header sort never moves
+  what a row index means).
+- A miss is stamped from the engine's clock, not ``datetime.now``, so
+  a miss and its ride's crossings share one timeline.
+
+Phase 6 adds the header's lap reading and re-colours DRAFT:
+
+- ``current_lap`` is the pure ``max(crossing.seq)`` across every
+  entry, and ``refresh_feed`` renders it through the view's
+  ``show_current_lap`` in the same call that renders the feed -- so
+  the header's reading and the feed can never disagree about the
+  ride, and an undo drops the reading back with the row it removed.
+- ``stop_light_mode`` maps DRAFT to the red circle: the pre-start
+  state is not running, and its own DRAFT label beside the lamp says
+  so, so the colour never carries meaning alone.
 """
 
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from rivercrossing import hands
@@ -84,9 +109,9 @@ from rivercrossing.ui.presenters.data_source import format_duration
 from rivercrossing.ui.sound import Cue  # Re-exported; see module docstring
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
-    from rivercrossing.ride import RideEngine
+    from rivercrossing.ride import Crossing, RideEngine
     from rivercrossing.ui.presenters.data_source import Counters, DataSource, FeedRow, RiderRow
 
 __all__ = [
@@ -95,6 +120,7 @@ __all__ = [
     "ConsolePresenter",
     "ConsoleView",
     "Cue",
+    "current_lap",
     "is_miss",
     "status_text",
     "stop_light_mode",
@@ -153,17 +179,19 @@ def stop_light_mode(status: RideStatus | None, *, stopped: bool = False) -> str:
     The console's code-side ``StopLight`` (``views/gauges.py``) lights
     one of three circles; this is the RideStatus -> mode mapping the
     view applies in ``set_state``. Pure (like ``_rejection_notice``),
-    so the mapping is testable without wx. REOPENED shares DRAFT's
-    amber: the corrections banner and the status label carry the
-    distinction -- the light never carries meaning by colour alone.
+    so the mapping is testable without wx. Phase 6 gives DRAFT the red
+    circle -- the pre-start state is "not running", and its own DRAFT
+    label beside the lamp says so -- while REOPENED keeps the amber
+    warning: the corrections banner and the status label carry the
+    distinction, so the light never carries meaning by colour alone.
     W1: ``None`` is the no-ride console -- no ride is open, so no
     circle lights (``"off"``). W6: a stopped RUNNING ride is amber
     too, matching its STOPPED label.
 
     Returns:
-        ``"green"`` live RUNNING, ``"yellow"`` DRAFT/REOPENED or a
-        stopped RUNNING ride, ``"red"`` FINISHED, ``"off"`` no ride
-        open (``None``).
+        ``"green"`` live RUNNING, ``"red"`` DRAFT or FINISHED,
+        ``"yellow"`` REOPENED or a stopped RUNNING ride, ``"off"``
+        no ride open (``None``).
     """
     if status is None:
         return "off"
@@ -171,7 +199,21 @@ def stop_light_mode(status: RideStatus | None, *, stopped: bool = False) -> str:
         return "yellow" if stopped else "green"
     if status is RideStatus.FINISHED:
         return "red"
+    if status is RideStatus.DRAFT:
+        return "red"
     return "yellow"
+
+
+def current_lap(crossings: Sequence[Crossing]) -> int:
+    """Return the highest lap number any entry has recorded (Phase 6).
+
+    ``max(crossing.seq)``: ``seq`` is the per-entry 1-based lap number,
+    so the console header's "Current Lap" reading is the furthest any
+    rider has got -- 0 before the first crossing of the ride. Pure and
+    wx-free, so the reading is unit-testable without a window; the
+    header's own two-digit rendering lives in the view.
+    """
+    return max((crossing.seq for crossing in crossings), default=0)
 
 
 def _clock_fraction(seconds: float, total: float) -> float:
@@ -183,6 +225,28 @@ def _clock_fraction(seconds: float, total: float) -> float:
     ``__post_init__`` validates positive -- no zero guard needed.
     """
     return min(1.0, max(0.0, seconds / total))
+
+
+def _visible_feed_rows(rows: Sequence[FeedRow], search_text: str) -> list[FeedRow]:
+    """Filter *rows* by *search_text* (Phase 4).
+
+    *search_text* matches the row's Plate, Name or Card cell as a
+    case-insensitive substring -- the same three-cell rule (and the
+    same whitespace-tolerant, blank-filters-nothing behaviour) the
+    rider editor's ``_visible_pairs`` applies to its own list. The
+    survivors keep the feed's given (newest-first) order: the list's
+    native header sort re-orders what it displays.
+    """
+    needle = search_text.strip().casefold()
+    if not needle:
+        return list(rows)
+    return [
+        row
+        for row in rows
+        if needle in row.plate.casefold()
+        or needle in row.entry.casefold()
+        or needle in row.card.casefold()
+    ]
 
 
 @runtime_checkable
@@ -269,6 +333,15 @@ class ConsoleView(Protocol):
 
         Rows arrive in the source's own order; the list's native header
         sort re-orders what it displays.
+        """
+        ...
+
+    def show_current_lap(self, lap: int) -> None:
+        """Render the header's Current Lap reading (Phase 6).
+
+        *lap* is ``console.current_lap(engine.crossings)`` -- the
+        highest lap number any entry has recorded, 0 before the first
+        crossing. The view renders it as the pinned two-digit value.
         """
         ...
 
@@ -368,6 +441,12 @@ class ConsolePresenter:
         self._frozen_elapsed: float | None = None
         # H: the riders rows last rendered; None forces the first tick.
         self._last_riders: list[RiderRow] | None = None
+        # Phase 4: the crossings search box's text, and the feed rows it
+        # last produced. None, not ``()``, so the first render always
+        # happens (an empty engine renders an empty feed exactly once).
+        self._search_text = ""
+        self._rendered_feed: list[FeedRow] = []
+        self._feed_watermark: tuple[object, ...] | None = None
         # W12/R-11: the constructor-owned render (class docstring).
         self.view.set_team_ui_visible(visible=self.engine.config.entry_mode is EntryMode.MIXED)
 
@@ -396,7 +475,7 @@ class ConsolePresenter:
             self.view.show_notice(_rejection_notice(plate, result.reason))
             self.view.focus_entry()
             return
-        self._refresh_feed()
+        self.refresh_feed()
         self._refresh_counters()
         self.view.flash_crossing(self.source.feed_rows()[0])
         self.view.play(Cue.FLAGGED if result.flagged else Cue.RECORDED)
@@ -414,15 +493,21 @@ class ConsolePresenter:
         refusal. A recorded miss is an intentional signal rather than a
         typo, so the field clears (unlike a rejected plate) and the
         ERROR cue confirms the symbol was not taken as a plate.
+
+        The instant comes from the ride's own clock
+        (``engine.clock()``), never ``datetime.now``: the feed renders
+        each row's elapsed reading against ``actual_start`` (Phase 4),
+        so a miss made outside the ride's own (possibly scripted)
+        timeline would sort and read as a point that never happened.
         """
         try:
-            self.engine.record_miss(datetime.now(UTC), reason="missed number")
+            self.engine.record_miss(self.engine.clock(), reason="missed number")
         except IllegalStateError as exc:
             self.view.play(Cue.ERROR)
             self.view.show_notice(f"Miss not recorded: {exc}")
             self.view.focus_entry()
             return
-        self._refresh_feed()
+        self.refresh_feed()
         self._refresh_counters()
         self.view.play(Cue.ERROR)
         self.view.show_notice("Number missed — logged for later entry")
@@ -461,7 +546,7 @@ class ConsolePresenter:
         except IllegalStateError as exc:
             self.view.show_notice(f"Undo unavailable: {exc}")
             return
-        self._refresh_feed()
+        self.refresh_feed()
         self._refresh_counters()
         self.view.show_notice("Last crossing undone")
 
@@ -487,7 +572,7 @@ class ConsolePresenter:
         except StartBlockedError as exc:
             self.view.show_start_blocked(list(exc.reasons))
             return
-        self._refresh_feed()
+        self.refresh_feed()
         self._refresh_counters()
         self.view.set_state(self.engine.state, stopped=self.engine.stopped)
         self.view.set_entry_locked(locked=False)
@@ -573,6 +658,32 @@ class ConsolePresenter:
         """Handle the hide-times setting toggling live (R-37)."""
         self.view.set_hide_times(hide=hide)
 
+    def on_search_text(self, text: str) -> None:
+        """Narrow the crossings list to rows matching *text* (Phase 4).
+
+        Matches the row's Plate, Name or Card cell case-insensitively
+        (the rider editor's own three-cell rule) -- so a plate, a
+        rider/entry name or a dealt card code all find their rows. The
+        survivors keep the feed's newest-first order (the list's native
+        header sort paints its own order on top); clearing the box
+        restores every row. The Needs Review tab is untouched: the
+        search box sits over the crossings list alone.
+        """
+        self._search_text = text
+        self.refresh_feed()
+
+    def rendered_feed_rows(self) -> list[FeedRow]:
+        """Return the rendered feed rows, search filter applied.
+
+        The app's row -> crossing resolution reads this: the view hands
+        its activation seam a row index into what it is *displaying*,
+        so resolving it against anything but the rendered list (the
+        unfiltered source, say) would open the wrong crossing under an
+        active search. Rows are the presenter's own list, so the view's
+        native header sort cannot move what an index means.
+        """
+        return list(self._rendered_feed)
+
     def on_finish(self) -> None:
         """Handle the Finish Ride flow (E4.4.2, gate hook E6.4.3).
 
@@ -592,7 +703,7 @@ class ConsolePresenter:
         except IllegalStateError as exc:
             self.view.show_notice(f"Cannot finish: {exc}")
             return
-        self._refresh_feed()
+        self.refresh_feed()
         self._refresh_counters()
         self.view.set_state(self.engine.state, stopped=self.engine.stopped)
         self.view.show_notice("Ride finished again" if was_reopened else "Ride finished")
@@ -612,7 +723,7 @@ class ConsolePresenter:
         except IllegalStateError as exc:
             self.view.show_notice(f"Cannot reopen: {exc}")
             return
-        self._refresh_feed()
+        self.refresh_feed()
         self._refresh_counters()
         self.view.set_state(self.engine.state, stopped=self.engine.stopped)
         self.view.show_notice("Ride reopened for corrections")
@@ -625,22 +736,69 @@ class ConsolePresenter:
         driver of the live clock, so C3's closed-ride freeze lives in
         :meth:`_refresh_clock`.
         """
-        self._refresh_feed()
+        self.refresh_feed()
         self._refresh_riders()
         self._refresh_counters()
         self._refresh_clock()
 
-    def _refresh_feed(self) -> None:
+    def refresh_feed(self) -> None:
         """Re-render the crossings feed and its flagged subset.
 
         The flagged subset is the review notebook's "Needs Review" tab
         (WS-H): exactly the feed's R-34 flag rows -- every short lap,
         held or credited -- so a record/undo that changes the feed
-        re-renders the flagged list in the same synchronous call.
+        re-renders the flagged list in the same synchronous call. Both
+        lists render the unfiltered rows; only the crossings list
+        itself applies the search box (:meth:`on_search_text`).
+
+        Public because the app's console swap
+        (``app._swap_console_onto``) renders through it:
+        renders through it: the presenter is the only object that
+        knows the search filter, so the rows it hands the view and the
+        rows :meth:`rendered_feed_rows` resolves an activation against
+        must be the same list.
+
+        Phase 4: the console scrolls the whole ride now, so this runs
+        only when the ride's own data changed --
+        :meth:`_feed_state` is the watermark, and an unchanged tick
+        returns before ``source.feed_rows()`` is even called. The
+        view rebuilds a fresh 2 000-row model per render and drops the
+        operator's header sort key doing it (macOS), so the skip is
+        what keeps the 1 s tick cheap.
+
+        Phase 6: the header's Current Lap reading renders here too.
+        Every way the reading can change -- a record, an undo, a
+        correction, a miss, a DNF mark -- moves the same watermark, so
+        the lap and the feed can never disagree about the ride.
         """
+        state = self._feed_state()
+        if state == self._feed_watermark:
+            return
+        self._feed_watermark = state
         rows = self.source.feed_rows()
-        self.view.show_feed(rows)
+        self._rendered_feed = _visible_feed_rows(rows, self._search_text)
+        self.view.show_feed(self._rendered_feed)
         self.view.show_flagged([row for row in rows if row.flagged])
+        self.view.show_current_lap(current_lap(self.engine.crossings))
+
+    def _feed_state(self) -> tuple[object, ...]:
+        """Return the tuple the rendered feed is a pure function of.
+
+        ``len(engine.events)`` is the primary watermark: every engine
+        mutation appends an audit event, so a recorded crossing, an
+        undo, a correction, a miss or a DNF mark all move it. The other
+        three entries are read off the same engine for the same render
+        (the pending misses, the held cards and the per-rider DNF set),
+        and the search text is the fourth input -- a box change must
+        re-render even when nothing else did.
+        """
+        return (
+            len(self.engine.events),
+            len(self.engine.pending_misses()),
+            len(self.engine.held_crossings()),
+            len(self.engine.dnf_riders),
+            self._search_text,
+        )
 
     def _refresh_riders(self) -> None:
         """Re-render the review notebook's riders tab from the source.

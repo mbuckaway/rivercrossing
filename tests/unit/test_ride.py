@@ -123,11 +123,11 @@ def test_ride_config_bare_required_fields_defaults_deck_count_to_eight() -> None
     assert config.deck_count == DEFAULT_DECK_COUNT
 
 
-def test_ride_config_bare_required_fields_defaults_jokers_per_deck_to_two() -> None:
-    """jokers_2_radio's XRC default (xrc-windows.md's setup mock)."""
+def test_ride_config_bare_required_fields_defaults_jokers_per_deck_to_one() -> None:
+    """jokers_choice's XRC default: 1 joker per deck (setup.xrc)."""
     config = _config()
 
-    assert config.jokers_per_deck == DEFAULT_JOKERS_PER_DECK
+    assert (config.jokers_per_deck, DEFAULT_JOKERS_PER_DECK) == (1, 1)
 
 
 def test_ride_config_bare_required_fields_defaults_max_cards_to_uncapped() -> None:
@@ -1057,6 +1057,44 @@ def test_snapshot_includes_dnf_entries_with_dnf_flag() -> None:
     assert results[1].dnf is False
 
 
+def test_snapshot_forfeits_a_dnf_team_riders_cards_and_keeps_the_team() -> None:
+    """A DNF rider's cards leave the pool; the team stays in."""
+    engine = _pooled_team_engine()
+    forfeited = engine.record_crossing("45", at=_dt(10, 2)).card
+    kept = engine.record_crossing("9", at=_dt(10, 4)).card
+
+    engine.mark_dnf("45", reason="mechanical failure")
+
+    results = {result.plate: result for result in engine.snapshot()}
+    assert results["9"].dnf is False
+    assert results["9"].cards == (kept,)
+    assert results["9"].hand == best_hand((kept,))
+    assert forfeited not in results["9"].cards
+
+
+def test_snapshot_marks_a_team_dnf_when_every_rider_is_dnf() -> None:
+    """All riders out means the entry is out -- excluded, cards gone."""
+    engine = _pooled_team_engine()
+    engine.record_crossing("45", at=_dt(10, 2))
+
+    engine.mark_dnf("45", reason="mechanical failure")
+    engine.mark_dnf("9", reason="mechanical failure")
+
+    results = {result.plate: result for result in engine.snapshot()}
+    assert results["9"].dnf is True
+    assert results["9"].cards == ()
+
+
+def test_snapshot_keeps_a_dnf_riders_cards_in_the_credited_hand_read() -> None:
+    """Forfeiture is scoring-only: the Cards column still keeps them."""
+    engine = _pooled_team_engine()
+    card = engine.record_crossing("45", at=_dt(10, 2)).card
+
+    engine.mark_dnf("45", reason="mechanical failure")
+
+    assert engine.credited_cards("9") == (card,)
+
+
 def test_snapshot_sets_a_solo_entries_sex_from_its_lone_rider() -> None:
     """A solo snapshot carries its rider's "M"/"F" (E7)."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
@@ -1267,7 +1305,7 @@ def test_record_crossing_min_lap_one_second_under_is_flagged() -> None:
 
 def test_record_crossing_deals_the_shoe_next_card_in_deal_index_order() -> None:
     """Each accepted crossing deals shoe[deal_index++] in turn."""
-    expected = Shoe(decks=8, jokers_per_deck=2, seed=20260920)
+    expected = Shoe(decks=8, jokers_per_deck=DEFAULT_JOKERS_PER_DECK, seed=20260920)
     engine, _ = _make_engine()
     engine.start()
     first = engine.record_crossing("12", at=_dt(10, 30))
@@ -1927,6 +1965,108 @@ def test_engine_card_for_given_an_unknown_crossing_raises_key_error() -> None:
         engine.card_for(crossing)
 
 
+# --------------- crossings list: ride-start + DNF read accessors
+# The console's crossings feed renders each crossing's elapsed time
+# (``crossed_at`` minus the ride's start) and marks a DNF rider's rows,
+# so those two facts need one public read each -- the feed is a wx-free
+# presenter module and must not reach into the engine's privates.
+
+
+def test_engine_actual_start_given_a_draft_ride_is_none() -> None:
+    """T-4 boundary: a ride that never started has no elapsed origin."""
+    engine, _ = _make_engine()
+
+    assert engine.actual_start is None
+
+
+def test_engine_actual_start_given_a_started_ride_returns_the_start_instant() -> None:
+    """The start instant every elapsed value derives from."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    assert engine.actual_start == _dt(10, 0)
+
+
+def test_engine_actual_start_given_a_back_dated_start_follows_the_correction() -> None:
+    """``set_start_time`` moves the origin with it (spec §3, 3d)."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.set_start_time(_dt(9, 55))
+
+    assert engine.actual_start == _dt(9, 55)
+
+
+def test_engine_dnf_riders_given_no_marks_is_empty() -> None:
+    """T-4 boundary: nothing marked, nothing reported."""
+    engine = _pooled_team_engine()
+
+    assert engine.dnf_riders == frozenset()
+
+
+def test_engine_dnf_riders_given_a_pooled_rider_mark_returns_that_plate() -> None:
+    """The per-rider set names the rider's own typed plate."""
+    engine = _pooled_team_engine()
+
+    engine.mark_dnf("45", reason="mechanical failure")
+
+    assert engine.dnf_riders == frozenset({"45"})
+
+
+def test_engine_dnf_riders_given_a_solo_mark_keeps_the_set_empty() -> None:
+    """A solo mark is the entry's own status, not a per-rider one."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.mark_dnf("12", reason="withdrawn")
+
+    assert engine.dnf_riders == frozenset()
+
+
+def test_engine_entry_is_dnf_given_a_healthy_entry_is_false() -> None:
+    """T-3 negative: an unmarked entry is still in the results."""
+    engine = _pooled_team_engine()
+    team = engine._roster.resolve_plate("9")  # the roster the engine was built with
+
+    assert engine.entry_is_dnf(team) is False
+
+
+def test_engine_entry_is_dnf_given_a_dnf_entry_status_is_true() -> None:
+    """A DNF'd entry status (solo or relay) is out of the results."""
+    roster = _roster_with_entries("12", "34")
+    engine, _ = _make_engine(roster=roster)
+    roster.entries[0].status = EntryStatus.DNF
+
+    assert engine.entry_is_dnf(roster.entries[0]) is True
+
+
+def test_engine_entry_is_dnf_given_a_pooled_team_with_one_rider_out_is_false() -> None:
+    """One rider's DNF never takes the whole pooled team down."""
+    engine = _pooled_team_engine()
+    engine.mark_dnf("45", reason="mechanical failure")
+    team = engine._roster.resolve_plate("9")  # the roster the engine was built with
+
+    assert engine.entry_is_dnf(team) is False
+
+
+def test_engine_entry_is_dnf_given_a_pooled_team_all_out_is_true() -> None:
+    """Every rider out means the team is out (Phase 3's rule)."""
+    engine = _pooled_team_engine()
+    engine.mark_dnf("45", reason="mechanical failure")
+    engine.mark_dnf("9", reason="mechanical failure")
+    team = engine._roster.resolve_plate("9")  # the roster the engine was built with
+
+    assert engine.entry_is_dnf(team) is True
+
+
+def test_engine_entry_is_dnf_given_a_riderless_entry_is_false() -> None:
+    """T-4 boundary: an empty team is never all-DNF."""
+    engine, _ = _make_engine()
+    riderless = Entry(plate="9", display_name="Dirt Dynamos", type=EntryType.TEAM)
+
+    assert engine.entry_is_dnf(riderless) is False
+
+
 # -------------------------- Phase 4: credited-cards read accessor
 
 
@@ -2084,8 +2224,8 @@ def test_engine_shoe_remaining_and_total_track_the_current_cycle() -> None:
     engine.start()
     engine.record_crossing("12", at=_dt(10, 30))
 
-    assert engine.shoe_total == 432  # 8 decks x (52 + 2 jokers)
-    assert engine.shoe_remaining == 431
+    assert engine.shoe_total == 424  # 8 decks x (52 + 1 joker)
+    assert engine.shoe_remaining == 423
 
 
 def test_engine_config_property_returns_the_frozen_setup_config() -> None:
@@ -2243,7 +2383,7 @@ def test_apply_deal_manual_event_credits_card_with_the_payload_reason() -> None:
     """apply("deal_manual") deals one card with the payload reason."""
     engine, _ = _make_engine()
     engine.start(at=_dt(10, 0))
-    reference = Shoe(decks=8, jokers_per_deck=2, seed=20260920)
+    reference = Shoe(decks=8, jokers_per_deck=DEFAULT_JOKERS_PER_DECK, seed=20260920)
     expected = reference.deal()[0]
     event = Event(
         action="deal_manual",
@@ -2705,7 +2845,7 @@ def test_assign_plate_to_miss_deals_exactly_one_card_into_the_hand() -> None:
     """The card is assigned at edit time, never at miss time (R-40)."""
     engine, _ = _engine_in("running")
     engine.record_miss(_dt(10, 5), reason="missed number")
-    reference = Shoe(decks=8, jokers_per_deck=2, seed=20260920)
+    reference = Shoe(decks=8, jokers_per_deck=DEFAULT_JOKERS_PER_DECK, seed=20260920)
 
     engine.assign_plate_to_miss(1, "12", reason="rider identified")
 
@@ -2862,7 +3002,7 @@ def test_apply_replay_record_miss_then_assign_is_equivalent() -> None:
 
 # A lap length of 1 km at 3600 km/h makes one lap exactly 1 second, so
 # ``planned_duration_s`` is the expected lap count verbatim -- the
-# verdict boundary rows below can then name the shoe's own 432 cards.
+# verdict boundary rows below can then name the shoe's own 424 cards.
 _ONE_SECOND_LAP_KM = 1.0
 _ONE_SECOND_LAP_SPEED_KMH = 3600.0
 
@@ -3040,10 +3180,10 @@ def test_estimate_cards_needed_given_any_two_speeds_is_monotonic_in_speed(
     ("planned_duration_s", "verdict"),
     [
         (1, FAR_TOO_MANY),  # T-4: far below the 2x boundary
-        (215, FAR_TOO_MANY),  # T-4: 2x boundary - 1
-        (216, OK),  # T-4: the 2x boundary itself
-        (432, OK),  # T-4: the 1x boundary (exactly the shoe)
-        (433, NOT_ENOUGH),  # T-4: 1x boundary + 1
+        (211, FAR_TOO_MANY),  # T-4: 2x boundary - 1
+        (212, OK),  # T-4: the 2x boundary itself
+        (424, OK),  # T-4: the 1x boundary (exactly the shoe)
+        (425, NOT_ENOUGH),  # T-4: 1x boundary + 1
     ],
     ids=["far_below", "below_2x", "at_2x", "at_1x", "above_1x"],
 )

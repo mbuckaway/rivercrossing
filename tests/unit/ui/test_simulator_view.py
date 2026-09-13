@@ -7,21 +7,23 @@ Only what genuinely needs no window is pinned here, in the
 snapshot behaviour) driven against a shell that owns only the generator
 controls and the presenter's roster. The live layout -- real spin
 controls on a real dialog -- stays with the (functional) suite.
+
+Phase 2 adds the Check button (a system modal, never ``sim_infobar``),
+the solo auto-fill on every riders/teams change, and the
+speed-derived interval seed.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
 
+import pytest
 import wx
 
 from rivercrossing.roster import EntryMode, EntryType, PlateModel, Roster
-from rivercrossing.ui.presenters.simulator import SimulatorPresenter
+from rivercrossing.ui.presenters.simulator import SimulatorPresenter, check_message
 from rivercrossing.ui.views import simulator as simulator_module
 from rivercrossing.ui.views.simulator import SimulatorDialog
-
-if TYPE_CHECKING:
-    import pytest
 
 
 class _Control:
@@ -91,6 +93,7 @@ class _Shell:
         self.riders_spin = _Control()
         self.teams_spin = _Control()
         self.solo_spin = _Control()
+        self.check_btn = _Control()
         self.gen_riders_btn = _Control()
 
 
@@ -104,8 +107,9 @@ def test_apply_roster_state_given_loaded_roster_disables_every_generator_control
         shell.riders_spin.enabled,
         shell.teams_spin.enabled,
         shell.solo_spin.enabled,
+        shell.check_btn.enabled,
         shell.gen_riders_btn.enabled,
-    ] == [False, False, False, False]
+    ] == [False, False, False, False, False]
 
 
 def test_apply_roster_state_given_empty_roster_enables_every_generator_control() -> None:
@@ -118,18 +122,20 @@ def test_apply_roster_state_given_empty_roster_enables_every_generator_control()
         shell.riders_spin.enabled,
         shell.teams_spin.enabled,
         shell.solo_spin.enabled,
+        shell.check_btn.enabled,
         shell.gen_riders_btn.enabled,
-    ] == [True, True, True, True]
+    ] == [True, True, True, True, True]
 
 
 def test_apply_roster_state_given_solo_mode_hides_the_team_and_solo_fields() -> None:
-    """A SOLO-only ride hides the team fields."""
+    """A SOLO-only ride hides the team fields and Check."""
     shell = _Shell(entry_mode=EntryMode.SOLO, loaded=False)
 
     SimulatorDialog._apply_roster_state(shell)
 
     assert (shell.teams_spin.shown, shell.solo_spin.shown) == (False, False)
-    assert (shell.riders_spin.shown, shell.gen_riders_btn.shown) == (True, True)
+    assert (shell.check_btn.shown, shell.riders_spin.shown) == (False, True)
+    assert shell.gen_riders_btn.shown is True
 
 
 def test_apply_roster_state_given_solo_mode_and_loaded_roster_hides_and_disables() -> None:
@@ -139,6 +145,7 @@ def test_apply_roster_state_given_solo_mode_and_loaded_roster_hides_and_disables
     SimulatorDialog._apply_roster_state(shell)
 
     assert (shell.teams_spin.shown, shell.teams_spin.enabled) == (False, False)
+    assert (shell.check_btn.shown, shell.check_btn.enabled) == (False, False)
     assert shell.riders_spin.enabled is False
 
 
@@ -149,7 +156,7 @@ def test_apply_roster_state_given_mixed_mode_keeps_the_team_and_solo_fields_show
     SimulatorDialog._apply_roster_state(shell)
 
     assert (shell.teams_spin.shown, shell.solo_spin.shown) == (True, True)
-    assert shell.gen_riders_btn.shown is True
+    assert (shell.check_btn.shown, shell.gen_riders_btn.shown) == (True, True)
 
 
 # --- plan §1: seeded spins, sim_values and the single Generate button
@@ -238,29 +245,63 @@ class _RecordingRunning:
         self.ran = True
 
 
+class _RefusingPresenter:
+    """A presenter stand-in whose generator refuses the counts."""
+
+    def __init__(self, roster: Roster, error: ValueError) -> None:
+        """Store the roster the view reads and the refusal to raise."""
+        self.roster = roster
+        self.error = error
+
+    def generate_riders(self, *_args: object, **_kwargs: object) -> None:
+        """Raise the stored refusal, as the real generator would."""
+        raise self.error
+
+
 def _generator_shell(  # noqa: PLR0913 -- (roster) + the five spin overrides
     roster: Roster,
     *,
-    riders: int = 10,
-    teams: int = 2,
-    solo: int = 2,
+    riders: int = 175,
+    teams: int = 40,
+    solo: int = 15,
     laps: int = 1,
-    interval: int = 1,
+    interval: int = 45,
+    engine: object = None,
 ) -> SimulatorDialog:
     """Build a dialog shell over a real presenter and spin doubles."""
     shell = object.__new__(SimulatorDialog)
-    shell.presenter = SimulatorPresenter(None, roster)
+    shell.presenter = SimulatorPresenter(engine, roster)
     shell.riders_spin = _Spin(riders)
     shell.teams_spin = _Spin(teams)
     shell.solo_spin = _Spin(solo)
     shell.laps_spin = _Spin(laps)
     shell.interval_spin = _Spin(interval)
+    shell.check_btn = _Control()
     shell.gen_riders_btn = _Control()
     shell.go_btn = _Control()
     shell.sim_infobar = _FakeInfobar()
     shell.dialog = _FakeDialog()
     shell.sim_values = (riders, teams, solo, laps, interval)
     return shell
+
+
+def _engine(lap_km: float = 8.0) -> SimpleNamespace:
+    """Return an engine double carrying the ride's own config."""
+    return SimpleNamespace(config=SimpleNamespace(lap_km=lap_km))
+
+
+def _controls() -> dict[str, _Control]:
+    """Return a control double per name the dialog resolves."""
+    return {
+        "riders_spin": _Spin(175),
+        "teams_spin": _Spin(40),
+        "solo_spin": _Spin(15),
+        "laps_spin": _Spin(1),
+        "interval_spin": _Spin(45),
+        "check_btn": _Control(),
+        "gen_riders_btn": _Control(),
+        "go_btn": _Control(),
+    }
 
 
 def _patch_find(monkeypatch: pytest.MonkeyPatch, spins: dict[str, _Control]) -> None:
@@ -273,19 +314,29 @@ def _patch_find(monkeypatch: pytest.MonkeyPatch, spins: dict[str, _Control]) -> 
     monkeypatch.setattr(SimulatorDialog, "_build_infobar", lambda _self: _FakeInfobar())
 
 
+def _patch_modals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[list[tuple[object, str, str]], list[tuple[object, str, str]]]:
+    """Record the std_dialogs show_* calls instead."""
+    info: list[tuple[object, str, str]] = []
+    warning: list[tuple[object, str, str]] = []
+
+    def _show_info(parent: object, title: str, message: str) -> None:
+        info.append((parent, title, message))
+
+    def _show_warning(parent: object, title: str, message: str) -> None:
+        warning.append((parent, title, message))
+
+    monkeypatch.setattr(simulator_module.std_dialogs, "show_info", _show_info)
+    monkeypatch.setattr(simulator_module.std_dialogs, "show_warning", _show_warning)
+    return info, warning
+
+
 def test_simulator_dialog_seeds_the_spins_from_the_passed_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plan §1: opening restores the persisted spin defaults."""
-    spins = {
-        "riders_spin": _Spin(10),
-        "teams_spin": _Spin(2),
-        "solo_spin": _Spin(2),
-        "laps_spin": _Spin(1),
-        "interval_spin": _Spin(1),
-        "gen_riders_btn": _Control(),
-        "go_btn": _Control(),
-    }
+    """Plan §1: opening restores the spins and derives solo."""
+    spins = _controls()
     _patch_find(monkeypatch, spins)
 
     view = SimulatorDialog(
@@ -300,23 +351,15 @@ def test_simulator_dialog_seeds_the_spins_from_the_passed_values(
     )
 
     assert (view.riders_spin.GetValue(), view.teams_spin.GetValue()) == (37, 6)
-    assert (view.solo_spin.GetValue(), view.laps_spin.GetValue()) == (5, 4)
-    assert (view.interval_spin.GetValue(), view.sim_values) == (9, (37, 6, 5, 4, 9))
+    assert (view.solo_spin.GetValue(), view.laps_spin.GetValue()) == (13, 4)
+    assert (view.interval_spin.GetValue(), view.sim_values) == (9, (37, 6, 13, 4, 9))
 
 
-def test_simulator_dialog_seeds_the_xrc_defaults_when_none_are_passed(
+def test_simulator_dialog_seeds_the_new_defaults_when_none_are_passed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The XRC values remain the fallback when no seeds are passed."""
-    spins = {
-        "riders_spin": _Spin(10),
-        "teams_spin": _Spin(2),
-        "solo_spin": _Spin(2),
-        "laps_spin": _Spin(1),
-        "interval_spin": _Spin(1),
-        "gen_riders_btn": _Control(),
-        "go_btn": _Control(),
-    }
+    """The view's own defaults are the new 175/40/15 spins."""
+    spins = _controls()
     _patch_find(monkeypatch, spins)
 
     view = SimulatorDialog(
@@ -325,7 +368,72 @@ def test_simulator_dialog_seeds_the_xrc_defaults_when_none_are_passed(
         roster=Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED),
     )
 
-    assert view.sim_values == (10, 2, 2, 1, 1)
+    assert view.sim_values == (175, 40, 15, 1, 45)
+
+
+@pytest.mark.parametrize(
+    ("lap_km", "avg_speed_kmh", "expected"),
+    [
+        pytest.param(8.0, 12.0, 45, id="demo-ride"),
+        pytest.param(5.0, 20.0, 20, id="shorter-lap-higher-speed"),
+        pytest.param(30.0, 1.0, 240, id="clamped-at-the-spin-ceiling"),
+    ],
+)
+def test_simulator_dialog_given_an_engine_seeds_the_interval_from_the_ride(  # noqa: PLR0913, PLR0917
+    monkeypatch: pytest.MonkeyPatch, lap_km: float, avg_speed_kmh: float, expected: int
+) -> None:
+    """Plan §3: the interval opens on the ride's own speed default."""
+    spins = _controls()
+    _patch_find(monkeypatch, spins)
+
+    view = SimulatorDialog(
+        _FakeDialog(),
+        engine=_engine(lap_km),
+        roster=Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED),
+        sim_interval=1,
+        avg_speed_kmh=avg_speed_kmh,
+    )
+
+    assert view.interval_spin.GetValue() == expected
+
+
+def test_simulator_dialog_given_a_solo_roster_leaves_solo_as_seeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A SOLO-only ride leaves its hidden solo field as seeded."""
+    spins = _controls()
+    _patch_find(monkeypatch, spins)
+
+    view = SimulatorDialog(
+        _FakeDialog(),
+        engine=None,
+        roster=Roster(entry_mode=EntryMode.SOLO, plate_model=PlateModel.RIDER_POOLED),
+        sim_solo=7,
+    )
+
+    assert view.solo_spin.GetValue() == 7
+
+
+def test_simulator_dialog_binds_check_and_the_two_team_count_spins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan §1/§2: Check and both count spins are bound."""
+    spins = _controls()
+    _patch_find(monkeypatch, spins)
+
+    view = SimulatorDialog(
+        _FakeDialog(),
+        engine=None,
+        roster=Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED),
+    )
+
+    assert view.dialog.bound == [
+        spins["gen_riders_btn"],
+        spins["check_btn"],
+        spins["go_btn"],
+        spins["riders_spin"],
+        spins["teams_spin"],
+    ]
 
 
 def test_snapshot_sim_values_records_the_current_spins() -> None:
@@ -362,15 +470,93 @@ def test_on_generate_riders_given_a_solo_roster_creates_solo_riders_only() -> No
     assert shell.dialog.ended == [wx.ID_OK]
 
 
-def test_on_generate_riders_given_a_refused_count_warns_and_keeps_the_dialog_open() -> None:
-    """A refused count lands on the InfoBar; the dialog stays open."""
+def test_on_generate_riders_given_stale_solo_auto_corrects_and_generates() -> None:
+    """Plan §1: Generate resolves solo, then proceeds."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    shell = _generator_shell(roster, riders=2, teams=1, solo=5)
+    shell = _generator_shell(roster, riders=10, teams=2, solo=0)
 
     SimulatorDialog._on_generate_riders(shell, None)
 
-    assert shell.sim_infobar.messages == ["solo must be between 0 and 2"]
-    assert (shell.dialog.ended, roster.entries) == ([], ())
+    teams = [entry for entry in roster.entries if entry.type is EntryType.TEAM]
+    assert (shell.solo_spin.GetValue(), [entry.team_size for entry in teams]) == (2, [4, 4])
+    assert shell.dialog.ended == [wx.ID_OK]
+
+
+def test_on_generate_riders_given_impossible_counts_shows_the_check_modal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan §2: below the team floor Generate explains."""
+    info, warning = _patch_modals(monkeypatch)
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, riders=1, teams=2, solo=0)
+
+    SimulatorDialog._on_generate_riders(shell, None)
+
+    assert warning == [(shell.dialog, "Rider Simulator", check_message(1, 2))]
+    assert (info, shell.sim_infobar.messages) == ([], [])
+    assert (shell.dialog.ended, roster.entries, shell.solo_spin.GetValue()) == ([], (), 0)
+
+
+def test_on_generate_riders_given_a_refused_generation_warns_on_the_infobar() -> None:
+    """A presenter refusal still lands on the InfoBar."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, riders=10, teams=2)
+    shell.presenter = _RefusingPresenter(
+        roster, ValueError("team riders must be between 4 and 8, got 9")
+    )
+
+    SimulatorDialog._on_generate_riders(shell, None)
+
+    assert shell.sim_infobar.messages == ["team riders must be between 4 and 8, got 9"]
+    assert (shell.dialog.ended, shell.dialog.layouts) == ([], 1)
+
+
+def test_on_check_given_a_valid_combination_shows_the_system_info_modal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plan §2: Check explains it in a native OK-only modal."""
+    info, warning = _patch_modals(monkeypatch)
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, riders=175, teams=40)
+
+    SimulatorDialog._on_check(shell, None)
+
+    assert info == [(shell.dialog, "Rider Simulator", check_message(175, 40))]
+    assert (warning, shell.sim_infobar.messages) == ([], [])
+
+
+def test_on_check_given_impossible_counts_shows_the_system_warning_modal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An impossible field gets the warning icon."""
+    info, warning = _patch_modals(monkeypatch)
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, riders=10, teams=8)
+
+    SimulatorDialog._on_check(shell, None)
+
+    assert warning == [(shell.dialog, "Rider Simulator", check_message(10, 8))]
+    assert (info, shell.sim_infobar.messages) == ([], [])
+
+
+@pytest.mark.parametrize(
+    ("riders", "teams", "solo", "expected"),
+    [
+        pytest.param(10, 2, 0, 2, id="fills-the-teams"),
+        pytest.param(5, 2, 9, 0, id="teams-not-full"),
+        pytest.param(1, 2, 5, 5, id="impossible-leaves-solo-alone"),
+    ],
+)
+def test_on_team_counts_changed_given_riders_and_teams_fills_solo(  # noqa: PLR0913, PLR0917
+    riders: int, teams: int, solo: int, expected: int
+) -> None:
+    """Plan §1: every riders/teams change recomputes solo."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, riders=riders, teams=teams, solo=solo)
+
+    SimulatorDialog._on_team_counts_changed(shell, None)
+
+    assert shell.solo_spin.GetValue() == expected
 
 
 def test_on_go_given_valid_settings_runs_the_race_and_snapshots_the_spins(
@@ -393,7 +579,7 @@ def test_on_go_given_valid_settings_runs_the_race_and_snapshots_the_spins(
     SimulatorDialog._on_go(shell, None)
 
     assert (shell.sim_values, created[0].laps, created[0].interval_minutes) == (
-        (10, 2, 2, 3, 7),
+        (175, 40, 15, 3, 7),
         3,
         7,
     )

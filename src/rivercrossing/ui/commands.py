@@ -81,6 +81,10 @@ class Enablement:
             ``None`` if it does not gate on status.
         requires_ride_open: The row's bare "ride open" / "a ride is
             open" condition.
+        requires_no_ride: The inverse condition -- New Ride…'s "no ride
+            open" (D1): the row is enabled only while no ride is
+            loaded, since the setup dialog it opens is the way *into*
+            a ride and Edit Ride… is the row for one already open.
         requires_ride_stopped: Start Ride's "or stopped RUNNING"
             clause -- only consulted while ``status == RUNNING``.
         teams_allowed: The ride's entry_mode is mixed, so team
@@ -99,6 +103,7 @@ class Enablement:
 
     allowed_states: frozenset[RideStatus] | None = None
     requires_ride_open: bool = False
+    requires_no_ride: bool = False
     requires_ride_stopped: bool = False
     teams_allowed: bool = False
     min_crossings: int = 0
@@ -243,7 +248,11 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         ids=("mi_new_ride",),
         kind=TargetKind.WINDOW,
         target=ids.RIDE_SETUP_DLG,
-        enabled_when=ALWAYS,  # "always"
+        # D1: the inverse of Edit Ride…'s gate -- this row opens a ride,
+        # so it is the one row §15 lists for a ride *not* yet open. The
+        # no-ride console is where it is enabled; Edit Ride… owns the
+        # loaded case.
+        enabled_when=Enablement(requires_no_ride=True),  # "no ride open"
     ),
     MenuRoute(
         menu="Ride",
@@ -660,6 +669,7 @@ def is_route_enabled(route: MenuRoute, state: RideState) -> bool:
     return (
         stop_ok
         and (not rule.requires_ride_open or state.ride_open)
+        and (not rule.requires_no_ride or not state.ride_open)
         and (not rule.teams_allowed or state.teams_allowed)
         and (not rule.requires_entry_has_cards or state.entry_has_cards)
         and (not rule.requires_html_export or state.html_exported)

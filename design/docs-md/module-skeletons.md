@@ -162,7 +162,7 @@ rivercrossing.ride — state machine & timing (§3/§6 · R-30…36)
 class RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
 @dataclass RideConfig(name, event_date, venue, lap_km, organizer, scorer, planned_start,
                       planned_duration_s, min_lap_s, entry_mode, plate_model,
-                      max_team_size=4, deck_count=8, jokers_per_deck=2, max_cards=None,
+                      max_team_size=4, deck_count=8, jokers_per_deck=1, max_cards=None,
                       tiebreak_order=("high_card","laps","total_time"), logo_path=None)
     # §2 ride-row setup fields; defined here since E3.5, built by ride_setup_dlg,
     # consumed by RideEngine below; EPIC 6's standings imports the tiebreak spellings
@@ -175,7 +175,7 @@ class RideEngine:             # pure; wall-clock injected for tests
     add_crossing_at(plate: str, at: datetime) -> CrossingResult   # RUNNING·REOPENED
     undo_last() -> Event · edit_crossing(id, …) · void_crossing(id, reason)
     reassign_crossing(id, plate) · deal_manual(plate, reason) · void_card(id, reason)
-    mark_dnf(entry_id, reason) · move_rider(rider_id, team_id)    # pooled only (R-17)
+    mark_dnf(plate, reason) · move_rider(rider_id, team_id)    # per-rider; pooled only (R-17)
     stop() -> Event · finish() -> Event · reopen() -> Event       # REOPENED = corrections only
     state: RideStatus · elapsed() · remaining() · on_course: int
     snapshot() -> list[EntryResult]                     # feeds standings live
@@ -317,7 +317,7 @@ tests/
 ├── property/                  # Hypothesis: hands invariants, shoe determinism,
 │                              #   roster mutation sequences, csv round-trip identity
 ├── simulations/               # seeded whole rides: 180×6 h, both entry modes,
-│   └── test_simulated_rides.py#   both plate models, 0/2/4 jokers, cap on/off (§12)
+│   └── test_simulated_rides.py#   both plate models, 0–4 jokers, cap on/off (§12)
 ├── functional/                # real wx, driven via ids.py + direct event injection (§12)
 │   ├── harness.py             # find-by-SetName, click, type, dialog hooks
 │   ├── pages.py               # page objects per window (1a…8c)

@@ -22,6 +22,7 @@ with and ``results_stale`` to answer the stale-export query with a
 test-configured value.
 """
 
+from dataclasses import replace
 from datetime import date, datetime
 
 from hypothesis import given
@@ -180,6 +181,36 @@ def test_results_presenter_init_without_a_stored_order_requests_the_ride_default
     ResultsPresenter(RecordingResultsView(), source)
 
     assert source.standings_orders == [DEFAULT_TIEBREAK_ORDER]
+
+
+def test_results_presenter_init_forwards_a_draw_rows_tie_note_untouched() -> None:
+    """Part 1: the R-43 note survives the presenter's own render."""
+    source = RecordingResultsSource()
+    source.rows_by_order[DEFAULT_TIEBREAK_ORDER] = [
+        replace(_row("7"), draw_required=True, tie_note="draw required")
+    ]
+    view = RecordingResultsView()
+
+    ResultsPresenter(view, source)
+
+    assert [(row.plate, row.draw_required, row.tie_note) for row in view.shown_solo] == [
+        ("7", True, "draw required")
+    ]
+
+
+def test_results_presenter_init_forwards_a_rows_best_lap_untouched() -> None:
+    """Part 3: the row's rendered Best lap reaches the view as built."""
+    source = RecordingResultsSource()
+    source.rows_by_order[DEFAULT_TIEBREAK_ORDER] = [
+        replace(_row("7"), best_lap="0:19:55", best_lap_seconds=1195.0)
+    ]
+    view = RecordingResultsView()
+
+    ResultsPresenter(view, source)
+
+    assert [(row.best_lap, row.best_lap_seconds) for row in view.shown_solo] == [
+        ("0:19:55", 1195.0)
+    ]
 
 
 def test_results_presenter_holds_the_view_and_data_source_it_was_given() -> None:

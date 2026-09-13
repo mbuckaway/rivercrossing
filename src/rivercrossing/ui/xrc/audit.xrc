@@ -21,6 +21,12 @@
       wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). No
       minimum is documented for this dialog, so it declares no <size>
       and the sizer handler Fit()s it and applies SetSizeHints().
+      Phase 6 supplies the floor from code instead: AuditDialog appends
+      the five columns at their own pinned widths (When 90 / Who 120 /
+      Action 180 / Entry 120 / Reason 330 - an unpinned wxDataViewCtrl
+      column keeps the platform's 80 DIP default and clips the Reason
+      cell) and floors and opens the dialog at MIN_SIZE (1000x600)
+      through _apply_min_size, clamped to the display's work area.
 
   The two filter controls carry visible wxStaticText labels. The canvas
   draws none, but UX-DESKTOP 7 requires a real, persistent label on

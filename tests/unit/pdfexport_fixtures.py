@@ -94,7 +94,14 @@ def build_placed(count: int = 50) -> tuple[Placed, ...]:
     The mixed field (every third entry is a team) is ranked through
     ``rank_by_kind`` and merged Teams-then-Solo -- the exact sequence
     the app hands the exporters, so the golden's full field shows the
-    two per-kind sections with per-kind places.
+    two per-kind sections with per-kind places. The DNF entry is then
+    put back at its own section's tail with the continuing place:
+    ``rank_by_kind`` excludes DNF results outright (a DNF rider never
+    appears in the published results), while the frozen golden keeps
+    exactly one DNF row -- so the exporters' DNF marking and the cover
+    counters stay exercised. ``test_pdfexport.py``'s own
+    ``test_render_marks_dnf_entries_in_full_field`` pins the marking
+    independently of the golden.
     """
     shoe = Shoe(decks=8, jokers_per_deck=2, seed=_GOLDEN_SEED)
     results: list[EntryResult] = []
@@ -116,8 +123,19 @@ def build_placed(count: int = 50) -> tuple[Placed, ...]:
                 dnf=(index == count - 1),
             )
         )
-    teams, solo = rank_by_kind(results)
-    return (*teams, *solo)
+    teams, solo = rank_by_kind([result for result in results if not result.dnf])
+    dnf = next((result for result in results if result.dnf), None)
+    if dnf is None:
+        return (*teams, *solo)
+    dnf_row = Placed(
+        place=len(teams if dnf.kind == "team" else solo) + 1,
+        result=dnf,
+        tie_note=None,
+        draw_required=False,
+    )
+    if dnf.kind == "team":
+        return (*teams, dnf_row, *solo)
+    return (*teams, *solo, dnf_row)
 
 
 def golden_opts() -> ExportOptions:

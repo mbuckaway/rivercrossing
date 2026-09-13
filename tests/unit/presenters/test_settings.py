@@ -51,9 +51,9 @@ _ALL_FIELDS = {
     "avg_speed_kmh",
 }
 
-# The simulator dialog's XRC spin defaults (simulation.xrc): riders 10,
-# teams 2, solo 2, laps 1, interval 1 (plan §1).
-_SIM_DEFAULTS = (10, 2, 2, 1, 1)
+# The simulator dialog's XRC spin defaults (simulation.xrc): riders
+# 175, teams 40, solo 15, laps 1, interval 45 (plan §1/§3).
+_SIM_DEFAULTS = (175, 40, 15, 1, 45)
 
 # The 90-150 zoom ladder, as the JSON-safe rung list files carry.
 _ZOOM_RUNGS = list(ZOOM_LADDER)
@@ -156,6 +156,17 @@ def test_save_then_load_round_trips_the_avg_speed(tmp_path: Path) -> None:
     loaded = load_settings(path)
 
     assert loaded.avg_speed_kmh == 17.5
+
+
+def test_save_then_load_round_trips_a_fractional_avg_speed(tmp_path: Path) -> None:
+    """Phase 1's decimal entry: the stored fraction survives intact."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), avg_speed_kmh=12.5)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == 12.5
 
 
 def test_load_settings_missing_avg_speed_key_falls_back_to_the_default(tmp_path: Path) -> None:

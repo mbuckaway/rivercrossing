@@ -180,6 +180,20 @@ def test_new_ride_route_now_lives_in_the_ride_menu_after_d1() -> None:
     assert route.menu == "Ride"
 
 
+def test_new_ride_route_declares_the_no_ride_gate() -> None:
+    """D1: New Ride is off while a ride is loaded -- it opens one.
+
+    The setup dialog is the one way *into* a ride, so offering it on
+    top of a live ride has nothing to do; Edit Ride… is that row.
+    ``mi_new_ride`` is the only no-ride-gated row the table declares,
+    which keeps the property below from passing vacuously.
+    """
+    route = commands.route_for_id(ids.MI_NEW_RIDE)
+
+    assert route.enabled_when.requires_no_ride is True
+    assert [gated.ids[0] for gated in NO_RIDE_REQUIRING_ROUTES] == [ids.MI_NEW_RIDE]
+
+
 def test_clear_ride_route_declares_the_d3_enablement_rule() -> None:
     """D3: the Clear Ride… row's own "Enabled when" cell, structured."""
     rule = commands.route_for_id(ids.MI_CLEAR_RIDE).enabled_when
@@ -275,7 +289,7 @@ ALLOWED_STATES = (
     frozenset({RideStatus.DRAFT}),  # File > Simulation...: DRAFT only
     None,  # File > Settings...: "always"
     None,  # File > Exit: "always"
-    None,  # Ride > New Ride...: "always"
+    None,  # Ride > New Ride...: "no ride open" -- condition-only, never a state rule (D1)
     None,  # Ride > Edit Ride...: "ride open" -- condition-only, any state (D2)
     # Start Ride (C2): DRAFT / RUNNING / REOPENED
     frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.REOPENED}),
@@ -317,6 +331,9 @@ ALLOWED_STATES = (
 )
 
 
+BASELINE_RIDE_OPEN = True
+
+
 def _baseline_state(status: RideStatus) -> commands.RideState:
     """Build a RideState with every non-status condition satisfied.
 
@@ -325,7 +342,7 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
     """
     return commands.RideState(
         status=status,
-        ride_open=True,
+        ride_open=BASELINE_RIDE_OPEN,
         ride_stopped=True,
         crossings=1,
         held_cards=1,
@@ -337,8 +354,20 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
     )
 
 
+# The condition-only rows whose §15 cell is the *inverse* of the
+# ride-open gate -- "no ride open" (D1's Ride > New Ride…). Transcribed
+# by label, independently of commands.py's own rule field.
+NO_RIDE_ROUTE_LABELS = ("New Ride…",)
+
 ITEM_STATE_MATRIX = tuple(
-    (route, status, allowed is None or status in allowed)
+    (
+        route,
+        status,
+        # The baseline's own ride_open, applied to the transcribed
+        # rule: a no-ride row is off in every baseline state.
+        (allowed is None or status in allowed)
+        and not (route.label in NO_RIDE_ROUTE_LABELS and BASELINE_RIDE_OPEN),
+    )
     for route, allowed in zip(commands.ROUTE_TABLE, ALLOWED_STATES, strict=True)
     for status in STATUSES
 )
@@ -348,6 +377,9 @@ ITEM_STATE_IDS = [
 
 RIDE_OPEN_REQUIRING_ROUTES = tuple(
     route for route in commands.ROUTE_TABLE if route.enabled_when.requires_ride_open
+)
+NO_RIDE_REQUIRING_ROUTES = tuple(
+    route for route in commands.ROUTE_TABLE if route.enabled_when.requires_no_ride
 )
 TEAMS_GATED_ROUTES = tuple(
     route for route in commands.ROUTE_TABLE if route.enabled_when.teams_allowed
@@ -362,6 +394,7 @@ VOID_CARD_ROUTE = _ROUTES_BY_LABEL["Void Card…"]
 PREVIEW_HTML_ROUTE = _ROUTES_BY_LABEL["Preview HTML in Browser"]
 PREVIEW_PDF_ROUTE = _ROUTES_BY_LABEL["Preview PDF in Browser"]
 START_RIDE_ROUTE = _ROUTES_BY_LABEL["Start Ride"]
+NEW_RIDE_ROUTE = _ROUTES_BY_LABEL["New Ride…"]
 EDIT_RIDE_ROUTE = _ROUTES_BY_LABEL["Edit Ride…"]
 CLEAR_RIDE_ROUTE = _ROUTES_BY_LABEL["Clear Ride…"]
 
@@ -589,7 +622,7 @@ def test_is_route_enabled_given_clear_ride_matches_spec_d3(
     assert result is expected_enabled
 
 
-@pytest.mark.parametrize("ride_open", [False, True], ids=["no_ride_open", "ride_open"])
+@pytest.mark.parametrize("ride_open", RIDE_OPEN_CASES, ids=RIDE_OPEN_CASE_IDS)
 @pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
 def test_is_route_enabled_given_edit_ride_follows_ride_open_in_every_state(
     status: RideStatus, *, ride_open: bool
@@ -600,6 +633,19 @@ def test_is_route_enabled_given_edit_ride_follows_ride_open_in_every_state(
     result = commands.is_route_enabled(EDIT_RIDE_ROUTE, state)
 
     assert result is ride_open
+
+
+@pytest.mark.parametrize("ride_open", RIDE_OPEN_CASES, ids=RIDE_OPEN_CASE_IDS)
+@pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
+def test_is_route_enabled_given_new_ride_follows_the_closed_ride_in_every_state(
+    status: RideStatus, *, ride_open: bool
+) -> None:
+    """D1: New Ride is no-ride-gated, never state-gated."""
+    state = dataclasses.replace(_baseline_state(status), ride_open=ride_open)
+
+    result = commands.is_route_enabled(NEW_RIDE_ROUTE, state)
+
+    assert result is not ride_open
 
 
 # --- E7.2.1: the live binder's enable/disable table for the -----------
@@ -689,6 +735,23 @@ def test_is_route_enabled_given_ride_not_open_and_route_requires_it_stays_disabl
     """Property: requires_ride_open always blocks a closed ride.
 
     Holds no matter what any other RideState field is.
+    """
+    result = commands.is_route_enabled(route, state)
+
+    assert result is False
+
+
+@given(
+    route=st.sampled_from(NO_RIDE_REQUIRING_ROUTES),
+    state=_ride_states_with(ride_open=True),
+)
+def test_is_route_enabled_given_ride_open_and_route_requires_none_stays_disabled(
+    route: commands.MenuRoute, state: commands.RideState
+) -> None:
+    """Property: requires_no_ride always blocks an open ride.
+
+    The inverse of the ride-open property above, over the same free
+    fields -- an open ride is exactly what D1's New Ride row refuses.
     """
     result = commands.is_route_enabled(route, state)
 

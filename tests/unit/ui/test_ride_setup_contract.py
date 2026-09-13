@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless pins for ride_setup_dlg's tie-break box and logo (§3c/§3d).
+"""Headless pins for ride_setup_dlg's tie-break box, logo, jokers.
 
 The Cards box now carries ``tiebreak_list``'s own three-row box beside
 the logo column (``logo_preview_bmp`` / ``logo_status_lbl`` /
 ``logo_browse_btn``); the standalone ``logo_picker`` row is gone. The
 list's seed is :data:`~rivercrossing.ride.DEFAULT_TIEBREAK_ORDER` --
 Phase 3's stored default, high-card draw first -- and a staged logo is
-what ``_form_values`` submits as ``logo_path``.
+what ``_form_values`` submits as ``logo_path``. Phase 1 turned the
+jokers_0/2/4_radio trio into the ``jokers_choice`` dropdown over 0..4,
+opening on 1.
 
 A real ``wx.Dialog`` needs a desktop, so these tests drive control
 doubles and call the steps directly -- the same ``object.__new__``
@@ -50,6 +52,7 @@ class _FakeControl:
         self.min_size: wx.Size | None = None
         self.bitmap: object = None
         self.label = ""
+        self.enabled = True
 
     def GetValue(self) -> object:  # noqa: N802 -- wx API name the SUT calls
         """Return the value this double was built with."""
@@ -62,6 +65,18 @@ class _FakeControl:
     def SetStrings(self, strings: list[str]) -> None:  # noqa: N802 -- wx API name the SUT calls
         """Replace the rows this double holds."""
         self._strings = list(strings)
+
+    def GetStringSelection(self) -> str:  # noqa: N802 -- wx API name the SUT calls
+        """Return the selected item's own text, as a wxChoice does."""
+        return str(self._value)
+
+    def SetStringSelection(self, value: str) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the item text the view selected."""
+        self._value = value
+
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name and positional bool
+        """Record the enabled state the view applied."""
+        self.enabled = enabled
 
     def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
         """Record the floor the view applied."""
@@ -133,14 +148,16 @@ _FORM_VALUE_CONTROLS = (
     "team_size_spin",
     "relay_radio",
     "decks_spin",
-    "jokers_0_radio",
-    "jokers_2_radio",
-    "jokers_4_radio",
+    "jokers_choice",
     "cap_chk",
     "cap_spin",
 )
 
 NAME_INPUT_VALUE = "GORBA EPIC 2026"
+
+# The structural-gate controls _form_values never reads (the gate
+# still has to enable/disable them).
+_STRUCTURE_ONLY_CONTROLS = ("solo_radio", "pooled_radio")
 
 
 def _bare_view(*, logo_path: Path | None = None) -> RideSetup:
@@ -156,8 +173,11 @@ def _bare_view(*, logo_path: Path | None = None) -> RideSetup:
     view.dialog = _FakeDialog()
     view._logo_path = logo_path
     view.tiebreak_list = _FakeControl(strings=list(_TIEBREAK_LABELS.values()))
-    for name in _FORM_VALUE_CONTROLS:
+    for name in (*_FORM_VALUE_CONTROLS, *_STRUCTURE_ONLY_CONTROLS):
         setattr(view, name, _FakeControl())
+    # The dropdown's double carries the same XRC default the authored
+    # control opens on (setup.xrc's <selection>1</selection>).
+    view.jokers_choice = _FakeControl(value="1")
     view.name_input = _FakeControl(NAME_INPUT_VALUE)
     view.date_picker = _FakeDateTime()
     view.start_time_picker = _FakeDateTime()
@@ -275,3 +295,73 @@ def test_ride_setup_form_values_given_no_staged_logo_submits_none() -> None:
     values = view._form_values()
 
     assert values.logo_path is None
+
+
+# ---------------------------------------- jokers dropdown (Phase 1)
+
+
+@pytest.mark.parametrize(
+    ("selected", "expected"),
+    [("0", 0), ("1", 1), ("2", 2), ("3", 3), ("4", 4)],
+    ids=["zero", "one", "two", "three", "four"],
+)
+def test_ride_setup_jokers_per_deck_given_each_selection_reads_its_int(
+    selected: str, expected: int
+) -> None:
+    """T-4: every authored item maps to its own int, 0..4."""
+    view = _bare_view()
+    view.jokers_choice.SetStringSelection(selected)
+
+    assert view._jokers_per_deck() == expected
+
+
+@pytest.mark.parametrize(
+    ("count", "selected"),
+    [(0, "0"), (1, "1"), (2, "2"), (3, "3"), (4, "4")],
+    ids=["zero", "one", "two", "three", "four"],
+)
+def test_ride_setup_show_jokers_per_deck_given_each_count_selects_its_item(
+    count: int, selected: str
+) -> None:
+    """D2 preload: the record's own 0..4 selects the matching item."""
+    view = _bare_view()
+
+    view.show_jokers_per_deck(count)
+
+    assert view.jokers_choice.GetStringSelection() == selected
+
+
+def test_ride_setup_show_jokers_per_deck_given_the_bare_view_leaves_the_xrc_default() -> None:
+    """A fresh dialog opens on 1 joker/deck without any preload call."""
+    view = _bare_view()
+
+    assert view._jokers_per_deck() == 1
+
+
+def test_ride_setup_form_values_given_a_selected_jokers_choice_submits_its_int() -> None:
+    """The dropdown's own selection is what the form submits."""
+    view = _bare_view()
+    view.jokers_choice.SetStringSelection("3")
+
+    values = view._form_values()
+
+    assert values.jokers_per_deck == 3
+
+
+def test_ride_setup_set_structure_enabled_given_false_disables_the_jokers_choice() -> None:
+    """D2: a started ride's jokers count is read-only like its decks."""
+    view = _bare_view()
+
+    view.set_structure_enabled(enabled=False)
+
+    assert view.jokers_choice.enabled is False
+
+
+def test_ride_setup_set_structure_enabled_given_true_enables_the_jokers_choice() -> None:
+    """A DRAFT ride keeps the dropdown editable (T-3 both outcomes)."""
+    view = _bare_view()
+    view.jokers_choice.enabled = False
+
+    view.set_structure_enabled(enabled=True)
+
+    assert view.jokers_choice.enabled is True

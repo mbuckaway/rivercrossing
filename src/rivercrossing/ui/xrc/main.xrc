@@ -23,15 +23,31 @@
       canvas minimum of 1100x700 is declared as <size> below and must be
       re-applied code-side with SetMinSize(). (spec.md 13 says 1180x740;
       the canvas is implementation truth and wins - recorded conflict.
-      W9 raises the declared size to 1100x780 code-side and here so the
-      full 30-row crossings feed stays visible at 100% zoom; the canvas
-      drawing's own amendment is W15's.)
+      W9 raises the declared size to 1100x780 code-side and here; the
+      canvas drawing's own amendment is W15's. Phase 4 retires the
+      30-row feed cap this height was sized around: crossings_list now
+      scrolls the whole ride, and the pane height is a working area, not
+      a row count. Phase 6 clamps whatever <size> or persisted geometry
+      arrives to the current display's work area through
+      _support.fit_frame_to_screen (wx.Display.GetClientArea, 16 px
+      margin) and re-runs that fit on wx.EVT_DISPLAY_CHANGED, so a
+      window saved on a larger or since-unplugged display still opens
+      whole and on screen.)
+    * Phase 6's Current Lap reading (current_lap_lbl) is a plain
+      wxStaticText with a clock-sized relative font (the 64 DIP dial's
+      own scale, spelled the way plate_input's 1.5x is) and its light
+      green authored here with <fg>. Measured on this build (4.3.1 /
+      wxWidgets 3.3.3, an XmlResource LoadFrame probe): the generic
+      window handler DOES honour <fg>, unlike wxDataViewListCtrl's
+      forced name or <relativesize> on a bitmap button. Only the
+      two-digit width pin stays code-side - XRC cannot measure a font.
 
-  Code-side per the canvas footnotes: feed columns/rows and bold flagged-row
-  attributes, card bitmaps from the imagelist, InfoBar text and show/hide,
-  main_splitter sash restore from settings, per-ride-state enabling of menus
-  and buttons, radio menu-item defaults (see main_menubar below), and every
-  data label's text.
+  Code-side per the canvas footnotes: feed columns/rows (with their
+  header sort), bold flagged-row attributes, the feed's search filter,
+  card bitmaps from the imagelist, InfoBar text and show/hide,
+  main_splitter sash restore from settings, per-ride-state enabling of
+  menus and buttons, radio menu-item defaults (see main_menubar below),
+  and every data label's text.
 -->
 <resource>
 
@@ -81,36 +97,48 @@
 
               <!--
                 Plan §11: the ride-info block, left to right. The stop
-                light's own column leads: ride_status_panel is a
-                code-side slot (the same XRC-cannot-author-a-wx.Control
-                subclass rule as the two clock panels), holding the
-                code-built StopLight (ride_status_light) beside its own
-                label. Then two native group boxes replace the one
-                "Ride" group. "Ride" carries the identity rows (Name,
-                Date, Venue) and "Details" the organizer rows
-                (Organizer, Scorer, Lap length km). Each row is an
-                unnamed wxStaticText caption in column one and a
-                wxTE_READONLY wxTextCtrl in column two, the counter
-                chips' own caption convention; show_ride_header fills
-                all six from the open ride's config. Both boxes carry
-                label text only, no frozen name, so ids.py is
-                unchanged. The ride's own logo (ride_logo_bmp, rendered
-                at 64x64) closes the block, to the right of both boxes
-                and before the clock panels. It is authored with no
-                bitmap element: measured on wxPython 4.3.1, XRC yields
-                a real wxStaticBitmap that keeps its name and accepts
-                SetBitmap later (about_logo_bmp's own authored shape).
+                light's own column leads: Phase 6 wraps it in a native
+                "Status" wxStaticBoxSizer so the group's fixed width is
+                drawn, not implied: ride_status_panel is a code-side slot
+                (the same XRC-cannot-author-a-wx.Control subclass rule as
+                the two clock panels) holding the code-built StopLight
+                (ride_status_light) beside its own label, whose width the
+                view pins to the widest status word (ride_status_lbl,
+                "REOPENED") so no state change can resize the column.
+                Then two native group boxes replace the one "Ride"
+                group. "Ride" carries the identity rows (Name, Date,
+                Venue) and "Details" the organizer rows (Organizer,
+                Scorer, Lap length km). Each row is an unnamed
+                wxStaticText caption in column one and a wxTE_READONLY
+                wxTextCtrl in column two, the counter chips' own caption
+                convention; show_ride_header fills all six from the open
+                ride's config. Both boxes carry label text only, no
+                frozen name, so ids.py is unchanged (Phase 6's Status box
+                is the same: the box title names it, no control does).
+                The ride's own logo (ride_logo_bmp, rendered at 64x64)
+                closes the block, to the right of both boxes and before
+                the clock panels. It is authored with no bitmap element:
+                measured on wxPython 4.3.1, XRC yields a real
+                wxStaticBitmap that keeps its name and accepts SetBitmap
+                later (about_logo_bmp's own authored shape).
               -->
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
                 <border>12</border>
-                <object class="wxPanel" name="ride_status_panel">
-                  <object class="wxBoxSizer">
-                    <orient>wxHORIZONTAL</orient>
-                    <object class="sizeritem">
-                      <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                      <object class="wxStaticText" name="ride_status_lbl">
-                        <label></label>
+                <object class="wxStaticBoxSizer">
+                  <label>Status</label>
+                  <orient>wxHORIZONTAL</orient>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxPanel" name="ride_status_panel">
+                      <object class="wxBoxSizer">
+                        <orient>wxHORIZONTAL</orient>
+                        <object class="sizeritem">
+                          <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                          <object class="wxStaticText" name="ride_status_lbl">
+                            <label>DRAFT</label>
+                          </object>
+                        </object>
                       </object>
                     </object>
                   </object>
@@ -246,6 +274,32 @@
                 <border>8</border>
                 <object class="wxStaticBitmap" name="ride_logo_bmp">
                   <size>64,64</size>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT|wxRIGHT</flag>
+            <border>12</border>
+            <object class="wxStaticBoxSizer">
+              <label></label>
+              <orient>wxVERTICAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTER_HORIZONTAL</flag>
+                <object class="wxStaticText" name="current_lap_lbl">
+                  <label>00</label>
+                  <fg>#90EE90</fg>
+                  <font>
+                    <sysfont>wxSYS_DEFAULT_GUI_FONT</sysfont>
+                    <relativesize>2</relativesize>
+                  </font>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTER_HORIZONTAL</flag>
+                <object class="wxStaticText">
+                  <label>Current Lap</label>
                 </object>
               </object>
             </object>
@@ -399,6 +453,30 @@
           <object class="wxPanel">
             <object class="wxBoxSizer">
               <orient>wxVERTICAL</orient>
+              <!-- Phase 4: the crossings search row, the rider editor's
+                   own shape (riders.xrc: a wxStaticText label + a
+                   wxSearchCtrl above the list). The label is the plain
+                   word the editor uses and carries no frozen name, so
+                   no ids.py entry rides on it. -->
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>8</border>
+                <object class="wxBoxSizer">
+                  <orient>wxHORIZONTAL</orient>
+                  <object class="sizeritem">
+                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                    <border>6</border>
+                    <object class="wxStaticText">
+                      <label>Search</label>
+                    </object>
+                  </object>
+                  <object class="sizeritem">
+                    <option>1</option>
+                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                    <object class="wxSearchCtrl" name="crossings_search"/>
+                  </object>
+                </object>
+              </object>
               <object class="sizeritem">
                 <option>1</option>
                 <flag>wxEXPAND</flag>

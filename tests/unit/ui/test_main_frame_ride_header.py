@@ -4,7 +4,7 @@
 ``show_ride_header`` renders the two ride-info groups beside the stop
 light: the ride's own logo plus six read-only values -- Name, Date,
 Venue in the "Ride" box, Organizer, Scorer and Lap length km in
-"Details". Four things are pinned here:
+"Details". Five things are pinned here:
 
 - :func:`rivercrossing.ui.views.main_frame._ride_logo_bitmap` -- a path
   decodes to an OK bitmap fitted into ``RIDE_LOGO_DISPLAY_SIZE``, or the
@@ -19,6 +19,11 @@ Venue in the "Ride" box, Organizer, Scorer and Lap length km in
 - §11's stop-light fix -- ``_pin_stop_light`` floors the lamp at its own
   ``DoGetBestSize`` so the header sizer cannot collapse it, and
   ``set_state`` drives every lifecycle mode through ``set_mode``.
+- Phase 6's two width pins and the lap reading --
+  ``_pin_status_label_width`` floors the Status label at the widest
+  status word (so the box's fixed column never reflows on a state
+  change), ``_pin_current_lap_width`` floors the reading at its own two
+  digits, and ``show_current_lap`` renders ``00``..``99``.
 
 The bitmap arm needs a live ``wx.App`` to decode and rescale a PNG, so
 this module builds one -- the module-cache strong reference
@@ -192,6 +197,27 @@ class _RecordingLight:
         self.min_size = size
 
 
+class _RecordingLabel:
+    """A ``wx.StaticText`` double recording the text it was set to."""
+
+    def __init__(self, label: str = "") -> None:
+        """Start showing *label*."""
+        self.label = label
+        self.min_size: wx.Size | None = None
+
+    def SetLabel(self, label: str) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the label the view rendered."""
+        self.label = label
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the floor the view pinned on the label."""
+        self.min_size = size
+
+    def GetTextExtent(self, text: str) -> wx.Size:  # noqa: N802 -- wx API name the SUT calls
+        """Report a deterministic, monotonic extent for *text*."""
+        return wx.Size(7 * len(text), 16)
+
+
 class _NoOp:
     """Any control the pin never asserts on: accepts every call."""
 
@@ -219,7 +245,8 @@ def _bare_view() -> MainFrame:
     view.ride_organizer_value = _RecordingValue()
     view.ride_scorer_value = _RecordingValue()
     view.ride_lap_km_value = _RecordingValue()
-    view.ride_status_lbl = _NoOp()
+    view.ride_status_lbl = _RecordingLabel()
+    view.current_lap_lbl = _RecordingLabel(label="00")
     view.ride_status_light = _RecordingLight()
     for name in (
         "plate_input",
@@ -427,14 +454,30 @@ def test_show_no_ride_given_a_rendered_header_hides_the_logo_slot(tmp_path: Path
     assert view.ride_logo_bmp.shown is False
 
 
-def test_show_no_ride_given_a_live_header_puts_the_status_lamp_off() -> None:
-    """W1: the status column's lamp goes dark with no ride."""
+def test_show_no_ride_given_a_live_header_puts_the_status_lamp_red() -> None:
+    """Phase 6: no ride renders the DRAFT lamp (red), not a dark one.
+
+    The no-ride console still names its state -- ``ride_status_lbl``
+    reads DRAFT -- and a labelled state is never carried by colour
+    alone (UX-DESKTOP section 7), so the lamp lights DRAFT's own red
+    rather than going dark.
+    """
     view = _bare_view()
     view.ride_status_light.set_mode("green")
 
     view.show_no_ride()
 
-    assert view.ride_status_light.mode == "off"
+    assert view.ride_status_light.mode == "red"
+
+
+def test_show_no_ride_given_a_live_header_labels_the_status_draft() -> None:
+    """Phase 6: the status label reads DRAFT with no ride open."""
+    view = _bare_view()
+    view.ride_status_lbl.SetLabel("RUNNING")
+
+    view.show_no_ride()
+
+    assert view.ride_status_lbl.label == "DRAFT"
 
 
 def test_show_no_ride_given_a_live_header_returns_the_console_to_draft() -> None:
@@ -485,25 +528,131 @@ def test_pin_stop_light_given_a_best_size_pins_exactly_that_minimum(
 @pytest.mark.parametrize(
     ("status", "stopped", "expected"),
     [
-        (RideStatus.DRAFT, False, "yellow"),
+        (RideStatus.DRAFT, False, "red"),
         (RideStatus.RUNNING, False, "green"),
         (RideStatus.RUNNING, True, "yellow"),
         (RideStatus.FINISHED, False, "red"),
         (RideStatus.REOPENED, False, "yellow"),
     ],
-    ids=["draft_amber", "running_green", "stopped_amber", "finished_red", "reopened_amber"],
+    ids=["draft_red", "running_green", "stopped_amber", "finished_red", "reopened_amber"],
 )
 def test_set_state_given_a_lifecycle_status_lights_the_lamp(
     status: RideStatus,
     stopped: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
     expected: str,
 ) -> None:
-    """WS-D/W6: each ``set_state`` transition drives the lamp mode."""
+    """WS-D/W6: each ``set_state`` transition drives the lamp mode.
+
+    Phase 6: DRAFT is red (the pre-start state), REOPENED keeps amber.
+    """
     view = _bare_view()
 
     view.set_state(status, stopped=stopped)
 
     assert view.ride_status_light.mode == expected
+
+
+# --------------------------------------- the Status group's fixed width
+# Part 2: the label is floored at the widest status word it can ever
+# show, so a DRAFT -> REOPENED transition cannot resize the column.
+
+
+def test_status_label_words_given_the_lifecycle_cover_every_rendered_word() -> None:
+    """The floor is computed from the real labels, STOPPED included."""
+    assert set(main_frame.STATUS_LABEL_WORDS) == {
+        "DRAFT",
+        "RUNNING",
+        "FINISHED",
+        "REOPENED",
+        "STOPPED",
+    }
+
+
+def test_pin_status_label_width_given_a_label_pins_the_widest_word() -> None:
+    """The pin is the widest word's own extent, nothing invented."""
+    label = _RecordingLabel()
+
+    width = main_frame._pin_status_label_width(label)
+
+    assert (width, label.min_size.width, label.min_size.height) == (
+        label.GetTextExtent("REOPENED").width,
+        label.GetTextExtent("REOPENED").width,
+        -1,
+    )
+
+
+def test_pin_status_label_width_given_the_stopped_word_reserves_its_room() -> None:
+    """STOPPED is seven characters: never the widest, never squeezed."""
+    label = _RecordingLabel()
+
+    main_frame._pin_status_label_width(label)
+
+    assert label.min_size.width >= label.GetTextExtent("STOPPED").width
+
+
+# --------------------------------------------------- the Current Lap
+# Part 3: the header's two-digit lap reading.
+
+
+def test_max_current_lap_given_the_two_digit_display_is_ninety_nine() -> None:
+    """The reading is pinned to two digits, so the cap is 99."""
+    assert main_frame.MAX_CURRENT_LAP == 99
+
+
+def test_pin_current_lap_width_given_a_label_pins_its_two_digit_extent() -> None:
+    """The Current Lap box is a fixed size: two digits, never three."""
+    label = _RecordingLabel()
+
+    width = main_frame._pin_current_lap_width(label)
+
+    assert (width, label.min_size.width, label.min_size.height) == (
+        label.GetTextExtent("99").width,
+        label.GetTextExtent("99").width,
+        -1,
+    )
+
+
+@pytest.mark.parametrize(
+    ("lap", "expected"),
+    [
+        (0, "00"),  # T-4 min: no crossing recorded yet
+        (1, "01"),  # T-4 min + 1: the first rider crossing
+        (9, "09"),
+        (10, "10"),  # the units -> tens roll
+        (98, "98"),  # T-4 max - 1
+        (99, "99"),  # T-4 max
+        (100, "99"),  # T-4 max + 1: capped, never a third digit
+        (-1, "00"),  # T-4 min - 1: floored, never a negative width
+    ],
+    ids=["zero", "one", "nine", "ten", "max_minus_one", "max", "max_plus_one", "min_minus_one"],
+)
+def test_show_current_lap_given_a_lap_number_renders_two_digits(lap: int, expected: str) -> None:
+    """``show_current_lap`` always renders exactly two digits."""
+    view = _bare_view()
+
+    view.show_current_lap(lap)
+
+    assert view.current_lap_lbl.label == expected
+
+
+def test_show_no_ride_given_a_rendered_lap_resets_the_reading_to_zero() -> None:
+    """Clearing the console cannot leave a stale lap in the header."""
+    view = _bare_view()
+    view.show_current_lap(42)
+
+    view.show_no_ride()
+
+    assert view.current_lap_lbl.label == "00"
+
+
+@given(lap=st.integers(min_value=0, max_value=99))
+def test_show_current_lap_given_any_lap_in_range_renders_two_digits(lap: int) -> None:
+    """T-7 invariant: the pinned column always sees two digits."""
+    view = _bare_view()
+
+    view.show_current_lap(lap)
+
+    assert (len(view.current_lap_lbl.label), view.current_lap_lbl.label) == (2, f"{lap:02d}")
 
 
 # ------------------------------------------------------- logo bitmap

@@ -510,14 +510,14 @@ class EntryDetailDialog:
         )
 
     def open_dnf(self, *, entry: str) -> DnfMark | None:
-        """Open dnf_confirm_dlg naming the entry."""
+        """Open dnf_confirm_dlg naming the entry, plate prefilled."""
         if self._resource is None:
             self.show_notice("Mark DNF unavailable")
             return None
         return corrections.run_dnf(
             self._resource,
             frame=self.dialog,
-            entry_id=self.plate,
+            plate=self.plate,
             entry=entry,
         )
 

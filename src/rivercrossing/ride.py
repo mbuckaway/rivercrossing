@@ -154,13 +154,18 @@ _MAX_TEAM_SIZE_LIMIT = 10
 # owned by the ride-setup work in E3/E4: the XRC declares no value
 # and the presenter supplies it." E3.5's own binding decision
 # (2026-08-08) resolves that question to 8; the canvas's 2 is a mock
-# artifact, not a competing default.
+# artifact, not a competing default. Phase 1 (2026-09-13) re-binds
+# the *jokers* half of that quoted "8 decks x 2 jokers = 432" default
+# to 1, so the shipped default shoe is 8 x 53 = 424 (the spec's own
+# text is updated in a later phase, not rewritten here).
 DEFAULT_DECK_COUNT = 8
 
-# xrc-windows.md's ride_setup_dlg mock: jokers_2_radio is XRC's own
-# checked default (setup.xrc's <value>1</value>), unlike decks_spin;
-# recorded here too so RideConfig's own default never drifts from it.
-DEFAULT_JOKERS_PER_DECK = 2
+# setup.xrc's jokers_choice dropdown (a wxChoice over 0..4, opening on
+# <selection>1</selection>) is the dialog half of this default; Phase
+# 1 (2026-09-13) re-bound it from the retired jokers_2_radio's 2 to 1.
+# Recorded here so RideConfig's own default never drifts from the
+# authored control.
+DEFAULT_JOKERS_PER_DECK = 1
 
 # The canvas's lap_km_spin draws "8.0" (the GORBA reference ride's own
 # 8 km loop, spec.md §6) but XRC declares no <value>, so a fresh
@@ -868,7 +873,17 @@ class RideEngine:
         self._laps: dict[str, list[Crossing]] = {}
         self._dealt: dict[Crossing, Card] = {}
         self._held: dict[Crossing, Card] = {}
-        self._hand: dict[str, list[Card]] = {}
+        # Credited cards, keyed by entry plate, each tagged with the
+        # plate the operator actually typed for the crossing that dealt
+        # it (``Crossing.rider_plate``; a manual/correction deal's own
+        # plate). The tag is what makes a per-rider DNF possible: a
+        # pooled team's forfeit takes only the DNF rider's cards, not
+        # the whole hand.
+        self._hand: dict[str, list[tuple[Card, str | None]]] = {}
+        # Per-rider DNF marks, replayable only from the ``dnf`` events
+        # (the persisted rider table has no dnf column): a pooled team
+        # is out of the results when every one of its riders is here.
+        self._dnf_riders: set[str] = set()
         self._events: list[Event] = []
         # E9.1.3: the persistence sink. The app attaches
         # Store.append(ride_id, event) here AFTER load_engine's replay,
@@ -918,6 +933,33 @@ class RideEngine:
         replaying them (module-skeletons.md S4).
         """
         return tuple(self._events)
+
+    @property
+    def actual_start(self) -> datetime | None:
+        """Return the gun instant, or ``None`` before the ride starts.
+
+        The origin every elapsed value derives from: the console's
+        elapsed clock (:meth:`elapsed`) and the crossings feed's Time
+        column both measure from here. ``set_start_time`` moves it, so
+        the feed's own elapsed column follows a back-dated gun
+        automatically. Read-only and non-raising, unlike
+        :meth:`_require_actual_start` -- a DRAFT ride legitimately has
+        no start yet.
+        """
+        return self._actual_start
+
+    @property
+    def dnf_riders(self) -> frozenset[str]:
+        """Return the plates of every rider marked DNF, read-only.
+
+        The per-rider half of the DNF surface (``mark_dnf``): a pooled
+        team stays in the results until every one of its riders is in
+        this set, and each marked rider's own crossings are what the
+        console's feed marks. An entry-level DNF (a solo rider, a relay
+        team) is the roster entry's own status instead -- see
+        :meth:`entry_is_dnf`.
+        """
+        return frozenset(self._dnf_riders)
 
     @property
     def on_course(self) -> int:
@@ -1176,7 +1218,7 @@ class RideEngine:
             self._held[crossing] = card
         else:
             # W4 default: always deal -- a short lap still credits.
-            self._hand.setdefault(entry.plate, []).append(card)
+            self._credit(entry.plate, card, crossing.rider_plate)
         self._append(
             Event(
                 action="record_crossing",
@@ -1236,9 +1278,11 @@ class RideEngine:
 
         Read-only: unlike :meth:`snapshot` this does not apply
         ``config.max_cards`` (R-13), which caps the scored hand, not
-        the cards the entry actually holds.
+        the cards the entry actually holds -- nor a DNF rider's
+        forfeiture, which is a scoring rule (the console's Cards column
+        still shows every card dealt).
         """
-        return tuple(self._hand.get(plate, ()))
+        return tuple(card for card, _rider_plate in self._hand.get(plate, ()))
 
     def pending_misses(self) -> tuple[PendingMiss, ...]:
         """Return every pending miss, oldest first, read-only.
@@ -1312,7 +1356,7 @@ class RideEngine:
         card = self._held.pop(crossing, None)
         if card is None:
             raise IllegalStateError("crossing's card is not held")
-        self._hand.setdefault(crossing.entry_id, []).append(card)
+        self._credit(crossing.entry_id, card, crossing.rider_plate)
         return self._append(
             Event(
                 action="confirm_held",
@@ -1386,9 +1430,7 @@ class RideEngine:
         self._remove_crossing(last)
         card = self._dealt.pop(last)
         self._held.pop(last, None)
-        hand = self._hand.get(last.entry_id)
-        if hand is not None and card in hand:
-            hand.remove(card)
+        self._discard_credited(last.entry_id, card)
         self._voided_cards.discard(card)
         # REOPENED after Finish: the shoe is re-opened (spec §15), so
         # this restitution succeeds and returns the card to the front --
@@ -1450,11 +1492,9 @@ class RideEngine:
         """
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot deal manually from {self._state}")
-        entry = self._roster.resolve_plate(plate)
-        if entry is None:
-            raise UnknownPlateError(f"unknown plate: {plate}")
+        entry = self._require_entry(plate)
         card = self._deal_card()
-        self._hand.setdefault(entry.plate, []).append(card)
+        self._credit(entry.plate, card, plate)
         self._roster.mark_has_data(entry)
         return self._append(
             Event(
@@ -1553,9 +1593,7 @@ class RideEngine:
         crossing = self._require_crossing(entry_id, seq)
         card = self._dealt.pop(crossing)
         self._held.pop(crossing, None)
-        hand = self._hand.get(crossing.entry_id)
-        if hand is not None and card in hand:
-            hand.remove(card)
+        self._discard_credited(crossing.entry_id, card)
         self._voided_cards.add(card)
         self._remove_crossing(crossing)
         self._voided.append((crossing, card))
@@ -1603,9 +1641,7 @@ class RideEngine:
         _require_reason(reason)
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot add crossing from {self._state}")
-        entry = self._roster.resolve_plate(plate)
-        if entry is None:
-            raise UnknownPlateError(f"unknown plate: {plate}")
+        entry = self._require_entry(plate)
         self._record_crossing_at(entry, crossed_at, rider_plate=plate)
         return self._append(
             Event(
@@ -1658,9 +1694,7 @@ class RideEngine:
         )
         if miss is None:
             raise IllegalStateError(f"no pending miss with miss_seq {miss_seq}")
-        entry = self._roster.resolve_plate(new_plate)
-        if entry is None:
-            raise UnknownPlateError(f"unknown plate: {new_plate}")
+        entry = self._require_entry(new_plate)
         self._pending_misses.remove(miss)
         self._record_crossing_at(entry, miss.crossed_at, rider_plate=new_plate)
         return self._append(
@@ -1700,7 +1734,7 @@ class RideEngine:
         )
         self._insert_crossing(crossing)
         self._dealt[crossing] = card
-        self._hand.setdefault(entry.plate, []).append(card)
+        self._credit(entry.plate, card, crossing.rider_plate)
         self._roster.mark_has_data(entry)
         return crossing
 
@@ -1749,14 +1783,10 @@ class RideEngine:
         crossing = self._crossings[seq - 1]
         old_entry_id = crossing.entry_id
         old_seq = crossing.seq
-        entry = self._roster.resolve_plate(new_plate)
-        if entry is None:
-            raise UnknownPlateError(f"unknown plate: {new_plate}")
+        entry = self._require_entry(new_plate)
         card = self._dealt[crossing]
         held = self._held.pop(crossing, None)
-        hand = self._hand.get(old_entry_id)
-        if hand is not None and card in hand:
-            hand.remove(card)
+        self._discard_credited(old_entry_id, card)
         self._dealt.pop(crossing)
         self._remove_crossing(crossing)
         self._renumber_later(old_entry_id, old_seq)
@@ -1772,7 +1802,7 @@ class RideEngine:
         if held is not None:
             self._held[replacement] = held
         elif card not in self._voided_cards:
-            self._hand.setdefault(entry.plate, []).append(card)
+            self._credit(entry.plate, card, replacement.rider_plate)
         return self._append(
             Event(
                 action="reassign",
@@ -1786,22 +1816,26 @@ class RideEngine:
             )
         )
 
-    def mark_dnf(self, entry_id: str, reason: str) -> Event:
-        """Mark one entry DNF; laps and cards stay (E7.1.1, spec §6).
+    def mark_dnf(self, plate: str, reason: str) -> Event:
+        """Mark one rider, or one whole entry, DNF (E7.1.1, spec §6).
 
-        The operator's "rider did not finish" correction: the entry's
-        status becomes DNF (spec §2 ``entry.status``), keeping every
-        recorded lap and card. :meth:`snapshot` reports the entry with
-        ``dnf=True`` and ``standings.rank`` places DNF entries after
-        every ACTIVE entry -- the engine never reimplements that
-        ranking. Reversible semantics (un-DNF) are the dialog's
-        concern, not the engine's: this command only sets the state.
-        RUNNING or REOPENED only.
+        The operator's "did not finish" correction. *plate* resolves
+        through the roster (R-16), and what it names decides the scope:
+        a pooled team member's own number marks **that rider**, so the
+        team stays in the results with its remaining riders' cards
+        while the DNF rider's cards are forfeited (:meth:`snapshot`);
+        every other plate -- a solo entry's, or a relay team's, whose
+        riders carry no plate at all (S1) -- marks the whole entry, as
+        it always has. A team comes out only when every rider of it is
+        DNF. Every recorded lap and card is kept either way (spec §6).
+        Reversible semantics (un-DNF) are the dialog's concern, not the
+        engine's: this command only records the mark. RUNNING or
+        REOPENED only.
 
         Args:
-            entry_id: The entry to mark (a plate, resolved like a
-                crossing's -- R-16).
-            reason: Why the entry is DNF; carried in the audit payload.
+            plate: The rider number or entry plate to mark.
+            reason: Why the rider did not finish; carried in the audit
+                payload.
 
         Returns:
             The appended ``dnf`` audit event.
@@ -1809,20 +1843,52 @@ class RideEngine:
         Raises:
             ValueError: *reason* is empty or whitespace-only.
             IllegalStateError: the ride is not RUNNING or REOPENED.
-            UnknownPlateError: *entry_id* resolves to no entry.
+            UnknownPlateError: *plate* resolves to no entry.
         """
         _require_reason(reason)
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot mark DNF from {self._state}")
-        entry = self._roster.resolve_plate(entry_id)
-        if entry is None:
-            raise UnknownPlateError(f"unknown plate: {entry_id}")
-        # Duck-typed status write: never import roster at runtime
-        # (module docstring), and the member must be a real StrEnum --
-        # the store's save_roster reads ``entry.status.value``.
-        entry.status = type(entry.status)("dnf")
+        entry = self._require_entry(plate)
+        # A team member's own number is the rider's, not the team's:
+        # under rider_pooled the team's own plate is derived from its
+        # lowest-numbered rider (S1), so a typed number that names a
+        # member always scopes to that member. Solo riders are never
+        # scoped this way -- their DNF *is* the entry's DNF.
+        rider = entry.type.value == "team" and any(
+            member.plate == plate for member in entry.riders
+        )
+        return self._record_dnf(entry, plate=plate, rider=rider, reason=reason)
+
+    def _record_dnf(  # noqa: PLR0913 -- (entry, plate, rider, reason): the dnf event's four fields
+        self, entry: Entry, *, plate: str, rider: bool, reason: str
+    ) -> Event:
+        """Set one DNF mark on *entry* and append its event.
+
+        The shared body of :meth:`mark_dnf` and the replay of a
+        persisted ``dnf`` event: *rider* True records the member's own
+        plate in the per-rider set, False writes the entry's status.
+        Both scopes audit the same payload shape -- the plate, the
+        entry it belongs to, the scope and the reason -- so replay
+        rebuilds the identical state without re-deriving the scope from
+        the roster.
+        """
+        if rider:
+            self._dnf_riders.add(plate)
+        else:
+            # Duck-typed status write: never import roster at runtime
+            # (module docstring), and the member must be a real StrEnum
+            # -- the store's save_roster reads ``entry.status.value``.
+            entry.status = type(entry.status)("dnf")
         return self._append(
-            Event(action="dnf", payload={"entry_id": entry.plate, "reason": reason})
+            Event(
+                action="dnf",
+                payload={
+                    "entry_id": entry.plate,
+                    "plate": plate,
+                    "rider": rider,
+                    "reason": reason,
+                },
+            )
         )
 
     def void_card(self, entry_id: str, card: Card, reason: str) -> Event:
@@ -1855,17 +1921,13 @@ class RideEngine:
         _require_reason(reason)
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot void card from {self._state}")
-        entry = self._roster.resolve_plate(entry_id)
-        if entry is None:
-            raise UnknownPlateError(f"unknown plate: {entry_id}")
+        entry = self._require_entry(entry_id)
         for crossing, held_card in self._held.items():
             if crossing.entry_id == entry.plate and held_card == card:
                 msg = "card is held; confirm or void it through the review panel"
                 raise IllegalStateError(msg)
-        hand = self._hand.get(entry.plate)
-        if hand is None or card not in hand:
+        if not self._discard_credited(entry.plate, card):
             raise IllegalStateError(f"no dealt card {card.code()} credited to {entry.plate}")
-        hand.remove(card)
         self._voided_cards.add(card)
         return self._append(
             Event(
@@ -2032,22 +2094,23 @@ class RideEngine:
         ``cards`` and ``hand`` to the first ``max_cards`` credited
         cards: laps past the cap still count, and later cards still
         deal from the shoe but never improve the hand. Held
-        (unconfirmed) and voided cards never reach the hand. DNF
-        entries (``mark_dnf``, E7.1.1) stay listed with ``dnf=True``;
-        ``standings.rank`` places them after every ACTIVE entry and the
-        leaderboards exclude them -- never reimplemented here. ``sex``
-        (E7) is a solo entry's lone rider's ``"M"``/``"F"`` and None
-        for a team: a team has no single sex, so the exports render it
-        blank there.
+        (unconfirmed) and voided cards never reach the hand. A DNF mark
+        (``mark_dnf``, E7.1.1) excludes its subject from the results:
+        ``dnf=True`` for an entry that is out -- its own status, or a
+        team every one of whose riders is DNF -- and a DNF team
+        member's cards are forfeited, so only the survivors' cards
+        score. ``standings`` then drops DNF results outright; the
+        leaderboards already excluded them. ``sex`` (E7) is a solo
+        entry's lone rider's ``"M"``/``"F"`` and None for a team: a
+        team has no single sex, so the exports render it blank there.
         """
         results: list[EntryResult] = []
         for entry in self._roster.entries:
-            dnf = entry.status.value == "dnf"  # spec §2's stored spelling
+            dnf = self.entry_is_dnf(entry)
             kind = entry.type.value
             laps = self._laps_for(entry.plate)
             times = self.lap_times(entry.plate)
-            hand_cards = self._hand.get(entry.plate)
-            cards = tuple(hand_cards) if hand_cards else ()
+            cards = self._scoring_cards(entry.plate)
             if self._config.max_cards is not None:
                 cards = cards[: self._config.max_cards]
             results.append(
@@ -2089,6 +2152,85 @@ class RideEngine:
             self._append(Event(action="shoe_reshuffle", payload={"cycle": self._shoe.cycle}))
             card, _deal_index = self._shoe.deal()
         return card
+
+    def _require_entry(self, plate: str) -> Entry:
+        """Return the entry *plate* resolves to (R-16), or raise.
+
+        The one plate->entry resolution every correction command shares
+        (``deal_manual``/``add_crossing_at``/``assign_plate_to_miss``/
+        ``reassign_crossing``/``mark_dnf``/``void_card``);
+        ``record_crossing`` keeps its own refusal result instead, since
+        a live mis-key must not raise into the console.
+
+        Raises:
+            UnknownPlateError: *plate* resolves to no entry.
+        """
+        entry = self._roster.resolve_plate(plate)
+        if entry is None:
+            raise UnknownPlateError(f"unknown plate: {plate}")
+        return entry
+
+    def entry_is_dnf(self, entry: Entry) -> bool:
+        """Return whether *entry* is out of the results entirely.
+
+        An entry-level DNF (spec §2's stored ``entry.status``) covers
+        the solo and relay cases. A pooled team is out only when every
+        one of its riders is -- the marker lives in this engine, never
+        written back to the roster, because a rider's DNF has no roster
+        column to live in (Phase 3). A riderless entry (a transient
+        empty team) is never all-DNF.
+
+        Public because the console's crossings feed is a wx-free
+        presenter module with a roster of its own: it marks a row DNF
+        from the rider's plate (:attr:`dnf_riders`) or from this
+        verdict, and must not restate the entry-level rule.
+        """
+        if entry.status.value == "dnf":  # spec §2's stored spelling
+            return True
+        return bool(entry.riders) and all(
+            member.plate in self._dnf_riders for member in entry.riders
+        )
+
+    def _scoring_cards(self, entry_id: str) -> tuple[Card, ...]:
+        """Return *entry_id*'s credited cards that still score.
+
+        A DNF rider forfeits exactly the cards their own crossings
+        dealt -- the credited hand's rider tag (``_credit``) is what
+        separates a pooled team's members; a card with no rider tag is
+        never forfeited. The cards themselves stay credited
+        (:meth:`credited_cards` still lists them for the console).
+        """
+        return tuple(
+            card
+            for card, rider_plate in self._hand.get(entry_id, ())
+            if rider_plate not in self._dnf_riders
+        )
+
+    def _credit(self, entry_id: str, card: Card, rider_plate: str | None) -> None:
+        """Add *card* to *entry_id*'s credited hand.
+
+        *rider_plate* tags the card -- the plate the operator typed for
+        the crossing that dealt it (:attr:`Crossing.rider_plate`), which
+        is exactly what a per-rider DNF forfeits on.
+        """
+        self._hand.setdefault(entry_id, []).append((card, rider_plate))
+
+    def _discard_credited(self, entry_id: str, card: Card) -> bool:
+        """Remove one *card* from *entry_id*'s credited hand.
+
+        The undo/void/reassign reversal of :meth:`_credit`: the first
+        credited entry matching *card* leaves the hand. Returns whether
+        one was found, so ``void_card``'s own refusal can name the
+        missing card.
+        """
+        hand = self._hand.get(entry_id)
+        if hand is None:
+            return False
+        for index, (credited, _rider_plate) in enumerate(hand):
+            if credited == card:
+                del hand[index]
+                return True
+        return False
 
     def _laps_for(self, entry_id: str) -> tuple[Crossing, ...]:
         """Return *entry_id*'s live crossings, earliest crossing first.
@@ -2240,9 +2382,11 @@ class RideEngine:
         re-apply the persisted instant through :meth:`_finish_at`/
         :meth:`_reopen_at`, keeping an old ride's recorded finish time
         (C3). ``continue`` from a replayed REOPENED ride is legal
-        (:meth:`start` accepts it). The shoe's open/closed state is
-        part of the reproduced state: ``finish`` closes the fresh shoe
-        and a replayed ``reopen`` opens it again, exactly as live.
+        (:meth:`start` accepts it). ``dnf`` replays its payload's own
+        scope, never a roster re-resolve, because a rider's DNF has no
+        roster column to come back from. The shoe's open/closed state
+        is part of the reproduced state: ``finish`` closes the fresh
+        shoe and a replayed ``reopen`` opens it again, exactly as live.
 
         Args:
             event: The event to re-apply, exactly as persisted.
@@ -2305,7 +2449,17 @@ class RideEngine:
                 reason=str(event.payload["reason"]),
             )
         elif action == "dnf":
-            self.mark_dnf(str(event.payload["entry_id"]), reason=str(event.payload["reason"]))
+            # The payload's own scope replays -- the entry is located
+            # by plate like every other replayed subject, but whether
+            # the mark was a rider's or the entry's is never re-derived
+            # from the roster: a rider DNF has no roster column to come
+            # back from, and a member may have changed teams since.
+            self._record_dnf(
+                self._require_entry(str(event.payload["entry_id"])),
+                plate=str(event.payload["plate"]),
+                rider=bool(event.payload["rider"]),
+                reason=str(event.payload["reason"]),
+            )
         elif action == "void_card":
             self.void_card(
                 str(event.payload["entry_id"]),

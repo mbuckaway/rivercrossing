@@ -25,10 +25,12 @@ from rivercrossing.ui.feed_model import (
     COL_TIME,
     COL_TOTAL,
     COLUMN_LABELS,
+    COLUMN_SORT_KEYS,
     COLUMN_WIDTHS,
     TIME_COLUMNS,
     card_text_or_blank,
     edited_row_indexes,
+    entry_text,
     flagged_row_indexes,
     flash_crossing_label,
     lap_text,
@@ -106,6 +108,132 @@ def test_time_columns_is_exactly_lap_time_and_total() -> None:
     assert TIME_COLUMNS == (COL_LAP_TIME, COL_TOTAL)
 
 
+# --- column sort keys (Phase 4: the list's native header sort) -------
+
+
+def test_column_sort_keys_length_matches_the_column_labels() -> None:
+    """Every column has one sort key -- the two stay in lockstep."""
+    assert len(COLUMN_SORT_KEYS) == len(COLUMN_LABELS)
+
+
+def test_time_sort_key_given_hours_orders_by_seconds_not_by_text() -> None:
+    """9 h sorts before 10 h; as text '10:00:00' would come first."""
+    nine_hours = _feed_row(elapsed_s=32_400.0)
+    ten_hours = _feed_row(elapsed_s=36_000.0)
+
+    ordered = sorted((ten_hours, nine_hours), key=COLUMN_SORT_KEYS[COL_TIME])
+
+    assert ordered == [nine_hours, ten_hours]
+
+
+def test_plate_sort_key_given_digit_plates_orders_numerically() -> None:
+    """Plate 2 sorts before plate 10, not after it."""
+    two = _feed_row(plate="2")
+    ten = _feed_row(plate="10")
+
+    ordered = sorted((ten, two), key=COLUMN_SORT_KEYS[COL_PLATE])
+
+    assert ordered == [two, ten]
+
+
+def test_plate_sort_key_given_a_non_digit_plate_orders_after_the_digits() -> None:
+    """A relay plate is text: every numbered plate comes first."""
+    numbered = _feed_row(plate="999")
+    relay = _feed_row(plate="A1")
+
+    ordered = sorted((relay, numbered), key=COLUMN_SORT_KEYS[COL_PLATE])
+
+    assert ordered == [numbered, relay]
+
+
+def test_name_sort_key_given_mixed_case_names_orders_case_insensitively() -> None:
+    """The key casefolds, so 'amy' sorts with 'Amy'."""
+    amy = _feed_row(entry="Amy")
+    zoe = _feed_row(entry="zoe")
+
+    ordered = sorted((zoe, amy), key=COLUMN_SORT_KEYS[COL_NAME])
+
+    assert ordered == [amy, zoe]
+
+
+def test_name_sort_key_given_a_dnf_row_ignores_the_rendered_marker() -> None:
+    """The marker never reorders the list it was added to."""
+    plain = _feed_row(entry="Amy")
+    marked = _feed_row(entry="Amy", dnf=True)
+
+    keys = [COLUMN_SORT_KEYS[COL_NAME](row) for row in (plain, marked)]
+
+    assert keys == ["amy", "amy"]
+
+
+def test_card_sort_key_given_codes_orders_by_the_stored_code() -> None:
+    """Stored codes, not glyphs: the deck's own order."""
+    king = _feed_row(card="KH")
+    nine = _feed_row(card="9H")
+
+    ordered = sorted((king, nine), key=COLUMN_SORT_KEYS[COL_CARD])
+
+    assert ordered == [nine, king]
+
+
+def test_lap_sort_key_given_laps_orders_numerically() -> None:
+    """Lap 2 sorts before lap 10, not after it."""
+    two = _feed_row(lap=2)
+    ten = _feed_row(lap=10)
+
+    ordered = sorted((ten, two), key=COLUMN_SORT_KEYS[COL_LAP])
+
+    assert ordered == [two, ten]
+
+
+def test_lap_time_sort_key_given_hours_orders_by_seconds_not_by_text() -> None:
+    """A 9 h lap sorts before a 10 h one, numerically."""
+    nine_hours = _feed_row(lap_time_s=32_400.0)
+    ten_hours = _feed_row(lap_time_s=36_000.0)
+
+    ordered = sorted((ten_hours, nine_hours), key=COLUMN_SORT_KEYS[COL_LAP_TIME])
+
+    assert ordered == [nine_hours, ten_hours]
+
+
+def test_total_sort_key_given_hours_orders_by_seconds_not_by_text() -> None:
+    """The Total column sorts by time, like the standings' own."""
+    nine_hours = _feed_row(total_s=32_400.0)
+    ten_hours = _feed_row(total_s=36_000.0)
+
+    ordered = sorted((ten_hours, nine_hours), key=COLUMN_SORT_KEYS[COL_TOTAL])
+
+    assert ordered == [nine_hours, ten_hours]
+
+
+# --- entry_text (Phase 4: the DNF marker on the Name cell) -----------
+
+
+def test_entry_text_given_a_healthy_row_returns_the_entry_name() -> None:
+    """T-3 negative: nothing marked, nothing appended."""
+    assert entry_text(_feed_row(entry="Rider 12")) == "Rider 12"
+
+
+def test_entry_text_given_a_dnf_row_appends_the_marker() -> None:
+    """A DNF rider's row carries a text marker, not a colour alone."""
+    assert entry_text(_feed_row(entry="Rider 12", dnf=True)) == "Rider 12 DNF"
+
+
+def test_entry_text_given_a_missed_row_keeps_the_miss_name() -> None:
+    """A miss has no entry to be DNF: its own name renders unchanged."""
+    assert entry_text(_feed_row(entry="missed", missed=True)) == "missed"
+
+
+@given(entry=st.text(max_size=20), dnf=st.booleans())
+def test_entry_text_given_any_row_appends_the_marker_exactly_when_dnf(
+    entry: str, *, dnf: bool
+) -> None:
+    """Property: the cell is the name, suffixed iff DNF."""
+    cell = entry_text(_feed_row(entry=entry, dnf=dnf))
+
+    assert cell == (f"{entry} DNF" if dnf else entry)
+
+
 # --- card_text_or_blank -------------------------------------------
 
 DEALT_CARD_TEXT_CASES = (
@@ -164,20 +292,29 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     held: bool = False,
     edited: bool = False,
     missed: bool = False,
+    dnf: bool = False,
+    card: str = "9H",
+    elapsed_s: float = 0.0,
+    lap_time_s: float = 0.0,
+    total_s: float = 0.0,
 ) -> FeedRow:
     """Build a minimal ``FeedRow`` varying only what a test needs."""
     return FeedRow(
-        time="14:00:00",
+        time="0:10:00",
         plate=plate,
         entry=entry,
         lap=lap,
         lap_time="10:00",
         total="10:00",
-        card="9H",
+        card=card,
         flagged=flagged,
         held=held,
         edited=edited,
         missed=missed,
+        dnf=dnf,
+        elapsed_s=elapsed_s,
+        lap_time_s=lap_time_s,
+        total_s=total_s,
     )
 
 

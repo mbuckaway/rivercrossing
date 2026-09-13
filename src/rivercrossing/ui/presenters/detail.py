@@ -19,8 +19,10 @@ class (replacing the Phase-5 no-op):
 - **Void card…** opens ``void_card_confirm_dlg`` (naming the selected
   lap's dealt card + entry) and calls :meth:`RideEngine.void_card` --
   dealt cards only (held cards stay the review surface's domain).
-- **Mark DNF…** opens ``dnf_confirm_dlg`` (naming the entry) and calls
-  :meth:`RideEngine.mark_dnf` on confirm.
+- **Mark DNF…** opens ``dnf_confirm_dlg`` (naming the entry, its
+  ``plate_input`` prefilled with this entry's own plate) and calls
+  :meth:`RideEngine.mark_dnf` on confirm; the operator may retype a
+  pooled rider's number to take that rider out alone.
 - **Move rider…** (pooled team entries only) opens the team picker and
   calls :meth:`Roster.move_rider` on confirm.
 - **Audit trail** opens ``audit_dlg`` bound to the audit viewer and
@@ -111,9 +113,15 @@ class CardVoid:
 
 @dataclass(frozen=True, slots=True)
 class DnfMark:
-    """One confirmed ``dnf_confirm_dlg`` submission (E7.2.1)."""
+    """One confirmed ``dnf_confirm_dlg`` submission (E7.2.1).
 
-    entry_id: str
+    ``plate`` is whatever the operator typed into the dialog's
+    ``plate_input`` -- a pooled rider's own number, or a whole entry's
+    plate -- and the engine's ``mark_dnf`` resolves the scope from the
+    roster; the dialog never decides which is which.
+    """
+
+    plate: str
     reason: str
 
 
@@ -174,7 +182,12 @@ class DetailView(Protocol):
         ...
 
     def open_dnf(self, *, entry: str) -> DnfMark | None:
-        """Open dnf_confirm_dlg naming the entry; return the confirm."""
+        """Open dnf_confirm_dlg naming the entry; return the confirm.
+
+        *entry* is the human label the confirm shows; the dialog's
+        ``plate_input`` opens prefilled with the view's own entry plate
+        so the operator only has to add a reason.
+        """
         ...
 
     def open_move_rider(
@@ -418,11 +431,11 @@ class DetailPresenter:
         if dnf is None:
             return
         try:
-            self.engine.mark_dnf(dnf.entry_id, dnf.reason)
+            self.engine.mark_dnf(dnf.plate, dnf.reason)
         except (IllegalStateError, UnknownPlateError, ValueError) as exc:
             self.view.show_notice(f"Cannot mark DNF: {exc}")
             return
-        self.view.show_notice("Entry marked DNF")
+        self.view.show_notice("DNF marked")
         self._corrected()
 
     def on_move_rider_clicked(self) -> None:

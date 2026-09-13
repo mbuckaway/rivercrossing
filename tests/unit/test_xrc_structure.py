@@ -43,6 +43,8 @@ MAIN_FRAME_CONTROLS = (
     "ride_lap_km_value",
     "ride_status_lbl",
     "ride_status_panel",
+    # Phase 6: the header's two-digit Current Lap reading.
+    "current_lap_lbl",
     "clock_elapsed_lbl",
     "clock_remaining_lbl",
     "elapsed_clock_panel",
@@ -55,6 +57,8 @@ MAIN_FRAME_CONTROLS = (
     "undo_btn",
     "main_splitter",
     "crossings_list",
+    # Phase 4: the crossings search box above the list.
+    "crossings_search",
     "crossings_count_lbl",
     "cards_count_lbl",
     "on_course_lbl",
@@ -152,7 +156,8 @@ MAIN_MENUBAR_CONTROLS = (
 # button row. The standalone Logo row's wxFilePickerCtrl is retired
 # (plan §3d): the Cards box now carries the logo *column* beside
 # tiebreak_list -- logo_preview_bmp, logo_status_lbl and
-# logo_browse_btn.
+# logo_browse_btn. Phase 1 re-shaped the jokers-per-deck group: the
+# jokers_0/2/4_radio trio is one jokers_choice dropdown over 0..4.
 RIDE_SETUP_CONTROLS = (
     "name_input",
     "date_picker",
@@ -174,9 +179,7 @@ RIDE_SETUP_CONTROLS = (
     "pooled_radio",
     "relay_radio",
     "decks_spin",
-    "jokers_0_radio",
-    "jokers_2_radio",
-    "jokers_4_radio",
+    "jokers_choice",
     "cap_chk",
     "cap_spin",
     "tiebreak_list",
@@ -225,17 +228,15 @@ ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
 RADIO_MENU_ITEMS = ZOOM_MENU_ITEMS
 
-# Canvas defaults, and the first member of each of the dialog's four
-# radio groups (short-lap policy, entry mode, plate model, jokers per
-# deck).
-SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio", "jokers_2_radio")
-GROUP_OPENING_RADIOS = ("hold_short_radio", "solo_radio", "pooled_radio", "jokers_0_radio")
+# Canvas defaults, and the first member of each of the dialog's three
+# radio groups (short-lap policy, entry mode, plate model -- the
+# jokers-per-deck group is Phase 1's jokers_choice dropdown now).
+SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio")
+GROUP_OPENING_RADIOS = ("hold_short_radio", "solo_radio", "pooled_radio")
 GROUP_FOLLOWING_RADIOS = (
     "always_deal_radio",
     "mixed_radio",
     "relay_radio",
-    "jokers_2_radio",
-    "jokers_4_radio",
 )
 
 FEED_LIST_NAMES = ("crossings_list", "flagged_list")
@@ -522,12 +523,13 @@ RIDE_INFO_VALUE_NAMES = (*RIDE_GROUP_VALUES, *DETAILS_GROUP_VALUES)
 # The two group boxes, in the order they are laid out.
 GROUP_BOX_LABELS = ("Ride", "Details")
 
-# The ride-info block's own children, left to right: the status column
-# first, then the two group boxes, then the logo slot. A group box is
+# The ride-info block's own children, left to right: the Status group
+# (Phase 6 wraps the stop light's column and its label in a titled
+# box), then the two group boxes, then the logo slot. A group box is
 # summarised as "wxStaticBoxSizer:<label>" -- the label is the only
 # thing naming it, which is the point of the §11 no-new-name rule.
 HEADER_BLOCK_CHILDREN = (
-    "ride_status_panel",
+    "wxStaticBoxSizer:Status",
     "wxStaticBoxSizer:Ride",
     "wxStaticBoxSizer:Details",
     "ride_logo_bmp",
@@ -535,8 +537,13 @@ HEADER_BLOCK_CHILDREN = (
 
 
 def _header_block() -> Element:
-    """Return the horizontal row `ride_status_panel` leads (§11)."""
-    return _nearest_sizer(_window("main_frame"), "ride_status_panel")
+    """Return the horizontal row `ride_status_panel` leads (§11).
+
+    Anchored on ``ride_logo_bmp``, a direct child of that row: Phase 6
+    wraps ``ride_status_panel`` in the Status box, so the panel's own
+    nearest sizer is now that box rather than the row.
+    """
+    return _nearest_sizer(_window("main_frame"), "ride_logo_bmp")
 
 
 def _child_summaries(sizer: Element) -> list[str]:
@@ -548,7 +555,8 @@ def _child_summaries(sizer: Element) -> list[str]:
         if name:
             summaries.append(name)
         elif child.attrib.get("class") == "wxStaticBoxSizer":
-            summaries.append(f"wxStaticBoxSizer:{_param(child, 'label')}")
+            label = _param(child, "label")
+            summaries.append(f"wxStaticBoxSizer:{label}" if label else "wxStaticBoxSizer")
         else:
             summaries.append(child.attrib.get("class", child.tag))
     return summaries
@@ -604,7 +612,7 @@ def test_ride_status_panel_precedes_both_group_sizers_in_child_order() -> None:
     children = _child_summaries(_header_block())
     group_indexes = [children.index(f"wxStaticBoxSizer:{label}") for label in GROUP_BOX_LABELS]
 
-    assert children.index("ride_status_panel") < min(group_indexes)
+    assert children.index("wxStaticBoxSizer:Status") < min(group_indexes)
 
 
 def test_ride_logo_slot_follows_both_group_sizers_in_child_order() -> None:
@@ -630,6 +638,144 @@ def test_ride_group_box_holds_the_identity_rows_only() -> None:
 def test_details_group_box_holds_the_organizer_rows_only() -> None:
     """§11: Organizer, Scorer and Lap length km move to "Details"."""
     assert _group_value_names("Details") == list(DETAILS_GROUP_VALUES)
+
+
+# --------------------------------------------------------------------
+# Phase 6: the Status box around the stop light's column, and the new
+# Current Lap group in the top row.
+
+STATUS_GROUP_LABEL = "Status"
+CURRENT_LAP_CAPTION = "Current Lap"
+
+
+def _containing_sizer(window: Element, inner: Element) -> Element:
+    """Return the innermost sizer that directly holds *inner*.
+
+    The reverse of ``_nearest_sizer``: given a sizer, find the one
+    wrapping it in a ``sizeritem`` -- how the top row is reached from
+    the ride-info block it carries.
+    """
+    return next(
+        obj
+        for obj in window.iter("object")
+        if obj.attrib.get("class", "").endswith("Sizer")
+        and any(
+            item.find("object") is inner for item in obj if item.attrib.get("class") == "sizeritem"
+        )
+    )
+
+
+def _top_row() -> Element:
+    """Return main.xrc's header row, the box above the ride-info block.
+
+    One parse for both lookups: the tree's element objects are only
+    identical within a single parse, and ``_containing_sizer`` matches
+    the block by identity.
+    """
+    window = _window("main_frame")
+    return _containing_sizer(window, _nearest_sizer(window, "ride_logo_bmp"))
+
+
+def _lap_group_box() -> Element:
+    """Return the Current Lap group box, anchored on its value control.
+
+    The box carries no title (an empty ``<label>``), so ``_group_box``'s
+    label lookup cannot find it -- walk up from ``current_lap_lbl``
+    instead.
+    """
+    window = _window("main_frame")
+    return _containing_sizer(window, _objects_by_name(window)["current_lap_lbl"])
+
+
+def test_status_group_box_wraps_the_stop_light_panel_and_its_label() -> None:
+    """Part 2: the lamp column and its label share one titled box."""
+    names = [
+        obj.attrib["name"]
+        for obj in _group_box(STATUS_GROUP_LABEL).iter("object")
+        if "name" in obj.attrib
+    ]
+
+    assert names == ["ride_status_panel", "ride_status_lbl"]
+
+
+def test_status_group_box_is_the_panels_own_containing_sizer() -> None:
+    """The box is the panel's parent sizer, not a sibling of it."""
+    panel_sizer = _nearest_sizer(_window("main_frame"), "ride_status_panel")
+
+    assert _param(panel_sizer, "label") == STATUS_GROUP_LABEL
+
+
+def test_current_lap_group_is_a_static_box_in_the_header_row() -> None:
+    """Part 3: the new group takes its own slot in the top row."""
+    row_children = _child_summaries(_top_row())
+
+    assert row_children == [
+        "wxBoxSizer",
+        "wxStaticBoxSizer",
+        "wxBoxSizer",
+        "wxBoxSizer",
+    ]
+
+
+def test_current_lap_group_holds_the_two_digit_value_and_its_caption() -> None:
+    """The value is first, its "Current Lap" caption below it."""
+    box = _lap_group_box()
+    cells = [
+        item.find("object")
+        for item in box
+        if item.attrib.get("class") == "sizeritem" and item.find("object") is not None
+    ]
+
+    assert [(cell.attrib.get("name"), _param(cell, "label")) for cell in cells] == [
+        ("current_lap_lbl", "00"),
+        (None, CURRENT_LAP_CAPTION),
+    ]
+
+
+def test_current_lap_group_declares_no_box_title() -> None:
+    """The box carries no title -- the "Current Lap" caption names it.
+
+    The word ``Lap`` is off the top of the control by request: the
+    caption under the reading already says what it is, and the empty
+    box label keeps the group from repeating it.
+    """
+    assert _param(_lap_group_box(), "label") == ""
+
+
+def test_current_lap_label_declares_the_two_digit_default() -> None:
+    """A fresh console reads 00 -- the value before any crossing."""
+    control = _objects_by_name(_window("main_frame"))["current_lap_lbl"]
+
+    assert (control.attrib["class"], _param(control, "label")) == ("wxStaticText", "00")
+
+
+def test_current_lap_label_declares_the_light_green_reading() -> None:
+    """Phase 6: light green, authored in XRC.
+
+    ``#90EE90`` is the operator's ``wx.Colour(144, 238, 144)`` -- 90,
+    EE and 90 hex.
+    """
+    control = _objects_by_name(_window("main_frame"))["current_lap_lbl"]
+
+    assert _param(control, "fg") == "#90EE90"
+
+
+def test_current_lap_label_declares_a_relative_clock_sized_font() -> None:
+    """The relative size is what the in-app 90-150% zoom scales from."""
+    font = _objects_by_name(_window("main_frame"))["current_lap_lbl"].find("font")
+
+    assert (_param(font, "sysfont"), _param(font, "relativesize"), font.find("size")) == (
+        "wxSYS_DEFAULT_GUI_FONT",
+        "2",
+        None,
+    )
+
+
+def test_current_lap_group_takes_the_column_style_caption_and_value_stack() -> None:
+    """A vertical column, like the two clock panels beside it."""
+    box = _lap_group_box()
+
+    assert _param(box, "orient") == "wxVERTICAL"
 
 
 @pytest.mark.parametrize(
@@ -732,7 +878,7 @@ def test_settings_dialog_declares_no_text_zoom_control() -> None:
 
 @pytest.mark.parametrize("radio_name", SELECTED_RADIOS)
 def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
-    """always-deal/mixed/pooled/jokers-2 start selected, as drawn."""
+    """always-deal/mixed/pooled start selected, as drawn."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert _param(radio, "value") == "1"
@@ -740,7 +886,7 @@ def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
 
 @pytest.mark.parametrize("radio_name", GROUP_OPENING_RADIOS)
 def test_radio_group_first_member_declares_rb_group(radio_name: str) -> None:
-    """Each of the dialog's four groups is opened by wxRB_GROUP."""
+    """Each of the dialog's three radio groups opens with wxRB_GROUP."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert "wxRB_GROUP" in _param(radio, "style")
@@ -752,6 +898,23 @@ def test_radio_group_later_member_omits_rb_group(radio_name: str) -> None:
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert "wxRB_GROUP" not in _param(radio, "style")
+
+
+def test_ride_setup_jokers_choice_declares_the_zero_to_four_items() -> None:
+    """Phase 1: the jokers-per-deck dropdown offers 0..4."""
+    choice = _objects_by_name(_window("ride_setup_dlg"))["jokers_choice"]
+
+    assert (
+        choice.attrib["class"],
+        [item.text for item in choice.findall("content/item")],
+    ) == ("wxChoice", ["0", "1", "2", "3", "4"])
+
+
+def test_ride_setup_jokers_choice_opens_on_one_joker_per_deck() -> None:
+    """The dropdown's default is 1, not the retired trio's 2."""
+    choice = _objects_by_name(_window("ride_setup_dlg"))["jokers_choice"]
+
+    assert _param(choice, "selection") == "1"
 
 
 def test_ride_setup_ok_button_declares_the_save_label() -> None:
@@ -986,7 +1149,8 @@ def test_crossing_number_dlg_declares_no_duplicate_control_name() -> None:
 # --------------------------------------------------------------------
 # Plan §1: the Rider Simulator's two Generate buttons collapse into the
 # one "Generate Riders" button, so gen_teams_btn leaves the XRC file
-# (and, with it, ui/ids.py).
+# (and, with it, ui/ids.py). Phase 2 adds check_btn beside it and
+# re-authors the count defaults.
 
 SIMULATION_XRC = "simulation.xrc"
 SIMULATION_DLG = "simulation_dlg"
@@ -997,6 +1161,7 @@ SIMULATION_DIALOG_CONTROLS = (
     "laps_spin",
     "interval_spin",
     "gen_riders_btn",
+    "check_btn",
     "go_btn",
     "wxID_CANCEL",
 )
@@ -1015,10 +1180,34 @@ def test_simulation_dlg_declares_one_generate_button_and_no_gen_teams_btn() -> N
     assert "gen_teams_btn" not in names
 
 
+def test_simulation_dlg_declares_the_check_button_in_the_generator_row() -> None:
+    """Plan §2: "Check" sits beside Generate Riders."""
+    dialog = _simulation_dialog()
+    objects = _objects_by_name(dialog)
+    row = _nearest_sizer_of(dialog, objects["gen_riders_btn"])
+
+    assert any(item is objects["check_btn"] for item in row.iter("object"))
+    assert _param(objects["check_btn"], "label") == "Check"
+
+
+def test_simulation_dlg_declares_the_new_count_defaults() -> None:
+    """Plan §1/§3: the authored defaults are 175 / 40 / 15 / 1 / 45."""
+    objects = _objects_by_name(_simulation_dialog())
+
+    assert (
+        _param(objects["riders_spin"], "value"),
+        _param(objects["teams_spin"], "value"),
+        _param(objects["solo_spin"], "value"),
+        _param(objects["laps_spin"], "value"),
+        _param(objects["interval_spin"], "value"),
+    ) == ("175", "40", "15", "1", "45")
+
+
 # --------------------------------------------------------------------
 # Plan §10: the card-sufficiency line in rider_issues_dlg and the
-# average rider speed spin in settings_dlg. Both are stored/supplied
-# settings, so neither declares an XRC default value.
+# average rider speed entry in settings_dlg. Phase 1 re-shaped the
+# latter (rounded integer spin -> one-decimal entry with the frozen
+# "Avg Lap Time (kmh)" label) and retired the Back up now button.
 
 
 def _settings_dialog() -> Element:
@@ -1031,29 +1220,70 @@ def _rider_issues_dialog() -> Element:
     return _top_level_windows("riders.xrc")["rider_issues_dlg"]
 
 
-def test_settings_dlg_declares_the_average_speed_spin() -> None:
-    """Plan §10: a 1..N km/h spin the presenter seeds, with no value."""
-    spin = _objects_by_name(_settings_dialog())["avg_speed_spin"]
+def _nearest_sizer_of(window: Element, target: Element) -> Element:
+    """Return the innermost sizer whose own subtree holds *target*.
 
-    assert (spin.attrib["class"], _param(spin, "min"), spin.find("value")) == (
-        "wxSpinCtrl",
-        "1",
-        None,
+    The element-identity twin of :func:`_nearest_sizer`: it locates
+    the sizer that owns an anonymous control (the entry's caption)
+    rather than one addressed by name.
+    """
+    containing = [
+        obj
+        for obj in window.iter("object")
+        if obj.attrib.get("class", "").endswith("Sizer")
+        and any(child is target for child in obj.iter("object"))
+    ]
+    return containing[-1]
+
+
+def test_settings_dlg_declares_the_average_speed_decimal_entry() -> None:
+    """Plan §10: a 12.0 authoring default, 1 decimal, floored at 1."""
+    entry = _objects_by_name(_settings_dialog())["avg_speed_spin"]
+
+    assert (
+        entry.attrib["class"],
+        _param(entry, "value"),
+        _param(entry, "digits"),
+        _param(entry, "min"),
+        _param(entry, "size"),
+    ) == ("wxSpinCtrlDouble", "12.0", "1", "1", "60,-1")
+
+
+def test_settings_avg_speed_entry_declares_its_avg_lap_time_label() -> None:
+    """The entry's caption is the frozen "Avg Lap Time (kmh)" string."""
+    labels = [
+        _param(obj, "label")
+        for obj in _settings_dialog().iter("object")
+        if obj.find("label") is not None
+    ]
+
+    assert "Avg Lap Time (kmh)" in labels
+
+
+def test_settings_avg_speed_label_owns_the_entrys_own_row() -> None:
+    """The caption and the entry share one box: they move together.
+
+    A persistent label control, not a placeholder on the entry
+    (UX-DESKTOP section 7): the caption's own sizer is the entry's.
+    """
+    dialog = _settings_dialog()
+    label = next(
+        obj for obj in dialog.iter("object") if _param(obj, "label") == "Avg Lap Time (kmh)"
     )
+    entry = _objects_by_name(dialog)["avg_speed_spin"]
+
+    assert _nearest_sizer_of(dialog, label) is _nearest_sizer_of(dialog, entry)
 
 
-def test_settings_avg_speed_spin_declares_its_kmh_label() -> None:
-    """The spin's own caption names the unit (km/h)."""
-    spin = _objects_by_name(_settings_dialog())["avg_speed_spin"]
+def test_settings_dlg_declares_no_backup_now_button() -> None:
+    """Phase 1: the dialog's manual-backup button is gone.
 
-    assert _param(spin, "label") == "Average rider speed (km/h)"
-
-
-def test_settings_avg_speed_spin_precedes_the_backup_button_row() -> None:
-    """Plan §10 places the spin above the Back up now row."""
+    File ▸ Back Up Database… (mi_backup_now) remains the single R-54
+    manual-backup surface.
+    """
     names = _control_names_in(_settings_dialog())
 
-    assert names.index("avg_speed_spin") < names.index("backup_now_btn")
+    assert "backup_now_btn" not in names
 
 
 def test_rider_issues_dlg_declares_the_card_check_label() -> None:

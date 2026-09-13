@@ -33,7 +33,13 @@ import pytest
 from platformdirs import user_data_dir
 
 import rivercrossing.store as store_module
-from rivercrossing.ride import Event, RideConfig, RideStatus
+from rivercrossing.ride import (
+    DEFAULT_DECK_COUNT,
+    DEFAULT_JOKERS_PER_DECK,
+    Event,
+    RideConfig,
+    RideStatus,
+)
 from rivercrossing.roster import Entry, EntryMode, PlateModel, Rider, Roster
 from rivercrossing.store import (
     RideNameMismatchError,
@@ -1059,7 +1065,8 @@ def test_store_load_engine_builds_shoe_from_the_stored_rng_seed(tmp_path: Path) 
 
     assert engine._shoe.dealt == 1  # one card off the fresh replay shoe
     assert engine.config.deck_count == 8
-    assert engine._shoe.remaining == 8 * 54 - 1
+    assert engine.config.jokers_per_deck == DEFAULT_JOKERS_PER_DECK
+    assert engine._shoe.remaining == DEFAULT_DECK_COUNT * (52 + DEFAULT_JOKERS_PER_DECK) - 1
 
 
 # --------------------------------------- E5.2.1 session bookkeeping

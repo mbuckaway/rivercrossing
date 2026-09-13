@@ -4,6 +4,37 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **A screen-fitted main window** — the window now fits the display's work area on launch and re-fits when the monitor configuration changes (work area, not full monitor: the menu bar and Dock/taskbar are excluded), clamping both its size and its position, including a window geometry restored from the previous session.
+- **A Current Lap reading in the console header** — a new group box in the header (no box title: the caption names it) shows the highest lap recorded as a two-digit light-green reading under a "Current Lap" caption; it counts up as the field crosses.
+- **A Check button in the Rider Simulator** — validates the riders / teams / solo counts and explains, in an OK-only dialog, how to fix a combination that cannot work. The simulator's defaults are now 175 riders, 40 teams and 15 solo riders; the solo count fills itself in so Generate always works, and "Minutes between first rider" opens on the lap length at the average speed plus a five-minute buffer.
+- **A search box and sortable, resizable columns on the crossings list** — the console feed now lists every crossing (the 30-row cap is gone) and scrolls the whole ride; it narrows as you type, sorts on a header click (Time ascending by default) and resizes from the column edges. A DNF rider's row carries a "DNF" marker.
+- **A Best lap column on the standings** — shown with Total under "Show lap & total times".
+- **A tie explanation on the results window** — double-clicking a ⚠ row opens an OK-only dialog carrying that row's draw reason.
+- **A per-rider DNF mark** — Riders ▸ Mark DNF… now asks for the rider's number: a pooled team member can be marked without ending the team, their cards are forfeit from the team's hand, and DNF riders are excluded from the results and the published pages.
+
+### Changed
+
+- **DRAFT's stop-light colour is red** (was amber) and the no-ride console shows the DRAFT label with the red light instead of a blank label and dark lamp; REOPENED and a stopped RUNNING ride stay amber. The light and the status label now sit in a fixed-width "Status" group box so the header never reflows on a state change.
+- **Jokers per deck is a dropdown of 0–4 defaulting to 1** (was the 0/2/4 radio trio defaulting to 2); `DEFAULT_JOKERS_PER_DECK` is 1.
+- **The Settings average-speed control is a decimal entry captioned "Avg Lap Time (kmh)"** (default 12.0) replacing the integer spin control; the stored value still feeds the card-sufficiency advisory.
+- **New Ride… is disabled while a ride is loaded** (clear the ride first); Edit Ride… remains enabled only while one is.
+- **The crossings list's Time column is the elapsed time since the ride start**, counting from 0, not the wall-clock crossing instant.
+- **The simulator lays down deterministic lap times** — lap 1 starts at the ride start, riders cross at whole minutes within the interval, and the next lap follows a clear gap — and records **one crossing per entry per lap**, so a team's lap count matches a solo rider's instead of multiplying by team size.
+- **The ride library floors at 610×220** (was 560×220, which crushed the column titles) and the audit trail at 1000×600 with pinned column widths.
+
+### Removed
+
+- **The Settings dialog's "Back up now" button** — manual backup keeps its one surface, File ▸ Back Up Database….
+
+### Fixed
+
+- **A rider-pooled team could finish a simulated ride with several times a solo rider's laps** — the simulator recorded every team member's plate each lap; it now records one rider per lap, so teams and solos end on the same lap count (the earlier team-lap fix covered team-relay rides only).
+- **Identical-hand ties showed every affected entry at the same place with an unexplained ⚠** — the badge now explains itself on double-click, and with corrected team lap counts distinct hands rank 1-2-3, leaving only genuine draws sharing a place.
+
 ## [1.0.13] - 2026-09-12
 
 ### Added

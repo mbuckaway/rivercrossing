@@ -26,7 +26,8 @@ import pytest
 import wx
 
 from conftest import gorba_config
-from rivercrossing.ride import Event, RideStatus
+from rivercrossing.cards import Shoe
+from rivercrossing.ride import Event, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
@@ -51,16 +52,76 @@ _CROSSING = {
 class _FakeFrame:
     """Record status-bar notices; no wx window ever exists."""
 
-    def __init__(self) -> None:
-        """Start with an empty notice log."""
+    def __init__(self, menubar: object = None) -> None:
+        """Start with an empty notice log; carry *menubar* verbatim."""
         self.notices: list[str] = []
+        self._menubar = menubar
 
     def SetStatusText(self, text: str) -> None:  # noqa: N802 -- wx API name the SUT calls
         """Record one status-bar notice."""
         self.notices.append(text)
 
-    def GetMenuBar(self) -> None:  # noqa: N802 -- wx API name the SUT calls
-        """Answer ``None`` for the no-menubar case."""
+    def GetMenuBar(self) -> object:  # noqa: N802 -- wx API name the SUT calls
+        """Answer the threaded menubar (``None`` by default)."""
+        return self._menubar
+
+
+class _RecordingMenuItem:
+    """A menu item that records the last ``Enable`` verdict."""
+
+    def __init__(self) -> None:
+        """Start with no recorded verdict."""
+        self.enabled: bool | None = None
+
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record *enabled* as the item's verdict."""
+        self.enabled = enabled
+
+
+class _RecordingMenuBar:
+    """A menubar carrying exactly the observed frozen item names.
+
+    The same recording double ``test_app_exports.py`` drives, over the
+    real ``wx.xrc.XRCID`` id space ``menu_state.apply_to_menubar``
+    walks -- the menu binder's wx touch is the XRCID lookup and
+    ``MenuItem.Enable``, both faked here.
+    """
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        """Build one recording item per frozen *names* entry."""
+        import wx.xrc  # noqa: PLC0415 -- the real id space the binder walks
+
+        self._names = {wx.xrc.XRCID(name): name for name in names}
+        self.items = {name: _RecordingMenuItem() for name in names}
+
+    def FindItem(  # noqa: N802 -- wx API name
+        self, real_id: int
+    ) -> tuple[_RecordingMenuItem | None, None]:
+        """Return the item for *real_id*, or a miss."""
+        name = self._names.get(real_id)
+        return (None, None) if name is None else (self.items[name], None)
+
+
+_RIDE_LIFECYCLE_MENU_IDS = (ids.MI_NEW_RIDE, ids.MI_EDIT_RIDE)
+
+
+class _EnginePresenter:
+    """A presenter stand-in exposing the engine the binder reads."""
+
+    def __init__(self, engine: object) -> None:
+        """Store the engine ``app._menu_ride_state`` projects."""
+        self.engine = engine
+
+
+def _menu_engine() -> RideEngine:
+    """Build a DRAFT engine over the one-entry MIXED roster."""
+    config = gorba_config()
+    return RideEngine(
+        config=config,
+        shoe=Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=7),
+        clock=lambda: config.planned_start,
+        roster=_roster(),
+    )
 
 
 class _FakeWindow:
@@ -106,9 +167,21 @@ class _FakeConsoleView:
         """Record the number of rendered feed rows."""
         self.calls.append(("show_feed", len(rows)))
 
+    def show_flagged(self, rows: list[object]) -> None:
+        """Record the number of rendered review-tab rows (WS-H).
+
+        The presenter's own ``refresh_feed`` feeds both lists, so a
+        console double of the swap path carries both channels.
+        """
+        self.calls.append(("show_flagged", len(rows)))
+
     def show_counters(self, counters: object) -> None:
         """Record the rendered counters."""
         self.calls.append(("show_counters", counters))
+
+    def show_current_lap(self, lap: int) -> None:
+        """Record the rendered Current Lap reading (Phase 6)."""
+        self.calls.append(("show_current_lap", lap))
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Record the R-11 teams-chip visibility push."""
@@ -372,6 +445,39 @@ def test_clear_presenter_without_a_wired_timer_unbinds_only_the_callbacks() -> N
     assert console._tick_timer is None
     assert console._presenter is None
     assert console._on_submit is None
+
+
+# ----------------------------------- D1: the New Ride… enablement
+#
+# ``_apply_menu_state`` is the live E1.4.2 binder: it computes one
+# ``commands.RideState`` from the engine (``_menu_ride_state``)
+# and applies §15's rules to the real menubar. D1 makes New Ride… the
+# one row that is enabled only while NO ride is loaded -- the setup
+# dialog is what opens a ride -- so the binder's two branches are pinned
+# here against a real engine, not only in ``test_menu_state.py``.
+
+
+def test_apply_menu_state_given_a_ride_loaded_disables_new_ride_and_enables_edit_ride() -> None:
+    """D1/D2: a loaded ride turns New Ride… off and Edit Ride… on."""
+    menubar = _RecordingMenuBar(_RIDE_LIFECYCLE_MENU_IDS)
+    context = _context(frame=_FakeFrame(menubar))
+    context.presenter = _EnginePresenter(_menu_engine())
+
+    app_module._apply_menu_state(context, RideStatus.DRAFT)
+
+    assert menubar.items[ids.MI_NEW_RIDE].enabled is False
+    assert menubar.items[ids.MI_EDIT_RIDE].enabled is True
+
+
+def test_apply_menu_state_given_no_ride_enables_new_ride_and_disables_edit_ride() -> None:
+    """D1/D2: with no ride loaded only New Ride… is available."""
+    menubar = _RecordingMenuBar(_RIDE_LIFECYCLE_MENU_IDS)
+    context = _context(frame=_FakeFrame(menubar))
+
+    app_module._apply_menu_state(context, RideStatus.DRAFT)
+
+    assert menubar.items[ids.MI_NEW_RIDE].enabled is True
+    assert menubar.items[ids.MI_EDIT_RIDE].enabled is False
 
 
 # ------------------------------------------------------- Edit Ride…

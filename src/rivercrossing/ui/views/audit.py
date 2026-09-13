@@ -26,7 +26,7 @@ import wx.dataview
 
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.audit import ALL_ACTIONS, AuditPresenter
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import associate_model, clamp_to_display, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,11 +36,13 @@ if TYPE_CHECKING:
 
 __all__ = [
     "AUDIT_COLUMN_LABELS",
+    "AUDIT_COLUMN_WIDTHS",
     "COL_ACTION",
     "COL_ENTRY",
     "COL_REASON",
     "COL_WHEN",
     "COL_WHO",
+    "MIN_SIZE",
     "AuditDialog",
     "AuditListModel",
 ]
@@ -53,6 +55,23 @@ COL_REASON = 4
 
 # xrc-windows.md D's exact column order.
 AUDIT_COLUMN_LABELS: tuple[str, ...] = ("When", "Who", "Action", "Entry", "Reason")
+
+# Phase 6: one pinned opening width per column, in the labels' own
+# order. A DataViewCtrl column never sizes itself to its content, so an
+# unpinned column keeps the platform's 80 DIP default (measured on
+# 4.3.1 osx-cocoa / wxWidgets 3.3.3) and the Reason cell -- the
+# longest, an arbitrary sentence -- clipped at every window size. The
+# three narrow columns fit what they hold (an ISO-ish timestamp, a
+# plate, an action verb) and Reason takes the slack; every column stays
+# resizable, so the operator tunes them by hand.
+AUDIT_COLUMN_WIDTHS: tuple[int, ...] = (90, 120, 180, 120, 330)
+
+# Phase 6: the dialog's own floor, code-side because XRC has no
+# window-level minsize and audit.xrc declares no <size> (its own
+# header notes it). 1000x600 is ~2x the dialog's measured content at
+# the pinned column widths above, and ``_apply_min_size`` clamps it to
+# the display's work area so a small screen still gets a whole dialog.
+MIN_SIZE = (1000, 600)
 
 _TEXT_ACCESSORS: tuple[Callable[[AuditRow], str], ...] = (
     lambda row: row.when,
@@ -134,6 +153,7 @@ class AuditDialog:
         self.action_choice = self._find(ids.ACTION_CHOICE, wx.Choice)
         self.audit_list = self._find(ids.AUDIT_LIST, wx.dataview.DataViewCtrl)
         self._build_columns()
+        self._apply_min_size()
         self._model: AuditListModel | None = None
 
         self.presenter = AuditPresenter(
@@ -160,9 +180,28 @@ class AuditDialog:
         return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
-        """Append ``audit_list``'s five text columns in canvas order."""
+        """Append ``audit_list``'s five text columns in canvas order.
+
+        Each column takes its own pinned width from
+        :data:`AUDIT_COLUMN_WIDTHS` (Phase 6) -- see that constant for
+        the measured reason an unpinned DataView column is unreadable.
+        """
         for col, label in enumerate(AUDIT_COLUMN_LABELS):
-            self.audit_list.AppendTextColumn(label, col)
+            self.audit_list.AppendTextColumn(label, col, width=AUDIT_COLUMN_WIDTHS[col])
+
+    def _apply_min_size(self) -> None:
+        """Floor *and* grow the dialog at :data:`MIN_SIZE` (Phase 6).
+
+        ``SetMinSize`` is the floor; ``Fit()`` is what actually grows
+        the loaded window to respect it now (the same measured note
+        ``ride_library._apply_min_size`` carries). The floor is clamped
+        to the display's work area
+        (:func:`~rivercrossing.ui.views._support.clamp_to_display`), so
+        a small screen still gets a whole dialog.
+        """
+        width, height = clamp_to_display(*MIN_SIZE)
+        self.dialog.SetMinSize(wx.Size(width, height))
+        self.dialog.Fit()
 
     def _bind_events(self) -> None:
         """Forward the two filters' events straight to the presenter.

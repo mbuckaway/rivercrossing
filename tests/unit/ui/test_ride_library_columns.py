@@ -14,9 +14,12 @@ stock 13 px GUI font: "2026-09-20" = 66 px, "REOPENED" = 59 px,
 widths by hand instead of the view re-filling the Ride column on
 every size event.
 
-The dialog's own floor (:data:`MIN_SIZE`) returns to a canvas-close
-560x220: the four pinned widths total 530 px, so nothing needs W10's
-doubled 1040 px width. ``RidesListModel.Compare`` backs the
+The dialog's own floor (:data:`MIN_SIZE`) is a canvas-close 610x220:
+the four pinned widths total 530 px, so 50 px of chrome on top of them
+covers the dialog's own borders and the button row without W10's
+doubled 1040 px width. ``_apply_min_size`` clamps that floor to the
+display work area, so a smaller screen still gets a whole dialog.
+``RidesListModel.Compare`` backs the
 still-sortable headers: the base ``DataViewIndexListModel`` already
 sorts text columns by their displayed value, so the override only has
 to case-fold the Ride name and sort Entries as a number (its
@@ -113,16 +116,100 @@ def test_rides_list_column_flags_given_the_pinned_list_keep_it_sortable() -> Non
     assert (flags & wx.dataview.DATAVIEW_COL_SORTABLE) == wx.dataview.DATAVIEW_COL_SORTABLE
 
 
-# --- MIN_SIZE (plan 1b: back to a canvas-close floor) ----------------
+# --- MIN_SIZE (plan 1b floor, Phase 6 widened for the columns) -------
 
 
 def test_min_size_given_the_plan_floor_is_small_enough_to_sit_beside_the_console() -> None:
-    """Plan 1b: the floor returns from W10's 1040x546 to 560x220.
+    """Phase 6: the floor widens from 560 to 610, keeping 560's height.
 
-    The four pinned widths total 530 px, inside the 560 px floor, so
-    the dialog opens small and the operator widens a column by hand.
+    The four pinned widths total 530 px and the floor adds 50 px of
+    chrome on top of that, so the dialog opens small and the operator
+    widens a column by hand.
     """
-    assert MIN_SIZE == (560, 220)
+    assert MIN_SIZE == (610, 220)
+
+
+class _SizingDialog:
+    """A dialog double recording every sizing call the SUT makes."""
+
+    def __init__(self) -> None:
+        """Start with an empty call log."""
+        self.calls: list[str] = []
+        self.min_size: wx.Size | None = None
+
+    def Fit(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the fitting call."""
+        self.calls.append("Fit")
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the floor the SUT applied."""
+        self.calls.append("SetMinSize")
+        self.min_size = size
+
+
+def _library_over(dialog: _SizingDialog) -> ride_library.RideLibrary:
+    """Return a ``RideLibrary`` over *dialog*, no .xrc window loaded.
+
+    ``__init__`` binds every control the .xrc window carries, which
+    needs a desktop; the sizing step reads only ``self.dialog``, so the
+    instance is made without it -- the same stand-in
+    ``test_dialogs_positioning.py`` uses.
+    """
+    view = object.__new__(ride_library.RideLibrary)
+    view.dialog = dialog
+    return view
+
+
+def test_ride_library_apply_min_size_given_a_roomy_display_forces_the_610_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The floor and the Fit() that honours it, in that order."""
+    monkeypatch.setattr(wx, "GetClientDisplayRect", lambda: (0, 25, 1920, 1080))
+    dialog = _SizingDialog()
+
+    _library_over(dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height, dialog.calls) == (
+        610,
+        220,
+        ["SetMinSize", "Fit"],
+    )
+
+
+def test_ride_library_apply_min_size_given_a_cramped_display_clamps_the_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A work area narrower than the floor still wins the clamp."""
+    monkeypatch.setattr(wx, "GetClientDisplayRect", lambda: (0, 25, 500, 200))
+    dialog = _SizingDialog()
+
+    _library_over(dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == (500, 200)
+
+
+@pytest.mark.parametrize(
+    ("rect", "expected"),
+    [
+        ((0, 25, 609, 219), (609, 219)),  # T-4: min - 1 on both axes
+        ((0, 25, 610, 220), (610, 220)),  # T-4: exactly the floor
+        ((0, 25, 611, 221), (610, 220)),  # T-4: min + 1, the floor holds
+        ((0, 25, 3840, 2160), (610, 220)),  # a roomy display
+    ],
+    ids=["min_minus_one", "min", "min_plus_one", "roomy"],
+)
+def test_ride_library_apply_min_size_given_any_display_never_exceeds_the_work_area(
+    monkeypatch: pytest.MonkeyPatch,
+    rect: tuple[int, int, int, int],
+    expected: tuple[int, int],
+) -> None:
+    """T-4 boundaries: the floor never exceeds the work area."""
+    monkeypatch.setattr(wx, "GetClientDisplayRect", lambda: rect)
+    dialog = _SizingDialog()
+
+    _library_over(dialog)._apply_min_size()
+
+    assert (dialog.min_size.width, dialog.min_size.height) == expected
 
 
 # --- RidesListModel.Compare (native header sorting) ------------------

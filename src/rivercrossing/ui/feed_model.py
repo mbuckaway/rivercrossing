@@ -16,17 +16,19 @@ split ``cards_imagelist.py`` draws between its pure helpers and
 ``CardImageList`` itself.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rivercrossing.ui.card_text import format_card
+from rivercrossing.ui.rider_columns import plate_order_key
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from rivercrossing.ui.presenters.data_source import FeedRow
 
 __all__ = [
     "COLUMN_LABELS",
+    "COLUMN_SORT_KEYS",
     "COLUMN_WIDTHS",
     "COL_CARD",
     "COL_LAP",
@@ -38,6 +40,7 @@ __all__ = [
     "TIME_COLUMNS",
     "card_text_or_blank",
     "edited_row_indexes",
+    "entry_text",
     "flagged_row_indexes",
     "flash_crossing_label",
     "lap_text",
@@ -68,6 +71,89 @@ TIME_COLUMNS: tuple[int, ...] = (COL_LAP_TIME, COL_TOTAL)
 # (xrc-windows.md's code-side list), so the widths are pinned data
 # here and applied by ``views/main_frame._build_columns``.
 COLUMN_WIDTHS: tuple[int, ...] = (80, 50, 150, 60, 50, 80, 80)
+
+
+def _time_sort_key(row: FeedRow) -> float:
+    """Return the Time sort key: the elapsed reading in seconds.
+
+    The numeric companion, not the ``h:mm:ss`` cell: as text "9:00:00"
+    sorts *after* "10:00:00", so a string key would scramble a ride
+    that runs past nine hours.
+    """
+    return row.elapsed_s
+
+
+def _plate_sort_key(row: FeedRow) -> tuple[int, int] | tuple[int, str]:
+    """Return the Plate sort key: numbered plates first, then text.
+
+    The rider lists' own numeric-aware rule (``rider_columns.
+    plate_order_key``): a relay ride's alphanumeric plate orders after
+    every rider number instead of interleaving with it.
+    """
+    return plate_order_key(row.plate)
+
+
+def _name_sort_key(row: FeedRow) -> str:
+    """Return the Name sort key: the casefolded entry name.
+
+    Deliberately the bare name, without :func:`entry_text`'s DNF
+    marker: a rider marked out mid-ride must not jump position in a
+    sorted list.
+    """
+    return row.entry.casefold()
+
+
+def _card_sort_key(row: FeedRow) -> str:
+    """Return the Card sort key: the stored code, not the glyph text.
+
+    The rider lists' own rule: the column then orders by the deck's
+    code order rather than by the suit-glyph block's code points.
+    """
+    return row.card
+
+
+def _lap_sort_key(row: FeedRow) -> int:
+    """Return the Lap sort key: the 1-based lap number."""
+    return row.lap
+
+
+def _lap_time_sort_key(row: FeedRow) -> float:
+    """Return the Lap time sort key: the lap's own seconds."""
+    return row.lap_time_s
+
+
+def _total_sort_key(row: FeedRow) -> float:
+    """Return the Total sort key: the entry's running seconds."""
+    return row.total_s
+
+
+# One sort key per :data:`COLUMN_LABELS` entry, in that order, for the
+# list's native header arrows (``views/main_frame.CrossingsFeedModel.
+# Compare``). A column's key is homogeneous *within* the column -- the
+# Plate key is an ``(int, int)``/``(int, str)`` pair, three are
+# ``float``, two ``str``, Lap an ``int`` -- but they differ *between*
+# columns, so the shared annotation is the rider columns' own ``Any``.
+COLUMN_SORT_KEYS: tuple[Callable[[FeedRow], Any], ...] = (
+    _time_sort_key,
+    _plate_sort_key,
+    _name_sort_key,
+    _card_sort_key,
+    _lap_sort_key,
+    _lap_time_sort_key,
+    _total_sort_key,
+)
+
+
+def entry_text(row: FeedRow) -> str:
+    """Return the feed's Name cell text for *row*.
+
+    The DNF marker (Phase 4): a row whose rider -- or whose whole
+    entry -- is out of the results renders a plain ``" DNF"`` suffix.
+    Text, not a second bold channel: ``GetAttrByRow`` already carries
+    the flagged/edited bold, and CODINGSTANDARDS-UX-DESKTOP.md §7
+    forbids conveying meaning by colour or weight alone.
+    """
+    return f"{row.entry} DNF" if row.dnf else row.entry
 
 
 def card_text_or_blank(card: str) -> str:

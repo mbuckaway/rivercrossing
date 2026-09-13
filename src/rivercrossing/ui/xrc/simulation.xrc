@@ -16,11 +16,15 @@
   only ever opened by the setup dialog. File order follows the flow:
   configure first, then run.
 
-  simulation_dlg sizes the placeholder field, then generates it.
-  gen_riders_btn is a custom id, so the bottom row is a plain
-  wxBoxSizer rather than a wxStdDialogButtonSizer (which only places
-  the ids it recognises); wxID_CANCEL stays a stock id so wx keeps its
-  own Escape and click handling.
+  simulation_dlg sizes the placeholder field, then generates it. The
+  count defaults are plan §1's 175 riders / 40 teams / 15 solo riders
+  (the auto-fill the dialog derives), and the interval opens on the
+  speed-derived default (plan §3); these authored values are the
+  fallback when the dialog is opened with no seeds. gen_riders_btn and
+  check_btn are custom ids, so the bottom row is a plain wxBoxSizer
+  rather than a wxStdDialogButtonSizer (which only places the ids it
+  recognises); wxID_CANCEL stays a stock id so wx keeps its own Escape
+  and click handling.
 
   sim_running_dlg is intentionally fixed: the progress gauge and the
   status line are the only content, and the run is modal while it is
@@ -56,7 +60,7 @@
             <object class="wxSpinCtrl" name="riders_spin">
               <min>1</min>
               <max>1000</max>
-              <value>10</value>
+              <value>175</value>
             </object>
           </object>
 
@@ -71,7 +75,7 @@
             <object class="wxSpinCtrl" name="teams_spin">
               <min>1</min>
               <max>100</max>
-              <value>2</value>
+              <value>40</value>
             </object>
           </object>
 
@@ -86,7 +90,7 @@
             <object class="wxSpinCtrl" name="solo_spin">
               <min>0</min>
               <max>1000</max>
-              <value>2</value>
+              <value>15</value>
             </object>
           </object>
 
@@ -116,7 +120,7 @@
             <object class="wxSpinCtrl" name="interval_spin">
               <min>1</min>
               <max>240</max>
-              <value>1</value>
+              <value>45</value>
             </object>
           </object>
 
@@ -133,6 +137,14 @@
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxButton" name="gen_riders_btn">
               <label>Generate Riders</label>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
+            <border>6</border>
+            <object class="wxButton" name="check_btn">
+              <label>Check</label>
             </object>
           </object>
 

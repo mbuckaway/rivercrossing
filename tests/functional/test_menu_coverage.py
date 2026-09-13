@@ -34,11 +34,12 @@ What only this module can prove:
    wired-row section drives them at a real bound frame (Stop Ride…
    scripts the native ``std_dialogs.show_confirm`` seam, W5; the
    XRC-driven rows auto-OK / auto-Cancel through the
-   ``dialogs.run_dialog`` seam), pins S2's
+   ``dialogs.run_dialog`` seam), and pins S2's
    incomplete-setup start gate (a DRAFT ride with one rider but a
-   blank minimum field stays DRAFT with the refusal notice), and
-   exercises the Settings dialog's ``backup_now_btn`` seam (S5) --
-   the R-54 handler's second entry point.
+   blank minimum field stays DRAFT with the refusal notice). Phase 1
+   retired the Settings dialog's own ``backup_now_btn``, so File ▸
+   Back Up Database… (``_handle_backup_database``) is R-54's single
+   manual-backup surface.
 
 ``wx.xrc.XRCID(name)`` is measured (a throwaway probe, per
 harness.py's own convention) to return the *same* runtime int id a
@@ -521,8 +522,8 @@ def test_mi_reopen_ride_confirmed_moves_a_finished_ride_to_reopened(
 # Stop Ride… and Ride ▸ Set Start Time… appeared and a confirmed OK
 # did nothing. The section below drives both wired handlers at a real,
 # bound bootstrap frame (routes bound via _bind_routes, live presenter
-# threaded), plus S2 (Start Ride's incomplete-setup gate) and S5 (the
-# Settings dialog's backup_now_btn seam). W5: mi_stop_ride is now a
+# threaded), plus S2 (Start Ride's incomplete-setup gate). W5:
+# mi_stop_ride is now a
 # COMMAND row reaching the live presenter's native stop-confirm flow
 # (std_dialogs.show_confirm, scripted here -- native message dialogs
 # are not programmatically dismissible, measured 2026-09-09), so the
@@ -732,46 +733,4 @@ def test_mi_start_ride_incomplete_setup_posts_the_gate_and_stays_draft(
         assert status_label.GetLabelText() == "DRAFT"
         assert not any(event.action == "start" for event in engine.events)
     finally:
-        harness.release_main_window(wx_app, context.frame)
-
-
-def test_settings_backup_now_btn_writes_a_backup_and_posts_its_path(  # noqa: PLR0913, PLR0917 -- (xrc_resource, wx_app, tmp_path, monkeypatch): the four fixture seams
-    xrc_resource: object,
-    wx_app: object,
-    tmp_path: object,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """S5: the Settings dialog's ``backup_now_btn`` runs the R-54 flow.
-
-    ux-polish wired the dialog's button to the same
-    ``_handle_backup_database`` action File ▸ Back Up Database… fires
-    (through ``_decorate``'s ``on_backup_now`` seam); only the menu
-    row was exercised before. Clicking the button while the dialog is
-    open (the patched ``run_dialog`` drives the click before closing)
-    writes one timestamped backup into ``<db>.backups/`` and posts the
-    written path on the main frame's status bar.
-    """
-    db_path = Path(str(tmp_path)) / "rides.db"
-    store = Store.open(db_path)
-    context, _engine = _build_live_console(xrc_resource, wx_app, store=store)
-    opened: list[str] = []
-
-    def _click_backup_then_cancel(dialog: Any, opener: Any) -> int:  # noqa: ANN401, ARG001
-        opened.append(dialog.GetName())
-        harness.click(dialog, ids.BACKUP_NOW_BTN)
-        return wx.ID_CANCEL
-
-    try:
-        monkeypatch.setattr(dialogs, "run_dialog", _click_backup_then_cancel)
-        harness.fire_menu_event(context.frame, "wxID_PREFERENCES")
-
-        status_text = context.frame.GetStatusBar().GetStatusText()
-        backup_dir = Path(f"{db_path}.backups")
-        backups = sorted(backup_dir.glob("*.db")) if backup_dir.is_dir() else []
-
-        assert opened == [ids.SETTINGS_DLG]
-        assert len(backups) == 1
-        assert status_text == f"Backed up database to {backups[-1]}"
-    finally:
-        store.close()
         harness.release_main_window(wx_app, context.frame)

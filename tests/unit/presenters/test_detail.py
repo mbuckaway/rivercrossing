@@ -535,17 +535,17 @@ def test_on_void_card_cancel_is_a_silent_noop() -> None:
 
 
 def test_on_dnf_opens_confirm_naming_the_entry_then_marks() -> None:
-    """Mark DNF: the confirm names the entry; OK flips the status."""
+    """Mark DNF: the confirm names the entry; OK marks its plate."""
     engine, _clock = _running_engine()
     view = FakeDetailView()
-    view.dnf_result = DnfMark(entry_id="12", reason="mechanical failure")
+    view.dnf_result = DnfMark(plate="12", reason="mechanical failure")
     presenter = _make_presenter(engine, view, engine._roster)
 
     presenter.on_dnf_clicked()
 
     assert view.last_dnf == "12 · Rider 12"
     assert engine.events[-1].action == "dnf"
-    assert view.notices == ["Entry marked DNF"]
+    assert view.notices == ["DNF marked"]
 
 
 def test_on_dnf_cancel_is_a_silent_noop() -> None:
@@ -748,7 +748,7 @@ def test_on_dnf_engine_refusal_surfaces_as_a_notice() -> None:
     engine, _clock = _running_engine()
     engine.finish()
     view = FakeDetailView()
-    view.dnf_result = DnfMark(entry_id="12", reason="mechanical failure")
+    view.dnf_result = DnfMark(plate="12", reason="mechanical failure")
     presenter = _make_presenter(engine, view, engine._roster)
 
     presenter.on_dnf_clicked()

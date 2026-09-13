@@ -305,7 +305,7 @@ def test_event_filter_given_a_button_event_logs_the_button(tmp_path: Path) -> No
     """F4: a button activation records its frozen name and label."""
     log = Logging(_log_path(tmp_path))
     event_filter = app_module._make_event_filter(log)
-    event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("backup_now_btn", "Back up now"))
+    event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("record_btn", "Record (Enter)"))
 
     result = event_filter.FilterEvent(event)
 
@@ -314,8 +314,8 @@ def test_event_filter_given_a_button_event_logs_the_button(tmp_path: Path) -> No
         {
             "level": "DEBUG",
             "event": "button",
-            "name": "backup_now_btn",
-            "label": "Back up now",
+            "name": "record_btn",
+            "label": "Record (Enter)",
         }
     ]
 
@@ -371,7 +371,7 @@ def test_event_filter_given_a_non_verbose_log_writes_nothing(tmp_path: Path) -> 
     """F4: an opted-out log skips before touching the control."""
     log = Logging(_log_path(tmp_path), verbose=False)
     event_filter = app_module._make_event_filter(log)
-    event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("backup_now_btn", "Back up now"))
+    event = _FakeCommandEvent(wx.EVT_BUTTON.typeId, _FakeControl("record_btn", "Record (Enter)"))
 
     result = event_filter.FilterEvent(event)
 

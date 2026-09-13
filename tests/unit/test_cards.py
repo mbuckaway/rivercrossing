@@ -177,6 +177,40 @@ def test_shoe_reshuffle_deals_the_seed_plus_one_fresh_shuffle() -> None:
     assert reshuffled_sequence == derived_sequence
 
 
+# A reshuffle rebuilds the whole shoe, so every cycle deals exactly
+# ``deck_count x (52 + jokers_per_deck)`` cards with the same joker
+# count. A long ride therefore sees the joker total repeat each cycle:
+# more than 16 jokers over a ride is expected behaviour, not a bug --
+# the count scales with the ride's own Cards settings (R-13), it is
+# never capped, and no cycle ever runs short of them.
+RESHUFFLE_COMPOSITION_CASES = ((2, 2), (2, 4), (8, 4), (8, 2))
+RESHUFFLE_COMPOSITION_IDS = [
+    f"{decks}_decks_{jokers}_jokers" for decks, jokers in RESHUFFLE_COMPOSITION_CASES
+]
+
+
+@pytest.mark.parametrize(
+    ("decks", "jokers_per_deck"),
+    RESHUFFLE_COMPOSITION_CASES,
+    ids=RESHUFFLE_COMPOSITION_IDS,
+)
+def test_shoe_reshuffle_next_cycle_deals_a_full_shoe_with_the_same_joker_count(
+    decks: int, jokers_per_deck: int
+) -> None:
+    """Cycle 2 repeats the full composition, jokers included."""
+    shoe = Shoe(decks=decks, jokers_per_deck=jokers_per_deck, seed=_SEED)
+    first_naturals, first_jokers = _composition(_deal_all(shoe))
+
+    shoe.reshuffle()
+    second_naturals, second_jokers = _composition(_deal_all(shoe))
+
+    assert (second_jokers, len(second_naturals)) == (first_jokers, len(first_naturals))
+    assert (second_jokers, len(second_naturals)) == (
+        decks * jokers_per_deck,
+        len(Rank) * len(Suit),
+    )
+
+
 # --------------------------------------------------------- composition
 
 

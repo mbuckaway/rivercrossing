@@ -144,7 +144,7 @@ def test_live_console_shows_zero_counters_at_startup(
         harness.find_control(window, ids.TEAMS_COUNT_LBL).GetLabelText(),
     )
 
-    assert labels == ("0", "0", "0", "432/432", "0", "0")
+    assert labels == ("0", "0", "0", "424/424", "0", "0")
 
 
 def test_live_console_starts_running_with_entry_and_stop_enabled(

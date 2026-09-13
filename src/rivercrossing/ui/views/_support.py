@@ -43,16 +43,24 @@ if TYPE_CHECKING:
 
 __all__ = [
     "FIND_SETTLE_ATTEMPTS",
+    "FRAME_SCREEN_MARGIN",
     "RiderRowListModel",
     "associate_model",
     "clamp_to_display",
     "default_card_images",
     "find_control",
+    "fit_frame_to_screen",
 ]
 
 # See find_control's own docstring for the measured, address-reuse
 # stale-lookup hazard this retry bound settles.
 FIND_SETTLE_ATTEMPTS = 25
+
+# The gap fit_frame_to_screen leaves between the window and the edges
+# of the work area (CODINGSTANDARDS-UX-DESKTOP.md section 6: a window
+# must never be larger than the display it opens on, and never flush
+# against the menu bar, Dock or taskbar).
+FRAME_SCREEN_MARGIN = 16
 
 
 def clamp_to_display(width: int, height: int) -> tuple[int, int]:
@@ -64,6 +72,55 @@ def clamp_to_display(width: int, height: int) -> tuple[int, int]:
     """
     _x, _y, display_width, display_height = wx.GetClientDisplayRect()
     return (min(width, display_width), min(height, display_height))
+
+
+def fit_frame_to_screen(frame: Any, min_size: tuple[int, int]) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Fit *frame* to the display it is on, and floor it at *min_size*.
+
+    The one cross-platform, OS-branch-free fit (CODINGSTANDARDS-
+    UX-DESKTOP.md section 6): the display comes from ``wx.Display.
+    GetFromWindow`` (falling back to the primary when wx cannot place
+    the window on any display -- ``wx.NOT_FOUND``), and the usable
+    rectangle from that display's ``GetClientArea``, which excludes the
+    macOS menu bar/Dock and the Windows taskbar on both hosts. Measured
+    on wxPython 4.3.1 / wxWidgets 3.3.3: ``GetWorkArea`` does not exist,
+    ``GetClientArea`` does.
+
+    The frame's own size is clamped to the work area minus a
+    :data:`FRAME_SCREEN_MARGIN` border on each side, and its position is
+    clamped so the whole window stays inside the work area -- so a
+    geometry persisted on a larger display, or on a display that is no
+    longer attached, comes back fully visible. The applied minimum is
+    the *smaller* of *min_size* and that area: a floor taller than the
+    screen would otherwise force a window larger than the screen.
+
+    Args:
+        frame: The ``wx.Frame`` to fit (already sized and positioned --
+            this only clamps what is there).
+            min_size: The floor the frame would like, as ``(W, H)``.
+    """
+    index = wx.Display.GetFromWindow(frame)
+    if index == wx.NOT_FOUND:
+        index = 0
+    rect = wx.Display(index).GetClientArea()
+    # Floored at zero: a wx.Size is never negative, and a degenerate
+    # work area (smaller than the two margins) must not produce one.
+    available = (
+        max(0, rect.width - 2 * FRAME_SCREEN_MARGIN),
+        max(0, rect.height - 2 * FRAME_SCREEN_MARGIN),
+    )
+    frame.SetMinSize(wx.Size(min(min_size[0], available[0]), min(min_size[1], available[1])))
+    size = frame.GetSize()
+    width = min(size.width, available[0])
+    height = min(size.height, available[1])
+    frame.SetSize(wx.Size(width, height))
+    position = frame.GetPosition()
+    frame.SetPosition(
+        wx.Point(
+            min(max(position.x, rect.x), rect.x + rect.width - width),
+            min(max(position.y, rect.y), rect.y + rect.height - height),
+        )
+    )
 
 
 def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401

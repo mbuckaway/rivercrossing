@@ -570,17 +570,17 @@ def test_best_hand_adding_a_card_never_lowers_the_result(cards: list[Card], extr
 def test_best_hand_field_of_180_entries_by_12_cards_scores_within_measured_budget() -> None:
     """The whole 180x12 field scores in under 1 second (R-42).
 
-    Seeded, duplicates and jokers included: an 8-deck/2-jokers-per-deck
-    shoe (spec section 4's own example) has 16 jokers among 432 cards,
-    so a 12-card sample draws one with roughly that same probability.
-    R-42 is a MUST and this bound is the requirement itself, not a
+    Seeded, duplicates and jokers included: the default
+    8-deck/1-joker-per-deck shoe has 8 jokers among 424 cards, so a
+    12-card sample draws one with roughly that same probability. R-42
+    is a MUST and this bound is the requirement itself, not a
     measured ceiling with headroom -- CI runners are slower than a
     development machine, so the implementation must clear this with
     real margin, not just on the fastest hardware available.
     """
     rng = random.Random(20260807)  # noqa: S311 -- a seeded test fixture, not a security use
     deck_codes = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
-    joker_probability = 16 / 432
+    joker_probability = 8 / 424
     field = [
         [
             Card(rank=None, suit=None, joker=True)

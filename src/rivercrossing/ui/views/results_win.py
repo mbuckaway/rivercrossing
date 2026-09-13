@@ -14,27 +14,45 @@ laps_list, the standings lists need no ``DataViewBitmapRenderer``.
 :func:`format_best5` is the pure text formatter this column uses, and
 :func:`format_place` the E6.4.1 ⚠ badge formatter (a draw_required row
 renders ``"⚠ 2"`` in its Place cell -- this task's own reading of the
-footnote's "⚠ badge column": the canvas pins exactly seven columns
-and shows no tie rows, so a new eighth column would shift every
-frozen column index; the badge instead leads the Place cell, where a
-scorer's eye lands first).
+footnote's "⚠ badge column": the canvas's own columns and their order
+are frozen, so a badge column would shift every frozen index; the
+badge instead leads the Place cell, where a scorer's eye lands first,
+and Phase 5's activation alert explains it).
 
 Phase 3 split the standings by entry kind. A MIXED ride renders its
 Teams and Solo sections on the two ``results_notebook`` pages
 (``teams_standings_list``/``solo_standings_list``); a SOLO-only ride
 hides the notebook and shows the one standalone ``standings_list``.
-The view switches on the ``entry_mode`` the app threads in, so no
-eighth column and no merged header row is needed.
+The view switches on the ``entry_mode`` the app threads in, so the
+kind split needs no extra column and no merged header row.
 
 E7.3.2's stale-export flag is the one live banner: ``set_stale``
 shows/hides the code-side ``stale_infobar`` (xrc-windows.md's
 code-side footnote; XRC cannot author a ``wxInfoBar`` -- results.xrc's
-own header). ``show_times_chk`` also toggles the Total column on
-every list here and gates the Fastest-time box: with times off the
-box is cleared and disabled, so the time_board/time-off combination
-cannot be requested (R-63). The window's one presenter
-(``self.presenter``, built here like ``RideSetup`` builds its own)
-holds the ``ExportOptions`` the export handlers (E6.4.2) read.
+own header). ``show_times_chk`` also toggles the two time columns --
+Total and Best lap -- on every list here and gates the Fastest-time
+box: with times off the box is cleared and disabled, so the
+time_board/time-off combination cannot be requested (R-63). The
+window's one presenter (``self.presenter``, built here like
+``RideSetup`` builds its own) holds the ``ExportOptions`` the export
+handlers (E6.4.2) read.
+
+Phase 5 adds three display facts the canvas cannot carry:
+
+- the ⚠ badge's explanation (Part 1). A ``wxDataViewCtrl`` has no
+  per-row hover tooltip, and hover is unreachable by keyboard anyway
+  (CODINGSTANDARDS-UX-DESKTOP §7), so the badge is explained on the
+  activation gesture instead: double-clicking (or pressing Enter on) a
+  draw row opens an OK-only alert carrying the row's own
+  ``tie_note``. ``standings``' draw flag and note are threaded through
+  ``StandingsRow`` for exactly this.
+- the Plate column's absence on the Team list under ``RIDER_POOLED``
+  (Part 2): a pooled team's plate is *derived* from its members, so
+  the column repeats a member's number while the Entry column names
+  the team. Under ``TEAM_RELAY`` the plate is the entry's identity and
+  stays.
+- the Best lap column (Part 3), positioned after Total and gated by
+  ``show_times_chk`` together with it -- both render time data.
 
 W11 wires the four export buttons: the app threads an
 ``on_export(target)`` callback (its own ``_handle_export_command``
@@ -57,10 +75,12 @@ import wx.dataview
 
 from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER, RideStatus
-from rivercrossing.roster import EntryMode
+from rivercrossing.roster import EntryMode, PlateModel
+from rivercrossing.standings import DRAW_TIE_NOTE
 from rivercrossing.ui import ids
 from rivercrossing.ui.card_text import JOKER_CODE, JOKER_DISPLAY, format_card
 from rivercrossing.ui.presenters.results import ResultsPresenter
+from rivercrossing.ui.std_dialogs import show_info
 from rivercrossing.ui.views._support import _ordering, associate_model, find_control
 
 if TYPE_CHECKING:
@@ -71,20 +91,25 @@ if TYPE_CHECKING:
 __all__ = [
     "COLUMN_LABELS",
     "COL_BEST5",
+    "COL_BESTLAP",
     "COL_ENTRY",
     "COL_HAND",
     "COL_LAPS",
     "COL_PLACE",
     "COL_PLATE",
     "COL_TOTAL",
+    "DRAW_EXPLANATION",
+    "DRAW_INFO_TITLE",
     "JOKER_CODE",
     "JOKER_DISPLAY",
     "MIN_SIZE",
     "STALE_INFOBAR",
     "STANDINGS_COLUMN_FLAGS",
     "TIE_BADGE",
+    "TIME_COLUMNS",
     "ResultsWindow",
     "StandingsListModel",
+    "draw_info_message",
     "format_best5",
     "format_card",
     "format_place",
@@ -95,16 +120,42 @@ COL_PLATE = 1
 COL_ENTRY = 2
 COL_LAPS = 3
 COL_TOTAL = 4
-COL_BEST5 = 5
-COL_HAND = 6
+COL_BESTLAP = 5
+COL_BEST5 = 6
+COL_HAND = 7
 
-# xrc-windows.md D's exact column order.
-COLUMN_LABELS: tuple[str, ...] = ("Place", "Plate", "Entry", "Laps", "Total", "Best 5", "Hand")
+# xrc-windows.md D's column order, with the Phase 5 Best lap column
+# placed directly after Total: both show the same ride clock, and only
+# show_times_chk hides them (results.xrc's own code-side footnote).
+COLUMN_LABELS: tuple[str, ...] = (
+    "Place",
+    "Plate",
+    "Entry",
+    "Laps",
+    "Total",
+    "Best lap",
+    "Best 5",
+    "Hand",
+)
+
+# The columns show_times_chk governs -- the two that render time data.
+TIME_COLUMNS: tuple[int, ...] = (COL_TOTAL, COL_BESTLAP)
 
 # E6.4.1: the R-43 "draw required" badge (xrc-windows.md D's code-side
 # footnote), rendered as a leading glyph in the Place cell (module
 # docstring).
 TIE_BADGE = "⚠"
+
+# The ⚠ badge's own explanation (Phase 5, Part 1). A wxDataViewCtrl has
+# no per-row hover tooltip and hover is keyboard-unreachable anyway
+# (CODINGSTANDARDS-UX-DESKTOP §7), so the badge is explained on the
+# activation gesture -- double-click or Enter -- in an OK-only alert:
+# the row's own tie note (standings' DRAW_TIE_NOTE), then this one plain
+# sentence saying what the flag means and who decides.
+DRAW_INFO_TITLE = "Draw required"
+DRAW_EXPLANATION = (
+    "Identical best hands were not resolved by the tie-break — the venue draw arbitrates."
+)
 
 # D16: XRC has no window-level minsize (results.xrc's own header notes
 # this and defers to code). The width floor is measured on wxPython
@@ -164,25 +215,40 @@ def format_place(standing: StandingsRow) -> str:
     return str(standing.place)
 
 
+def draw_info_message(standing: StandingsRow) -> str:
+    """Return the ⚠ explanation alert's body for *standing*.
+
+    The row's own tie note leads (``standings.DRAW_TIE_NOTE``, "draw
+    required"), then :data:`DRAW_EXPLANATION`'s plain sentence. A row
+    whose note is unset -- a hand-built row, or an export-era stub --
+    still reads "draw required" rather than the word "None".
+    """
+    note = standing.tie_note or DRAW_TIE_NOTE
+    return f"{note}\n\n{DRAW_EXPLANATION}"
+
+
 _TEXT_ACCESSORS: tuple[Callable[[StandingsRow], str], ...] = (
     format_place,
     lambda standing: standing.plate,
     lambda standing: standing.entry,
     lambda standing: str(standing.laps),
     lambda standing: standing.total,
+    lambda standing: standing.best_lap,
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
 )
 
 # The native header sort's per-column key, in ``COLUMN_LABELS`` order:
-# Place/Laps are ints, Total sorts on the stored numeric seconds (never
-# its rendered ``h:mm:ss`` text), and the rest are strings.
+# Place/Laps are ints, Total and Best lap sort on the stored numeric
+# seconds (never their rendered ``h:mm:ss`` text), and the rest are
+# strings.
 _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
     lambda standing: standing.place,
     lambda standing: standing.plate,
     lambda standing: standing.entry,
     lambda standing: standing.laps,
     lambda standing: standing.total_seconds,
+    lambda standing: standing.best_lap_seconds,
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
 )
@@ -202,7 +268,7 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         self._rows = tuple(rows)
 
     def GetColumnCount(self) -> int:
-        """Return the standings' fixed seven columns."""
+        """Return the standings' fixed eight columns."""
         return len(COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
@@ -212,6 +278,18 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Return the cell value at *row*/*col*."""
         return _TEXT_ACCESSORS[col](self._rows[row])
+
+    def standing_at(self, row: int) -> StandingsRow | None:
+        """Return the row at *row*, or None when *row* names none.
+
+        The activation handler's own lookup: ``GetRow`` answers a
+        not-found item with wxNOT_FOUND (0xFFFFFFFF, measured on this
+        build), so the range guard is what turns every unresolvable item
+        into "no row" rather than a crash.
+        """
+        if 0 <= row < len(self._rows):
+            return self._rows[row]
+        return None
 
     def Compare(  # noqa: PLR0913, PLR0917 -- wx's own four-argument callback shape
         self,
@@ -259,7 +337,7 @@ class ResultsWindow:
     presenter is built here, the same ``RideSetup`` precedent.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the tie-break order, export-watermark, entry-mode and export seams
+    def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the tie-break order, export-watermark, entry-mode, plate-model and export seams
         self,
         dialog: wx.Dialog,
         *,
@@ -267,6 +345,7 @@ class ResultsWindow:
         tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER,
         export_watermark: int | None = None,
         entry_mode: EntryMode = EntryMode.SOLO,
+        plate_model: PlateModel = PlateModel.RIDER_POOLED,
         on_export: Callable[[str], None] | None = None,
     ) -> None:
         """Decorate an already-loaded ``results_dlg`` window.
@@ -288,6 +367,13 @@ class ResultsWindow:
             entry_mode: The ride's entry mode (``RideConfig.
                 entry_mode``). MIXED shows the two-page notebook; SOLO
                 shows the standalone ``standings_list``.
+            plate_model: The ride's plate policy (``RideConfig.
+                plate_model``). Under ``RIDER_POOLED`` the Team list
+                drops its Plate column: a pooled team's plate is derived
+                from its members' plates, so the column repeats one
+                member's number and the Entry column is the team's
+                identity. Under ``TEAM_RELAY`` the entry's own plate is
+                the identity, so the column stays.
             on_export: The app's export flow (W11) -- the same
                 ``_handle_export_command`` route each ``mi_export_*``
                 menu row runs. Each export button fires it with the
@@ -297,6 +383,7 @@ class ResultsWindow:
         self.dialog = dialog
         self.data_source = data_source
         self.entry_mode = entry_mode
+        self.plate_model = plate_model
         self.on_export = on_export
 
         self.standings_list = self._find(ids.STANDINGS_LIST, wx.dataview.DataViewCtrl)
@@ -309,7 +396,7 @@ class ResultsWindow:
         self.full_field_chk = self._find(ids.FULL_FIELD_CHK, wx.CheckBox)
         self.all_cards_chk = self._find(ids.ALL_CARDS_CHK, wx.CheckBox)
 
-        self._total_columns = self._build_columns()
+        self._time_columns = self._build_columns()
         self._apply_show_times_state()
         self._model: StandingsListModel | None = None
         self._teams_model: StandingsListModel | None = None
@@ -370,36 +457,52 @@ class ResultsWindow:
                 button.Bind(wx.EVT_BUTTON, lambda _event, t=target: on_export(t))
 
     def _build_columns(self) -> tuple[Any, ...]:
-        """Build the seven columns on every standings list.
+        """Build every standings list's columns.
+
+        The Team list drops its Plate column under ``RIDER_POOLED``
+        (Part 2): a pooled team's plate is derived from its members, so
+        that column repeats a member's plate rather than naming the
+        entry, and the Entry column already carries the team's name.
+        The standalone and Solo lists always keep theirs, as does the
+        Team list under ``TEAM_RELAY``.
 
         Returns:
-            The Total column (``COL_TOTAL``) of each list, in
-            (standalone, notebook Teams, notebook Solo) order -- the
-            columns ``show_times_chk`` toggles hidden (results.xrc's
-            own code-side footnote: "hides Total col here too").
+            The Total and Best lap columns (``TIME_COLUMNS``) of each
+            list, in (standalone, notebook Teams, notebook Solo) order
+            -- the columns ``show_times_chk`` toggles hidden
+            (results.xrc's own code-side footnote: "hides Total col here
+            too").
         """
+        hide_team_plate = self.plate_model is PlateModel.RIDER_POOLED
         return tuple(
-            self._build_columns_for(control)
-            for control in (
-                self.standings_list,
-                self.teams_standings_list,
-                self.solo_standings_list,
+            column
+            for control, hide_plate in (
+                (self.standings_list, False),
+                (self.teams_standings_list, hide_team_plate),
+                (self.solo_standings_list, False),
             )
+            for column in self._build_columns_for(control, hide_plate=hide_plate)
         )
 
     @staticmethod
-    def _build_columns_for(control: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Append one list's seven columns in canvas order.
+    def _build_columns_for(control: Any, *, hide_plate: bool = False) -> tuple[Any, ...]:  # noqa: ANN401 -- wx ships no stubs
+        """Append one list's eight columns in canvas order.
+
+        Args:
+            control: The ``DataViewCtrl`` to append to.
+            hide_plate: Hide the Plate column (a pooled team's list).
 
         Returns:
-            The Total column (``COL_TOTAL``) for *control*.
+            *control*'s time columns (:data:`TIME_COLUMNS`) -- Total,
+            then Best lap.
         """
-        total: Any = None
-        for col, label in enumerate(COLUMN_LABELS):
-            column = control.AppendTextColumn(label, col, flags=STANDINGS_COLUMN_FLAGS)
-            if col == COL_TOTAL:
-                total = column
-        return total
+        columns = [
+            control.AppendTextColumn(label, col, flags=STANDINGS_COLUMN_FLAGS)
+            for col, label in enumerate(COLUMN_LABELS)
+        ]
+        if hide_plate:
+            columns[COL_PLATE].SetHidden(True)  # noqa: FBT003 -- wx API takes a positional bool
+        return tuple(columns[col] for col in TIME_COLUMNS)
 
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build the code-side :data:`STALE_INFOBAR`, inserted on top.
@@ -417,7 +520,12 @@ class ResultsWindow:
         return bar
 
     def _bind_events(self) -> None:
-        """Forward every publish-checkbox event to the presenter."""
+        """Forward the publish checkboxes and the list activations.
+
+        Every publish checkbox forwards to the presenter; each standings
+        list explains its own ⚠ rows on the activation gesture
+        (Part 1).
+        """
         for checkbox in (
             self.show_times_chk,
             self.laps_board_chk,
@@ -426,13 +534,19 @@ class ResultsWindow:
             self.all_cards_chk,
         ):
             self.dialog.Bind(wx.EVT_CHECKBOX, self._on_publish_toggle, checkbox)
+        for control in (
+            self.standings_list,
+            self.teams_standings_list,
+            self.solo_standings_list,
+        ):
+            control.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_standings_activated)
 
     def _on_publish_toggle(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle a publish-checkbox click; forward it to the presenter.
 
-        ``show_times_chk`` also toggles the Total column and gates the
-        Fastest-time board (results.xrc's own footnote) -- a structural
-        sibling-control fact the view owns, the same
+        ``show_times_chk`` also toggles the two time columns and gates
+        the Fastest-time board (results.xrc's own footnote) -- a
+        structural sibling-control fact the view owns, the same
         ``RideSetup._on_cap_toggle`` precedent.
         """
         event.Skip()
@@ -440,17 +554,36 @@ class ResultsWindow:
             self._apply_show_times_state()
         self.presenter.on_publish_toggled()
 
+    def _on_standings_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Explain the activated row's ⚠ badge (Part 1).
+
+        Double-clicking (or pressing Enter on) a ``draw_required`` row
+        opens the OK-only information alert carrying the row's own tie
+        note and :data:`DRAW_EXPLANATION`; any other row does nothing.
+        The row resolves through the model the event was raised with --
+        the same model the list is rendering -- so a list sharing this
+        handler cannot explain another list's row.
+        """
+        model = event.GetModel()
+        if not isinstance(model, StandingsListModel):
+            return
+        standing = model.standing_at(model.GetRow(event.GetItem()))
+        if standing is None or not standing.draw_required:
+            return
+        show_info(self.dialog, DRAW_INFO_TITLE, draw_info_message(standing))
+
     def _apply_show_times_state(self) -> None:
         """Apply the sibling controls ``show_times_chk`` governs.
 
-        Times off hides the Total column on every list and makes the
-        Fastest-time board unrequestable: its box is cleared and
-        disabled, so ``publish_options()`` can never map a time board
-        while no times are shown (R-63 -- the board is nothing but time
-        data). Re-checking show_times re-enables the box.
+        Times off hides both time columns (Total and Best lap) on every
+        list and makes the Fastest-time board unrequestable: its box is
+        cleared and disabled, so ``publish_options()`` can never map a
+        time board while no times are shown (R-63 -- the board is
+        nothing but time data). Re-checking show_times re-enables the
+        box.
         """
         show_times = self.show_times_chk.GetValue()
-        for column in self._total_columns:
+        for column in self._time_columns:
             column.SetHidden(not show_times)
         if not show_times:
             self.time_board_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool

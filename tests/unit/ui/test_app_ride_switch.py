@@ -68,9 +68,21 @@ class _FakeConsoleView:
         """Record the number of rendered feed rows."""
         self.calls.append(("show_feed", len(rows)))
 
+    def show_flagged(self, rows: list[object]) -> None:
+        """Record the number of rendered review-tab rows (WS-H).
+
+        The presenter's own ``refresh_feed`` feeds both lists, so a
+        console double of the swap path carries both channels.
+        """
+        self.calls.append(("show_flagged", len(rows)))
+
     def show_counters(self, counters: object) -> None:
         """Record the rendered counters."""
         self.calls.append(("show_counters", counters))
+
+    def show_current_lap(self, lap: int) -> None:
+        """Record the rendered Current Lap reading (Phase 6)."""
+        self.calls.append(("show_current_lap", lap))
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Record the teams-chip visibility verdict (R-11, W12)."""
@@ -169,7 +181,14 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
             "set_presenter",
             "show_ride_header",
             "set_state",
+            # Phase 4: the feed renders through the presenter's own
+            # refresh_feed (the search filter's owner), which feeds
+            # the review tab in the same call.
+            # Phase 6: the same refresh_feed renders the Current Lap
+            # reading beside the feed and the review tab.
             "show_feed",
+            "show_flagged",
+            "show_current_lap",
             "show_counters",
             "focus_entry",
         ]

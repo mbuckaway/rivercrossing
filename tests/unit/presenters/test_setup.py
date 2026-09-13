@@ -647,6 +647,24 @@ def test_on_submit_given_an_out_of_range_team_size_shows_validation_not_crash() 
     )
 
 
+# ------------------- jokers-per-deck: the 0..4 dropdown (Phase 1)
+# The dialog's jokers_choice offers exactly 0..4; each selection must
+# reach RideConfig unchanged (the presenter never re-reads the XRC).
+
+
+@pytest.mark.parametrize("jokers_per_deck", [0, 1, 2, 3, 4])
+def test_on_submit_given_each_jokers_choice_value_carries_it_onto_the_config(
+    jokers_per_deck: int,
+) -> None:
+    """Every item the dropdown offers round-trips onto RideConfig."""
+    presenter = SetupPresenter(RecordingSetupView(), Roster())
+
+    config = presenter.on_submit(_form(jokers_per_deck=jokers_per_deck))
+
+    assert config is not None
+    assert config.jokers_per_deck == jokers_per_deck
+
+
 # ----------------------- minimum-setup gate (R-20, on-submit refusal)
 # A complete form must clear setup_minimum_violations -- the same
 # minimum-setup floor ride.start() enforces (blank name/venue/

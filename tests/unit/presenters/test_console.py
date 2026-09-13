@@ -20,11 +20,13 @@ C3 freezes the clock for a closed (FINISHED/REOPENED) ride.
 ``EngineDataSource`` is the first real ``DataSource`` implementation
 over ``(engine, roster)``; its mapping tests pin the feed shape (R-32:
 time, plate, entry, lap, lap time, total, card code, flagged,
-newest-first, cap 30 -- W9: the card cell always carries the real
-code; a held crossing's row is flagged and shows the held card's own
-code, never the literal placeholder "held"), the counters, and the
-non-console methods (standings/entry_detail/audit_rows/riders/rides)
-implemented simply for E5/E6 to replace.
+newest-first -- Phase 4 retires the 30-row cap and makes ``time`` the
+elapsed reading since ``actual_start`` -- W9: the card cell always
+carries the real code; a held crossing's row is flagged and shows the
+held card's own code, never the literal placeholder "held"), the
+counters, and the non-console methods
+(standings/entry_detail/audit_rows/riders/rides) implemented simply for
+E5/E6 to replace.
 """
 
 import dataclasses
@@ -41,6 +43,7 @@ from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import (
     Crossing,
     Event,
+    IllegalStateError,
     RideConfig,
     RideEngine,
     RideStatus,
@@ -230,16 +233,28 @@ class FakeConsoleView:
         # H: the riders tab re-render count -- the tick skips an
         # unchanged render so a native sort survives (macOS).
         self.riders_calls = 0
+        # Phase 4: the crossings feed's re-render count -- the same
+        # skip keeps a 2 000-row model (and the operator's header sort)
+        # off the 1 s tick.
+        self.feed_calls = 0
+        # The counter chips stay on the every-second tick (only the
+        # feed is skipped).
+        self.counters_calls = 0
+        # Phase 6: the header's Current Lap reading (None = never
+        # pushed).
+        self.last_current_lap: int | None = None
 
     def show_feed(self, rows: list[FeedRow]) -> None:
         """Record the fed rows, then re-apply the console gates."""
         self.last_feed = list(rows)
+        self.feed_calls += 1
         if self._presenter is not None:
             self._presenter.refresh_console_gates()
 
     def show_counters(self, c: Counters) -> None:
         """Record the counters."""
         self.last_counters = c
+        self.counters_calls += 1
 
     def set_team_ui_visible(self, *, visible: bool) -> None:
         """Record the teams-chip visibility verdict (R-11, W12)."""
@@ -337,6 +352,10 @@ class FakeConsoleView:
         """Record the riders review rows and count the render (WS-H)."""
         self.last_riders = list(rows)
         self.riders_calls += 1
+
+    def show_current_lap(self, lap: int) -> None:
+        """Record the header's Current Lap reading (Phase 6)."""
+        self.last_current_lap = lap
 
 
 def _make_presenter(
@@ -453,7 +472,7 @@ def test_engine_data_source_feed_rows_given_crossings_returns_newest_first() -> 
     assert feed[1].lap == 1
     assert feed[0].plate == "12"
     assert feed[0].entry == "Rider 12"
-    assert feed[0].time == "10:03:20"  # start 10:00 + 200 s
+    assert feed[0].time == "0:03:20"  # elapsed: start 10:00 + 200 s
     assert feed[0].lap_time == "1:40"  # 100 s between laps
     assert feed[0].total == "0:03:20"  # 200 s from the gun
     assert feed[0].card == engine.card_for(engine.crossings[-1]).code()
@@ -462,11 +481,13 @@ def test_engine_data_source_feed_rows_given_crossings_returns_newest_first() -> 
 
 @pytest.mark.parametrize(
     ("recorded", "shown"),
-    [(29, 29), (30, 30), (31, 30)],
-    ids=["below_cap", "at_cap", "past_cap"],
+    [(29, 29), (30, 30), (31, 31)],
+    ids=["below_thirty", "at_thirty", "past_thirty"],
 )
-def test_engine_data_source_feed_rows_caps_at_thirty_rows(recorded: int, shown: int) -> None:
-    """R-32's 20-30 cap: rows stay at 30 past the cap, newest first."""
+def test_engine_data_source_feed_rows_given_many_crossings_returns_them_all(
+    recorded: int, shown: int
+) -> None:
+    """The 30-row cap is retired: every crossing is a row (Phase 4)."""
     engine, clock = _running_engine()
     # logic-coverage-exempt: T-8 -- this loop is pure Arrange (recording
     # *recorded* fixture crossings before the one Act); every assertion
@@ -478,7 +499,7 @@ def test_engine_data_source_feed_rows_caps_at_thirty_rows(recorded: int, shown: 
     feed = source.feed_rows()
 
     assert len(feed) == shown
-    assert [row.lap for row in feed] == list(range(recorded, recorded - shown, -1))
+    assert feed[-1].lap == 1  # the oldest crossing is still rendered
 
 
 def test_engine_data_source_feed_rows_given_flagged_crossing_reports_the_held_cards_code() -> None:
@@ -547,8 +568,8 @@ def test_engine_data_source_counters_reflect_engine_state() -> None:
         crossings=2,
         cards_dealt=2,  # both credited -- no held card
         on_course=0,  # plate 12 has 2 (even) laps
-        shoe_remaining=430,  # 8x54 shoe, 2 dealt
-        shoe_total=432,
+        shoe_remaining=422,  # 8x53 shoe, 2 dealt
+        shoe_total=424,
         riders=2,  # one registered rider per solo entry
         teams=0,  # no team entries in this roster
     )
@@ -670,6 +691,17 @@ def test_engine_data_source_standings_omitted_order_uses_the_default_constant() 
     assert source.standings() == source.standings(order=DEFAULT_TIEBREAK_ORDER)
 
 
+def _seed_credited_hand(engine: RideEngine, plate: str, cards: list[Card]) -> None:
+    """Overwrite *plate*'s credited hand with *cards*, no rider tag.
+
+    The private-access seed the hand-tie tests share: the engine's
+    credited hand holds ``(card, rider_plate)`` pairs (the tag a
+    per-rider DNF forfeits on), and a card whose crossing never named a
+    rider carries ``None`` -- never forfeited by anyone.
+    """
+    engine._hand[plate] = [(card, None) for card in cards]
+
+
 def _engine_with_a_hand_tie() -> RideEngine:
     """Record a pair tied on hand but not on laps: 12 leads 34 by laps.
 
@@ -683,8 +715,8 @@ def _engine_with_a_hand_tie() -> RideEngine:
     _record(engine, clock, "34", lap_time_s=60)
     _record(engine, clock, "12", lap_time_s=100)
     tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
-    engine._hand["12"] = list(tied)
-    engine._hand["34"] = list(tied)
+    _seed_credited_hand(engine, "12", tied)
+    _seed_credited_hand(engine, "34", tied)
     return engine
 
 
@@ -762,8 +794,8 @@ def test_engine_data_source_standings_reordered_order_changes_row_order() -> Non
     _record(engine, clock, "34", lap_time_s=60)
     _record(engine, clock, "12", lap_time_s=100)
     tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
-    engine._hand["12"] = list(tied)
-    engine._hand["34"] = list(tied)
+    _seed_credited_hand(engine, "12", tied)
+    _seed_credited_hand(engine, "34", tied)
     engine.finish()
     source = EngineDataSource(engine, engine._roster)
 
@@ -796,6 +828,60 @@ def test_engine_data_source_standings_given_a_zero_card_entry_renders_a_blank_ha
     assert by_plate["12"].hand != ""  # one credited card has a real prose hand
     assert by_plate["34"].hand == ""
     assert teams == []
+
+
+def test_engine_data_source_standings_finished_draw_rows_carry_the_tie_note() -> None:
+    """Part 1: the ⚠ rows carry R-43's own note for the view's alert."""
+    engine = _engine_with_a_hand_tie()
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings(
+        order=tiebreak_order_from_spellings(("high_card", "laps", "total_time"))
+    )
+
+    assert [(row.place, row.draw_required, row.tie_note) for row in rows] == [
+        (1, True, "draw required"),
+        (1, True, "draw required"),
+    ]
+
+
+def test_engine_data_source_standings_given_distinct_hands_leaves_the_tie_note_unset() -> None:
+    """Part 1: an ordinary row has no ⚠ note for the view to explain."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=90)
+    engine.finish()
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings()
+
+    assert [(row.draw_required, row.tie_note) for row in rows] == [(False, None), (False, None)]
+
+
+def test_engine_data_source_standings_rows_carry_the_quickest_lap_as_best_lap() -> None:
+    """Part 3: Best lap is the snapshot's quickest lap, seconds kept."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "12", lap_time_s=60)
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings()
+
+    best = next(row for row in rows if row.plate == "12")
+    assert (best.best_lap, best.best_lap_seconds) == ("0:01:00", 60.0)
+
+
+def test_engine_data_source_standings_given_a_lap_less_entry_renders_a_zero_best_lap() -> None:
+    """T-4 boundary: an entry that never crossed has no best lap."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    source = EngineDataSource(engine, engine._roster)
+
+    _teams, rows = source.standings()
+
+    idle = next(row for row in rows if row.plate == "34")
+    assert (idle.best_lap, idle.best_lap_seconds) == ("0:00:00", 0.0)
 
 
 def test_empty_data_source_standings_accepts_the_order_argument() -> None:
@@ -1202,6 +1288,26 @@ def test_on_plate_entered_given_a_miss_symbol_refreshes_the_feed_with_a_miss_row
     presenter.on_plate_entered("-")
 
     assert [(row.plate, row.entry) for row in view.last_feed] == [("-", "missed")]
+
+
+def test_on_plate_entered_given_a_miss_symbol_stamps_it_from_the_engines_clock() -> None:
+    """The miss instant comes from the ride's own clock, not ``now()``.
+
+    A miss is a point on the ride's timeline exactly like a crossing
+    is: the feed renders its elapsed reading against ``actual_start``
+    (Phase 4), so the two must share one clock -- a scripted or
+    back-dated ride would otherwise strand the miss outside the ride
+    and raise on the subtraction.
+    """
+    engine, clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    clock.advance(90)
+    expected = engine.clock()
+
+    presenter.on_plate_entered("=")
+
+    assert engine.pending_misses()[0].crossed_at == expected
 
 
 def test_on_plate_entered_given_a_miss_symbol_plays_error_and_notifies() -> None:
@@ -1783,6 +1889,250 @@ def test_console_view_protocol_carries_no_sort_indicator_member() -> None:
     assert "set_sort_indicator" not in ConsoleView.__dict__
 
 
+# ---------------------------------------- the search box (Phase 4)
+# The console's search box narrows the crossings list the same way the
+# rider editor's narrows its own: a case-insensitive substring over the
+# rendered cells (plate, name/entry, card). A blank box restores every
+# row; the Needs Review tab keeps every flagged row either way.
+
+
+def test_on_search_text_given_a_plate_fragment_keeps_only_the_matching_rows() -> None:
+    """A plate substring narrows the feed, like the editor's box."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text("34")
+
+    assert [row.plate for row in view.last_feed] == ["34"]
+
+
+def test_on_search_text_given_a_name_fragment_keeps_only_the_matching_rows() -> None:
+    """The Name cell is searched too, not just the plate."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text("Rider 12")
+
+    assert [row.plate for row in view.last_feed] == ["12"]
+
+
+def test_on_search_text_given_a_card_code_keeps_only_the_matching_rows() -> None:
+    """The Card cell is the third searched cell."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    card = engine.card_for(engine.crossings[-1]).code()
+    _record(engine, clock, "34", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text(card)
+
+    assert [row.plate for row in view.last_feed] == ["12"]
+
+
+def test_on_search_text_given_a_lower_case_fragment_matches_the_upper_case_cell() -> None:
+    """The match is case-insensitive on both sides."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text("rider 12")
+
+    assert [row.plate for row in view.last_feed] == ["12"]
+
+
+def test_on_search_text_given_surrounding_whitespace_still_matches() -> None:
+    """Whitespace around the needle is ignored, as in the editor."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text("  12  ")
+
+    assert [row.plate for row in view.last_feed] == ["12"]
+
+
+def test_on_search_text_given_a_blank_string_restores_every_row() -> None:
+    """Clearing the box (the native X) brings the whole ride back."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.on_search_text("12")
+
+    presenter.on_search_text("")
+
+    assert [row.plate for row in view.last_feed] == ["34", "12"]
+
+
+def test_on_search_text_given_whitespace_only_restores_every_row() -> None:
+    """T-4 boundary: a box holding spaces filters nothing either."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.on_search_text("12")
+
+    presenter.on_search_text("   ")
+
+    assert [row.plate for row in view.last_feed] == ["12"]
+
+
+def test_on_search_text_given_no_match_renders_an_empty_feed() -> None:
+    """Negative: a needle nothing carries leaves no rows."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text("nothing matches this")
+
+    assert view.last_feed == []
+
+
+def test_on_search_text_given_a_miss_row_matches_its_missed_cell() -> None:
+    """A miss row is searchable by its own "-"/"missed" cells."""
+    engine, _clock = _running_engine()
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text("missed")
+
+    assert [row.plate for row in view.last_feed] == ["-"]
+
+
+def test_on_search_text_given_a_filter_leaves_the_flagged_tab_complete() -> None:
+    """The search narrows the crossings list, never the review tab."""
+    engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
+    _record(engine, clock, "12", lap_time_s=5)  # flagged short lap
+    _record(engine, clock, "34", lap_time_s=100)  # clean lap, newer
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_search_text("34")
+
+    assert [row.plate for row in view.last_flagged] == ["12"]
+    assert [row.plate for row in view.last_feed] == ["34"]
+
+
+def test_rendered_feed_rows_given_a_filter_returns_exactly_the_rendered_rows() -> None:
+    """The app resolves an activated row against this very list."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    _record(engine, clock, "34", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.on_search_text("34")
+
+    rendered = presenter.rendered_feed_rows()
+
+    assert rendered == view.last_feed
+    assert [row.plate for row in rendered] == ["34"]
+
+
+def test_rendered_feed_rows_before_any_render_is_empty() -> None:
+    """T-4 boundary: a presenter that never rendered has no rows."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    assert presenter.rendered_feed_rows() == []
+
+
+# ------------------------------------------------- the 1 s tick's feed
+# The console scrolls the whole ride now, so the tick must not rebuild a
+# multi-thousand-row model every second: the presenter re-renders only
+# when the ride's own data changed. The clock and counters keep ticking.
+
+
+def test_tick_given_an_unchanged_ride_does_not_re_render_the_feed() -> None:
+    """T-3 negative: the second tick rebuilds nothing."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+    first_render_calls = view.feed_calls
+
+    presenter.tick()
+
+    assert (first_render_calls, view.feed_calls) == (1, 1)
+
+
+def test_tick_given_an_unchanged_ride_still_ticks_the_clock() -> None:
+    """The skip is the feed's only: the live clock keeps refreshing."""
+    engine, clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+    clock.advance(30)
+
+    presenter.tick()
+
+    assert view.last_clock == ("0:00:30", "5:59:30")
+
+
+def test_tick_given_a_new_crossing_re_renders_the_feed() -> None:
+    """T-3: a new crossing moves the event count, so it renders."""
+    engine, clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+
+    _record(engine, clock, "12", lap_time_s=100)
+    presenter.tick()
+
+    assert (view.feed_calls, [row.plate for row in view.last_feed]) == (2, ["12"])
+
+
+def test_tick_given_a_new_pending_miss_re_renders_the_feed() -> None:
+    """T-3: a miss is a feed row too, so the tick picks it up."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+    engine.record_miss(_dt(10, 5), reason="missed number")
+
+    presenter.tick()
+
+    assert [row.plate for row in view.last_feed] == ["-"]
+
+
+def test_tick_given_a_dnf_mark_re_renders_the_feed() -> None:
+    """T-3: the per-rider DNF set is part of the render's own state."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+    presenter.tick()
+    engine.mark_dnf("12", reason="withdrawn")
+
+    presenter.tick()
+
+    assert (view.feed_calls, view.last_feed[0].dnf) == (2, True)
+
+
+def test_tick_given_an_unchanged_ride_keeps_the_counter_chips_live() -> None:
+    """The skip covers the feed only: counters refresh every tick."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+    presenter.tick()
+
+    assert (view.feed_calls, view.counters_calls) == (1, 2)
+
+
 # ----------------------------------------------------------------- tick
 
 
@@ -1966,6 +2316,35 @@ def test_on_plate_entered_given_a_credited_short_lap_lists_it_in_the_flagged_row
     )
 
 
+def test_on_undo_given_an_engine_refusal_after_the_confirm_posts_a_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a refusal past the pre-check never crashes.
+
+    The pre-check makes this arm unreachable through the real engine's
+    own rules, so the refusal is scripted onto the engine directly --
+    the "never a crash" half of ``on_undo``'s contract.
+    """
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    view.confirm_result = True
+    presenter = _make_presenter(engine, view)
+
+    def _refuse() -> None:
+        """Raise the engine's refusal, as a slipped pre-check would."""
+        raise IllegalStateError("ride is not running")
+
+    monkeypatch.setattr(engine, "undo_last", _refuse)
+
+    presenter.on_undo()
+
+    assert (view.last_notice, len(engine.crossings)) == (
+        "Undo unavailable: ride is not running",
+        1,
+    )
+
+
 def test_on_undo_given_a_later_clean_crossing_keeps_the_flagged_row_listed() -> None:
     """WS-H: undoing a clean lap keeps the still-flagged row listed."""
     engine, clock = _running_engine(min_lap_s=60, hold_short_laps=True)
@@ -1998,8 +2377,8 @@ def test_on_tick_given_flagged_crossing_refreshes_the_review_lists() -> None:
     [
         (RideStatus.RUNNING, False, "green"),
         (RideStatus.RUNNING, True, "yellow"),
-        (RideStatus.DRAFT, False, "yellow"),
-        (RideStatus.DRAFT, True, "yellow"),
+        (RideStatus.DRAFT, False, "red"),
+        (RideStatus.DRAFT, True, "red"),
         (RideStatus.FINISHED, False, "red"),
         (RideStatus.FINISHED, True, "red"),
         (RideStatus.REOPENED, False, "yellow"),
@@ -2008,8 +2387,8 @@ def test_on_tick_given_flagged_crossing_refreshes_the_review_lists() -> None:
     ids=[
         "running_green",
         "stopped_running_yellow",
-        "draft_yellow",
-        "stopped_draft_yellow",
+        "draft_red",
+        "stopped_draft_red",
         "finished_red",
         "stopped_finished_red",
         "reopened_yellow",
@@ -2022,8 +2401,10 @@ def test_stop_light_mode_given_ride_status_returns_the_semantic_colour(
     """WS-D/W6: RUNNING green, stopped RUNNING amber, the rest fixed.
 
     W6: the light never carries meaning by colour alone, so a stopped
-    RUNNING ride joins DRAFT/REOPENED on amber while the label says
-    STOPPED.
+    RUNNING ride joins REOPENED on amber while the label says STOPPED.
+    Phase 6: DRAFT switched from amber to red -- the pre-start state
+    now reads as "not running yet" (its own DRAFT label sits beside
+    it), and only REOPENED keeps the amber warning colour.
     """
     assert console_module.stop_light_mode(status, stopped=stopped) == mode
 
@@ -2049,6 +2430,88 @@ def test_stop_light_mode_given_any_lifecycle_value_returns_a_known_mode(
         "red",
         "off",
     }
+
+
+# -------------------------------------------- Phase 6: the Current Lap
+
+
+def test_current_lap_given_no_crossings_returns_zero() -> None:
+    """T-4 empty collection: a ride with no laps reads 0."""
+    assert console_module.current_lap(()) == 0
+
+
+def _crossing(seq: int) -> Crossing:
+    """Build a minimal crossing at *seq* for the lap-number pins."""
+    return Crossing(
+        seq=seq,
+        crossed_at=_dt(10) + timedelta(minutes=seq),
+        entry_id="12",
+    )
+
+
+@pytest.mark.parametrize(
+    ("seqs", "expected"),
+    [
+        ((1,), 1),  # T-4 single: the first rider crossing is lap 1
+        ((1, 2), 2),
+        ((1, 2, 3), 3),
+        ((2, 1), 2),  # record order never matters, only the highest lap
+        ((9, 10), 10),  # the units->tens roll
+        ((10, 9), 10),
+        ((99, 100), 100),  # the tens->hundreds roll
+    ],
+    ids=["first", "second", "third", "unordered", "units_to_tens", "unordered_tens", "hundreds"],
+)
+def test_current_lap_given_crossings_returns_the_highest_lap_number(
+    seqs: tuple[int, ...], expected: int
+) -> None:
+    """The reading is ``max(crossing.seq)`` across every entry."""
+    assert console_module.current_lap(tuple(_crossing(seq) for seq in seqs)) == expected
+
+
+@given(seqs=st.lists(st.integers(min_value=1, max_value=1000), min_size=1, max_size=40))
+def test_current_lap_given_any_crossings_returns_the_largest_lap_recorded(
+    seqs: list[int],
+) -> None:
+    """T-7 invariant: the reading is exactly the maximum lap present."""
+    crossings = tuple(_crossing(seq) for seq in seqs)
+
+    assert console_module.current_lap(crossings) == max(seqs)
+
+
+def test_on_tick_given_no_crossings_renders_lap_zero() -> None:
+    """A fresh ride's header reads lap 0 before the first crossing."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+
+    assert view.last_current_lap == 0
+
+
+def test_on_plate_entered_given_the_first_crossing_moves_the_current_lap_to_one() -> None:
+    """Phase 6: the first rider crossing moves the header 00 -> 01."""
+    engine, _clock = _running_engine()
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_plate_entered("12")
+
+    assert view.last_current_lap == 1
+
+
+def test_on_undo_given_the_only_crossing_returns_the_current_lap_to_zero() -> None:
+    """An undo of the newest lap drops the reading back to zero."""
+    engine, clock = _running_engine()
+    _record(engine, clock, "12", lap_time_s=100)
+    view = FakeConsoleView()
+    view.confirm_result = True
+    presenter = _make_presenter(engine, view)
+
+    presenter.on_undo()
+
+    assert view.last_current_lap == 0
 
 
 @pytest.mark.parametrize(
@@ -2486,8 +2949,8 @@ def test_engine_data_source_standings_rerank_after_reopened_correction_and_finis
     _record(engine, clock, "34", lap_time_s=60)
     _record(engine, clock, "12", lap_time_s=100)
     tied = [Card.parse(code) for code in ("5H", "5D", "2C", "3C", "4C")]
-    engine._hand["12"] = list(tied)
-    engine._hand["34"] = list(tied)
+    _seed_credited_hand(engine, "12", tied)
+    _seed_credited_hand(engine, "34", tied)
     engine.finish()
     _teams_before, before_rows = EngineDataSource(engine, engine._roster).standings()
     before = [row.plate for row in before_rows]

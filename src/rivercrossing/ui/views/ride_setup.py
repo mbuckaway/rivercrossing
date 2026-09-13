@@ -64,7 +64,6 @@ import wx
 import wx.adv
 
 from rivercrossing.ride import (
-    DEFAULT_JOKERS_PER_DECK,
     DEFAULT_TIEBREAK_ORDER,
     TIEBREAK_HIGH_CARD,
     TIEBREAK_LAPS,
@@ -112,11 +111,6 @@ _TIEBREAK_LABELS: dict[str, str] = {
     TIEBREAK_HIGH_CARD: "High-card draw",
 }
 _TIEBREAK_IDS_BY_LABEL: dict[str, str] = {label: id_ for id_, label in _TIEBREAK_LABELS.items()}
-
-# The jokers radio group's third choice (setup.xrc's jokers_0/2/4_radio
-# trio); 2, the group's XRC default, is ride.py's own
-# DEFAULT_JOKERS_PER_DECK, so only the odd one out needs a name here.
-JOKERS_4_PER_DECK = 4
 
 # tiebreak_list's own bounded box (plan section 3c): R-14 names exactly
 # three criteria, and setup.xrc authors the same 160x120 <size>. The
@@ -263,9 +257,7 @@ class RideSetup:
         self.pooled_radio = self._find(ids.POOLED_RADIO, wx.RadioButton)
         self.relay_radio = self._find(ids.RELAY_RADIO, wx.RadioButton)
         self.decks_spin = self._find(ids.DECKS_SPIN, wx.SpinCtrl)
-        self.jokers_0_radio = self._find(ids.JOKERS_0_RADIO, wx.RadioButton)
-        self.jokers_2_radio = self._find(ids.JOKERS_2_RADIO, wx.RadioButton)
-        self.jokers_4_radio = self._find(ids.JOKERS_4_RADIO, wx.RadioButton)
+        self.jokers_choice = self._find(ids.JOKERS_CHOICE, wx.Choice)
         self.cap_chk = self._find(ids.CAP_CHK, wx.CheckBox)
         self.cap_spin = self._find(ids.CAP_SPIN, wx.SpinCtrl)
         self.tiebreak_list = self._find(ids.TIEBREAK_LIST, wx.adv.EditableListBox)
@@ -407,12 +399,13 @@ class RideSetup:
 
         ``entry_mode``/``plate_model``/``jokers_per_deck`` and the W4
         radio pair are the exception each: wx has no "enum radio
-        group" control, so translating which radio is checked into a
-        domain value is this method's own mechanical job (module
-        docstring, mirroring ``RiderEditor._form_values``'s own note
-        about ``team_choice``) -- ``hold_short_laps`` reads the
-        pair's first member, whose checked state means the operator
-        opted into R-34's hold path.
+        group" control, so translating which radio is checked (or
+        which jokers_choice item is selected) into a domain value is
+        this method's own mechanical job (module docstring, mirroring
+        ``RiderEditor._form_values``'s own note about
+        ``team_choice``) -- ``hold_short_laps`` reads the pair's first
+        member, whose checked state means the operator opted into
+        R-34's hold path.
         """
         picked_date = self.date_picker.GetValue()
         picked_time = self.start_time_picker.GetValue()
@@ -443,12 +436,17 @@ class RideSetup:
         )
 
     def _jokers_per_deck(self) -> int:
-        """Return 0/2/4 for whichever jokers_*_radio is checked."""
-        if self.jokers_0_radio.GetValue():
-            return 0
-        if self.jokers_4_radio.GetValue():
-            return 4
-        return 2
+        """Return the jokers_choice selection as its int value (0..4).
+
+        The dropdown's items ARE the domain values (setup.xrc's
+        ``<content>`` lists "0".."4"), so the selected item's own text
+        is the count -- reading it by text, not by index, keeps the
+        translation immune to a later reorder of the items. The XRC's
+        ``<selection>1</selection>`` guarantees a selection always
+        exists, the same structural-default rule the retired radio trio
+        followed.
+        """
+        return int(self.jokers_choice.GetStringSelection())
 
     def _tiebreak_order(self) -> tuple[str, str, str]:
         """Return tiebreak_list's current row order as tiebreak ids.
@@ -558,10 +556,14 @@ class RideSetup:
         self.always_deal_radio.SetValue(not hold_short_laps)
 
     def show_jokers_per_deck(self, count: int) -> None:
-        """Check jokers_0/2/4_radio from the record (D2)."""
-        self.jokers_2_radio.SetValue(count == DEFAULT_JOKERS_PER_DECK)
-        self.jokers_0_radio.SetValue(count == 0)
-        self.jokers_4_radio.SetValue(count == JOKERS_4_PER_DECK)
+        """Select jokers_choice's own item from the record (D2).
+
+        ``SetStringSelection`` is the choice-shaped preload the rest of
+        this codebase uses (``rider_editor.show_team``'s own seam): a
+        stored count the dropdown does not offer leaves the current
+        selection alone rather than blanking it.
+        """
+        self.jokers_choice.SetStringSelection(str(count))
 
     def show_card_cap(self, max_cards: int | None) -> None:
         """Render cap_chk/cap_spin; ``None`` means uncapped (D2)."""
@@ -627,9 +629,7 @@ class RideSetup:
             self.pooled_radio,
             self.relay_radio,
             self.decks_spin,
-            self.jokers_0_radio,
-            self.jokers_2_radio,
-            self.jokers_4_radio,
+            self.jokers_choice,
             self.cap_chk,
             self.tiebreak_list,
         ):

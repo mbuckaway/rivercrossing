@@ -23,7 +23,7 @@ import wx.dataview
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import associate_model, clamp_to_display, find_control
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -85,13 +85,14 @@ COLUMN_LABELS: tuple[str, ...] = ("Ride", "Date", "Status", "Entries")
 
 # D16: the canvas draws this dialog at 520x182; XRC has no window-level
 # minsize (library.xrc's own header notes this and defers to code).
-# Plan 1b returns the floor close to that canvas size: the four
-# columns now open at their own pinned widths (530 px of these 560),
-# so W10's doubled 1040x546 floor is retired and the dialog sits
-# beside the console rather than dominating the screen. ``SetMinSize``
-# + ``Fit()`` is what actually grows the dialog to respect the floor
-# right now (W10's own measured note).
-MIN_SIZE = (560, 220)
+# Plan 1b returns the floor close to that canvas size; Phase 6 widens it
+# from 560 to 610 -- the four columns now open at their own pinned
+# widths (530 px of these 610), so W10's doubled 1040x546 floor stays
+# retired and the dialog sits beside the console rather than dominating
+# the screen. ``SetMinSize`` + ``Fit()`` is what actually grows the
+# dialog to respect the floor right now (W10's own measured note), and
+# ``_apply_min_size`` clamps that floor to the display's work area.
+MIN_SIZE = (610, 220)
 
 # Plan 1b column defaults. A DataViewCtrl column never sizes itself to
 # its content, so an unpinned column keeps the platform's 80 DIP
@@ -570,7 +571,12 @@ class RideLibrary:
         never collapses to the sizer's own small best height.
         ``library.xrc``'s header anticipates exactly this: "Code
         re-applies SetMinSize() if a screen-fit minimum is ever
-        specified".
+        specified". Phase 6 supplies that screen fit: the floor is
+        clamped to the display's work area
+        (:func:`~rivercrossing.ui.views._support.clamp_to_display`), so
+        a small screen still gets a whole dialog rather than a floor
+        wider than the screen.
         """
-        self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], MIN_SIZE[1]))
+        width, height = clamp_to_display(*MIN_SIZE)
+        self.dialog.SetMinSize(wx.Size(width, height))
         self.dialog.Fit()

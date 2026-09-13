@@ -103,7 +103,6 @@ from rivercrossing.ui.logging import Logging, build_log_path, prune_logs
 from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import (
-    FEED_CAP,
     AuditRow,
     DataSource,
     EmptyDataSource,
@@ -113,10 +112,11 @@ from rivercrossing.ui.presenters.data_source import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from types import TracebackType
 
     from rivercrossing.ride import Crossing, Event
+    from rivercrossing.ui.presenters.data_source import FeedRow
     from rivercrossing.ui.presenters.settings import AppSettings
 
 __all__ = ["build_app", "build_main_window", "main"]
@@ -857,7 +857,12 @@ def _swap_console_onto(  # noqa: PLR0913, PLR0917 -- (context, engine, roster, s
     view.set_presenter(presenter)
     _show_ride_header(context, engine.config)
     view.set_state(source.ride_status(), stopped=engine.stopped)
-    view.show_feed(source.feed_rows())
+    # The presenter's own feed render (Phase 4): it applies the search
+    # filter, so the rows on screen and the rows an activated feed row
+    # resolves against (``rendered_feed_rows``) are one list. A direct
+    # ``view.show_feed(source.feed_rows())`` would leave the two out of
+    # step until the next tick.
+    presenter.refresh_feed()
     view.show_counters(source.counters())
     view.focus_entry()
     context.presenter = presenter
@@ -1365,8 +1370,10 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
         # and GO buttons inert); _open_target then has no view to
         # persist, and the roster is untouched anyway.
         if context.presenter is not None:
-            # Plan §1: seed the five spins from the live settings, so
-            # the dialog opens on the operator's last-used counts.
+            # Plan §1/§3: seed the spins from the live settings, so the
+            # dialog opens on the operator's last-used counts -- and
+            # hand over the average speed, so the interval opens on
+            # this ride's own speed-derived default.
             return SimulatorDialog(
                 window,
                 engine=context.presenter.engine,
@@ -1376,6 +1383,7 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
                 sim_solo=context.settings.sim_solo,
                 sim_laps=context.settings.sim_laps,
                 sim_interval=context.settings.sim_interval,
+                avg_speed_kmh=context.settings.avg_speed_kmh,
             )
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1 (shared with the W11 F2a flagged seam): the live
@@ -1390,9 +1398,11 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
         # roster always matches the engine -- the resume path never
         # updates context.roster) and rank them with the ride's
         # stored order. entry_mode decides the MIXED notebook or the
-        # SOLO standalone list. The E5.4.2 empty state stays for the
-        # no-presenter path (route-level tests), where the export
-        # buttons stay disabled (DRAFT) and inert (no callback).
+        # SOLO standalone list; plate_model decides whether the Team
+        # list carries its Plate column (Phase 5, Part 2). The E5.4.2
+        # empty state stays for the no-presenter path (route-level
+        # tests), where the export buttons stay disabled (DRAFT) and
+        # inert (no callback).
         presenter = context.presenter
         if presenter is not None:
             ResultsWindow(
@@ -1401,6 +1411,7 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
                 tiebreak_order=presenter.engine.config.tiebreak_order,
                 export_watermark=context.export_watermark,
                 entry_mode=presenter.engine.config.entry_mode,
+                plate_model=presenter.engine.config.plate_model,
                 # W11: the four export buttons fire the same
                 # _handle_export_command route the matching mi_export_*
                 # menu row runs -- the dead synthetic-EVT_MENU
@@ -1415,16 +1426,13 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
     elif route.target == ids.SETTINGS_DLG:
         # E8.1.2: Settings renders the context's current settings and,
         # on OK, persists + applies them through the live seams (the
-        # appearance mirror to the View-menu radios). ux-polish wires
-        # backup_now_btn: the dialog's on_backup_now seam runs the
-        # same _handle_backup_database action File ▸ Back Up
-        # Database… fires (R-54), surfacing the written path (or
-        # failure) on the status bar.
+        # appearance mirror to the View-menu radios). Phase 1 retired
+        # the dialog's Back up now button: R-54's manual backup has one
+        # surface, File ▸ Back Up Database… (_handle_backup_database).
         SettingsDialog(
             window,
             settings=context.settings,
             on_save=lambda new_settings: _apply_settings_live(context, new_settings),
-            on_backup_now=lambda: _handle_backup_database(context),
         )
     elif route.target == ids.SHORTCUTS_DLG:
         # E8.2.1: Help ▸ Keyboard Shortcuts renders the accelerator
@@ -2093,14 +2101,14 @@ def _handle_open_user_guide(context: _RouteContext) -> None:
 
 
 def _handle_backup_database(context: _RouteContext) -> None:
-    """File ▸ Back Up Database… / Settings' ``backup_now_btn``: R-54.
+    """File ▸ Back Up Database…: R-54.
 
     ux-polish's manual-backup command: with a live store open, writes
     one timestamped backup through :meth:`Store.backup_now` and posts
     the written path on the status bar; a failure posts the error
-    instead of crashing. The settings dialog's own button runs this
-    same handler through the ``on_backup_now`` seam ``_decorate``
-    wires. With no store open there is no database to back up -- the
+    instead of crashing. Phase 1 retired the settings dialog's own
+    Back up now button, so this menu row is R-54's single manual-backup
+    surface. With no store open there is no database to back up -- the
     E5.4.2 in-memory constructions get the same no-store guard notice
     the duplicate route uses.
     """
@@ -2583,15 +2591,21 @@ def _handle_deal_manual_route(context: _RouteContext) -> None:
 
 
 def _handle_mark_dnf_route(context: _RouteContext) -> None:
-    """Riders ▸ Mark DNF…: dnf_confirm_dlg naming the current entry."""
+    """Riders ▸ Mark DNF…: dnf_confirm_dlg, then mark the typed target.
+
+    Phase 3 makes this row self-sufficient: the dialog's ``plate_input``
+    asks for the rider number (or a whole entry's plate), so no entry
+    has to be open first -- an already-open entry just prefills the
+    input and names itself in the confirm, exactly like the other
+    corrections' ``context.detail_plate`` deep-link. The engine's
+    ``mark_dnf`` decides whether the number scopes to one pooled rider
+    or to the whole entry.
+    """
     engine = _correction_engine(context)
     if engine is None:
         context.frame.SetStatusText("Mark DNF… — no ride open")
         return
     plate = context.detail_plate
-    if plate is None:
-        context.frame.SetStatusText("Mark DNF… — open an entry first")
-        return
     from rivercrossing.ui.views import (  # noqa: PLC0415 -- deferred, see module docstring
         corrections,
     )
@@ -2599,15 +2613,15 @@ def _handle_mark_dnf_route(context: _RouteContext) -> None:
     dnf = corrections.run_dnf(
         context.resource,
         frame=context.frame,
-        entry_id=plate,
-        entry=_entry_label(context, plate),
+        plate=plate or "",
+        entry=_entry_label(context, plate) if plate is not None else "",
     )
     if dnf is None:
         return
     _apply_correction(
         context,
-        lambda: engine.mark_dnf(dnf.entry_id, dnf.reason),
-        "Entry marked DNF",
+        lambda: engine.mark_dnf(dnf.plate, dnf.reason),
+        "DNF marked",
     )
 
 
@@ -3117,38 +3131,38 @@ def _wire_flagged_open_seam(context: _RouteContext) -> None:
 def _crossing_for_feed_row(engine: RideEngine, row: int) -> Crossing | None:
     """Return the crossing the console feed's *row* shows, or ``None``.
 
-    The crossing rows are ``reversed(engine.crossings[-FEED_CAP:])``
-    (``EngineDataSource.feed_rows``: newest first, R-32's 30-row cap),
-    so row 0 is the newest crossing and the row index unwinds that same
-    window. The cap drops the *oldest* crossings while every recorded
-    crossing keeps its ride-wide ordinal, so an index outside the window
-    -- a stale activation after the feed shrank -- names no crossing.
+    The crossing rows are ``reversed(engine.crossings)``
+    (``EngineDataSource.feed_rows``: newest first, every crossing of
+    the ride -- Phase 4 retired R-32's 30-row cap), so row 0 is the
+    newest crossing and the row index unwinds the whole ride: only an
+    index outside it names no crossing.
 
     K's misses interleave with the crossings, so this indexes the
     *crossing* rows only; :func:`_feed_row_target` is the feed-aware
     resolver the console's activation seam actually uses.
     """
-    window = engine.crossings[-FEED_CAP:]
-    if not 0 <= row < len(window):
+    crossings = engine.crossings
+    if not 0 <= row < len(crossings):
         return None
-    return window[len(window) - 1 - row]
+    return crossings[len(crossings) - 1 - row]
 
 
 def _feed_row_target(
-    source: DataSource, engine: RideEngine, row: int
+    rows: Sequence[FeedRow], engine: RideEngine, row: int
 ) -> Crossing | PendingMiss | None:
     """Return the target the console feed's *row* shows, or ``None``.
 
-    K's interleaved feed (``EngineDataSource.feed_rows``) means a row
-    index no longer names a fixed crossing: the row's own ``missed``
-    flag decides. A miss row resolves to its :class:`PendingMiss` by
-    ``miss_seq`` against the engine's pending misses; a crossing row
-    resolves through :func:`_crossing_for_feed_row`, counting only the
-    crossing rows before it (the misses it skips do not shift the
-    30-row cap arithmetic). A row outside the feed -- a stale
-    activation after the feed shrank -- names nothing.
+    *rows* are the rows actually rendered on screen -- the presenter's
+    own ``rendered_feed_rows()``, so an activated index is resolved
+    against exactly the list the operator sees, search filter included
+    (Phase 4). K's interleaved feed means a row index no longer names a
+    fixed crossing: the row's own ``missed`` flag decides. A miss row
+    resolves to its :class:`PendingMiss` by ``miss_seq`` against the
+    engine's pending misses; a crossing row resolves through
+    :func:`_crossing_for_feed_row`, counting only the crossing rows
+    before it. A row outside the rendered feed -- a stale activation
+    after the feed shrank -- names nothing.
     """
-    rows = source.feed_rows()
     if not 0 <= row < len(rows):
         return None
     feed_row = rows[row]
@@ -3208,9 +3222,12 @@ def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
     on a feed row opens the row's detail.
 
     The console view hands over a *row index*, resolved here by
-    :func:`_feed_row_target` to either the live ``Crossing`` or the
-    pending miss the row stands for; the shared
-    :func:`_show_crossing_detail_dialog` then runs the window.
+    :func:`_feed_row_target` against the rows the presenter actually
+    rendered -- the search box narrows that list, so an index under an
+    active search still names the crossing the operator clicked -- to
+    either the live ``Crossing`` or the pending miss the row stands
+    for; the shared :func:`_show_crossing_detail_dialog` then runs the
+    window.
 
     A console with no ride behind it (W1's no-ride bootstrap) has no
     presenter and no crossings, so there is nothing to show; the
@@ -3220,7 +3237,7 @@ def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
     if presenter is None:
         return
     engine = presenter.engine
-    target = _feed_row_target(presenter.source, engine, row)
+    target = _feed_row_target(presenter.rendered_feed_rows(), engine, row)
     if target is None:
         return
     _show_crossing_detail_dialog(context, engine, target)
