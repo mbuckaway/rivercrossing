@@ -20,10 +20,10 @@ Two measured wx failure modes this module exists to avoid (AGENTS.md):
   them; unless something shows or clears the queue,
   ``wxApp::CleanUp()`` tries to pop a "Several errors occurred" modal
   at interpreter exit with no user present to dismiss it, and hangs
-  forever. ``tests/functional/conftest.py`` hits this from
-  ``LoadFrame``/``LoadDialog`` failures and redirects the log target
-  for the same reason this module does: to stderr, not disabled,
-  since a failed XRC load still names the resource it could not find.
+  forever. A failing ``LoadFrame``/``LoadDialog`` hits this too: the
+  tests redirect the log target for the same reason this module does
+  -- to stderr, not disabled, since a failed XRC load still names the
+  resource it could not find.
 
 Only wx-free names (``ids``, ``commands``, ``accelerators``,
 ``quit_flow``, ``theme``, ``rivercrossing.roster`` -- E3.2's seeded
@@ -326,18 +326,13 @@ _loaded_xrc_resource: Any | None = None
 Re-parsing the .xrc files on every ``build_main_window`` call is
 wasteful and re-rolls the Fault-B degraded-load die (a parse under
 load can skip a subtree, and a later re-parse can overwrite an earlier
-clean one). Load once per process and reuse, matching
-``tests/functional/harness.load_xrc_resources``'s session-scoped
-load-once pattern.
+clean one). Load once per process and reuse.
 """
 
 
 def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
     """Load every packaged ``.xrc`` file into the global resource once.
 
-    Mirrors ``tests/functional/harness.load_xrc_resources`` exactly,
-    but is not imported from there: that module is test-only
-    infrastructure, absent from a frozen bundle's own package path.
     ``wx.xrc.XmlResource.Get()`` is a process-wide singleton, so the
     loaded resource is memoized and returned on later calls.
     """
@@ -361,8 +356,7 @@ def _fresh_xrc_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
     The Fault-B rebuild source: a *new* ``wx.xrc.XmlResource()`` (never
     the process-wide singleton :func:`_load_xrc_resources` loads, whose
     degraded builds under worker load are what this works around),
-    loaded from the same ``ui/xrc/*.xrc`` files. Mirrors
-    ``tests/functional/harness._fresh_resource``.
+    loaded from the same ``ui/xrc/*.xrc`` files.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -374,10 +368,9 @@ def _fresh_xrc_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
     return resource
 
 
-# 25, mirroring ui.views._support.FIND_SETTLE_ATTEMPTS (and the
-# harness's own _FIND_SETTLE_ATTEMPTS): the same wx/SIP wrapper-cache
-# stale-lookup hazard _support.find_control settles applies to the app
-# gate's own name lookups too.
+# 25, mirroring ui.views._support.FIND_SETTLE_ATTEMPTS: the same
+# wx/SIP wrapper-cache stale-lookup hazard _support.find_control
+# settles applies to the app gate's own name lookups too.
 _FIND_SETTLE_ATTEMPTS = 25
 
 
@@ -401,9 +394,9 @@ def _missing_required_control(
     resolved to its expected class: the build is complete.
 
     Each lookup settles the stale-lookup hazard with the bounded
-    ``del control; gc.collect()`` re-query idiom the harness's own gate
-    uses -- never a ``SafeYield``: yielding during verification is
-    exactly the event processing the degradation hides in.
+    ``del control; gc.collect()`` re-query idiom the tests use too --
+    never a ``SafeYield``: yielding during verification is exactly the
+    event processing the degradation hides in.
     """
     require_wx()
     import wx  # noqa: PLC0415 -- deferred, see module docstring
@@ -429,9 +422,9 @@ def _load_frame_verified(
 ) -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
     """Load ``main_frame`` from *resource* and verify *required*.
 
-    Fault-B (degraded-XRC-load) production mirror of
-    ``tests/functional/harness.load_window_verified``: under worker load
-    the process-global ``wx.xrc.XmlResource`` singleton can silently
+    Fault-B (degraded-XRC-load) guard, the production counterpart of
+    the tests' verified loader: under worker load the process-global
+    ``wx.xrc.XmlResource`` singleton can silently
     skip a subtree during a load, so the frame comes back missing a
     control ``MainFrame.__init__`` later needs -- which would otherwise
     surface as a bare ``LookupError`` from
@@ -442,7 +435,7 @@ def _load_frame_verified(
     as missing; a genuinely incomplete build is rebuilt ONCE from a
     fresh private ``wx.xrc.XmlResource()`` (never the degraded
     singleton) and re-verified. The rebuild happens while the degraded
-    frame is still alive -- mirroring the harness's ordering, so the
+    frame is still alive -- mirroring the tests' ordering, so the
     rebuilt controls cannot land on the degraded frame's just-freed
     addresses -- and the degraded frame is then destroyed (a plain
     ``frame.Destroy()``; its deferred deletion is processed by the
@@ -524,8 +517,7 @@ def _check_loaded_hide_times(menubar: Any, *, hide: bool) -> None:  # noqa: ANN4
     dialog applies a new hide-times value (the mirror). ``wxMenuBar.
     Check`` sets the check state explicitly -- a synthetic ``EVT_MENU``
     does not auto-toggle check items on this pin (measured for the
-    radio items; the functional suite verifies the check item the same
-    way).
+    radio items; the check item needs the same explicit set).
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -559,7 +551,7 @@ def _toggle_hide_times(context: _RouteContext) -> None:
     presenter is threaded) and sets the ``mi_hide_times`` check item
     explicitly -- a synthetic ``EVT_MENU`` does not auto-toggle check
     items on this pin (measured for the radio items; verified for the
-    check item the same way in the functional suite).
+    check item the same way).
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -602,10 +594,9 @@ def _handle_view_row(context: _RouteContext, route: commands.MenuRoute, event: A
     persist, and tick the fired radio explicitly.
 
     A synthetic ``EVT_MENU`` never flips a menu item's own checked
-    state the way a genuine native click does (measured: this
-    harness's functional suite has no delivery mechanism but direct
-    event injection, harness.py's own module docstring), so each
-    branch sets its item's checked state explicitly; ``wxMenuBar.
+    state the way a genuine native click does (measured: a synthetic
+    event is direct injection, never native delivery), so each branch
+    sets its item's checked state explicitly; ``wxMenuBar.
     Check`` also unchecks the other members of a radio group
     (measured), matching a real click's native handling.
 
@@ -856,6 +847,15 @@ def _swap_console_onto(  # noqa: PLR0913, PLR0917 -- (context, engine, roster, s
     presenter = ConsolePresenter(view, engine=engine, source=source)
     view.set_presenter(presenter)
     _show_ride_header(context, engine.config)
+    # The context must already hold the swap when ``set_state`` runs:
+    # that call -- and ``refresh_feed``'s own ``show_feed`` -- fires the
+    # menu binder, which derives ``ride_open`` from
+    # ``context.presenter``. Assigned afterwards, the first ride attach
+    # (the W1 bootstrap's presenter-less context) reapplies the no-ride
+    # enablement and leaves every ride-gated menu disabled until a
+    # second attach.
+    context.presenter = presenter
+    context.roster = roster
     view.set_state(source.ride_status(), stopped=engine.stopped)
     # The presenter's own feed render (Phase 4): it applies the search
     # filter, so the rows on screen and the rows an activated feed row
@@ -865,8 +865,6 @@ def _swap_console_onto(  # noqa: PLR0913, PLR0917 -- (context, engine, roster, s
     presenter.refresh_feed()
     view.show_counters(source.counters())
     view.focus_entry()
-    context.presenter = presenter
-    context.roster = roster
 
 
 def _switch_console_to_ride(
@@ -888,8 +886,11 @@ def _switch_console_to_ride(
     roster = store.roster_for(ride_id)
     engine = store.load_engine(ride_id, roster, clock=clock)
     _wire_store_append(engine, store, ride_id, notify=_status_notice(context))
-    _swap_console_onto(context, engine, roster, EngineDataSource(engine, roster))
+    # The new ride id must reach the context before the swap runs: the
+    # swap's menu-binder fire reads it synchronously, the same ordering
+    # rule ``_swap_console_onto`` follows for its context writes.
     context.active_ride_id = ride_id
+    _swap_console_onto(context, engine, roster, EngineDataSource(engine, roster))
     log = _log(context)
     if log is not None:
         log.ride_loaded(ride_id=ride_id)
@@ -912,7 +913,7 @@ def _persist_created_ride(context: _RouteContext, config: RideConfig) -> None:
     uses (``_live_library_callbacks``'s own docstring): this runs
     inside the setup dialog's submit, before ``EndModal``, and a
     post-modal action performed synchronously inside a modal's unwind
-    is not dismissible by the functional harness (measured there).
+    is not dismissible by the tests (measured there).
 
     Args:
         context: The route context whose store/roster to act on.
@@ -1082,7 +1083,7 @@ def _live_library_callbacks(
       -- deferred through ``wx.CallAfter``, the same modal-chaining
       avoidance the resume flow's ``library_btn`` uses (measured
       there: a modal opened synchronously inside this one's unwind is
-      not dismissible by the harness).
+      not dismissible by the tests).
     - **Duplicate** shows the ride's name in the E5.4.1 mock-first
       confirm and, on OK, calls ``Store.duplicate_ride`` -- the view
       refreshes its own rows afterwards, so the new DRAFT ride
@@ -2049,19 +2050,18 @@ def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stu
     parent is the dialog or frame the operator is actually in. When
     nothing has focus -- measured: ``FindFocus()`` reads ``None`` for
     a terminal-launched, unbundled Python that is never the frontmost
-    macOS app (tests/functional/test_dialog_behavior.py), even with a
-    modal dialog open -- the topmost modal dialog stands in (the
-    modal IS the active window while it runs), then the app's top
-    window.
+    macOS app, even with a modal dialog open -- the topmost modal
+    dialog stands in (the modal IS the active window while it runs),
+    then the app's top window.
     """
     focused = wx.Window.FindFocus()
     if focused is not None:
         # logic-coverage-exempt: T-3 -- the keyboard-focus path is
-        # measured unobservable in the VM harness (FindFocus reads
-        # None for a terminal-launched app that is never frontmost,
-        # test_dialog_behavior.py), so its two arms are exercised only
-        # on a real frontmost desktop; the modal/GetTopWindow paths
-        # below carry the functional coverage.
+        # measured unobservable headless (FindFocus reads None for a
+        # terminal-launched app that is never frontmost), so its two
+        # arms are exercised only on a real frontmost desktop; the
+        # modal/GetTopWindow paths below carry the rest of the
+        # coverage.
         top = focused.GetTopLevelParent()
         if top is not None:
             return top
@@ -2673,8 +2673,8 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     """Open *route*'s target window, or notice its absence (D1).
 
     ``LoadDialog`` returns ``None`` rather than raise when
-    *route.target* names no XRC resource at all (harness.py's own
-    measured note) -- no §15 route is un-authored anymore (E5.4.1 and
+    *route.target* names no XRC resource at all (measured) -- no §15
+    route is un-authored anymore (E5.4.1 and
     E7 authored Duplicate Ride, Reopen Ride, Void Card), but the
     branch stays as the safety net for any future route whose target
     is not yet authored, with no change needed here: a route never
@@ -3800,7 +3800,7 @@ def _run_launch_self_test(context: _RouteContext) -> None:
             window.Destroy()
 
 
-def _launch_choice(session: PreviousSession, *, ride_open: bool) -> str:
+def _launch_choice(session: PreviousSession) -> str:
     """Return the launch prompt a store-backed start needs (W3).
 
     The pure decision behind :func:`_run_launch_flow`, kept out of the
@@ -3808,23 +3808,20 @@ def _launch_choice(session: PreviousSession, *, ride_open: bool) -> str:
     session-row semantics are unchanged: :func:`resume_flow.
     resume_dialog_for` still owns which previous sessions warrant
     ``resume_dlg`` (R-52) -- including a REOPENED ride's continue --
-    and this only adds the No Ride Open choice for a start that
-    resumes nothing.
+    and this returns the one other outcome for a start that resumes
+    nothing.
 
     Args:
         session: The previous session's resume record.
-        ride_open: Whether a store ride is already open in the
-            console.
 
     Returns:
         ``"resume"`` when *session* warrants ``resume_dlg``;
-        ``"no_ride"`` when nothing is open and nothing resumes (show
-        the No Ride Open alert); ``"none"`` otherwise -- a ride is
-        already open, so the console already answers the launch.
+        ``"none"`` otherwise -- nothing resumes, so the launch shows
+        no prompt and the console stands as it is.
     """
     if resume_flow.resume_dialog_for(session) is not None:
         return "resume"
-    return "none" if ride_open else "no_ride"
+    return "none"
 
 
 def _run_resume_dialog(
@@ -3925,8 +3922,8 @@ def _defer_open_library(context: _RouteContext) -> None:
     Escape) opens ``ride_library_dlg`` on the running event loop: a
     modal opened synchronously right after the resume modal's own
     unwind -- still inside the launch flow -- is not dismissible by
-    the functional harness (measured; the child hit its bound in a
-    hung ride_library_dlg). The ``CallAfter`` fires on the running
+    the tests (measured; the child hit its bound in a hung
+    ride_library_dlg). The ``CallAfter`` fires on the running
     event loop (``main()``'s ``MainLoop``), right at startup. The
     console underneath stays the visible placeholder; the library's
     Open replaces it.
@@ -3980,32 +3977,13 @@ def _resume_continue(  # noqa: PLR0913, PLR0917 -- (context, store, ride_id, clo
         store.clear_active_ride()
 
 
-_NO_RIDE_TITLE = "No Ride Open"
-_NO_RIDE_MESSAGE = "No ride is loaded. Create a new one or load an existing one."
-
-
-def _show_no_ride_info(parent: Any) -> None:  # noqa: ANN401 -- wx Window; wx ships no stubs
-    """Show the launch's No Ride Open alert over *parent* (W3).
-
-    Replaces ``no_ride_dlg``, the XRC window this code stopped loading
-    in W3 and W15 removed from dialogs.xrc: a store-backed launch that
-    resumes no ride and opens no ride gets this one information alert
-    instead of an unexplained empty console, then nothing -- the
-    console is visible and the operator uses the menus. The retired
-    window's Create/Open-library choice is the File menus' own job.
-    """
-    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
-
-    std_dialogs.show_info(parent, _NO_RIDE_TITLE, _NO_RIDE_MESSAGE)
-
-
 def _run_launch_flow(
     context: _RouteContext, store: Store | None, clock: Callable[[], datetime] | None = None
 ) -> None:
     """Run the post-launch flow on a store-backed start (W3).
 
-    Called by :func:`main` (and the functional suite's own
-    main-equivalent helpers) once the frame is visible;
+    Called by :func:`main` (and the tests' own main-equivalent
+    helpers) once the frame is visible;
     ``build_main_window`` itself shows no modal. The flow decides from
     the store's previous-session record (E5.2.2's reading; no
     audit-based decisions):
@@ -4013,9 +3991,9 @@ def _run_launch_flow(
     - a session that left a ride running shows ``resume_dlg`` (R-52)
       -- Continue reuses the library-Open console switch, Open
       library defers ``ride_library_dlg``;
-    - otherwise, with no ride open, it shows the No Ride Open alert
-      (the console stays up; the operator uses the menus);
-    - otherwise it does nothing -- a ride is already open.
+    - otherwise it shows nothing: a start that resumes nothing leaves
+      the console exactly as it is -- empty, or on a ride already
+      open -- and the operator uses the menus.
 
     A store-less build returns immediately: there is no session row to
     read and no launch prompt (E5.4.2's in-memory behavior).
@@ -4031,7 +4009,7 @@ def _run_launch_flow(
     if store is None:
         return
     previous = store.previous_session()
-    choice = _launch_choice(previous, ride_open=context.active_ride_id is not None)
+    choice = _launch_choice(previous)
     log = _log(context)
     if log is not None:
         log.launch(
@@ -4039,9 +4017,6 @@ def _run_launch_flow(
             previous_ride_id=previous.ride_id,
             choice=choice,
         )
-    if choice == "no_ride":
-        _show_no_ride_info(context.frame)
-        return
     if choice != "resume":
         return
     ride_id = previous.ride_id
@@ -4116,8 +4091,9 @@ def build_main_window(
     "app never starts again" regression). The console always opens on
     the empty bootstrap engine, and the post-Show launch flow
     (:func:`_run_launch_flow`, called by :func:`main`) shows the
-    resume dialog or the No Ride Open alert over the visible frame;
-    Continue swaps the console through :func:`_switch_console_to_ride`.
+    resume dialog over the visible frame when the previous session
+    warrants one, and nothing at all otherwise; Continue swaps the
+    console through :func:`_switch_console_to_ride`.
 
     Split out of :func:`main` so a test can drive the whole
     construction path without ever entering ``MainLoop``, which
@@ -4130,7 +4106,7 @@ def build_main_window(
             ``RiverCrossingApp.MacReopenApp`` to restore later, binds
             its ``wxEVT_QUERY_END_SESSION``, and keeps the assembled
             :class:`_RouteContext` as ``launch_context`` -- the handle
-            :func:`main`'s post-Show launch flow and the functional
+            :func:`main`'s post-Show launch flow and the tests'
             helpers use.
         store: The live :class:`~rivercrossing.store.Store`, when the
             caller opened one (E5.2.1). Threaded through
@@ -4142,8 +4118,8 @@ def build_main_window(
         settings_path: The per-user settings file to load at startup
             and write layout saves back to; ``None`` uses
             :func:`~rivercrossing.ui.presenters.settings.default_path`.
-            The functional suite injects a temp path so no test ever
-            touches the real user config dir.
+            The tests inject a temp path so no test ever touches the
+            real user config dir.
 
     Returns:
         The loaded, fully wired ``main_frame``, not yet shown.
@@ -4155,7 +4131,7 @@ def build_main_window(
     )
 
     # F1: the second ordered bootstrap step -- main() already built and
-    # installed the log; a construction without one (the functional
+    # installed the log; a construction without one (the tests'
     # helpers build the window directly) logs nothing.
     log = getattr(app, "log", None)
     if log is not None:
@@ -4163,8 +4139,7 @@ def build_main_window(
     # logic-coverage-exempt: T-3 -- this guard's live arm runs only
     # under main() against a real wx.App (build_main_window loads XRC
     # and constructs the console), so the unit suite can exercise only
-    # the log-less arm; tests/functional/test_app_bootstrap.py's probe
-    # is what covers the log-present arm.
+    # the log-less arm; a real main() run covers the log-present arm.
 
     # E8.1.1: load the per-user settings once, at startup; every apply
     # below reads the same loaded object, and the layout save callback
@@ -4216,10 +4191,11 @@ def build_main_window(
     # W3/W1: no launch modal runs here, and no ride is built either.
     # With no store-backed ride open the console holds a true empty
     # state (no engine, no presenter); the post-Show launch flow
-    # (main()'s _run_launch_flow) shows resume_dlg / the No Ride Open
-    # alert over the visible frame, and Continue -- or the library's
-    # Open -- swaps the console onto the store ride afterwards, so a
-    # replay against a drifted roster can never take the build down.
+    # (main()'s _run_launch_flow) shows resume_dlg over the visible
+    # frame when the previous session warrants one -- and nothing
+    # otherwise -- and Continue -- or the library's Open -- swaps the
+    # console onto the store ride afterwards, so a replay against a
+    # drifted roster can never take the build down.
     # The bootstrap no longer calls _build_console_engine (nor does
     # Clear Ride any more): it stays as the unit tests' builder for a
     # bootstrap-shaped console.
@@ -4273,8 +4249,8 @@ def build_main_window(
     _apply_menu_state(context, RideStatus.DRAFT)
 
     # W3: the post-Show launch flow needs the assembled context, and
-    # the app object is the one handle main() and the functional
-    # helpers share (the same reason main_frame lives on it).
+    # the app object is the one handle main() and the tests' helpers
+    # share (the same reason main_frame lives on it).
     app.launch_context = context
     return frame
 
@@ -4283,9 +4259,9 @@ def _log(context: _RouteContext) -> Logging | None:
     """Return the launch's structured log, when the app carries one.
 
     ``None`` for a construction whose app predates the F1 log (a
-    route-level test's ``app=None``, or the functional helpers that
-    build a window without going through :func:`main`), so every
-    logging call site is a silent no-op instead of a crash.
+    route-level test's ``app=None``, or the tests' helpers that build
+    a window without going through :func:`main`), so every logging
+    call site is a silent no-op instead of a crash.
     """
     return cast("Logging | None", getattr(context.app, "log", None))
 
@@ -4401,16 +4377,16 @@ def _build_app_class() -> type[Any]:
         once they exist; both default here so every attribute access
         is safe even before then. ``log`` is this launch's NDJSON
         :class:`~rivercrossing.ui.logging.Logging`, attached by
-        :func:`main`; ``None`` for an app a test or the functional
-        harness built without going through it.
+        :func:`main`; ``None`` for an app a test built without going
+        through it.
         """
 
         main_frame: Any = None
         really_quitting: bool = False
         # F1: this launch's NDJSON log, attached by main() after it is
-        # built next to settings.json. ``None`` for an app a test or
-        # the functional harness built without going through main(),
-        # so every logging call site is a silent no-op.
+        # built next to settings.json. ``None`` for an app a test built
+        # without going through main(), so every logging call site is a
+        # silent no-op.
         log: Logging | None = None
 
         def MacReopenApp(self) -> None:  # noqa: N802 -- wx's own override name
@@ -4479,13 +4455,13 @@ def _bootstrap_window(  # noqa: PLR0913 -- (app, db_path, store, settings_path):
     :func:`build_main_window` exists). W3: :func:`main` opens the
     Store itself -- its ``finally`` must own the close even when the
     build raises -- and passes it in as ``store=``; callers that want
-    the one-call open-and-build seam (the functional/acceptance
-    helpers that mirror main() minus the loop) pass ``db_path=`` and
-    receive the opened Store back. Whichever way it is opened, the
+    the one-call open-and-build seam (the tests' helpers that mirror
+    main() minus the loop) pass ``db_path=`` and receive the opened
+    Store back. Whichever way it is opened, the
     store threads into the window so the launch flow reads the
     previous session (R-52) and the quit flow stamps ``closed_at`` on
     a confirmed exit. No launch modal runs here: the resume dialog
-    and the No Ride Open alert belong to :func:`main`'s post-Show
+    belongs to :func:`main`'s post-Show
     :func:`_run_launch_flow`.
 
     Args:
@@ -4513,8 +4489,8 @@ def _resolve_db_path(db_path: Path | None) -> Path | None:
 
     E9.1.1's launch seam: ``RIVERCROSSING_DB_PATH`` points the bundled
     binary at a temp ``rides.db`` (the packaged-app smoke stages one
-    through it), while an explicit ``db_path`` -- the functional
-    suite's own staging -- still wins. ``None`` means no override:
+    through it), while an explicit ``db_path`` -- the tests' own
+    staging -- still wins. ``None`` means no override:
     :func:`~rivercrossing.store.default_db_path` falls back to the
     per-user default.
 
@@ -4555,7 +4531,7 @@ def main(db_path: Path | None = None) -> int:
     bootstrap raise still closes it -- builds the window with no
     modal, shows it, then defers both the launch flow
     (:func:`_run_launch_flow`: ``resume_dlg`` when the previous
-    session left a ride running, else the No Ride Open alert) and the
+    session left a ride running, nothing otherwise) and the
     R-44 self-test to the running event loop, and enters
     ``MainLoop``. A raise anywhere before the loop shows a parentless
     error box (:func:`~rivercrossing.ui.std_dialogs.show_error`) and
@@ -4570,8 +4546,7 @@ def main(db_path: Path | None = None) -> int:
             default (:func:`~rivercrossing.store.default_db_path`),
             or the ``RIVERCROSSING_DB_PATH`` override when set
             (:func:`_resolve_db_path`). The one argument a caller may
-            supply -- the functional suite stages a temp ``rides.db``
-            through it.
+            supply -- the tests stage a temp ``rides.db`` through it.
 
     Returns:
         The process exit code; ``0`` on a clean shutdown.

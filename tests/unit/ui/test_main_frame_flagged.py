@@ -15,7 +15,7 @@ directly (a ``DataViewIndexListModel`` subclass needs no display), and
 the two activation handlers run as unbound methods against a shell
 owning only the state each one reads -- so no ``wx`` window is ever
 built. What genuinely needs a live control (the real ``Bind``-delivered
-events) stays with the functional suite.
+events) is not pinned here.
 """
 
 from __future__ import annotations

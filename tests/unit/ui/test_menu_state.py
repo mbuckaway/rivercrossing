@@ -20,9 +20,8 @@ binder headlessly:
 
 The one fact only a real ``wx.MenuBar`` can prove -- that
 ``menubar.FindItem(XRCID(...)).Enable(...)`` genuinely flips a loaded
-menu item -- lives in ``tests/functional/test_entry_detail_actions.py``
-(and the bootstrap's ``set_state`` seam), mirroring the split
-``test_commands.py``/``test_menu_coverage.py`` already use.
+menu item -- needs a live toolkit and is not pinned here (nor is the
+bootstrap's ``set_state`` seam).
 """
 
 import dataclasses
@@ -394,9 +393,9 @@ def test_apply_to_menubar_default_seam_resolves_ids_lazily() -> None:
 
     Pinning the seam's shape: ``apply_to_menubar`` must not import wx
     at module scope (the binder module stays headless-importable); the
-    default resolver is looked up inside the call. The functional
-    suite drives the real ``wx.xrc.XRCID`` resolver against a real
-    menubar; here a fake resolver stands in for it.
+    default resolver is looked up inside the call. The real
+    ``wx.xrc.XRCID`` resolver runs against a live menubar; here a fake
+    resolver stands in for it.
     """
     state = _baseline_state(RideStatus.RUNNING)
     menubar, _table = _menubar_and_table(state)

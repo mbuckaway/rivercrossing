@@ -10,9 +10,9 @@ through a ``DataViewIndexListModel`` subclass, the same idiom
 DataViewCtrls. The ``rows`` parameter defaults to
 :data:`ACCELERATOR_TABLE`, the single source of truth
 (``ui.accelerators``' own docstring: E8.2.1 imports only that, never
-the full command table); production wiring uses the default, and an
-injected sequence is what the functional suite uses to prove the
-dialog renders its input. ``wxID_CLOSE`` needs no wiring here: every
+the full command table); production wiring uses the default, and a
+test can inject its own sequence to prove the dialog renders its
+input. ``wxID_CLOSE`` needs no wiring here: every
 dialog's Escape/click-to-dismiss handling for that stock id comes
 from ``ui.views.dialogs.wire_close_button``, applied once by
 ``dialogs.run_dialog`` around every dialog this codebase shows.
@@ -94,8 +94,8 @@ class ShortcutsDialog:
         """Decorate an already-loaded ``shortcuts_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``dialogs.xrc``.
+            dialog: The ``wx.Dialog`` the caller already loaded
+                from ``dialogs.xrc``.
             rows: The accelerator rows to render; defaults to
                 :data:`ACCELERATOR_TABLE` -- the single source of
                 truth (xrc-windows.md E). Tests inject a fake row to

@@ -6,10 +6,9 @@ guide path and ``open_guide``'s URL all run without a display, so the
 mapping, the defaulting, the missing-guide error and the guide-file
 consistency are exactly the logic R-71's >=90% branch-coverage gate
 covers in the headless suite. The wx half -- resolving the active
-top-level window and firing the ``mi_user_guide`` route -- is proven
-by the spawned-subprocess scenarios in ``tests/functional/
-test_user_guide.py`` instead (the same split ``test_zoom.py``/
-``test_theme.py`` draw).
+top-level window and firing the ``mi_user_guide`` route -- is out
+of scope here (the same split ``test_zoom.py``/``test_theme.py``
+draw).
 """
 
 import re

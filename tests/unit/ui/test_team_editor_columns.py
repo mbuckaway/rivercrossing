@@ -16,8 +16,7 @@ window, no ``wx.App``:
 - The default width resolves to ``wxDVC_DEFAULT_WIDTH`` (80 DIP);
   the first ("Team") column now opens at double that.
 
-The columns' live layout stays with the (disabled) functional suite,
-``tests/functional/test_team_editor.py``.
+The columns' live layout needs a real window and is not pinned here.
 """
 
 import wx

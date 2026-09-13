@@ -224,7 +224,7 @@ class Logging:
 
         Args:
             previous_state: The state the app found on disk, e.g.
-                ``"no_ride"``.
+                ``"clean_quit"``.
             previous_ride_id: The ride being resumed, or ``None``.
             choice: What the operator chose, e.g. ``"resume"``.
         """

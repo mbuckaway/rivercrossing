@@ -226,8 +226,8 @@ class EntryDetailDialog:
         """Decorate an already-loaded ``entry_detail_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``detail.xrc``.
+            dialog: The ``wx.Dialog`` the app bootstrap already
+                loaded from ``detail.xrc``.
             plate: The plate of the entry to render.
             data_source: The display-data seam. This view knows only
                 the :class:`~rivercrossing.ui.presenters.data_source.
@@ -253,7 +253,7 @@ class EntryDetailDialog:
 
         Raises:
             LookupError: If no entry owns *plate* -- R-38's loud
-                failure, pinned by the functional suite.
+                failure.
         """
         self.dialog = dialog
         self.data_source = data_source

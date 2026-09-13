@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for the app-side Fault-B guard (degraded XRC load).
 
-Production mirror of ``harness.load_window_verified``: under worker
+Production mirror of the window-load guard: under worker
 load the process-global ``wx.xrc.XmlResource`` singleton can silently
 skip a subtree during a load, so ``main_frame`` comes back missing a
 control ``MainFrame.__init__`` later ``_find``s -- which surfaces as a
@@ -248,7 +248,7 @@ def test_load_frame_verified_rebuilds_once_from_a_fresh_resource(
     """A degraded singleton load is rebuilt once from a fresh resource.
 
     The rebuilt frame is returned; the degraded frame is destroyed only
-    after the fresh build (mirroring the harness ordering).
+    after the fresh build (mirroring the app guard's ordering).
     """
     required = (ids.CROSSINGS_LIST,)
     classes = {ids.CROSSINGS_LIST: _FakeControl}
@@ -363,7 +363,7 @@ def test_load_xrc_resources_memoizes_the_global_resource(
     Re-loading on every ``build_main_window`` call re-parses the .xrc
     files, and a later re-parse can re-roll the Fault-B degradation
     the guard exists to work around. The app loader memoizes the
-    singleton, matching the harness's load-once pattern.
+    singleton, so only the first call parses.
     """
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
 

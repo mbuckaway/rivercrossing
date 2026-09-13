@@ -10,10 +10,11 @@ loop the deferred work. Three of those steps are pinned here without
 ever entering ``MainLoop`` (which blocks) or constructing a real
 window:
 
-- **G**: the launch flow (``resume_dlg`` / the No Ride Open alert) is
-  deferred through ``wx.CallAfter`` -- it must run on the running
-  event loop, after the frame is shown and the menubar is live, not
-  synchronously while the frame is still being set up.
+- **G**: the launch flow (``resume_dlg``, when the previous session
+  warrants a resume) is deferred through ``wx.CallAfter`` -- it must
+  run on the running event loop, after the frame is shown and the
+  menubar is live, not synchronously while the frame is still being
+  set up.
 - **F1/F3/F4**: the log is constructed from the loaded settings'
   ``verbose_logging``, records the ``app_start`` launch context, and
   the control-event filter is installed on the app.
@@ -277,7 +278,7 @@ def _context(*, log: Logging | None) -> app_module._RouteContext:
 def test_main_defers_the_launch_flow_to_the_running_event_loop(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """G: the resume/No-Ride flow is scheduled, never run synchronously.
+    """G: the resume flow is scheduled, never run synchronously.
 
     Running it while the frame is still being set up is the "app never
     starts again" shape; the deferred call keeps it on the running
@@ -415,7 +416,7 @@ def test_main_retains_the_installed_event_filter_on_the_app(
 
 
 def test_run_launch_flow_with_no_ride_records_the_launch_choice(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
 ) -> None:
     """F1: the launch record names the previous state and the choice."""
     log = Logging(build_log_path(tmp_path, _LAUNCH))
@@ -423,7 +424,6 @@ def test_run_launch_flow_with_no_ride_records_the_launch_choice(
     store = _PreviousSessionStore(
         PreviousSession(state=SessionState.CLEAN_QUIT, ride_id=None, ended_at=None)
     )
-    monkeypatch.setattr(app_module, "_show_no_ride_info", lambda _parent: None)
 
     app_module._run_launch_flow(context, store)
 
@@ -433,7 +433,7 @@ def test_run_launch_flow_with_no_ride_records_the_launch_choice(
             "event": "launch",
             "previous_state": "clean_quit",
             "previous_ride_id": None,
-            "choice": "no_ride",
+            "choice": "none",
         }
     ]
 
@@ -450,20 +450,31 @@ class _PreviousSessionStore:
         return self._session
 
 
-def test_run_launch_flow_without_a_log_still_runs_the_flow(
+def test_run_launch_flow_without_a_log_still_resumes_the_ride(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F1: a log-less app still shows the No Ride Open alert."""
+    """F1: a log-less app still runs the launch flow's resume."""
     context = _context(log=None)
     store = _PreviousSessionStore(
-        PreviousSession(state=SessionState.CLEAN_QUIT, ride_id=None, ended_at=None)
+        PreviousSession(
+            state=SessionState.RUNNING_AT_EXIT,
+            ride_id=7,
+            ended_at=datetime(2026, 9, 11, 11, 0),  # noqa: DTZ001 -- naive local, the store's contract
+        )
     )
-    shown: list[object] = []
-    monkeypatch.setattr(app_module, "_show_no_ride_info", shown.append)
+
+    def _resume(
+        context_: app_module._RouteContext, _store: object, ride_id: int, _clock: object
+    ) -> None:
+        """Record the resumed ride on the context."""
+        context_.active_ride_id = ride_id
+
+    monkeypatch.setattr(app_module, "_run_resume_dialog", lambda _c, _s, _p: "continue")
+    monkeypatch.setattr(app_module, "_resume_continue", _resume)
 
     app_module._run_launch_flow(context, store)
 
-    assert shown == [context.frame]
+    assert context.active_ride_id == 7
 
 
 class _FakeEngine:

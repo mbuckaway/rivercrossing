@@ -132,8 +132,8 @@ class AuditDialog:
         """Decorate an already-loaded ``audit_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``audit.xrc``.
+            dialog: The ``wx.Dialog`` the caller already loaded
+                from ``audit.xrc``.
             data_source: The display-data seam. This view knows only
                 the :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
@@ -207,7 +207,7 @@ class AuditDialog:
         """Forward the two filters' events straight to the presenter.
 
         ``audit_search`` is a ``wxSearchCtrl``: text changes (typing,
-        the harness's ``SetValue``, the native clear X) all re-run the
+        a programmatic ``SetValue``, the native clear X) all re-run the
         search, and the search button (Enter) does too -- every path
         reads the control's current value, so one handler serves all
         three events.
@@ -241,9 +241,8 @@ class AuditDialog:
     def set_entry_filter(self, entry: str) -> None:
         """Pre-fill ``audit_search`` (``AuditView``, R-38 deep-link).
 
-        ``SetValue`` fires ``EVT_TEXT`` on this build (the harness's
-        measured contract), but the presenter binds that event only
-        after construction, so the deep-link pre-fill cannot loop back
-        into the presenter.
+        ``SetValue`` fires ``EVT_TEXT`` on this build (measured), but
+        the presenter binds that event only after construction, so the
+        deep-link pre-fill cannot loop back into the presenter.
         """
         self.audit_search.SetValue(entry)

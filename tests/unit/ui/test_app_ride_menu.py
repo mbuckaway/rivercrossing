@@ -38,6 +38,7 @@ from rivercrossing.ui.views import ride_setup as ride_setup_module
 from rivercrossing.ui.views.main_frame import MainFrame
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _START = "2026-09-20T10:00:00"
@@ -137,11 +138,24 @@ class _FakeWindow:
 
 
 class _FakeConsoleView:
-    """Record every render call a console swap makes."""
+    """Record every render call a console swap makes.
+
+    ``set_state`` also fires the menu-binder seam, exactly as the real
+    :meth:`MainFrame.set_state` does (it caches the status and ends with
+    ``_notify_ride_changed``); the seam is inert until a test registers
+    one through :meth:`set_on_ride_changed`, so the render-recording
+    tests above are unaffected.
+    """
 
     def __init__(self) -> None:
-        """Start with an empty call log."""
+        """Start with an empty call log, no seam and a DRAFT status."""
         self.calls: list[tuple[str, object]] = []
+        self._status = RideStatus.DRAFT
+        self._on_ride_changed: Callable[[RideStatus], None] | None = None
+
+    def set_on_ride_changed(self, callback: Callable[[RideStatus], None]) -> None:
+        """Register the app's menu binder (``MainFrame``'s own seam)."""
+        self._on_ride_changed = callback
 
     def set_presenter(self, presenter: object) -> None:
         """Record the swapped presenter."""
@@ -160,8 +174,16 @@ class _FakeConsoleView:
         self.calls.append(("show_ride_header", fields))
 
     def set_state(self, status: RideStatus, *, stopped: bool = False) -> None:
-        """Record the rendered lifecycle state and stop guard (W6)."""
+        """Record the state, then fire the menu-binder seam (W6).
+
+        The seam fire is what the real view does at the end of
+        ``set_state``; it is synchronous, so a binder that reads the
+        route context sees exactly what the swap has populated so far.
+        """
         self.calls.append(("set_state", (status, stopped)))
+        self._status = status
+        if self._on_ride_changed is not None:
+            self._on_ride_changed(self._status)
 
     def show_feed(self, rows: list[object]) -> None:
         """Record the number of rendered feed rows."""
@@ -478,6 +500,73 @@ def test_apply_menu_state_given_no_ride_enables_new_ride_and_disables_edit_ride(
 
     assert menubar.items[ids.MI_NEW_RIDE].enabled is True
     assert menubar.items[ids.MI_EDIT_RIDE].enabled is False
+
+
+# ------------------------- E5.4.1: the first library Open's menu state
+#
+# The bootstrap binds the menu binder while ``context.presenter`` is
+# still ``None`` (W1) and applies the no-ride state. The first library
+# Open has to reach the loaded ride's enablement inside that one swap:
+# the swap fills the route context *before* it renders state, so the
+# synchronous binder fire at the end of ``set_state`` already sees the
+# ride rather than the presenter-less bootstrap context.
+
+
+def _record_opened_ride_binder(
+    context: app_module._RouteContext, opened_ride_ids: list[int | None]
+) -> Callable[[RideStatus], None]:
+    """Build the bootstrap's binder, recording the ride each fire saw.
+
+    ``main``'s own wiring is ``_console.set_on_ride_changed(lambda
+    status: _apply_menu_state(context, status))``; the ride id is
+    recorded first, so the test can see what the context held at the
+    moment the binder ran.
+    """
+
+    def _on_ride_changed(status: RideStatus) -> None:
+        opened_ride_ids.append(context.active_ride_id)
+        app_module._apply_menu_state(context, status)
+
+    return _on_ride_changed
+
+
+def test_switch_console_to_ride_given_a_no_ride_bootstrap_loads_the_ride_before_it_notifies(
+    tmp_path: Path,
+) -> None:
+    """E5.4.1: the first library Open turns the ride-gated menus on.
+
+    Regression: ``_swap_console_onto`` assigned ``context.presenter``/
+    ``context.roster`` after ``view.set_state(...)``, and
+    ``_switch_console_to_ride`` assigned ``context.active_ride_id``
+    after the swap. The real ``set_state`` ends by firing the menu
+    binder, so the first Open -- the only one that runs over the W1
+    bootstrap's presenter-less context -- applied the no-ride
+    ``ride_open=False`` enablement: Riders ▸ New Ride… stayed the only
+    enabled row and every other menu stayed disabled until the operator
+    opened the library a second time. The swap now fills the context
+    before it renders state, so the very first notify carries the ride.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(gorba_config())
+        store.save_roster(ride_id, _roster())
+        menubar = _RecordingMenuBar(_RIDE_LIFECYCLE_MENU_IDS)
+        view = _FakeConsoleView()
+        context = _context(store=store, view=view, frame=_FakeFrame(menubar))
+        opened_ride_ids: list[int | None] = []
+        view.set_on_ride_changed(_record_opened_ride_binder(context, opened_ride_ids))
+        # The bootstrap's own initial apply, over the no-ride context.
+        app_module._apply_menu_state(context, RideStatus.DRAFT)
+        assert menubar.items[ids.MI_EDIT_RIDE].enabled is False
+
+        app_module._switch_console_to_ride(context, ride_id)
+
+        assert menubar.items[ids.MI_NEW_RIDE].enabled is False
+        assert menubar.items[ids.MI_EDIT_RIDE].enabled is True
+        assert opened_ride_ids[0] == ride_id
+    finally:
+        store.close()
 
 
 # ------------------------------------------------------- Edit Ride…

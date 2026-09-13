@@ -16,7 +16,8 @@ The view methods are driven as unbound methods against a shell that owns
 only the state each one reads (``test_main_frame_riders_list.py``'s
 precedent), while ``Compare``/``GetValueByRow`` run on the real model --
 constructing one needs no ``wx.App``. The ``Bind`` calls that deliver a
-real keystroke or header click stay with the functional suite.
+real keystroke or header click need a live control and are not pinned
+here.
 """
 
 from __future__ import annotations
@@ -47,10 +48,18 @@ MAIN_XRC = "main.xrc"
 class _Column:
     """A ``wx.dataview.DataViewColumn`` double for the native sort."""
 
-    def __init__(self, model_column: int, *, ascending: bool = True) -> None:
-        """Carry *model_column* and the header arrow's own direction."""
+    def __init__(
+        self, model_column: int, *, ascending: bool = True, is_sort_key: bool = False
+    ) -> None:
+        """Carry *model_column*, the arrow and the sort-key state.
+
+        *is_sort_key* defaults to ``False``: a freshly built column has
+        never sorted the control, which is exactly the state Windows'
+        generic ``DataView`` aborts on when the key is cleared.
+        """
         self.model_column = model_column
         self.ascending = ascending
+        self.is_sort_key = is_sort_key
         self.sort_orders: list[bool] = []
         self.operations: list[str] = []
 
@@ -61,6 +70,10 @@ class _Column:
     def IsSortOrderAscending(self) -> bool:  # noqa: N802 -- wx API name the double mirrors
         """Return the header arrow's direction."""
         return self.ascending
+
+    def IsSortKey(self) -> bool:  # noqa: N802 -- wx API name the double mirrors
+        """Return whether the control currently sorts by this column."""
+        return self.is_sort_key
 
     def UnsetAsSortKey(self) -> None:  # noqa: N802 -- wx API name the double mirrors
         """Record the sort-key clear the macOS re-apply needs."""
@@ -305,7 +318,12 @@ def test_default_feed_sort_is_the_time_column_ascending() -> None:
 
 
 def test_show_feed_given_rows_applies_the_default_sort_after_the_rebuild() -> None:
-    """A fresh model drops the key; the view puts the arrow back."""
+    """A fresh model drops the key; the view puts the arrow back.
+
+    The first render has never sorted this column, so it is not a sort
+    key: the view sets the arrow without first clearing it -- the clear
+    is what Windows' generic ``DataView`` aborts on.
+    """
     column = _Column(feed_model.COL_TIME)
     control = _CrossingsListControl()
     control.columns[feed_model.COL_TIME] = column
@@ -313,7 +331,7 @@ def test_show_feed_given_rows_applies_the_default_sort_after_the_rebuild() -> No
 
     main_frame.MainFrame.show_feed(shell, [_feed_row()])
 
-    assert (column.operations, column.sort_orders) == (["unset", "set"], [True])
+    assert (column.operations, column.sort_orders) == (["set"], [True])
 
 
 def test_show_feed_given_a_remembered_column_re_applies_that_column() -> None:
@@ -387,9 +405,29 @@ def test_apply_feed_sort_given_a_missing_column_leaves_the_model_alone() -> None
     assert model.resorts == 0
 
 
+def test_apply_feed_sort_given_a_never_sorted_column_leaves_the_sort_key_alone() -> None:
+    """First render: skip the clear for a never-sorted column.
+
+    Windows' generic ``DataViewColumn.UnsetAsSortKey`` asserts ("column
+    is not used for sorting") whenever the column is not the control's
+    sort key -- the first render's exact state -- and aborts the
+    process; skipping the clear keeps it alive.
+    """
+    column = _Column(feed_model.COL_TIME)
+    control = _CrossingsListControl()
+    control.columns[feed_model.COL_TIME] = column
+    model = _ResortModel()
+    shell = _Shell(control=control)
+    shell._crossings_model = model
+
+    main_frame.MainFrame._apply_feed_sort(shell)
+
+    assert (column.operations, column.sort_orders, model.resorts) == (["set"], [True], 1)
+
+
 def test_apply_feed_sort_given_a_remembered_column_unset_then_sets_then_resorts() -> None:
-    """Measured macOS: clearing the sort key first is load-bearing."""
-    column = _Column(feed_model.COL_TOTAL)
+    """Measured macOS: clearing a live sort key is load-bearing."""
+    column = _Column(feed_model.COL_TOTAL, is_sort_key=True)
     control = _CrossingsListControl()
     control.columns[feed_model.COL_TOTAL] = column
     model = _ResortModel()

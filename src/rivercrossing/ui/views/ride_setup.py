@@ -193,8 +193,8 @@ def _pick_logo_path(parent: wx.Window) -> Path | None:
         style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST,
     ) as picker:
         # logic-coverage-exempt: T-3 -- a native modal's own two return
-        # values cannot be driven headlessly (harness.py's own note);
-        # both outcomes ARE tested, through this seam being patched in
+        # values cannot be driven headlessly; both outcomes ARE tested
+        # through this seam being patched in
         # test_ride_setup_logo_wx.py.
         if picker.ShowModal() != wx.ID_OK:
             return None
@@ -215,8 +215,8 @@ class RideSetup:
         """Decorate an already-loaded ``ride_setup_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``setup.xrc``.
+            dialog: The ``wx.Dialog`` the caller already loaded
+                from ``setup.xrc``.
             roster: The in-memory roster whose own entry_mode/
                 max_team_size/plate_model/status this dialog reads
                 (``SetupPresenter``'s own module docstring).

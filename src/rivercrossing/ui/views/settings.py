@@ -55,8 +55,8 @@ class SettingsDialog:
         """Decorate an already-loaded ``settings_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``settings.xrc``.
+            dialog: The ``wx.Dialog`` the app bootstrap already
+                loaded from ``settings.xrc``.
             settings: The current :class:`AppSettings` to render; its
                 ``zoom_percent``/``splitter_sash``/``window_geometry``
                 are carried into whatever OK collects (none has a

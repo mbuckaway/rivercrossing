@@ -22,7 +22,7 @@ all without a display:
   arithmetic unwinds the whole-ride (uncapped, Phase 4) console feed.
 
 Real-window geometry, the loaded dialog's controls and click-through
-behaviour stay with the functional suite.
+behaviour need a real window and are not pinned here.
 """
 
 from dataclasses import replace

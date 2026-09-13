@@ -8,12 +8,11 @@ The launch-flow workstream moves every launch modal out of
 ``frame.Show()`` blocks the app invisibly -- the "app never starts
 again" regression): the frame is shown first, then
 :func:`rivercrossing.ui.app._run_launch_flow` decides from the
-store's previous-session record whether to show ``resume_dlg``, the
-No Ride Open info alert, or nothing. This module proves that flow
-headless:
+store's previous-session record whether to show ``resume_dlg`` or
+nothing. This module proves that flow headless:
 
 - the pure decision (:func:`_launch_choice`) over every session
-  state / ride-open combination;
+  state/ride-id pair;
 - Continue reuses the library-Open console switch and keeps
   ``Store.set_active_ride`` (the R-52 resume marker);
 - a replay failure (``RideEngineError`` from ``Store.load_engine``
@@ -22,8 +21,7 @@ headless:
   console up;
 - Open library defers ``ride_library_dlg`` through ``wx.CallAfter``
   and never double-prompts;
-- a no-candidate launch with no ride open shows the No Ride Open
-  info alert with the exact copy.
+- a no-candidate launch shows no prompt at all: the console stands.
 
 The wx boundary is the one mocked thing: ``require_wx`` is replaced
 with a recorder, and ``std_dialogs.show_info``/``show_error`` are
@@ -53,9 +51,6 @@ if TYPE_CHECKING:
 # The staged ride's actual_start, as the store's audit payload (naive
 # local, the engine's own contract -- a literal, never a tz call).
 _START_ISO = "2026-09-20T10:00:00"
-
-_NO_RIDE_TITLE = "No Ride Open"
-_NO_RIDE_COPY = "No ride is loaded. Create a new one or load an existing one."
 
 
 class _FakeFrame:
@@ -211,38 +206,29 @@ def _stage_resumed_ride(db_path: Path, *, corrupt_replay: bool = False) -> int:
 
 
 @pytest.mark.parametrize(
-    ("state", "ride_id", "ride_open", "expected"),
+    ("state", "ride_id", "expected"),
     [
-        (SessionState.RUNNING_AT_EXIT, 7, False, "resume"),
-        (SessionState.RUNNING_AT_EXIT, 7, True, "resume"),
-        (SessionState.CRASHED, 7, False, "resume"),
-        (SessionState.CRASHED, 7, True, "resume"),
-        (SessionState.CRASHED, None, False, "no_ride"),
-        (SessionState.CRASHED, None, True, "none"),
-        (SessionState.CLEAN_QUIT, None, False, "no_ride"),
-        (SessionState.CLEAN_QUIT, None, True, "none"),
+        (SessionState.RUNNING_AT_EXIT, 7, "resume"),
+        (SessionState.CRASHED, 7, "resume"),
+        (SessionState.CRASHED, None, "none"),
+        (SessionState.CLEAN_QUIT, None, "none"),
     ],
     ids=(
         "running_at_exit_resumes",
-        "running_at_exit_resumes_even_with_ride_open",
         "crashed_with_ride_resumes",
-        "crashed_with_ride_resumes_even_with_ride_open",
-        "crashed_without_ride_prompts_no_ride",
-        "crashed_without_ride_with_ride_open_does_nothing",
-        "clean_quit_prompts_no_ride",
-        "clean_quit_with_ride_open_does_nothing",
+        "crashed_without_ride_does_nothing",
+        "clean_quit_does_nothing",
     ),
 )
-def test_launch_choice_returns_the_dialog_for_the_session_state(  # noqa: PLR0913, PLR0917 -- (state, ride_id, ride_open, expected): the T-13 decision table's four columns; FBT001: ride_open is a table column, never a call-site flag
+def test_launch_choice_returns_the_dialog_for_the_session_state(
     state: SessionState,
     ride_id: int | None,
-    ride_open: bool,  # noqa: FBT001 -- decision-table column, not a call-site flag
     expected: str,
 ) -> None:
-    """T-13: the resume/no-ride/none decision over every state pair."""
+    """T-13: the resume/none decision over every state pair."""
     session = PreviousSession(state=state, ride_id=ride_id, ended_at=None)
 
-    choice = app_module._launch_choice(session, ride_open=ride_open)
+    choice = app_module._launch_choice(session)
 
     assert choice == expected
 
@@ -265,10 +251,10 @@ def test_run_launch_flow_given_no_store_returns_without_prompting(
 # ----------------------------------------- no-candidate launches
 
 
-def test_run_launch_flow_given_no_candidate_and_no_ride_shows_no_ride_info_with_exact_copy(
+def test_run_launch_flow_given_no_candidate_shows_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A fresh store: the No Ride Open alert appears with the copy."""
+    """A fresh store: the launch shows no prompt at all."""
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     shown: list[tuple[object, ...]] = []
@@ -281,13 +267,17 @@ def test_run_launch_flow_given_no_candidate_and_no_ride_shows_no_ride_info_with_
     finally:
         store.close()
 
-    assert shown == [(frame, _NO_RIDE_TITLE, _NO_RIDE_COPY)]
+    assert shown == []
 
 
 def test_run_launch_flow_given_no_candidate_with_a_ride_open_shows_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A ride already open answers the launch; no prompt appears."""
+    """A ride already open changes nothing: no prompt appears either.
+
+    Pins the dropped ``ride_open`` dimension: a launch that resumes
+    nothing shows nothing, whatever the console already holds.
+    """
     db_path = tmp_path / "rides.db"
     store = Store.open(db_path)
     shown: list[tuple[object, ...]] = []
@@ -417,13 +407,10 @@ def test_run_launch_flow_replay_failure_clears_marker_shows_error_and_keeps_plac
 # -------------------------------------------------- Library path
 
 
-def test_run_launch_flow_library_defers_open_library_and_never_prompts_no_ride(
+def test_run_launch_flow_library_defers_open_library(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Open library defers ride_library_dlg; no no-ride alert.
-
-    The launch already answered its question.
-    """
+    """Open library defers ride_library_dlg; the launch ends there."""
     db_path = tmp_path / "rides.db"
     _stage_resumed_ride(db_path)
     store = Store.open(db_path)
@@ -443,7 +430,7 @@ def test_run_launch_flow_library_defers_open_library_and_never_prompts_no_ride(
     finally:
         store.close()
 
-    assert shown == []  # the launch already answered its question
+    assert shown == []  # the resume dialog already answered the launch
     assert opened == [(context, commands.route_for_id("mi_open_library"))]
     assert opened[0][1].target == ids.RIDE_LIBRARY_DLG
 

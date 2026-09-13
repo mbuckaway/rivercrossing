@@ -70,8 +70,7 @@ class RidesSource(Protocol):
 
 # Real XRC name FindWindowByName resolves, but excluded from ui/ids.py
 # by tools/gen_ids.py's STOCK_IDS set (spec.md §15b) -- the same
-# literal views/dialogs.py repeats for the identical reason; pages.py
-# is test-only and production cannot import it.
+# literal views/dialogs.py repeats for the identical reason.
 WX_ID_DELETE = "wxID_DELETE"
 WX_ID_OPEN = "wxID_OPEN"
 
@@ -257,8 +256,8 @@ class RideLibrary:
         """Decorate an already-loaded ``ride_library_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``library.xrc``.
+            dialog: The ``wx.Dialog`` already loaded from
+                ``library.xrc``, by the app bootstrap or by tests.
             data_source: The library's row source -- any object with a
                 ``rides()`` (the :class:`RidesSource` Protocol), so
                 the store-backed source ``app.py`` wires in and the
@@ -535,8 +534,8 @@ class RideLibrary:
         if dialog is None:
             # logic-coverage-exempt: T-3 -- delete_ride_dlg is authored
             # in library.xrc and loaded before any route opens the
-            # library; a None here means the resource is missing, which
-            # the functional load-time verification already fails on.
+            # library; a None here means the resource is missing, so
+            # this is a broken build, not a reachable state.
             return
         try:
             message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
@@ -546,14 +545,14 @@ class RideLibrary:
             delete_button = wx.Window.FindWindowByName(WX_ID_DELETE, dialog)
             if delete_button is not None:
                 # wxID_DELETE is not one of the ids wx auto-binds to
-                # end a modal (harness.py's measured note), so the
-                # confirmed Delete ends the dialog with its own id.
+                # end a modal (measured), so the confirmed Delete ends
+                # the dialog with its own id.
                 delete_button.Bind(wx.EVT_BUTTON, lambda click: dialog.EndModal(click.GetId()))
             # logic-coverage-exempt: T-3 -- message_lbl and wxID_DELETE
-            # are frozen names in delete_ride_dlg's XRC (pages.py lists
-            # both), so the None arms above are unreachable defensive
-            # guards for wx's name lookup; the dialogs tests already
-            # cover the negative control-lookup path.
+            # are frozen names in delete_ride_dlg's XRC, so the None
+            # arms above are unreachable defensive guards for wx's name
+            # lookup; the dialogs tests already cover the negative
+            # control-lookup path.
             result = dialogs.run_dialog(dialog, opener=self.dialog)
             if result == wx.ID_DELETE and self._on_delete is not None:
                 self._on_delete(selected)

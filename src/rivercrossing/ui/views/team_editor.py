@@ -604,11 +604,18 @@ class TeamEditor:
         macOS: ``SetSortOrder`` is a no-op when the direction is
         unchanged (measured), so the rebuilt model would otherwise
         revert to source order.
+
+        The clear is guarded by ``IsSortKey()``: ``_sort_column``
+        defaults to the Name column before any header click, so the
+        first render would otherwise clear a sort key the control
+        never set -- Windows' generic ``UnsetAsSortKey`` asserts there
+        and aborts the process.
         """
         column = self.teams_list.GetColumn(self._sort_column)
         if column is None:
             return
-        column.UnsetAsSortKey()
+        if column.IsSortKey():
+            column.UnsetAsSortKey()
         column.SetSortOrder(self._sort_ascending)
         self._teams_model.Resort()
 

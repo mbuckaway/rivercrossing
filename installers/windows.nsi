@@ -10,8 +10,7 @@
 ; "More info -> Run anyway" step for this unsigned build.
 ;
 ; Compiled by `nox -s winsetup`; the contract is pinned by
-; tests/unit/test_windows_nsi.py and the artifact is smoked by
-; tests/functional/test_winsetup_smoke.py. Every machine-specific
+; tests/unit/test_windows_nsi.py. Every machine-specific
 ; input arrives as a compile-time define, so no version or path is
 ; ever hard-coded here:
 ;

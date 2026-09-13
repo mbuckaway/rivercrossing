@@ -13,26 +13,19 @@ test module by its bare basename, and the pre-existing
 ``tests/unit/test_cards_imagelist.py`` already owns that name -- a
 same-basename sibling here would abort collection of the whole
 ``tests/unit`` tree with an import-file mismatch. The ``_wx`` suffix
-mirrors the functional suite's own split file
-(``tests/functional/test_cards_imagelist_wx.py``), which runs in a
-separate pytest process and shares no import namespace with this
+keeps the real-toolkit half of that name distinct from the headless
 module.
 
 ``wx.Bitmap`` decoding and ``wx.ImageList`` construction need a live
 ``wx.App``, so this module builds one locally -- a module-cache
 strong reference, because an unbound ``wx.App()`` is collected as
 soon as the fixture that built it goes out of scope and the
-interpreter then hangs at exit (the measured pattern
-``tests/functional/conftest.py`` documents; that session fixture is
-not available to the unit process, so the pattern is reproduced
-here). No window is ever created, so the unit process never takes
-over a desktop.
+interpreter then hangs at exit (a measured pattern reproduced here,
+since no session fixture supplies it to the unit process). No window
+is ever created, so the unit process never takes over a desktop.
 
-The spawned-subprocess scenarios in
-``tests/functional/test_cards_imagelist_wx.py`` additionally prove
-pixel identity and the Retina 2x set; this module keeps the proof to
-keys, indexes, bitmap validity, the decode-failure path and the
-scale-validation error.
+This module keeps the proof to keys, indexes, bitmap validity, the
+decode-failure path and the scale-validation error.
 """
 
 import re

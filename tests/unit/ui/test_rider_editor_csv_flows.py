@@ -4,9 +4,8 @@
 The flow is the one place ``mi_export_csv`` (``ui.app``'s
 ``_handle_export_csv``) and ``rider_editor_dlg``'s own ``export_btn``
 run the picker -> write flow through. Its write is the CSV export
-boundary the functional suite drives through real windows
-(``tests/functional/test_rider_editor.py``); what stays headless here
-is the failure contract itself: a failed ``csvio.export`` (``OSError``
+boundary a real window would drive; what stays headless here is the
+failure contract itself: a failed ``csvio.export`` (``OSError``
 from an unwritable target) is caught inside the flow and surfaced
 through the caller's ``on_error`` seam -- ``Export failed: {exc}`` --
 instead of an unguarded raise into a wx handler that swallows it

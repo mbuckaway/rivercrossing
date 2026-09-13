@@ -14,7 +14,7 @@ are checked here, both cheap and headless:
 
 The presenter half (``on_start`` opening that dialog) lives in
 ``tests/unit/presenters/test_console.py``. Real window geometry and
-the modal show stay with the functional suite.
+the modal show need a real window and are not pinned here.
 
 A third, pure half is pinned at the end: the size rule the view
 applies after loading the dialog

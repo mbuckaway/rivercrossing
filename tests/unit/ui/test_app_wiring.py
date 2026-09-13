@@ -3,12 +3,11 @@
 
 Everything a real display would be needed to prove -- the menubar,
 the accelerator table, every §15 route actually bound, real/empty
-data on screen -- lives in ``tests/functional/test_app_bootstrap.py``
-instead (mirroring ``test_commands.py``/``test_menu_coverage.py``'s
-own split). What stays here is what ``ast`` and plain imports can
-already prove without wx: that ``rivercrossing.ui.app`` itself never
-needs a ``wx.App`` -- or even wx at all -- to import, that :func:`main`
-is annotated, and that the bootstrap roster is empty with the E6/E7
+data on screen -- needs a real display, so it is not covered here.
+What stays here is what ``ast`` and plain imports can already
+prove without wx -- that ``rivercrossing.ui.app`` itself never needs
+a ``wx.App`` -- or even wx at all -- to import, that :func:`main` is
+annotated, and that the bootstrap roster is empty with the E6/E7
 windows reading the module's ``EmptyDataSource``.
 """
 
@@ -94,8 +93,7 @@ def test_main_takes_only_the_optional_db_path_override() -> None:
     """main() is the entry point; only the db override may be passed.
 
     E9.1.1: the db path override (defaulting to ``None``) is the one
-    argument a caller may supply -- the functional suite stages a temp
-    ``rides.db`` through it. Nothing else may be threaded in.
+    argument a caller may supply. Nothing else may be threaded in.
     """
     parameters = inspect.signature(app.main).parameters
 

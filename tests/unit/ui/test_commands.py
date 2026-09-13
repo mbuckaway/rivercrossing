@@ -6,13 +6,12 @@ Everything here runs without ``wx`` and without a display:
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
-exactly why it belongs here rather than only in the functional suite
-(``cards_imagelist``'s split between ``tests/unit/`` and
-``tests/functional/`` is the precedent).
+exactly why it belongs in this headless suite (``cards_imagelist``'s
+headless/real-toolkit split is the precedent).
 
 Two things a real ``wx.MenuBar`` can prove that nothing here can are
-kept in ``tests/functional/test_menu_coverage.py`` instead: that a
-real ``wx.CommandEvent(wx.EVT_MENU, ...)`` actually reaches a route
+kept out of this module: that a real
+``wx.CommandEvent(wx.EVT_MENU, ...)`` actually reaches a route
 (R-73's "reachable and drivable"), and the macOS stock-item
 relocation measurement. Everything else -- the route table's shape,
 its kind/target transcription, ``route_for_id``'s dispatch and its

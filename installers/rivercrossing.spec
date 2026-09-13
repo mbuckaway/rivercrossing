@@ -23,9 +23,9 @@ from ``tools/check_asset_manifest.py``, which maps every ``.xrc``,
 card bitmap and WAV cue to ``rivercrossing/ui/...`` inside the
 bundle. A frozen module's ``__file__`` points at
 ``sys._MEIPASS/rivercrossing/ui/__init__.pyc``, so
-``cards_imagelist.cards_dir()`` and ``harness.xrc_directory()`` --
-both of which resolve assets relative to the package -- only find
-anything if the data sits on that same relative path. That same
+``cards_imagelist.cards_dir()`` -- which resolves assets relative
+to the package -- only finds anything if the data sits on that
+same relative path. That same
 call verifies the manifest first, which is what makes a missing
 asset fail *this build* rather than the app's first paint.
 ``vector_data_entries`` does the same for the two evaluator
@@ -97,8 +97,7 @@ ICON_ICO = BRANDING / "rivercrossing.ico"
 # * wx.xrc is load-bearing. Without it the bundle ships no
 #   _xrc/_xml extension modules and no libwx_*_xrc/libwx_baseu_xml
 #   at all, so not one window could load. Nothing in the app's
-#   import graph names it -- the harness does, and the harness is
-#   not in the bundle.
+#   import graph names it.
 # * wx.adv arrives transitively today, and wx.dataview because the
 #   view modules import it. Both are still declared: XRC reaches
 #   wxTimePickerCtrl, wxDatePickerCtrl, wxHyperlinkCtrl and
@@ -163,8 +162,8 @@ executable = EXE(  # noqa: F821 -- PyInstaller injects EXE
     # A GUI app with no terminal: PyInstaller's windowed-traceback
     # handler would pop a modal on an unhandled exception, and CI has
     # nobody to dismiss it -- the same exit-time hang wx's own log
-    # target causes (tests/functional/conftest.py). Off, so a crash
-    # goes to stderr where the smoke test reads it.
+    # target causes. Off, so a crash goes to stderr where the smoke
+    # test reads it.
     disable_windowed_traceback=True,
     argv_emulation=False,
     codesign_identity=None,  # unsigned dev bundle (spec.md section 14)
