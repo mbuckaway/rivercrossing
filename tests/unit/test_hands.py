@@ -226,15 +226,15 @@ def test_eval5_flush_outranks_straight() -> None:
 
 def test_compare_identical_hands_returns_zero() -> None:
     """Two evaluations of the same 5 cards compare as equal."""
-    first = eval5(_cards("AS KS QS JS TS"))
-    second = eval5(_cards("AS KS QS JS TS"))
+    first = eval5(_cards("AS KS QS JS 10S"))
+    second = eval5(_cards("AS KS QS JS 10S"))
 
     assert compare(first, second) == 0
 
 
 def test_eval5_royal_flush_is_the_best_natural_hand() -> None:
     """The royal flush lands in ``HandClass.ROYAL_FLUSH``, no kicker."""
-    royal = eval5(_cards("TS JS QS KS AS"))
+    royal = eval5(_cards("10S JS QS KS AS"))
 
     assert royal.cls == HandClass.ROYAL_FLUSH
     assert royal.tiebreak == (NATURAL_HAND_SIZE,)
@@ -349,7 +349,7 @@ def test_eval5_joker_vector_matches_authored_exact_codes(row: _JokerVectorRow) -
 def test_eval5_five_of_a_kind_outranks_royal_flush() -> None:
     """Five of a kind (wild) always beats a natural royal flush."""
     five_of_a_kind = eval5(_cards("AS AD AH AC JK"))
-    royal_flush = eval5(_cards("AS KS QS JS TS"))
+    royal_flush = eval5(_cards("AS KS QS JS 10S"))
 
     assert compare(five_of_a_kind, royal_flush) == 1
 
@@ -504,7 +504,7 @@ def test_best_hand_n12_j2_explores_exactly_120_natural_subsets() -> None:
     an independent brute force over the same C(10,3) subsets, counted
     explicitly, must agree with best_hand's own answer.
     """
-    naturals = _cards("2C 3D 4H 5S 6C 7D 8H 9S TC JD")
+    naturals = _cards("2C 3D 4H 5S 6C 7D 8H 9S 10C JD")
     jokers = _cards("JK JK")
     subsets = list(itertools.combinations(naturals, NATURAL_HAND_SIZE - len(jokers)))
     brute_force_best = max(
@@ -528,7 +528,7 @@ def test_best_hand_card_cap_blocks_a_later_improving_card() -> None:
     upgrade (HIGH_CARD -> PAIR) -- so scoring only the first 10 really
     does block an improvement the 11th card would have made.
     """
-    first_ten = _cards("2C 3D 4H 5S 7C 8D 9H TS QC KD")
+    first_ten = _cards("2C 3D 4H 5S 7C 8D 9H 10S QC KD")
     first_eleven = [*first_ten, *_cards("KH")]
 
     capped = best_hand(first_ten)
@@ -579,7 +579,7 @@ def test_best_hand_field_of_180_entries_by_12_cards_scores_within_measured_budge
     real margin, not just on the fastest hardware available.
     """
     rng = random.Random(20260807)  # noqa: S311 -- a seeded test fixture, not a security use
-    deck_codes = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
+    deck_codes = [Card(rank=rank, suit=suit).code() for rank in Rank for suit in Suit]
     joker_probability = 8 / 424
     field = [
         [

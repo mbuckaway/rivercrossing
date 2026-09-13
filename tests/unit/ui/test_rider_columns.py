@@ -110,7 +110,7 @@ def test_column_value_given_a_row_returns_its_canvas_cell_text(
 CARD_CELL_CASES = (
     ((), ""),  # T-4 collection boundary: empty
     (("AS",), "A♠"),  # T-4 collection boundary: single
-    (("AS", "KH", "TD"), "A♠ K♥ T♦"),  # T-4 collection boundary: many
+    (("AS", "KH", "10D"), "A♠ K♥ 10♦"),  # T-4 collection boundary: many
     (("9H", "KD"), "9♥ K♦"),  # the goal's own example
     (("JK",), "JK★"),  # the joker marker
 )
@@ -125,7 +125,7 @@ def test_cards_column_value_given_a_hand_returns_the_space_joined_glyph_text(
     assert _column("Cards").value(_row(cards=cards)) == expected
 
 
-_VALID_RANKS = tuple("23456789TJQKA")
+_VALID_RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
 _VALID_SUITS = tuple("SHDC")
 
 

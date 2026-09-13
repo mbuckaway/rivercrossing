@@ -239,7 +239,7 @@ DEALT_CARD_TEXT_CASES = (
     ("9H", "9♥"),
     ("6H", "6♥"),
     ("KS", "K♠"),
-    ("TD", "T♦"),
+    ("10D", "10♦"),
     ("JK", "JK★"),
 )
 
@@ -433,10 +433,10 @@ def _flash_row(*, card: str = "9H", flagged: bool = False, held: bool = False) -
         ("KS", "K♠"),
         ("4D", "4♦"),
         ("7C", "7♣"),
-        ("TD", "T♦"),
+        ("10D", "10♦"),
         ("JK", "JK★"),
     ],
-    ids=["hearts", "spades", "diamonds", "clubs", "ten_keeps_t", "joker_star"],
+    ids=["hearts", "spades", "diamonds", "clubs", "ten_spells_10", "joker_star"],
 )
 def test_flash_crossing_label_given_a_dealt_code_spells_its_suit_glyph(
     card: str, display: str
@@ -489,7 +489,7 @@ def test_flash_crossing_label_given_an_unknown_suit_letter_raises_key_error() ->
 
 
 @given(
-    rank=st.text(alphabet="23456789TJQKA", min_size=1, max_size=1),
+    rank=st.sampled_from(("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")),
     suit=st.sampled_from("SHDC"),
     held=st.booleans(),
 )

@@ -53,7 +53,7 @@ _SHOE_TOTAL = _DECKS * (52 + _JOKERS_PER_DECK)  # 108, task-briefs.md's own numb
 
 
 def _codes(cards: Sequence[Card]) -> list[str]:
-    """List each card's stored two-character code, in order."""
+    """List each card's stored code ("AS", "10D", "JK"), in order."""
     return [card.code() for card in cards]
 
 
@@ -464,6 +464,15 @@ def test_seeded_card_codes_returns_every_natural_card_once_in_seed_order() -> No
     assert "JK" not in codes
 
 
+def test_seeded_card_codes_given_a_ten_spells_it_10_not_t() -> None:
+    """The sequence's own ten codes are "10x" -- the stored form."""
+    codes = seeded_card_codes(_SEED)
+
+    ten_codes = sorted(code for code in codes if code[:-1] == "10")
+
+    assert ten_codes == ["10C", "10D", "10H", "10S"]
+
+
 def test_seeded_card_codes_multi_deck_is_deduped_across_decks() -> None:
     """More decks reshuffle the same 52 naturals -- never duplicates."""
     codes = seeded_card_codes(_SEED, decks=8)
@@ -494,7 +503,7 @@ def test_seeded_card_codes_different_seeds_shuffle_differently() -> None:
 
 @pytest.mark.parametrize(
     "code",
-    ["AS", "2C", "TD", "9H", "KS", "4D"],
+    ["AS", "2C", "10D", "9H", "KS", "4D"],
     ids=[
         "ace_of_spades",
         "two_of_clubs",
@@ -510,6 +519,36 @@ def test_card_parse_round_trips_a_natural_code(code: str) -> None:
 
     assert parsed.joker is False
     assert parsed.code() == code
+
+
+def test_card_code_given_the_ten_returns_the_three_character_10_form() -> None:
+    """The stored code spells the ten "10", like its "10d" bitmap."""
+    assert Card(rank=Rank.TEN, suit=Suit.DIAMONDS).code() == "10D"
+
+
+def test_card_code_given_a_non_ten_stays_the_two_character_form() -> None:
+    """Only the ten grows a character: "AS" is unchanged."""
+    assert Card(rank=Rank.ACE, suit=Suit.SPADES).code() == "AS"
+
+
+def test_card_parse_given_the_10_code_rebuilds_the_ten_of_diamonds() -> None:
+    """parse("10D") reads rank "10" and suit "D" -- three characters."""
+    parsed = Card.parse("10D")
+
+    assert parsed == Card(rank=Rank.TEN, suit=Suit.DIAMONDS)
+    assert parsed.code() == "10D"
+
+
+def test_card_parse_given_the_retired_t_ten_code_raises_key_error() -> None:
+    """T-5: no legacy "T" ten -- "TD" is not a card code."""
+    with pytest.raises(KeyError, match=re.escape("'T'")):
+        Card.parse("TD")
+
+
+def test_card_parse_given_an_empty_code_raises_key_error() -> None:
+    """T-4 empty boundary: "" has no rank, so the parse fails loud."""
+    with pytest.raises(KeyError, match=re.escape("''")):
+        Card.parse("")
 
 
 def test_card_parse_round_trips_the_joker_code() -> None:

@@ -37,7 +37,7 @@ def test_card_text_given_the_joker_constants_are_the_canvas_spellings() -> None:
 
 DISPLAY_CASES = (
     ("9H", "9♥"),  # hearts
-    ("TS", "T♠"),  # spades; "T" is the stored ten (Card.code())
+    ("10S", "10♠"),  # spades; the stored ten is "10" (Card.code())
     ("KD", "K♦"),  # diamonds
     ("2C", "2♣"),  # clubs
     ("JK", JOKER_DISPLAY),  # the joker, which carries no suit letter
@@ -48,8 +48,18 @@ DISPLAY_CASES = (
 def test_format_card_given_a_stored_code_returns_its_canvas_glyph_text(
     code: str, expected: str
 ) -> None:
-    """Every suit glyph, the "T" ten boundary, and the joker marker."""
+    """Every suit glyph, the ten's "10" rank, the joker marker."""
     assert format_card(code) == expected
+
+
+def test_format_card_given_the_ten_code_returns_the_10_rank_glyph() -> None:
+    """The text "10" is exactly the bitmap's own "10" asset rank."""
+    assert format_card("10D") == "10♦"
+
+
+def test_format_card_given_the_joker_code_returns_the_starred_display() -> None:
+    """The joker is untouched by the ten's spelling: still "JK★"."""
+    assert format_card(JOKER_CODE) == "JK★"
 
 
 def test_format_card_given_an_empty_code_raises_index_error() -> None:
@@ -64,7 +74,7 @@ def test_format_card_given_an_unknown_suit_letter_raises_key_error() -> None:
         format_card("9X")
 
 
-_VALID_RANKS = tuple("23456789TJQKA")
+_VALID_RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
 _VALID_SUITS = tuple("SHDC")
 _SUIT_GLYPHS = frozenset({"♠", "♥", "♦", "♣"})
 

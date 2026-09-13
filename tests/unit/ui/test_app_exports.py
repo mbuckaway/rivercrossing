@@ -211,7 +211,7 @@ def _snapshot() -> tuple[EntryResult, ...]:
     """Build a two-entry field: a quad of nines and a royal flush."""
     return (
         _result("88", "9S 9D 9C 9H 2C", laps=4, total_time=1_000.0),
-        _result("7", "AS KS QS JS TS", laps=5, total_time=1_200.0),
+        _result("7", "AS KS QS JS 10S", laps=5, total_time=1_200.0),
     )
 
 

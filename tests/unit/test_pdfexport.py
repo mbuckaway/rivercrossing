@@ -1124,6 +1124,17 @@ def test_card_text_renders_rank_suit_and_joker(card: Card, expected: str) -> Non
     assert pdfexport._card_text(card) == expected
 
 
+def test_pair_text_given_the_ten_pair_renders_the_10_rank_glyph() -> None:
+    """The payload pair route spells the ten "10", matching "10d"."""
+    assert pdfexport._pair_text(("10", "d")) == "10♦"
+
+
+def test_rank_letter_given_the_ten_is_the_10_spelling() -> None:
+    """T-3: the report's rank-10 letter is "10"; no "T" survives."""
+    assert pdfexport._RANK_LETTER[Rank.TEN.value] == "10"
+    assert "T" not in pdfexport._RANK_LETTER.values()
+
+
 def test_hand_label_is_blank_for_a_no_card_hand() -> None:
     """The empty-hand guard displays "" -- pinned (like the HTML)."""
     assert pdfexport._hand_label("") == ""
