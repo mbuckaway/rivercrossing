@@ -4,6 +4,21 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.15] - 2026-09-13
+
+### Added
+
+- **An open/quit smoke test** (`tests/functional/test_app_menu_quit.py`) — launches the whole app, lets it draw, and drives the app-menu Quit; it runs in CI on macOS, Windows x64 and Windows ARM64 via `scripts/run-open.sh` / `scripts/run-open.ps1`.
+
+### Removed
+
+- **The "No Ride Open" launch alert** — a store-backed launch that opens no ride goes straight to the console, with the File/Ride menus as the way in, instead of showing an information alert.
+
+### Fixed
+
+- **The app crashed on launch on Windows** — the crossings feed's sort re-apply cleared a column that had never been sorted, which the Windows (generic) DataView treats as an assertion (`DontUseColumnForSorting`) and aborts the process, with no log. The clear now runs only when the column is actually the sort key (`IsSortKey()`), in both the feed and the teams editor.
+- **A ride opened from the ride library was not recognized until it was opened a second time** — the console switched its presenter after the ride-change notification fired, so the first Open left the menus in the no-ride state (only New Ride… enabled). The route context is now updated before the notification, so one Open loads the ride and enables the menus.
+
 ## [1.0.14] - 2026-09-13
 
 ### Added
