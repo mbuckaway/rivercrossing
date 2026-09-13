@@ -161,6 +161,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     entry: str = "Rider",
     lap: int = 1,
     flagged: bool = False,
+    held: bool = False,
     edited: bool = False,
     missed: bool = False,
 ) -> FeedRow:
@@ -174,6 +175,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         total="10:00",
         card="9H",
         flagged=flagged,
+        held=held,
         edited=edited,
         missed=missed,
     )
@@ -273,7 +275,7 @@ def test_edited_row_indexes_given_arbitrary_edits_agrees_with_each_rows_own_bit(
 # --- flash_crossing_label (W9: dealt code glyphs + held suffix) -----
 
 
-def _flash_row(*, card: str = "9H", flagged: bool = False) -> FeedRow:
+def _flash_row(*, card: str = "9H", flagged: bool = False, held: bool = False) -> FeedRow:
     """Build the just-recorded crossing row ``flash_crossing`` shows."""
     return FeedRow(
         time="10:00:05",
@@ -284,6 +286,7 @@ def _flash_row(*, card: str = "9H", flagged: bool = False) -> FeedRow:
         total="0:05:00",
         card=card,
         flagged=flagged,
+        held=held,
     )
 
 
@@ -313,13 +316,34 @@ def test_flash_crossing_label_given_a_dealt_code_spells_its_suit_glyph(
     [("9H", "9♥"), ("QH", "Q♥"), ("JK", "JK★")],
     ids=["held_natural", "held_queen", "held_joker"],
 )
-def test_flash_crossing_label_given_a_flagged_row_appends_the_held_marker(
+def test_flash_crossing_label_given_a_held_row_appends_the_held_marker(
     card: str, display: str
 ) -> None:
     """W9: a held flash names the card and appends ``(held)``."""
-    label = flash_crossing_label(_flash_row(card=card, flagged=True))
+    label = flash_crossing_label(_flash_row(card=card, held=True))
 
     assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt {display} (held)"
+
+
+@pytest.mark.parametrize(
+    ("flagged", "held", "suffix"),
+    [
+        (False, False, ""),
+        (True, False, ""),
+        (False, True, " (held)"),
+        (True, True, " (held)"),
+    ],
+    ids=["normal", "short_credited", "held_only", "short_held"],
+)
+def test_flash_crossing_label_given_a_row_appends_held_exactly_when_held(
+    flagged: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    suffix: str,
+) -> None:
+    """T-13: the suffix follows ``held``, not ``flagged``."""
+    label = flash_crossing_label(_flash_row(flagged=flagged, held=held))
+
+    assert label == f"✓ 12 · Rider 12 · Lap 3 · 1:40 · dealt 9♥{suffix}"
 
 
 def test_flash_crossing_label_given_an_unknown_suit_letter_raises_key_error() -> None:
@@ -331,19 +355,26 @@ def test_flash_crossing_label_given_an_unknown_suit_letter_raises_key_error() ->
 @given(
     rank=st.text(alphabet="23456789TJQKA", min_size=1, max_size=1),
     suit=st.sampled_from("SHDC"),
-    flagged=st.booleans(),
+    held=st.booleans(),
 )
 def test_flash_crossing_label_given_any_natural_code_renders_the_matching_glyph(
-    rank: str, suit: str, *, flagged: bool
+    rank: str, suit: str, *, held: bool
 ) -> None:
     """Property: rank+glyph pairing is exact for every natural card."""
     glyphs = {"S": "♠", "H": "♥", "D": "♦", "C": "♣"}
 
-    label = flash_crossing_label(_flash_row(card=f"{rank}{suit}", flagged=flagged))
+    label = flash_crossing_label(_flash_row(card=f"{rank}{suit}", held=held))
 
-    suffix = " (held)" if flagged else ""
+    suffix = " (held)" if held else ""
     assert label.endswith(f"dealt {rank}{glyphs[suit]}{suffix}")
     assert label.startswith("✓ ")
+
+
+def test_flagged_row_indexes_given_a_credited_short_lap_still_marks_the_row() -> None:
+    """Always-deal: a short lap is bolded for review though not held."""
+    rows = (_feed_row(plate="12", flagged=True, held=False),)
+
+    assert flagged_row_indexes(rows) == frozenset({0})
 
 
 # --- missed rows (K: a pass whose number the scorer missed) ----------

@@ -171,7 +171,7 @@ class RideEngine:             # pure; wall-clock injected for tests
     start(at: datetime | None = None) -> Event          # button or retro time (R-30)
     set_start_time(at: datetime) -> Event               # lap-1 recompute (3d)
     record_crossing(plate: str, at=None) -> CrossingResult
-        # → lap n, lap_time, card | ShortLapFlagged (card held, 1h) | UnknownPlate
+        # → lap n, lap_time, card | ShortLapFlagged (flagged; card held only under hold_short_laps) | UnknownPlate
     add_crossing_at(plate: str, at: datetime) -> CrossingResult   # RUNNING·REOPENED
     undo_last() -> Event · edit_crossing(id, …) · void_crossing(id, reason)
     reassign_crossing(id, plate) · deal_manual(plate, reason) · void_card(id, reason)
@@ -189,6 +189,12 @@ class RideEngine:             # pure; wall-clock injected for tests
 #   (audit log), `held_crossings()`, `confirm_held`/`void_held`,
 #   `deal_manual(plate, reason)` and the read accessors `config`, `crossings`,
 #   `card_for`, `shoe_remaining`, `shoe_total` (E7 consumes the first three).
+# card-sufficiency advisory (ride.py module functions, ride-sim/corrections batch):
+#   estimate_cards_needed(config, roster, avg_speed_kmh) -> int | None ·
+#   check_card_sufficiency(config, roster, avg_speed_kmh) -> CardCheck | None, where
+#   CardCheck(shoe_cards, expected, verdict) and verdict ∈ {NOT_ENOUGH, OK, FAR_TOO_MANY}
+#   compares the shoe size (deck_count × (52 + jokers_per_deck)) against the crossings a
+#   field is expected to record (per rider pooled, per entry relay) — see Spec §4
 ```
 
 rivercrossing.roster — in-memory roster & lock matrix (§1–§2 · R-11/12/15/17/20 · E3)
@@ -204,7 +210,7 @@ class Roster:                 # one ride's entries/riders; status set by the E4 
     change_solo_plate · change_pooled_rider_plate · change_team_plate · change_plate   # the model-correct dispatch the editors + fixes share
     next_free_plate() -> str                       # highest numeric + 1
     validate_for_start() -> list[StartViolation]   # R-12's floor, checked at start
-    entries · audit_log · status                   # audit events persist via the E5 store
+    entries · audit_log · status · take_audit_log()  # audit events persist via the E5 store
 can_edit_structure(status) · can_delete_entry(status, has_data)
 can_move_rider(status, plate_model) · can_add_entry() · can_fix_name()
 team_name_key(name) -> str                     # fuzzy team key; the CSV preview and rider_issues share it
@@ -228,7 +234,8 @@ class Store:                  # facade; sqlite3, WAL, foreign_keys ON
     Store.open(path) -> Store              # runs migrations; records session row
     rides() · create_ride(config) · duplicate_ride(id) · delete_ride(id, typed_name)
     load_engine(ride_id) -> RideEngine     # replay events; shoe from stored seed
-    append(ride_id, event: Event) -> None  # sync commit path
+    append(ride_id, event: Event) -> None  # sync commit path (syncs ride.status for lifecycle actions)
+    append_roster_event(ride_id, action, payload_json) -> None  # roster plate-change audit row; no status write
     audit(ride_id, filter=…) -> list[AuditRow]
     session_state() -> SessionState        # CLEAN_QUIT | CRASHED | RUNNING_AT_EXIT (R-52)
 class AsyncWriter:            # §10 single writer; UI awaits put(), never blocks

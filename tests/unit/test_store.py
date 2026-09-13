@@ -2591,6 +2591,126 @@ def test_store_audit_rows_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
         store.close()
 
 
+# ----------------- plan §8: roster plate changes in the audit table
+
+
+def test_store_append_roster_event_inserts_an_audit_row_stamped_at_now(
+    tmp_path: Path,
+) -> None:
+    """A roster event lands as one audit row stamped at append time."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        before = int(datetime.now(UTC).timestamp())
+        store.append_roster_event(
+            ride_id,
+            "change_solo_plate",
+            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+        )
+        after = int(datetime.now(UTC).timestamp())
+    finally:
+        store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT at, action, payload_json FROM audit WHERE ride_id = ?", (ride_id,)
+        ).fetchone()
+    assert row is not None
+    assert before <= row["at"] <= after
+    assert row["action"] == "change_solo_plate"
+    assert json.loads(row["payload_json"]) == {
+        "display_name": "Alice",
+        "old_plate": "12",
+        "new_plate": "13",
+    }
+
+
+def test_store_append_roster_event_leaves_the_ride_status_and_updated_at_untouched(
+    tmp_path: Path,
+) -> None:
+    """A plate change is audit-only: the ride row never moves."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        running = _fetch_ride_row(db_path, ride_id)
+        store.append_roster_event(ride_id, "change_team_plate", json.dumps({"new_plate": "9"}))
+        after = _fetch_ride_row(db_path, ride_id)
+    finally:
+        store.close()
+
+    assert after["status"] == RideStatus.RUNNING
+    assert after["status"] == running["status"]
+    assert after["updated_at"] == running["updated_at"]
+
+
+def test_store_append_roster_event_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
+    """T-5: a roster event for an unknown ride fails loudly."""
+    Store.open(tmp_path / "rides.db").close()
+
+    store = Store.open(tmp_path / "rides.db")
+    try:
+        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
+            store.append_roster_event(999, "change_solo_plate", "{}")
+    finally:
+        store.close()
+
+
+def test_store_audit_rows_entry_falls_back_through_plate_change_payload_keys(
+    tmp_path: Path,
+) -> None:
+    """A plate-change row renders old_plate, new_plate, then name."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+        store.append_roster_event(
+            ride_id,
+            "change_solo_plate",
+            json.dumps({"display_name": "Alice", "old_plate": "12", "new_plate": "13"}),
+        )
+        store.append_roster_event(
+            ride_id, "change_team_plate", json.dumps({"display_name": "A", "new_plate": "77"})
+        )
+        store.append_roster_event(
+            ride_id, "change_pooled_rider_plate", json.dumps({"display_name": "Trail Blazers"})
+        )
+
+        rows = store.audit_rows(ride_id)
+    finally:
+        store.close()
+
+    assert [row.entry for row in rows] == ["Trail Blazers", "77", "12"]
+
+
+def test_store_load_engine_ignores_a_roster_plate_change_row(tmp_path: Path) -> None:
+    """Replay skips a plate-change row: ``apply`` never sees it."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(min_lap_s=1))
+        store.append(
+            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
+        )
+        store.append_roster_event(
+            ride_id,
+            "change_team_plate",
+            json.dumps({"display_name": "A", "old_plate": "1", "new_plate": "2"}),
+        )
+
+        engine = store.load_engine(ride_id, roster=_replay_roster())
+    finally:
+        store.close()
+
+    assert [event.action for event in engine.events] == ["start"]
+    assert engine.state is RideStatus.RUNNING
+
+
 # ------------------------------------------------- default_db_path
 # E9.1.1: the bootstrap resolves the rides database path the same way
 # settings.py's default_path resolves settings.json -- platformdirs,
@@ -2831,8 +2951,8 @@ def test_store_save_roster_zero_rider_relay_team_keeps_its_relay_plate(tmp_path:
     assert entry.riders == []
 
 
-# ============================================================ C1/D3
-# The ride-logo re-materialization (C1) and the Clear Ride reset (D3).
+# ============================================================ C1
+# The ride-logo re-materialization (C1).
 
 
 def test_store_load_engine_rematerializes_the_stored_ride_logo(tmp_path: Path) -> None:
@@ -2875,156 +2995,6 @@ def test_store_load_engine_given_no_logo_bytes_leaves_logo_path_none(
         store.close()
 
     assert engine.config.logo_path is None
-
-
-def _stage_ride_with_data(db_path: Path, *, name: str = "Clearable") -> int:
-    """Stage one ride with an entry, a crossing, a card and audit rows.
-
-    The shape Clear Ride… must wipe: two audit rows (start + crossing),
-    one entry with its rider and crossing, one dealt card and the
-    session's active-ride marker.
-
-    Returns:
-        The staged ride's id.
-    """
-    store = Store.open(db_path)
-    try:
-        ride_id = store.create_ride(_config(name=name))
-        store.append(
-            ride_id,
-            Event(
-                action="record_crossing",
-                payload={
-                    "plate": "12",
-                    "entry_id": "12",
-                    "lap": 1,
-                    "crossed_at": "2026-09-20T10:02:00",
-                },
-            ),
-        )
-        store.append(
-            ride_id, Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
-        )
-        with store._conn:
-            entry_id = store._conn.execute(
-                "INSERT INTO entry (ride_id, plate, display_name, type, team_size, status)"
-                " VALUES (?, '12', 'Alice', 'solo', 1, 'active')",
-                (ride_id,),
-            ).lastrowid
-            rider_id = store._conn.execute(
-                "INSERT INTO rider (entry_id, first_name, last_name, plate, sort_order)"
-                " VALUES (?, 'Alice', '', '12', 1)",
-                (entry_id,),
-            ).lastrowid
-            crossing_id = store._conn.execute(
-                "INSERT INTO crossing (ride_id, entry_id, rider_id, seq, crossed_at, lap_s, flag)"
-                " VALUES (?, ?, ?, 1, 100, 50, 'none')",
-                (ride_id, entry_id, rider_id),
-            ).lastrowid
-            store._conn.execute(
-                "INSERT INTO card"
-                " (ride_id, entry_id, crossing_id, shoe_index, rank, suit, state, dealt_at)"
-                " VALUES (?, ?, ?, 0, 14, 's', 'dealt', 100)",
-                (ride_id, entry_id, crossing_id),
-            )
-            store._conn.execute(
-                "UPDATE ride SET status = 'running', actual_start = 100 WHERE id = ?",
-                (ride_id,),
-            )
-        store.set_active_ride(ride_id)
-    finally:
-        store.close()
-    return ride_id
-
-
-def test_store_clear_ride_wipes_its_data_and_returns_it_to_draft(tmp_path: Path) -> None:
-    """D3: Clear Ride empties the ride and leaves it a fresh DRAFT."""
-    db_path = tmp_path / "rides.db"
-    ride_id = _stage_ride_with_data(db_path)
-
-    store = Store.open(db_path)
-    try:
-        store.clear_ride(ride_id)
-
-        engine = store.load_engine(ride_id, _replay_roster())
-        assert engine.state is RideStatus.DRAFT
-        assert engine.events == ()
-        assert engine.crossings == ()
-        assert store.roster_for(ride_id).entries == ()
-    finally:
-        store.close()
-
-    with closing(sqlite3.connect(str(db_path))) as conn:
-        entry_rows = conn.execute(
-            "SELECT COUNT(*) FROM entry WHERE ride_id = ?", (ride_id,)
-        ).fetchone()[0]
-        crossing_rows = conn.execute(
-            "SELECT COUNT(*) FROM crossing WHERE ride_id = ?", (ride_id,)
-        ).fetchone()[0]
-        card_rows = conn.execute(
-            "SELECT COUNT(*) FROM card WHERE ride_id = ?", (ride_id,)
-        ).fetchone()[0]
-        audit_rows = conn.execute(
-            "SELECT COUNT(*) FROM audit WHERE ride_id = ?", (ride_id,)
-        ).fetchone()[0]
-        status = conn.execute("SELECT status FROM ride WHERE id = ?", (ride_id,)).fetchone()[0]
-        active = conn.execute(
-            "SELECT active_ride_id FROM app_session ORDER BY id DESC LIMIT 1"
-        ).fetchone()[0]
-
-    assert (entry_rows, crossing_rows, card_rows, audit_rows) == (0, 0, 0, 0)
-    assert status == "draft"
-    assert active is None
-
-
-def test_store_clear_ride_keeps_the_ride_row_and_its_setup(tmp_path: Path) -> None:
-    """D3: clearing resets the ride; Delete (R-18) removes it."""
-    db_path = tmp_path / "rides.db"
-    ride_id = _stage_ride_with_data(db_path, name="Club poker night")
-
-    store = Store.open(db_path)
-    try:
-        store.clear_ride(ride_id)
-        rides = store.rides()
-    finally:
-        store.close()
-
-    assert [(ride.id, ride.name) for ride in rides] == [(ride_id, "Club poker night")]
-
-
-def test_store_clear_ride_keeps_a_sibling_ride_untouched(tmp_path: Path) -> None:
-    """D3: a sibling ride's rows survive a clear."""
-    db_path = tmp_path / "rides.db"
-    doomed = _stage_ride_with_data(db_path, name="Doomed")
-    store = Store.open(db_path)
-    try:
-        keeper = store.create_ride(_config(name="Keeper"))
-        store.append(
-            keeper, Event(action="start", payload={"actual_start": "2026-09-20T11:00:00"})
-        )
-        store.clear_ride(doomed)
-    finally:
-        store.close()
-
-    store = Store.open(db_path)
-    try:
-        assert [row.action for row in store.audit_rows(keeper)] == ["start"]
-        assert store.audit_rows(doomed) == []
-    finally:
-        store.close()
-
-
-def test_store_clear_ride_unknown_ride_raises_naming_it(tmp_path: Path) -> None:
-    """T-5: clearing a ride id that never existed fails loudly."""
-    db_path = tmp_path / "rides.db"
-    Store.open(db_path).close()
-
-    store = Store.open(db_path)
-    try:
-        with pytest.raises(RideNotFoundError, match=re.escape("no ride with id 999")):
-            store.clear_ride(999)
-    finally:
-        store.close()
 
 
 # --------------------------------------- D2: updating a stored ride

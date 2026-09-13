@@ -34,7 +34,11 @@ from rivercrossing.roster import (
     Rider,
     Roster,
 )
-from rivercrossing.ui.presenters.simulator import SimOutcome, SimulatorPresenter
+from rivercrossing.ui.presenters.simulator import (
+    SimOutcome,
+    SimulatorPresenter,
+    _plates_to_record,
+)
 
 # The fixed naive clock every engine here is built with.
 _START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001
@@ -592,13 +596,113 @@ def test_run_simulation_team_below_the_size_floor_is_blocked() -> None:
 
 
 def test_run_simulation_relay_records_crossings_under_the_entry_plate() -> None:
-    """A relay crossing records on the team's plate, not a rider's."""
+    """A relay lap records once per entry, on the entry's own plate."""
     presenter, engine, roster = _draft(plate_model=PlateModel.TEAM_RELAY)
     presenter.generate_riders(6, 2, 2, seed=_SEED)
 
     outcome = presenter.run_simulation(laps=1, interval_minutes=1)
 
-    assert outcome == SimOutcome(cancelled=False, recorded=6, blocked=None)
-    assert {crossing.entry_id for crossing in engine.crossings} == {
+    assert outcome == SimOutcome(cancelled=False, recorded=4, blocked=None)
+    assert sorted(crossing.entry_id for crossing in engine.crossings) == sorted(
         entry.plate for entry in roster.entries
-    }
+    )
+
+
+def test_run_simulation_relay_team_laps_equal_solo_laps() -> None:
+    """A relay team and a solo cover the same number of laps."""
+    presenter, engine, roster = _draft(plate_model=PlateModel.TEAM_RELAY)
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+    solo = _entries_of(roster, EntryType.SOLO)[0]
+    team = _entries_of(roster, EntryType.TEAM)[0]
+
+    presenter.run_simulation(laps=3, interval_minutes=1)
+
+    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    assert laps_by_entry[team.plate] == laps_by_entry[solo.plate] == 3
+
+
+# ------------------------------------------------ _plates_to_record
+
+
+def test_plates_to_record_relay_returns_one_plate_per_entry() -> None:
+    """A relay ride records one plate per entry, not one per rider."""
+    presenter, _engine, roster = _draft(plate_model=PlateModel.TEAM_RELAY)
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    plates = _plates_to_record(roster)
+
+    assert plates == [entry.plate for entry in roster.entries]
+
+
+def test_plates_to_record_pooled_returns_one_plate_per_rider() -> None:
+    """A pooled ride records one plate per rider, solos included."""
+    presenter, _engine, roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+
+    plates = _plates_to_record(roster)
+
+    assert plates == [rider.plate for entry in roster.entries for rider in entry.riders]
+    assert len(plates) == 10
+
+
+@pytest.mark.parametrize("plate_model", [PlateModel.RIDER_POOLED, PlateModel.TEAM_RELAY])
+def test_plates_to_record_empty_roster_returns_no_plates(plate_model: PlateModel) -> None:
+    """An empty roster records nothing, under either model."""
+    _presenter, _engine, roster = _draft(plate_model=plate_model)
+
+    plates = _plates_to_record(roster)
+
+    assert plates == []
+
+
+@pytest.mark.parametrize(
+    ("plate_model", "expected"),
+    [
+        pytest.param(PlateModel.TEAM_RELAY, 1, id="single-entry-relay"),
+        pytest.param(PlateModel.RIDER_POOLED, 2, id="single-entry-pooled"),
+    ],
+)
+def test_plates_to_record_single_team_returns_one_plate_per_model(
+    plate_model: PlateModel, expected: int
+) -> None:
+    """One two-rider team yields one relay plate, two pooled plates."""
+    presenter, _engine, roster = _draft(plate_model=plate_model)
+    presenter.generate_riders(2, 1, 0, seed=_SEED)
+
+    plates = _plates_to_record(roster)
+
+    assert len(plates) == expected
+
+
+@given(
+    total=st.integers(min_value=2, max_value=6),
+    seed=st.integers(min_value=-1000, max_value=1000),
+)
+def test_plates_to_record_given_a_relay_ride_returns_one_plate_per_entry(
+    total: int, seed: int
+) -> None:
+    """Property: one relay plate per entry, all distinct (T-7)."""
+    presenter, _engine, roster = _draft(plate_model=PlateModel.TEAM_RELAY)
+    presenter.generate_riders(total, 1, total - 2, seed=seed)
+
+    plates = _plates_to_record(roster)
+
+    assert len(plates) == len(roster.entries)
+    assert len(set(plates)) == len(plates)
+
+
+@given(
+    total=st.integers(min_value=2, max_value=6),
+    seed=st.integers(min_value=-1000, max_value=1000),
+)
+def test_plates_to_record_given_a_pooled_ride_returns_one_plate_per_rider(
+    total: int, seed: int
+) -> None:
+    """Property: one pooled plate per rider, none absent (T-7)."""
+    presenter, _engine, roster = _draft()
+    presenter.generate_riders(total, 1, total - 2, seed=seed)
+
+    plates = _plates_to_record(roster)
+
+    assert len(plates) == len(_riders_of(roster))
+    assert None not in plates

@@ -9,7 +9,11 @@ editor preselecting that team, everything else the rider editor
 preselecting the issue's rider), convert a pooled size-1 team's lone
 rider back into their own solo entry, assign a missing-number rider the
 next free plate, and renumber a duplicate-number issue's later
-claimant.
+claimant. Plan §10 adds a read-only card-sufficiency line above the
+issue summary: the ride's shoe size against the crossings its field is
+estimated to record, rendered from
+:func:`~rivercrossing.ride.check_card_sufficiency`'s verdict when the
+flow is handed a live config and the stored average rider speed.
 
 The view is dumb, forwarding every control event straight to
 :class:`~rivercrossing.ui.presenters.rider_issues.RiderIssuesPresenter`
@@ -28,6 +32,7 @@ import wx
 import wx.dataview
 import wx.xrc
 
+from rivercrossing.ride import FAR_TOO_MANY, NOT_ENOUGH, CardCheck, check_card_sufficiency
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.rider_issues import RiderIssueRow, RiderIssuesPresenter
 from rivercrossing.ui.views import dialogs
@@ -36,6 +41,7 @@ from rivercrossing.ui.views._support import associate_model, clamp_to_display, f
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from rivercrossing.ride import RideConfig
     from rivercrossing.roster import Roster
 
 __all__ = [
@@ -62,6 +68,24 @@ ISSUES_INFOBAR = "issues_infobar"
 # a letterbox. The height matches the sibling editors' 560
 # (rider_editor 1280x560, team_editor 940x560).
 MIN_SIZE = (900, 560)
+
+
+def _card_check_text(card_check: CardCheck) -> str:
+    """Return the ``card_check_lbl`` sentence for *card_check*.
+
+    Plan §10's verdict line has one stable shape either side of the
+    verdict, so the two numbers always read in the same order: the
+    shoe's own capacity first, then the estimated demand, then the
+    verdict.
+    """
+    summary = (
+        f"Shoe holds {card_check.shoe_cards} cards · estimated {card_check.expected} crossings"
+    )
+    if card_check.verdict == NOT_ENOUGH:
+        return f"{summary} — NOT ENOUGH"
+    if card_check.verdict == FAR_TOO_MANY:
+        return f"{summary} — far too many (2×+)"  # noqa: RUF001 -- the multiplication sign is the intended display glyph
+    return f"{summary} — OK"
 
 
 class IssuesListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -101,7 +125,9 @@ class RiderIssuesView:
     rider_editor.py``'s presenter-inside-the-view wiring.
     """
 
-    def __init__(self, dialog: wx.Dialog, *, roster: Roster) -> None:
+    def __init__(
+        self, dialog: wx.Dialog, *, roster: Roster, card_check: CardCheck | None = None
+    ) -> None:
         """Decorate an already-loaded ``rider_issues_dlg`` window.
 
         Args:
@@ -110,9 +136,14 @@ class RiderIssuesView:
             roster: The in-memory :class:`~rivercrossing.roster.
                 Roster` this dialog reports on and, on a conversion,
                 writes to.
+            card_check: The ride's card-sufficiency verdict (plan §10)
+                to render on ``card_check_lbl``; ``None`` hides the
+                line -- the estimate was impossible, or the flow was
+                opened without a live ride/settings pair.
         """
         self.dialog = dialog
 
+        self.card_check_lbl = self._find(ids.CARD_CHECK_LBL, wx.StaticText)
         self.issues_summary_lbl = self._find(ids.ISSUES_SUMMARY_LBL, wx.StaticText)
         self.issues_list = self._find(ids.ISSUES_LIST, wx.dataview.DataViewCtrl)
         self._build_columns()
@@ -136,6 +167,7 @@ class RiderIssuesView:
         self._bind_events()
         self._apply_min_size()
         self.presenter.refresh()
+        self.show_card_check(card_check)
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -293,6 +325,20 @@ class RiderIssuesView:
         """Render the issue-count summary line (``RiderIssuesView``)."""
         self.issues_summary_lbl.SetLabel(text)
 
+    def show_card_check(self, card_check: CardCheck | None) -> None:
+        """Render the card-sufficiency verdict, or hide the line.
+
+        Plan §10's read-only line: ``None`` -- no live config to
+        estimate from, or an impossible estimate -- hides
+        ``card_check_lbl`` rather than leaving a stale verdict from an
+        earlier render on screen.
+        """
+        if card_check is None:
+            self.card_check_lbl.Hide()
+            return
+        self.card_check_lbl.SetLabel(_card_check_text(card_check))
+        self.card_check_lbl.Show()
+
     def set_convert_solo_enabled(self, *, enabled: bool) -> None:
         """Gate ``convert_solo_btn`` on *enabled*."""
         self.convert_solo_btn.Enable(enabled)
@@ -333,17 +379,31 @@ class RiderIssuesView:
         self.dialog.SetSize(wx.Size(width, height))
 
 
-def run_rider_issues_flow(parent: wx.Window, roster: Roster) -> bool:
+def run_rider_issues_flow(  # noqa: PLR0913 -- (parent, roster) + the two optional plan §10 seams
+    parent: wx.Window,
+    roster: Roster,
+    *,
+    config: RideConfig | None = None,
+    avg_speed_kmh: float | None = None,
+) -> bool:
     """Open the rider-issues dialog modally; report whether it changed.
 
     No picker runs ahead of this dialog (unlike ``run_csv_import_flow``)
     -- the report reads the roster already in memory.
+
+    Plan §10 adds the card-sufficiency line: with both *config* (the
+    live ride's setup) and *avg_speed_kmh* (the stored settings value)
+    supplied, :func:`~rivercrossing.ride.check_card_sufficiency`
+    computes the shoe-vs-demand verdict the view renders on
+    ``card_check_lbl``; either missing hides the line.
 
     Args:
         parent: The window to parent the dialog on, and to return focus
             to once it ends.
         roster: The in-memory roster the report reads and, on any fix
             or nested-editor edit, writes.
+        config: The live ride's setup config, when one is open.
+        avg_speed_kmh: The stored average rider speed in km/h.
 
     Returns:
         Whether the roster was mutated in any way while the dialog was
@@ -361,9 +421,14 @@ def run_rider_issues_flow(parent: wx.Window, roster: Roster) -> bool:
     if window is None:
         return False
 
+    card_check = (
+        check_card_sufficiency(config, roster, avg_speed_kmh)
+        if config is not None and avg_speed_kmh is not None
+        else None
+    )
     audit_before = len(roster.audit_log)
     try:
-        RiderIssuesView(window, roster=roster)
+        RiderIssuesView(window, roster=roster, card_check=card_check)
         default_button = dialogs.default_button_for(ids.RIDER_ISSUES_DLG)
         if default_button is not None:
             dialogs.set_default_button(window, default_button)

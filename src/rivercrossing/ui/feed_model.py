@@ -100,7 +100,7 @@ def edited_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
     The feed's second bold channel: a crossing a correction touched
     (edit/void/add-at-time/reassign -- the ``FeedRow.edited`` flag set
     by ``EngineDataSource.feed_rows`` from the engine's event log)
-    renders bold like a flagged (held-card) row does (R-34). Pure, so
+    renders bold like a flagged (short-lap) row does (R-34). Pure, so
     the wx-facing ``CrossingsFeedModel`` can delegate the decision
     here, exactly as it does for :func:`flagged_row_indexes`.
     """
@@ -123,7 +123,7 @@ def flash_crossing_label(row: FeedRow) -> str:
     The console's just-recorded line: ``"✓ 12 · Rider 12 · Lap 3 ·
     1:40 · dealt 9♥"``. W9: the dealt card's code spells its suit as
     a glyph (the row's ``card`` is always a real code, held or not),
-    and a held crossing -- the row's own ``flagged`` bit, R-34 --
+    and a held crossing -- the row's own ``held`` bit, R-34 --
     appends ``" (held)"``. The four-entry suit map is local to this
     helper: per-view maps already exist (``results_win``,
     ``dialogs``, ``pdfexport``) and this adds no shared structure.
@@ -136,5 +136,5 @@ def flash_crossing_label(row: FeedRow) -> str:
     glyphs = {"H": "♥", "D": "♦", "C": "♣", "S": "♠"}
     code = row.card
     display = "JK★" if code == "JK" else f"{code[:-1]}{glyphs[code[-1]]}"
-    held = " (held)" if row.flagged else ""
+    held = " (held)" if row.held else ""
     return f"✓ {row.plate} · {row.entry} · Lap {row.lap} · {row.lap_time} · dealt {display}{held}"

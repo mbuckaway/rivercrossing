@@ -20,9 +20,16 @@
 
   Only the radio group declares a default. spec.md 13 requires that a
   radio group is never left unselected, so "System" is structural and
-  belongs here. sound_chk, hide_times_chk and verbose_log_chk are
-  stored settings: the presenter loads them when the dialog opens, so
-  no <checked> is declared for them.
+  belongs here. sound_chk, hide_times_chk, verbose_log_chk and
+  avg_speed_spin are stored settings: the presenter loads them when the
+  dialog opens, so no <checked>/<value> is declared for them.
+
+  Plan §10: avg_speed_spin is the average rider speed the
+  card-sufficiency estimate in Riders ▸ Check for Rider Issues… uses.
+  Its <min> is 1 km/h so the spin cannot be parked at 0 (an infinite
+  lap time); the stored value's own 1 km/h floor lives in the
+  presenter (settings.py's _MIN_AVG_SPEED_KMH), this is the control's
+  half of the same bound.
 
   F1 (verbose logging): verbose_log_chk is a stored setting like
   sound_chk - AppSettings.verbose_logging, rendered at open and
@@ -119,6 +126,18 @@
         <border>10</border>
         <object class="wxCheckBox" name="verbose_log_chk">
           <label>Verbose logging (write a diagnostic log for support)</label>
+        </object>
+      </object>
+
+      <!-- Plan §10: the average rider speed the card-sufficiency
+           estimate reads. Stored setting: the presenter seeds it on
+           open, so no value is declared. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxSpinCtrl" name="avg_speed_spin">
+          <label>Average rider speed (km/h)</label>
+          <min>1</min>
         </object>
       </object>
 

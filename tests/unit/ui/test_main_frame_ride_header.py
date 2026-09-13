@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
-"""Headless pins for the console's ride-info header (plan §5).
+"""Headless pins for the console's ride-info header (plan §5, §11).
 
-``show_ride_header`` renders the Ride group beside the stop light: the
-ride's own logo plus six read-only values -- Name, Date, Venue,
-Organizer, Scorer and Lap length km. Three things are pinned here:
+``show_ride_header`` renders the two ride-info groups beside the stop
+light: the ride's own logo plus six read-only values -- Name, Date,
+Venue in the "Ride" box, Organizer, Scorer and Lap length km in
+"Details". Four things are pinned here:
 
 - :func:`rivercrossing.ui.views.main_frame._ride_logo_bitmap` -- a path
   decodes to an OK bitmap fitted into ``RIDE_LOGO_DISPLAY_SIZE``, or the
@@ -15,6 +16,9 @@ Organizer, Scorer and Lap length km. Three things are pinned here:
   frame built with ``object.__new__``
   (``test_ride_setup_logo_wx.py``'s precedent): no wx window is ever
   created, so the unit process never takes over a desktop.
+- §11's stop-light fix -- ``_pin_stop_light`` floors the lamp at its own
+  ``DoGetBestSize`` so the header sizer cannot collapse it, and
+  ``set_state`` drives every lifecycle mode through ``set_mode``.
 
 The bitmap arm needs a live ``wx.App`` to decode and rescale a PNG, so
 this module builds one -- the module-cache strong reference
@@ -41,6 +45,8 @@ from hypothesis import strategies as st
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode
+from rivercrossing.ui.views import main_frame
+from rivercrossing.ui.views.gauges import StopLight
 from rivercrossing.ui.views.main_frame import (
     RIDE_INFO_VALUE_WIDTH,
     RIDE_LOGO_DISPLAY_SIZE,
@@ -165,15 +171,25 @@ class _RecordingBitmap:
 
 
 class _RecordingLight:
-    """``ride_status_light`` double: records the lamp mode."""
+    """``ride_status_light`` double: records its mode and its floor."""
 
-    def __init__(self) -> None:
-        """Start dark, as a fresh console does."""
+    def __init__(self, best: wx.Size | None = None) -> None:
+        """Start dark, reporting *best* as the lamp's own best size."""
         self.mode = "off"
+        self.min_size: wx.Size | None = None
+        self._best = wx.Size(20, 58) if best is None else best
 
     def set_mode(self, mode: str) -> None:
         """Record the mode the view applied."""
         self.mode = mode
+
+    def DoGetBestSize(self) -> wx.Size:  # noqa: N802 -- wx API name the SUT calls
+        """Report the lamp's own best size."""
+        return wx.Size(self._best)
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the floor the view pinned on the lamp."""
+        self.min_size = size
 
 
 class _NoOp:
@@ -195,6 +211,7 @@ def _bare_view() -> MainFrame:
     view = object.__new__(MainFrame)
     view.frame = _NoOp()
     view._on_ride_changed = None
+    view._presenter = None
     view.ride_logo_bmp = _RecordingBitmap()
     view.ride_name_value = _RecordingValue()
     view.ride_date_value = _RecordingValue()
@@ -428,6 +445,65 @@ def test_show_no_ride_given_a_live_header_returns_the_console_to_draft() -> None
     view.show_no_ride()
 
     assert view._status is RideStatus.DRAFT
+
+
+# --------------------------------------------- the stop-light slot
+# Plan §11: the lamp's own column leads the header. The reported "stop
+# light does nothing" was a layout collapse -- the lamp laid out at
+# (0, 0) beside its label -- so MainFrame pins it to its own best size,
+# and these pins hold that size and every `set_state` mode change.
+
+
+def test_stop_light_given_no_parent_reports_the_three_circle_best_size() -> None:
+    """§11: the lamp's best size is a real 20x58 box, never (0, 0)."""
+    light = StopLight.__new__(StopLight)
+
+    best = light.DoGetBestSize()
+
+    assert (best.width, best.height) == (20, 58)
+
+
+@pytest.mark.parametrize(
+    "best",
+    [(0, 0), (1, 1), (20, 58), (4096, 4096)],
+    ids=["empty", "single_dip", "lamp", "huge"],
+)
+def test_pin_stop_light_given_a_best_size_pins_exactly_that_minimum(
+    best: tuple[int, int],
+) -> None:
+    """§11: the floor is the lamp's own best size, nothing invented."""
+    light = _RecordingLight(best=wx.Size(*best))
+
+    result = main_frame._pin_stop_light(light)
+
+    assert (result.width, result.height, light.min_size.width, light.min_size.height) == (
+        *best,
+        *best,
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "stopped", "expected"),
+    [
+        (RideStatus.DRAFT, False, "yellow"),
+        (RideStatus.RUNNING, False, "green"),
+        (RideStatus.RUNNING, True, "yellow"),
+        (RideStatus.FINISHED, False, "red"),
+        (RideStatus.REOPENED, False, "yellow"),
+    ],
+    ids=["draft_amber", "running_green", "stopped_amber", "finished_red", "reopened_amber"],
+)
+def test_set_state_given_a_lifecycle_status_lights_the_lamp(
+    status: RideStatus,
+    stopped: bool,  # noqa: FBT001 -- a parametrize row's value, not a call-site bool
+    expected: str,
+) -> None:
+    """WS-D/W6: each ``set_state`` transition drives the lamp mode."""
+    view = _bare_view()
+
+    view.set_state(status, stopped=stopped)
+
+    assert view.ride_status_light.mode == expected
 
 
 # ------------------------------------------------------- logo bitmap

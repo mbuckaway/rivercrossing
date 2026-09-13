@@ -183,7 +183,7 @@ from typing import TYPE_CHECKING, cast
 from platformdirs import user_data_dir
 
 from rivercrossing.cards import Shoe
-from rivercrossing.ride import Event, RideConfig, RideEngine, RideStatus
+from rivercrossing.ride import REPLAY_ACTIONS, Event, RideConfig, RideEngine, RideStatus
 from rivercrossing.roster import (
     Entry,
     EntryMode,
@@ -1085,53 +1085,6 @@ class Store:
             )
             self._conn.execute("DELETE FROM ride WHERE id = ?", (ride_id,))
 
-    # -------------------------------- D3 Clear Ride reset
-
-    def clear_ride(self, ride_id: int) -> None:
-        """Reset one ride to an empty DRAFT, keeping its own setup (D3).
-
-        Ride ▸ Clear Ride…'s store half: the dependents ``delete_ride``
-        removes are removed here too, in the same FK-safe order (cards,
-        crossings, riders, entries, audit rows), and
-        ``app_session.active_ride_id`` is NULLed -- but the ``ride``
-        row itself stays, with its setup columns untouched and its
-        lifecycle rewound: ``status`` back to DRAFT and
-        ``actual_start``/``finished_at`` cleared, so a replay of the
-        now-empty audit log rebuilds a DRAFT engine.
-
-        No state guard: the §15 enablement rule (DRAFT, or stopped
-        RUNNING, or FINISHED) is the menu binder's, and a
-        store-level "RUNNING is not clearable" rule would duplicate it.
-
-        Args:
-            ride_id: The ride to reset.
-
-        Raises:
-            RideNotFoundError: No ``ride`` row has *ride_id*.
-        """
-        row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
-        if row is None:
-            raise RideNotFoundError(f"no ride with id {ride_id}")
-        now = int(datetime.now(UTC).timestamp())
-        with self._conn:
-            self._conn.execute("DELETE FROM card WHERE ride_id = ?", (ride_id,))
-            self._conn.execute("DELETE FROM crossing WHERE ride_id = ?", (ride_id,))
-            self._conn.execute(
-                "DELETE FROM rider WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?)",
-                (ride_id,),
-            )
-            self._conn.execute("DELETE FROM entry WHERE ride_id = ?", (ride_id,))
-            self._conn.execute("DELETE FROM audit WHERE ride_id = ?", (ride_id,))
-            self._conn.execute(
-                "UPDATE app_session SET active_ride_id = NULL WHERE active_ride_id = ?",
-                (ride_id,),
-            )
-            self._conn.execute(
-                "UPDATE ride SET status = ?, actual_start = NULL, finished_at = NULL,"
-                " updated_at = ? WHERE id = ?",
-                (RideStatus.DRAFT, now, ride_id),
-            )
-
     def update_ride_config(self, ride_id: int, config: RideConfig) -> None:
         """Rewrite one ride's setup columns from *config* (D2).
 
@@ -1226,6 +1179,38 @@ class Store:
                     (status, now, ride_id),
                 )
 
+    def append_roster_event(self, ride_id: int, action: str, payload_json: str) -> None:
+        """Persist one roster audit event as an ``audit`` row.
+
+        The roster-side counterpart to :meth:`append`: plate changes
+        are logged by ``Roster._log`` as
+        :class:`~rivercrossing.roster.AuditEvent`s, never as engine
+        events, so they bypass the lifecycle sync -- this writes the
+        row and leaves ``ride.status``/``updated_at`` exactly as they
+        were, because a plate change is not a ride mutation. ``at``
+        matches ``append``'s fallback stamp: the current UTC epoch.
+        The caller serializes the payload (``json.dumps`` of the audit
+        event's own mapping), so the store never re-shapes roster data
+        it does not own.
+
+        Args:
+            ride_id: The ride the roster event belongs to.
+            action: The roster audit action, e.g. ``change_solo_plate``.
+            payload_json: The event payload, already JSON-serialized.
+
+        Raises:
+            RideNotFoundError: No ``ride`` row has *ride_id*.
+        """
+        row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
+        if row is None:
+            raise RideNotFoundError(f"no ride with id {ride_id}")
+        at = int(datetime.now(UTC).timestamp())
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO audit (ride_id, at, action, payload_json) VALUES (?, ?, ?, ?)",
+                (ride_id, at, action, payload_json),
+            )
+
     def load_engine(
         self,
         ride_id: int,
@@ -1246,7 +1231,11 @@ class Store:
         ``rng_seed`` (spec §4: replaying the seed reproduces every
         deal, so no ``Shoe.replay`` is needed), and applies every
         persisted event in append (insert-id) order via
-        :meth:`RideEngine.apply`.
+        :meth:`RideEngine.apply`, skipping any row whose action is not
+        in :data:`~rivercrossing.ride.REPLAY_ACTIONS`. Display-only rows
+        an engine never recorded -- plan §8's roster plate changes --
+        are thus left alone: the roster comes from the entry/rider
+        tables, never from replay.
 
         The roster is rebuilt from the DB by default (E5.4.1 closes
         E5.1.2's caller-supplied boundary); a caller may still pass
@@ -1307,9 +1296,10 @@ class Store:
             (ride_id,),
         ).fetchall()
         for stored in events:
-            engine.apply(
-                Event(action=stored["action"], payload=json.loads(stored["payload_json"]))
-            )
+            action = stored["action"]
+            if action not in REPLAY_ACTIONS:
+                continue
+            engine.apply(Event(action=action, payload=json.loads(stored["payload_json"])))
         return engine
 
     # ------------------------- E7.3.1 audit viewer read accessor
@@ -1322,8 +1312,10 @@ class Store:
         :class:`~rivercrossing.ui.presenters.data_source.AuditRow`
         shape the viewer's list draws -- ``who="scorer"`` (the engine
         never records another actor), ``entry`` = the payload's
-        ``entry_id`` (falling back to ``plate``, then ``""``),
-        ``reason`` = the payload's ``reason``, and ``when`` rendered
+        ``entry_id``, falling back to ``plate``, then (for a roster
+        plate change, whose payload carries neither) ``old_plate``,
+        ``new_plate`` and ``display_name``, then ``""``, ``reason`` =
+        the payload's ``reason``, and ``when`` rendered
         from the stored ``at`` epoch as local ``HH:MM:SS`` (spec §13:
         stored UTC, displayed local). Newest first by insert id -- the
         same order the viewer draws -- never by ``at``, which is not
@@ -1355,7 +1347,14 @@ class Store:
                     when=_audit_when(audit_row["at"]),
                     who="scorer",
                     action=audit_row["action"],
-                    entry=str(payload.get("entry_id") or payload.get("plate") or ""),
+                    entry=str(
+                        payload.get("entry_id")
+                        or payload.get("plate")
+                        or payload.get("old_plate")
+                        or payload.get("new_plate")
+                        or payload.get("display_name")
+                        or ""
+                    ),
                     reason=str(payload.get("reason") or ""),
                 )
             )

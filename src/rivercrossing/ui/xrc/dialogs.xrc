@@ -1077,4 +1077,70 @@
     </object>
   </object>
 
+  <!-- J2/§9: the Crossing Detail Edit prompt. Edit is the "wrong plate
+       on the line" correction, so it asks for the number in a small
+       Save/Cancel dialog rather than unlocking the detail window's own
+       read-only plate field; OK still commits that field, but only
+       miss mode unlocks it. The one field is a plain wxTextCtrl sized
+       for the four digits a plate at most carries (main.xrc's own
+       <hint>), with a real persistent caption beside it, never
+       placeholder text (UX-DESKTOP §7). Save is the marked default so
+       Enter commits and Escape keeps the stock Cancel route; the
+       stock sizer and stock ids give both for free (UX-DESKTOP §3). The
+       view (views/crossing_detail.py's run_number_dialog) seeds
+       number_input with the crossing's current plate, focuses and
+       selects it, and reads Save's trimmed text; nothing here resolves
+       the plate, since RideEngine.reassign_crossing owns the refusal. -->
+  <object class="wxDialog" name="crossing_number_dlg">
+    <title>Number</title>
+    <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
+
+    <object class="wxBoxSizer">
+      <orient>wxVERTICAL</orient>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Number</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxTextCtrl" name="number_input">
+              <size>50,-1</size>
+            </object>
+          </object>
+
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxALL</flag>
+        <border>10</border>
+        <object class="wxStdDialogButtonSizer">
+          <object class="button">
+            <object class="wxButton" name="wxID_OK">
+              <label>Save</label>
+              <default>1</default>
+            </object>
+          </object>
+          <object class="button">
+            <object class="wxButton" name="wxID_CANCEL">
+              <label>Cancel</label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+    </object>
+  </object>
+
 </resource>

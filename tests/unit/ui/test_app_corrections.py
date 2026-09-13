@@ -19,10 +19,20 @@ dialogs + real engine commands) are functionally covered by
 ``test_void_card_confirm.py`` and ``test_menu_coverage.py``.
 """
 
-import pytest
+from datetime import datetime
 
+import pytest
+import wx
+
+from conftest import gorba_config
+from rivercrossing.cards import Shoe
+from rivercrossing.ride import Crossing, RideEngine
+from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import app as app_module
-from rivercrossing.ui import commands, ids
+from rivercrossing.ui import commands, ids, std_dialogs
+from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
+from rivercrossing.ui.views import crossing_detail as crossing_detail_module
+from rivercrossing.ui.views import dialogs
 
 _CORRECTION_ROUTES = (
     ids.MI_ADD_CROSSING_AT,
@@ -213,14 +223,16 @@ def test_make_route_handler_given_mi_stop_ride_without_presenter_posts_the_stub(
     assert notices == [f"{route.label} — not yet implemented"]
 
 
-# ============================================================ W11
+# ============================================================ W11 F2a
 # F2a (dead-control wiring): the console's flagged list had no
-# activation binding, so a scorer could never open Entry Detail from a
-# flagged crossing -- and ``_RouteContext.detail_plate`` was only ever
-# self-assigned, so the menu correction routes refused. The app now
-# wires a ``set_on_open_flagged`` seam (mirroring the Riders tab's
-# ``set_on_open_rider``) whose handler opens the live entry detail at
-# the flagged plate and records it as the current entry.
+# activation binding, so a scorer could never open anything from a
+# flagged crossing. Plan §6 refines the seam: a flagged row is a short
+# lap with a card *disposition* -- held (hold mode, R-34) or credited
+# (always-deal) -- so the activation carries ``(plate, held)`` and the
+# app routes it: held -> a Confirm/Void decision through
+# ``engine.confirm_held`` / ``engine.void_held``, credited -> the
+# crossing detail on that lap. A stale row (no crossing resolves) posts
+# a status notice instead of opening anything.
 
 
 class _OpenFlaggedConsole:
@@ -265,41 +277,371 @@ class _RouteStub:
         self.detail_plate: str | None = None
 
 
-def test_wire_flagged_open_seam_opens_the_entry_detail_at_the_flagged_plate(
+def test_wire_flagged_open_seam_routes_the_flagged_row_to_the_review_handler(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """F2a: the wired seam opens the live detail for the activated row.
+    """F2a/§6: the wired seam passes the row's plate + held.
 
-    ``_open_entry_detail_for`` is the app-side opener; this pins the
-    wiring half (the console only fires ``callback(plate)``).
+    ``_open_flagged_review_for`` is the app-side router; this pins the
+    wiring half (the console fires ``callback(plate, held)``).
     """
-    opened: list[tuple[object, str]] = []
+    opened: list[tuple[object, str, bool]] = []
     monkeypatch.setattr(
         app_module,
-        "_open_entry_detail_for",
-        lambda context, plate: opened.append((context, plate)),
+        "_open_flagged_review_for",
+        lambda context, plate, held: opened.append((context, plate, held)),
     )
     console = _OpenFlaggedConsole()
     context = _RouteStub(console_view=console)
 
     app_module._wire_flagged_open_seam(context)  # type: ignore[arg-type]
-    console._on_open_flagged("77")  # type: ignore[attr-defined]
+    console._on_open_flagged("77", True)  # type: ignore[attr-defined]  # noqa: FBT003 -- seam's flag
 
-    assert opened == [(context, "77")]
+    assert opened == [(context, "77", True)]
 
 
 def test_wire_flagged_open_seam_without_a_console_view_is_a_no_op(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A console-less route-level context has nothing to wire."""
-    called: list[object] = []
-    monkeypatch.setattr(
-        app_module, "_open_entry_detail_for", lambda _context, _plate: called.append(1)
-    )
+    called: list[tuple[object, ...]] = []
+    monkeypatch.setattr(app_module, "_open_flagged_review_for", lambda *args: called.append(args))
 
     app_module._wire_flagged_open_seam(_RouteStub(console_view=None))  # type: ignore[arg-type]
 
     assert called == []
+
+
+# ============================================== plan §6 review routing
+# The app-side half: resolve the (plate, held) pair back to the live
+# crossing the feed row shows, then route by card disposition.
+
+
+def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
+    """Build a naive datetime on the fixed event day."""
+    return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design
+
+
+def _running_engine(*, hold_short_laps: bool, min_lap_s: int = 60) -> RideEngine:
+    """Build a RUNNING engine over one solo entry (plate 12)."""
+    config = gorba_config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps)
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Rider 12", last_name="", plate="12")
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
+    engine = RideEngine(config=config, shoe=shoe, clock=lambda: _dt(10, 0), roster=roster)
+    engine.start()
+    return engine
+
+
+def _review_context(
+    engine: RideEngine,
+    *,
+    frame: object = None,
+    resource: object = None,
+) -> _RouteStub:
+    """Build the route context over the live *engine* and source."""
+    source = EngineDataSource(engine, engine._roster)
+    presenter = type("_Presenter", (), {"engine": engine, "source": source})()
+    return _RouteStub(frame=frame, roster=engine._roster, presenter=presenter, resource=resource)
+
+
+def _stub_show(
+    monkeypatch: pytest.MonkeyPatch, name: str, result: int
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    """Swap ``std_dialogs.<name>`` for a recorder returning *result*."""
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def _show(*args: object, **kwargs: object) -> int:
+        calls.append((args, kwargs))
+        return result
+
+    monkeypatch.setattr(std_dialogs, name, _show)
+    return calls
+
+
+class _FakeWindow:
+    """A wx-window-shaped stub: closable, nothing else."""
+
+    def IsBeingDeleted(self) -> bool:  # noqa: N802 -- wx API name
+        """Report this stub is never mid-delete."""
+        return False
+
+    def Destroy(self) -> None:  # noqa: N802 -- wx API name
+        """No-op: there is no real window to destroy."""
+
+
+class _FakeResource:
+    """A resource-shaped stub returning one window (or ``None``)."""
+
+    def __init__(self, window: object) -> None:
+        """Store the window every LoadDialog call returns."""
+        self.window = window
+
+    def LoadDialog(self, _parent: object, _name: object) -> object:  # noqa: N802 -- wx API name
+        """Return the stored window for the requested target."""
+        return self.window
+
+
+def test_open_flagged_review_for_given_a_held_row_resolves_the_held_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A held row resolves to the crossing in the hold queue."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    context = _review_context(engine, frame=_NoticeFrame([]))
+    routed: list[object] = []
+    monkeypatch.setattr(
+        app_module,
+        "_review_held_crossing",
+        lambda _context, _engine, crossing: routed.append(crossing),
+    )
+
+    app_module._open_flagged_review_for(context, "12", True)  # noqa: FBT003 -- seam's flag
+
+    assert routed == [engine.crossings[-1]]
+
+
+def test_open_flagged_review_for_given_a_credited_row_resolves_the_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A credited short lap resolves to its recorded crossing."""
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    context = _review_context(engine, frame=_NoticeFrame([]))
+    routed: list[object] = []
+    monkeypatch.setattr(
+        app_module,
+        "_show_crossing_detail_dialog",
+        lambda _context, _engine, target: routed.append(target),
+    )
+
+    app_module._open_flagged_review_for(context, "12", False)  # noqa: FBT003 -- seam's flag
+
+    assert routed == [engine.crossings[-1]]
+
+
+@pytest.mark.parametrize("held", [True, False], ids=["held", "credited"])
+def test_open_flagged_review_for_given_an_unresolvable_plate_posts_a_notice(
+    monkeypatch: pytest.MonkeyPatch, *, held: bool
+) -> None:
+    """A stale activation (plate absent from the feed) opens nothing."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    notices: list[str] = []
+    context = _review_context(engine, frame=_NoticeFrame(notices))
+    routed: list[str] = []
+    monkeypatch.setattr(app_module, "_review_held_crossing", lambda *_args: routed.append("held"))
+    monkeypatch.setattr(
+        app_module, "_show_crossing_detail_dialog", lambda *_args: routed.append("detail")
+    )
+
+    app_module._open_flagged_review_for(context, "99", held)
+
+    assert (notices, routed) == (["Review — no crossing found for plate 99"], [])
+
+
+def test_open_flagged_review_for_given_a_credited_row_asked_as_held_posts_a_notice() -> None:
+    """The held search covers the hold queue only: the pair is stale."""
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    notices: list[str] = []
+    context = _review_context(engine, frame=_NoticeFrame(notices))
+
+    app_module._open_flagged_review_for(context, "12", True)  # noqa: FBT003 -- seam's flag
+
+    assert notices == ["Review — no crossing found for plate 12"]
+
+
+def test_open_flagged_review_for_given_a_miss_row_posts_a_notice() -> None:
+    """A miss row is never a flagged row, so it resolves to nothing."""
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_miss(_dt(10, 0, 5), reason="missed number")
+    notices: list[str] = []
+    context = _review_context(engine, frame=_NoticeFrame(notices))
+
+    app_module._open_flagged_review_for(context, "-", False)  # noqa: FBT003 -- seam's flag
+
+    assert notices == ["Review — no crossing found for plate -"]
+
+
+def test_open_flagged_review_for_given_no_presenter_posts_nothing() -> None:
+    """A context with no live console has nothing to review."""
+    notices: list[str] = []
+    context = _RouteStub(frame=_NoticeFrame(notices), presenter=None)
+
+    app_module._open_flagged_review_for(context, "12", True)  # noqa: FBT003 -- seam's flag
+
+    assert notices == []
+
+
+def test_held_card_facts_given_a_held_crossing_names_entry_plate_lap_and_card() -> None:
+    """UX-DESKTOP §4: the confirm names the object it is about."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    crossing = engine.crossings[-1]
+
+    facts = app_module._held_card_facts(engine, crossing, engine._roster)
+
+    assert facts == (
+        f"Rider 12 · plate 12 · Lap 1 · {format_duration(5.0)} · "
+        f"{engine.card_for(crossing).code()}"
+    )
+
+
+def test_held_card_facts_given_a_lap_past_the_recorded_times_renders_a_zero_time() -> None:
+    """A stale crossing renders a zero duration and no card."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    stale = Crossing(entry_id="12", seq=99, crossed_at=_dt(10, 0, 5))
+
+    facts = app_module._held_card_facts(engine, stale, engine._roster)
+
+    assert facts == f"Rider 12 · plate 12 · Lap 99 · {format_duration(0.0)} · no card"
+
+
+def test_held_card_facts_given_an_unresolvable_entry_falls_back_to_the_entry_id() -> None:
+    """An unresolvable entry falls back to the crossing's entry id."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    crossing = engine.crossings[-1]
+
+    facts = app_module._held_card_facts(engine, crossing, Roster())
+
+    assert facts.startswith("12 · plate 12 · Lap 1 · ")
+
+
+def test_review_held_crossing_given_a_confirmed_prompt_releases_the_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Confirm releases the held card into the entry's credited hand."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    crossing = engine.crossings[-1]
+    notices: list[str] = []
+    context = _review_context(engine, frame=_NoticeFrame(notices))
+    calls = _stub_show(monkeypatch, "show_prompt", wx.ID_OK)
+
+    app_module._review_held_crossing(context, engine, crossing)
+
+    parent, title, message, ok_label, cancel_label = calls[0][0]
+    assert (parent, title, ok_label, cancel_label) == (
+        context.frame,
+        "Review Held Card",
+        "Confirm card",
+        "Cancel",
+    )
+    assert "Rider 12" in message
+    assert "Lap 1" in message
+    assert engine.held_crossings() == ()
+    assert engine.credited_cards("12") == (engine.card_for(crossing),)
+    assert notices == ["Card confirmed for plate 12"]
+
+
+def test_review_held_crossing_given_confirmed_void_discards_the_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declining the confirm, then confirming the void discards it."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    crossing = engine.crossings[-1]
+    notices: list[str] = []
+    context = _review_context(engine, frame=_NoticeFrame(notices))
+    _stub_show(monkeypatch, "show_prompt", wx.ID_CANCEL)
+    calls = _stub_show(monkeypatch, "show_danger", wx.ID_OK)
+
+    app_module._review_held_crossing(context, engine, crossing)
+
+    _parent, title, _message, ok_label, cancel_label = calls[0][0]
+    assert (title, ok_label, cancel_label) == ("Void Held Card?", "Void card", "Keep held")
+    assert engine.held_crossings() == ()
+    assert engine.credited_cards("12") == ()
+    assert notices == ["Card voided for plate 12"]
+
+
+def test_review_held_crossing_given_both_declined_keeps_the_card_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both declines keep the card in the hold queue."""
+    engine = _running_engine(hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    crossing = engine.crossings[-1]
+    notices: list[str] = []
+    context = _review_context(engine, frame=_NoticeFrame(notices))
+    _stub_show(monkeypatch, "show_prompt", wx.ID_CANCEL)
+    _stub_show(monkeypatch, "show_danger", wx.ID_CANCEL)
+
+    app_module._review_held_crossing(context, engine, crossing)
+
+    assert [held.crossing for held in engine.held_crossings()] == [crossing]
+    assert engine.credited_cards("12") == ()
+    assert notices == []
+
+
+def test_open_flagged_review_for_given_a_credited_short_lap_builds_the_crossing_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The credited path opens ``crossing_detail_dlg`` on the lap."""
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    context = _review_context(
+        engine, frame=_NoticeFrame([]), resource=_FakeResource(_FakeWindow())
+    )
+    built: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        crossing_detail_module,
+        "CrossingDetailView",
+        lambda *_args, **kwargs: built.append(kwargs),
+    )
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(
+        dialogs,
+        "run_dialog",
+        lambda _dialog, opener: 0,  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    )
+
+    app_module._open_flagged_review_for(context, "12", False)  # noqa: FBT003 -- seam's flag
+
+    assert built == [
+        {"crossing": engine.crossings[-1], "roster": engine._roster, "engine": engine}
+    ]
+
+
+def test_show_crossing_detail_dialog_given_no_window_posts_the_notice() -> None:
+    """An unauthored crossing_detail_dlg posts the app's own notice."""
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_crossing("12", at=_dt(10, 0, 5))
+    notices: list[str] = []
+    context = _review_context(engine, frame=_NoticeFrame(notices), resource=_FakeResource(None))
+
+    app_module._show_crossing_detail_dialog(context, engine, engine.crossings[-1])
+
+    assert notices == ["Crossing Detail — no window authored yet"]
+
+
+def test_show_crossing_detail_dialog_given_a_pending_miss_builds_the_miss_view(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K2: a miss target keeps the same dialog in its miss mode."""
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_miss(_dt(10, 0, 5), reason="missed number")
+    miss = engine.pending_misses()[0]
+    context = _review_context(
+        engine, frame=_NoticeFrame([]), resource=_FakeResource(_FakeWindow())
+    )
+    built: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        crossing_detail_module, "MissDetailView", lambda *_args, **kwargs: built.append(kwargs)
+    )
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(
+        dialogs,
+        "run_dialog",
+        lambda _dialog, opener: 0,  # noqa: ARG005 -- the SUT calls opener=; the stub ignores it
+    )
+
+    app_module._show_crossing_detail_dialog(context, engine, miss)
+
+    assert built == [{"miss": miss, "engine": engine}]
 
 
 def test_open_entry_detail_dialog_live_branch_records_and_builds_the_live_dialog(

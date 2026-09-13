@@ -35,7 +35,7 @@ from rivercrossing.ui.presenters.settings import (
 )
 from rivercrossing.ui.theme import ThemeMode
 
-_SEVEN_FIELDS = {
+_ALL_FIELDS = {
     "appearance",
     "sound_on",
     "hide_times",
@@ -43,7 +43,17 @@ _SEVEN_FIELDS = {
     "splitter_sash",
     "window_geometry",
     "verbose_logging",
+    "sim_riders",
+    "sim_teams",
+    "sim_solo",
+    "sim_laps",
+    "sim_interval",
+    "avg_speed_kmh",
 }
+
+# The simulator dialog's XRC spin defaults (simulation.xrc): riders 10,
+# teams 2, solo 2, laps 1, interval 1 (plan §1).
+_SIM_DEFAULTS = (10, 2, 2, 1, 1)
 
 # The 90-150 zoom ladder, as the JSON-safe rung list files carry.
 _ZOOM_RUNGS = list(ZOOM_LADDER)
@@ -53,7 +63,7 @@ _ZOOM_RUNGS = list(ZOOM_LADDER)
 
 
 def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
-    """All seven fields survive a save/load round trip intact."""
+    """Every AppSettings field round-trips through save/load."""
     path = tmp_path / "settings.json"
     original = AppSettings(
         appearance="dark",
@@ -63,12 +73,136 @@ def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
         splitter_sash=320,
         window_geometry=(40, 60, 1200, 800),
         verbose_logging=False,
+        sim_riders=37,
+        sim_teams=6,
+        sim_solo=5,
+        sim_laps=4,
+        sim_interval=9,
     )
 
     save_settings(original, path)
     loaded = load_settings(path)
 
     assert loaded == original
+
+
+def test_default_settings_sim_fields_are_the_dialog_xrc_defaults() -> None:
+    """Plan §1: a first launch seeds the simulator's five spins."""
+    settings = default_settings()
+
+    assert (
+        settings.sim_riders,
+        settings.sim_teams,
+        settings.sim_solo,
+        settings.sim_laps,
+        settings.sim_interval,
+    ) == _SIM_DEFAULTS
+
+
+def test_save_then_load_round_trips_the_sim_fields(tmp_path: Path) -> None:
+    """The five simulator spin values survive a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(
+        default_settings(),
+        sim_riders=37,
+        sim_teams=6,
+        sim_solo=5,
+        sim_laps=4,
+        sim_interval=9,
+    )
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (
+        loaded.sim_riders,
+        loaded.sim_teams,
+        loaded.sim_solo,
+        loaded.sim_laps,
+        loaded.sim_interval,
+    ) == (37, 6, 5, 4, 9)
+
+
+def test_load_settings_missing_sim_keys_falls_back_to_defaults(tmp_path: Path) -> None:
+    """An older file with no sim keys seeds the XRC defaults."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (
+        loaded.sim_riders,
+        loaded.sim_teams,
+        loaded.sim_solo,
+        loaded.sim_laps,
+        loaded.sim_interval,
+    ) == _SIM_DEFAULTS
+
+
+# --- average rider speed (plan §10) --------------------------------
+
+
+def test_default_settings_defaults_avg_speed_to_twelve_kmh() -> None:
+    """Plan §10: a first launch seeds the speed at 12 km/h."""
+    assert default_settings().avg_speed_kmh == 12.0
+
+
+def test_save_then_load_round_trips_the_avg_speed(tmp_path: Path) -> None:
+    """A chosen average rider speed survives a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), avg_speed_kmh=17.5)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == 17.5
+
+
+def test_load_settings_missing_avg_speed_key_falls_back_to_the_default(tmp_path: Path) -> None:
+    """An older file with no avg_speed_kmh key keeps the default."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == 12.0
+
+
+@pytest.mark.parametrize(
+    ("saved_speed", "expected_speed"),
+    [
+        (0.5, 1.0),  # T-4: min - 1
+        (1.0, 1.0),  # T-4: the floor itself
+        (1.5, 1.5),  # T-4: min + 1
+        (12, 12.0),  # a stored JSON int is a valid speed
+        (99.0, 99.0),  # a realistic fast field
+    ],
+)
+def test_load_settings_clamps_avg_speed_to_the_one_kmh_floor(
+    tmp_path: Path, saved_speed: float, expected_speed: float
+) -> None:
+    """A below-floor speed rises to 1 km/h; the rest survive."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"avg_speed_kmh": saved_speed}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == expected_speed
+
+
+def test_load_settings_non_finite_avg_speed_uses_the_default(tmp_path: Path) -> None:
+    """A JSON NaN speed is corrupt for this field: the default applies.
+
+    ``json.loads`` accepts the bare ``NaN`` literal, and a NaN would
+    survive the floor clamp and reach ``math.ceil`` -- the loader's
+    never-raises contract needs it rejected here (T-3/T-4 nullable).
+    """
+    path = tmp_path / "settings.json"
+    path.write_text('{"avg_speed_kmh": NaN}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.avg_speed_kmh == 12.0
 
 
 def test_load_settings_missing_file_returns_defaults(tmp_path: Path) -> None:
@@ -142,6 +276,12 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
                 "splitter_sash": "320",
                 "window_geometry": [1, 2],
                 "verbose_logging": "yes",
+                "sim_riders": "ten",
+                "sim_teams": True,
+                "sim_solo": 2.5,
+                "sim_laps": None,
+                "sim_interval": "1",
+                "avg_speed_kmh": "fast",
             }
         ),
         encoding="utf-8",
@@ -214,7 +354,7 @@ def test_save_settings_creates_missing_parent_directories(tmp_path: Path) -> Non
     assert load_settings(path) == default_settings()
 
 
-def test_save_settings_writes_json_with_all_seven_fields(tmp_path: Path) -> None:
+def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     """The file is JSON carrying every AppSettings field by name."""
     path = tmp_path / "settings.json"
     save_settings(
@@ -226,15 +366,24 @@ def test_save_settings_writes_json_with_all_seven_fields(tmp_path: Path) -> None
             splitter_sash=250,
             window_geometry=(10, 20, 30, 40),
             verbose_logging=False,
+            sim_riders=12,
+            sim_teams=3,
+            sim_solo=4,
+            sim_laps=2,
+            sim_interval=5,
+            avg_speed_kmh=17.5,
         ),
         path,
     )
 
     raw = json.loads(path.read_text(encoding="utf-8"))
 
-    assert set(raw) == _SEVEN_FIELDS
+    assert set(raw) == _ALL_FIELDS
     assert raw["window_geometry"] == [10, 20, 30, 40]
     assert raw["verbose_logging"] is False
+    assert raw["sim_riders"] == 12
+    assert raw["sim_interval"] == 5
+    assert raw["avg_speed_kmh"] == 17.5
 
 
 # --- default-path wiring (path=None branches) ----------------------
@@ -310,6 +459,12 @@ _SETTINGS_STRATEGY = st.builds(
         st.integers(min_value=100, max_value=5000),
     ),
     verbose_logging=st.booleans(),
+    sim_riders=st.integers(min_value=0, max_value=1000),
+    sim_teams=st.integers(min_value=0, max_value=100),
+    sim_solo=st.integers(min_value=0, max_value=1000),
+    sim_laps=st.integers(min_value=0, max_value=1000),
+    sim_interval=st.integers(min_value=0, max_value=240),
+    avg_speed_kmh=st.floats(min_value=1.0, max_value=400.0, allow_nan=False, allow_infinity=False),
 )
 
 

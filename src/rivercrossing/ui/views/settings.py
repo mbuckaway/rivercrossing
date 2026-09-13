@@ -2,9 +2,10 @@
 """``SettingsDialog``: ``settings_dlg`` (3a), the app-wide preferences.
 
 E8.1.2 finishes the dialog E8.1.1's presenter stubbed: this thin view
-renders the current :class:`AppSettings` into the appearance radios
-and the sound/hide-times/verbose-log checkboxes, and OK collects a
-fresh :class:`AppSettings` for the app's ``on_save`` callback (which
+renders the current :class:`AppSettings` into the appearance radios,
+the sound/hide-times/verbose-log checkboxes and (plan §10) the
+``avg_speed_spin`` average rider speed, and OK collects a fresh
+:class:`AppSettings` for the app's ``on_save`` callback (which
 persists + applies it). W13 (notes #12): the text-zoom choice left
 the dialog -- View ▸ Zoom is the single zoom surface -- so
 ``zoom_percent`` carries through OK unchanged, like the layout
@@ -78,6 +79,7 @@ class SettingsDialog:
         self.sound_chk = self._find(ids.SOUND_CHK, wx.CheckBox)
         self.hide_times_chk = self._find(ids.HIDE_TIMES_CHK, wx.CheckBox)
         self.verbose_log_chk = self._find(ids.VERBOSE_LOG_CHK, wx.CheckBox)
+        self.avg_speed_spin = self._find(ids.AVG_SPEED_SPIN, wx.SpinCtrl)
         self.backup_now_btn = self._find(ids.BACKUP_NOW_BTN, wx.Button)
 
         self.show_settings(settings)
@@ -107,6 +109,7 @@ class SettingsDialog:
         self.sound_chk.SetValue(settings.sound_on)
         self.hide_times_chk.SetValue(settings.hide_times)
         self.verbose_log_chk.SetValue(settings.verbose_logging)
+        self.avg_speed_spin.SetValue(round(settings.avg_speed_kmh))
 
     def collect_settings(self) -> AppSettings:
         """Read the controls into a fresh :class:`AppSettings`.
@@ -123,6 +126,7 @@ class SettingsDialog:
             sound_on=bool(self.sound_chk.GetValue()),
             hide_times=bool(self.hide_times_chk.GetValue()),
             verbose_logging=bool(self.verbose_log_chk.GetValue()),
+            avg_speed_kmh=float(self.avg_speed_spin.GetValue()),
             zoom_percent=self._settings.zoom_percent,
             splitter_sash=self._settings.splitter_sash,
             window_geometry=self._settings.window_geometry,

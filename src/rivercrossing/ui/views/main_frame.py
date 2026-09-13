@@ -283,11 +283,11 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         """Bold the whole row when its crossing is flagged or edited.
 
         The two bold channels share one render: a flagged crossing
-        (R-34, held/short-lap) and an edited crossing (E7.2.2, one a
-        correction touched -- spec §3 design 8c's "edits highlighted
-        in the feed") both bold the entire row. *col* is unused:
-        xrc-windows.md's code-side note bolds the whole flagged row,
-        not one cell.
+        (R-34, a short lap -- held or credited) and an edited crossing
+        (E7.2.2, one a correction touched -- spec §3 design 8c's
+        "edits highlighted in the feed") both bold the entire row.
+        *col* is unused: xrc-windows.md's code-side note bolds the
+        whole flagged row, not one cell.
         """
         if row not in self._flagged and row not in self._edited:
             return False
@@ -302,10 +302,16 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
     :class:`CrossingsFeedModel` carries -- ``DataViewIndexListModel``
     resolves to ``Any`` and mypy refuses to subclass ``Any``.
 
-    The review notebook's "Needs Review" tab: one row per R-34 flag
-    (the rows the console feed bolds), showing Plate | Lap | Lap
+    The review notebook's "Needs Review" tab: one row per short-lap
+    flag (the rows the console feed bolds), showing Plate | Lap | Lap
     time. Rows are supplied fresh each ``show_flagged``, exactly like
     :class:`CrossingsFeedModel`'s own rebuild-per-show pattern.
+
+    ``held_for_row`` is the tab's routing seam (plan §6): the wrapped
+    row's ``held`` bit tells the app whether the activation gets a
+    confirm/void decision (hold mode, R-34) or opens the credited
+    short lap's crossing detail. The three rendered columns do not
+    carry it, so it is answered straight off the wrapped row.
     """
 
     def __init__(self, rows: Sequence[FeedRow]) -> None:
@@ -329,6 +335,10 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
         if col == FLAG_COL_LAP:
             return str(flagged_row.lap)
         return flagged_row.lap_time
+
+    def held_for_row(self, row: int) -> bool:
+        """Return whether *row*'s card is held for review (plan §6)."""
+        return self._rows[row].held
 
 
 class StartBlockedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -449,6 +459,20 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
 }
 
 
+def _pin_stop_light(light: StopLight) -> wx.Size:
+    """Floor *light* at its own best size and return that size.
+
+    §11: XRC has no window-level minsize and the header row is tight,
+    so without an explicit floor the lamp laid out at (0, 0) beside its
+    label -- the light was on but invisible. ``DoGetBestSize`` is the
+    lamp's own three-circle geometry; caching it as the minimum is what
+    keeps the sizer from squeezing it away.
+    """
+    best = light.DoGetBestSize()
+    light.SetMinSize(best)
+    return best
+
+
 class MainFrame:
     """Code-side behaviour for ``main_frame`` (the console, 1a).
 
@@ -551,6 +575,9 @@ class MainFrame:
         self.remaining_clock = self._build_clock_dial(self.remaining_clock_panel, REMAINING_CLOCK)
         self.ride_status_light = StopLight(self.ride_status_panel)
         self.ride_status_light.SetName(RIDE_STATUS_LIGHT)
+        # §11: reserve the lamp's own best size before inserting it --
+        # the leading header column squeezes it to nothing otherwise.
+        _pin_stop_light(self.ride_status_light)
         self.ride_status_panel.GetSizer().Insert(
             0, self.ride_status_light, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8
         )
@@ -589,9 +616,11 @@ class MainFrame:
         self._start_blocked_model: StartBlockedListModel | None = None
         self._on_open_rider: Callable[[str], None] | None = None
         # W11 F2a: the flagged tab's activation seam (its own slot --
-        # activating a flagged row opens entry detail, not the rider
-        # editor, so the two lists keep separate callbacks).
-        self._on_open_flagged: Callable[[str], None] | None = None
+        # activating a flagged row routes to the review decision or
+        # the credited lap's crossing detail, not the rider editor, so
+        # the two lists keep separate callbacks). It fires
+        # ``(plate, held)``: the row's own disposition decides.
+        self._on_open_flagged: Callable[[str, bool], None] | None = None
         # J2: the crossings feed's activation seam. Its own slot too:
         # the feed is keyed by row index (the app resolves that back to
         # the live Crossing), not by plate like the other two lists.
@@ -862,15 +891,18 @@ class MainFrame:
         """
         self._on_open_rider = callback
 
-    def set_on_open_flagged(self, callback: Callable[[str], None]) -> None:
+    def set_on_open_flagged(self, callback: Callable[[str, bool], None]) -> None:
         """Register the activation seam of the flagged tab (W11 F2a).
 
-        The app wires this to its open-entry-detail flow; the console
-        itself only fires ``callback(plate)`` when a flagged row is
+        The app wires this to its review router; the console itself
+        only fires ``callback(plate, held)`` when a flagged row is
         activated (double-click or Enter with the list focused). The
+        handler is called with the row's plate and its ``held`` flag:
+        a held card (R-34, hold mode) gets a confirm/void decision, a
+        credited short lap (always-deal) opens its crossing detail. The
         flagged tab and the riders tab keep separate seams because the
-        app opens a different dialog for each (entry detail vs the
-        rider editor).
+        app opens a different surface for each (review vs the rider
+        editor).
         """
         self._on_open_flagged = callback
 
@@ -952,14 +984,34 @@ class MainFrame:
         column.SetSortOrder(self._riders_sort_ascending)
         model.Resort()
 
+    def _fire_open_flagged(self, row: int) -> None:
+        """Fire the flagged-open seam for model row *row* (W11 F2a/§6).
+
+        The one place the tab's ``(plate, held)`` pair is assembled,
+        shared by the row's own activation and by ``review_btn`` so the
+        two routes cannot drift. An unwired console (no app yet, test
+        constructions) leaves the row untouched.
+        """
+        if self._flagged_model is None or self._on_open_flagged is None:
+            return
+        plate = self._flagged_model.GetValueByRow(row, FLAG_COL_PLATE)
+        self._on_open_flagged(plate, self._flagged_model.held_for_row(row))
+
     def _on_review_clicked(self) -> None:
         """Handle ``review_btn``: the sidebar's "Review…" affordance.
 
-        Deferring to :meth:`focus_review_panel` keeps the button's
-        behavior and the menu route's behavior one implementation
-        (WS-H).
+        Shows and focuses the Needs Review tab (WS-H) and then acts on
+        the row the operator has selected -- the same routing a
+        double-click fires (plan §6). With nothing selected the button
+        keeps its original focus-only behavior, which is also the
+        ``Cards ▸ Review Held Cards`` menu route's
+        :meth:`focus_review_panel` target.
         """
         self.focus_review_panel()
+        row = self.flagged_list.GetSelectedRow()
+        if row == wx.NOT_FOUND:
+            return
+        self._fire_open_flagged(row)
 
     def set_finished_actions(
         self,
@@ -1001,20 +1053,20 @@ class MainFrame:
             self._on_open_rider(plate)
 
     def _on_flagged_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Fire the open-flagged seam with the activated row's plate.
+        """Fire the open-flagged seam with the row's plate + held flag.
 
         W11 F2a: the mirror of :meth:`_on_rider_activated` for the
-        flagged list -- the flagged row's plate is the entry the
-        app's open-entry-detail flow targets.
+        flagged list. The row's plate and its card disposition go to
+        the app's review router (:meth:`_fire_open_flagged`), which
+        decides between the confirm/void decision and the crossing
+        detail.
         """
         if self._flagged_model is None:
             return
         row = self._flagged_model.GetRow(event.GetItem())
         if row == wx.NOT_FOUND:
             return
-        plate = self._flagged_model.GetValueByRow(row, FLAG_COL_PLATE)
-        if self._on_open_flagged is not None:
-            self._on_open_flagged(plate)
+        self._fire_open_flagged(row)
 
     def _on_crossing_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Fire the open-crossing seam with the activated feed row (J2).
@@ -1121,9 +1173,9 @@ class MainFrame:
         """Render the review notebook's flagged rows (ConsoleView).
 
         WS-H: the presenter feeds the flagged subset of the feed here
-        (its ``_refresh_feed``), and the view rebuilds the model like
-        :meth:`show_feed` does -- fresh rows each call keeps the
-        row-count bookkeeping trivial.
+        (its ``_refresh_feed``) -- every short lap, held or credited --
+        and the view rebuilds the model like :meth:`show_feed` does:
+        fresh rows each call keeps the row-count bookkeeping trivial.
         """
         self._flagged_model = FlaggedListModel(rows)
         self.flagged_list.AssociateModel(self._flagged_model)

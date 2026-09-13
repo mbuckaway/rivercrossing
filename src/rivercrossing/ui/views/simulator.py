@@ -6,8 +6,9 @@ replays one scripted race through the live engine. Both halves of that
 flow live here, each wrapping an already-XRC-loaded window with its
 code-side behaviour:
 
-* :class:`SimulatorDialog` reads the five count fields, forwards the
-  two Generate buttons to the presenter, and runs the race through
+* :class:`SimulatorDialog` reads the five count fields, seeds them
+  from the persisted settings, forwards the one Generate Riders button
+  to the presenter, and runs the race through
   :class:`SimRunningDialog` when GO validates.
 * :class:`SimRunningDialog` owns the progress gauge and the status
   line, and pumps the event loop so the gauge repaints and Cancel is
@@ -52,11 +53,12 @@ if TYPE_CHECKING:
 __all__ = ["MIN_WIDTH", "SIM_INFOBAR", "SimRunningDialog", "SimulatorDialog"]
 
 # The setup dialog's width floor, measured on wxPython 4.3.1 /
-# wxWidgets 3.3.3: Fit() reports the generator row (123 + 6 + 122 +
-# spacer + 74 + 6 + 74) plus the two 10px sizeritem borders = 425, and
-# that row is wider than the label/field grid. Below 425 the Generate
-# and GO buttons would be squeezed; the measured best width is the
-# floor.
+# wxWidgets 3.3.3: the original two-button generator row (123 + 6 + 122
+# + spacer + 74 + 6 + 74) plus the two 10px sizeritem borders = 425, and
+# that row was wider than the label/field grid. Plan §1 retires the
+# Generate Teams button, narrowing the row, so 425 stays the floor: it
+# still clears the grid (the narrower half of the original measurement)
+# and never squeezes the remaining Generate and GO buttons.
 MIN_WIDTH = 425
 
 # The error InfoBar's frozen name (spec.md 15b). XRC cannot author a
@@ -102,15 +104,34 @@ def _load_running_window(parent: wx.Window) -> wx.Dialog:
 class SimulatorDialog:
     """Code-side behaviour for ``simulation_dlg``.
 
-    Reads the five count fields, forwards Generate to the presenter and
-    runs the race through :class:`SimRunningDialog` on GO. A Generate
-    that the presenter refuses (a count combination outside the team
-    bounds) shows the refusal on ``sim_infobar`` and leaves the dialog
-    open; a successful Generate closes it so the app persists the
-    roster.
+    Seeds the five count fields from the persisted settings, forwards
+    Generate Riders to the presenter and runs the race through
+    :class:`SimRunningDialog` on GO. A Generate that the presenter
+    refuses (a count combination outside the team bounds) shows the
+    refusal on ``sim_infobar`` and leaves the dialog open; a successful
+    Generate closes it so the app persists the roster.
+
+    :attr:`sim_values` is the five spins as last confirmed in
+    :meth:`_on_generate_riders`/:meth:`_on_go`; the app reads it after
+    the modal ends, when the real window is gone (plan §1).
     """
 
-    def __init__(self, dialog: wx.Dialog, *, engine: RideEngine, roster: Roster) -> None:
+    # The five spin values, snapshotted before each successful close so
+    # the app can persist them without touching the destroyed window.
+    sim_values: tuple[int, int, int, int, int]
+
+    def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the five persisted seeds
+        self,
+        dialog: wx.Dialog,
+        *,
+        engine: RideEngine,
+        roster: Roster,
+        sim_riders: int = 10,
+        sim_teams: int = 2,
+        sim_solo: int = 2,
+        sim_laps: int = 1,
+        sim_interval: int = 1,
+    ) -> None:
         """Decorate an already-loaded ``simulation_dlg`` window.
 
         Args:
@@ -119,6 +140,12 @@ class SimulatorDialog:
             engine: The live ride engine the simulated crossings
                 record into.
             roster: The in-memory roster the generator fills.
+            sim_riders: The persisted "Number of riders" seed.
+            sim_teams: The persisted "Number of teams" seed.
+            sim_solo: The persisted "Solo riders" seed.
+            sim_laps: The persisted "Number of laps" seed.
+            sim_interval: The persisted "Minutes between first rider"
+                seed.
         """
         self.dialog = dialog
         self.presenter = SimulatorPresenter(engine, roster)
@@ -128,9 +155,11 @@ class SimulatorDialog:
         self.solo_spin = self._find(ids.SOLO_SPIN, wx.SpinCtrl)
         self.laps_spin = self._find(ids.LAPS_SPIN, wx.SpinCtrl)
         self.interval_spin = self._find(ids.INTERVAL_SPIN, wx.SpinCtrl)
-        self.gen_teams_btn = self._find(ids.GEN_TEAMS_BTN, wx.Button)
         self.gen_riders_btn = self._find(ids.GEN_RIDERS_BTN, wx.Button)
         self.go_btn = self._find(ids.GO_BTN, wx.Button)
+
+        self._seed_spins((sim_riders, sim_teams, sim_solo, sim_laps, sim_interval))
+        self._snapshot_sim_values()
 
         self.sim_infobar = self._build_infobar()
 
@@ -138,6 +167,31 @@ class SimulatorDialog:
         self._apply_roster_state()
         self.dialog.SetMinSize(wx.Size(MIN_WIDTH, -1))
         self.dialog.Fit()
+
+    def _seed_spins(self, values: tuple[int, int, int, int, int]) -> None:
+        """Seed the five spins with *values* (plan §1).
+
+        ``wx.SpinCtrl.SetValue`` clamps to the control's own min/max, so
+        a hand-edited settings file carrying an out-of-range count
+        still opens on a usable field. The keyword defaults mirror the
+        XRC values, so an open with no seeds passed keeps them.
+        """
+        riders, teams, solo, laps, interval = values
+        self.riders_spin.SetValue(riders)
+        self.teams_spin.SetValue(teams)
+        self.solo_spin.SetValue(solo)
+        self.laps_spin.SetValue(laps)
+        self.interval_spin.SetValue(interval)
+
+    def _snapshot_sim_values(self) -> None:
+        """Record the five spins for the app to persist (plan §1)."""
+        self.sim_values = (
+            self.riders_spin.GetValue(),
+            self.teams_spin.GetValue(),
+            self.solo_spin.GetValue(),
+            self.laps_spin.GetValue(),
+            self.interval_spin.GetValue(),
+        )
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -168,38 +222,31 @@ class SimulatorDialog:
         return bar
 
     def _bind_events(self) -> None:
-        """Forward the two Generate buttons and GO to their handlers."""
-        self.dialog.Bind(wx.EVT_BUTTON, self._on_generate_teams, self.gen_teams_btn)
+        """Forward Generate Riders and GO to their handlers."""
         self.dialog.Bind(wx.EVT_BUTTON, self._on_generate_riders, self.gen_riders_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_go, self.go_btn)
 
     def _apply_roster_state(self) -> None:
         """Reflect the roster's entry mode and state on the fields.
 
-        A SOLO-only ride has no teams to create, so ``teams_spin``,
-        ``solo_spin`` and ``gen_teams_btn`` leave the dialog. A roster
-        that already holds entries was loaded from a ride, so every
-        generator control is disabled -- generating would collide with
-        the real riders. The lap and interval fields stay live either
-        way: simulating a loaded field is the point of GO.
+        A SOLO-only ride has no teams to create, so ``teams_spin`` and
+        ``solo_spin`` leave the dialog. A roster that already holds
+        entries was loaded from a ride, so every generator control is
+        disabled -- generating would collide with the real riders. The
+        lap and interval fields stay live either way: simulating a
+        loaded field is the point of GO.
         """
         if self.presenter.roster.entry_mode is EntryMode.SOLO:
             _set_row_visible(self.teams_spin, visible=False)
             _set_row_visible(self.solo_spin, visible=False)
-            _set_row_visible(self.gen_teams_btn, visible=False)
         loaded = bool(self.presenter.roster.entries)
         for control in (
             self.riders_spin,
             self.teams_spin,
             self.solo_spin,
-            self.gen_teams_btn,
             self.gen_riders_btn,
         ):
             control.Enable(not loaded)
-
-    def _on_generate_teams(self, _event: wx.CommandEvent) -> None:
-        """Generate the requested empty teams, then close on success."""
-        self._generate(lambda: self.presenter.generate_teams(self.teams_spin.GetValue()))
 
     def _on_generate_riders(self, _event: wx.CommandEvent) -> None:
         """Generate the requested riders, then close on success.
@@ -228,7 +275,8 @@ class SimulatorDialog:
         The presenter refuses a count combination outside the team-size
         bounds with a ``ValueError``; the message is the operator's
         explanation, so it lands on ``sim_infobar`` and the dialog stays
-        open for a correction.
+        open for a correction. A successful generation snapshots the
+        spins before closing (plan §1).
         """
         try:
             generate()
@@ -236,6 +284,7 @@ class SimulatorDialog:
             self.sim_infobar.ShowMessage(str(exc), wx.ICON_WARNING)
             self.dialog.Layout()
             return
+        self._snapshot_sim_values()
         self.dialog.EndModal(wx.ID_OK)
 
     def _on_go(self, _event: wx.CommandEvent) -> None:
@@ -255,6 +304,7 @@ class SimulatorDialog:
             interval_minutes=interval_minutes,
         )
         running.run()
+        self._snapshot_sim_values()
         self.dialog.EndModal(wx.ID_OK)
 
 

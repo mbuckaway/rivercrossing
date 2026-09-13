@@ -33,6 +33,7 @@ reason as above); ``RideEngine``'s own docstring records the full
 doc-silence list.
 """
 
+import math
 from bisect import insort
 from contextlib import suppress
 from dataclasses import dataclass
@@ -56,9 +57,14 @@ __all__ = [
     "DEFAULT_DECK_COUNT",
     "DEFAULT_JOKERS_PER_DECK",
     "DEFAULT_TIEBREAK_ORDER",
+    "FAR_TOO_MANY",
+    "NOT_ENOUGH",
+    "OK",
+    "REPLAY_ACTIONS",
     "TIEBREAK_HIGH_CARD",
     "TIEBREAK_LAPS",
     "TIEBREAK_TOTAL_TIME",
+    "CardCheck",
     "Crossing",
     "CrossingResult",
     "Event",
@@ -73,6 +79,8 @@ __all__ = [
     "StartBlockedError",
     "UnknownEventActionError",
     "UnknownPlateError",
+    "check_card_sufficiency",
+    "estimate_cards_needed",
     "setup_minimum_violations",
 ]
 
@@ -281,6 +289,115 @@ def setup_minimum_violations(config: RideConfig) -> list[str]:
     return violations
 
 
+# --------------------------------- card-sufficiency check (plan §10)
+
+
+# The three verdicts check_card_sufficiency returns. The operator sees
+# a rendered sentence, but the machine-readable spelling is what a
+# caller keys on, so these are frozen strings rather than a StrEnum: no
+# module stores one, unlike RideStatus/PlateModel's persisted values.
+NOT_ENOUGH = "not_enough"
+OK = "ok"
+FAR_TOO_MANY = "far_too_many"
+
+
+@dataclass(frozen=True, slots=True)
+class CardCheck:
+    """One ride's shoe size against its estimated card demand.
+
+    ``shoe_cards`` is the shoe's own capacity (spec §4's
+    ``deck_count x (52 + jokers_per_deck)``); ``expected`` is the
+    crossing count :func:`estimate_cards_needed` predicts for the
+    field. ``verdict`` is one of :data:`NOT_ENOUGH` (the shoe runs dry
+    before the field stops drawing), :data:`OK`, or :data:`FAR_TOO_MANY`
+    (the shoe holds more than twice the demand).
+    """
+
+    shoe_cards: int
+    expected: int
+    verdict: str
+
+
+def estimate_cards_needed(config: RideConfig, roster: Roster, avg_speed_kmh: float) -> int | None:
+    """Estimate how many cards *roster*'s field will draw (plan §10).
+
+    One card per accepted crossing (R-40), so the estimate is the
+    crossing count an average-speed field of this size is expected to
+    record: the planned duration divided by the seconds one lap takes
+    at *avg_speed_kmh*, rounded up (a partial lap still deals), times
+    the number of draw units -- every rider on a ``rider_pooled`` ride,
+    every entry on a ``team_relay`` one (S1's one-card-per-plate-per-lap
+    rule).
+
+    The plate model is compared by its stored ``.value`` rather than
+    against ``PlateModel``: importing ``roster`` here at runtime would
+    close the import cycle the module docstring records, and
+    ``.value``'s spelling is the same persisted one
+    :meth:`RideEngine.on_course` already reads.
+
+    Args:
+        config: The ride's setup-time settings (lap length, duration).
+        roster: The field whose entries/riders are counted.
+        avg_speed_kmh: The operator's average rider speed in km/h.
+
+    Returns:
+        The estimated card count, or ``None`` when no estimate is
+        possible -- a non-positive ``lap_km``/``avg_speed_kmh``/
+        ``planned_duration_s``, or an empty roster.
+    """
+    if (
+        config.lap_km <= 0
+        or avg_speed_kmh <= 0
+        or config.planned_duration_s <= 0
+        or not roster.entries
+    ):
+        return None
+    lap_seconds = config.lap_km / avg_speed_kmh * 3600
+    laps_per_entry = math.ceil(config.planned_duration_s / lap_seconds)
+    draw_units = (
+        sum(len(entry.riders) for entry in roster.entries)
+        if config.plate_model.value == "rider_pooled"
+        else len(roster.entries)
+    )
+    return draw_units * laps_per_entry
+
+
+def check_card_sufficiency(
+    config: RideConfig, roster: Roster, avg_speed_kmh: float
+) -> CardCheck | None:
+    """Judge the ride's shoe against its estimated demand (plan §10).
+
+    The "Check for Rider Issues…" card-sufficiency line: the shoe's
+    own capacity is compared to :func:`estimate_cards_needed`'s
+    prediction at the 1x boundary (demand above capacity is
+    :data:`NOT_ENOUGH`) and the 2x boundary (capacity above twice the
+    demand is :data:`FAR_TOO_MANY`); everything between is
+    :data:`OK`. ``max_cards`` (R-13) is deliberately not consulted --
+    it caps what an entry's hand scores, not how many cards the shoe
+    must hold.
+
+    Args:
+        config: The ride's setup-time settings.
+        roster: The field whose entries/riders are counted.
+        avg_speed_kmh: The operator's average rider speed in km/h.
+
+    Returns:
+        The :class:`CardCheck`, or ``None`` when the estimate itself
+        is impossible (:func:`estimate_cards_needed` returned ``None``).
+    """
+    expected = estimate_cards_needed(config, roster, avg_speed_kmh)
+    if expected is None:
+        return None
+    shoe_cards = config.deck_count * (52 + config.jokers_per_deck)
+    if expected > shoe_cards:
+        verdict = NOT_ENOUGH
+    elif shoe_cards > 2 * expected:
+        verdict = FAR_TOO_MANY
+    else:
+        verdict = OK
+    return CardCheck(shoe_cards=shoe_cards, expected=expected, verdict=verdict)
+
+
 # ==================================================== E4.1 engine
 
 
@@ -327,6 +444,37 @@ class UnknownPlateError(RideEngineError):
     can flash its cue; E7's manual-deal dialog surfaces this as the
     error for a mistyped plate.
     """
+
+
+# The event actions :meth:`RideEngine.apply` dispatches -- and so the
+# only audit rows a replay may hand it. ``Store.load_engine`` filters on
+# this set (plan §8): the ``audit`` table also carries display-only
+# history such as roster plate changes, which a rebuild must skip rather
+# than trip ``apply``'s unknown-action guard.
+REPLAY_ACTIONS: frozenset[str] = frozenset(
+    {
+        "start",
+        "continue",
+        "set_start_time",
+        "record_crossing",
+        "confirm_held",
+        "void_held",
+        "undo",
+        "deal_manual",
+        "edit_crossing",
+        "void_crossing",
+        "add_crossing_at",
+        "record_miss",
+        "assign_plate_to_miss",
+        "reassign",
+        "dnf",
+        "void_card",
+        "stop",
+        "finish",
+        "reopen",
+        "shoe_reshuffle",
+    }
+)
 
 
 class UnknownEventActionError(RideEngineError):
@@ -983,11 +1131,14 @@ class RideEngine:
         plate, or a rider_pooled rider's plate, credits the entry --
         uncapped, R-16), appends one lap with a timestamp, marks the
         entry has_data, and deals one card from the shoe (R-40). A lap
-        under ``config.min_lap_s`` is short; whether it flags depends
-        on the W4 policy: with ``config.hold_short_laps`` True the lap
-        still records but its card is held, not credited (R-34), with
-        the False default (always deal) the card is credited to the
-        hand like any other. Refusals come back as ``accepted=False``
+        under ``config.min_lap_s`` is short and always reports
+        ``flagged=True`` -- the review channel the console's FLAGGED
+        cue and Needs Review panel read. The W4 policy decides the
+        card's disposition alone: with ``config.hold_short_laps`` True
+        the lap still records but its card is held, not credited
+        (R-34); with the False default (always deal) the card is
+        credited to the hand like any other. Refusals come back as
+        ``accepted=False``
         results, never raises: not RUNNING, stopped (E4.1.3), or an
         unknown plate (``reason="unknown_plate"``, E4.2.4 -- the error
         cue is E4.4's UI concern).
@@ -1023,11 +1174,9 @@ class RideEngine:
         if short and self._config.hold_short_laps:
             # R-34 (W4 opt-in): the card waits for review, uncredited.
             self._held[crossing] = card
-            flagged = True
         else:
             # W4 default: always deal -- a short lap still credits.
             self._hand.setdefault(entry.plate, []).append(card)
-            flagged = False
         self._append(
             Event(
                 action="record_crossing",
@@ -1047,7 +1196,7 @@ class RideEngine:
             lap=seq,
             lap_time=lap_time,
             card=card,
-            flagged=flagged,
+            flagged=short,
         )
 
     def held_crossings(self) -> tuple[HeldCrossing, ...]:

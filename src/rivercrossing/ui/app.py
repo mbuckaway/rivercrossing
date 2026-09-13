@@ -46,6 +46,7 @@ there, not here).
 """
 
 import gc
+import json
 import os
 import platform
 import re
@@ -103,10 +104,12 @@ from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.console import ConsolePresenter
 from rivercrossing.ui.presenters.data_source import (
     FEED_CAP,
+    AuditRow,
     DataSource,
     EmptyDataSource,
     EngineDataSource,
     RideSummary,
+    format_duration,
 )
 
 if TYPE_CHECKING:
@@ -1188,9 +1191,8 @@ def _save_layout_settings(
 def _open_entry_detail_dialog(context: _RouteContext, window: Any, plate: str) -> None:  # noqa: ANN401
     """Decorate *window* as the entry detail for *plate* (E7.2.1).
 
-    The entry-detail decoration both the ``mi_entry_detail`` menu route
-    (via :func:`_decorate`) and the W11 F2a flagged-tab seam
-    (:func:`_open_entry_detail_for`) perform: with a live console
+    The entry-detail decoration the ``mi_entry_detail`` menu route
+    performs (via :func:`_decorate`): with a live console
     threaded AND a concrete entry (``context.detail_plate``, recorded
     when entry detail opened), entry detail opens that entry over the
     live engine/roster/resource, so the six action buttons act on real
@@ -1227,6 +1229,43 @@ def _open_entry_detail_dialog(context: _RouteContext, window: Any, plate: str) -
         )
     else:
         EntryDetailDialog(window, _ENTRY_DETAIL_DEFAULT_PLATE, data_source=_EMPTY_SOURCE)
+
+
+class _StoreAuditSource:
+    """The audit dialog's DB-backed source (plan §8).
+
+    The ``audit`` table holds both engine events and the roster
+    plate-change rows :func:`_persist_roster_audit` drains, so this
+    adapter serves the presenter from the store instead of the
+    console's :class:`EngineDataSource` -- whose ``audit_rows`` reads
+    only ``engine.events`` and would never show a plate change. Not a
+    full :class:`DataSource`: the audit presenter reads this one
+    method, and ``AuditDialog`` types the seam as ``DataSource``.
+    """
+
+    def __init__(self, store: Store, ride_id: int) -> None:
+        """Hold the open store and the ride whose trail to read."""
+        self._store = store
+        self._ride_id = ride_id
+
+    def audit_rows(self) -> list[AuditRow]:
+        """Return the stored audit rows, newest first."""
+        return self._store.audit_rows(self._ride_id)
+
+
+def _audit_source(context: _RouteContext) -> DataSource:
+    """Return the audit dialog's data source for *context*.
+
+    With a store-backed ride open the dialog reads the ``audit`` table
+    (engine events *and* roster plate changes); otherwise it keeps
+    E7.3.1's live-console source, or the E5.4.2 empty state when no
+    console is threaded either.
+    """
+    store = context.store
+    if store is not None and context.active_ride_id is not None:
+        return cast("DataSource", _StoreAuditSource(store, context.active_ride_id))
+    presenter = context.presenter
+    return presenter.source if presenter is not None else _EMPTY_SOURCE
 
 
 def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each binds a different view class
@@ -1326,7 +1365,18 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
         # and GO buttons inert); _open_target then has no view to
         # persist, and the roster is untouched anyway.
         if context.presenter is not None:
-            return SimulatorDialog(window, engine=context.presenter.engine, roster=context.roster)
+            # Plan §1: seed the five spins from the live settings, so
+            # the dialog opens on the operator's last-used counts.
+            return SimulatorDialog(
+                window,
+                engine=context.presenter.engine,
+                roster=context.roster,
+                sim_riders=context.settings.sim_riders,
+                sim_teams=context.settings.sim_teams,
+                sim_solo=context.settings.sim_solo,
+                sim_laps=context.settings.sim_laps,
+                sim_interval=context.settings.sim_interval,
+            )
     elif route.target == ids.ENTRY_DETAIL_DLG:
         # E7.2.1 (shared with the W11 F2a flagged seam): the live
         # branch opens the selected entry over the live seams; the
@@ -1391,19 +1441,13 @@ def _decorate(  # noqa: PLR0912, C901 -- one elif per decorated target; each bin
         AboutDialog(window, logo_path=logo_path)
     elif route.target == ids.AUDIT_DLG:
         # E7.3.1: Audit Trail… opens the real viewer -- newest-first
-        # audit_list plus the search/action filters -- over the live
-        # console's engine source when one is threaded (the store-backed
-        # ride's events), the E5.4.2 empty state otherwise. The roster
-        # lets the search resolve a plate to its entry's display name.
-        presenter = context.presenter
-        if presenter is not None:
-            AuditDialog(
-                window,
-                data_source=presenter.source,
-                roster=context.roster,
-            )
-        else:
-            AuditDialog(window, data_source=_EMPTY_SOURCE, roster=context.roster)
+        # audit_list plus the search/action filters. With a store-backed
+        # ride open the source reads the audit table itself (plan §8:
+        # engine events *and* the roster plate changes the console's
+        # engine-only source cannot show); otherwise it keeps the live
+        # console's source, or the E5.4.2 empty state. The roster lets
+        # the search resolve a plate to its entry's display name.
+        AuditDialog(window, data_source=_audit_source(context), roster=context.roster)
     return None
 
 
@@ -1563,11 +1607,19 @@ def _handle_check_rider_issues(context: _RouteContext) -> None:
     status notice and skips the rebuild -- the same guard
     :func:`_handle_import_csv` uses, for the same wx-swallowed-raise
     reason (the measured note ``docs/EPIC3-SESSION-SUMMARY.md``
-    records).
+    records). Plan §10 threads the live ride's config and the stored
+    average rider speed so the dialog can show its card-sufficiency
+    line; both are read from the context, never cached here.
     """
     from rivercrossing.ui.views import rider_issues  # noqa: PLC0415
 
-    changed = rider_issues.run_rider_issues_flow(context.frame, context.roster)
+    presenter = context.presenter
+    changed = rider_issues.run_rider_issues_flow(
+        context.frame,
+        context.roster,
+        config=(presenter.engine.config if presenter is not None else None),
+        avg_speed_kmh=context.settings.avg_speed_kmh,
+    )
     store = context.store
     if changed and store is not None and context.active_ride_id is not None:
         try:
@@ -1575,7 +1627,7 @@ def _handle_check_rider_issues(context: _RouteContext) -> None:
         except (OSError, sqlite3.Error) as exc:
             context.frame.SetStatusText(f"Could not save riders: {exc}")
             return
-        presenter = context.presenter
+        _persist_roster_audit(context, store, context.active_ride_id, context.roster)
         clock = presenter.engine.clock if presenter is not None else None
         _switch_console_to_ride(context, context.active_ride_id, clock=clock)
 
@@ -2668,6 +2720,45 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
         _persist_simulator_changes(context, view)
 
 
+# Plan §8 scopes the persisted roster audit to plate changes: the
+# ride's own events already reach the audit table through the engine's
+# append sink, so every other roster event (creates, renames, moves,
+# CSV imports) stays in memory only.
+_PLATE_CHANGE_ACTIONS = frozenset(
+    {"change_solo_plate", "change_pooled_rider_plate", "change_team_plate"}
+)
+
+
+def _persist_roster_audit(  # noqa: PLR0913, PLR0917 -- (context, store, ride_id, roster): one call per save site
+    context: _RouteContext, store: Store, ride_id: int, roster: Roster
+) -> None:
+    """Drain *roster*'s new plate-change events into the audit table.
+
+    Called right after a successful ``Store.save_roster`` at every
+    roster-edit site (plan §8). The events come from :meth:`Roster.
+    take_audit_log`, so only what was recorded since the previous
+    drain is written. Every event is consumed even when it is not a
+    plate change -- those are already persisted through the engine's
+    own append sink. A refused insert surfaces as a status notice, the
+    same guard idiom the roster saves use (wx swallows an unguarded
+    raise).
+
+    Args:
+        context: The route context whose frame takes the notice.
+        store: The open store to insert through.
+        ride_id: The ride the events belong to.
+        roster: The roster whose audit log to drain.
+    """
+    for event in roster.take_audit_log():
+        if event.action not in _PLATE_CHANGE_ACTIONS:
+            continue
+        try:
+            store.append_roster_event(ride_id, event.action, json.dumps(dict(event.payload)))
+        except (OSError, sqlite3.Error) as exc:
+            context.frame.SetStatusText(f"Could not save audit trail: {exc}")
+            return
+
+
 def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
     """Persist the roster after a rider-editor modal ends (W7).
 
@@ -2682,6 +2773,10 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
     reason (the measured note ``docs/EPIC3-SESSION-SUMMARY.md``
     records): worst case the operator is told nothing happened while
     the edit silently stayed unpersisted.
+
+    Plan §8: a committed plate change also reaches the ``audit`` table
+    through :func:`_persist_roster_audit`, so the Audit Trail dialog
+    shows it on the next open.
 
     Args:
         context: The route context whose store/roster to act on.
@@ -2698,6 +2793,8 @@ def _persist_rider_editor_changes(context: _RouteContext, view: Any) -> None:  #
         store.save_roster(context.active_ride_id, context.roster)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save riders: {exc}")
+        return
+    _persist_roster_audit(context, store, context.active_ride_id, context.roster)
 
 
 def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
@@ -2729,10 +2826,12 @@ def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # 
         store.save_roster(context.active_ride_id, context.roster)
     except (OSError, sqlite3.Error) as exc:
         context.frame.SetStatusText(f"Could not save teams: {exc}")
+        return
+    _persist_roster_audit(context, store, context.active_ride_id, context.roster)
 
 
 def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
-    """Persist the roster after the simulator dialog closes.
+    """Persist the roster and spins after the simulator dialog closes.
 
     The mirror of :func:`_persist_rider_editor_changes`: the simulator
     generates placeholder riders and teams into the in-memory roster,
@@ -2743,21 +2842,55 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     notice -- the same guard idiom the rider editor uses, for the same
     wx-swallowed-raise reason.
 
+    Plan §1 adds the settings write: the dialog's five spin values
+    (``view.sim_values``, recorded before the modal closed) are stored
+    so the next open seeds the fields with them. This runs whichever
+    way the modal ended -- the window is already gone, so the values
+    are read from the view's plain tuple, never from a wx control.
+
+    Plan §2 adds the menu re-apply. GO drives the engine directly
+    (``SimulatorPresenter.run_simulation``), so no console ride-state
+    change fires and the menubar keeps the ride's pre-GO enablement --
+    Finish Ride / Stop Ride / Undo Last Crossing all stay disabled on
+    the ride the GO just left RUNNING (stopped). Re-applying the live
+    engine's own status, the same read
+    :func:`_record_export_completion` refreshes with, enables them on
+    the spot; a GO the engine refused leaves it DRAFT, so the menu
+    never claims a ride that never started. A route-level context with
+    no presenter has no live ride to re-apply.
+
     Args:
-        context: The route context whose store/roster to act on.
-        view: The closed ``SimulatorDialog`` (or a presenter-shaped
+        context: The route context whose store, roster and settings
+            to act on.
+        view: The closed ``SimulatorDialog`` (or a simulator-shaped
             stand-in) whose ``presenter.roster_changed`` says whether
-            this session generated anything.
+            this session generated anything and whose ``sim_values``
+            carry the five spin values to persist.
     """
-    if not view.presenter.roster_changed:
-        return
-    store = context.store
-    if store is None or context.active_ride_id is None:
-        return
+    if view.presenter.roster_changed:
+        store = context.store
+        if store is not None and context.active_ride_id is not None:
+            try:
+                store.save_roster(context.active_ride_id, context.roster)
+            except (OSError, sqlite3.Error) as exc:
+                context.frame.SetStatusText(f"Could not save riders: {exc}")
+    sim_riders, sim_teams, sim_solo, sim_laps, sim_interval = view.sim_values
+    updated = replace(
+        context.settings,
+        sim_riders=sim_riders,
+        sim_teams=sim_teams,
+        sim_solo=sim_solo,
+        sim_laps=sim_laps,
+        sim_interval=sim_interval,
+    )
     try:
-        store.save_roster(context.active_ride_id, context.roster)
+        settings_store.save_settings(updated, context.settings_path)
     except (OSError, sqlite3.Error) as exc:
-        context.frame.SetStatusText(f"Could not save riders: {exc}")
+        context.frame.SetStatusText(f"Could not save settings: {exc}")
+    context.settings = updated
+    presenter = context.presenter
+    if presenter is not None:
+        _apply_menu_state(context, presenter.engine.state)
 
 
 def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
@@ -2816,50 +2949,169 @@ def _wire_rider_open_seam(context: _RouteContext) -> None:
     console_view.set_on_open_rider(lambda plate: _open_rider_editor_for(context, plate))
 
 
-def _open_entry_detail_for(context: _RouteContext, plate: str) -> None:
-    """Open ``entry_detail_dlg`` at *plate* (the W11 F2a flagged seam).
+# The held-card review copy (plan §6). The confirm question is the
+# non-destructive one (info icon, Enter confirms a card into the hand);
+# declining it asks the destructive void question, whose Cancel is the
+# safe keep-held answer. Two native confirms rather than a new XRC
+# window: spec §15b's frozen name registry carries no review-dialog
+# names, and native dialogs need none.
+_HELD_REVIEW_TITLE = "Review Held Card"
+_HELD_CONFIRM_LABEL = "Confirm card"
+_HELD_CONFIRM_CANCEL_LABEL = "Cancel"
+_HELD_VOID_TITLE = "Void Held Card?"
+_HELD_VOID_LABEL = "Void card"
+_HELD_VOID_CANCEL_LABEL = "Keep held"
 
-    The flagged-tab activation flow: wired as
-    :meth:`MainFrame.set_on_open_flagged`'s callback
-    (:func:`_wire_flagged_open_seam`), so a double-click (or Enter) on
-    a flagged row opens the LIVE entry detail at the flagged entry's
-    plate -- the same decoration :func:`_open_target` performs for the
-    ``mi_entry_detail`` route (:func:`_open_entry_detail_dialog`,
-    which also records ``context.detail_plate`` so the correction menu
-    routes act on the flagged entry). The dialog path mirrors
-    :func:`_open_rider_editor_for`'s own: zoom applied before
-    decoration, shown through ``dialogs.run_dialog``, destroyed in a
-    ``finally`` (Fault A: a decoration raise must not leak it).
+
+def _held_card_facts(engine: RideEngine, crossing: Crossing, roster: Roster) -> str:
+    """Return the summary line the held-card review confirms carry.
+
+    UX-DESKTOP §4: a confirm names the object it is about, so the
+    question carries the entry, the plate, the lap, that lap's time and
+    the card awaiting disposition. A crossing whose lap is past the
+    entry's recorded times (a stale row) renders the zero duration; a
+    crossing the hold queue no longer carries renders ``no card``.
     """
-    from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+    entry = roster.resolve_plate(crossing.entry_id)
+    name = entry.display_name if entry is not None else crossing.entry_id
+    times = engine.lap_times(crossing.entry_id)
+    lap_time = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+    card = engine.held_card_for(crossing)
+    card_text = card.code() if card is not None else "no card"
+    return (
+        f"{name} · plate {crossing.rider_plate or crossing.entry_id} · "
+        f"Lap {crossing.seq} · {format_duration(lap_time)} · {card_text}"
+    )
 
-    window = context.resource.LoadDialog(None, ids.ENTRY_DETAIL_DLG)
-    if window is None:
-        context.frame.SetStatusText("Entry Detail — no window authored yet")
+
+def _review_held_crossing(context: _RouteContext, engine: RideEngine, crossing: Crossing) -> None:
+    """Ask what to do with *crossing*'s held card, then commit it.
+
+    The held half of the flagged review routing (plan §6): one native
+    confirm asks whether to confirm the card into the entry's hand;
+    declining it asks the destructive void question instead. Confirm
+    runs ``engine.confirm_held`` and Void ``engine.void_held`` -- both
+    already emit audited events -- and each posts a status notice. The
+    console feed re-renders from the engine on its own next tick, so
+    nothing is refreshed here.
+    """
+    wx = require_wx()
+    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    facts = _held_card_facts(engine, crossing, context.roster)
+    plate = crossing.rider_plate or crossing.entry_id
+    confirmed = std_dialogs.show_prompt(
+        context.frame,
+        _HELD_REVIEW_TITLE,
+        f"{facts}\n\nConfirm this card into the entry's hand?",
+        _HELD_CONFIRM_LABEL,
+        _HELD_CONFIRM_CANCEL_LABEL,
+    )
+    if confirmed == wx.ID_OK:
+        engine.confirm_held(crossing)
+        context.frame.SetStatusText(f"Card confirmed for plate {plate}")
         return
-    try:
-        zoom.apply_to(window)
-        _open_entry_detail_dialog(context, window, plate)
-        _apply_dialog_defaults(window, commands.route_for_id("mi_entry_detail"))
-        dialogs.run_dialog(window, opener=context.frame)
-    finally:
-        if not window.IsBeingDeleted():
-            window.Destroy()
+    voided = std_dialogs.show_danger(
+        context.frame,
+        _HELD_VOID_TITLE,
+        f"{facts}\n\nVoid this card? It will not be credited.",
+        _HELD_VOID_LABEL,
+        _HELD_VOID_CANCEL_LABEL,
+    )
+    if voided == wx.ID_OK:
+        engine.void_held(crossing)
+        context.frame.SetStatusText(f"Card voided for plate {plate}")
+
+
+def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, held) pair
+    source: DataSource,
+    engine: RideEngine,
+    plate: str,
+    held: bool,  # noqa: FBT001 -- the seam's flag travels positionally
+) -> Crossing | None:
+    """Resolve the crossing a flagged ``(plate, held)`` row names.
+
+    The Needs Review tab renders the feed's flagged rows (short laps),
+    so the newest such row for *plate* with the same disposition
+    identifies the lap: its ``FeedRow.lap`` is the crossing's own
+    ``seq``, searched in the pair's own half of the engine -- the hold
+    queue for a held row, every recorded crossing for a credited one.
+    Both halves use the feed's own identity, ``crossing.rider_plate or
+    crossing.entry_id``. ``None`` is a stale row: nothing in the feed
+    matches the activated pair.
+    """
+    row = next(
+        (
+            candidate
+            for candidate in source.feed_rows()
+            if candidate.flagged
+            and not candidate.missed
+            and candidate.plate == plate
+            and candidate.held == held
+        ),
+        None,
+    )
+    if row is None:
+        return None
+    candidates = (
+        [held_crossing.crossing for held_crossing in engine.held_crossings()]
+        if held
+        else list(engine.crossings)
+    )
+    return next(
+        (
+            crossing
+            for crossing in candidates
+            if (crossing.rider_plate or crossing.entry_id) == plate and crossing.seq == row.lap
+        ),
+        None,
+    )
+
+
+def _open_flagged_review_for(
+    context: _RouteContext,
+    plate: str,
+    held: bool,  # noqa: FBT001 -- the seam's flag travels positionally
+) -> None:
+    """Route a flagged-row activation by card disposition (§6).
+
+    The app half of :meth:`MainFrame.set_on_open_flagged` (which fires
+    ``callback(plate, held)``): a **held** card gets the confirm/void
+    decision, a **credited** short lap (always-deal mode) opens
+    ``crossing_detail_dlg`` on the lap. A row that resolves to no live
+    crossing -- a stale activation after an undo or correction -- posts
+    a status notice instead of opening anything. A console-less
+    route-level context has nothing to review.
+    """
+    presenter = context.presenter
+    if presenter is None:
+        return
+    engine = presenter.engine
+    crossing = _flagged_crossing_for(presenter.source, engine, plate, held)
+    if crossing is None:
+        context.frame.SetStatusText(f"Review — no crossing found for plate {plate}")
+        return
+    if held:
+        _review_held_crossing(context, engine, crossing)
+    else:
+        _show_crossing_detail_dialog(context, engine, crossing)
 
 
 def _wire_flagged_open_seam(context: _RouteContext) -> None:
-    """Wire the console flagged tab's activation to entry detail.
+    """Wire the console flagged tab's activation to the review router.
 
-    W11 F2a: :meth:`MainFrame.set_on_open_flagged` is the view's pure
-    seam (it only fires ``callback(plate)``); this is the app's half
-    that opens the live entry detail at the activated flagged row's
-    plate, recording it as the current entry. A console-less
-    route-level context has nothing to wire.
+    W11 F2a/§6: :meth:`MainFrame.set_on_open_flagged` is the view's
+    pure seam (it fires ``callback(plate, held)``); this is the app's
+    half that resolves the activated row back to its live crossing and
+    routes it by card disposition (:func:`_open_flagged_review_for`). A
+    console-less route-level context has nothing to wire.
     """
     console_view = context.console_view
     if console_view is None:
         return
-    console_view.set_on_open_flagged(lambda plate: _open_entry_detail_for(context, plate))
+    console_view.set_on_open_flagged(
+        lambda plate, held: _open_flagged_review_for(context, plate, held)
+    )
 
 
 def _crossing_for_feed_row(engine: RideEngine, row: int) -> Crossing | None:
@@ -2909,29 +3161,21 @@ def _feed_row_target(
     return _crossing_for_feed_row(engine, crossing_rows_before)
 
 
-def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
-    """Open ``crossing_detail_dlg`` on the feed row *row* (J2/K2).
+def _show_crossing_detail_dialog(
+    context: _RouteContext, engine: RideEngine, target: Crossing | PendingMiss
+) -> None:
+    """Load ``crossing_detail_dlg`` and run it on *target* (J2/K2).
 
-    The console crossings feed's activation flow: wired as
-    :meth:`MainFrame.set_on_open_crossing`'s callback
-    (:func:`_wire_crossing_open_seam`), so a double-click (or Enter)
-    on a feed row opens the row's detail -- the same decoration idiom
-    :func:`_open_rider_editor_for` uses (zoom applied before
-    decoration, shown through ``dialogs.run_dialog``, destroyed in a
-    ``finally`` so a decoration raise cannot leak it).
-
-    Differences: the console view hands over a *row index*, resolved
-    here by :func:`_feed_row_target` to either the live ``Crossing``
-    or the pending miss the row stands for. A crossing opens
-    :class:`CrossingDetailView`, a miss opens
+    The decoration both crossing-detail entry points share -- the feed
+    row's own activation and the credited short lap's review routing:
+    zoom applied before the view is built, shown through
+    ``dialogs.run_dialog``, destroyed in a ``finally`` so a decoration
+    raise cannot leak it (the :func:`_open_rider_editor_for` idiom). A
+    crossing opens :class:`CrossingDetailView`, a miss opens
     :class:`MissDetailView`, so the same window serves the "wrong plate
     on the line" and "score the miss" corrections. The dialog commits
     straight through the console's engine, whose event sink already
     persists it, so nothing is read back afterwards.
-
-    A console with no ride behind it (W1's no-ride bootstrap) has no
-    presenter and no crossings, so there is nothing to show; the
-    startup empty feed renders no row a double-click could reach.
     """
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
     from rivercrossing.ui.views.crossing_detail import (  # noqa: PLC0415 -- deferred
@@ -2939,13 +3183,6 @@ def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
         MissDetailView,
     )
 
-    presenter = context.presenter
-    if presenter is None:
-        return
-    engine = presenter.engine
-    target = _feed_row_target(presenter.source, engine, row)
-    if target is None:
-        return
     window = context.resource.LoadDialog(None, ids.CROSSING_DETAIL_DLG)
     if window is None:
         context.frame.SetStatusText("Crossing Detail — no window authored yet")
@@ -2960,6 +3197,33 @@ def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
     finally:
         if not window.IsBeingDeleted():
             window.Destroy()
+
+
+def _open_crossing_detail_for(context: _RouteContext, row: int) -> None:
+    """Open ``crossing_detail_dlg`` on the feed row *row* (J2/K2).
+
+    The console crossings feed's activation flow: wired as
+    :meth:`MainFrame.set_on_open_crossing`'s callback
+    (:func:`_wire_crossing_open_seam`), so a double-click (or Enter)
+    on a feed row opens the row's detail.
+
+    The console view hands over a *row index*, resolved here by
+    :func:`_feed_row_target` to either the live ``Crossing`` or the
+    pending miss the row stands for; the shared
+    :func:`_show_crossing_detail_dialog` then runs the window.
+
+    A console with no ride behind it (W1's no-ride bootstrap) has no
+    presenter and no crossings, so there is nothing to show; the
+    startup empty feed renders no row a double-click could reach.
+    """
+    presenter = context.presenter
+    if presenter is None:
+        return
+    engine = presenter.engine
+    target = _feed_row_target(presenter.source, engine, row)
+    if target is None:
+        return
+    _show_crossing_detail_dialog(context, engine, target)
 
 
 def _wire_crossing_open_seam(context: _RouteContext) -> None:
@@ -3280,6 +3544,32 @@ def _correction_route_handler(
     return None
 
 
+def _live_presenter_handler(
+    context: _RouteContext,
+    act: Callable[[ConsolePresenter], None],
+    fallback_notice: str,
+) -> Callable[[Any], None]:
+    """Return a handler running *act* on the fire-time presenter.
+
+    ``_bind_routes`` binds every route once at bootstrap, while
+    ``context.presenter`` is still ``None``; E5.4.1's console swap
+    fills the same context in later, so a handler must read
+    ``context.presenter`` when the menu item fires, not when it is
+    built. A bind-time snapshot would leave the row permanently on
+    *fallback_notice*. Mirrors the presenter-first shape
+    :func:`_handle_finish_route` uses.
+    """
+
+    def _fire(_event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        presenter = context.presenter
+        if presenter is None:
+            context.frame.SetStatusText(fallback_notice)
+            return
+        act(presenter)
+
+    return _fire
+
+
 def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per route special case; each is a real action
     context: _RouteContext, route: commands.MenuRoute
 ) -> Callable[[Any], None]:
@@ -3294,18 +3584,19 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     (E3.4) is the one ``COMMAND`` row with a real action of its own,
     ahead of the generic stub. ``undo_last_crossing`` (E4.4.2) fires
     the live console presenter's ``on_undo`` (covering both the Cards
-    ▸ Undo menu item and its Ctrl+Z accelerator); when no live
-    presenter is threaded (route-level tests), it falls back to the
-    generic stub. ``start_ride`` (ux-polish) fires the live
-    presenter's ``on_start`` the same way -- the engine's own start
-    gate (empty roster, incomplete setup) refuses through
-    ``StartBlockedError`` and the presenter opens the blocked-start
-    issues dialog, one row per reason (Phase 5); with no presenter
-    the fallback posts "Start Ride — no ride open".
+    ▸ Undo menu item and its Ctrl+Z accelerator). ``start_ride``
+    (ux-polish) fires the live presenter's ``on_start`` the same way
+    -- the engine's own start gate (empty roster, incomplete setup)
+    refuses through ``StartBlockedError`` and the presenter opens the
+    blocked-start issues dialog, one row per reason (Phase 5).
     ``stop_ride`` (W5) fires the live presenter's native stop-confirm
     flow (``on_stop_requested``) the same way -- a riderless roster
-    gets a native warning from the flow itself; with no presenter the
-    fallback posts the generic stub. ``focus_review_panel``
+    gets a native warning from the flow itself. All three resolve
+    ``context.presenter`` through :func:`_live_presenter_handler` at
+    fire time, because :func:`_bind_routes` runs its one binding pass
+    before any ride is open; with no presenter threaded, each posts
+    its own notice ("Start Ride — no ride open" for the start row).
+    ``focus_review_panel``
     (ux-polish) focuses the console's
     review-panel "Needs Review" tab through the wired console view,
     with the generic stub standing in for a console-less route-level
@@ -3345,29 +3636,27 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     if route.target == "export_riders_csv":
         return lambda _event: _handle_export_csv(context)
     if route.target == "undo_last_crossing":
-        presenter = context.presenter
-        if presenter is not None:
-            return lambda _event: presenter.on_undo()
-        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
+        return _live_presenter_handler(
+            context,
+            lambda presenter: presenter.on_undo(),
+            f"{route.label} — not yet implemented",
+        )
     if route.target == "start_ride":
-        # A distinct local (not ``presenter``): the undo branch above
-        # narrows its own binding into a lambda, and a later
-        # reassignment of the same name would void that narrowing for
-        # mypy (closures capture the variable, not the value).
-        start_presenter = context.presenter
-        if start_presenter is not None:
-            return lambda _event: start_presenter.on_start()
-        return lambda _event: context.frame.SetStatusText("Start Ride — no ride open")
+        return _live_presenter_handler(
+            context,
+            lambda presenter: presenter.on_start(),
+            "Start Ride — no ride open",
+        )
     if route.target == "stop_ride":
         # W5: mi_stop_ride reaches the live presenter's native
         # stop-confirm flow (on_stop_requested) -- the identical
         # handler the console Stop button fires, so the menu row and
-        # the button cannot drift. Same distinct-local reason as the
-        # start branch above.
-        stop_presenter = context.presenter
-        if stop_presenter is not None:
-            return lambda _event: stop_presenter.on_stop_requested()
-        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
+        # the button cannot drift.
+        return _live_presenter_handler(
+            context,
+            lambda presenter: presenter.on_stop_requested(),
+            f"{route.label} — not yet implemented",
+        )
     if route.target == "clear_ride":
         # D3: confirm, then reset the open ride to a fresh DRAFT. The
         # row dispatches through its own handler (like the finish and
@@ -3794,8 +4083,11 @@ def build_main_window(
     ux-polish adds one post-wiring step: the console Riders tab's
     double-click seam is wired to the rider editor
     (:func:`_wire_rider_open_seam`); W11 adds the flagged tab's
-    activation seam the same way (:func:`_wire_flagged_open_seam` ->
-    live entry detail at the flagged plate) and the FINISHED banner's
+    activation seam the same way, routed by the row's card
+    disposition (:func:`_wire_flagged_open_seam` ->
+    :func:`_open_flagged_review_for`: a held card's confirm/void
+    decision, a credited short lap's crossing detail) and the
+    FINISHED banner's
     two buttons (:func:`_wire_finished_banner_actions` -> the reopen
     and results flows); J2 adds the crossings feed's own activation
     seam (:func:`_wire_crossing_open_seam` -> the read-only Crossing
