@@ -75,7 +75,7 @@ def test_column_labels_rename_entry_to_name_throughout() -> None:
 # One width per canvas column, in canvas order: enough for the widest
 # demo value in each text column ("14:22:41", "9999", "Trail Blazers
 # (T)", "999", "3:02:11") and the 24x32 card face plus padding in the
-# bitmap one (entry_detail's own D16 width precedent).
+# bitmap one (the rider editor's card columns use the same width).
 CANVAS_COLUMN_WIDTHS = (80, 50, 150, 60, 50, 80, 80)
 
 

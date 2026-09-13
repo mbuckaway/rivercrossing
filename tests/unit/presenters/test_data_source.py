@@ -7,11 +7,11 @@ test_demo.py). These tests pin what those suites only reach indirectly:
 the module's two pure display formatters -- the one-hour switch of
 ``_format_lap_time`` (durations past ``h:mm:ss``) and ``_event_time``'s
 refusal arm for a payload timestamp that is not ISO-8601 -- plus J1's
-per-rider crossing attribution, where ``EngineDataSource``'s feed and
-entry-detail rows name the rider whose plate the operator typed and
-fall back to the entry's plate/team name only when no roster rider
-owns that plate. Pure functions over plain values -- no wx, no I/O, so
-there is nothing to fake or mock (T-10).
+per-rider crossing attribution, where ``EngineDataSource``'s feed rows
+name the rider whose plate the operator typed and fall back to the
+entry's plate/team name only when no roster rider owns that plate.
+Pure functions over plain values -- no wx, no I/O, so there is nothing
+to fake or mock (T-10).
 """
 
 from datetime import datetime, timedelta
@@ -214,30 +214,6 @@ def test_feed_rows_given_solo_rider_shows_their_own_name_and_plate() -> None:
     feed = source.feed_rows()
 
     assert [(row.plate, row.entry) for row in feed] == [("12", "Amy")]
-
-
-def test_entry_detail_given_pooled_rider_plate_names_the_typing_rider_on_the_lap() -> None:
-    """J1: each lap row names the rider whose plate was typed."""
-    roster = _pooled_team_roster()
-    engine = _running_engine(roster)
-    engine.record_crossing("45", at=_dt(10, 2))
-    source = EngineDataSource(engine, roster)
-
-    detail = source.entry_detail("9")
-
-    assert [lap.rider for lap in detail.laps] == ["Sarah"]
-
-
-def test_entry_detail_given_team_relay_lap_falls_back_to_the_entry_display_name() -> None:
-    """Relay riders own no plate, so the entry name stands in."""
-    roster = _relay_team_roster()
-    engine = _running_engine(roster)
-    engine.record_crossing("9", at=_dt(10, 2))
-    source = EngineDataSource(engine, roster)
-
-    detail = source.entry_detail("9")
-
-    assert [lap.rider for lap in detail.laps] == ["Dirt Dynamos"]
 
 
 def test_rider_name_for_given_matching_plate_returns_that_riders_full_name() -> None:

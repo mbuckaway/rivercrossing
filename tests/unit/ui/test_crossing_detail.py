@@ -42,7 +42,8 @@ from rivercrossing.ui import app as app_module
 from rivercrossing.ui import ids, std_dialogs
 from rivercrossing.ui.card_text import format_card
 from rivercrossing.ui.presenters.data_source import EngineDataSource
-from rivercrossing.ui.views import crossing_detail, dialogs, main_frame
+from rivercrossing.ui.views import corrections, crossing_detail, dialogs, main_frame
+from rivercrossing.ui.views.corrections import CardVoid, CrossingEdit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -481,6 +482,8 @@ def _view(  # noqa: PLR0913 -- (engine, roster, crossing, plate) all matter
         setattr(view, attr, _RecordingLabel())
     view.edit_plate_input = _RecordingText(plate)
     view.edit_btn = _RecordingButton()
+    view.edit_time_btn = _RecordingButton()
+    view.void_card_btn = _RecordingButton()
     view.delete_btn = _RecordingButton()
     view.ok_btn = _RecordingButton()
     view.crossing_detail_infobar = _RecordingInfoBar()
@@ -626,6 +629,273 @@ def test_render_given_a_ride_that_is_not_live_disables_delete(state: RideStatus)
     view.render()
 
     assert view.delete_btn.enabled is False
+
+
+# ----------------------------------- Edit Time / Void Card (Phase 2)
+#
+# The crossing detail's two new corrections: edit_time_btn retimes the
+# crossing through ``edit_crossing_dlg`` in edit mode, void_card_btn
+# voids the crossing's own dealt card through ``void_card_confirm_dlg``.
+
+
+def test_render_given_a_credited_card_enables_the_new_corrections() -> None:
+    """A credited card is voidable; Edit Time is always offered."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster)
+
+    view.render()
+
+    assert (view.edit_time_btn.enabled, view.void_card_btn.enabled) == (True, True)
+
+
+def test_render_given_a_held_card_disables_void_card() -> None:
+    """R-34: a held card is the review surface's, not voidable here."""
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster)
+
+    view.render()
+
+    assert (view.edit_time_btn.enabled, view.void_card_btn.enabled) == (True, False)
+
+
+def test_render_given_a_voided_card_disables_void_card() -> None:
+    """T-3 negative: a card already out of the ride cannot be voided."""
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.void_held(engine.crossings[0])
+    view = _view(engine, roster=roster)
+
+    view.render()
+
+    assert (view.edit_time_btn.enabled, view.void_card_btn.enabled) == (True, False)
+
+
+def test_render_given_a_pending_miss_disables_both_new_corrections() -> None:
+    """A miss is neither retimeable nor voidable."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    view = _miss_view(engine)
+
+    view.render()
+
+    assert (view.edit_time_btn.enabled, view.void_card_btn.enabled) == (False, False)
+
+
+def _stub_run_edit_crossing(
+    monkeypatch: pytest.MonkeyPatch, result: CrossingEdit | None
+) -> list[dict[str, object]]:
+    """Stub ``corrections.run_edit_crossing`` to return *result*."""
+    calls: list[dict[str, object]] = []
+
+    def _run(_resource: object, **kwargs: object) -> CrossingEdit | None:
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(corrections, "run_edit_crossing", _run)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("rider_plate", "expected"),
+    [("12", "12"), (None, "12")],
+    ids=["typed_plate", "no_typed_plate"],
+)
+def test_on_edit_time_given_a_crossing_prefills_the_plate_field(
+    monkeypatch: pytest.MonkeyPatch,
+    rider_plate: str | None,
+    expected: str,
+) -> None:
+    """T-4 nullable: the dialog opens on the plate the view shows."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    crossing = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate=rider_plate)
+    view = _view(engine, roster=roster, crossing=crossing)
+    calls = _stub_run_edit_crossing(monkeypatch, None)
+
+    view._on_edit_time(_RecordingEvent())
+
+    assert calls == [
+        {
+            "frame": view.dialog,
+            "adding": False,
+            "plate": expected,
+            "time": "10:02:00",
+            "seq": 1,
+            "base_date": engine.config.event_date,
+        }
+    ]
+    assert view.dialog.modal_ids == []
+
+
+def test_on_edit_time_given_a_confirmed_edit_retimes_the_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 2: a confirmed edit commits through ``edit_crossing``."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster)
+    _stub_run_edit_crossing(
+        monkeypatch,
+        CrossingEdit(entry_id="12", seq=1, crossed_at=_dt(10, 3), reason="wrong clock"),
+    )
+    event = _RecordingEvent()
+
+    view._on_edit_time(event)
+
+    assert [(c.seq, c.crossed_at) for c in engine.crossings] == [(1, _dt(10, 3))]
+    assert engine.events[-1].action == "edit_crossing"
+    assert engine.events[-1].payload["reason"] == "wrong clock"
+    assert (view.dialog.modal_ids, event.skipped) == ([wx.ID_OK], True)
+
+
+def test_on_edit_time_given_a_chosen_void_voids_the_crossing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3: edit mode's void_btn voids instead of retiming."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster)
+    _stub_run_edit_crossing(
+        monkeypatch,
+        CrossingEdit(entry_id="12", seq=1, crossed_at=None, reason="never happened", void=True),
+    )
+
+    view._on_edit_time(_RecordingEvent())
+
+    assert engine.crossings == ()
+    assert engine.events[-1].action == "void_crossing"
+    assert view.dialog.modal_ids == [wx.ID_OK]
+
+
+def test_on_edit_time_given_a_cancelled_dialog_leaves_the_ride_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: Cancel commits nothing and closes nothing."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster)
+    _stub_run_edit_crossing(monkeypatch, None)
+    events_before = len(engine.events)
+
+    view._on_edit_time(_RecordingEvent())
+
+    assert (len(engine.events), view.dialog.modal_ids) == (events_before, [])
+    assert view.crossing_detail_infobar.messages == []
+
+
+def test_on_edit_time_given_a_finished_ride_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finished ride refuses; the dialog stays open."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.finish()
+    view = _view(engine, roster=roster)
+    _stub_run_edit_crossing(
+        monkeypatch,
+        CrossingEdit(entry_id="12", seq=1, crossed_at=_dt(10, 3), reason="wrong clock"),
+    )
+
+    view._on_edit_time(_RecordingEvent())
+
+    assert view.dialog.modal_ids == []
+    assert view.crossing_detail_infobar.messages == [
+        "Could not edit crossing: cannot edit crossing from finished"
+    ]
+
+
+def _stub_run_void_card(
+    monkeypatch: pytest.MonkeyPatch, result: CardVoid | None
+) -> list[dict[str, object]]:
+    """Stub ``corrections.run_void_card`` to return *result*."""
+    calls: list[dict[str, object]] = []
+
+    def _run(_resource: object, **kwargs: object) -> CardVoid | None:
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(corrections, "run_void_card", _run)
+    return calls
+
+
+def test_on_void_card_given_a_confirmed_void_voids_the_crossings_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 2: the confirm names the card + entry, then voids it."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[0]
+    card = engine.card_for(crossing)
+    view = _view(engine, roster=roster)
+    calls = _stub_run_void_card(
+        monkeypatch, CardVoid(entry_id="12", card=card.code(), reason="wrong card")
+    )
+    event = _RecordingEvent()
+
+    view._on_void_card(event)
+
+    assert calls == [
+        {
+            "frame": view.dialog,
+            "entry_id": "12",
+            "card": card.code(),
+            "entry": "12 · Amy",
+        }
+    ]
+    assert engine.credited_cards("12") == ()
+    assert engine.events[-1].action == "void_card"
+    assert engine.events[-1].payload["reason"] == "wrong card"
+    assert (view.dialog.modal_ids, event.skipped) == ([wx.ID_OK], True)
+
+
+def test_on_void_card_given_a_cancelled_dialog_leaves_the_ride_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: Cancel voids nothing and closes nothing."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster)
+    _stub_run_void_card(monkeypatch, None)
+    events_before = len(engine.events)
+
+    view._on_void_card(_RecordingEvent())
+
+    assert (len(engine.events), view.dialog.modal_ids) == (events_before, [])
+    assert view.crossing_detail_infobar.messages == []
+
+
+def test_on_void_card_given_a_finished_ride_keeps_the_dialog_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finished ride refuses; the dialog stays open."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    card = engine.card_for(engine.crossings[0])
+    engine.finish()
+    view = _view(engine, roster=roster)
+    _stub_run_void_card(
+        monkeypatch, CardVoid(entry_id="12", card=card.code(), reason="wrong card")
+    )
+
+    view._on_void_card(_RecordingEvent())
+
+    assert view.dialog.modal_ids == []
+    assert view.crossing_detail_infobar.messages == [
+        "Could not void card: cannot void card from finished"
+    ]
 
 
 # ------------------------------------------------------------ Edit
@@ -931,12 +1201,12 @@ def test_on_ok_given_a_finished_ride_refuses_and_keeps_the_dialog_open() -> None
 # ---------------------------------------------------------- Delete
 
 # The Delete confirm's own copy for Amy's 10:02 lap-1 crossing (Undo)
-# and for Amy's 10:05 lap-2 crossing (the specific-crossing void).
+# and for Amy's 10:05 lap-2 crossing (the specific-crossing delete).
 _DELETE_MESSAGE = (
     "Undo crossing 10:02:00 · Amy · lap 1? The newest crossing and its dealt card are removed."
 )
 _VOID_MESSAGE = (
-    "Void crossing 10:05:00 · Amy · lap 2? The crossing and its card are voided; "
+    "Delete crossing 10:05:00 · Amy · lap 2? The crossing and its card are voided; "
     "the entry's later laps renumber."
 )
 
@@ -965,13 +1235,14 @@ def test_delete_message_given_a_newest_crossing_names_the_undo() -> None:
     assert message == _DELETE_MESSAGE
 
 
-def test_delete_message_given_an_earlier_crossing_names_the_void() -> None:
-    """T-13 false: any other crossing's confirm says it is voided."""
+def test_delete_message_given_an_earlier_crossing_names_the_delete() -> None:
+    """T-13 false: any other crossing's confirm reads Delete."""
     message = crossing_detail.delete_message(
         _delete_fields(lap="2", time="10:05:00"), newest=False
     )
 
     assert message == _VOID_MESSAGE
+    assert message.startswith("Delete crossing ")
 
 
 # T-7 property: delete_message is pure (fields in, string out), so the
@@ -1137,7 +1408,7 @@ def test_on_delete_given_an_earlier_crossing_names_the_crossing_it_voids(
 
     view._on_delete(_RecordingEvent())
 
-    assert calls == [(view.dialog, "Void Crossing?", _VOID_MESSAGE, "Void", "Cancel")]
+    assert calls == [(view.dialog, "Delete Crossing?", _VOID_MESSAGE, "Delete", "Cancel")]
 
 
 def test_on_delete_given_a_cancelled_void_leaves_the_ride_alone(
@@ -1382,6 +1653,8 @@ def _miss_view(
         setattr(view, attr, _RecordingLabel())
     view.edit_plate_input = _RecordingText(plate)
     view.edit_btn = _RecordingButton()
+    view.edit_time_btn = _RecordingButton()
+    view.void_card_btn = _RecordingButton()
     view.delete_btn = _RecordingButton()
     view.ok_btn = _RecordingButton()
     view.crossing_detail_infobar = _RecordingInfoBar()

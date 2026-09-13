@@ -317,7 +317,6 @@ def test_handle_clear_ride_route_given_a_confirmed_danger_leaves_the_store_untou
         context = _context(store=store, view=view, frame=frame)
         app_module._switch_console_to_ride(context, ride_id)
         engine = context.presenter.engine  # type: ignore[union-attr] -- the swap above set it
-        context.detail_plate = "12"
         context.html_export_path = tmp_path / "results.html"
         context.pdf_export_path = tmp_path / "results.pdf"
         context.export_watermark = 2
@@ -334,7 +333,6 @@ def test_handle_clear_ride_route_given_a_confirmed_danger_leaves_the_store_untou
         assert engine.on_event is None
         assert context.presenter is None
         assert context.active_ride_id is None
-        assert context.detail_plate is None
         assert context.html_export_path is None
         assert context.pdf_export_path is None
         assert context.export_watermark is None
@@ -392,7 +390,6 @@ def test_handle_clear_ride_route_without_a_store_clears_the_console_in_memory(
     context = _context(store=None, view=view)
     engine, _source = app_module._build_console_engine(context.roster)
     _live_console(context, engine, view)
-    context.detail_plate = "12"
     _stub_danger(monkeypatch, result=wx.ID_OK)
     view.calls.clear()
 
@@ -400,7 +397,6 @@ def test_handle_clear_ride_route_without_a_store_clears_the_console_in_memory(
 
     assert context.presenter is None
     assert context.active_ride_id is None
-    assert context.detail_plate is None
     assert context.roster.entries == ()
     assert ("clear_presenter", None) in view.calls
     assert ("show_no_ride", None) in view.calls

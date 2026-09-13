@@ -99,21 +99,21 @@ RIDE_MENU_ITEMS = (
     "mi_clear_ride",
 )
 # D4: mi_add_entry retired -- the Rider Editor row is the single entry
-# point for adding riders.
+# point for adding riders. Phase 2 retired mi_entry_detail with its
+# window.
 RIDERS_MENU_ITEMS = (
     "mi_rider_editor",
     "mi_team_editor",
     "mi_check_rider_issues",
     "mi_mark_dnf",
-    "mi_entry_detail",
 )
+# Phase 2 retired mi_reassign_plate and mi_void_card: Crossing Detail
+# now owns both corrections, not the Cards menu.
 CARDS_MENU_ITEMS = (
     "mi_undo_crossing",
     "mi_add_crossing_at",
     "mi_edit_crossing",
-    "mi_reassign_plate",
     "mi_deal_manual",
-    "mi_void_card",
     "mi_review_held",
 )
 # Part D: the single Preview in Browser row split per format -- each
@@ -203,17 +203,18 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4 (Results lost its tie-break row
-# in Part C and split its Preview row per format): File 8 (mi_simulation
-# added), Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4. The
-# single View row expands into the 8 items section 15b names for it
-# (W13: hide-times + the seven zoom radios; the theme trio left the View
-# menu).
+# spec.md section 15's rows after D1/D4 and Phase 2 (Results lost its
+# tie-break row in Part C and split its Preview row per format; Phase 2
+# retired mi_entry_detail, mi_reassign_plate and mi_void_card): File 8
+# (mi_simulation added), Ride 9, Riders 4, Cards 5, Results 7, View 1,
+# Help 4. The single View row expands into the 8 items section 15b names
+# for it (W13: hide-times + the seven zoom radios; the theme trio left
+# the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
-    ("Ri&ders", 5),
-    ("&Cards", 7),
+    ("Ri&ders", 4),
+    ("&Cards", 5),
     ("Re&sults", 7),
     ("&View", 8),
     ("&Help", 4),
@@ -455,13 +456,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_five_menu_item_names() -> None:
-    """D1/D4/C6/Part D: 45 ``mi_*`` items -- Preview split."""
+def test_main_menubar_declares_forty_two_menu_item_names() -> None:
+    """D1/D4/C6/Part D + Phase 2: 42 ``mi_*`` items."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 45
+    assert len(menu_item_names) == 42
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:

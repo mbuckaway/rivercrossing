@@ -1784,6 +1784,25 @@ def test_deal_manual_pooled_rider_plate_credits_the_team() -> None:
     assert results["9"].cards == (Card.parse(str(event.payload["card"])),)
 
 
+def test_deal_manual_bonus_card_is_entry_scoped_and_survives_a_riders_dnf() -> None:
+    """A bonus card carries no rider tag, so no DNF forfeits it.
+
+    ``deal_manual`` credits the entry with no rider tag (the typed
+    plate rides in the audit payload only), so a pooled rider's DNF
+    forfeits only the cards their own crossings dealt -- the bonus card
+    stays in the entry's scoring hand.
+    """
+    engine = _pooled_team_engine()
+    manual = engine.deal_manual("45", reason="bonus card")
+    bonus = Card.parse(str(manual.payload["card"]))
+    engine.record_crossing("45", at=_dt(10, 2))
+
+    engine.mark_dnf("45", reason="mechanical failure")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["9"].cards == (bonus,)
+
+
 @pytest.mark.parametrize(
     ("start_state", "match"),
     [

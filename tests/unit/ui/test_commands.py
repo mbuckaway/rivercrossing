@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 41-row route table,
+``commands.py`` imports no ``wx`` at all, so its 38-row route table,
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -44,8 +44,8 @@ from rivercrossing.ui import commands, ids
 ROUTE_COUNTS_BY_MENU = (
     ("File", 8),  # D1: New Ride… moved to the Ride menu; +mi_simulation
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
-    ("Riders", 5),  # D4: mi_add_entry retired
-    ("Cards", 7),
+    ("Riders", 4),  # Phase 2: mi_entry_detail retired
+    ("Cards", 5),  # Phase 2: mi_reassign_plate + mi_void_card retired
     ("Results", 7),  # C6: mi_tiebreak_order retired; +1: Preview split per format
     ("View", 1),
     ("Help", 4),
@@ -81,13 +81,10 @@ ROUTE_TARGETS = (
     (commands.TargetKind.WINDOW, ids.TEAM_EDITOR_DLG),  # Teams Editor (Phase 4: mixed rides)
     (commands.TargetKind.WINDOW, ids.RIDER_ISSUES_DLG),  # Check for Rider Issues...
     (commands.TargetKind.DIALOG, ids.DNF_CONFIRM_DLG),  # Mark DNF...
-    (commands.TargetKind.WINDOW, ids.ENTRY_DETAIL_DLG),  # Entry Detail...
     (commands.TargetKind.COMMAND, None),  # Undo Last Crossing: "no dialog"
     (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Add Crossing at Time...
     (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Edit Crossing...
-    (commands.TargetKind.DIALOG, ids.REASSIGN_DLG),  # Reassign Plate...
-    (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Manual Card...
-    (commands.TargetKind.DIALOG, ids.VOID_CARD_CONFIRM_DLG),  # Void Card... (E7)
+    (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Bonus Card...
     (commands.TargetKind.COMMAND, None),  # Review Held Cards: focuses an existing panel
     (commands.TargetKind.DIALOG, ids.RESULTS_DLG),  # Standings (Part C: modal dialog)
     (commands.TargetKind.COMMAND, None),  # Generate HTML...: OS-native save dialog
@@ -113,9 +110,9 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_forty_one_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_thirty_eight_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 41
+    assert len(commands.ROUTE_TABLE) == 38
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
@@ -126,12 +123,12 @@ def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: in
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_eight_real_menu_item_ids_once_each() -> None:
-    """45 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_forty_five_real_menu_item_ids_once_each() -> None:
+    """42 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 48
-    assert len(set(flat_ids)) == 48
+    assert len(flat_ids) == 45
+    assert len(set(flat_ids)) == 45
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -162,6 +159,27 @@ def test_route_for_id_given_the_retired_add_entry_id_raises_after_d4() -> None:
     """D4: mi_add_entry left the Riders menu and the route table."""
     with pytest.raises(commands.UnroutedMenuItemError, match=re.escape("mi_add_entry")):
         commands.route_for_id("mi_add_entry")
+
+
+# Phase 2 retired the dead correction surfaces: Entry Detail… (its
+# window is gone), and the duplicate Reassign Plate… / Void Card… rows
+# (Crossing Detail now owns both corrections).
+_RETIRED_ROUTE_IDS = ("mi_entry_detail", "mi_reassign_plate", "mi_void_card")
+
+
+@pytest.mark.parametrize("item_id", _RETIRED_ROUTE_IDS)
+def test_route_for_id_given_a_retired_phase_2_id_raises(item_id: str) -> None:
+    """Phase 2: the retired ids leave the route table."""
+    with pytest.raises(commands.UnroutedMenuItemError, match=re.escape(item_id)):
+        commands.route_for_id(item_id)
+
+
+def test_deal_manual_route_is_labelled_deal_bonus_card() -> None:
+    """Phase 2: mi_deal_manual's row reads "Deal Bonus Card…"."""
+    route = commands.route_for_id(ids.MI_DEAL_MANUAL)
+
+    assert route.label == "Deal Bonus Card…"
+    assert route.target == ids.MANUAL_DEAL_DLG
 
 
 def test_edit_ride_route_declares_the_setup_dialog_and_a_ride_open_gate() -> None:
@@ -306,13 +324,10 @@ ALLOWED_STATES = (
     # condition-only gate, never a RideStatus membership rule
     None,  # Riders > Check for Rider Issues...: "ride open"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Riders > Mark DNF...
-    None,  # Riders > Entry Detail...: "ride open"
     frozenset({RideStatus.RUNNING}),  # Cards > Undo Last Crossing: "RUNNING, >=1 crossing"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Add Crossing at Time...
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Edit Crossing...
-    frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Reassign Plate...
-    frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Deal Manual Card...
-    frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Void Card...
+    frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Deal Bonus Card...
     None,  # Cards > Review Held Cards: "held cards > 0"
     None,  # Results > Standings: "always" -- the dialog shows the empty state
     frozenset({RideStatus.FINISHED}),  # Results > Generate HTML...
@@ -389,7 +404,6 @@ CROSSINGS_GATED_ROUTES = tuple(
 _ROUTES_BY_LABEL = {route.label: route for route in commands.ROUTE_TABLE}
 REVIEW_HELD_CARDS_ROUTE = _ROUTES_BY_LABEL["Review Held Cards"]
 AUDIT_TRAIL_ROUTE = _ROUTES_BY_LABEL["Audit Trail…"]
-VOID_CARD_ROUTE = _ROUTES_BY_LABEL["Void Card…"]
 PREVIEW_HTML_ROUTE = _ROUTES_BY_LABEL["Preview HTML in Browser"]
 PREVIEW_PDF_ROUTE = _ROUTES_BY_LABEL["Preview PDF in Browser"]
 START_RIDE_ROUTE = _ROUTES_BY_LABEL["Start Ride"]
@@ -501,16 +515,32 @@ def test_is_route_enabled_given_audit_rows_boundary_matches_audit_trail(audit_ro
     assert result is (audit_rows >= 1)
 
 
+# Phase 2 retired the Void Card menu row, the only real route that set
+# ``requires_entry_has_cards``. The rule field remains part of the §15
+# enablement model, so its two branches are pinned over a synthetic
+# probe route rather than a live row.
+_ENTRY_HAS_CARDS_PROBE = commands.MenuRoute(
+    menu="Cards",
+    label="Synthetic entry-has-cards probe",
+    ids=("mi_probe_entry_has_cards",),
+    kind=commands.TargetKind.COMMAND,
+    target="probe",
+    enabled_when=commands.Enablement(
+        allowed_states=frozenset({RideStatus.RUNNING}), requires_entry_has_cards=True
+    ),
+)
+
+
 @pytest.mark.parametrize(("entry_has_cards", "expected"), ENTRY_HAS_CARDS_CASES)
-def test_is_route_enabled_given_entry_has_cards_condition_matches_void_card(
+def test_is_route_enabled_given_entry_has_cards_condition_gates_the_probe(
     *, entry_has_cards: bool, expected: bool
 ) -> None:
-    """T-3: both branches of Void Card's "entry has cards" guard."""
+    """T-3: both branches of the "entry has cards" guard."""
     state = dataclasses.replace(
         _baseline_state(RideStatus.RUNNING), entry_has_cards=entry_has_cards
     )
 
-    result = commands.is_route_enabled(VOID_CARD_ROUTE, state)
+    result = commands.is_route_enabled(_ENTRY_HAS_CARDS_PROBE, state)
 
     assert result is expected
 
@@ -650,11 +680,12 @@ def test_is_route_enabled_given_new_ride_follows_the_closed_ride_in_every_state(
 # --- E7.2.1: the live binder's enable/disable table for the -----------
 # --- correction rows (menu_state applies exactly this table) ----------
 
-# spec.md §15's "Enabled when" cells for the six correction rows the
-# live menu binder targets, transcribed independently of commands.py
-# itself (the same double-transcription discipline as ALLOWED_STATES).
-# The fourth field is Void Card's own "entry has cards" requirement;
-# None means the row has no such condition.
+# spec.md §15's "Enabled when" cells for the four correction rows the
+# live menu binder targets (Phase 2 retired Reassign Plate… and Void
+# Card…), transcribed independently of commands.py itself (the same
+# double-transcription discipline as ALLOWED_STATES). The fourth field
+# is an "entry has cards" requirement; None means the row has no such
+# condition (no live row declares one since Void Card… retired).
 _RUNNING_FOR_TESTS = frozenset({RideStatus.RUNNING})
 _RUNNING_REOPENED_FOR_TESTS = frozenset({RideStatus.RUNNING, RideStatus.REOPENED})
 
@@ -662,9 +693,7 @@ _CORRECTION_ENABLEMENT = (
     ("Undo Last Crossing", _RUNNING_FOR_TESTS, 1, None),
     ("Add Crossing at Time…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
     ("Edit Crossing…", _RUNNING_REOPENED_FOR_TESTS, 1, None),
-    ("Reassign Plate…", _RUNNING_REOPENED_FOR_TESTS, 1, None),
-    ("Deal Manual Card…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
-    ("Void Card…", _RUNNING_REOPENED_FOR_TESTS, 0, 1),
+    ("Deal Bonus Card…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
 )
 
 
@@ -681,11 +710,11 @@ def test_is_route_enabled_given_correction_route_matches_the_live_binder_table( 
     *,
     status: RideStatus,
 ) -> None:
-    """The six correction rows' verdicts are the §15 table, per state.
+    """The four correction rows' verdicts are the §15 table, per state.
 
-    Every row's state gate, its numeric minimum and Void Card's own
-    entry-has-cards condition combine exactly as the live binder
-    applies them (menu_state.enablement_table).
+    Every row's state gate, its numeric minimum and any entry-has-cards
+    condition combine exactly as the live binder applies them
+    (menu_state.enablement_table).
     """
     state = dataclasses.replace(
         _baseline_state(status),
