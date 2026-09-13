@@ -4,42 +4,51 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Added
-
-- **Team/solo-aware results pages** — the HTML export and the PDF report render per kind: a mixed ride gets a "Best hands — teams" (top 3) and "Best hands — solo riders" (top 3) podium, "Top teams" (top 5) and "Top solo riders" (top 5) lists, "Most laps — teams" (top 5) and "Most laps — solo riders" (top 5) boards, and a full field split into "Teams" and "Solo riders" subsections under the one "Full field" heading; a solo ride gets the single-kind page (top 3 / top 10 / top 10). Team sections are plate-less and compact — no plate column, team name and cards in separate columns, a small inline logo — and the podium poster gains the same split (top 3 teams + top 3 solo riders on one page; top 5 in a solo event).
-- **A shared results model for the exporters** — `htmlexport.build_payload()`, `htmlexport.sections()` and `htmlexport.format_generated()` build the row model, the per-kind section plan and the "Generated …" stamp both the HTML and PDF renderers consume.
-
-### Changed
-
-- **Preview is per format** — Results ▸ Preview in Browser is replaced by Results ▸ Preview HTML in Browser and Results ▸ Preview PDF in Browser (the last results PDF or podium poster); both need a FINISHED ride and that format's own export this session, and a CSV export never enables either.
-- **Standings is always available** — the Results ▸ Standings row (F5) no longer waits for an open ride; with none open the results window renders its empty state.
-
 ## [1.0.13] - 2026-09-12
 
 ### Added
 
-- **Rider Simulator** — File ▸ Simulation… (`simulation_dlg`, DRAFT-only) configures riders, teams, solo riders, laps and the minutes between the first rider, generates `TEAM-####` teams and `FIRSTNAME-####`/`LASTNAME-####` riders (solo riders first, random M/F, random team assignment, auto plates), then replays the race on GO through the console's own `RideEngine.record_crossing(plate, at=…)` seam; a modal progress dialog (`sim_running_dlg`) reports percent complete and allows cancelling.
+- **Rider Simulator** — File ▸ Simulation… (`simulation_dlg`, DRAFT-only) configures riders, teams, solo riders, laps and the minutes between the first rider, generates `TEAM-####` teams and `FIRSTNAME-####`/`LASTNAME-####` riders (solo riders first, random M/F, random team assignment, auto plates), then replays the race on GO through the console's own `RideEngine.record_crossing(plate, at=…)` seam; a modal progress dialog (`sim_running_dlg`) reports percent complete and allows cancelling. Its spin-box values persist in `settings.json`; one **Generate Riders** button creates the teams first then the riders; GO leaves the ride stopped and RUNNING so the operator finishes it.
 - **Teams and Solo tabs on the results window** — a mixed ride splits its standings across a `results_notebook` (Teams · `teams_standings_list`, Solo · `solo_standings_list`); a solo ride hides the notebook and renders every rider in `standings_list`.
 - **Sortable, resizable standings columns** — the three results lists sort natively on a header click and resize their columns (`DATAVIEW_COL_SORTABLE | DATAVIEW_COL_RESIZABLE`), and `StandingsRow` gains a `total_seconds` field so the Total column sorts numerically.
 - **A Close button on the results export row** — `wxID_CLOSE` joins the four publish buttons, and the window's minimum width is 755 so the five checkboxes do not wrap.
+- **Team/solo-aware results pages** — the HTML export and the PDF report render per kind: a mixed ride gets a "Best hands — teams" (top 3) and "Best hands — solo riders" (top 3) podium, "Top teams" (top 5) and "Top solo riders" (top 5) lists, "Most laps — teams" (top 5) and "Most laps — solo riders" (top 5) boards, and a full field split into "Teams" and "Solo riders" subsections under the one "Full field" heading; a solo ride gets the single-kind page (top 3 / top 10 / top 10). Team sections are plate-less and compact — no plate column, team name and cards in separate columns, a small inline logo — and the podium poster gains the same split (top 3 teams + top 3 solo riders on one page; top 5 in a solo event).
+- **A shared results model for the exporters** — `htmlexport.build_payload()`, `htmlexport.sections()` and `htmlexport.format_generated()` build the row model, the per-kind section plan and the "Generated …" stamp both the HTML and PDF renderers consume.
+- **Card-sufficiency advisory and average rider speed** — Settings gains an "Average rider speed (km/h)" value (default 12), and Check for Rider Issues… reports whether the ride's shoe (`deck_count × (52 + jokers_per_deck)`) will hold enough cards for the crossings the field is expected to record — NOT ENOUGH, OK, or FAR TOO MANY.
+- **Ride information in the console header** — the ride's logo plus six read-only read-outs (Name, Date, Venue, Organizer, Scorer, Lap length km) in two group boxes, with the stop light leading the row.
 
 ### Changed
 
 - **The results window is a modal dialog** — `results_frame` (a modeless `wxFrame`) is now the `wxDialog` `results_dlg`, opened through `dialogs.run_dialog`.
 - **Results exports are gated to a FINISHED ride** — the four export buttons (`export_html_btn`, `export_pdf_btn`, `poster_btn`, `export_csv_btn`) stay disabled until the ride finishes, matching the Results-menu rows; Preview in Browser now needs a FINISHED ride and an export that exists.
 - **The Rider Editor's Add rider… moved to the list's button row** — `add_btn` sits beside Delete and Close, while Edit Rider… (`edit_btn`) stays in the form pane.
+- **Preview is per format** — Results ▸ Preview in Browser is replaced by Results ▸ Preview HTML in Browser and Results ▸ Preview PDF in Browser (the last results PDF or podium poster); both need a FINISHED ride and that format's own export this session, and a CSV export never enables either.
+- **Standings is always available** — the Results ▸ Standings row (F5) no longer waits for an open ride; with none open the results window renders its empty state.
+- **Ride status is written as it changes** — the Ride Library shows a ride's real status (its `ride.status` column is written on every start/continue/finish/reopen), and the delete guard refuses a RUNNING ride.
+- **Clear Ride… takes the ride off the screen only** — the in-memory ride, roster and export state are dropped and the console returns to the no-ride empty state, but the database is untouched: the ride, its riders and every crossing stay saved and reopen from the library.
+- **The default tie-break order is high-card-first** — Ride Setup seeds High-card draw → Most laps → Total time (the order applies to a finished ride's results; a live ride still auto-ranks by laps then time).
+- **The Ride Setup logo is a preview with Browse…** — the path picker is gone; a chosen PNG is resized to a 256×256 fit, stored in the ride's `logo_png`, and previewed at 96×96.
+- **The console header is re-laid out** — the stop light leads the row, the ride read-outs are split into a "Ride" group (Name, Date, Venue) and a "Details" group (Organizer, Scorer, Lap length km), and the logo sits to their right.
+- **A short lap flags for review under both card policies** — with Always deal the card is credited and the crossing still lists in Needs Review; with Hold short laps the card is held as before.
+- **The crossing detail Edit opens a Number prompt** — a `crossing_number_dlg` with a 4-digit `number_input` and Save/Cancel replaces the inline plate edit; Save reassigns the crossing to the typed number.
+- **The Review… button and flagged rows act** — a held card opens a Confirm/Void decision (release or discard), and a credited short lap opens the crossing detail.
+- **The audit trail logs plate changes** — a rider or team plate edit is written to the audit trail and shown in Audit Trail… alongside the ride events.
 
 ### Removed
 
 - **The results window's tie-break panel and Reopen button** — `tiebreak_list` and `reopen_btn` are gone; the tie-break order lives only in Ride Setup (`setup.xrc`), and a ride reopens through Ride ▸ Reopen Ride (`mi_reopen_ride`).
 - **Results ▸ Tie-break Order… (`mi_tiebreak_order`)** — the Results-menu row is retired.
 - **The inline Teams/Solo section-header rows** — the notebook's pages replace the header rows that used to sit inside `standings_list`.
+- **The demo data seam (`rivercrossing.demo`)** — the test-only fixture module is gone.
+- **The dead `Store.clear_ride`** — Clear Ride is screen-only, so the store half is no longer used.
 
 ### Fixed
 
 - **A new rider joins an existing team while the ride is running** — Add now folds through `Roster.add_rider_to_team`, so the pooled RUNNING/REOPENED carve-out comes from `can_move_rider` instead of the transient size-1 team the join used to build.
+- **Team-relay laps no longer inflate** — the simulator records one crossing per entry per lap (one rider on course), so a relay team's lap count matches a solo rider's instead of multiplying by team size.
+- **Start Ride, Stop Ride… and Undo Last Crossing work from the menu** — the three routes resolved the presenter when the menu was built (before a ride was open) and were permanently stuck on their "not yet implemented" notices.
+- **A crossing can be deleted** — the crossing detail's Delete was offered only for the newest crossing; it now deletes any crossing while the ride is running or reopened (newest undoes, any other voids).
+- **A short lap appears in Needs Review** — the panel listed only held cards, so an Always-deal short lap never showed.
 
 ## [1.0.12] - 2026-09-11
 
