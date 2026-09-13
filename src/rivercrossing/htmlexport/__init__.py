@@ -356,8 +356,8 @@ _MONTH_ABBR = (
 )
 
 # cards.Rank's own integer values to the record's rank letters. The
-# ten is "10" in the record (the golden pages' own spelling), unlike
-# Card.code()'s "T" -- these are the payload pairs, not card codes.
+# ten is "10" -- the golden pages' own spelling and Card.code()'s too
+# -- and these are the payload pairs, not card codes.
 _RANK_PAIR_LETTER: dict[int, str] = {
     2: "2",
     3: "3",
@@ -589,8 +589,7 @@ def _hand_label(hand: EvaluatedHand) -> str:
 def _card_pair(card: Card) -> CardPair:
     """Convert one Card to its record pair (rank letter, suit letter).
 
-    The ten maps to "10" -- the record's own spelling, not
-    ``Card.code``'s "T".
+    The ten maps to "10", the same spelling ``Card.code`` uses.
     """
     if card.joker:
         return ("JK", "j")

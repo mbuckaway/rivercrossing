@@ -11,14 +11,11 @@ Two things are worth knowing before reading further.
 
 **Two naming conventions meet here.** ``Card.code()`` (see
 module-skeletons.md S4) returns the *stored* form -- ``"AS"``,
-``"TD"``, ``"JK"``: uppercase, with ``T`` for ten. The bitmap files
-use the *asset* form -- ``As.png``, ``10d.png``, ``joker.png``:
-mixed case, with ``10`` spelled out. :func:`asset_key` is the only
-bridge between them, and it is a pure function so it can be tested
-without a display. ``rivercrossing.cards`` does not exist yet (it
-lands in EPIC 2, E2.2.1), so the parameter is typed ``str``; it
-will accept ``Card.code()`` output unchanged when that module
-arrives.
+``"10D"``, ``"JK"``: upper case, with the ten spelled ``10``. The
+bitmap files use the *asset* form -- ``As.png``, ``10d.png``,
+``joker.png``: suit lower case, the same ``10`` rank token.
+:func:`asset_key` is the only bridge between them, and it is a pure
+function so it can be tested without a display.
 
 **A missing bitmap is a startup failure.** Every loader path runs
 :func:`verify_card_assets` over all 106 files -- both scales, not
@@ -75,9 +72,10 @@ CARD_KEYS = (
     JOKER_KEY,
 )
 
-# Stored rank characters map onto asset rank tokens one for one --
-# only ten differs, so the table is derived rather than retyped.
-_RANK_BY_CODE = {("T" if rank == "10" else rank): rank for rank in ASSET_RANKS}
+# Stored rank tokens are exactly the asset rank tokens -- both spell
+# the ten "10" -- so the table is derived from ASSET_RANKS rather
+# than retyped.
+_RANK_BY_CODE = {rank: rank for rank in ASSET_RANKS}
 _SUIT_BY_CODE = {suit.upper(): suit for suit in ASSET_SUITS}
 
 
@@ -102,9 +100,8 @@ def asset_key(code: str) -> str:
     """Return the asset key for a stored card code.
 
     Args:
-        code: The stored form -- ``"AS"``, ``"TD"``, ``"JK"``. This
-            is what ``Card.code()`` will return once
-            ``rivercrossing.cards`` lands (E2.2.1).
+        code: The stored form -- ``"AS"``, ``"10D"``, ``"JK"``. This
+            is what ``Card.code()`` returns (module-skeletons S4).
 
     Returns:
         The bitmap filename stem: ``"As"``, ``"10d"``, ``"joker"``.
@@ -116,8 +113,8 @@ def asset_key(code: str) -> str:
         return JOKER_KEY
     # Slices rather than indexes: a code of any other length lands
     # on "" or a multi-character key, neither of which is in a map.
-    rank = _RANK_BY_CODE.get(code[:1])
-    suit = _SUIT_BY_CODE.get(code[1:])
+    rank = _RANK_BY_CODE.get(code[:-1])
+    suit = _SUIT_BY_CODE.get(code[-1:])
     if rank is None or suit is None:
         raise UnknownCardCodeError(f"unknown card code {code!r}")
     return f"{rank}{suit}"

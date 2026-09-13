@@ -124,8 +124,7 @@ _FONT_FILES: tuple[tuple[tuple[str, str], Path], ...] = (
 _RUNNING_TITLE_SEP = " — Official results"
 
 # cards.Rank's integer values to the display rank letters; the ten is
-# "10" in the report (the golden pages' own spelling), unlike
-# Card.code()'s "T".
+# "10" -- the golden pages' own spelling, and Card.code()'s too.
 _RANK_LETTER: dict[int, str] = {
     2: "2",
     3: "3",

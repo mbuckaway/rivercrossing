@@ -59,7 +59,7 @@ _LETTER_BY_RANK: dict[Rank, str] = {
     Rank.SEVEN: "7",
     Rank.EIGHT: "8",
     Rank.NINE: "9",
-    Rank.TEN: "T",
+    Rank.TEN: "10",
     Rank.JACK: "J",
     Rank.QUEEN: "Q",
     Rank.KING: "K",
@@ -85,9 +85,10 @@ class Card:
     joker: bool = False
 
     def code(self) -> str:
-        """Return this card's stored two-character form.
+        """Return this card's stored code.
 
-        Examples: ``"AS"``, ``"TD"``, ``"JK"`` (joker).
+        Examples: ``"AS"``, ``"10D"``, ``"JK"`` (joker). The ten spells
+        "10", the same rank token its bitmap asset's filename carries.
 
         The two ``cast`` calls document, for mypy, the natural-card
         contract stated above -- a joker never reaches them because
@@ -102,10 +103,15 @@ class Card:
 
     @staticmethod
     def parse(code: str) -> Card:
-        """Parse a stored two-character code back into a Card."""
+        """Parse a stored card code (``"AS"``, ``"10D"``, ``"JK"``).
+
+        The rank is *code*'s whole prefix and the suit its last
+        character, so the ten's three-character "10D" reads rank "10"
+        and suit "D" while "AS" still reads "A" and "S".
+        """
         if code == _JOKER_CODE:
             return Card(rank=None, suit=None, joker=True)
-        return Card(rank=_RANK_BY_LETTER[code[0]], suit=_SUIT_BY_LETTER[code[1]], joker=False)
+        return Card(rank=_RANK_BY_LETTER[code[:-1]], suit=_SUIT_BY_LETTER[code[-1]], joker=False)
 
 
 class ShoeEmpty(Exception):  # noqa: N818 -- frozen name, module-skeletons.md S4

@@ -3,9 +3,12 @@
 
 Every one of phevaluator's 7,462 distinct natural 5-card ranks gets
 exactly one representative row: a 5-card hand, its phevaluator rank,
-and its hand class. The rank comes from phevaluator (the same library
-``rivercrossing.hands.eval5`` wraps); the hand class comes from
-``rivercrossing.hands.classify_pattern``, which computes it
+and its hand class. The hand is written in ``rivercrossing.cards``'
+own stored-code alphabet (the ten is "10", so a row parses with
+``Card.parse``) and translated into phevaluator's two-character
+spelling for the scoring call. The rank comes from phevaluator (the
+same library ``rivercrossing.hands.eval5`` wraps); the hand class
+comes from ``rivercrossing.hands.classify_pattern``, which computes it
 independently, from the cards' own rank-multiset/flush/straight
 pattern, so this fixture can catch a bug in ``eval5``'s own
 phevaluator-rank-to-class table rather than merely restate it -- never
@@ -40,12 +43,16 @@ if TYPE_CHECKING:
 _ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = _ROOT / "src" / "rivercrossing" / "vectors" / "rank_sweep.csv"
 
-# Rank letters low to high; phevaluator and rivercrossing.cards.Card
-# both use this same alphabet, so these codes parse with either.
-_RANK_LETTERS = "23456789TJQKA"
-_RANK_VALUES = {letter: value for value, letter in enumerate(_RANK_LETTERS, start=2)}
+# Stored rank tokens low to high, the app's own spelling: the
+# rivercrossing.cards Card alphabet, with "10" for the ten. The
+# generator writes these codes into the CSV (hands.py's self-test
+# parses them with Card.parse); phevaluator's own parser accepts only
+# its two-character "T" ten, so _phevaluator_code translates on the
+# way into evaluate_cards.
+_RANK_TOKENS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
+_RANK_VALUES = {token: value for value, token in enumerate(_RANK_TOKENS, start=2)}
 _SUIT_LETTERS = "CDHS"
-DECK: tuple[str, ...] = tuple(rank + suit for rank in _RANK_LETTERS for suit in _SUIT_LETTERS)
+DECK: tuple[str, ...] = tuple(token + suit for token in _RANK_TOKENS for suit in _SUIT_LETTERS)
 
 _CSV_HEADER = ("cards", "rank", "hand_class")
 
@@ -56,6 +63,17 @@ class RankVectorRow(NamedTuple):
     cards: str
     rank: int
     hand_class: str
+
+
+def _phevaluator_code(code: str) -> str:
+    """Translate one stored card code into phevaluator's own spelling.
+
+    phevaluator's parser rejects a three-character code ("10C") and
+    knows the ten only as "T", so the rank token is swapped while the
+    suit letter passes through unchanged.
+    """
+    rank, suit = code[:-1], code[-1]
+    return f"{'T' if rank == '10' else rank}{suit}"
 
 
 def _enumerate_five_card_hands() -> Iterator[tuple[str, ...]]:
@@ -72,11 +90,11 @@ def enumerate_representative_hands() -> list[RankVectorRow]:
     """
     by_rank: dict[int, RankVectorRow] = {}
     for combo in _enumerate_five_card_hands():
-        rank: int = evaluate_cards(*combo)
+        rank: int = evaluate_cards(*(_phevaluator_code(code) for code in combo))
         if rank in by_rank:
             continue
-        ranks = [_RANK_VALUES[code[0]] for code in combo]
-        suits = [code[1] for code in combo]
+        ranks = [_RANK_VALUES[code[:-1]] for code in combo]
+        suits = [code[-1] for code in combo]
         hand_class = classify_pattern(ranks, suits).name
         by_rank[rank] = RankVectorRow(cards=" ".join(combo), rank=rank, hand_class=hand_class)
     return [by_rank[rank] for rank in sorted(by_rank)]

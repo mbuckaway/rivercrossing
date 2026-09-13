@@ -111,7 +111,7 @@ rivercrossing.cards — deck model & seeded shoe (§4)
 class Suit(Enum): CLUBS DIAMONDS HEARTS SPADES
 class Rank(IntEnum): TWO=2 … TEN=10 JACK=11 QUEEN=12 KING=13 ACE=14
 @dataclass Card(rank: Rank | None, suit: Suit | None, joker: bool = False)
-    .code() -> str            # "AS", "TD", "JK" — the stored form
+    .code() -> str            # "AS", "10D", "JK" — the stored form
     Card.parse(code: str) -> Card
 class Shoe:                   # deterministic multi-deck shoe
     __init__(decks: int, jokers_per_deck: int, seed: int)

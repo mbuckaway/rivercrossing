@@ -117,7 +117,7 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 <pre class="sk"><b>class</b> Suit(Enum): CLUBS DIAMONDS HEARTS SPADES
 <b>class</b> Rank(IntEnum): TWO=2 … TEN=10 JACK=11 QUEEN=12 KING=13 ACE=14
 <b>@dataclass</b> Card(rank: Rank | None, suit: Suit | None, joker: bool = False)
-    .code() -> str            <i># "AS", "TD", "JK" — the stored form</i>
+    .code() -> str            <i># "AS", "10D", "JK" — the stored form</i>
     Card.parse(code: str) -> Card
 <b>class</b> Shoe:                   <i># deterministic multi-deck shoe</i>
     __init__(decks: int, jokers_per_deck: int, seed: int)
