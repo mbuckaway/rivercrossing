@@ -5,9 +5,8 @@ Everything here runs without ``wx`` and without a display:
 ``ui/feed_model.py`` never imports it. The wx-facing half --
 ``CrossingsFeedModel``, a ``wx.dataview.DataViewIndexListModel``
 subclass that delegates to the pure functions tested here -- lives in
-``views/main_frame.py`` and is proven by the real-toolkit functional
-suite (``cards_imagelist``'s own split between ``tests/unit/`` and
-``tests/functional/`` is the precedent this mirrors).
+``views/main_frame.py`` and needs the real toolkit, so it is not
+exercised in this headless file.
 """
 
 import re

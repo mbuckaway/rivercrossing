@@ -105,91 +105,9 @@ def unit(session):
     session.run(
         "pytest",
         "tests/unit",
-        "tests/property",
-        "tests/simulations",
         "-m",
         "not functional",
         *session.posargs,
-    )
-
-
-@nox.session(python=PYTHON)
-def functional(session):
-    """Drive real wx windows (CI stage 3).
-
-    Coverage is off here: the view layer is proven by driving
-    windows and asserting what they contain, not by counting
-    executed lines.
-
-    Each test *file* runs in its own worker process. Measured: in a
-    single shared process, FindWindowByName intermittently fails to
-    resolve a control that exists on a freshly loaded main_frame --
-    3 failures in 8 full-suite runs, always the same three tests,
-    while the same code is deterministic in isolation (12/12 frame
-    loads, 400 dialog build/destroy cycles). Something in wx's
-    per-process state degrades after several hundred window
-    constructions. Bounding each file to its own process took that
-    to 6/6 clean runs.
-
-    Plus auto-retry, which project-plan.md §4 adopts by name as this
-    suite's flake control. It is doing real work, not papering over a
-    mystery: after isolation the residual rate measured 1 bad run in
-    10 (a failure or, once, a hang near completion), and one retry
-    then measured 10/10 clean. The trigger is narrowed -- building a
-    frame, moving a splitter sash, destroying it and rebuilding fails
-    ~1 in 6 even in a fresh process -- but the underlying wx behaviour
-    is not explained, so treat a green suite as bounded, not solved.
-    Bumped to two retries (PR #8's CI, run 31344728049): the hosted
-    3-core runners' own churn at this suite's full 761-test size
-    outran what one retry absorbed on the isolated cases this
-    docstring's own measurement covered; the local Tart VM (4 CPUs)
-    still runs clean without needing the second one.
-
-    --reruns 2 cannot absorb the residual wx/SIP wrapper-cache
-    corruption, which is process-granular: a rerun re-runs inside the
-    same poisoned worker (docs/EPIC3-SESSION-SUMMARY.md Addendum 2).
-    tools/functional_perfile.py therefore runs one fresh pytest
-    process per file up front -- measured this session
-    (docs/FUNCTIONAL-SUITE-INSTABILITY.md section 2.1): whole-suite
-    xdist passes at -n 2 accumulate the degradation until late files
-    fail with _support.py:106 LookupError, while every file run alone
-    in a fresh process passes -- and a failed file gets exactly one
-    fresh-process retry round inside the tool.
-
-    --forked would be the wrong tool on macOS: forking a process that
-    has already initialised NSApplication is not safe.
-
-    DISABLED (2026-09-10): the suite is broken and is being rewritten
-    from scratch, so this session refuses to run.
-    """
-    session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
-
-    sys.path.insert(0, str(ROOT))
-    from tools.functional_gate import host_functional_run_allowed  # noqa: PLC0415
-
-    allowed, message = host_functional_run_allowed(sys.platform, os.environ)
-    if not allowed:
-        session.error(message)
-
-    session.install(DEV)
-    # tools/functional_perfile.py runs one fresh pytest process per
-    # file, 2 at a time (measured: more concurrent wx processes crash;
-    # -n 2 is the convergent count). The legacy RIVERCROSSING_
-    # FUNCTIONAL_JOBS knob (the old xdist -n value) maps onto the
-    # per-file concurrency env; "auto" is not a perfile value and
-    # falls back to the 2-worker default. Pytest posargs are not
-    # forwarded: perfile's argv is exactly one directory (exit 2
-    # otherwise), so a `-k` filter must go through the file's own
-    # pytest run instead.
-    perfile_jobs = os.environ.get("RIVERCROSSING_FUNCTIONAL_JOBS")
-    run_env: dict[str, str] = {}
-    if perfile_jobs is not None and perfile_jobs.isdigit():
-        run_env["RIVERCROSSING_FUNCTIONAL_PERFILE_JOBS"] = perfile_jobs
-    session.run(
-        "python",
-        str(ROOT / "tools" / "functional_perfile.py"),
-        "tests/functional",
-        env=run_env,
     )
 
 
@@ -266,8 +184,8 @@ def bundle(session):
 def smoke(session):
     """Launch the built bundle and smoke-test it (CI stage 5).
 
-    DISABLED (2026-09-10): this test lives in ``tests/functional``,
-    whose suite is broken and is being rewritten from scratch. CI no
+    DISABLED (2026-09-10): this test lives in the functional suite,
+    which is broken and is being rewritten from scratch. CI no
     longer runs it.
     """
     session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
@@ -319,8 +237,8 @@ def dmg(session):
 def dmg_smoke(session):
     """Mount the built DMG and smoke-test it (CI stage 5, P8-D7).
 
-    DISABLED (2026-09-10): this test lives in ``tests/functional``,
-    whose suite is broken and is being rewritten from scratch. CI no
+    DISABLED (2026-09-10): this test lives in the functional suite,
+    which is broken and is being rewritten from scratch. CI no
     longer runs it.
     """
     session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")
@@ -416,8 +334,8 @@ def winsetup(session):
 def winsetup_smoke(session):
     """Run the Windows installer smoke tests (CI stage 5, Phase 9).
 
-    DISABLED (2026-09-10): these tests live in ``tests/functional``,
-    whose suite is broken and is being rewritten from scratch. CI no
+    DISABLED (2026-09-10): these tests live in the functional suite,
+    which is broken and is being rewritten from scratch. CI no
     longer runs them.
     """
     session.error("FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM")

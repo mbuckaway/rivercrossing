@@ -8,8 +8,8 @@ invariant, the startup validation that turns a packaging mistake
 into a crash before the first paint, and the parity of
 ``tools/gen_card_bitmaps.py`` with the committed output.
 
-Building a real ``wx.ImageList`` from these files is the separate
-functional suite; nothing here may import ``wx``.
+Building a real ``wx.ImageList`` from these files is not pinned here;
+nothing here may import ``wx``.
 """
 
 import importlib.util

@@ -1,13 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Unit tests for the PDF-font and docs manifests (P7, E9.1.1).
 
-The bundle-smoke suite (tests/functional/test_bundle_smoke.py) asserts
-the full manifest against a *built* bundle; this module pins the new
-PDF-font half (P7) and the E9.1.1 docs half against the *source* tree,
-so the wiring fails fast in the headless suite without waiting for a
-PyInstaller build. ``tools/`` is a dev-script tree, not an installed
-package, so the module under test is loaded from its file path (the
-pattern test_gen_htmlexport_goldens.py established).
+This module pins the new PDF-font half (P7) and the E9.1.1 docs half
+against the *source* tree, so the wiring fails fast in the headless
+suite without waiting for a PyInstaller build. ``tools/`` is a
+dev-script tree, not an installed package, so the module under test
+is loaded from its file path (the pattern
+test_gen_htmlexport_goldens.py established).
 """
 
 import importlib.util

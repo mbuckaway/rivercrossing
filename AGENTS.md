@@ -13,6 +13,13 @@ tie-breaks, and publishes results as a self-contained HTML page, PDF report, pod
 survives crashes, accidental stops and restarts without losing a keystroke.
 
 ---
+TEST RULES
+
+ONLY UNIT TESTS WILL BE WRITTEN. ALL CODE MUST BE WRITTEN USING TDD AND THE tdd-python-writer AGENT. NO
+FUNCTIONAL, BEHAVIOURAL, ACCEPTANCE, SIMULATOR OR OTHER TESTS ARE TO BE WRITTEN WITHOUT EXPRESSED
+PERMISSION.
+
+---
 
 ## `design/` is the contract
 
@@ -81,10 +88,10 @@ Source files carry a single SPDX line and no other licence header:
   whose first commit is not tests is rejected (R-70, `project-plan.md` §2).
 - **Coverage ≥ 90% line AND branch** on core modules (`cards hands standings ride store csvio htmlexport
   pdfexport`) — R-71, enforced by `--cov-branch --cov-fail-under=90`.
-- **Functional tests are not optional** in principle — the product *is* a UI, and the functional suite
-  driving real wx windows is the only thing that proves it runs. In practice it is currently **broken
-  and being rewritten from scratch**: its wrappers refuse to run, and the unit-coupled helpers that
-  import it fail with it. Never skip a *working* suite to get green.
+- **Unit tests only.** The one permitted functional test is the open/quit smoke,
+  `tests/functional/test_app_menu_quit.py`, run by `scripts/run-open.sh` /
+  `scripts/run-open.ps1`; it is the only functional test CI runs. Do not add functional,
+  behavioural, acceptance, simulator or property tests without expressed permission.
 - Never write `assert True`, placeholder tests, or skips used as padding.
 - Shell scripts are ShellCheck-clean; never `set -e` — check return codes explicitly.
 
@@ -96,12 +103,10 @@ Source files carry a single SPDX line and no other licence header:
 - Destroy windows explicitly. `Destroy()` is deferred, so a stale window can still answer
   `FindWindowByName` in the same process and silently contaminate the next assertion.
 - Use event-driven waits, never bare `sleep`.
-- **The functional suite is DISABLED.** `scripts/run_functional_tests.sh`,
-  `scripts/run_functional_tests_vm.sh` and `scripts/setup_functional_vm.sh` each print
-  `FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM` and exit 1 on sight — do not work around them.
-  The suite is being rewritten from scratch as a separate effort. (When it returns: it opens 23 real
-  windows and takes over the host desktop, so on macOS it runs in the Tart VM, and a bare
-  `nox -s functional` refuses on a Mac unless `RIVERCROSSING_HOST_FUNCTIONAL=1` is set.)
+- **One functional test exists:** the open/quit smoke, `tests/functional/test_app_menu_quit.py`.
+  It builds the whole app, shows the window, and drives the app-menu Quit (the confirm answered by a
+  `wx.ModalDialogHook`), so it is the regression gate for the Windows-only open crash. Every other
+  functional/acceptance/simulation/property suite has been removed — do not recreate one.
 
 ---
 
@@ -145,14 +150,13 @@ uv venv .venv && uv pip install -e '.[dev]'   # or: python -m venv .venv && .ven
 
 nox -s lint typecheck importlint ids_drift css_drift  # CI stage 1 — static
 nox -s unit                                   # CI stage 2 — unit + coverage gate
-nox -s functional                              # CI stage 3 — suite is BROKEN; do not run
 nox -s bundle                                  # CI stage 5 — build the dev bundle
 ```
 
-**CI runs no functional tests.** Stages 3–4 were removed on 2026-09-08 and the three stage-5
-packaging smoke sessions on 2026-09-10; the workflow builds and packages only. Every functional
-entry point — the `scripts/*functional*` wrappers, `nox -s functional`, and the `tests/functional`
-conftest — refuses with `FUNCTIONAL TESTS ARE BROKEN. DO NOT RUN THEM`.
+**CI runs the unit suite plus one functional test.** The `open-smoke` job runs
+`scripts/run-open.sh` / `scripts/run-open.ps1` — the open/quit smoke — on macOS, Windows x64 and
+Windows ARM64; it must pass for a PR to be green. The retired functional/acceptance/simulation/
+property suites are gone, and no other non-unit test may be added.
 
 **The CSS sessions need Node.** `gen_css` and `css_drift` compile the vendored CSS with the pinned
 Tailwind CLI, which lives in the gitignored `node_modules`. Both nox sessions run the lockfile's

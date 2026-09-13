@@ -132,8 +132,8 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     a same-named control that belongs to a different window
     (``plate_input`` alone exists in four windows).
 
-    Measured (reproduced under load in this repo's own functional
-    suite, many windows built and torn down in one session):
+    Measured under load (many windows built and torn down in one
+    process):
     wxPython wraps wx objects by C++ pointer identity, and when a
     previous top-level window's deletion is pending (or a wrapper is
     otherwise still alive after its C++ object was freed), a freshly-
@@ -144,14 +144,13 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
     correctly even then, so name alone does not catch this -- only
     the wrapper's own Python *type* is wrong. Checking
     ``isinstance(control, expected_type)`` is what actually catches
-    it, and ``wx.SafeYield()`` -- the same kind of pump
-    ``harness.close_window`` uses to flush a deferred deletion --
-    resolves it on retry in every case measured at the scale one
-    window construction reaches. It is not a complete fix under
-    sustained load across a whole test session (a known, reported
-    residual risk, not silently swallowed); production never
-    approaches that load, since each of these windows is built at
-    most once.
+    it, and ``wx.SafeYield()`` -- the same kind of pump that
+    flushes a deferred window deletion -- resolves it on retry in
+    every case measured at the scale one window construction
+    reaches. It is not a complete fix under sustained load across
+    a whole test session (a known, reported residual risk, not
+    silently swallowed); production never approaches that load,
+    since each of these windows is built at most once.
 
     Root cause (confirmed upstream, 2026-08): SIP's C++-pointer ->
     Python-wrapper map retains its entry for as long as the Python
@@ -190,12 +189,12 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         attempts += 1
     if not isinstance(control, expected_type):
         children = [child.GetName() for child in window.GetChildren()]
-        # LookupError, not TypeError: mirrors harness.py's own
-        # ControlNotFoundError(LookupError) for the identical "name
-        # did not resolve inside this window" case. The child count
-        # and names tell a whole-subtree load gap (CI has seen three
-        # fresh loads of the same frame each missing a different
-        # control) apart from a single genuinely missing name.
+        # LookupError, not TypeError: this is a name that did not
+        # resolve inside the window, not a wrong argument type. The
+        # child count and names tell a whole-subtree load gap (CI has
+        # seen three fresh loads of the same frame each missing a
+        # different control) apart from a single genuinely missing
+        # name.
         raise LookupError(  # noqa: TRY004
             f"{window.GetName()} has no control named {name!r} "
             f"(first-level children: {len(children)} -- {children!r})"
@@ -231,11 +230,10 @@ def associate_model(control: Any, model: Any) -> None:  # noqa: ANN401 -- wx shi
     not be reproduced as a genuine defect in this environment: a
     terminal-launched process never becomes the macOS foreground
     app, the same limitation that defeats ``UIActionSimulator`` and
-    ``FindFocus`` elsewhere in this codebase's own functional suite
-    (``harness.py``'s module docstring) -- so a screen capture here
-    cannot actually see the dialog either way, and the original
-    observation may be an artifact of that limitation rather than a
-    real bug.
+    ``FindFocus`` elsewhere in this codebase -- so a screen capture
+    here cannot actually see the dialog either way, and the
+    original observation may be an artifact of that limitation
+    rather than a real bug.
 
     ``Refresh()`` + ``Update()`` right after associating a model is
     nonetheless standard, harmless practice for a macOS

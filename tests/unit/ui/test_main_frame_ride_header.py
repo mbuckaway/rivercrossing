@@ -121,11 +121,11 @@ def _app() -> wx.App:
     measured unbound-app hang ``test_cards_imagelist_wx`` documents).
 
     The active log target is redirected to stderr -- the same guard
-    ``ui.app`` installs and ``tests/functional/conftest.py`` applies
-    session-wide. A missing or undecodable logo makes wx *queue* an
-    error rather than print it, and with no target to flush the queue
-    ``wxApp::CleanUp()`` blocks at interpreter exit on a "Several
-    errors occurred" modal nobody can dismiss (measured exit 124).
+    ``ui.app`` installs. A missing or undecodable logo makes wx
+    *queue* an error rather than print it, and with no target to
+    flush the queue ``wxApp::CleanUp()`` blocks at interpreter exit
+    on a "Several errors occurred" modal nobody can dismiss
+    (measured exit 124).
     """
     app = wx.GetApp() or wx.App(redirect=False)
     wx.Log.SetActiveTarget(wx.LogStderr())

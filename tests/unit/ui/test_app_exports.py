@@ -592,8 +592,8 @@ def test_team_logo_srcs_omits_a_card_code_with_no_asset_behind_it() -> None:
 # ``on_export(target)`` callback and the app wires it to the same
 # ``_handle_export_command`` routes the menu rows run. These pins keep
 # the view's button table and the app's dispatch table in lockstep
-# headless; the real-button behaviour is functionally pinned in
-# tests/functional/test_results_exports.py.
+# headless; the real-button behaviour needs a live window and is not
+# pinned here.
 
 
 def test_results_window_export_buttons_map_each_button_to_its_route_target() -> None:

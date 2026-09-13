@@ -4,13 +4,11 @@
 Only the column/cell *formatting* functions each view module defines
 are exercised here -- ``RidesListModel``/``CardsHeldModel``/
 ``EntryLapsModel``/``StandingsListModel`` all subclass
-``wx.dataview.DataViewIndexListModel`` and are proven against the real
-toolkit instead, in ``tests/functional/test_lists_demo.py`` -- and the
-console's riders list has no model of its own at all any more: it
-renders through the shared ``ui.views._support.RiderRowListModel``
-(``tests/unit/ui/test_main_frame_riders_list.py``), which
-``cards_imagelist``'s own split between ``tests/unit/`` and
-``tests/functional/`` is the precedent this mirrors.
+``wx.dataview.DataViewIndexListModel`` and need the real toolkit
+instead -- and the console's riders list has no model of its own at
+all any more: it renders through the shared
+``ui.views._support.RiderRowListModel``
+(``tests/unit/ui/test_main_frame_riders_list.py``).
 
 Importing ``ride_library``/``results_win`` does pull in ``wx``
 transitively (their ``DataViewIndexListModel`` subclasses need it at

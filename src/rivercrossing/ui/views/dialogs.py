@@ -57,9 +57,8 @@ spec.md §13's matching initial-focus decision for every form dialog,
 ``rider_editor_dlg``, ``add_rider_dlg`` and ``team_editor_dlg``
 included. Both are the one place these decisions are recorded --
 ``app.py``'s ``_apply_dialog_defaults`` applies them when a real
-menu route opens the dialog, and
-``tests/functional/test_dialog_behavior.py`` asserts them directly
-against a raw XRC-loaded dialog; neither copies the other's table.
+menu route opens the dialog, reading these tables rather than
+copying them.
 """
 
 import gc
@@ -97,10 +96,8 @@ __all__ = [
 ]
 
 # Real XRC names FindWindowByName resolves, but excluded from ui/ids.py
-# by tools/gen_ids.py's STOCK_IDS set (spec.md §15b) -- the same two
-# stock ids tests/functional/pages.py names for the identical reason;
-# production code cannot import that test-only module, so these are
-# the one place it repeats the (immutable, wx-defined) literal.
+# by tools/gen_ids.py's STOCK_IDS set (spec.md §15b) -- the one place
+# production code repeats these (immutable, wx-defined) literals.
 WX_ID_OK = "wxID_OK"
 WX_ID_CLOSE = "wxID_CLOSE"
 
@@ -169,11 +166,11 @@ class MissingDialogControlError(LookupError):
 def _control(dialog: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
     """Return the *expected_type* control named *name* in *dialog*.
 
-    Mirrors ``tests/functional/harness.find_control``'s shape: the
-    lookup always passes *dialog* as the explicit ``parent`` argument
-    to ``FindWindowByName``, never as an instance-method call, since
+    Mirrors ``_support.find_control``'s shape: the lookup always
+    passes *dialog* as the explicit ``parent`` argument to
+    ``FindWindowByName``, never as an instance-method call, since
     the latter silently searches every top-level window in the
-    process instead (measured, harness.py's own module docstring).
+    process instead (measured).
 
     The ``isinstance`` check is not decoration: under the address-
     reuse hazard ``_support.find_control`` documents, a freshly
@@ -302,10 +299,9 @@ def delete_ride_message(ride_name: str) -> str:
     """Return ``delete_ride_dlg``'s ``message_lbl`` copy for a ride.
 
     UX-DESKTOP §4: a destructive confirm must name the object it is
-    about to destroy, so this line is not optional -- the E5.3.2
-    functional suite asserts the label is non-empty and carries
-    *ride_name* (a blank label is a failed assertion, never cosmetic).
-    Mirrors library.xrc's own data-bearing sentence.
+    about to destroy, so this line is not optional -- the label must
+    be non-empty and carry *ride_name* (a blank label is a failure,
+    never cosmetic). Mirrors library.xrc's own data-bearing sentence.
     """
     return f'Deletes "{ride_name}" and all its data.'
 
@@ -410,9 +406,8 @@ def _active_log() -> Logging | None:
     """Return the launch's structured log from the live app (F4).
 
     ``main`` builds the log and hangs it on the app (``app.log``); an
-    app that predates F1 -- a functional harness's own ``wx.App``, or
-    no app at all -- has none, so the dialog seam logs nothing rather
-    than raising.
+    app that predates F1 -- a bare ``wx.App``, or none at all -- has
+    none, so the dialog seam logs nothing rather than raising.
     """
     return getattr(wx.GetApp(), "log", None)
 

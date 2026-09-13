@@ -6,8 +6,8 @@ behaviour xrc-windows.md's footnotes assign to it -- DataView
 columns/rows, InfoBar construction, splitter persistence and the
 like -- and implements that window's ``*View`` Protocol from
 ``ui.presenters``. Loading the XRC itself stays the caller's job
-(the app bootstrap in production, ``harness.load_window`` in tests);
-nothing here duplicates that.
+(the app bootstrap, in production and in tests); nothing here
+duplicates that.
 """
 
 from rivercrossing.ui.views.main_frame import MainFrame

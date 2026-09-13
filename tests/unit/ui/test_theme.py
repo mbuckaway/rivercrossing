@@ -19,8 +19,7 @@ menu-id mapping (``mode_for_menu_id`` / ``menu_item_id_for`` /
 constant use ``test_app_wiring.py`` already established -- but never
 constructs a ``wx.App``, a ``wx.Frame``, or any other live wx object:
 that boundary (and everything ``theme.apply``/``ThemeController``
-touch beyond it) is proven only by the real, spawned-subprocess
-scenarios in ``tests/functional/test_theme.py`` instead (mirrors
+touch beyond it) is out of scope here (mirrors
 ``test_cards_imagelist.py``'s own split for ``CardImageList``).
 
 ux-polish: :func:`theme.apply_light_mode_panel_bg` follows the same
@@ -30,9 +29,8 @@ it headless raises ``PyNoAppError``), so the unit tests below drive
 the decision through a monkeypatched ``theme.require_wx`` returning a
 fake wx module and a plain-object fake dialog, exactly as
 :func:`theme.apply`'s own capability-guard tests patch ``wx.PyApp``.
-The real-wx proof -- ``ride_setup_dlg`` carries the panel tone in a
-Light appearance -- lives in the spawned-subprocess scenarios in
-``tests/functional/test_theme.py``.
+The real-wx behaviour -- ``ride_setup_dlg`` carries the panel tone
+in a Light appearance -- is not exercised here.
 """
 
 import pytest
@@ -236,10 +234,9 @@ def test_apply_returns_none_when_wx_pyapp_appearance_is_absent(
 # returns a wx.SystemAppearance that exposes IsDark()/IsSystemDark()/
 # IsUsingDarkBackground()/GetName()/AreAppsDark but NO IsLight()
 # (theme.py's own helper docstring records the measurement). The
-# functional suite's scenarios already read live theme results with
-# the identical probe -- ``GetAppearance().IsDark()`` -- so these
-# tests pin the helper's branch decision through a fake wx module,
-# never a real wx.App (module docstring).
+# probe is ``GetAppearance().IsDark()``, so these tests pin the
+# helper's branch decision through a fake wx module, never a real
+# wx.App (module docstring).
 
 
 class _FakePanelDialog:

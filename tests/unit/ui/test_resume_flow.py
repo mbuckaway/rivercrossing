@@ -4,10 +4,10 @@
 ``resume_flow.py`` imports no ``wx`` at all, so the wording function
 (``resume_message``) and the launch decision (``resume_dialog_for``)
 are exactly the kind of logic R-71's >=90% branch-coverage gate is
-meant to cover -- ``tests/functional/test_resume_dlg.py`` covers what
-only a real ``wx.Dialog`` can prove (that ``resume_dlg`` actually
-shows at launch, that its buttons end the modal, and that the
-resumed console shows the right elapsed).
+meant to cover. What only a real ``wx.Dialog`` can prove -- that
+``resume_dlg`` actually shows at launch, that its buttons end the
+modal, and that the resumed console shows the right elapsed -- needs
+a live toolkit and stays out of this headless file.
 
 Spec §3 / R-52: closed_at present -> "You quit at 12:41 -- the ride
 kept running"; closed_at NULL -> crash, "closed unexpectedly at

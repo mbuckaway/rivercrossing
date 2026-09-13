@@ -51,10 +51,10 @@ def _app() -> wx.App:
     """Return this module's one ``wx.App``, creating it on first use.
 
     The log target is redirected to stderr -- the same guard
-    ``ui.app`` installs and the functional conftest applies
-    session-wide: a failed decode queues a wx error, and with no target
-    to flush it ``wxApp::CleanUp()`` blocks at interpreter exit on a
-    "Several errors occurred" modal nobody can dismiss (measured).
+    ``ui.app`` installs: a failed decode queues a wx error, and with
+    no target to flush it ``wxApp::CleanUp()`` blocks at interpreter
+    exit on a "Several errors occurred" modal nobody can dismiss
+    (measured).
     """
     app = wx.GetApp() or wx.App(redirect=False)
     wx.Log.SetActiveTarget(wx.LogStderr())

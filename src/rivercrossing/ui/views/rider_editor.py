@@ -160,8 +160,8 @@ __all__ = [
 # riders_list's columns come from the shared, wx-free
 # ``ui.rider_columns`` (Phase 3), so this editor's list and the
 # console's own ``console_riders_list`` cannot drift. The index names
-# stay as this module's own public surface (the functional suite and
-# this file read them).
+# stay as this module's own public surface (this file and the unit
+# tests read them).
 COL_PLATE = 0
 COL_NAME = 1
 COL_TEAM = 2
@@ -254,9 +254,8 @@ SEX_OPTIONS: tuple[str, ...] = ("", "M", "F")
 _EDIT_TITLE = "Edit Rider"
 
 # The two NotImplementedError messages each view class's own "wrong
-# half" of RidersView raises (module docstring) -- each keeps "E3.4"
-# as a substring so the already-pinned functional tests naming it
-# stay valid unchanged.
+# half" of RidersView raises (module docstring); each carries the
+# "E3.4" phase id in its text.
 _CSV_PREVIEW_NOT_IMPLEMENTED = (
     "csv_preview_dlg is decorated by CsvPreviewDialog, not RiderEditor (E3.4)"
 )
@@ -359,8 +358,8 @@ class RiderEditor:
         """Decorate an already-loaded ``rider_editor_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``riders.xrc``.
+            dialog: The ``wx.Dialog`` the app bootstrap already
+                loaded from ``riders.xrc``.
             roster: The in-memory :class:`~rivercrossing.roster.
                 Roster` this editor reads and writes directly --
                 unlike every other view in this package, never a
@@ -530,7 +529,7 @@ class RiderEditor:
         """Handle a rider_search change; forward its current text.
 
         ``rider_search`` is a ``wxSearchCtrl``: text changes (typing,
-        the harness's ``SetValue``, the native clear X) all re-run the
+        a programmatic ``SetValue``, the native clear X) all re-run the
         filter, and the search button (Enter) does too -- every path
         reads the control's current value, so one handler serves all
         three events (the audit dialog's own precedent).
@@ -588,8 +587,8 @@ class RiderEditor:
         directly, never by relying on the selection event alone: a
         programmatic ``Select`` fires ``EVT_DATAVIEW_SELECTION_CHANGED``
         on macOS's generic control but not on MSW's native one
-        (``harness.select_row``'s own measured note). Where macOS does
-        fire the event, it re-runs the same idempotent handler.
+        (measured). Where macOS does fire the event, it re-runs the
+        same idempotent handler.
         """
         for row in range(self._model.GetCount()):
             if self._model.GetValueByRow(row, COL_PLATE) == plate:
@@ -957,8 +956,8 @@ class CsvPreviewDialog:
         """Decorate an already-loaded ``csv_preview_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``riders.xrc``.
+            dialog: The ``wx.Dialog`` the app bootstrap already
+                loaded from ``riders.xrc``.
             roster: The in-memory roster a picked file previews
                 against and, on Import, commits into -- the same
                 roster a live ``RiderEditor`` reads, if one happens
@@ -1174,8 +1173,7 @@ def _pick_import_path(parent: wx.Window) -> Path | None:
 
     A thin ``wx.FileDialog`` seam: tests monkeypatch this function
     itself (module-level) rather than ever driving the native picker,
-    which no test in this suite can do (harness.py's own module
-    docstring).
+    which no test can drive headlessly.
     """
     with wx.FileDialog(
         parent,

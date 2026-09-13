@@ -20,7 +20,7 @@ no window is pinned here:
 
 The rest of the wiring -- the ``Bind`` calls that deliver a real header
 sort or select a real notebook page -- needs a live ``wx`` window and
-stays with the functional suite.
+is not pinned here.
 """
 
 from __future__ import annotations

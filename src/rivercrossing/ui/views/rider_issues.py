@@ -131,8 +131,8 @@ class RiderIssuesView:
         """Decorate an already-loaded ``rider_issues_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``riders.xrc``.
+            dialog: The ``wx.Dialog`` already loaded from
+                ``riders.xrc``, by the app bootstrap or by tests.
             roster: The in-memory :class:`~rivercrossing.roster.
                 Roster` this dialog reports on and, on a conversion,
                 writes to.

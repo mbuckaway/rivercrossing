@@ -8,8 +8,7 @@ scoped to it too.
 
 The one thing only a real ``wx.MenuBar`` can prove -- that the three
 XRC-backed entries agree with ``main.xrc``'s live ``<accel>``
-declarations -- stays in
-``tests/functional/test_menu_coverage.py``.
+declarations -- needs a live toolkit and is not pinned here.
 """
 
 from rivercrossing.ui import accelerators

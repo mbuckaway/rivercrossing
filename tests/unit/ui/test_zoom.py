@@ -6,10 +6,9 @@
 fully wx-free, so the seven-way mapping, its negative path, and the
 point-size rounding are exactly the logic R-71's >=90% branch-coverage
 gate is meant to cover. Everything past that point -- the per-window
-base-font capture and the real ``wx.Font`` construction -- is proven
-only by the spawned-subprocess scenarios in
-``tests/functional/test_settings.py`` instead (the same split
-``test_theme.py`` draws).
+base-font capture and the real ``wx.Font`` construction -- runs
+through a monkeypatched ``zoom.require_wx`` fake, never a live
+``wx.App`` (the same split ``test_theme.py`` draws).
 """
 
 import re
@@ -152,9 +151,8 @@ def test_zoom_controller_defaults_to_one_hundred_percent() -> None:
 # test_theme.py's own split draws the line this follows: the wx-free
 # mapping math is proven headless, and the real ``wx.Font`` build is
 # driven through a monkeypatched ``zoom.require_wx`` returning a fake
-# wx module -- never a live wx.App in the unit process. The spawned-
-# subprocess scenarios in tests/functional/test_settings.py are where
-# the real fonts render.
+# wx module -- never a live wx.App in the unit process. Rendering a
+# real font needs a live wx.App, so it is out of scope here.
 
 
 class _FakeBaseFont:

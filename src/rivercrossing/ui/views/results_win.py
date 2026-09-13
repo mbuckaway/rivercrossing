@@ -351,8 +351,8 @@ class ResultsWindow:
         """Decorate an already-loaded ``results_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``results.xrc``.
+            dialog: The ``wx.Dialog`` the caller already loaded
+                from ``results.xrc``.
             data_source: The display-data seam. This view knows only
                 the :class:`~rivercrossing.ui.presenters.data_source.
                 DataSource` Protocol -- the caller wires in whichever
@@ -635,8 +635,8 @@ class ResultsWindow:
     def show_publish_options(self, options: ExportOptions) -> None:
         """Reflect the five publish checkboxes (``ResultsView``).
 
-        ``SetValue`` fires no ``EVT_CHECKBOX`` (measured harness
-        convention), so this cannot loop back into the presenter.
+        ``SetValue`` fires no ``EVT_CHECKBOX`` (measured), so this
+        cannot loop back into the presenter.
         """
         self.show_times_chk.SetValue(options.show_times)
         self.laps_board_chk.SetValue(options.laps_board)

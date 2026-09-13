@@ -1,21 +1,20 @@
 # RiverCrossing CI — the static, unit, build and release stages from
 # design/docs-md/spec.md §14.
 #
-# No functional tests of any kind run here, and none may be added back.
-# The functional suite (tests/functional) and the acceptance race
-# (tests/acceptance) drive the real wx UI on a desktop; both are broken
-# and forbidden permanently (2026-09-12). Each directory's conftest exits
-# at collection, so pytest refuses before a single test or window runs.
-# Former stages 3 (Functional UI) and 4 (Acceptance race) are removed —
-# not pending anything — and the scheduled nightly acceptance workflow
-# (nightly.yml) was deleted the same day: no test runs on a schedule, and
-# no cron trigger may be reintroduced. The stage-5 packaging smoke
-# sessions (smoke, dmg_smoke, winsetup_smoke) were removed on 2026-09-10
-# for the same reason. CI builds and packages only.
+# CI runs the headless unit suite, plus ONE permitted functional test: the
+# open/quit smoke (tests/functional/test_app_menu_quit.py) in the `open-smoke`
+# job below, on every OS leg. Every other non-unit suite -- the functional
+# suite, the acceptance race, the property and simulation suites -- is removed
+# (2026-09-13); only unit tests are written (see AGENTS.md TEST RULES). No test
+# runs on a schedule, and no cron trigger may be reintroduced. The stage-5
+# packaging smoke sessions (smoke, dmg_smoke, winsetup_smoke) were removed on
+# 2026-09-10.
 #
 # EPIC 1 wired stages 1, 2, 3 and 5; EPIC 9 delivered stage 4 (the
-# acceptance race) and E9.2.2's nightly seeded replay. Stages 3-4 and the
-# nightly were removed permanently on 2026-09-12 (above). Phase 9 added
+# acceptance race) and E9.2.2's nightly seeded replay. The old stage 3
+# (full functional suite), stage 4 (acceptance race) and the nightly were
+# removed on 2026-09-12; the single open/quit smoke now runs as the
+# `open-smoke` job above. Phase 9 added
 # the unsigned per-user NSIS installer to the Windows stage-5 leg (the
 # unsigned half of E9.1.2); Phase 11 added the unsigned half of stage 6 --
 # a version tag runs every wired stage and, when green, publishes the
@@ -89,7 +88,7 @@ jobs:
 
   # ---------------------------------------------------------------- stage 2
   unit:
-    name: "2 · Unit + property (${{ matrix.os }})"
+    name: "2 · Unit (${{ matrix.os }})"
     strategy:
       fail-fast: false
       matrix:
@@ -106,7 +105,7 @@ jobs:
       - name: Install
         run: uv pip install --system -e ".[dev]"
       - name: pytest (coverage gate >= 90% line and branch)
-        run: pytest tests/unit tests/property tests/simulations -m "not functional"
+        run: pytest tests/unit -m "not functional"
       - name: Upload coverage
         if: always()
         uses: actions/upload-artifact@v4
@@ -114,6 +113,37 @@ jobs:
           name: coverage-${{ matrix.os }}
           path: coverage.json
           if-no-files-found: ignore
+
+  # ------------------------------------------------- stage 3 · open smoke
+  # The one permitted functional test (tests/functional/test_app_menu_quit.py):
+  # it builds the real app, shows the window, and drives the app-menu Quit,
+  # answering the confirm with a wx.ModalDialogHook. It is the regression gate
+  # for the Windows-only open crash, so it must pass on all three OS legs for a
+  # PR to be green.
+  open-smoke:
+    name: "3 · Open + quit smoke (${{ matrix.os }})"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, windows-11-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv pip install --system -e ".[dev]"
+      - name: Open + quit smoke (macOS)
+        if: runner.os != 'Windows'
+        run: ./scripts/run-open.sh
+      - name: Open + quit smoke (Windows)
+        if: runner.os == 'Windows'
+        run: ./scripts/run-open.ps1
 
   # ------------------------------------------------------- stage 5 · macOS
   build-macos:

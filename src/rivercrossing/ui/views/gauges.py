@@ -198,7 +198,7 @@ class StopLight(wx.Control):  # type: ignore[misc]
     ``# type: ignore[misc]``: same wx-ships-no-stubs note as
     :class:`RaceClock`. The lit colour is driven by
     ``console.stop_light_mode`` (RideStatus -> mode) from the view's
-    ``set_state``; ``mode`` stays readable for the functional harness.
+    ``set_state``; ``mode`` stays readable for callers that inspect it.
     The light is display-only: it carries no events, and it never
     carries state by colour alone (the status label beside it always
     spells the state out).

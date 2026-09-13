@@ -866,8 +866,7 @@ def test_settings_dialog_declares_no_text_zoom_control() -> None:
     The settings dialog used to carry ``zoom_choice`` -- the text-zoom
     surface testing notes #12 removed. Its removal is structural here
     (no ``zoom_choice`` object and no ``wxChoice`` at all in the
-    dialog), and behavioural in the functional suite (pages.py's
-    SETTINGS_DLG spec and the renders scenario's raw-name probe).
+    dialog); nothing here opens the dialog to check its behaviour.
     """
     names = _control_names_in(_top_level_windows("settings.xrc")["settings_dlg"])
     classes = [obj.attrib["class"] for obj in _parse("settings.xrc").iter("object")]

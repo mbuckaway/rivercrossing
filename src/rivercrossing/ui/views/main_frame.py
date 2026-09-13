@@ -25,9 +25,8 @@ measure a font), and the ``EVT_DISPLAY_CHANGED`` re-fit.
 
 :class:`MainFrame` decorates an already-XRC-loaded ``wx.Frame`` -- it
 never calls ``LoadFrame`` itself. Loading stays the caller's job
-(``harness.load_window`` in tests, the app bootstrap in production),
-matching every other window in this codebase and the rule this
-repo's own harness states: reuse the one loader, never build a
+(the app bootstrap), matching every other window in this codebase
+and the repo's loader rule: reuse the one loader, never build a
 second.
 
 **Why no separate ``console_panel.py`` (SIMPLECODE Rule 7 -- one
@@ -510,9 +509,9 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
 # The concrete wx class each REQUIRED_CONTROLS name must resolve to.
 # Transcribed verbatim from ``MainFrame.__init__``'s own
 # ``self._find(name, Class)`` calls below -- the one name->class
-# contract the app guard (``ui.app._load_frame_verified``) and the
-# harness's gate both read, so the guard can never demand a class the
-# ctor does not. Keep the keys in lockstep with REQUIRED_CONTROLS
+# contract the app guard (``ui.app._load_frame_verified``) reads, so
+# the guard can never demand a class the ctor does not. Keep the keys
+# in lockstep with REQUIRED_CONTROLS
 # (tests/unit/test_main_frame_guard.py pins both transcriptions).
 REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     ids.CROSSINGS_LIST: wx.dataview.DataViewCtrl,
@@ -605,8 +604,7 @@ class MainFrame:
     class's own earlier docstring recorded for ``set_hide_times``.
     :meth:`wire_console` binds the lifecycle controls (start/stop/
     undo) and the tick timer, mirroring :meth:`wire_entry`'s
-    callback idiom; the app bootstrap (and the live-console harness)
-    call it after construction.
+    callback idiom; the app bootstrap calls it after construction.
     """
 
     def __init__(  # noqa: PLR0913, PLR0915 -- constructor: (frame, data_source) + E4.4.2/E8.1.1 seams + every control it resolves
@@ -622,8 +620,8 @@ class MainFrame:
         """Decorate an already-loaded ``main_frame`` window.
 
         Args:
-            frame: The ``wx.Frame`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``main.xrc``.
+            frame: The ``wx.Frame`` the caller already loaded
+                from ``main.xrc``.
             data_source: The display-data seam (module-skeletons.md
                 ``ui.presenters``). This view knows only the
                 :class:`~rivercrossing.ui.presenters.data_source.
@@ -922,9 +920,9 @@ class MainFrame:
 
         Measured on wxPython 4.3.1: ``wx.InfoBar.AddButton(id, label)``
         creates a real ``wx.Button`` child; binding the click on that
-        child (not the bar) is what receives both the synthetic
-        harness click and a real one, and the click never auto-dismisses
-        the bar (the handler's state transition owns dismissal). The
+        child (not the bar) is what receives both a synthetic click
+        and a real one, and the click never auto-dismisses the bar
+        (the handler's state transition owns dismissal). The
         buttons carry the frozen-style names the tests find them by.
         """
         reopen_id = wx.NewIdRef()
@@ -1145,6 +1143,11 @@ class MainFrame:
         rebuilt model would keep the presenter's own order and the
         sort would silently revert.
 
+        The clear is guarded by ``IsSortKey``: on the first render the
+        column has never sorted the control, and Windows' generic
+        ``DataViewColumn.UnsetAsSortKey`` asserts ("column is not used
+        for sorting") and aborts the process there.
+
         Unlike the riders tab's own sort, this one always applies: the
         feed opens sorted by Time ASCENDING (the ride's own reading
         order), so there is no "nothing sorted yet" state.
@@ -1155,7 +1158,8 @@ class MainFrame:
         column = self.crossings_list.GetColumn(self._feed_sort_column)
         if column is None:
             return
-        column.UnsetAsSortKey()
+        if column.IsSortKey():
+            column.UnsetAsSortKey()
         column.SetSortOrder(self._feed_sort_ascending)
         model.Resort()
 
@@ -1291,7 +1295,7 @@ class MainFrame:
         """Forward the ``crossings_search`` box's current text.
 
         ``crossings_search`` is a ``wxSearchCtrl``: text changes
-        (typing, the harness's ``SetValue``, the native clear X) all
+        (typing, a programmatic ``SetValue``, the native clear X) all
         re-run the filter, and the search button (Enter) does too --
         every path reads the control's current value, so one handler
         serves all three events (the rider editor's own precedent).
@@ -1871,9 +1875,9 @@ class MainFrame:
         # Stop the timer with the frame: a running wx.Timer whose owner
         # was destroyed keeps its native timer registered, and the next
         # wxSafeYield dispatches wxTimerImpl::SendEvent against the
-        # freed owner -- the measured segfault behind the functional
-        # suite's "worker crashed" flake (reproduced deterministically:
-        # build frame -> destroy -> SafeYield past the tick period).
+        # freed owner -- a measured segfault (reproduced
+        # deterministically: build frame -> destroy -> SafeYield past
+        # the tick period).
         self.frame.Bind(wx.EVT_WINDOW_DESTROY, lambda _event: self._tick_timer.Stop())
 
     def set_presenter(self, presenter: ConsolePresenter) -> None:

@@ -15,7 +15,7 @@ are pinned here as plain module data -- no window, no ``wx.App``
   column carries the rider the operator reads, so it opens at double
   that.
 
-The columns' live layout stays with the (disabled) functional suite.
+The columns' live layout needs a real window and is not pinned here.
 """
 
 import pytest

@@ -13,10 +13,8 @@ out of that table into its own COMMAND branch (``target="stop_ride"``
 the two remaining shapes: Set Start Time… still dispatches through
 ``_LIVE_FLOW_HANDLERS``, and Stop Ride… fires
 ``presenter.on_stop_requested``. This file is the only headless
-``_make_route_handler`` suite; the handlers themselves (real wx
-dialogs + real engine commands) are functionally covered by
-``tests/functional/test_corrections.py``,
-``test_void_card_confirm.py`` and ``test_menu_coverage.py``.
+``_make_route_handler`` suite; the handlers themselves need real wx
+dialogs and real engine commands, so they are not exercised here.
 """
 
 from datetime import datetime

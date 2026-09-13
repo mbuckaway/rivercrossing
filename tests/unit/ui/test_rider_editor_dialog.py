@@ -8,7 +8,7 @@ XRC declares is checked here as pure XML -- no ``wx`` import, no
 display -- alongside the code-side numbers the XRC cannot express (a
 window has no minsize property): the Add/Edit dialog's own width floor
 and its primary button's width floor. Real-window geometry and
-click-through behaviour stay in the functional suite.
+click-through behaviour need a real window and are not pinned here.
 """
 
 from pathlib import Path

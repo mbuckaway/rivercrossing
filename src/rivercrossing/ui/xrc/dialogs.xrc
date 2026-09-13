@@ -10,9 +10,9 @@
   through the native confirm (ui.std_dialogs.show_confirm) instead of
   an XRC dialog.
   no_ride_dlg (section B) retired in W15: the store-backed launch that
-  resumes nothing and opens nothing shows the native info dialog
-  (ui.std_dialogs.show_info) instead; the create/open choice is the
-  File menus' own job.
+  resumes nothing and opens nothing now shows nothing at all; the
+  console stands and the create/open choice is the File menus' own
+  job.
   Phase 11 (H2) retired four more section-B dialogs for native
   std_dialogs: finish_confirm_dlg (show_danger, with the REOPENED
   "Finish again" label), duplicate_ride_dlg and reopen_ride_dlg

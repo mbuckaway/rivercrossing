@@ -38,8 +38,8 @@ class SelfTestDialog:
         """Decorate an already-loaded ``selftest_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``dialogs.xrc``.
+            dialog: The ``wx.Dialog`` the caller already loaded
+                from ``dialogs.xrc``.
         """
         self.dialog = dialog
         self.output = self._find(ids.SELFTEST_OUTPUT, wx.TextCtrl)

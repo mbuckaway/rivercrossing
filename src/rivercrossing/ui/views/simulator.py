@@ -154,8 +154,8 @@ class SimulatorDialog:
         """Decorate an already-loaded ``simulation_dlg`` window.
 
         Args:
-            dialog: The ``wx.Dialog`` ``harness.load_window`` (or the
-                app bootstrap) already loaded from ``simulation.xrc``.
+            dialog: The ``wx.Dialog`` the app bootstrap already
+                loaded from ``simulation.xrc``.
             engine: The live ride engine the simulated crossings
                 record into; its lap length sizes the interval seed.
             roster: The in-memory roster the generator fills.

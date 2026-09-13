@@ -86,8 +86,8 @@ REQUIRED_SOUNDS: tuple[str, ...] = ("error.wav", "flagged.wav", "recorded.wav")
 
 # Where the data must land inside the bundle. A frozen module's
 # ``__file__`` points at ``sys._MEIPASS/rivercrossing/ui/...``, so
-# ``cards_imagelist.cards_dir()`` and ``harness.xrc_directory()``
-# resolve only if the assets sit on that same relative path.
+# ``cards_imagelist.cards_dir()`` and the app's XRC loader resolve
+# only if the assets sit on that same relative path.
 PACKAGE_DEST = "rivercrossing/ui"
 
 # E2.4.1 (spec section 12, R-44): the evaluator self-test's own vector

@@ -14,9 +14,7 @@ Everything here is wx-free -- the map, the lookup, the guide path
 and the URL building all run without a display, mirroring
 ``zoom.py``/``theme.py`` -- so the mapping logic is exactly what
 R-71's >=90% branch-coverage gate covers in the headless suite; the
-active-window resolution lives in ``ui.app``'s route handler and is
-proven by the functional scenarios (tests/functional/
-test_user_guide.py).
+active-window resolution lives in ``ui.app``'s route handler.
 
 The guide ships in the repo's ``docs/`` directory beside the package
 for now; E9 bundles it into the installed package, where
@@ -122,8 +120,8 @@ def open_guide(anchor: str | None = None) -> str:
     """Open the user guide at *anchor* in the OS-default browser.
 
     The URL is the return value -- the seam the app posts to the
-    status bar and the functional suite captures -- so this stays
-    thin about what it opens.
+    status bar and the tests capture -- so this stays thin about what
+    it opens.
 
     Args:
         anchor: The guide anchor (section id) to deep-link to;

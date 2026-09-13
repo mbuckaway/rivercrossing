@@ -3,7 +3,7 @@
 
 spec.md section 14 asserts both hosted runners have a real
 desktop session, so wx windows open without a virtual display.
-The whole functional suite rests on that claim, so verify it
+Every GUI check in CI rests on that claim, so verify it
 explicitly -- open a real frame, draw into it, capture a PNG --
 before 23 windows come to depend on it.
 

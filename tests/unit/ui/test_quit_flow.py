@@ -4,10 +4,9 @@
 ``quit_flow.py`` imports no ``wx`` at all, so ``dialog_for_status``'s
 four-status mapping and ``outcome_for``'s result matrix are exactly
 the kind of logic R-71's >=90% branch-coverage gate is meant to
-cover -- ``tests/functional/test_quit_flow_wx.py`` covers what only
-a real ``wx.Dialog`` can prove (that the right dialog actually
-shows, and that clicking its buttons genuinely ends the modal with
-these ids).
+cover. What only a real ``wx.Dialog`` can prove (that the right
+dialog actually shows, and that clicking its buttons genuinely ends
+the modal with these ids) is not asserted here.
 
 Phase 11 H2: the non-RUNNING branch stopped naming an XRC dialog at
 all -- ``exit_confirm_dlg`` retired in favour of the native
