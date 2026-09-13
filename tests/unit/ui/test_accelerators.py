@@ -14,9 +14,9 @@ declarations -- needs a live toolkit and is not pinned here.
 from rivercrossing.ui import accelerators
 
 
-def test_accelerator_table_declares_exactly_four_entries() -> None:
-    """Enter, Ctrl+Z, F5, F1 -- no more, no fewer (E1.4.1 brief)."""
-    assert len(accelerators.ACCELERATOR_TABLE) == 4
+def test_accelerator_table_declares_exactly_five_entries() -> None:
+    """Enter, Ctrl+Z, F5, F1, F2 -- no more, no fewer."""
+    assert len(accelerators.ACCELERATOR_TABLE) == 5
 
 
 def test_accelerator_table_declares_each_key_exactly_once() -> None:
@@ -31,3 +31,14 @@ def test_enter_accelerator_is_not_a_menu_item() -> None:
     enter_row = next(row for row in accelerators.ACCELERATOR_TABLE if row.key == "Enter")
 
     assert enter_row.menu_item_id is None
+
+
+def test_f2_accelerator_is_a_code_side_frame_accelerator() -> None:
+    """Phase 6: F2 opens the selected feed row's Crossing Detail.
+
+    It carries no ``menu_item_id`` -- the opposite of the three XRC
+    ``<accel>`` rows -- because main.xrc has no menu item for it.
+    """
+    f2_row = next(row for row in accelerators.ACCELERATOR_TABLE if row.key == "F2")
+
+    assert (f2_row.action, f2_row.menu_item_id) == ("Edit crossing (open detail)", None)

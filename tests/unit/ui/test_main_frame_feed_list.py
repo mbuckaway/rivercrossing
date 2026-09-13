@@ -473,6 +473,130 @@ def test_on_search_text_given_no_presenter_still_lets_the_event_continue() -> No
     assert event.skipped is True
 
 
+# ---------------------------------------- F2: edit crossing (Phase 6)
+
+
+class _Selection:
+    """A ``DataViewItem`` double for the feed's selection."""
+
+    def __init__(self, *, ok: bool = True) -> None:
+        """Carry whether the item references a real row."""
+        self._ok = ok
+
+    def IsOk(self) -> bool:  # noqa: N802 -- wx API name the double mirrors
+        """Return whether the item references a real row."""
+        return self._ok
+
+
+class _FeedList:
+    """A ``DataViewCtrl`` double for the feed's selection."""
+
+    def __init__(self, selection: _Selection) -> None:
+        """Carry the control's current selection."""
+        self.selection = selection
+
+    def GetSelection(self) -> _Selection:  # noqa: N802 -- wx API name the double mirrors
+        """Return the currently selected item."""
+        return self.selection
+
+
+class _FeedModel:
+    """A ``CrossingsFeedModel`` double resolving an item to a row."""
+
+    def __init__(self, *, row: int = 0) -> None:
+        """Resolve every item to *row*; NOT_FOUND is a stale one."""
+        self._row = row
+        self.resolved: list[object] = []
+
+    def GetRow(self, item: object) -> int:  # noqa: N802 -- wx API name the double mirrors
+        """Record the item and return the configured row."""
+        self.resolved.append(item)
+        return self._row
+
+
+class _FeedShell:
+    """A ``MainFrame`` double owning the F2 handler's own state."""
+
+    def __init__(
+        self,
+        *,
+        selection: _Selection | None = None,
+        model: _FeedModel | None = None,
+        open_crossing: object = None,
+    ) -> None:
+        """Store the state the F2 handler reads."""
+        self.crossings_list = _FeedList(_Selection() if selection is None else selection)
+        self._crossings_model = model
+        self._on_open_crossing = open_crossing
+
+
+def test_on_edit_crossing_accelerator_given_a_selected_row_fires_the_seam() -> None:
+    """Phase 6: F2 opens the selected feed row's Crossing Detail."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=3), open_crossing=fired.append)
+
+    main_frame.MainFrame._on_edit_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == [3]
+
+
+def test_accelerator_entries_given_a_frame_id_returns_the_f2_entry() -> None:
+    """Phase 6: the frame's own entry is F2 -> its frame-local id.
+
+    ``app._apply_accelerators`` appends this list to the harvested
+    menubar entries, so the key code and command are the app-facing
+    contract that keeps F2 alive after the bootstrap re-applies the
+    table.
+    """
+    shell = object.__new__(main_frame.MainFrame)
+    shell._edit_crossing_id = 4242
+
+    entries = main_frame.MainFrame.accelerator_entries(shell)
+
+    assert [(entry.GetKeyCode(), entry.GetCommand()) for entry in entries] == [(wx.WXK_F2, 4242)]
+
+
+def test_on_edit_crossing_accelerator_given_no_selection_fires_nothing() -> None:
+    """T-3 negative: an invalid selection never resolves a row."""
+    fired: list[int] = []
+    model = _FeedModel(row=0)
+    shell = _FeedShell(selection=_Selection(ok=False), model=model, open_crossing=fired.append)
+
+    main_frame.MainFrame._on_edit_crossing_accelerator(shell, _SortEvent())
+
+    assert (fired, model.resolved) == ([], [])
+
+
+def test_on_edit_crossing_accelerator_given_no_model_fires_nothing() -> None:
+    """T-3 negative: rows never rendered mean no row can open."""
+    fired: list[int] = []
+    shell = _FeedShell(open_crossing=fired.append)
+
+    main_frame.MainFrame._on_edit_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == []
+
+
+def test_on_edit_crossing_accelerator_given_wx_not_found_row_fires_nothing() -> None:
+    """T-3 negative: a stale selection resolves to no row."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=wx.NOT_FOUND), open_crossing=fired.append)
+
+    main_frame.MainFrame._on_edit_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == []
+
+
+def test_on_edit_crossing_accelerator_given_no_callback_resolves_but_opens_nothing() -> None:
+    """T-3 negative: an unwired console resolves, opens nothing."""
+    model = _FeedModel(row=2)
+    shell = _FeedShell(model=model)
+
+    main_frame.MainFrame._on_edit_crossing_accelerator(shell, _SortEvent())
+
+    assert (len(model.resolved), shell._on_open_crossing) == (1, None)
+
+
 # ------------------------------------------- CrossingsFeedModel.Compare
 
 

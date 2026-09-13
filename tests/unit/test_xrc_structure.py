@@ -251,11 +251,12 @@ GROUP_FOLLOWING_RADIOS = (
 
 FEED_LIST_NAMES = ("crossings_list", "flagged_list")
 
-# ride_setup_dlg's Cards box after plan §3c/§3d: tiebreak_list's own
-# three-row box (the view floors it at the same 160x120) sits left of
-# the logo column, whose preview bitmap carries the 96x96 box.
-TIEBREAK_LIST_BOX = "160,120"
-LOGO_PREVIEW_BOX = "96,96"
+# ride_setup_dlg's Cards box after plan §3c/§3d, re-sized in Phase 6:
+# tiebreak_list's own three-row box (the view floors it at the same
+# 120x120) sits left of the logo column, whose preview bitmap carries
+# the 240x240 box.
+TIEBREAK_LIST_BOX = "120,120"
+LOGO_PREVIEW_BOX = "240,240"
 LOGO_COLUMN_NAMES = ("logo_preview_bmp", "logo_status_lbl", "logo_browse_btn")
 
 # The name wxDataViewListCtrl's XRC handler forces onto its control,
@@ -1039,7 +1040,7 @@ def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
 
 
 def test_ride_setup_tiebreak_list_declares_the_three_row_box() -> None:
-    """§3c: a bounded 160x120 box, not a full-width stretch."""
+    """§3c: a bounded 120x120 box, not a full-width stretch."""
     control = _objects_by_name(_window("ride_setup_dlg"))["tiebreak_list"]
 
     assert _param(control, "size") == TIEBREAK_LIST_BOX
@@ -1074,7 +1075,7 @@ def test_ride_setup_logo_column_stacks_its_three_controls_vertically() -> None:
 
 
 def test_ride_setup_logo_preview_is_declared_as_a_sized_static_bitmap() -> None:
-    """§3d: a bitmap-less 96x96 wxStaticBitmap the view fills in."""
+    """§3d: a bitmap-less 240x240 wxStaticBitmap the view fills in."""
     control = _objects_by_name(_window("ride_setup_dlg"))["logo_preview_bmp"]
 
     assert (control.attrib["class"], _param(control, "size"), control.find("bitmap")) == (

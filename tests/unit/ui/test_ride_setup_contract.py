@@ -21,9 +21,11 @@ and preview pins live in ``test_ride_setup_logo_wx.py``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from defusedxml.ElementTree import parse
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -36,18 +38,27 @@ from rivercrossing.ui import ids
 from rivercrossing.ui.views.ride_setup import (
     _TIEBREAK_LABELS,
     CAP_DISABLED,
+    LOGO_PREVIEW_SIZE,
     TIEBREAK_LIST_MIN_SIZE,
     TIEBREAK_LIST_ROWS,
     RideSetup,
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import wx
+
+XRC_DIR = Path(__file__).resolve().parents[3] / "src" / "rivercrossing" / "ui" / "xrc"
 
 # The three criteria R-14 names, in Phase 3's stored default order.
 DEFAULT_TIEBREAK_ROWS = ("High-card draw", "Most laps", "Total time")
+
+
+def _authored_size(control_name: str) -> str:
+    """Return setup.xrc's ``<size>`` text for *control_name*."""
+    root = parse(XRC_DIR / "setup.xrc").getroot()
+    control = next(obj for obj in root.iter("object") if obj.get("name") == control_name)
+    size = control.find("size")
+    return "" if size is None or size.text is None else size.text
 
 
 class _FakeControl:
@@ -225,8 +236,23 @@ def test_ride_setup_tiebreak_list_given_the_ride_seed_holds_three_rows() -> None
 
 
 def test_ride_setup_tiebreak_list_declares_the_three_row_min_size() -> None:
-    """§3c: a 160x120 box, the same box setup.xrc authors."""
-    assert TIEBREAK_LIST_MIN_SIZE == (160, 120)
+    """§3c: a 120x120 box, the same box setup.xrc authors."""
+    assert TIEBREAK_LIST_MIN_SIZE == (120, 120)
+
+
+def test_ride_setup_tiebreak_list_xrc_declares_the_min_size_box() -> None:
+    """Phase 6: setup.xrc authors the same 120x120 box as the floor."""
+    assert _authored_size("tiebreak_list") == "120,120"
+
+
+def test_ride_setup_logo_preview_size_is_the_240_box() -> None:
+    """Phase 6: the preview renders inside a 240x240 box."""
+    assert LOGO_PREVIEW_SIZE == (240, 240)
+
+
+def test_ride_setup_logo_preview_xrc_declares_the_preview_box() -> None:
+    """Phase 6: setup.xrc authors the same 240x240 box."""
+    assert _authored_size("logo_preview_bmp") == "240,240"
 
 
 def test_ride_setup_apply_tiebreak_min_size_given_a_list_floors_it() -> None:

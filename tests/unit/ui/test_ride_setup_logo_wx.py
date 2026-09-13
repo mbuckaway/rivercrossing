@@ -134,6 +134,14 @@ def _write_png(path: Path, size: tuple[int, int]) -> Path:
     return path
 
 
+# --------------------------------------------------------------- boxes
+
+
+def test_ride_setup_logo_preview_size_is_the_240_box() -> None:
+    """Phase 6: the preview box is 240 square, not 96."""
+    assert LOGO_PREVIEW_SIZE == (240, 240)
+
+
 # --------------------------------------------- browsing: stage_logo
 
 
@@ -189,6 +197,21 @@ def test_ride_setup_stage_logo_given_a_png_previews_it_fitted(
         view.logo_preview_bmp.bitmap.GetWidth(),
         view.logo_preview_bmp.bitmap.GetHeight(),
     ) == (LOGO_PREVIEW_SIZE[0], LOGO_PREVIEW_SIZE[0] // 2)
+
+
+def test_ride_setup_stage_logo_given_a_png_previews_it_at_240(
+    tmp_path: Path,
+) -> None:
+    """Phase 6: the 240x240 box renders a 2:1 source at 240x120."""
+    source = _write_png(tmp_path / "gorba.png", WIDE_PNG)
+    view = _bare_view()
+
+    view.stage_logo(source)
+
+    assert (
+        view.logo_preview_bmp.bitmap.GetWidth(),
+        view.logo_preview_bmp.bitmap.GetHeight(),
+    ) == (240, 120)
 
 
 def test_ride_setup_stage_logo_given_a_png_shows_its_file_name(
