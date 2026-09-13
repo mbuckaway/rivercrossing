@@ -1085,53 +1085,6 @@ class Store:
             )
             self._conn.execute("DELETE FROM ride WHERE id = ?", (ride_id,))
 
-    # -------------------------------- D3 Clear Ride reset
-
-    def clear_ride(self, ride_id: int) -> None:
-        """Reset one ride to an empty DRAFT, keeping its own setup (D3).
-
-        Ride ▸ Clear Ride…'s store half: the dependents ``delete_ride``
-        removes are removed here too, in the same FK-safe order (cards,
-        crossings, riders, entries, audit rows), and
-        ``app_session.active_ride_id`` is NULLed -- but the ``ride``
-        row itself stays, with its setup columns untouched and its
-        lifecycle rewound: ``status`` back to DRAFT and
-        ``actual_start``/``finished_at`` cleared, so a replay of the
-        now-empty audit log rebuilds a DRAFT engine.
-
-        No state guard: the §15 enablement rule (DRAFT, or stopped
-        RUNNING, or FINISHED) is the menu binder's, and a
-        store-level "RUNNING is not clearable" rule would duplicate it.
-
-        Args:
-            ride_id: The ride to reset.
-
-        Raises:
-            RideNotFoundError: No ``ride`` row has *ride_id*.
-        """
-        row = self._conn.execute("SELECT id FROM ride WHERE id = ?", (ride_id,)).fetchone()
-        if row is None:
-            raise RideNotFoundError(f"no ride with id {ride_id}")
-        now = int(datetime.now(UTC).timestamp())
-        with self._conn:
-            self._conn.execute("DELETE FROM card WHERE ride_id = ?", (ride_id,))
-            self._conn.execute("DELETE FROM crossing WHERE ride_id = ?", (ride_id,))
-            self._conn.execute(
-                "DELETE FROM rider WHERE entry_id IN (SELECT id FROM entry WHERE ride_id = ?)",
-                (ride_id,),
-            )
-            self._conn.execute("DELETE FROM entry WHERE ride_id = ?", (ride_id,))
-            self._conn.execute("DELETE FROM audit WHERE ride_id = ?", (ride_id,))
-            self._conn.execute(
-                "UPDATE app_session SET active_ride_id = NULL WHERE active_ride_id = ?",
-                (ride_id,),
-            )
-            self._conn.execute(
-                "UPDATE ride SET status = ?, actual_start = NULL, finished_at = NULL,"
-                " updated_at = ? WHERE id = ?",
-                (RideStatus.DRAFT, now, ride_id),
-            )
-
     def update_ride_config(self, ride_id: int, config: RideConfig) -> None:
         """Rewrite one ride's setup columns from *config* (D2).
 

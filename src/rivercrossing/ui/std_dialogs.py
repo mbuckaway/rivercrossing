@@ -197,9 +197,10 @@ def show_danger(  # noqa: PLR0913, PLR0917 -- (parent, title, message) + 2 butto
     """Show *message* as a data-losing confirm and return the modal id.
 
     :func:`show_confirm`'s shape with the error icon in place of the
-    warning one: Ride ▸ Clear Ride… discards a ridden ride's crossings,
-    cards and audit trail, which reads as an error rather than a
-    caution. Cancel is the default button for the same measured reason
+    warning one: Ride ▸ Clear Ride… removes the open ride from the
+    screen (its data stays saved in the database), which reads as an
+    error rather than a caution. Cancel is the default button for the
+    same measured reason
     as the confirm's -- Enter must never destroy data by accident.
 
     Args:
