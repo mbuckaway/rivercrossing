@@ -449,6 +449,20 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
 }
 
 
+def _pin_stop_light(light: StopLight) -> wx.Size:
+    """Floor *light* at its own best size and return that size.
+
+    §11: XRC has no window-level minsize and the header row is tight,
+    so without an explicit floor the lamp laid out at (0, 0) beside its
+    label -- the light was on but invisible. ``DoGetBestSize`` is the
+    lamp's own three-circle geometry; caching it as the minimum is what
+    keeps the sizer from squeezing it away.
+    """
+    best = light.DoGetBestSize()
+    light.SetMinSize(best)
+    return best
+
+
 class MainFrame:
     """Code-side behaviour for ``main_frame`` (the console, 1a).
 
@@ -551,6 +565,9 @@ class MainFrame:
         self.remaining_clock = self._build_clock_dial(self.remaining_clock_panel, REMAINING_CLOCK)
         self.ride_status_light = StopLight(self.ride_status_panel)
         self.ride_status_light.SetName(RIDE_STATUS_LIGHT)
+        # §11: reserve the lamp's own best size before inserting it --
+        # the leading header column squeezes it to nothing otherwise.
+        _pin_stop_light(self.ride_status_light)
         self.ride_status_panel.GetSizer().Insert(
             0, self.ride_status_light, 0, wx.ALIGN_CENTRE_VERTICAL | wx.RIGHT, 8
         )

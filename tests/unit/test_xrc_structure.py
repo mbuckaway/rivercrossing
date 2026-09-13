@@ -504,47 +504,83 @@ def test_ride_header_logo_is_declared_as_a_static_bitmap() -> None:
 
 
 # --------------------------------------------------------------------
-# Plan §5: the ride-info group beside the stop light.
+# Plan §11: the console header's left-to-right re-layout. The stop
+# light's own column leads the ride-info block, the one "Ride" group
+# splits into two native boxes -- "Ride" (Name/Date/Venue) and
+# "Details" (Organizer/Scorer/Lap length km) -- and the logo slot
+# moves out of the group to the right of both, before the clock
+# panels. Every box carries <label> text only, so no frozen name and
+# no ids.py entry changed.
 
-# The six value rows, in the grid's own order. Captions are unnamed
-# wxStaticText, like every counter chip's caption.
-RIDE_INFO_VALUE_NAMES = (
-    "ride_name_value",
-    "ride_date_value",
-    "ride_venue_value",
-    "ride_organizer_value",
-    "ride_scorer_value",
-    "ride_lap_km_value",
+# The six value rows, split across the two boxes in their authored
+# order. Captions are unnamed wxStaticText, like every counter chip's
+# caption.
+RIDE_GROUP_VALUES = ("ride_name_value", "ride_date_value", "ride_venue_value")
+DETAILS_GROUP_VALUES = ("ride_organizer_value", "ride_scorer_value", "ride_lap_km_value")
+RIDE_INFO_VALUE_NAMES = (*RIDE_GROUP_VALUES, *DETAILS_GROUP_VALUES)
+
+# The two group boxes, in the order they are laid out.
+GROUP_BOX_LABELS = ("Ride", "Details")
+
+# The ride-info block's own children, left to right: the status column
+# first, then the two group boxes, then the logo slot. A group box is
+# summarised as "wxStaticBoxSizer:<label>" -- the label is the only
+# thing naming it, which is the point of the §11 no-new-name rule.
+HEADER_BLOCK_CHILDREN = (
+    "ride_status_panel",
+    "wxStaticBoxSizer:Ride",
+    "wxStaticBoxSizer:Details",
+    "ride_logo_bmp",
 )
 
 
-def _ride_info_box() -> Element:
-    """Return main.xrc's one "Ride" ``wxStaticBoxSizer``."""
+def _header_block() -> Element:
+    """Return the horizontal row `ride_status_panel` leads (§11)."""
+    return _nearest_sizer(_window("main_frame"), "ride_status_panel")
+
+
+def _child_summaries(sizer: Element) -> list[str]:
+    """Summarise each child: a control's name, or a box's label."""
+    children = [item.find("object") for item in sizer if item.attrib.get("class") == "sizeritem"]
+    summaries: list[str] = []
+    for child in children:
+        name = child.attrib.get("name")
+        if name:
+            summaries.append(name)
+        elif child.attrib.get("class") == "wxStaticBoxSizer":
+            summaries.append(f"wxStaticBoxSizer:{_param(child, 'label')}")
+        else:
+            summaries.append(child.attrib.get("class", child.tag))
+    return summaries
+
+
+def _group_box(label: str) -> Element:
+    """Return main.xrc's ``wxStaticBoxSizer`` carrying *label*."""
     return next(
         obj
         for obj in _window("main_frame").iter("object")
-        if obj.attrib.get("class") == "wxStaticBoxSizer" and _param(obj, "label") == "Ride"
+        if obj.attrib.get("class") == "wxStaticBoxSizer" and _param(obj, "label") == label
     )
 
 
-def _ride_info_grid() -> Element:
-    """Return the Ride box's label + value ``wxFlexGridSizer``."""
+def _group_grid(label: str) -> Element:
+    """Return the *label* box's caption + value ``wxFlexGridSizer``."""
     return next(
         obj
-        for obj in _ride_info_box().iter("object")
+        for obj in _group_box(label).iter("object")
         if obj.attrib.get("class") == "wxFlexGridSizer"
     )
 
 
-def _ride_info_rows() -> tuple[tuple[str, str], ...]:
-    """Pair each caption cell with the value control beside it.
+def _group_rows(label: str) -> tuple[tuple[str, str], ...]:
+    """Pair each caption cell in *label*'s grid with its value control.
 
     The grid is row-major -- caption, value, caption, value -- so each
     pair is one "Name -> ride_name_value" row.
     """
     cells = [
         item.find("object")
-        for item in _ride_info_grid()
+        for item in _group_grid(label)
         if item.attrib.get("class") == "sizeritem"
     ]
     return tuple(
@@ -553,28 +589,76 @@ def _ride_info_rows() -> tuple[tuple[str, str], ...]:
     )
 
 
-def test_ride_header_declares_the_ride_group_box() -> None:
-    """§5: the identity block is a native "Ride" wxStaticBoxSizer."""
-    assert _param(_ride_info_box(), "label") == "Ride"
+def _group_value_names(label: str) -> list[str]:
+    """List the named controls inside the *label* group box."""
+    return [obj.attrib["name"] for obj in _group_box(label).iter("object") if "name" in obj.attrib]
 
 
-def test_ride_header_ride_box_holds_the_logo_and_the_six_values() -> None:
-    """§5: the reused logo slot leads, then the six value controls."""
-    names = [obj.attrib["name"] for obj in _ride_info_box().iter("object") if "name" in obj.attrib]
-
-    assert names == ["ride_logo_bmp", *RIDE_INFO_VALUE_NAMES]
+def test_ride_header_block_lays_out_status_then_both_groups_then_the_logo() -> None:
+    """§11 left to right: stop light, Ride, Details, logo."""
+    assert _child_summaries(_header_block()) == list(HEADER_BLOCK_CHILDREN)
 
 
-def test_ride_info_grid_declares_the_six_captioned_rows_in_order() -> None:
-    """§5: Name, Date, Venue, Organizer, Scorer and Lap length km."""
-    assert _ride_info_rows() == (
-        ("Name", "ride_name_value"),
-        ("Date", "ride_date_value"),
-        ("Venue", "ride_venue_value"),
-        ("Organizer", "ride_organizer_value"),
-        ("Scorer", "ride_scorer_value"),
-        ("Lap length km", "ride_lap_km_value"),
+def test_ride_status_panel_precedes_both_group_sizers_in_child_order() -> None:
+    """§11: the stop-light column leads the ride-info block."""
+    children = _child_summaries(_header_block())
+    group_indexes = [children.index(f"wxStaticBoxSizer:{label}") for label in GROUP_BOX_LABELS]
+
+    assert children.index("ride_status_panel") < min(group_indexes)
+
+
+def test_ride_logo_slot_follows_both_group_sizers_in_child_order() -> None:
+    """§11: the logo sits at the far right of the ride-info block."""
+    children = _child_summaries(_header_block())
+
+    assert children.index("ride_logo_bmp") > max(
+        children.index(f"wxStaticBoxSizer:{label}") for label in GROUP_BOX_LABELS
     )
+
+
+@pytest.mark.parametrize("label", GROUP_BOX_LABELS)
+def test_ride_header_declares_the_two_group_boxes(label: str) -> None:
+    """§11: the one Ride group split into "Ride" and "Details"."""
+    assert _param(_group_box(label), "label") == label
+
+
+def test_ride_group_box_holds_the_identity_rows_only() -> None:
+    """§11: Name, Date and Venue stay in the "Ride" group."""
+    assert _group_value_names("Ride") == list(RIDE_GROUP_VALUES)
+
+
+def test_details_group_box_holds_the_organizer_rows_only() -> None:
+    """§11: Organizer, Scorer and Lap length km move to "Details"."""
+    assert _group_value_names("Details") == list(DETAILS_GROUP_VALUES)
+
+
+@pytest.mark.parametrize(
+    ("label", "rows"),
+    [
+        (
+            "Ride",
+            (
+                ("Name", "ride_name_value"),
+                ("Date", "ride_date_value"),
+                ("Venue", "ride_venue_value"),
+            ),
+        ),
+        (
+            "Details",
+            (
+                ("Organizer", "ride_organizer_value"),
+                ("Scorer", "ride_scorer_value"),
+                ("Lap length km", "ride_lap_km_value"),
+            ),
+        ),
+    ],
+    ids=["ride", "details"],
+)
+def test_group_box_declares_its_captioned_rows_in_order(
+    label: str, rows: tuple[tuple[str, str], ...]
+) -> None:
+    """§11: each box keeps its own three captioned value rows."""
+    assert _group_rows(label) == rows
 
 
 @pytest.mark.parametrize("value_name", RIDE_INFO_VALUE_NAMES)
@@ -594,27 +678,6 @@ def test_ride_logo_slot_declares_the_64_pixel_display_size() -> None:
     control = _objects_by_name(_window("main_frame"))["ride_logo_bmp"]
 
     assert _param(control, "size") == "64,64"
-
-
-def test_ride_info_group_shares_the_header_row_with_the_status_column() -> None:
-    """§5: the Ride box sits beside ride_status_panel's own column."""
-    row = _nearest_sizer(_window("main_frame"), "ride_status_panel")
-    names = [obj.attrib["name"] for obj in row.iter("object") if "name" in obj.attrib]
-
-    assert (_param(row, "orient"), names) == (
-        "wxHORIZONTAL",
-        [
-            "ride_logo_bmp",
-            "ride_name_value",
-            "ride_date_value",
-            "ride_venue_value",
-            "ride_organizer_value",
-            "ride_scorer_value",
-            "ride_lap_km_value",
-            "ride_status_panel",
-            "ride_status_lbl",
-        ],
-    )
 
 
 @pytest.mark.parametrize(("item_name", "accelerator"), ACCELERATOR_CASES)
@@ -849,3 +912,72 @@ def test_ride_setup_declares_no_file_picker_control() -> None:
     classes = [obj.attrib["class"] for obj in _window("ride_setup_dlg").iter("object")]
 
     assert classes.count("wxFilePickerCtrl") == 0
+
+
+# --------------------------------------------------------------------
+# Plan §9: the crossing-detail Number prompt (dialogs.xrc).
+
+NUMBER_DLG = "crossing_number_dlg"
+# Four digits plus the control's own borders, in DIP: the plate the
+# operator retypes is at most four characters (main.xrc's own plate
+# hint), so the field declares its width rather than inheriting the
+# platform's much wider wxTextCtrl default.
+NUMBER_INPUT_SIZE = "50,-1"
+
+
+def _number_dialog() -> Element:
+    """Return dialogs.xrc's ``crossing_number_dlg`` element."""
+    return _top_level_windows("dialogs.xrc")[NUMBER_DLG]
+
+
+def test_crossing_number_dlg_is_declared_as_a_top_level_wx_dialog() -> None:
+    """LoadDialog resolves the prompt by its frozen window name."""
+    assert _number_dialog().attrib["class"] == "wxDialog"
+
+
+def test_crossing_number_dlg_declares_the_number_caption() -> None:
+    """UX-DESKTOP §7: the one input carries a real, persistent label."""
+    labels = [
+        _param(obj, "label")
+        for obj in _number_dialog().iter("object")
+        if obj.attrib["class"] == "wxStaticText"
+    ]
+
+    assert labels == ["Number"]
+
+
+def test_crossing_number_dlg_number_input_is_a_four_digit_text_ctrl() -> None:
+    """The prompt's one editable control is the four-digit field."""
+    control = _objects_by_name(_number_dialog())["number_input"]
+
+    assert (control.attrib["class"], _param(control, "size")) == (
+        "wxTextCtrl",
+        NUMBER_INPUT_SIZE,
+    )
+
+
+def test_crossing_number_dlg_declares_the_save_and_cancel_stock_buttons() -> None:
+    """§9: Save is the default; Cancel keeps Escape's route."""
+    buttons = [
+        (obj.attrib["name"], _param(obj, "label"), _param(obj, "default"))
+        for obj in _number_dialog().iter("object")
+        if obj.attrib["class"] == "wxButton"
+    ]
+
+    assert buttons == [("wxID_OK", "Save", "1"), ("wxID_CANCEL", "Cancel", "")]
+
+
+def test_crossing_number_dlg_declares_exactly_one_std_dialog_button_sizer() -> None:
+    """UX-DESKTOP §3: the stock sizer owns button order."""
+    classes = [obj.attrib["class"] for obj in _number_dialog().iter("object")]
+
+    assert classes.count("wxStdDialogButtonSizer") == 1
+
+
+def test_crossing_number_dlg_declares_no_duplicate_control_name() -> None:
+    """Section 15b: names are unique within their window."""
+    counts = Counter(_control_names_in(_number_dialog()))
+
+    repeated = sorted(name for name, count in counts.items() if count > 1)
+
+    assert repeated == []

@@ -52,8 +52,10 @@
       </object>
 
       <!--
-        The ride-info group, the two gauge-clock columns (WS-D) and the
-        start/stop group. elapsed_clock_panel / remaining_clock_panel /
+        The ride-info block (plan §11: the stop light's status column,
+        then the "Ride" and "Details" group boxes, then the ride logo
+        slot), the two gauge-clock columns (WS-D) and the start/stop
+        group. elapsed_clock_panel / remaining_clock_panel /
         ride_status_panel are code-side slots: XRC cannot author a
         wx.Control subclass, so RaceClock / StopLight (views/gauges.py)
         are built into these panels and named with SetName() in code
@@ -78,36 +80,51 @@
               <orient>wxHORIZONTAL</orient>
 
               <!--
-                C1/§5: the ride-info group. A native wxStaticBoxSizer
-                carries the ride's own logo (ride_logo_bmp, rendered at
-                64x64) beside the six read-only value rows: Name,
-                Date, Venue, Organizer, Scorer and Lap length km. Each
-                row is an unnamed wxStaticText caption in column one and
-                a wxTE_READONLY wxTextCtrl in column two, the counter
+                Plan §11: the ride-info block, left to right. The stop
+                light's own column leads: ride_status_panel is a
+                code-side slot (the same XRC-cannot-author-a-wx.Control
+                subclass rule as the two clock panels), holding the
+                code-built StopLight (ride_status_light) beside its own
+                label. Then two native group boxes replace the one
+                "Ride" group. "Ride" carries the identity rows (Name,
+                Date, Venue) and "Details" the organizer rows
+                (Organizer, Scorer, Lap length km). Each row is an
+                unnamed wxStaticText caption in column one and a
+                wxTE_READONLY wxTextCtrl in column two, the counter
                 chips' own caption convention; show_ride_header fills
-                all six from the open ride's config. The logo control is
-                authored with no <bitmap>: measured on wxPython 4.3.1,
-                XRC yields a real wxStaticBitmap that keeps its name and
-                accepts SetBitmap later (about_logo_bmp's own authored
-                shape).
+                all six from the open ride's config. Both boxes carry
+                label text only, no frozen name, so ids.py is
+                unchanged. The ride's own logo (ride_logo_bmp, rendered
+                at 64x64) closes the block, to the right of both boxes
+                and before the clock panels. It is authored with no
+                bitmap element: measured on wxPython 4.3.1, XRC yields
+                a real wxStaticBitmap that keeps its name and accepts
+                SetBitmap later (about_logo_bmp's own authored shape).
               -->
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>12</border>
+                <object class="wxPanel" name="ride_status_panel">
+                  <object class="wxBoxSizer">
+                    <orient>wxHORIZONTAL</orient>
+                    <object class="sizeritem">
+                      <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                      <object class="wxStaticText" name="ride_status_lbl">
+                        <label></label>
+                      </object>
+                    </object>
+                  </object>
+                </object>
+              </object>
+
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
                 <border>8</border>
                 <object class="wxStaticBoxSizer">
                   <label>Ride</label>
-                  <orient>wxHORIZONTAL</orient>
+                  <orient>wxVERTICAL</orient>
 
                   <object class="sizeritem">
-                    <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                    <border>8</border>
-                    <object class="wxStaticBitmap" name="ride_logo_bmp">
-                      <size>64,64</size>
-                    </object>
-                  </object>
-
-                  <object class="sizeritem">
-                    <flag>wxALIGN_CENTRE_VERTICAL</flag>
                     <object class="wxFlexGridSizer">
                       <cols>2</cols>
                       <vgap>6</vgap>
@@ -157,6 +174,23 @@
                           <value></value>
                         </object>
                       </object>
+                    </object>
+                  </object>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>8</border>
+                <object class="wxStaticBoxSizer">
+                  <label>Details</label>
+                  <orient>wxVERTICAL</orient>
+
+                  <object class="sizeritem">
+                    <object class="wxFlexGridSizer">
+                      <cols>2</cols>
+                      <vgap>6</vgap>
+                      <hgap>6</hgap>
 
                       <object class="sizeritem">
                         <flag>wxALIGN_CENTRE_VERTICAL</flag>
@@ -207,24 +241,11 @@
                 </object>
               </object>
 
-              <!--
-                The status column: ride_status_panel is a code-side slot
-                (the same XRC-cannot-author-a-wx.Control-subclass rule as
-                the two clock panels), holding the code-built StopLight
-                (ride_status_light) beside its own label.
-              -->
               <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxPanel" name="ride_status_panel">
-                  <object class="wxBoxSizer">
-                    <orient>wxHORIZONTAL</orient>
-                    <object class="sizeritem">
-                      <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                      <object class="wxStaticText" name="ride_status_lbl">
-                        <label></label>
-                      </object>
-                    </object>
-                  </object>
+                <flag>wxALIGN_CENTRE_VERTICAL|wxLEFT</flag>
+                <border>8</border>
+                <object class="wxStaticBitmap" name="ride_logo_bmp">
+                  <size>64,64</size>
                 </object>
               </object>
             </object>
