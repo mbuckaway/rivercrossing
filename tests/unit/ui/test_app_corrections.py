@@ -21,6 +21,7 @@ from datetime import datetime
 
 import pytest
 import wx
+from xrc_fixtures import pin_no_authored_window
 
 from conftest import gorba_config
 from rivercrossing.cards import Shoe
@@ -642,12 +643,18 @@ def test_open_flagged_review_for_given_a_credited_short_lap_builds_the_crossing_
     ]
 
 
-def test_show_crossing_detail_dialog_given_no_window_posts_the_notice() -> None:
+def test_show_crossing_detail_dialog_given_no_window_posts_the_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """An unauthored crossing_detail_dlg posts the app's own notice."""
     engine = _running_engine(hold_short_laps=False)
     engine.record_crossing("12", at=_dt(10, 0, 5))
     notices: list[str] = []
     context = _review_context(engine, frame=_NoticeFrame(notices), resource=_FakeResource(None))
+    # The self-heal retries a miss against _support.fresh_resource: pin
+    # the rebuild to miss too, so a real XmlResource never builds
+    # headless (the Windows GUI-log-target hang).
+    pin_no_authored_window(monkeypatch, lambda: _FakeResource(None))
 
     app_module._show_crossing_detail_dialog(context, engine, engine.crossings[-1])
 
