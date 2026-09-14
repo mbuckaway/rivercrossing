@@ -323,7 +323,7 @@ tests/
 ├── property/                  # Hypothesis: hands invariants, shoe determinism,
 │                              #   roster mutation sequences, csv round-trip identity
 ├── simulations/               # seeded whole rides: 180×6 h, both entry modes,
-│   └── test_simulated_rides.py#   both plate models, 0–4 jokers, cap on/off (§12)
+│   └── test_simulated_rides.py#   both plate models, 0–10 jokers, cap on/off (§12)
 ├── functional/                # real wx, driven via ids.py + direct event injection (§12)
 │   ├── harness.py             # find-by-SetName, click, type, dialog hooks
 │   ├── pages.py               # page objects per window (1a…8c)

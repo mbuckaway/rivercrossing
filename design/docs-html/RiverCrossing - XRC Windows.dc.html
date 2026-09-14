@@ -18,7 +18,7 @@
 <div style="max-width:1080px;background:#fff;border:1px solid #c8c8c8;padding:18px 22px;margin-bottom:30px;font-size:13px">
 <div style="font-size:20px;font-weight:600">RiverCrossing — XRC window designs <span style="font-weight:400;color:#666">(implementation truth · retires the Industry hi-fi mockups)</span></div>
 <div style="margin-top:8px;line-height:1.55">Native wxWidgets controls only, sizer-based, Windows look shown (identical structure on macOS). Every interactive control carries its <code style="font-family:Consolas,monospace;font-size:10px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">xrc_name</code> annotation — these are the XRC <code style="font-family:Consolas,monospace;font-size:10px">name</code> attributes, canonical and frozen; standard buttons use stock IDs (wxID_OK, wxID_CANCEL, wxID_CLOSE, wxID_DELETE, wxID_EXIT, wxID_ABOUT). Naming rules + window↔file map: Spec §15b.</div>
-<div style="margin-top:8px;line-height:1.55;color:#444"><strong>Canvas caveats (HTML approximation):</strong> browser form controls stand in for wx natives; exact spacing/fonts come from sizers + system fonts, not these pixels; sizes below are minimums expressed in dialog units at build time. <strong>Global code-side items (not expressible in XRC):</strong> ① wxDataViewListCtrl columns + row data + per-row attributes (bold flagged rows, red suits) — appended in code; ② card imagelist population (53 card bitmaps @1x/2x); ③ wxInfoBar message text + Show/Hide calls; ④ splitter sash position restore from settings; ⑤ menu enable/disable per ride state (§15); ⑥ theme: 4.2.5 baseline = macOS follows OS / Windows light; wxApp.SetAppearance on the wx 3.3+ upgrade. Everything else drawn here is declared in XRC.</div>
+<div style="margin-top:8px;line-height:1.55;color:#444"><strong>Canvas caveats (HTML approximation):</strong> browser form controls stand in for wx natives; exact spacing/fonts come from sizers + system fonts, not these pixels; sizes below are minimums expressed in dialog units at build time. <strong>Global code-side items (not expressible in XRC):</strong> ① wxDataViewListCtrl columns + row data + per-row attributes (bold flagged rows, red suits) — appended in code; ② card imagelist population (53 card bitmaps @1x/2x); ③ wxInfoBar message text + Show/Hide calls; ④ splitter sash position restore from settings; ⑤ menu enable/disable per ride state (§15); ⑥ theme: on the 4.3.1 / wxWidgets 3.3.3 baseline wxApp.SetAppearance ships, so System/Light/Dark are live on both platforms (macOS applies appearance changes at runtime; Windows takes effect at next launch, MSW returning CannotChange once a top-level window exists). Everything else drawn here is declared in XRC.</div>
 </div>
 
 <div style="font-size:15px;font-weight:600;margin:26px 0 14px">A · Main frame</div>
@@ -29,13 +29,13 @@
 <div style="background:#fff;border-bottom:1px solid #e2e2e2;padding:3px 10px;display:flex;gap:16px;font-size:12px"><span>File</span><span>Ride</span><span>Riders</span><span>Cards</span><span>Results</span><span>View</span><span>Help</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;margin-left:auto">main_menubar · items mi_* — see §15b</code></div>
 <div style="background:#fdf6e3;border-bottom:1px solid #e6d9a8;padding:5px 10px;font-size:11.5px;display:flex;gap:10px;align-items:center"><span>ⓘ This ride was running when the app closed. Continue timing on wall clock?</span><button style="font:11px 'Segoe UI';padding:2px 10px">Continue ride</button><button style="font:11px 'Segoe UI';padding:2px 10px">Open library</button><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;margin-left:auto">resume_infobar · reopened_infobar (wxInfoBar, hidden by default)</code></div>
 <div style="display:flex;gap:14px;align-items:center;padding:10px 12px;border-bottom:1px solid #ddd;background:#f9f9f9">
-<div><div style="font-size:14px;font-weight:600">GORBA EPIC &amp; MTB Festival 2026 <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">ride_name_lbl</code></div>
+<div><div style="font-size:14px;font-weight:600">GORBA EPIC &amp; MTB Festival 2026 <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">ride_name_value</code></div>
 <div style="color:#0a7a2f;font-weight:600">RUNNING <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">ride_status_lbl</code></div></div>
 <div style="margin-left:auto;text-align:right"><span style="font-size:30px;font-weight:700;font-variant-numeric:tabular-nums">4:22:41</span> <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">clock_elapsed_lbl</code><div style="color:#555">1:37:19 to close <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">clock_remaining_lbl</code></div></div>
 <div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">
 <button style="font:12px 'Segoe UI';padding:3px 16px" disabled>Start ride</button>
 <div style="display:flex;gap:6px;align-items:center"><label style="display:flex;gap:4px;align-items:center"><input type="checkbox">Arm</label><button style="font:12px 'Segoe UI';padding:3px 12px" disabled>Stop ride…</button></div>
-<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">start_btn · arm_stop_chk · stop_btn</code></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">start_btn · stop_btn — round green GO / red STOP wxBitmapButtons (the Arm checkbox and its arm_stop_chk constant are retired in C2: the engine's own state gates the buttons, so a live-RUNNING ride needs no separate arming act)</code></div>
 </div>
 <div style="display:flex;gap:12px;align-items:center;padding:10px 12px;border-bottom:1px solid #ddd">
 <span style="font-weight:600">Plate</span><input value="123" style="font:20px 'Segoe UI';padding:3px 8px;width:130px;font-weight:600"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">plate_input (focused)</code>
@@ -53,7 +53,7 @@
 <tr><td style="padding:3px 8px">14:21:30</td><td>212</td><td>M. Chen</td><td>5</td><td>24:02</td><td>2:10:44</td><td><span style="display:inline-block;width:17px;height:22px;border:1px solid #999;background:#fff;font-size:10px;text-align:center">JK★</span></td></tr>
 <tr><td style="padding:3px 8px">14:20:52</td><td>8</td><td>R. Dubois</td><td>7</td><td>21:17</td><td>2:58:03</td><td><span style="display:inline-block;width:17px;height:22px;border:1px solid #999;background:#fff;font-size:10px;text-align:center;color:#c00">4♦</span></td></tr>
 </tbody></table>
-<div style="padding:4px 8px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">crossings_list (wxDataViewListCtrl · newest first · last 30)</code></div>
+<div style="padding:4px 8px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">crossings_list (wxDataViewCtrl · every crossing of the ride — no cap, the list scrolls (Phase 4 retired R-32's 30-row window) · every column sortable and resizable, opening on the Time column ascending)</code></div>
 </div>
 <div style="width:250px;padding:10px;display:flex;flex-dire-ction:column;flex-direction:column;gap:10px">
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:11.5px">
@@ -87,22 +87,22 @@
 <span>Duration h:m</span><input value="6:00" style="font:12px 'Segoe UI';padding:2px 4px;width:70px"><span>Min lap m:s</span><input value="12:00" style="font:12px 'Segoe UI';padding:2px 4px;width:70px">
 <span>Logo</span><input value="gorba.png  [Browse…]" style="font:12px 'Segoe UI';padding:2px 4px;grid-column:2/5">
 </div>
-<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input · logo_picker</code>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">name_input · date_picker · start_time_picker · venue_input · lap_km_spin · organizer_input · scorer_input · duration_input · min_lap_input — the standalone Logo row (a logo_picker wxFilePickerCtrl with a path box) is retired: logo_preview_bmp · logo_status_lbl · logo_browse_btn now live in the Cards box beside tiebreak_list — a 240×240 wxStaticBitmap preview, the status label (default "NO LOGO"), and a "Browse…" button that picks a PNG, resizes it to fit the 256×256 standard logo size and stages the resized file as the ride's logo_png BLOB source</code>
 <fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px 10px"><legend style="font-size:11px;padding:0 4px">Entries</legend>
-<label style="display:block"><input type="radio" name="em" defaultChecked="{{ true }}"> Solo riders only (default)</label>
-<label style="display:block"><input type="radio" name="em"> Solo + teams</label>
+<label style="display:block"><input type="radio" name="em"> Solo riders only</label>
+<label style="display:block"><input type="radio" name="em" defaultChecked="{{ true }}"> Solo + teams (default)</label>
 <div style="margin:6px 0 0 20px;display:flex;gap:8px;align-items:center;color:#888">Max riders per team <input value="4" style="font:12px 'Segoe UI';padding:1px 4px;width:44px" disabled> (2–10)</div>
 <div style="margin:6px 0 0 20px;color:#888">
 <label style="display:block"><input type="radio" name="pm" defaultChecked="{{ true }}" disabled> Rider plates — pooled (default): each rider draws per lap, uncapped; team hand from pooled cards</label>
 <label style="display:block"><input type="radio" name="pm" disabled> Team plate — relay: one plate per team, one rider on course (EPIC)</label></div>
-<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">solo_radio · mixed_radio · team_size_spin · pooled_radio · relay_radio (enabled only when mixed_radio)</code>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">solo_radio · mixed_radio — teams is the default: mixed_radio carries the XRC &lt;value&gt;1&lt;/value&gt; (ux-polish), so "Solo + teams (default)" is what a fresh setup shows; solo-only is the opt-out · team_size_spin · pooled_radio · relay_radio (enabled only when mixed_radio)</code>
 </fieldset>
 <fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px 10px"><legend style="font-size:11px;padding:0 4px">Cards</legend>
-<div style="display:flex;gap:14px;align-items:center">Decks <input value="2" style="font:12px 'Segoe UI';padding:1px 4px;width:44px"> Jokers/deck:
-<label><input type="radio" name="jk"> 0</label><label><input type="radio" name="jk" defaultChecked="{{ true }}"> 2</label><label><input type="radio" name="jk"> 4</label>
-<label style="margin-left:12px"><input type="checkbox"> Card cap</label><input value="10" style="font:12px 'Segoe UI';padding:1px 4px;width:44px" disabled></div>
-<div style="margin-top:6px;display:flex;gap:8px;align-items:center">Tie-break order <span style="border:1px solid #ccc;background:#fff;padding:2px 8px">① Most laps ② Total time ③ High-card draw ▲▼</span></div>
-<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">decks_spin · jokers_0_radio · jokers_2_radio (default) · jokers_4_radio · cap_chk · cap_spin · tiebreak_list (wxEditableListBox reorder arrows)</code>
+<div style="display:flex;gap:14px;align-items:center">Decks <input value="8" style="font:12px 'Segoe UI';padding:1px 4px;width:44px"> Jokers <input value="1" style="font:12px 'Segoe UI';padding:1px 4px;width:34px">
+<label><input type="radio" name="jkm"> Per deck</label><label><input type="radio" name="jkm" defaultChecked="{{ true }}"> Total (default)</label>
+<label style="margin-left:12px">Card cap <input value="Disabled ▾" style="font:12px 'Segoe UI';padding:1px 4px;width:86px"></label></div>
+<div style="margin-top:6px;display:flex;gap:8px;align-items:center">Tie-break order <span style="border:1px solid #ccc;background:#fff;padding:2px 8px">① High-card draw ② Most laps ③ Total time ▲▼</span></div>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">decks_spin · jokers_spin (a wxSpinCtrl over 0..10, opening on 1 — ride.DEFAULT_JOKERS_PER_DECK/ride.MAX_JOKERS_PER_DECK, recorded so the control and the domain cannot drift) · jokers_per_deck_radio / jokers_total_radio (the jokers mode pair — "Per deck" re-deals that many jokers every cycle, "Total" (checked, ride.DEFAULT_JOKERS_MODE) spends them once across the ride; ride.JOKERS_MODES fixes the two spellings and the ride persists ride.jokers_mode) · cap_choice (a wxChoice whose "Disabled" first item is the default no-cap selection, then one item per cap 5..20; the view reads the item's text, so the numbers are domain values, not indices) · tiebreak_list (wxEditableListBox — exactly the three rows above, three lines tall at &lt;size&gt;120,120&lt;/size&gt; with the width sized to the longest row "High-card draw" plus its reorder arrows; the XRC declares no &lt;style&gt;, so it shows the arrows alone and no New/Edit/Delete buttons)</code>
 </fieldset>
 <div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 18px;font-weight:600">OK</button><button style="font:12px 'Segoe UI';padding:3px 14px">Cancel</button></div>
 <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_OK · wxID_CANCEL (wxStdDialogButtonSizer)</code>
@@ -213,7 +213,8 @@
 </div>
 
 <div id="entrydetail" style="width:560px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
-<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Entry Detail — 77 Trail Blazers</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">entry_detail_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Entry Detail — 77 Trail Blazers</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">entry_detail_dlg</code><span style="margin-left:auto;color:#666">✕ — RETIRED (scoring-and-corrections)</span></div>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ Retirement: the Riders ▸ Entry Detail… row (mi_entry_detail) and its whole window left the app — detail.xrc is deleted and its controls retired with it: plate_choice, entry_header_lbl, members_lbl, cards_list, laps_list, move_rider_btn, deal_card_btn, dnf_btn, edit_crossing_btn, audit_btn (the shared void_card_btn moved to Crossing Detail instead). Its corrections now live on the console's per-row Crossing Detail window (F), which grew edit_time_btn/void_card_btn; the per-row plate reassign runs through the crossing_number_dlg prompt (§9). Historical canvas copy follows.</div>
 <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
 <div><strong>Team · 3 riders · 9 laps · 3:02:11</strong> — A. Roy (77) · K. Singh (78) · L. Marchetti (79) <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">entry_header_lbl · members_lbl</code></div>
 <fieldset style="border:1px solid #bdbdbd;margin:0;padding:8px"><legend style="font-size:11px;padding:0 4px">Cards held (9)</legend>
@@ -248,7 +249,8 @@
 </div>
 
 <div id="reassigndlg" style="width:340px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
-<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Reassign Plate</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">reassign_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Reassign Plate</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">reassign_dlg</code><span style="margin-left:auto;color:#666">✕ — RETIRED (scoring-and-corrections)</span></div>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ Retirement: the Cards ▸ Reassign Plate… route left with the retired Entry Detail window; Crossing Detail reassigns a plate through crossing_number_dlg + reassign_crossing. Historical canvas copy follows.</div>
 <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
 <div>Crossing 14:21:59 · lap credited to <strong>45</strong> <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">crossing_lbl</code></div>
 <div style="display:grid;grid-template-columns:80px 1fr;gap:6px;align-items:center"><span>New plate</span><input value="46" style="font:12px 'Segoe UI';padding:2px 4px;width:80px"><span>Reason</span><input style="font:12px 'Segoe UI';padding:2px 4px"></div>
@@ -258,7 +260,7 @@
 </div>
 
 <div id="dealdlg" style="width:340px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
-<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Deal Manual Card</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">manual_deal_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
+<div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Deal Bonus Card</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">manual_deal_dlg</code><span style="margin-left:auto;color:#666">✕</span></div>
 <div style="padding:12px;display:flex;flex-direction:column;gap:8px">
 <div style="display:grid;grid-template-columns:60px 1fr;gap:6px;align-items:center"><span>Plate</span><input value="45" style="font:12px 'Segoe UI';padding:2px 4px;width:80px"><span>Reason</span><input value="flagged lap confirmed" style="font:12px 'Segoe UI';padding:2px 4px"></div>
 <div style="color:#555;font-size:11.5px">Deals the next card from the shoe — deterministic, audit-logged.</div>
@@ -290,7 +292,7 @@
 <thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">Place</th><th style="padding:3px 8px;font-weight:600">Plate</th><th style="padding:3px 8px;font-weight:600">Entry</th><th style="padding:3px 8px;font-weight:600">Laps</th><th style="padding:3px 8px;font-weight:600">Total</th><th style="padding:3px 8px;font-weight:600">Best 5</th><th style="padding:3px 8px;font-weight:600">Hand</th></tr></thead>
 <tbody>
 <tr><td style="padding:3px 8px;font-weight:700">1</td><td>77</td><td>Trail Blazers</td><td>9</td><td>5:44:02</td><td>K♠ K♣ K♦ JK★ 9♥</td><td>Four of a kind, kings</td></tr>
-<tr><td style="padding:3px 8px;font-weight:700">2</td><td>123</td><td>Sam Ellis</td><td>8</td><td>5:51:17</td><td>Q♥ J♥ T♥ 9♥ 8♥</td><td>Straight flush, queen-high</td></tr>
+<tr><td style="padding:3px 8px;font-weight:700">2</td><td>123</td><td>Sam Ellis</td><td>8</td><td>5:51:17</td><td>Q♥ J♥ 10♥ 9♥ 8♥</td><td>Straight flush, queen-high</td></tr>
 <tr><td style="padding:3px 8px;font-weight:700">3</td><td>8</td><td>R. Dubois</td><td>7</td><td>5:38:44</td><td>A♣ A♦ A♥ 4♦ 4♠</td><td>Full house, aces over fours</td></tr>
 </tbody></table>
 <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">standings_list (full field; DNF block last; card bitmaps via imagelist)</code>
@@ -357,11 +359,11 @@
 <label style="margin-right:14px"><input type="radio" name="ap" defaultChecked="{{ true }}"> System</label>
 <label style="margin-right:14px"><input type="radio" name="ap"> Light</label>
 <label><input type="radio" name="ap"> Dark</label>
-<div style="margin-top:4px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">appearance_system_radio (default) · appearance_light_radio · appearance_dark_radio — 4.2.5 baseline: macOS follows OS, Windows light (Dark disabled, "needs wxPython 4.3" hint); SetAppearance activates on wx 3.3+</code></div></fieldset>
+<div style="margin-top:4px"><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">appearance_system_radio (default) · appearance_light_radio · appearance_dark_radio — System/Light/Dark radios live on both platforms: 4.3.1 supplies wx.App.SetAppearance, so no capability check and no disabled radio (macOS applies appearance changes at runtime; Windows takes effect at next launch)</code></div></fieldset>
 <label><input type="checkbox" defaultChecked="{{ true }}"> Sound on crossing (recorded / flagged / error cues)</label>
 <label><input type="checkbox"> Hide times on the console (toggle any time, even mid-ride)</label>
 <div style="display:flex;gap:8px;align-items:center">Text zoom <input value="100% ▾" style="font:12px 'Segoe UI';padding:2px 4px;width:64px"><button style="font:12px 'Segoe UI';padding:2px 10px;margin-left:auto">Back up now</button></div>
-<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">sound_chk · hide_times_chk · zoom_choice · backup_now_btn</code>
+<code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">sound_chk · hide_times_chk · verbose_log_chk (F1 — a stored setting rendered at open and collected on OK, like sound_chk; on by default, it feeds ui.logging.Logging, the opt-out NDJSON trace rivercrossing-&lt;timestamp&gt;.log — one file per launch, pruned to the last 20 · avg_speed_spin (the §4 card-sufficiency advisory's km/h setting) — W13 removed the text-zoom choice (zoom_choice): View ▸ Zoom is the single zoom surface, and this dialog carries no backup button — File ▸ Back Up Database… owns that (R-54)</code>
 <div style="display:flex;gap:8px;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:3px 18px;font-weight:600">OK</button><button style="font:12px 'Segoe UI';padding:3px 14px">Cancel</button></div>
 </div>
 </div>
@@ -376,16 +378,18 @@
 </div>
 </div>
 
-<div id="shortcutsdlg" style="width:420px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
+<div id="shortcutsdlg" style="width:480px;background:#f3f3f3;border:1px solid #999;box-shadow:3px 3px 12px rgba(0,0,0,.22);font-size:12px">
 <div style="background:#fff;border-bottom:1px solid #dcdcdc;padding:5px 10px;display:flex;gap:8px"><span style="font-weight:600">Keyboard Shortcuts</span><code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">shortcuts_dlg (Help ▸ mi_shortcuts)</code><span style="margin-left:auto;color:#666">✕</span></div>
 <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">
 <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #ccc">
 <thead><tr style="background:#f0f0f0;text-align:left"><th style="padding:3px 8px;font-weight:600">Key</th><th style="padding:3px 8px;font-weight:600">Action</th></tr></thead>
-<tbody><tr><td style="padding:2px 8px;width:110px">Enter</td><td>Record crossing for typed plate</td></tr>
+<tbody><tr><td style="padding:2px 8px;width:120px">Enter</td><td>Record crossing for typed plate</td></tr>
 <tr><td style="padding:2px 8px">Ctrl+Z</td><td>Undo last crossing</td></tr>
 <tr><td style="padding:2px 8px">F5</td><td>Standings (Results window)</td></tr>
-<tr><td style="padding:2px 8px">F1</td><td>User guide</td></tr></tbody></table>
+<tr><td style="padding:2px 8px">F1</td><td>User guide</td></tr>
+<tr><td style="padding:2px 8px">F2</td><td>Edit crossing (open detail)</td></tr></tbody></table>
 <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px">shortcuts_list (read-only; rows filled in code from the accelerator table — cannot drift)</code>
+<div style="font-size:10.5px;color:#7a5c00;background:#fffbe8;border-top:1px dashed #d9c76a;padding:6px 10px">⚠ code-side (Phase 6): the dialog pins its two columns to SHORTCUT_COLUMN_WIDTHS (120/320 px) — an unpinned DataView column keeps the platform's 80 DIP default and clips the Action text on first open — and floors itself at SHORTCUTS_MIN_SIZE (480×300) with SetMinSize + Fit() in code, since XRC declares no window-level minsize.</div>
 <div style="display:flex;justify-content:flex-end"><button style="font:12px 'Segoe UI';padding:2px 12px">Close</button></div>
 <code style="font-family:Consolas,monospace;font-size:9px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;padding:0 3px;align-self:flex-end">wxID_CLOSE</code>
 </div>

@@ -44,10 +44,10 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 ├── README.md · LICENSE · CHANGELOG.md
 ├── .github/workflows/
 │   ├── ci.yml                  <i># §14 six-stage matrix: windows-latest + macos-latest</i>
-│   └── release.yml             <i># tag → PyInstaller → Inno Setup .exe / notarized .dmg</i>
+│   └── release.yml             <i># tag → PyInstaller → NSIS .exe / notarized .dmg</i>
 ├── installers/
 │   ├── rivercrossing.spec           <i># PyInstaller (both OSes, one spec)</i>
-│   ├── windows.iss             <i># Inno Setup, per-user, unsigned (R-01)</i>
+│   ├── windows.nsi             <i># NSIS, per-user, unsigned (exists — Phase 9; NSIS replaces Inno Setup, R-01); Windows stays unsigned by decision (R-01)</i>
 │   └── dmg_settings.py         <i># dmgbuild config; codesign + notarize in release.yml</i>
 ├── docs/user-guide/            <i># per the User Guide outline (6a)</i>
 ├── src/rivercrossing/
@@ -70,8 +70,9 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 │   │   └── templates/          <i>#   base.html.j2 + widget macros + vendored CSS/fonts</i>
 │   ├── pdfexport.py            <i># §8b fpdf2 renderer + podium poster (5a–5d)</i>
 │   └── ui/
-│       ├── app.py              <i># WxAsyncApp bootstrap, theme + session wiring</i>
-│       ├── theme.py            <i># the one token table, light+dark (R-03)</i>
+│       ├── app.py              <i># wx.App bootstrap, theme + session wiring</i>
+│       ├── theme.py            <i># appearance modes via wx.App.SetAppearance (R-03);</i>
+│       │                       <i>#   token table deferred — no consumer yet (open item O2)</i>
 │       ├── sound.py            <i># three WAV cues per §10 (recorded/flagged/error)</i>
 │       ├── ids.py              <i># mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)</i>
 │       ├── xrc/                <i># canonical UI: main, setup, riders, detail, results,</i>
@@ -120,11 +121,15 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
     .code() -> str            <i># "AS", "10D", "JK" — the stored form</i>
     Card.parse(code: str) -> Card
 <b>class</b> Shoe:                   <i># deterministic multi-deck shoe</i>
-    __init__(decks: int, jokers_per_deck: int, seed: int)
+    __init__(decks: int, jokers_per_deck: int, seed: int, *, jokers_total: bool = False)
     deal() -> tuple[Card, int]          <i># (card, deal_index); raises ShoeEmpty</i>
     reshuffle() -> None                 <i># new cycle; audit caller logs it (§4)</i>
     remaining: int · dealt: int · cycle: int
-    Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int) -> Shoe
+    Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int, *,
+                jokers_total: bool = False) -> Shoe
+<i># jokers_total selects the mode (§4): False (the S4 default) re-deals jokers_per_deck
+#   jokers every cycle; True spends that many jokers once across the ride — the budget
+#   persists across reshuffles, and a spent budget deals naturals only</i>
 <i># invariant: same (config, seed) ⇒ identical deal sequence (R-40)</i></pre></div>
 
 <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
@@ -155,6 +160,13 @@ time_leaderboard(results, top: int = 10) -> list[Placed]   <i># most laps, then 
 <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.ride — state machine &amp; timing <span class="text-muted" style="font-weight:400">(§3/§6 · R-30…36)</span></div>
 <pre class="sk"><b>class</b> RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
+<b>@dataclass</b> RideConfig(name, event_date, venue, lap_km, organizer, scorer, planned_start,
+                      planned_duration_s, min_lap_s, entry_mode, plate_model,
+                      max_team_size=4, deck_count=8, jokers_per_deck=1, jokers_mode="total",
+                      max_cards=None,
+                      tiebreak_order=("high_card","laps","total_time"), logo_path=None)
+    <i># §2 ride-row setup fields; defined here since E3.5, built by ride_setup_dlg,</i>
+    <i># consumed by RideEngine below; EPIC 6's standings imports the tiebreak spellings</i>
 <b>class</b> RideEngine:             <i># pure; wall-clock injected for tests</i>
     __init__(config: RideConfig, shoe: Shoe, clock: Callable[[], datetime])
     start(at: datetime | None = None) -> Event          <i># button or retro time (R-30)</i>
@@ -219,8 +231,9 @@ pdfexport.podium_poster(ride, placed, path)     <i># one-page poster (5d)</i></p
 <i># same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv)
 </i><i># ResultsPresenter (1f flags, rerank on tie-break change) · LibraryPresenter (1g)
 </i><i># DetailPresenter (1e/7b) · AuditPresenter (R-38) · SettingsPresenter (3a)</i>
-app.main() -> int              <i># WxAsyncApp; resume dialog per session_state (4a/1h)</i>
-theme.tokens(mode) -> Tokens   <i># light|dark|system; live re-skin (R-03)</i>
+app.main() -> int              <i># wx.App; resume dialog per session_state (4a/1h)</i>
+theme.apply(app, mode) -> AppearanceResult   <i># light|dark|system via wx.App.SetAppearance (R-03);</i>
+                               <i># tokens(mode) deferred — no custom-drawn consumer yet (O2)</i>
 ids.py: PLATE_INPUT = "plate_input" …   <i># = XRC names, generated from xrc/ (§15b)</i>
 sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   <i># §10 cues, settings toggle</i></pre></div>
 </div>
@@ -229,14 +242,16 @@ sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   <i># §10 cues, settings to
 <div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><pre class="sk">tests/
 ├── unit/                      <i># per core module, headless, coverage ≥ 90% (R-71)</i>
-│   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py
+│   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py · test_roster.py
 │   ├── test_store.py · test_csvio.py · test_htmlexport.py · test_pdfexport.py
 │   └── presenters/            <i># FakeView-driven presenter tests — still no wx</i>
-├── vectors/                   <i># 7,462-rank sweep data + joker vector table (R-44/72)</i>
-├── property/                  <i># Hypothesis: hands invariants, shoe determinism</i>
+├── (vectors: src/rivercrossing/vectors/ — the 7,462-rank sweep + joker table ship as package
+│                              <i>#   data so the launch self-test reads them from the app, R-44/72)</i>
+├── property/                  <i># Hypothesis: hands invariants, shoe determinism,</i>
+│                              <i>#   roster mutation sequences, csv round-trip identity</i>
 ├── simulations/               <i># seeded whole rides: 180×6 h, both entry modes,</i>
-│   └── test_simulated_rides.py<i>#   both plate models, 0/2/4 jokers, cap on/off (§12)</i>
-├── functional/                <i># real wx, driven via ids.py + wx.UIActionSimulator</i>
+│   └── test_simulated_rides.py<i>#   both plate models, 0–10 jokers, cap on/off (§12)</i>
+├── functional/                <i># real wx, driven via ids.py + direct event injection (§12)</i>
 │   ├── harness.py             <i># find-by-SetName, click, type, dialog hooks</i>
 │   ├── pages.py               <i># page objects per window (1a…8c)</i>
 │   └── test_menu_coverage.py  <i># walks every §15 route in every ride state (R-73)</i>
@@ -248,8 +263,9 @@ sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   <i># §10 cues, settings to
 <div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><pre class="sk">[project]  name = "rivercrossing"  requires-python = ">=3.14"
     <i># import package rivercrossing — renamed with the product (§11)</i>
-dependencies = ["wxPython~=4.2.5", "wxasync", "fpdf2", "jinja2"]  <i># wx 3.2 stable wheel;</i>
-    <i># dark mode auto-activates on the 4.3 upgrade (SetAppearance) — no code change</i>
+dependencies = ["wxPython~=4.3.1", "fpdf2", "jinja2"]     <i># wxWidgets 3.3.3, cp314 wheel;</i>
+    <i># SetAppearance ships in it, so dark mode is live on both platforms (R-03)</i>
+    <i># wxasync is deliberately absent — Spec §10; E5 picks the wx⇄asyncio integration</i>
     <i># sqlite3 is stdlib; Tailwind CLI is a build-time asset step, not a runtime dep</i>
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",
