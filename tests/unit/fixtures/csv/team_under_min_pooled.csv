@@ -1,5 +1,5 @@
-firstname,lastname,type,teamname,number,notes
-Alex,Ferreira,solo,,1,
-Bo,Lindqvist,team,Wolves,2,
-Cy,Osei,team,Wolves,3,
-Do,Marchetti,team,Solo Team,4,
+firstname,lastname,type,teamname,number,notes,sex
+Alex,Ferreira,solo,,1,,M
+Bo,Lindqvist,team,Wolves,2,,F
+Cy,Osei,team,Wolves,3,,M
+Do,Marchetti,team,Solo Team,4,,F
