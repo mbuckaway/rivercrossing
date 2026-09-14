@@ -480,7 +480,8 @@ def _accelerator_entries(menubar: Any) -> list[Any]:  # noqa: ANN401 -- wx ships
     handler, and a frame-level accelerator on bare Enter would risk
     shadowing it. Phase 6's ``F2`` row is ``None``-id too, but it is a
     real frame accelerator -- :meth:`MainFrame.accelerator_entries`
-    owns it, and :func:`_apply_accelerators` appends it.
+    owns it, and :func:`_apply_accelerators` appends it through its
+    own ``extra_entries`` argument.
     """
     require_wx()
     import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
@@ -496,16 +497,48 @@ def _accelerator_entries(menubar: Any) -> list[Any]:  # noqa: ANN401 -- wx ships
     return entries
 
 
-def _apply_accelerators(frame: Any, menubar: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+def _accelerator_table_entries(
+    menubar: Any,  # noqa: ANN401 -- wx ships no stubs
+    extra_entries: Sequence[Any],
+) -> list[Any]:
+    """Combine the menubar's harvested entries with the code-side ones.
+
+    *extra_entries* -- :meth:`MainFrame.accelerator_entries`'s ``F2``
+    row, which :func:`_accelerator_entries` cannot harvest (it has no
+    ``menu_item_id``) -- is appended after the harvested three, so a
+    caller's entries can never displace the XRC ones. Split out of
+    :func:`_apply_accelerators` so the composition is testable without
+    a frame: ``wx.AcceleratorTable`` offers no way to read its entries
+    back.
+
+    Args:
+        menubar: The live menubar the XRC-backed entries are read from.
+        extra_entries: The frame-level code-side entries to append.
+
+    Returns:
+        The harvested entries followed by *extra_entries*.
+    """
+    return [*_accelerator_entries(menubar), *extra_entries]
+
+
+def _apply_accelerators(
+    frame: Any,  # noqa: ANN401 -- wx ships no stubs
+    menubar: Any,  # noqa: ANN401 -- wx ships no stubs
+    *,
+    extra_entries: Sequence[Any] = (),
+) -> None:
     """Apply the frozen accelerator table to *frame* (E1.4.1).
 
-    The three menu-bound entries are harvested from *menubar*; the
-    console's own code-side entries (Phase 6's F2) are appended, so this
-    re-application cannot replace the frame-level table
-    :class:`MainFrame` bound in its constructor.
+    The three menu-bound entries are harvested from *menubar*;
+    *extra_entries* -- the console's own code-side entries (Phase 6's
+    ``F2``) -- are appended, so this re-application cannot replace the
+    frame-level table :class:`MainFrame` bound in its constructor. The
+    frame supplies none of them: it is only ever asked to
+    ``SetAcceleratorTable``, because the raw ``wx.Frame``
+    ``build_main_window`` passes has no entry list of its own.
     """
     wx = require_wx()
-    entries = [*_accelerator_entries(menubar), *frame.accelerator_entries()]
+    entries = _accelerator_table_entries(menubar, extra_entries)
     frame.SetAcceleratorTable(wx.AcceleratorTable(entries))
 
 
@@ -4053,7 +4086,7 @@ def build_main_window(
     sound.set_muted(muted=not loaded_settings.sound_on)
     zoom.set_percent(loaded_settings.zoom_percent)
 
-    _apply_accelerators(frame, menubar)
+    _apply_accelerators(frame, menubar, extra_entries=_console.accelerator_entries())
     # theme_controller is kept alive by _RouteContext, threaded through
     # every route handler. console_view is threaded the same way so
     # E5.4.1's library Open can swap the console's presenter; the
