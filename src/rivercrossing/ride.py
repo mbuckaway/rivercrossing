@@ -901,14 +901,14 @@ class RideEngine:
       event. The refusal is the derived-lap-time rule itself
       (``lap_times``), not ``config.min_lap_s`` -- a short lap is still
       a lap and still flags (R-34).
-    - **Replay is exempt from that gate.** ``apply`` writes a replayed
-      ``edit_crossing``/``add_crossing_at`` through the private
-      ``_edit_crossing_at``/``_add_crossing_at`` halves, never the
-      public commands: a persisted row was already judged when it ran
-      live, and the operator's "the number was missed" flow routinely
-      back-dates a lap, so re-judging it would refuse a ride whose
-      stored state predates the gate -- :meth:`_begin_start`'s own
-      exemption, E5.1.2.
+    - **The gate holds on replay.** ``apply`` re-applies a persisted
+      ``edit_crossing``/``add_crossing_at`` through the public command
+      -- never a private ungated half -- so a replayed event is judged
+      by the same zero/negative-lap gate as a live correction. A legal
+      live command already satisfied that gate when it ran, so
+      replaying it still rebuilds the ride exactly. The app is
+      unreleased and its databases are erased, so no pre-gate row
+      exists to preserve (E5.1.2).
     - **Duplicates are a projection, never a mutation.**
       ``duplicate_crossings`` names every live pair sharing one entry
       and one identical instant, oldest first; it changes nothing and
@@ -1684,18 +1684,6 @@ class RideEngine:
         position = laps.index(crossing)
         previous = laps[position - 1].crossed_at if position > 0 else self._require_actual_start()
         _require_lap_after(crossing.entry_id, crossed_at, previous)
-        return self._edit_crossing_at(crossing, crossed_at, reason)
-
-    def _edit_crossing_at(self, crossing: Crossing, crossed_at: datetime, reason: str) -> Event:
-        """Write one re-timed crossing, past Phase 3's lap-time gate.
-
-        The replay seam's half of :meth:`edit_crossing` (E5.1.2): a
-        persisted ``edit_crossing`` row was already judged when it ran
-        live, so applying it again must reproduce the recorded state --
-        a row written before the gate can carry a zero lap time --
-        rather than re-judge it under today's rule. The same exemption
-        :meth:`_begin_start` records for ``start``'s readiness gates.
-        """
         replacement = Crossing(
             entry_id=crossing.entry_id,
             seq=crossing.seq,
@@ -1807,20 +1795,6 @@ class RideEngine:
         laps = self._laps_for(entry.plate)
         latest = laps[-1].crossed_at if laps else self._require_actual_start()
         _require_lap_after(entry.plate, crossed_at, latest)
-        return self._add_crossing_at(entry, crossed_at, plate=plate, reason=reason)
-
-    def _add_crossing_at(  # noqa: PLR0913 -- (entry, crossed_at, plate, reason): the event's four fields, frozen with the public command's own signature
-        self, entry: Entry, crossed_at: datetime, *, plate: str, reason: str
-    ) -> Event:
-        """Record the crossing and append its event, past the lap gate.
-
-        The replay seam's half of :meth:`add_crossing_at` (E5.1.2): a
-        persisted back-dated add was already judged when it ran live, so
-        applying it again reproduces it -- a row written before Phase 3
-        can precede the entry's latest lap -- instead of re-judging it
-        under today's rule (:meth:`_begin_start`'s own exemption for a
-        persisted row that predates a gate).
-        """
         self._record_crossing_at(entry, crossed_at, rider_plate=plate)
         return self._append(
             Event(
@@ -2554,7 +2528,12 @@ class RideEngine:
         :meth:`_begin_start` directly -- never through :meth:`start`'s
         readiness gates, which a live start already cleared -- so a
         persisted running ride rebuilds even when its stored state
-        would not pass today's gates (an empty roster, say).
+        would not pass today's gates (an empty roster, say). The Phase 3
+        lap-time gate is *not* bypassed that way: a replayed
+        ``edit_crossing``/``add_crossing_at`` goes through the public
+        command, so a stored row whose ``crossed_at`` yields a zero or
+        negative lap time is refused (class docstring's Phase 3
+        resolutions).
         ``stop`` re-stamps its payload timestamp from the engine's
         clock, so its audit bytes differ by design on replay (class
         docstring's E5.1.2 resolutions); ``finish``/``reopen``
@@ -2573,6 +2552,9 @@ class RideEngine:
         Raises:
             UnknownEventActionError: *event.action* is not a known
                 ride mutation.
+            ValueError: a replayed correction's reason is empty, or a
+                replayed ``edit_crossing``/``add_crossing_at`` violates
+                Phase 3's zero/negative-lap gate.
             RideEngineError: ``confirm_held``/``void_held`` name a
                 crossing this engine never recorded (an inconsistent
                 event stream).
@@ -2595,12 +2577,9 @@ class RideEngine:
         elif action == "deal_manual":
             self.deal_manual(str(event.payload["plate"]), reason=str(event.payload["reason"]))
         elif action == "edit_crossing":
-            # Past Phase 3's lap-time gate on purpose (see the private
-            # half's docstring): a persisted row was judged live.
-            self._edit_crossing_at(
-                self._require_crossing(
-                    str(event.payload["entry_id"]), int(str(event.payload["seq"]))
-                ),
+            self.edit_crossing(
+                str(event.payload["entry_id"]),
+                int(str(event.payload["seq"])),
                 _payload_dt(event, "crossed_at"),
                 reason=str(event.payload["reason"]),
             )
@@ -2611,12 +2590,9 @@ class RideEngine:
                 reason=str(event.payload["reason"]),
             )
         elif action == "add_crossing_at":
-            # Same exemption (see _add_crossing_at): a back-dated add
-            # recorded before the gate must still rebuild.
-            self._add_crossing_at(
-                self._require_entry(str(event.payload["plate"])),
+            self.add_crossing_at(
+                str(event.payload["plate"]),
                 _payload_dt(event, "crossed_at"),
-                plate=str(event.payload["plate"]),
                 reason=str(event.payload["reason"]),
             )
         elif action == "record_miss":
