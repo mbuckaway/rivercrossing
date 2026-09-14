@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
-# Run the single "app menu quit" smoke test. This is the local
-# developer check for the Windows open/quit crash, so unlike the full
-# functional suite it has NO macOS host gate and runs on a Mac.
+# Run the single whole-app functional smoke: create a DRAFT ride, import a
+# CSV, open the Rider Simulator, and quit. This is the local developer check
+# for the Windows open/quit crash, so unlike the full functional suite it has
+# NO macOS host gate and runs on a Mac.
 #
 # Usage: run-open.sh [extra pytest args, e.g. -x -k something]
 

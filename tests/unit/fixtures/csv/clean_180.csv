@@ -1,181 +1,181 @@
-firstname,lastname,type,teamname,number,notes
-Marc,Rossi,solo,,1,
-Priya,Tremblay,solo,,2,
-Tom,Chen,solo,,3,
-Alex,Fournier,solo,,4,
-Jordan,Singh,solo,,5,
-Maya,Larsen,solo,,6,
-Liam,Reyes,solo,,7,
-Nadia,Adeyemi,solo,,8,
-Chris,Nair,solo,,9,
-Ines,Petrov,solo,,10,
-Devon,Okafor,solo,,11,
-Okoro,Dubois,solo,,12,
-Freya,Mbeki,solo,,13,
-Bram,Kowalski,solo,,14,
-Lucia,Novak,solo,,15,
-Sarah,Hale,solo,,16,
-Marc,Rossi,solo,,17,
-Priya,Tremblay,solo,,18,
-Tom,Chen,solo,,19,
-Alex,Fournier,solo,,20,
-Jordan,Singh,solo,,21,
-Maya,Larsen,solo,,22,
-Liam,Reyes,solo,,23,
-Nadia,Adeyemi,solo,,24,
-Chris,Nair,solo,,25,
-Ines,Petrov,solo,,26,
-Devon,Okafor,solo,,27,
-Okoro,Dubois,solo,,28,
-Freya,Mbeki,solo,,29,
-Bram,Kowalski,solo,,30,
-Lucia,Novak,solo,,31,
-Sarah,Hale,solo,,32,
-Marc,Rossi,solo,,33,
-Priya,Tremblay,solo,,34,
-Tom,Chen,solo,,35,
-Alex,Fournier,solo,,36,
-Jordan,Singh,solo,,37,
-Maya,Larsen,solo,,38,
-Liam,Reyes,solo,,39,
-Nadia,Adeyemi,solo,,40,
-Chris,Nair,solo,,41,
-Ines,Petrov,solo,,42,
-Devon,Okafor,solo,,43,
-Okoro,Dubois,solo,,44,
-Freya,Mbeki,solo,,45,
-Bram,Kowalski,solo,,46,
-Lucia,Novak,solo,,47,
-Sarah,Hale,solo,,48,
-Marc,Rossi,solo,,49,
-Priya,Tremblay,solo,,50,
-Tom,Chen,solo,,51,
-Alex,Fournier,solo,,52,
-Jordan,Singh,solo,,53,
-Maya,Larsen,solo,,54,
-Liam,Reyes,solo,,55,
-Nadia,Adeyemi,solo,,56,
-Chris,Nair,solo,,57,
-Ines,Petrov,solo,,58,
-Devon,Okafor,solo,,59,
-Okoro,Dubois,solo,,60,
-Freya,Mbeki,solo,,61,
-Bram,Kowalski,solo,,62,
-Lucia,Novak,solo,,63,
-Sarah,Hale,solo,,64,
-Marc,Rossi,solo,,65,
-Priya,Tremblay,solo,,66,
-Tom,Chen,solo,,67,
-Alex,Fournier,solo,,68,
-Jordan,Singh,solo,,69,
-Maya,Larsen,solo,,70,
-Liam,Reyes,solo,,71,
-Nadia,Adeyemi,solo,,72,
-Chris,Nair,solo,,73,
-Ines,Petrov,solo,,74,
-Devon,Okafor,solo,,75,
-Okoro,Dubois,solo,,76,
-Freya,Mbeki,solo,,77,
-Bram,Kowalski,solo,,78,
-Lucia,Novak,solo,,79,
-Sarah,Hale,solo,,80,
-Marc,Rossi,solo,,81,
-Priya,Tremblay,solo,,82,
-Tom,Chen,solo,,83,
-Alex,Fournier,solo,,84,
-Jordan,Singh,solo,,85,
-Maya,Larsen,solo,,86,
-Liam,Reyes,solo,,87,
-Nadia,Adeyemi,solo,,88,
-Chris,Nair,solo,,89,
-Ines,Petrov,solo,,90,
-Devon,Okafor,solo,,91,
-Okoro,Dubois,solo,,92,
-Freya,Mbeki,solo,,93,
-Bram,Kowalski,solo,,94,
-Lucia,Novak,solo,,95,
-Sarah,Hale,solo,,96,
-Marc,Rossi,solo,,97,
-Priya,Tremblay,solo,,98,
-Tom,Chen,solo,,99,
-Alex,Fournier,solo,,100,
-Jordan,Singh,solo,,101,
-Maya,Larsen,solo,,102,
-Liam,Reyes,solo,,103,
-Nadia,Adeyemi,solo,,104,
-Chris,Nair,solo,,105,
-Ines,Petrov,solo,,106,
-Devon,Okafor,solo,,107,
-Okoro,Dubois,solo,,108,
-Freya,Mbeki,solo,,109,
-Bram,Kowalski,solo,,110,
-Lucia,Novak,solo,,111,
-Sarah,Hale,solo,,112,
-Marc,Rossi,solo,,113,
-Priya,Tremblay,solo,,114,
-Tom,Chen,solo,,115,
-Alex,Fournier,solo,,116,
-Jordan,Singh,solo,,117,
-Maya,Larsen,solo,,118,
-Liam,Reyes,solo,,119,
-Nadia,Adeyemi,solo,,120,
-Marc,Rossi,team,Dirt Dynamos,121,
-Priya,Tremblay,team,Dirt Dynamos,121,
-Tom,Chen,team,Dirt Dynamos,121,
-Alex,Fournier,team,Dirt Dynamos,121,
-Jordan,Singh,team,Trail Blazers,122,
-Maya,Larsen,team,Trail Blazers,122,
-Liam,Reyes,team,Trail Blazers,122,
-Nadia,Adeyemi,team,Trail Blazers,122,
-Chris,Nair,team,Ridge Runners,123,
-Ines,Petrov,team,Ridge Runners,123,
-Devon,Okafor,team,Ridge Runners,123,
-Okoro,Dubois,team,Ridge Runners,123,
-Freya,Mbeki,team,Gravel Grinders,124,
-Bram,Kowalski,team,Gravel Grinders,124,
-Lucia,Novak,team,Gravel Grinders,124,
-Sarah,Hale,team,Gravel Grinders,124,
-Marc,Rossi,team,Pedal Pushers,125,
-Priya,Tremblay,team,Pedal Pushers,125,
-Tom,Chen,team,Pedal Pushers,125,
-Alex,Fournier,team,Pedal Pushers,125,
-Jordan,Singh,team,Mud Marchers,126,
-Maya,Larsen,team,Mud Marchers,126,
-Liam,Reyes,team,Mud Marchers,126,
-Nadia,Adeyemi,team,Mud Marchers,126,
-Chris,Nair,team,Summit Seekers,127,
-Ines,Petrov,team,Summit Seekers,127,
-Devon,Okafor,team,Summit Seekers,127,
-Okoro,Dubois,team,Summit Seekers,127,
-Freya,Mbeki,team,Switchback Squad,128,
-Bram,Kowalski,team,Switchback Squad,128,
-Lucia,Novak,team,Switchback Squad,128,
-Sarah,Hale,team,Switchback Squad,128,
-Marc,Rossi,team,Rock Hoppers,129,
-Priya,Tremblay,team,Rock Hoppers,129,
-Tom,Chen,team,Rock Hoppers,129,
-Alex,Fournier,team,Rock Hoppers,129,
-Jordan,Singh,team,Spoke Sisters,130,
-Maya,Larsen,team,Spoke Sisters,130,
-Liam,Reyes,team,Spoke Sisters,130,
-Nadia,Adeyemi,team,Spoke Sisters,130,
-Chris,Nair,team,Wheel Wanderers,131,
-Ines,Petrov,team,Wheel Wanderers,131,
-Devon,Okafor,team,Wheel Wanderers,131,
-Okoro,Dubois,team,Wheel Wanderers,131,
-Freya,Mbeki,team,Chain Reaction,132,
-Bram,Kowalski,team,Chain Reaction,132,
-Lucia,Novak,team,Chain Reaction,132,
-Sarah,Hale,team,Chain Reaction,132,
-Marc,Rossi,team,Descent Devils,133,
-Priya,Tremblay,team,Descent Devils,133,
-Tom,Chen,team,Descent Devils,133,
-Alex,Fournier,team,Descent Devils,133,
-Jordan,Singh,team,Climb Crew,134,
-Maya,Larsen,team,Climb Crew,134,
-Liam,Reyes,team,Climb Crew,134,
-Nadia,Adeyemi,team,Climb Crew,134,
-Chris,Nair,team,Loop Legends,135,
-Ines,Petrov,team,Loop Legends,135,
-Devon,Okafor,team,Loop Legends,135,
-Okoro,Dubois,team,Loop Legends,135,
+firstname,lastname,type,teamname,number,notes,sex
+Marc,Rossi,solo,,1,,M
+Priya,Tremblay,solo,,2,,F
+Tom,Chen,solo,,3,,M
+Alex,Fournier,solo,,4,,F
+Jordan,Singh,solo,,5,,
+Maya,Larsen,solo,,6,,M
+Liam,Reyes,solo,,7,,F
+Nadia,Adeyemi,solo,,8,,M
+Chris,Nair,solo,,9,,F
+Ines,Petrov,solo,,10,,
+Devon,Okafor,solo,,11,,M
+Okoro,Dubois,solo,,12,,F
+Freya,Mbeki,solo,,13,,M
+Bram,Kowalski,solo,,14,,F
+Lucia,Novak,solo,,15,,
+Sarah,Hale,solo,,16,,M
+Marc,Rossi,solo,,17,,F
+Priya,Tremblay,solo,,18,,M
+Tom,Chen,solo,,19,,F
+Alex,Fournier,solo,,20,,
+Jordan,Singh,solo,,21,,M
+Maya,Larsen,solo,,22,,F
+Liam,Reyes,solo,,23,,M
+Nadia,Adeyemi,solo,,24,,F
+Chris,Nair,solo,,25,,
+Ines,Petrov,solo,,26,,M
+Devon,Okafor,solo,,27,,F
+Okoro,Dubois,solo,,28,,M
+Freya,Mbeki,solo,,29,,F
+Bram,Kowalski,solo,,30,,
+Lucia,Novak,solo,,31,,M
+Sarah,Hale,solo,,32,,F
+Marc,Rossi,solo,,33,,M
+Priya,Tremblay,solo,,34,,F
+Tom,Chen,solo,,35,,
+Alex,Fournier,solo,,36,,M
+Jordan,Singh,solo,,37,,F
+Maya,Larsen,solo,,38,,M
+Liam,Reyes,solo,,39,,F
+Nadia,Adeyemi,solo,,40,,
+Chris,Nair,solo,,41,,M
+Ines,Petrov,solo,,42,,F
+Devon,Okafor,solo,,43,,M
+Okoro,Dubois,solo,,44,,F
+Freya,Mbeki,solo,,45,,
+Bram,Kowalski,solo,,46,,M
+Lucia,Novak,solo,,47,,F
+Sarah,Hale,solo,,48,,M
+Marc,Rossi,solo,,49,,F
+Priya,Tremblay,solo,,50,,
+Tom,Chen,solo,,51,,M
+Alex,Fournier,solo,,52,,F
+Jordan,Singh,solo,,53,,M
+Maya,Larsen,solo,,54,,F
+Liam,Reyes,solo,,55,,
+Nadia,Adeyemi,solo,,56,,M
+Chris,Nair,solo,,57,,F
+Ines,Petrov,solo,,58,,M
+Devon,Okafor,solo,,59,,F
+Okoro,Dubois,solo,,60,,
+Freya,Mbeki,solo,,61,,M
+Bram,Kowalski,solo,,62,,F
+Lucia,Novak,solo,,63,,M
+Sarah,Hale,solo,,64,,F
+Marc,Rossi,solo,,65,,
+Priya,Tremblay,solo,,66,,M
+Tom,Chen,solo,,67,,F
+Alex,Fournier,solo,,68,,M
+Jordan,Singh,solo,,69,,F
+Maya,Larsen,solo,,70,,
+Liam,Reyes,solo,,71,,M
+Nadia,Adeyemi,solo,,72,,F
+Chris,Nair,solo,,73,,M
+Ines,Petrov,solo,,74,,F
+Devon,Okafor,solo,,75,,
+Okoro,Dubois,solo,,76,,M
+Freya,Mbeki,solo,,77,,F
+Bram,Kowalski,solo,,78,,M
+Lucia,Novak,solo,,79,,F
+Sarah,Hale,solo,,80,,
+Marc,Rossi,solo,,81,,M
+Priya,Tremblay,solo,,82,,F
+Tom,Chen,solo,,83,,M
+Alex,Fournier,solo,,84,,F
+Jordan,Singh,solo,,85,,
+Maya,Larsen,solo,,86,,M
+Liam,Reyes,solo,,87,,F
+Nadia,Adeyemi,solo,,88,,M
+Chris,Nair,solo,,89,,F
+Ines,Petrov,solo,,90,,
+Devon,Okafor,solo,,91,,M
+Okoro,Dubois,solo,,92,,F
+Freya,Mbeki,solo,,93,,M
+Bram,Kowalski,solo,,94,,F
+Lucia,Novak,solo,,95,,
+Sarah,Hale,solo,,96,,M
+Marc,Rossi,solo,,97,,F
+Priya,Tremblay,solo,,98,,M
+Tom,Chen,solo,,99,,F
+Alex,Fournier,solo,,100,,
+Jordan,Singh,solo,,101,,M
+Maya,Larsen,solo,,102,,F
+Liam,Reyes,solo,,103,,M
+Nadia,Adeyemi,solo,,104,,F
+Chris,Nair,solo,,105,,
+Ines,Petrov,solo,,106,,M
+Devon,Okafor,solo,,107,,F
+Okoro,Dubois,solo,,108,,M
+Freya,Mbeki,solo,,109,,F
+Bram,Kowalski,solo,,110,,
+Lucia,Novak,solo,,111,,M
+Sarah,Hale,solo,,112,,F
+Marc,Rossi,solo,,113,,M
+Priya,Tremblay,solo,,114,,F
+Tom,Chen,solo,,115,,
+Alex,Fournier,solo,,116,,M
+Jordan,Singh,solo,,117,,F
+Maya,Larsen,solo,,118,,M
+Liam,Reyes,solo,,119,,F
+Nadia,Adeyemi,solo,,120,,
+Marc,Rossi,team,Dirt Dynamos,121,,M
+Priya,Tremblay,team,Dirt Dynamos,121,,F
+Tom,Chen,team,Dirt Dynamos,121,,M
+Alex,Fournier,team,Dirt Dynamos,121,,F
+Jordan,Singh,team,Trail Blazers,122,,
+Maya,Larsen,team,Trail Blazers,122,,M
+Liam,Reyes,team,Trail Blazers,122,,F
+Nadia,Adeyemi,team,Trail Blazers,122,,M
+Chris,Nair,team,Ridge Runners,123,,F
+Ines,Petrov,team,Ridge Runners,123,,
+Devon,Okafor,team,Ridge Runners,123,,M
+Okoro,Dubois,team,Ridge Runners,123,,F
+Freya,Mbeki,team,Gravel Grinders,124,,M
+Bram,Kowalski,team,Gravel Grinders,124,,F
+Lucia,Novak,team,Gravel Grinders,124,,
+Sarah,Hale,team,Gravel Grinders,124,,M
+Marc,Rossi,team,Pedal Pushers,125,,F
+Priya,Tremblay,team,Pedal Pushers,125,,M
+Tom,Chen,team,Pedal Pushers,125,,F
+Alex,Fournier,team,Pedal Pushers,125,,
+Jordan,Singh,team,Mud Marchers,126,,M
+Maya,Larsen,team,Mud Marchers,126,,F
+Liam,Reyes,team,Mud Marchers,126,,M
+Nadia,Adeyemi,team,Mud Marchers,126,,F
+Chris,Nair,team,Summit Seekers,127,,
+Ines,Petrov,team,Summit Seekers,127,,M
+Devon,Okafor,team,Summit Seekers,127,,F
+Okoro,Dubois,team,Summit Seekers,127,,M
+Freya,Mbeki,team,Switchback Squad,128,,F
+Bram,Kowalski,team,Switchback Squad,128,,
+Lucia,Novak,team,Switchback Squad,128,,M
+Sarah,Hale,team,Switchback Squad,128,,F
+Marc,Rossi,team,Rock Hoppers,129,,M
+Priya,Tremblay,team,Rock Hoppers,129,,F
+Tom,Chen,team,Rock Hoppers,129,,
+Alex,Fournier,team,Rock Hoppers,129,,M
+Jordan,Singh,team,Spoke Sisters,130,,F
+Maya,Larsen,team,Spoke Sisters,130,,M
+Liam,Reyes,team,Spoke Sisters,130,,F
+Nadia,Adeyemi,team,Spoke Sisters,130,,
+Chris,Nair,team,Wheel Wanderers,131,,M
+Ines,Petrov,team,Wheel Wanderers,131,,F
+Devon,Okafor,team,Wheel Wanderers,131,,M
+Okoro,Dubois,team,Wheel Wanderers,131,,F
+Freya,Mbeki,team,Chain Reaction,132,,
+Bram,Kowalski,team,Chain Reaction,132,,M
+Lucia,Novak,team,Chain Reaction,132,,F
+Sarah,Hale,team,Chain Reaction,132,,M
+Marc,Rossi,team,Descent Devils,133,,F
+Priya,Tremblay,team,Descent Devils,133,,
+Tom,Chen,team,Descent Devils,133,,M
+Alex,Fournier,team,Descent Devils,133,,F
+Jordan,Singh,team,Climb Crew,134,,M
+Maya,Larsen,team,Climb Crew,134,,F
+Liam,Reyes,team,Climb Crew,134,,
+Nadia,Adeyemi,team,Climb Crew,134,,M
+Chris,Nair,team,Loop Legends,135,,F
+Ines,Petrov,team,Loop Legends,135,,M
+Devon,Okafor,team,Loop Legends,135,,F
+Okoro,Dubois,team,Loop Legends,135,,

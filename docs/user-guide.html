@@ -53,6 +53,7 @@
     <li><a href="#finishing-standings">Finishing &amp; standings</a></li>
     <li><a href="#publishing-results">Publishing results</a></li>
     <li><a href="#poker-the-run-way">Poker, the run way</a></li>
+    <li><a href="#card-shoe">Card shoe</a></li>
     <li><a href="#troubleshooting-faq">Troubleshooting &amp; FAQ</a></li>
     <li><a href="#appendix-a-shortcuts">Appendix A — Keyboard shortcuts</a></li>
     <li><a href="#appendix-b-csv-reference">Appendix B — CSV reference</a></li>
@@ -208,8 +209,22 @@
 <p>Duplicates across entries are expected — the shoe is shuffled, not dealt from a single deck — and the shoe reshuffles automatically if it empties. Two entries with identical best hands are resolved by the ride's tie-break order, never guessed.</p>
 </section>
 
+<section id="card-shoe">
+<h2>10 · Card shoe — how cards are dealt</h2>
+<p>Every lap deals one card from the ride's <strong>shoe</strong>: the single shuffled list of cards the ride builds once and draws from, in order, for its whole life.</p>
+<ul>
+  <li><strong>Created once.</strong> When the ride is created, the app draws a random <strong>seed</strong> from your operating system's secure random source and stores it with the ride. The shoe is that seed's shuffled list of decks (and jokers). It is not re-shuffled for the ride's life; the only way the order changes is if the shoe empties, when it reshuffles automatically and keeps dealing.</li>
+  <li><strong>Dealt from the front, in order.</strong> The next card is always the front of the remaining list. Every crossing takes the next card — the dealt order is exactly the shuffled list, first to last.</li>
+  <li><strong>Undo puts a card back at the front.</strong> Undo Last Crossing returns the card to the front of the shoe, so the next deal re-deals it.</li>
+  <li><strong>Voiding does not return the card.</strong> Voiding a crossing (or a card) takes the card out of the system — it does not go back into the shoe. Only Undo returns a card.</li>
+  <li><strong>Reassigning moves the card with the crossing.</strong> Moving a crossing to another entry moves its card too; no new card is dealt.</li>
+  <li><strong>Locked once the ride starts.</strong> The shoe's size (decks and jokers) is part of the ride's format. You can change it while the ride is a draft; once the ride starts, those fields are disabled in <strong>Ride ▸ Edit Ride…</strong> so the live shoe and the recorded ride can never disagree.</li>
+  <li><strong>Random, and auditable.</strong> The shuffle is an unbiased Fisher–Yates shuffle seeded from the operating system's secure random source. The order is random and unpredictable to riders, but the seed is stored, so replaying the ride from the database reproduces exactly the cards everyone drew — the crash-and-restart guarantee.</li>
+</ul>
+</section>
+
 <section id="troubleshooting-faq">
-<h2>10 · Troubleshooting &amp; FAQ</h2>
+<h2>11 · Troubleshooting &amp; FAQ</h2>
 <ul>
   <li><strong>Missed the start</strong> — use <strong>Ride ▸ Set Start Time…</strong> to back-date it; lap-1 times recompute.</li>
   <li><strong>Typed the wrong plate</strong> — undo the crossing, or edit/reassign it and record a reason.</li>

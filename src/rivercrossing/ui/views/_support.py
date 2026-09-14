@@ -14,6 +14,17 @@ method (existing tests call it as a bound method) that forwards here.
 :func:`associate_model` is not a duplication extraction -- see its
 own docstring for exactly what it does and does not claim to fix.
 
+:func:`load_dialog` and :func:`load_menubar` answer the same rule,
+and both retry a miss once through :func:`fresh_resource` -- the one
+rebuild source. Every window and menubar load site -- ``ui/app.py``'s
+route, quit, self-test and resume flows, ``ui/views/corrections.py``'s
+six runners, ``crossing_detail.py``, ``ride_library.py``,
+``simulator.py`` and the rest of the sites loading straight off
+``wx.xrc.XmlResource.Get()`` -- asked the resource for its window and
+got ``None`` back when a load had silently skipped it. That is the
+Fault-B degraded-load class, which reads to the operator as a menu row
+clicking through to "no window authored yet".
+
 Phase 3 adds the rider-list piece both rider lists need:
 :class:`RiderRowListModel` (a ``DataViewIndexListModel`` rendering
 ``RiderRow`` cells through ``ui.rider_columns``). Both lists sort
@@ -29,9 +40,11 @@ from __future__ import annotations
 
 import gc
 from functools import cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import wx
+import wx.xrc  # submodule, not loaded by plain `import wx`
 
 from rivercrossing.ui.cards_imagelist import CardImageList, load_card_image_list
 
@@ -50,6 +63,9 @@ __all__ = [
     "default_card_images",
     "find_control",
     "fit_frame_to_screen",
+    "fresh_resource",
+    "load_dialog",
+    "load_menubar",
 ]
 
 # See find_control's own docstring for the measured, address-reuse
@@ -200,6 +216,111 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
             f"(first-level children: {len(children)} -- {children!r})"
         )
     return control
+
+
+# The packaged XRC directory every view loads from; fresh_resource's
+# default source.
+_XRC_DIR = Path(__file__).resolve().parent.parent / "xrc"
+
+
+# The memoized rebuilds, keyed by directory: one parse per directory
+# per process.
+_rebuilt_resources: dict[Path, Any] = {}
+
+
+def _loaded_xrc_dir(xrc_dir: Path) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return one private ``XmlResource`` loaded from *xrc_dir*.
+
+    Memoized per directory, so a healthy rebuild parses its files once
+    per process. A rebuild that failed any load is deliberately *not*
+    memoized: the degraded-load class this module exists to work around
+    can make the first rebuild the bad one, and a frozen degraded
+    resource would defeat every later self-heal.
+    """
+    cached = _rebuilt_resources.get(xrc_dir)
+    if cached is not None:
+        return cached
+    resource = wx.xrc.XmlResource()
+    failed = False
+    for path in sorted(xrc_dir.glob("*.xrc")):
+        if not resource.Load(str(path)):
+            failed = True
+            # Load reports an unreadable or partly skipped file only
+            # through this boolean, so name the file: a silently
+            # missing subtree is the Fault-B degraded-load class this
+            # module exists to work around.
+            wx.LogWarning(f"XRC load failed for {path}")
+    if not failed:
+        _rebuilt_resources[xrc_dir] = resource
+    return resource
+
+
+def fresh_resource(xrc_dir: Path | None = None) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return a private ``XmlResource`` loaded from every packaged .xrc.
+
+    The rebuild source for the Fault-B degraded-load class: a *new*
+    ``wx.xrc.XmlResource``, never the process-wide singleton
+    ``wx.xrc.XmlResource.Get`` returns (a parse under load can skip a
+    subtree, and a later re-parse can overwrite an earlier clean one),
+    loaded from the same ``ui/xrc/*.xrc`` files.
+
+    The built resource is memoized per directory (see
+    :func:`_loaded_xrc_dir`), so a healthy rebuild happens once per
+    process and a rebuild that failed a load is retried next time.
+    *xrc_dir* defaults to the packaged ``ui/xrc``; a test points it at
+    a temporary directory to exercise the rebuild without the shipped
+    files.
+    """
+    return _loaded_xrc_dir(xrc_dir if xrc_dir is not None else _XRC_DIR)
+
+
+def load_dialog(
+    resource: Any,  # noqa: ANN401 -- wx ships no stubs
+    name: str,
+    *,
+    parent: Any = None,  # noqa: ANN401 -- wx ships no stubs
+) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Load dialog *name* from *resource*, rebuilding once if missing.
+
+    ``LoadDialog`` returns ``None`` when a load skipped the dialog's
+    subtree -- the Fault-B class behind the reported ``File ▸
+    Simulation…`` "no window authored yet" notice. A miss retries once
+    against :func:`fresh_resource`, so a shipped dialog comes back
+    instead of ``None``; only a target no ``.xrc`` authors stays
+    ``None``. A rebuild that raises (an ``OSError``, a parse error)
+    also answers ``None``: this runs inside a wx event handler, where
+    an escaping exception is a crash.
+
+    *parent* is passed to both loads. It defaults to ``None`` -- the
+    parentless load every menu route uses -- and the two sites that
+    parent their dialog (``_load_running_window``,
+    ``RideLibrary._on_delete_clicked``) pass their own window: the
+    retry must keep the parent, or a self-healed rebuild would
+    silently restack the dialog.
+    """
+    window = resource.LoadDialog(parent, name)
+    if window is not None:
+        return window
+    try:
+        return fresh_resource().LoadDialog(parent, name)
+    except Exception:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
+        return None
+
+
+def load_menubar(resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Load menubar *name* from *resource*, rebuilding once if missing.
+
+    The :func:`load_dialog` shape on the ``LoadMenuBar`` seam: a miss
+    retries once against :func:`fresh_resource`, and a rebuild that
+    raises answers ``None`` rather than escaping into the wx handler.
+    """
+    menubar = resource.LoadMenuBar(None, name)
+    if menubar is not None:
+        return menubar
+    try:
+        return fresh_resource().LoadMenuBar(None, name)
+    except Exception:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
+        return None
 
 
 @cache

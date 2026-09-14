@@ -203,8 +203,7 @@ class _RouteContext:
             E5.4.2), and E5.4.1's Reopen route can fire ``on_reopen``.
             Optional with a stub fallback so route-level tests that
             construct ``_RouteContext`` without a live console keep
-            working unchanged (test_app_open_target.py's
-            ``_make_route_context``).
+            working unchanged.
         console_view: The live :class:`~rivercrossing.ui.views.
             MainFrame` console, set by :func:`build_main_window`
             after construction; E5.4.1's library Open swaps its
@@ -229,7 +228,7 @@ class _RouteContext:
     # Undo Last Crossing route (and its Ctrl+Z accelerator) can fire
     # presenter.on_undo. Optional with a stub fallback so route-level
     # tests that construct _RouteContext without a live console keep
-    # working unchanged (test_app_open_target.py's _make_route_context).
+    # working unchanged.
     presenter: ConsolePresenter | None = None
     # E5.2.1: the optional live Store the quit flow stamps closed_at on.
     store: Store | None = None
@@ -341,24 +340,6 @@ def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
     return resource
 
 
-def _fresh_xrc_resource() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
-    """Return a private ``XmlResource`` loaded from every packaged .xrc.
-
-    The Fault-B rebuild source: a *new* ``wx.xrc.XmlResource()`` (never
-    the process-wide singleton :func:`_load_xrc_resources` loads, whose
-    degraded builds under worker load are what this works around),
-    loaded from the same ``ui/xrc/*.xrc`` files.
-    """
-    require_wx()
-    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
-
-    xrc_dir = Path(__file__).resolve().parent / "xrc"
-    resource = wx.xrc.XmlResource()
-    for path in sorted(xrc_dir.glob("*.xrc")):
-        resource.Load(str(path))
-    return resource
-
-
 # 25, mirroring ui.views._support.FIND_SETTLE_ATTEMPTS: the same
 # wx/SIP wrapper-cache stale-lookup hazard _support.find_control
 # settles applies to the app gate's own name lookups too.
@@ -443,7 +424,11 @@ def _load_frame_verified(
     if _missing_required_control(frame, required, classes) is None:
         return frame
 
-    fresh = _fresh_xrc_resource()
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        fresh_resource,
+    )
+
+    fresh = fresh_resource()
     rebuilt = fresh.LoadFrame(None, ids.MAIN_FRAME)
     frame.Destroy()
     if rebuilt is None:
@@ -2535,9 +2520,12 @@ _CORRECTION_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
 def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     """Open *route*'s target window, or notice its absence (D1).
 
-    ``LoadDialog`` returns ``None`` rather than raise when
-    *route.target* names no XRC resource at all (measured) -- no §15
-    route is un-authored anymore (E5.4.1 and
+    The load goes through
+    :func:`~rivercrossing.ui.views._support.load_dialog`, so a target
+    a degraded singleton load skipped is rebuilt from a fresh
+    ``XmlResource`` instead of answering ``None``. A target genuinely
+    no ``.xrc`` authors still returns ``None`` rather than raise
+    (measured) -- no §15 route is un-authored anymore (E5.4.1 and
     E7 authored Duplicate Ride, Reopen Ride, Void Card), but the
     branch stays as the safety net for any future route whose target
     is not yet authored, with no change needed here: a route never
@@ -2546,7 +2534,11 @@ def _open_target(context: _RouteContext, route: commands.MenuRoute) -> None:
     this failure class (a menu row clicking through to nothing) is
     diagnosable from the log alone.
     """
-    window = context.resource.LoadDialog(None, route.target)
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        load_dialog,
+    )
+
+    window = load_dialog(context.resource, route.target)
     if window is None:
         log = _log(context)
         if log is not None:
@@ -2791,9 +2783,12 @@ def _open_rider_editor_for(context: _RouteContext, plate: str) -> None:
     leak it).
     """
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        load_dialog,
+    )
     from rivercrossing.ui.views.rider_editor import RiderEditor  # noqa: PLC0415 -- deferred
 
-    window = context.resource.LoadDialog(None, ids.RIDER_EDITOR_DLG)
+    window = load_dialog(context.resource, ids.RIDER_EDITOR_DLG)
     if window is None:
         context.frame.SetStatusText("Rider Editor — no window authored yet")
         return
@@ -3057,12 +3052,15 @@ def _show_crossing_detail_dialog(
     persists it, so nothing is read back afterwards.
     """
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        load_dialog,
+    )
     from rivercrossing.ui.views.crossing_detail import (  # noqa: PLC0415 -- deferred
         CrossingDetailView,
         MissDetailView,
     )
 
-    window = context.resource.LoadDialog(None, ids.CROSSING_DETAIL_DLG)
+    window = load_dialog(context.resource, ids.CROSSING_DETAIL_DLG)
     if window is None:
         context.frame.SetStatusText("Crossing Detail — no window authored yet")
         return
@@ -3148,7 +3146,9 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     """Run the quit-confirm dialog for the ride's current status.
 
     Loads :func:`quit_flow.dialog_for_status`'s target from
-    *context*'s already-loaded resource -- ``exit_running_dlg`` for a
+    *context*'s already-loaded resource (through
+    :func:`~rivercrossing.ui.views._support.load_dialog`, so a
+    degraded load self-heals) -- ``exit_running_dlg`` for a
     RUNNING ride -- writes the running variant's ride-naming copy into
     its ``message_lbl`` (E5.2.3), binds ``finish_first_btn`` to
     ``EndModal`` (A1), shows it through
@@ -3189,7 +3189,11 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     if dialog_name is None:
         return _confirm_quit_native(context)
 
-    dialog = context.resource.LoadDialog(None, dialog_name)
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        load_dialog,
+    )
+
+    dialog = load_dialog(context.resource, dialog_name)
     if dialog_name == ids.EXIT_RUNNING_DLG:
         ride_name = presenter.engine.config.name if presenter is not None else "The ride"
         message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
@@ -3641,9 +3645,12 @@ def _run_launch_self_test(context: _RouteContext) -> None:
     ("failure blocks finishing a ride") is EPIC 6's; this only makes
     the hook itself exist and run (E2.4.1's own scope note).
     """
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        load_dialog,
+    )
     from rivercrossing.ui.views.selftest import SelfTestDialog  # noqa: PLC0415
 
-    window = context.resource.LoadDialog(None, ids.SELFTEST_DLG)
+    window = load_dialog(context.resource, ids.SELFTEST_DLG)
     try:
         view = SelfTestDialog(window)
     except Exception:
@@ -3722,6 +3729,9 @@ def _run_resume_dialog(
     """
     wx = require_wx()
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see module docstring
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        load_dialog,
+    )
 
     ride_id = previous.ride_id
     ended_at = previous.ended_at
@@ -3733,7 +3743,7 @@ def _run_resume_dialog(
         # only narrows types for mypy.
         raise RuntimeError("resume dialog warranted without a ride or end time")
 
-    dialog = context.resource.LoadDialog(None, ids.RESUME_DLG)
+    dialog = load_dialog(context.resource, ids.RESUME_DLG)
     if dialog is None:
         context.frame.SetStatusText("Resume Ride — no resume dialog authored yet")
         return None
@@ -3990,6 +4000,9 @@ def build_main_window(
         The loaded, fully wired ``main_frame``, not yet shown.
     """
     from rivercrossing.ui.views import MainFrame  # noqa: PLC0415 -- deferred, see module docstring
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        load_menubar,
+    )
     from rivercrossing.ui.views.main_frame import (  # noqa: PLC0415 -- deferred, see module docstring
         REQUIRED_CONTROL_CLASSES,
         REQUIRED_CONTROLS,
@@ -4022,7 +4035,14 @@ def build_main_window(
     # lookup); the frame and resource used downstream are the verified
     # ones.
     frame = _load_frame_verified(resource, REQUIRED_CONTROLS, REQUIRED_CONTROL_CLASSES)
-    menubar = resource.LoadMenuBar(None, ids.MAIN_MENUBAR)
+    menubar = load_menubar(resource, ids.MAIN_MENUBAR)
+    # Fault-B: load_menubar answers None when neither the singleton nor
+    # the fresh rebuild authors the menubar. SetMenuBar(None) and the
+    # two _check_loaded_* helpers below would then fail with an
+    # unrelated AttributeError, so name the real cause here.
+    if menubar is None:
+        msg = f"no menubar named {ids.MAIN_MENUBAR!r}"
+        raise LookupError(msg)
     frame.SetMenuBar(menubar)
     _check_loaded_hide_times(menubar, hide=loaded_settings.hide_times)
     _check_loaded_zoom_radio(menubar, loaded_settings.zoom_percent)

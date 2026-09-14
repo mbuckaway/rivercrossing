@@ -23,6 +23,7 @@ from datetime import date, datetime
 from types import SimpleNamespace
 
 import pytest
+from xrc_fixtures import pin_no_authored_window
 
 from rivercrossing.ride import FAR_TOO_MANY, NOT_ENOUGH, OK, CardCheck, RideConfig
 from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider, Roster
@@ -303,6 +304,10 @@ def test_run_rider_issues_flow_given_an_unauthored_dialog_returns_false(
     """T-3 negative: LoadDialog returning None is a silent no-op."""
     _window, resource = _stub_toolkit(monkeypatch)
     resource.window = None
+    # The self-heal retries a miss against _support.fresh_resource:
+    # pin the rebuild to miss too, so the unauthored case is what is
+    # pinned and no real XmlResource is built mid-suite.
+    pin_no_authored_window(monkeypatch, lambda: _FakeXmlResource(None))
     roster = _one_rider_roster()
 
     changed = run_rider_issues_flow(object(), roster)

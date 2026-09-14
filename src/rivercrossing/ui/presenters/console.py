@@ -208,10 +208,12 @@ def current_lap(crossings: Sequence[Crossing]) -> int:
     """Return the highest lap number any entry has recorded (Phase 6).
 
     ``max(crossing.seq)``: ``seq`` is the per-entry 1-based lap number,
-    so the console header's "Current Lap" reading is the furthest any
-    rider has got -- 0 before the first crossing of the ride. Pure and
-    wx-free, so the reading is unit-testable without a window; the
-    header's own two-digit rendering lives in the view.
+    so the console header's "Current Lap" reading is the leading
+    rider's lap count -- the largest per-entry lap number, which only
+    advances when the leader records a new lap. The reading is 0
+    before the first crossing of the ride. Pure and wx-free, so the
+    reading is unit-testable without a window; the header's own
+    two-digit rendering lives in the view.
     """
     return max((crossing.seq for crossing in crossings), default=0)
 

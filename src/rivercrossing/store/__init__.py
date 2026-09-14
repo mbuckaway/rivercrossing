@@ -41,7 +41,12 @@ them open and later EPICs will build on them:
 - **rng_seed**: spec §4 makes the seed DB-owned ("Fisher-Yates
   shuffled with the stored ``rng_seed``"; replaying the seed
   reproduces every deal), so :meth:`Store.create_ride` generates a
-  fresh seed with ``secrets.randbits`` -- never taken from the config.
+  fresh seed with ``secrets.randbits(63)`` -- a 63-bit draw from the
+  OS CSPRNG, never taken from the config. The shuffle itself is the
+  uniform Fisher-Yates of ``cards._shuffled_sequence``, and R-40's
+  replay guarantee rides on that seed plus the running interpreter's
+  ``shuffle()`` algorithm: the algorithm is fixed within a CPython
+  version, but not guaranteed across versions.
 - **transaction shape**: the connection runs in sqlite3's default
   (legacy) mode. Each operator action is one committed transaction --
   ``create_ride`` wraps its insert in ``with conn``;
@@ -931,7 +936,8 @@ class Store:
         Args:
             config: The ride's setup settings (RideConfig).
             rng_seed: The shoe's shuffle seed to store, or ``None`` for
-                the DB-owned random seed (spec §4). E9.2.2 (R-77) lets
+                the DB-owned random seed -- ``secrets.randbits(63)``,
+                a 63-bit OS CSPRNG draw (spec §4). E9.2.2 (R-77) lets
                 the nightly acceptance race own its seed: it injects
                 one here and files it on failure, so a failed night is
                 reproducible by re-running with the same value.

@@ -698,6 +698,16 @@ class PendingMiss:
     crossed_at: datetime
 
 
+def _shoe_structure(config: RideConfig) -> tuple[int, int, str]:
+    """Return *config*'s shoe structure: (decks, jokers per deck, mode).
+
+    The three fields Edit Ride… locks past DRAFT, compared as one
+    value so :meth:`RideEngine.update_config` rebuilds the shoe only
+    when one of them really changed.
+    """
+    return (config.deck_count, config.jokers_per_deck, config.jokers_mode)
+
+
 class RideEngine:
     """The ride state machine, timing core and minimal crossing path.
 
@@ -1105,17 +1115,32 @@ class RideEngine:
 
         Edit Ride… corrects the *settings* of the ride that is already
         open -- its name, date, start, venue, organizer, scorer and (in
-        DRAFT) its structure. The ride itself is untouched: the shoe,
-        the roster and the event log all stay exactly as they are, so
-        editing a started ride never rewinds it, re-deals a card or
-        invalidates the audit trail. Structural gating is the setup
-        dialog's (it locks those controls past DRAFT); this seam only
-        swaps the value.
+        DRAFT) its structure. The ride itself is untouched: the roster
+        and the event log stay exactly as they are, so editing a
+        started ride never rewinds it, re-deals a card or invalidates
+        the audit trail. Structural gating is the setup dialog's (it
+        locks those controls past DRAFT).
+
+        A DRAFT ride's shoe-structure change is the one exception: the
+        live shoe is rebuilt from its own stored seed under the new
+        ``deck_count``/``jokers_per_deck``/``jokers_mode``, so the
+        stored config and the shoe can never silently diverge. Past
+        DRAFT the shoe is never touched -- those controls are locked,
+        and a FINISHED ride's shoe is closed.
 
         Args:
             config: The edited configuration to hold from now on.
         """
+        previous = self._config
         self._config = config
+        if self._state is RideStatus.DRAFT and _shoe_structure(config) != _shoe_structure(
+            previous
+        ):
+            self._shoe.reconfigure(
+                config.deck_count,
+                config.jokers_per_deck,
+                jokers_total=config.jokers_mode == JOKERS_MODE_TOTAL,
+            )
 
     @property
     def crossings(self) -> tuple[Crossing, ...]:

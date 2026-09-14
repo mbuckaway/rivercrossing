@@ -181,7 +181,23 @@ NAME_INPUT_VALUE = "GORBA EPIC 2026"
 
 # The structural-gate controls _form_values never reads (the gate
 # still has to enable/disable them).
-_STRUCTURE_ONLY_CONTROLS = ("solo_radio", "pooled_radio")
+_GATE_ONLY_CONTROLS = ("solo_radio", "pooled_radio")
+
+# Every control set_structure_enabled gates (D2's ride-shape set):
+# entry mode, plate model, decks, the Cards box and the tie-break
+# order, in the SUT's own tuple order.
+_STRUCTURE_CONTROLS = (
+    "solo_radio",
+    "mixed_radio",
+    "pooled_radio",
+    "relay_radio",
+    "decks_spin",
+    "jokers_spin",
+    "jokers_per_deck_radio",
+    "jokers_total_radio",
+    "cap_choice",
+    "tiebreak_list",
+)
 
 
 def _bare_view(*, logo_path: Path | None = None) -> RideSetup:
@@ -197,7 +213,7 @@ def _bare_view(*, logo_path: Path | None = None) -> RideSetup:
     view.dialog = _FakeDialog()
     view._logo_path = logo_path
     view.tiebreak_list = _FakeControl(strings=list(_TIEBREAK_LABELS.values()))
-    for name in (*_FORM_VALUE_CONTROLS, *_STRUCTURE_ONLY_CONTROLS):
+    for name in (*_FORM_VALUE_CONTROLS, *_GATE_ONLY_CONTROLS):
         setattr(view, name, _FakeControl())
     # The doubled Cards controls carry the same XRC defaults the
     # authored controls open on (setup.xrc): 1 joker, the total radio
@@ -477,14 +493,11 @@ def test_ride_setup_show_max_cards_given_a_number_selects_its_item(max_cards: in
     assert view.cap_choice.GetStringSelection() == str(max_cards)
 
 
-@pytest.mark.parametrize(
-    "control_name",
-    ["jokers_spin", "jokers_per_deck_radio", "jokers_total_radio", "cap_choice"],
-)
-def test_ride_setup_set_structure_enabled_given_false_disables_the_cards_controls(
+@pytest.mark.parametrize("control_name", _STRUCTURE_CONTROLS)
+def test_ride_setup_set_structure_enabled_given_false_disables_the_structure_controls(
     control_name: str,
 ) -> None:
-    """D2: a started ride's jokers/cap controls are read-only."""
+    """D2: a started ride's whole ride-shape set is read-only."""
     view = _bare_view()
 
     view.set_structure_enabled(enabled=False)
@@ -492,14 +505,11 @@ def test_ride_setup_set_structure_enabled_given_false_disables_the_cards_control
     assert getattr(view, control_name).enabled is False
 
 
-@pytest.mark.parametrize(
-    "control_name",
-    ["jokers_spin", "jokers_per_deck_radio", "jokers_total_radio", "cap_choice"],
-)
-def test_ride_setup_set_structure_enabled_given_true_enables_the_cards_controls(
+@pytest.mark.parametrize("control_name", _STRUCTURE_CONTROLS)
+def test_ride_setup_set_structure_enabled_given_true_enables_the_structure_controls(
     control_name: str,
 ) -> None:
-    """A DRAFT ride keeps all four editable (T-3 both outcomes)."""
+    """A DRAFT ride keeps every ride-shape control editable (T-3)."""
     view = _bare_view()
     getattr(view, control_name).enabled = False
 

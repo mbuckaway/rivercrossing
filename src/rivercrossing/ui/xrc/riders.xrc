@@ -35,8 +35,8 @@
 
   1.0.12: rider_editor_dlg's Rider box is a read-only display now -
   plate_input/first_name_input/last_name_input carry wxTE_READONLY
-  and team_choice is a wxChoice (selectable, never free-typed), so
-  the pane shows the selected record while all writing happens in
+  and team_choice is a wxTextCtrl with wxTE_READONLY, so the
+  pane shows the selected record while all writing happens in
   add_rider_dlg. That dialog carries both modes: XRC titles it "Add
   Rider" and labels its wxID_OK "Save", and the view retitles it
   "Edit Rider" for the Edit mode (one window, one primary button).

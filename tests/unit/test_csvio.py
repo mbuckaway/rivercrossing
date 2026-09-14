@@ -333,8 +333,8 @@ def test_preview_pooled_clean_sample_falcons_entry_derives_plate_from_lowest_rid
         type=EntryType.TEAM,
         riders=(
             ParsedRider(first_name="Elin", last_name="Novak", plate="10"),
-            ParsedRider(first_name="Faisal", last_name="Rahman", plate="11"),
-            ParsedRider(first_name="Gita", last_name="Sundaram", plate="12"),
+            ParsedRider(first_name="Faisal", last_name="Rahman", plate="11", sex="M"),
+            ParsedRider(first_name="Gita", last_name="Sundaram", plate="12", sex="F"),
         ),
     )
 

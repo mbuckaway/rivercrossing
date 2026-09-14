@@ -5,8 +5,10 @@ Pure XML -- no ``wx`` import and no display. These tests guard what
 a loader test cannot see: that every frozen name from spec.md
 section 15b is actually written into the file it belongs to, that no
 name repeats inside one top-level window, that the two XRC classes
-measured to drop or override their ``name`` never creep back in, and
-that the canvas's radio defaults are declared where drawn.
+measured to drop or override their ``name`` never creep back in, that
+the canvas's radio defaults are declared where drawn, and that the
+menubar's authored items are exactly ``commands.ROUTE_TABLE``'s
+routes (a wx-free import, so the no-display rule still holds).
 
 Verification through the real toolkit -- ``LoadFrame`` /
 ``LoadDialog`` / ``LoadMenuBar``, ``FindWindowByName``, ``GetValue``
@@ -19,6 +21,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 from defusedxml.ElementTree import parse
+
+from rivercrossing.ui import commands
 
 if TYPE_CHECKING:
     # Type-only: defusedxml does not re-export the Element class.
@@ -473,6 +477,21 @@ def test_main_menubar_declares_forty_two_menu_item_names() -> None:
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
     assert len(menu_item_names) == 42
+
+
+def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
+    """No orphaned menu item: every authored name is routed, and back.
+
+    ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
+    is driven from, so its 45 ids and the authored item names must be
+    one set. A row that outlives its route, or a route with no item,
+    would leave an item the enablement walk can never reach.
+    """
+    routed = {item_id for route in commands.ROUTE_TABLE for item_id in route.ids}
+
+    authored = set(_control_names_in(_window("main_menubar")))
+
+    assert routed == authored
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:

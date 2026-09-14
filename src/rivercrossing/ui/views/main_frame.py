@@ -59,6 +59,7 @@ from rivercrossing.ui.views._support import (
     associate_model,
     find_control,
     fit_frame_to_screen,
+    load_dialog,
 )
 from rivercrossing.ui.views.gauges import RaceClock, StopLight, go_bundle, stop_bundle
 
@@ -92,6 +93,7 @@ __all__ = [
     "MAX_CURRENT_LAP",
     "MIN_SIZE",
     "NEEDS_REVIEW_PAGE_LABEL",
+    "NO_RIDE_STATUS_TEXT",
     "REMAINING_CLOCK",
     "REMAINING_CLOCK_PANEL",
     "REOPENED_INFOBAR",
@@ -162,13 +164,21 @@ RIDE_STATUS_LIGHT = "ride_status_light"
 # build -- main.xrc's header notes the measurement).
 MAX_CURRENT_LAP = 99
 
+# W1: the no-ride console's status label. ``show_no_ride`` sets it
+# directly, because a DRAFT reading would tell the operator a ride
+# already exists -- the label has to ask for the ride to be created.
+# ``_status`` still returns to DRAFT: menu enablement reads the
+# presenter seam, never this text.
+NO_RIDE_STATUS_TEXT = "CREATE RIDE"
+
 # Phase 6: every word ``ride_status_lbl`` can ever show -- each live
-# state's own label plus the stopped-RUNNING reading -- so the Status
-# column's label is floored at the widest of them and a state
-# transition can never resize the column.
+# state's own label, the stopped-RUNNING reading, and the no-ride
+# label above -- so the Status column's label is floored at the widest
+# of them and a state transition can never resize the column.
 STATUS_LABEL_WORDS: tuple[str, ...] = (
     *(status_text(status) for status in RideStatus),
     status_text(RideStatus.RUNNING, stopped=True),
+    NO_RIDE_STATUS_TEXT,
 )
 
 # §5: the ride-info group's two sizes. main.xrc declares the same 64x64
@@ -578,9 +588,10 @@ def _pin_status_label_width(label: wx.StaticText) -> int:
     Phase 6: the Status box has a fixed width, so the label's own text
     must never decide it -- a DRAFT -> REOPENED transition would
     otherwise widen the column and shove the boxes beside it. The floor
-    is measured from :data:`STATUS_LABEL_WORDS` (the same words
-    ``set_state`` renders, ``STOPPED`` included), in the label's own
-    current font, so it follows the platform's metrics.
+    is measured from :data:`STATUS_LABEL_WORDS` (every word
+    ``set_state`` and :meth:`show_no_ride` render, ``STOPPED`` and
+    :data:`NO_RIDE_STATUS_TEXT` included), in the label's own current
+    font, so it follows the platform's metrics.
     """
     width: int = max(label.GetTextExtent(word).width for word in STATUS_LABEL_WORDS)
     label.SetMinSize(wx.Size(width, -1))
@@ -1623,7 +1634,9 @@ class MainFrame:
         ride is open, so it is deliberately not part of the
         ``ConsoleView`` Protocol -- with no ride there is no presenter
         to call it. The ride-info group is blank (every value row
-        cleared, the logo slot hidden), the status column reads DRAFT
+        cleared, the logo slot hidden), the status column reads
+        :data:`NO_RIDE_STATUS_TEXT` (CREATE RIDE -- the operator has to
+        create one; a DRAFT reading would suggest one already exists)
         with its lamp lit red (Phase 6 -- a labelled state is never
         carried by colour alone, UX-DESKTOP section 7), every ride
         control is inert, all three banners are dismissed, and the
@@ -1642,7 +1655,7 @@ class MainFrame:
         ):
             value.SetValue("")
         self.ride_logo_bmp.Hide()
-        self.ride_status_lbl.SetLabel(status_text(RideStatus.DRAFT))
+        self.ride_status_lbl.SetLabel(NO_RIDE_STATUS_TEXT)
         self.ride_status_light.set_mode(stop_light_mode(RideStatus.DRAFT))
         # W1: every ride control is inert with no ride to act on.
         for control in (
@@ -1835,7 +1848,7 @@ class MainFrame:
         otherwise clip its text (``CsvPreviewDialog._apply_min_size``'s
         idiom).
         """
-        window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.START_BLOCKED_DLG)
+        window = load_dialog(wx.xrc.XmlResource.Get(), ids.START_BLOCKED_DLG)
         # logic-coverage-exempt: T-3 -- a None window means the XRC
         # handler could not build the dialog at all; unreachable from a
         # headless unit test (ui/views is coverage-omitted).

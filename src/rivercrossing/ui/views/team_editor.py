@@ -69,6 +69,7 @@ from rivercrossing.ui.views._support import (
     clamp_to_display,
     default_card_images,
     find_control,
+    load_dialog,
 )
 
 if TYPE_CHECKING:
@@ -867,7 +868,7 @@ def run_add_team_flow(parent: wx.Window, roster: Roster, *, editing: Entry | Non
     Returns:
         Whether a commit actually landed.
     """
-    window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.ADD_TEAM_DLG)
+    window = load_dialog(wx.xrc.XmlResource.Get(), ids.ADD_TEAM_DLG)
     if window is None:
         return False
     try:

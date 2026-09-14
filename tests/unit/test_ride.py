@@ -2663,6 +2663,74 @@ def test_engine_update_config_keeps_the_ride_state_and_its_events() -> None:
     assert engine.crossings == crossings_before
 
 
+# D2's other half: a DRAFT shoe-structure edit also rebuilds the live
+# shoe from the same stored seed, so the stored config and the shoe
+# cannot silently diverge (SHOWMECHANICS.md's Edit-gating promise).
+# Past DRAFT the shoe is untouched -- a FINISHED ride's closed shoe in
+# particular must never be rebuilt.
+
+_DRAFT_EDIT_SEED = 20260920
+
+
+def _draft_engine_with_seed(seed: int) -> RideEngine:
+    """Build a DRAFT engine over a per-deck shoe with a known seed."""
+    config = _config(jokers_mode=JOKERS_MODE_PER_DECK)
+    shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=seed)
+    return RideEngine(
+        config=config,
+        shoe=shoe,
+        clock=_FakeClock(config.planned_start),
+        roster=_roster_with_entries("12"),
+    )
+
+
+def test_engine_update_config_given_a_draft_deck_count_change_rebuilds_the_shoe() -> None:
+    """D2: a DRAFT deck_count edit re-sizes the live shoe."""
+    engine = _draft_engine_with_seed(_DRAFT_EDIT_SEED)
+
+    engine.update_config(_config(jokers_mode=JOKERS_MODE_PER_DECK, deck_count=2))
+
+    assert (engine.shoe_total, engine.shoe_remaining) == (2 * 53, 2 * 53)
+
+
+def test_engine_update_config_given_a_draft_joker_change_re_deals_from_the_stored_seed() -> None:
+    """D2: the rebuilt shoe keeps the seed and the composition."""
+    engine = _draft_engine_with_seed(_DRAFT_EDIT_SEED)
+    engine.update_config(
+        _config(jokers_mode=JOKERS_MODE_PER_DECK, deck_count=2, jokers_per_deck=2)
+    )
+    engine.start()
+
+    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+
+    reference = Shoe(decks=2, jokers_per_deck=2, seed=_DRAFT_EDIT_SEED)
+    assert (engine.shoe_total, result.card) == (2 * 54, reference.deal()[0])
+
+
+def test_engine_update_config_given_a_running_ride_keeps_the_live_shoe() -> None:
+    """D2: a started ride's shoe is never rebuilt by a config edit."""
+    engine = _draft_engine_with_seed(_DRAFT_EDIT_SEED)
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    before = (engine.shoe_total, engine.shoe_remaining)
+
+    engine.update_config(_config(jokers_mode=JOKERS_MODE_PER_DECK, deck_count=2))
+
+    assert (engine.shoe_total, engine.shoe_remaining) == before
+
+
+def test_engine_update_config_given_a_finished_ride_keeps_its_closed_shoe() -> None:
+    """D2: a FINISHED ride's closed shoe is never rebuilt."""
+    engine = _draft_engine_with_seed(_DRAFT_EDIT_SEED)
+    engine.start()
+    engine.finish()
+    before = (engine.shoe_total, engine.shoe_remaining)
+
+    engine.update_config(_config(jokers_mode=JOKERS_MODE_PER_DECK, deck_count=2))
+
+    assert (engine.shoe_total, engine.shoe_remaining) == before
+
+
 # ============================ J1: per-rider crossing attribution
 
 
