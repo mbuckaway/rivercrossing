@@ -301,6 +301,22 @@ Open Editor… Convert to Solo Assign Plate Renumber Close
 
 ⚠ code-side (R-78): issues_list columns/rows; the card-sufficiency line (`card_check_lbl`) sits above the summary — `run_rider_issues_flow` renders `ride.check_card_sufficiency(config, roster, avg_speed_kmh)` when it is handed both the live ride config and the stored average rider speed, and either missing hides the line (§4); the report covers the duplicate-team-name (hard) and near-duplicate-team-name (⚠ warning) kinds beside team-of-one/missing-name/missing-number/duplicate-name/duplicate-number; convert_solo_btn enabled only for a pooled DRAFT team-of-one — "Convert to Solo" extracts its lone rider to their own solo entry (extract_rider_to_solo); assign_plate_btn is enabled only for a missing-number issue (gives that rider the next free plate) and renumber_btn only for a duplicate-number issue (renumbers the later claimant), both DRAFT-only and writing through the roster's shared change_plate dispatch so each plate shape picks its model-correct primitive; "Open Editor…" opens the teams editor preselected on a team-of-one's team by name (select_team_by_name), the rider editor preselected on the issue's plate (select_rider_by_plate) otherwise, then re-lists; refusals show on issues_infobar (an wxInfoBar built code-side with SetName). The view reconciles the list selection after every render so the fix buttons derive from the post-render row, and the flow reports a change from the roster's audit-log delta, so a nested editor's edit counts too. Opened from Riders ▸ Check for Rider Issues… (mi_check_rider_issues), a ride-open route; the window lives in riders.xrc (§15b).
 
+Cannot Start Ride`start_blocked_dlg`✕
+
+| Issue |
+|---|
+| organizer is required |
+| scorer is required |
+| roster has no riders |
+
+`start_blocked_list (wxDataViewCtrl · one column "Issue" — one blocking reason per row, in the order the engine reported them)`
+
+OK
+
+`wxID_OK "OK" (wxStdDialogButtonSizer)`
+
+⚠ code-side (Phase 5): the console's blocked-start report. `on_start` routes a `StartBlockedError` here (`view.show_start_blocked(exc.reasons)`) instead of the W5 one-line native warning: one row per blocking issue, in the order the engine reported them — a setup violation verbatim (`ride.setup_minimum_violations`), a roster violation prefixed with its plate (`Roster.validate_for_start`, R-12's team floor), or "roster has no riders" — with a single OK to dismiss. The ride stays un-started either way. The view appends the one `Issue` column in code (`START_BLOCKED_COLUMN_LABELS`) and opens the dialog at twice its fitted width and height (`main_frame._start_blocked_size`), since XRC declares no window-level minsize and the single column would otherwise clip its text. The window lives in riders.xrc (§15b).
+
 ~~Entry Detail — 77 Trail Blazers~~ `entry_detail_dlg` ✕ — **RETIRED (scoring-and-corrections)**
 
 ⚠ Retirement: the Riders ▸ Entry Detail… row (`mi_entry_detail`) and its whole window left the app — `detail.xrc` is deleted and its controls retired with it: `plate_choice`, `entry_header_lbl`, `members_lbl`, `cards_list`, `laps_list`, `move_rider_btn`, `deal_card_btn`, `dnf_btn`, `edit_crossing_btn`, `audit_btn` (the shared `void_card_btn` moved to Crossing Detail instead). Its corrections now live on the console's per-row Crossing Detail window (F), which grew `edit_time_btn`/`void_card_btn`; the per-row plate reassign runs through the `crossing_number_dlg` prompt (§9). Historical canvas copy follows.
