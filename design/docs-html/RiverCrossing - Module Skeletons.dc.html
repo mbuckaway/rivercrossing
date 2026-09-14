@@ -43,12 +43,14 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 ├── pyproject.toml              <i># PEP 621 metadata + ruff/mypy/pytest/coverage config</i>
 ├── README.md · LICENSE · CHANGELOG.md
 ├── .github/workflows/
-│   ├── ci.yml                  <i># §14 six-stage matrix: windows-latest + macos-latest</i>
-│   └── release.yml             <i># tag → PyInstaller → Inno Setup .exe / notarized .dmg</i>
+│   └── ci.yml                  <i># §14 six-stage matrix: windows-latest + macos-latest (Developer ID signing + notarization for the macOS DMG live in its tag release job, E9.1.3)</i>
 ├── installers/
-│   ├── rivercrossing.spec           <i># PyInstaller (both OSes, one spec)</i>
-│   ├── windows.iss             <i># Inno Setup, per-user, unsigned (R-01)</i>
-│   └── dmg_settings.py         <i># dmgbuild config; codesign + notarize in release.yml</i>
+│   ├── rivercrossing.spec           <i># PyInstaller (both OSes, one spec; branded icons since Phase 8)</i>
+│   ├── windows.nsi             <i># NSIS, per-user, unsigned (exists — Phase 9; NSIS replaces Inno Setup, R-01); Windows stays unsigned by decision (R-01, no Authenticode certificate)</i>
+│   ├── dmg_settings.py         <i># dmgbuild config (exists — Phase 8, unsigned); codesign + notarize happen in ci.yml's release job (E9.1.3)</i>
+│   └── branding/               <i># icon + DMG-background SVG sources and their COMMITTED generated</i>
+│                               <i>#   artifacts (.icns/.ico/dual-res .tiff — no PNG in git);</i>
+│                               <i>#   regenerate with tools/gen_app_icons.py via `nox -s gen_branding`</i>
 ├── docs/user-guide/            <i># per the User Guide outline (6a)</i>
 ├── src/rivercrossing/
 │   ├── __init__.py             <i># __version__ single source</i>
@@ -57,7 +59,9 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 │   ├── cards.py                <i># card model + seeded Shoe</i>
 │   ├── hands.py                <i># poker evaluator: eval5 + wild layer + ranking table</i>
 │   ├── standings.py            <i># ordering, tie-breaks ①②③, leaderboards</i>
-│   ├── ride.py                 <i># state machine, crossings, timing, undo</i>
+│   ├── ride.py                 <i># state machine, crossings, timing, undo; RideConfig (E3.5)</i>
+│   ├── roster.py               <i># in-memory entries/riders/teams + lock matrix (§1–§2, E3)</i>
+│   ├── rider_issues.py         <i># the roster defect report (R-78 · rider_issues_dlg)</i>
 │   ├── store/
 │   │   ├── __init__.py         <i># Store facade (public API)</i>
 │   │   ├── schema.py           <i># DDL v1 + PRAGMAs (WAL, foreign_keys)</i>
@@ -70,9 +74,12 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 │   │   └── templates/          <i>#   base.html.j2 + widget macros + vendored CSS/fonts</i>
 │   ├── pdfexport.py            <i># §8b fpdf2 renderer + podium poster (5a–5d)</i>
 │   └── ui/
-│       ├── app.py              <i># WxAsyncApp bootstrap, theme + session wiring</i>
-│       ├── theme.py            <i># the one token table, light+dark (R-03)</i>
+│       ├── app.py              <i># wx.App bootstrap, theme + session wiring</i>
+│       ├── theme.py            <i># appearance modes via wx.App.SetAppearance (R-03);</i>
+│       │                       <i>#   token table deferred — no consumer yet (open item O2)</i>
 │       ├── sound.py            <i># three WAV cues per §10 (recorded/flagged/error)</i>
+│       ├── logging.py          <i># per-invocation NDJSON log (F1): one file per launch, pruned</i>
+│       │                       <i>#   to the last 20; the app's one crash log (A2)</i>
 │       ├── ids.py              <i># mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)</i>
 │       ├── xrc/                <i># canonical UI: main, setup, riders, detail, results,</i>
 │       │                       <i>#   library, audit, settings, dialogs (.xrc — Spec §15b)</i>
@@ -85,7 +92,6 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 │           ├── console_panel.py<i># feed, entry field, counters (1a, 8a–8c)</i>
 │           ├── ride_setup.py   <i># 1c/7a</i>
 │           ├── rider_editor.py <i># 1d/2b + csv preview (3e)</i>
-│           ├── entry_detail.py <i># 1e/7b</i>
 │           ├── results_win.py  <i># 1f</i>
 │           ├── ride_library.py <i># 1g</i>
 │           ├── audit_view.py   <i># Ride ▸ Audit Trail (R-38)</i>
@@ -100,9 +106,11 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 <b>2 hands</b> ── no deps                        <i>(pure algorithm; vectors + Hypothesis + brute force)
 </i><b>3 standings</b> ─→ hands                     <i>(ranking + tie-breaks over evaluated hands)
 </i><b>4 ride</b> ─→ cards                          <i>(state machine deals via Shoe; no DB, no wx)
-</i><b>5 store</b> ─→ ride, cards                   <i>(persists events; replays them back into RideEngine)
-</i><b>6 csvio</b> ─→ store models
-<b>7 htmlexport / 8 pdfexport</b> ─→ standings, store models
+</i><b>4b roster</b> ─→ ride                        <i>(E3's store-less models: entries/riders/teams, the
+                                          lock matrix, audited mutations the store later persists)
+</i><b>5 store</b> ─→ ride, cards, roster           <i>(persists events; replays them back into RideEngine)
+</i><b>6 csvio</b> ─→ roster, standings             <i>(finished-ride columns + §15 standings CSV need standings)
+</i><b>7 htmlexport / 8 pdfexport</b> ─→ standings, store models
 <b>9 ui.presenters</b> ─→ ride, store, standings, csvio, exports
 <b>10 ui.views + app</b> ─→ presenters, theme, sound, ids   <i>(wx enters here, nowhere else)
 </i><b>11 installers + CI release lane</b>          <i>(smoke test the built binary, §14)</i></pre></div>
@@ -117,14 +125,21 @@ pre.sk i{color:var(--color-neutral-500);font-style:normal}</style>
 <pre class="sk"><b>class</b> Suit(Enum): CLUBS DIAMONDS HEARTS SPADES
 <b>class</b> Rank(IntEnum): TWO=2 … TEN=10 JACK=11 QUEEN=12 KING=13 ACE=14
 <b>@dataclass</b> Card(rank: Rank | None, suit: Suit | None, joker: bool = False)
-    .code() -> str            <i># "AS", "TD", "JK" — the stored form</i>
+    .code() -> str            <i># "AS", "10D", "JK" — the stored form</i>
     Card.parse(code: str) -> Card
 <b>class</b> Shoe:                   <i># deterministic multi-deck shoe</i>
-    __init__(decks: int, jokers_per_deck: int, seed: int)
+    __init__(decks: int, jokers_per_deck: int, seed: int, *, jokers_total: bool = False)
     deal() -> tuple[Card, int]          <i># (card, deal_index); raises ShoeEmpty</i>
     reshuffle() -> None                 <i># new cycle; audit caller logs it (§4)</i>
     remaining: int · dealt: int · cycle: int
-    Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int) -> Shoe
+    Shoe.replay(decks, jokers_per_deck, seed, deals: int, cycles: int, *,
+                jokers_total: bool = False) -> Shoe
+    restitute(card: Card) -> None       <i># Ctrl+Z: the last-dealt card returns to the front (E2.2.1)</i>
+    close() -> None                     <i># ride Finish locks the shoe; deal/reshuffle/restitute</i>
+                                        <i># raise ShoeClosedError afterwards (E2.2.1)</i>
+<i># jokers_total selects the mode (§4): False (the S4 default) re-deals jokers_per_deck
+#   jokers every cycle; True spends that many jokers once across the ride — the budget
+#   persists across reshuffles, and a spent budget deals naturals only</i>
 <i># invariant: same (config, seed) ⇒ identical deal sequence (R-40)</i></pre></div>
 
 <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
@@ -150,25 +165,76 @@ self_test() -> SelfTestReport   <i># 7,462 distinct-rank sweep + joker vectors;<
                   draw_required: bool)                 <i># never silently ordered</i>
 rank(results, order: tuple[TieBreak, ...]) -> list[Placed]
 laps_leaderboard(results, top: int = 10) -> list[Placed]
-time_leaderboard(results, top: int = 10) -> list[Placed]   <i># most laps, then time</i></pre></div>
+time_leaderboard(results, top: int = 10) -> list[Placed]   <i># most laps, then time</i>
+hand_name(hand: EvaluatedHand) -> str   <i># title-case em-dash prose (E6.1.1, D1); raises on an empty hand</i>
+tiebreak_order_from_spellings(spellings) -> tuple[TieBreak, ...]   <i># ride spellings ⇄ members (E6.1.1)</i></pre></div>
 
 <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.ride — state machine &amp; timing <span class="text-muted" style="font-weight:400">(§3/§6 · R-30…36)</span></div>
 <pre class="sk"><b>class</b> RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
+<b>@dataclass</b> RideConfig(name, event_date, venue, lap_km, organizer, scorer, planned_start,
+                      planned_duration_s, min_lap_s, entry_mode, plate_model,
+                      max_team_size=4, deck_count=8, jokers_per_deck=1, jokers_mode="total",
+                      max_cards=None,
+                      tiebreak_order=("high_card","laps","total_time"), logo_path=None)
+    <i># §2 ride-row setup fields; defined here since E3.5, built by ride_setup_dlg,</i>
+    <i># consumed by RideEngine below; EPIC 6's standings imports the tiebreak spellings</i>
 <b>class</b> RideEngine:             <i># pure; wall-clock injected for tests</i>
     __init__(config: RideConfig, shoe: Shoe, clock: Callable[[], datetime])
     start(at: datetime | None = None) -> Event          <i># button or retro time (R-30)</i>
     set_start_time(at: datetime) -> Event               <i># lap-1 recompute (3d)</i>
     record_crossing(plate: str, at=None) -> CrossingResult
-        <i># → lap n, lap_time, card | ShortLapFlagged (card held, 1h) | UnknownPlate</i>
+        <i># → lap n, lap_time, card | ShortLapFlagged (flagged; card held only under hold_short_laps) | UnknownPlate</i>
     add_crossing_at(plate: str, at: datetime) -> CrossingResult   <i># RUNNING·REOPENED</i>
     undo_last() -> Event · edit_crossing(id, …) · void_crossing(id, reason)
     reassign_crossing(id, plate) · deal_manual(plate, reason) · void_card(id, reason)
-    mark_dnf(entry_id, reason) · move_rider(rider_id, team_id)    <i># pooled only (R-17)</i>
+    mark_dnf(plate, reason) · move_rider(rider_id, team_id)    <i># per-rider; pooled only (R-17)</i>
     stop() -> Event · finish() -> Event · reopen() -> Event       <i># REOPENED = corrections only</i>
     state: RideStatus · elapsed() · remaining() · on_course: int
     snapshot() -> list[EntryResult]                     <i># feeds standings live
-</i><i># every mutation returns an Event the store persists; engine rebuilds via replay(events)</i></pre></div>
+</i><i># every mutation returns an Event the store persists; engine rebuilds via replay(events)
+</i><i># E4 amendments (2026-08-28): __init__ takes `roster` in addition (duck-typed,
+#   annotated under TYPE_CHECKING only — roster.py imports RideStatus from this
+#   module at runtime, so a runtime back-import would cycle); the concrete shapes
+#   are Event(action, payload) · Crossing(entry_id, seq, crossed_at) ·
+#   CrossingResult(accepted, plate, entry_id, entry_name, lap, lap_time, card,
+#   flagged, reason) · HeldCrossing(crossing, card); RideEngine exposes `events`
+#   (audit log), `held_crossings()`, `confirm_held`/`void_held`,
+#   `deal_manual(plate, reason)` and the read accessors `config`, `crossings`,
+#   `card_for`, `shoe_remaining`, `shoe_total` (E7 consumes the first three).
+# card-sufficiency advisory (ride.py module functions, ride-sim/corrections batch):
+#   estimate_cards_needed(config, roster, avg_speed_kmh) -> int | None ·
+#   check_card_sufficiency(config, roster, avg_speed_kmh) -> CardCheck | None, where
+#   CardCheck(shoe_cards, expected, verdict) and verdict ∈ {NOT_ENOUGH, OK, FAR_TOO_MANY}
+#   compares the shoe size at the ride's jokers mode (deck_count × (52 + jokers_per_deck)
+#   per deck, deck_count × 52 + jokers_per_deck total) against the crossings a
+#   field is expected to record (per rider pooled, per entry relay) — see Spec §4</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.roster — in-memory roster &amp; lock matrix <span class="text-muted" style="font-weight:400">(§1–§2 · R-11/12/15/17/20 · E3)</span></div>
+<pre class="sk"><b>class</b> EntryMode(StrEnum): SOLO MIXED · <b>class</b> PlateModel(StrEnum): RIDER_POOLED TEAM_RELAY
+<b>@dataclass</b> Entry(plate, display_name, type, riders, status, notes)   <i># identity, not value</i>
+<b>@dataclass</b> Rider(name, plate: str | None, sort_order)
+<b>class</b> Roster:                 <i># one ride's entries/riders; status set by the E4 engine</i>
+    __init__(*, entry_mode=SOLO, max_team_size=4, plate_model=RIDER_POOLED)
+    create_solo_entry · create_team_entry · create_team_entry_of_one · add_rider_to_team
+    move_rider · extract_rider_to_solo · remove_rider · update_entry · delete_entry · mark_has_data
+    change_solo_plate · change_pooled_rider_plate · change_team_plate · change_plate   <i># the model-correct dispatch the editors + fixes share</i>
+    next_free_plate() -> str                       <i># highest numeric + 1</i>
+    validate_for_start() -> list[StartViolation]   <i># R-12's floor, checked at start</i>
+    entries · audit_log · status · take_audit_log()  <i># audit events persist via the E5 store</i>
+can_edit_structure(status) · can_delete_entry(status, has_data)
+can_move_rider(status, plate_model) · can_add_entry() · can_fix_name()
+team_name_key(name) -> str                     <i># fuzzy team key; the CSV preview and rider_issues share it</i>
+<i># one plate namespace per ride; a pooled team entry adopts its lowest rider plate;
+# teams may be size 1 while DRAFT — the floor is enforced at CSV commit and ride start</i></pre></div>
+
+<div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
+</i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.rider_issues — the roster defect report <span class="text-muted" style="font-weight:400">(R-78 · rider_issues_dlg)</span></div>
+<pre class="sk">rider_issues(roster) -> tuple[RiderIssue, ...]
+    <i># stable report order: team-of-one · missing-name · missing-number · duplicate-name
+    #   · duplicate-team-name · near-duplicate-team-name (a ⚠ warning) · duplicate-number
+    # team-name checks reuse the CSV importer's identity rules (roster.team_name_key / the normalized name)</i></pre></div>
 
 <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.store — persistence <span class="text-muted" style="font-weight:400">(§2/§9 · R-50…54)</span></div>
@@ -176,7 +242,8 @@ time_leaderboard(results, top: int = 10) -> list[Placed]   <i># most laps, then 
     Store.open(path) -> Store              <i># runs migrations; records session row</i>
     rides() · create_ride(config) · duplicate_ride(id) · delete_ride(id, typed_name)
     load_engine(ride_id) -> RideEngine     <i># replay events; shoe from stored seed</i>
-    append(ride_id, event: Event) -> None  <i># sync commit path</i>
+    append(ride_id, event: Event) -> None  <i># sync commit path (syncs ride.status for lifecycle actions)</i>
+    append_roster_event(ride_id, action, payload_json) -> None  <i># roster plate-change audit row; no status write</i>
     audit(ride_id, filter=…) -> list[AuditRow]
     session_state() -> SessionState        <i># CLEAN_QUIT | CRASHED | RUNNING_AT_EXIT (R-52)
 </i><b>class</b> AsyncWriter:            <i># §10 single writer; UI awaits put(), never blocks</i>
@@ -187,8 +254,14 @@ backup.run(path, keep=20) · backup.schedule_hourly(…) · backup.restore(src, 
 
 <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.csvio / htmlexport / pdfexport <span class="text-muted" style="font-weight:400">(§7/§8/§8b · R-21/61/62/63)</span></div>
-<pre class="sk">csvio.preview(path, ride) -> ImportPreview      <i># counts + conflicts; writes nothing</i>
-csvio.commit(preview) -> ImportReport · csvio.export(ride, path) -> None
+<pre class="sk">csvio.preview(path, ride, *, map_unknown_sex_to_male=False, convert_teams_of_one_to_solo=False) -> ImportPreview   <i># counts + conflicts; writes nothing;</i>
+                                                <i>#   ride = the Roster aggregate until E5's Store</i>
+                                                <i>#   convert_teams_of_one_to_solo imports a DRAFT one-rider team as a solo entry (both plate models)</i>
+csvio.commit(preview) -> ImportReport · csvio.export(ride, path, *, placed=None) -> None
+    <i># commit applies through the roster's own audited mutators, atomically;</i>
+    <i># ImportReport carries inserted/updated/moved/extracted/joined counts + the audit events</i>
+    <i># export with placed (a FINISHED ride's standings) appends laps/cards/best_hand/total_time (§7)</i>
+csvio.export_standings(placed, path, *, show_times=False) -> None   <i># §15 standings CSV (E6.4.2)</i>
 <b>@dataclass</b> ExportOptions(show_times=False, laps_board=True, time_board=False,
                         full_field=True, all_cards=True, lap_km=8.0)  <i># times hidden by default (R-63)</i>
 htmlexport.build_payload(ride, placed, opts, generated, team_logos=None) -> RacePayload
@@ -199,14 +272,17 @@ htmlexport.sections(payload, placed) -> Sections
     <i># laps boards 5/5 (or 10); team rows render plate-less</i>
 htmlexport.format_generated(at) -> str
     <i># "Generated H:MM, Mon D YYYY" — a pure function of its input, no tz conversion (R-62)</i>
-htmlexport.render(ride, placed, opts) -> str    <i># Jinja2 (autoescape, StrictUndefined),</i>
-    <i># base.html.j2 + macros (event_header, podium_card, standings_row,</i>
-    <i># laps_board, time_board, field_row, drawn_row) — STATIC markup, no page JS;</i>
-    <i># vendored Tailwind CSS + fonts inlined, payload JSON</i>
-    <i># embedded (</ escaped as <\/), logo base64; times off ⇒ neither cells nor JSON fields emitted.</i>
+htmlexport.render(ride, placed, opts, *, logo_src=None, generated=None, logo_path=None) -> str
+    <i># Jinja2 (autoescape, StrictUndefined), base.html.j2 + macros</i>
+    <i># (event_header, podium_card, standings_row, laps_board, time_board, field_row, drawn_row)</i>
+    <i># — STATIC markup, no page JS; vendored Tailwind CSS + fonts inlined, payload JSON</i>
+    <i># embedded (&lt;/ escaped as <\/), logo base64 (transparent 1×1 fallback), laps/time boards</i>
+    <i># derived from placed when the options ask; times off ⇒ neither cells nor JSON fields emitted.</i>
     <i># Tests: golden pages from committed fixtures + JSON round-trip (§8)</i>
-pdfexport.render(ride, placed, opts, path)      <i># fpdf2, deterministic bytes (R-62)</i>
-pdfexport.podium_poster(ride, placed, path)     <i># one-page poster (5d)</i></pre></div>
+pdfexport.render(ride, placed, opts, path, *, letter=True, created_at=None, logo_path=None)
+    <i># fpdf2, deterministic bytes (R-62); aware-UTC creation stamp is the only timestamp</i>
+pdfexport.podium_poster(ride, placed, path, *, letter=True, created_at=None, logo_path=None)
+    <i># one-page poster (5d)</i></pre></div>
 
 <div class="blueprint"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><div style="font-family:var(--font-heading);font-weight:600;font-size:15px;padding:10px 16px;border-bottom:1px solid var(--color-divider)">rivercrossing.ui — MVP shell <span class="text-muted" style="font-weight:400">(§10/§13/§15 · R-02/03/31/73/76)</span></div>
@@ -214,13 +290,20 @@ pdfexport.podium_poster(ride, placed, path)     <i># one-page poster (5d)</i></p
 </i><i># unit-tested with a FakeView. Views implement the Protocol with wx.
 </i><b>class</b> ConsoleView(Protocol):   show_feed(rows) · show_counters(c) · flash_crossing(r)
                                set_state(RideStatus) · focus_entry() · play(cue)
+                               show_notice(text) · clear_entry()   <i># Phase 8: entry-row feedback</i>
 <b>class</b> ConsolePresenter:        on_plate_entered(text) · on_undo() · on_arm_stop(bool)
                                on_stop_confirmed() · on_hide_times(bool) · tick()
 <i># same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv)
 </i><i># ResultsPresenter (1f flags, rerank on tie-break change) · LibraryPresenter (1g)
 </i><i># DetailPresenter (1e/7b) · AuditPresenter (R-38) · SettingsPresenter (3a)</i>
-app.main() -> int              <i># WxAsyncApp; resume dialog per session_state (4a/1h)</i>
-theme.tokens(mode) -> Tokens   <i># light|dark|system; live re-skin (R-03)</i>
+app.main() -> int              <i># wx.App; resume dialog per session_state (4a/1h)</i>
+theme.apply(app, mode) -> AppearanceResult   <i># light|dark|system via wx.App.SetAppearance (R-03);</i>
+                               <i># tokens(mode) deferred — no custom-drawn consumer yet (O2)</i>
+logging.Logging(path, *, verbose=True) -> Logging   <i># per-invocation NDJSON log (F1): one file per launch;</i>
+                               <i># .startup()/.launch()/.ride_loaded()/.exception() always write, the</i>
+                               <i># .marker()/.menu()/.dialog()/.button()/.control() trace honours verbose</i>
+logging.build_log_path(directory, now) -> Path      <i># rivercrossing-&lt;YYYYmmdd-HHMMSS&gt;.log inside directory</i>
+logging.prune_logs(directory, *, keep=20) -> None   <i># keep only the most recent invocation logs</i>
 ids.py: PLATE_INPUT = "plate_input" …   <i># = XRC names, generated from xrc/ (§15b)</i>
 sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   <i># §10 cues, settings toggle</i></pre></div>
 </div>
@@ -229,14 +312,16 @@ sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   <i># §10 cues, settings to
 <div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><pre class="sk">tests/
 ├── unit/                      <i># per core module, headless, coverage ≥ 90% (R-71)</i>
-│   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py
+│   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py · test_roster.py
 │   ├── test_store.py · test_csvio.py · test_htmlexport.py · test_pdfexport.py
 │   └── presenters/            <i># FakeView-driven presenter tests — still no wx</i>
-├── vectors/                   <i># 7,462-rank sweep data + joker vector table (R-44/72)</i>
-├── property/                  <i># Hypothesis: hands invariants, shoe determinism</i>
+├── (vectors: src/rivercrossing/vectors/ — the 7,462-rank sweep + joker table ship as package
+│                              <i>#   data so the launch self-test reads them from the app, R-44/72)</i>
+├── property/                  <i># Hypothesis: hands invariants, shoe determinism,</i>
+│                              <i>#   roster mutation sequences, csv round-trip identity</i>
 ├── simulations/               <i># seeded whole rides: 180×6 h, both entry modes,</i>
-│   └── test_simulated_rides.py<i>#   both plate models, 0/2/4 jokers, cap on/off (§12)</i>
-├── functional/                <i># real wx, driven via ids.py + wx.UIActionSimulator</i>
+│   └── test_simulated_rides.py<i>#   both plate models, 0–10 jokers, cap on/off (§12)</i>
+├── functional/                <i># real wx, driven via ids.py + direct event injection (§12)</i>
 │   ├── harness.py             <i># find-by-SetName, click, type, dialog hooks</i>
 │   ├── pages.py               <i># page objects per window (1a…8c)</i>
 │   └── test_menu_coverage.py  <i># walks every §15 route in every ride state (R-73)</i>
@@ -248,8 +333,9 @@ sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   <i># §10 cues, settings to
 <div class="blueprint" style="margin-top:10px"><i class="corner tl"></i><i class="corner tr"></i><i class="corner bl"></i><i class="corner br">
 </i><pre class="sk">[project]  name = "rivercrossing"  requires-python = ">=3.14"
     <i># import package rivercrossing — renamed with the product (§11)</i>
-dependencies = ["wxPython~=4.2.5", "wxasync", "fpdf2", "jinja2"]  <i># wx 3.2 stable wheel;</i>
-    <i># dark mode auto-activates on the 4.3 upgrade (SetAppearance) — no code change</i>
+dependencies = ["wxPython~=4.3.1", "fpdf2", "jinja2"]     <i># wxWidgets 3.3.3, cp314 wheel;</i>
+    <i># SetAppearance ships in it, so dark mode is live on both platforms (R-03)</i>
+    <i># wxasync is deliberately absent — Spec §10; E5 picks the wx⇄asyncio integration</i>
     <i># sqlite3 is stdlib; Tailwind CLI is a build-time asset step, not a runtime dep</i>
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",

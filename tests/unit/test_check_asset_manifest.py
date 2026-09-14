@@ -17,6 +17,10 @@ from types import ModuleType  # noqa: TC003 -- used at runtime as a return type 
 
 import pytest
 
+from rivercrossing.cards import Card, Rank, Suit
+from rivercrossing.ui.card_text import format_card
+from rivercrossing.ui.cards_imagelist import CARD_KEYS, UnknownCardCodeError, asset_key
+
 _ROOT = Path(__file__).resolve().parents[2]
 _MANIFEST_PATH = _ROOT / "tools" / "check_asset_manifest.py"
 _PACKAGE_DIR = _ROOT / "src" / "rivercrossing"
@@ -203,3 +207,55 @@ def test_docs_data_entries_given_a_missing_doc_raises_instead_of_listing_entries
         manifest.MissingAssetError, match=re.escape("htmlexport/templates/fonts/OFL.txt")
     ):
         manifest.docs_data_entries(tmp_path)
+
+
+# ------------------------------- the stored-code to asset-key match
+
+# Phase 7: the ten's stored code is "10" (``Card.code()`` -> "10D"),
+# which is also its bitmap's asset rank ("10d"). These tests pin the
+# two spellings against each other: a code that resolved to a bitmap
+# while rendering a different rank would ship a face that disagrees
+# with its own image, and a surviving "T" alias would hide it.
+
+
+def _ten_of_diamonds_code() -> str:
+    """Return the ten of diamonds' stored code ("10D")."""
+    return Card(rank=Rank.TEN, suit=Suit.DIAMONDS).code()
+
+
+@pytest.mark.parametrize("rank", list(Rank))
+def test_asset_key_given_every_natural_card_code_resolves_to_a_shipped_bitmap(
+    rank: Rank,
+) -> None:
+    """Every Card.code() lands on a bitmap key the manifest ships."""
+    key = asset_key(Card(rank=rank, suit=Suit.SPADES).code())
+
+    assert key in CARD_KEYS
+
+
+def test_asset_key_given_the_ten_code_resolves_to_the_10_bitmap_stem() -> None:
+    """Card.code()'s "10D" is the "10d" face, never a "Td" lookalike."""
+    assert asset_key(_ten_of_diamonds_code()) == "10d"
+
+
+def test_format_card_rank_text_given_the_ten_equals_its_bitmap_asset_rank() -> None:
+    """The image/text match: the rendered "10" is the asset's "10"."""
+    code = _ten_of_diamonds_code()
+    rendered_rank = format_card(code)[:-1]
+    asset_rank = asset_key(code)[:-1]
+
+    assert (rendered_rank, asset_rank) == ("10", "10")
+
+
+@pytest.mark.parametrize("rank", list(Rank))
+def test_format_card_rank_text_equals_the_asset_rank_for_every_rank(rank: Rank) -> None:
+    """T-3: no rank's text can drift from its bitmap's token."""
+    code = Card(rank=rank, suit=Suit.CLUBS).code()
+
+    assert format_card(code)[:-1] == asset_key(code)[:-1]
+
+
+def test_asset_key_given_the_retired_t_ten_code_raises_unknown_card_code_error() -> None:
+    """T-5: the legacy "T" ten has no bitmap and no surviving alias."""
+    with pytest.raises(UnknownCardCodeError, match=re.escape("'TD'")):
+        asset_key("TD")

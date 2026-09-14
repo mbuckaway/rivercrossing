@@ -1,19 +1,26 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for the app bootstrap's wx-free contract (E1.6.x).
 
-Everything a real display would be needed to prove -- the menubar,
-the accelerator table, every §15 route actually bound, real/empty
-data on screen -- needs a real display, so it is not covered here.
-What stays here is what ``ast`` and plain imports can already
-prove without wx -- that ``rivercrossing.ui.app`` itself never needs
-a ``wx.App`` -- or even wx at all -- to import, that :func:`main` is
-annotated, and that the bootstrap roster is empty with the E6/E7
-windows reading the module's ``EmptyDataSource``.
+Everything a real display would be needed to prove -- a live menubar
+and frame, every §15 route actually bound, real/empty data on screen
+-- is not covered here. What stays here is what plain imports,
+``ast`` and ``inspect.getsource`` can already prove without a
+``wx.App``: that ``rivercrossing.ui.app`` itself is importable
+without wx at all, that :func:`main` is annotated, that the bootstrap
+roster is empty with the E6/E7 windows reading the module's
+``EmptyDataSource``, and that the bootstrap composes the accelerator
+table from the menubar plus the console's own entries without ever
+reading anything off the frame (E1.4.1). ``wx.AcceleratorEntry`` and
+``wx.AcceleratorTable`` construct headlessly -- measured; only the
+menubar's own XRC agreement needs a real toolkit.
 """
 
 import inspect
 import sys
 from typing import TYPE_CHECKING
+
+import wx
+import wx.xrc
 
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.ui import app
@@ -258,3 +265,129 @@ def test_app_module_source_wires_a_fixed_team_logo_seed_into_the_bootstrap_roste
     source = inspect.getsource(app.build_main_window)
 
     assert "team_logo_seed=_SEEDED_TEAM_LOGO_SEED" in source
+
+
+# --- E1.4.1: the table is applied without reading the frame ---
+
+
+class _AccelItemDouble:
+    """The ``GetAccel()`` half of a menubar row."""
+
+    def __init__(self, accel: wx.AcceleratorEntry) -> None:
+        """Hold the row's own accelerator."""
+        self._accel = accel
+
+    def GetAccel(self) -> wx.AcceleratorEntry:  # noqa: N802 -- wx API name the double mirrors
+        """Return the row's accelerator, as ``wx.MenuItem`` does."""
+        return self._accel
+
+
+class _MenuBarDouble:
+    """A menubar whose rows all report one known Ctrl+Z accelerator."""
+
+    def __init__(self) -> None:
+        """Log the ids looked up, against one shared row double."""
+        self.looked_up: list[int] = []
+        self._item = _AccelItemDouble(wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("Z"), 0))
+
+    def FindItem(self, item_id: int) -> tuple[_AccelItemDouble, None]:  # noqa: N802 -- wx API name
+        """Return the row double for *item_id*, recording the lookup."""
+        self.looked_up.append(item_id)
+        return self._item, None
+
+
+class _FrameDouble:
+    """A frame double offering ``SetAcceleratorTable`` and nothing else.
+
+    It deliberately lacks ``accelerator_entries``: a raw ``wx.Frame``
+    has no such method either, which is the shape ``build_main_window``
+    hands :func:`rivercrossing.ui.app._apply_accelerators`.
+    """
+
+    def __init__(self) -> None:
+        """Start with no applied table."""
+        self.tables: list[object] = []
+
+    def SetAcceleratorTable(self, table: object) -> None:  # noqa: N802 -- wx API name
+        """Record *table*, the one call the production code may make."""
+        self.tables.append(table)
+
+
+def test_accelerator_table_entries_given_extra_entries_includes_both() -> None:
+    """E1.4.1: the harvested three come first; the code-side F2 follows.
+
+    The three ``menu_item_id`` rows are harvested from the menubar in
+    ``ACCELERATOR_TABLE`` order (``Ctrl+Z``, ``F5``, ``F1``);
+    ``extra_entries`` -- the console's own ``F2``, which has no menu
+    item to harvest -- is appended after them, so a caller's entries
+    can never displace the XRC ones.
+    """
+    menubar = _MenuBarDouble()
+    # T-4 boundary: many extra entries, all appended in order.
+    extra = [
+        wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F2, 4242),
+        wx.AcceleratorEntry(wx.ACCEL_CTRL, ord("S"), 4343),
+    ]
+
+    entries = app._accelerator_table_entries(menubar, extra)
+
+    assert [(entry.GetFlags(), entry.GetKeyCode(), entry.GetCommand()) for entry in entries] == [
+        (wx.ACCEL_CTRL, ord("Z"), wx.xrc.XRCID("mi_undo_crossing")),
+        (wx.ACCEL_CTRL, ord("Z"), wx.xrc.XRCID("mi_standings")),
+        (wx.ACCEL_CTRL, ord("Z"), wx.xrc.XRCID("mi_user_guide")),
+        (wx.ACCEL_NORMAL, wx.WXK_F2, 4242),
+        (wx.ACCEL_CTRL, ord("S"), 4343),
+    ]
+
+
+def test_accelerator_table_entries_given_no_extra_entries_returns_the_harvest() -> None:
+    """T-4 boundary: an empty ``extra_entries`` adds nothing."""
+    menubar = _MenuBarDouble()
+
+    entries = app._accelerator_table_entries(menubar, [])
+
+    assert [entry.GetCommand() for entry in entries] == [
+        wx.xrc.XRCID("mi_undo_crossing"),
+        wx.xrc.XRCID("mi_standings"),
+        wx.xrc.XRCID("mi_user_guide"),
+    ]
+
+
+def test_apply_accelerators_given_a_frame_without_entries_method_applies_table() -> None:
+    """The launch blocker: the frame owns no entry list.
+
+    A raw ``wx.Frame`` has no ``accelerator_entries``, but
+    ``build_main_window`` passes exactly that, so reading the console's
+    F2 entry off it raised AttributeError inside ``_apply_accelerators``
+    and every launch died before ``MainLoop``. The entries now arrive as
+    an argument instead.
+    """
+    frame = _FrameDouble()
+    extra = [wx.AcceleratorEntry(wx.ACCEL_NORMAL, wx.WXK_F2, 4242)]
+
+    app._apply_accelerators(frame, _MenuBarDouble(), extra_entries=extra)
+
+    assert [type(table) for table in frame.tables] == [wx.AcceleratorTable]
+
+
+def test_apply_accelerators_given_no_extra_entries_still_applies_the_table() -> None:
+    """``extra_entries`` defaults to empty, so none is required."""
+    frame = _FrameDouble()
+
+    app._apply_accelerators(frame, _MenuBarDouble())
+
+    assert [type(table) for table in frame.tables] == [wx.AcceleratorTable]
+
+
+def test_build_main_window_passes_the_console_entries_into_apply_accelerators() -> None:
+    """E1.4.1: the bootstrap supplies the console's F2 entry.
+
+    The raw frame cannot supply it (it has no
+    ``accelerator_entries``), so the call site names the console's own
+    list -- the same source-pin style this file's other
+    bootstrap-wiring tests use.
+    """
+    expected = "_apply_accelerators(frame, menubar, extra_entries=_console.accelerator_entries())"
+    source = inspect.getsource(app.build_main_window)
+
+    assert expected in source

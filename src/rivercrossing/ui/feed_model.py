@@ -66,8 +66,8 @@ TIME_COLUMNS: tuple[int, ...] = (COL_LAP_TIME, COL_TOTAL)
 # truncates at the default window size: 80 fits "14:22:41"-shaped
 # timestamps and "3:02:11" totals, 50 fits "9999" plates and "999"
 # laps, 150 fits the longest demo name ("Trail Blazers (T)"), and 60
-# fits the 24x32 card face plus padding (entry_detail's own D16 width
-# for the same bitmaps). DataView columns have no autosize-to-content
+# fits the 24x32 card face plus padding (the width the rider editor's
+# card columns use). DataView columns have no autosize-to-content
 # (xrc-windows.md's code-side list), so the widths are pinned data
 # here and applied by ``views/main_frame._build_columns``.
 COLUMN_WIDTHS: tuple[int, ...] = (80, 50, 150, 60, 50, 80, 80)

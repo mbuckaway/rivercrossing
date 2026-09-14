@@ -108,7 +108,7 @@ CARD_DISPLAY_CASES = (
     ("KC", "K♣"),
     ("KD", "K♦"),
     ("9H", "9♥"),
-    ("TH", "T♥"),
+    ("10H", "10♥"),
     ("AC", "A♣"),
     ("4D", "4♦"),
     ("4S", "4♠"),
@@ -120,7 +120,7 @@ CARD_DISPLAY_CASES = (
 def test_format_card_given_a_stored_code_returns_its_canvas_glyph_text(
     code: str, expected: str
 ) -> None:
-    """Every suit glyph, the "T" ten boundary, and the joker marker."""
+    """Every suit glyph, the ten's "10" rank, and the joker marker."""
     assert format_card(code) == expected
 
 
@@ -130,7 +130,7 @@ def test_format_card_given_an_unknown_suit_letter_raises_key_error() -> None:
         format_card("9X")
 
 
-_VALID_RANKS = tuple("23456789TJQKA")
+_VALID_RANKS = ("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")
 _VALID_SUITS = tuple("SHDC")
 
 
@@ -159,7 +159,7 @@ def test_format_card_given_any_valid_code_ends_in_a_known_suit_glyph_or_is_the_j
 
 BEST5_CASES = (
     (("KS", "KC", "KD", "JK", "9H"), "K♠ K♣ K♦ JK★ 9♥"),
-    (("QH", "JH", "TH", "9H", "8H"), "Q♥ J♥ T♥ 9♥ 8♥"),
+    (("QH", "JH", "10H", "9H", "8H"), "Q♥ J♥ 10♥ 9♥ 8♥"),
     (("AC", "AD", "AH", "4D", "4S"), "A♣ A♦ A♥ 4♦ 4♠"),
     ((), ""),  # T-4 collection boundary: empty
     (("JK",), JOKER_DISPLAY),  # T-4 collection boundary: single

@@ -21,8 +21,8 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   a ``wxID_CANCEL`` instead, so callers never need to branch on which
   case a given dialog is.
 * **Form dialogs focus their first field, not their default button.**
-  ``set_start_dlg``, ``edit_crossing_dlg``, ``reassign_dlg``,
-  ``manual_deal_dlg``, ``ride_setup_dlg`` and ``rider_editor_dlg``
+  ``set_start_dlg``, ``edit_crossing_dlg``, ``manual_deal_dlg``,
+  ``ride_setup_dlg`` and ``rider_editor_dlg``
   each mark ``wxID_OK`` (or nothing -- see the open gap below) as
   default so Enter still submits the form, but spec.md §13 wants the
   *initial focus* on the first input field instead.
@@ -45,12 +45,11 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   the frame renders its controls inside the frame on Cocoa instead of
   a dialog of its own.
 
-``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``,
-``entry_detail_dlg``, W7's ``add_rider_dlg``, Phase 4's
-``team_editor_dlg`` and R-76's ``rider_issues_dlg`` carry no
-``<default>`` button at all in their already-authored XRC, so "Enter
-activates the marked default button" has nothing to activate for
-these seven --
+``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``, W7's
+``add_rider_dlg``, Phase 4's ``team_editor_dlg`` and R-76's
+``rider_issues_dlg`` carry no ``<default>`` button at all in their
+already-authored XRC, so "Enter activates the marked default button"
+has nothing to activate for these six --
 :data:`DEFAULT_BUTTON_DECISIONS` is the per-dialog product call
 (E1.5.3) that fills the gap, and :data:`FORM_FIRST_FIELDS` is
 spec.md §13's matching initial-focus decision for every form dialog,
@@ -87,7 +86,6 @@ __all__ = [
     "finish_again_labels",
     "finish_ride_message",
     "first_field_for",
-    "reassign_message",
     "reopen_ride_message",
     "run_dialog",
     "set_initial_focus",
@@ -113,7 +111,6 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
     (ids.CSV_PREVIEW_DLG, WX_ID_OK),
     (ids.ADD_RIDER_DLG, WX_ID_OK),
     (ids.ADD_TEAM_DLG, WX_ID_OK),
-    (ids.ENTRY_DETAIL_DLG, WX_ID_CLOSE),
     (ids.RIDER_EDITOR_DLG, ids.EDIT_BTN),
     (ids.TEAM_EDITOR_DLG, ids.EDIT_BTN),
     (ids.RIDER_ISSUES_DLG, WX_ID_CLOSE),
@@ -129,7 +126,6 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
 FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.SET_START_DLG, ids.START_DATE_PICKER),
     (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
-    (ids.REASSIGN_DLG, ids.NEW_PLATE_INPUT),
     (ids.MANUAL_DEAL_DLG, ids.PLATE_INPUT),
     (ids.DNF_CONFIRM_DLG, ids.PLATE_INPUT),
     (ids.RIDE_SETUP_DLG, ids.NAME_INPUT),
@@ -390,16 +386,6 @@ def dnf_message(plate: str, name: str) -> str:
     assertion.
     """
     return f"{plate} · {name}"
-
-
-def reassign_message(crossing_time: str, entry: str) -> str:
-    """Return ``reassign_dlg``'s ``crossing_lbl`` copy (E7.2.1).
-
-    Names the crossing being reassigned (``"Crossing 14:21:59 · lap
-    credited to 45"``), matching dialogs.xrc's data-bearing line; a
-    blank label is a failed assertion.
-    """
-    return f"Crossing {crossing_time} · lap credited to {entry}"
 
 
 def _active_log() -> Logging | None:

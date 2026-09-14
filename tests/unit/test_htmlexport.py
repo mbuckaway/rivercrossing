@@ -574,6 +574,41 @@ def test_render_public_maps_joker_card_to_jk_pair() -> None:
     assert ["JK", "j"] in record["results"][0]["cards"]
 
 
+def test_render_public_maps_a_ten_card_to_the_10_rank_pair() -> None:
+    """A drawn ten embeds as ["10", "d"], matching its "10d" bitmap."""
+    cards = (
+        Card(Rank.TEN, Suit.DIAMONDS),
+        Card(Rank.NINE, Suit.SPADES),
+        Card(Rank.NINE, Suit.DIAMONDS),
+        Card(Rank.NINE, Suit.CLUBS),
+        Card(Rank.KING, Suit.HEARTS),
+    )
+    result = EntryResult(
+        entry_id="88",
+        plate="88",
+        name="Ten Squad",
+        kind="team",
+        laps=11,
+        total_time=3600.0,
+        best_lap=1800.0,
+        cards=cards,
+        hand=best_hand(cards),
+        dnf=False,
+    )
+    placed = (Placed(place=1, result=result, tie_note=None, draw_required=False),)
+
+    html = render(_StubRide(), placed, ExportOptions())
+
+    record = json.loads(race_data_block(html))
+    assert ["10", "d"] in record["results"][0]["cards"]
+
+
+def test_rank_pair_letter_given_the_ten_is_the_10_spelling() -> None:
+    """T-3: the record's rank-10 letter is "10"; no "T" survives."""
+    assert htmlexport._RANK_PAIR_LETTER[Rank.TEN.value] == "10"
+    assert "T" not in htmlexport._RANK_PAIR_LETTER.values()
+
+
 def test_render_public_entry_with_no_cards_renders_empty_hand_label() -> None:
     """A no-show entry (zero cards) still renders, with no hand name."""
     result = EntryResult(

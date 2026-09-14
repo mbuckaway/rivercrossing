@@ -80,6 +80,7 @@ __all__ = [
     "CROSSINGS_SEARCH",
     "DEFAULT_FEED_SORT",
     "DEFAULT_SASH",
+    "EDIT_CROSSING_KEY",
     "ELAPSED_CLOCK",
     "ELAPSED_CLOCK_PANEL",
     "FEED_COLUMN_FLAGS",
@@ -202,6 +203,13 @@ FEED_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAVIEW_COL
 # ride clock. Re-applied by ``_apply_feed_sort`` after every rebuild;
 # an operator's header click replaces it (``_on_feed_column_sorted``).
 DEFAULT_FEED_SORT: tuple[int, bool] = (feed_model.COL_TIME, True)
+
+# Phase 6: F2 opens the selected feed row's Crossing Detail. main.xrc's
+# menu map has no mi_* row for "edit crossing" (accelerators.
+# ACCELERATOR_TABLE's F2 row carries menu_item_id=None, like Enter) and
+# XRC's <accel> can only fire a menu item, so the console binds this
+# frame-level accelerator in code with its own wx id.
+EDIT_CROSSING_KEY = wx.WXK_F2
 
 # console_riders_list's columns (Phase 4): the console draws every
 # shared column (``ui.rider_columns.CONSOLE_RIDER_COLUMNS`` -- Plate |
@@ -797,6 +805,16 @@ class MainFrame:
         # when the display arrangement changes, on both platforms.
         self.frame.Bind(wx.EVT_DISPLAY_CHANGED, self._on_display_changed)
 
+        # Phase 6: F2 opens the selected feed row's Crossing Detail.
+        # The id is frame-local (wx.NewIdRef, the FINISHED banner
+        # buttons' own idiom) because no menu item owns this command;
+        # accelerator_entries() also hands the entry to
+        # app._apply_accelerators, so the bootstrap's menubar-derived
+        # table cannot drop it after construction.
+        self._edit_crossing_id = wx.NewIdRef()
+        self.frame.Bind(wx.EVT_MENU, self._on_edit_crossing_accelerator, id=self._edit_crossing_id)
+        self.frame.SetAcceleratorTable(wx.AcceleratorTable(self.accelerator_entries()))
+
         # The console-view handle the app (and scenarios) reach the
         # view's own methods through -- the results window's
         # ``frame.presenter`` precedent (results_win.py).
@@ -1074,6 +1092,19 @@ class MainFrame:
         """
         self._on_open_crossing = callback
 
+    def accelerator_entries(self) -> list[Any]:
+        """Return the frame's own code-side accelerator entries.
+
+        The three menu-backed shortcuts come from ``main.xrc``'s
+        ``<accel>`` elements and are harvested by
+        ``app._apply_accelerators``; F2 (edit crossing) has no menu item
+        to harvest, so the console owns its entry here. The app appends
+        this list to the harvested ones when it re-applies the frame's
+        table at bootstrap -- without that, the frame-level binding made
+        in ``__init__`` would be silently replaced.
+        """
+        return [wx.AcceleratorEntry(wx.ACCEL_NORMAL, EDIT_CROSSING_KEY, self._edit_crossing_id)]
+
     def focus_review_panel(self) -> None:
         """Focus the review notebook's "Needs Review" tab (WS-H).
 
@@ -1211,9 +1242,19 @@ class MainFrame:
         keeps its original focus-only behavior, which is also the
         ``Cards ▸ Review Held Cards`` menu route's
         :meth:`focus_review_panel` target.
+
+        ``flagged_list`` is a plain ``DataViewCtrl``, so its selection
+        arrives as a ``DataViewItem`` that the model resolves to a row;
+        the ``GetSelectedRow`` of ``wxDataViewListCtrl`` does not exist
+        here. Resolve it exactly as :meth:`_on_flagged_activated` does.
         """
         self.focus_review_panel()
-        row = self.flagged_list.GetSelectedRow()
+        if self._flagged_model is None:
+            return
+        item = self.flagged_list.GetSelection()
+        if not item.IsOk():
+            return
+        row = self._flagged_model.GetRow(item)
         if row == wx.NOT_FOUND:
             return
         self._fire_open_flagged(row)
@@ -1286,6 +1327,28 @@ class MainFrame:
         if self._crossings_model is None:
             return
         row = self._crossings_model.GetRow(event.GetItem())
+        if row == wx.NOT_FOUND:
+            return
+        if self._on_open_crossing is not None:
+            self._on_open_crossing(row)
+
+    def _on_edit_crossing_accelerator(self, _event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Open the selected feed row's Crossing Detail on F2 (Phase 6).
+
+        The keyboard twin of :meth:`_on_crossing_activated`: that
+        handler takes the activated item from its event, this one takes
+        the feed's *selection* (F2 is not tied to a click) and resolves
+        it through the same model. Both fire the same
+        :meth:`set_on_open_crossing` seam with a row index, so the app's
+        row-to-``Crossing`` resolution is shared. Nothing selected --
+        or a stale selection the model cannot resolve -- is a no-op.
+        """
+        if self._crossings_model is None:
+            return
+        item = self.crossings_list.GetSelection()
+        if not item.IsOk():
+            return
+        row = self._crossings_model.GetRow(item)
         if row == wx.NOT_FOUND:
             return
         if self._on_open_crossing is not None:

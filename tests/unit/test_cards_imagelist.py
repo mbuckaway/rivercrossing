@@ -23,6 +23,7 @@ from hypothesis import strategies as st
 from PIL import Image
 
 import rivercrossing.ui
+from rivercrossing.cards import Card, Rank, Suit
 from rivercrossing.ui.cards_imagelist import (
     BITMAP_SIZES,
     CARD_KEYS,
@@ -65,17 +66,17 @@ JOKER_BORDER = (89, 126, 163, 255)
 
 CARD_FILE_COUNT = 106
 
-# module-skeletons.md S4: Card.code() -> "AS", "TD", "JK".
+# module-skeletons.md S4: Card.code() -> "AS", "10D", "JK".
 CODE_CASES = (
     ("AS", "As"),
-    ("TD", "10d"),
+    ("10D", "10d"),
     ("JK", "joker"),
     ("2C", "2c"),
     ("KH", "Kh"),
     ("9S", "9s"),
     ("QD", "Qd"),
     ("JC", "Jc"),
-    ("TH", "10h"),
+    ("10H", "10h"),
     ("AC", "Ac"),
 )
 
@@ -90,7 +91,8 @@ BAD_CODES = (
     "as",
     "aS",
     "As",
-    "10D",
+    "TD",  # the retired "T" ten: no legacy alias survives
+    "10x",  # a "10" rank with an unknown suit
     "XY",
     "JOKER",
     "jk",
@@ -179,7 +181,7 @@ def generated_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.mark.parametrize(("code", "key"), CODE_CASES)
 def test_asset_key_with_stored_code_returns_the_asset_filename_stem(code: str, key: str) -> None:
-    """Stored AS -> As, TD -> 10d, JK -> joker (module-skeletons S4)."""
+    """Stored AS -> As, 10D -> 10d, joker -> joker (S4)."""
     assert to_asset_key(code) == key
 
 
@@ -192,9 +194,14 @@ def test_asset_key_with_unmappable_code_raises_unknown_card_code_error(
         to_asset_key(code)
 
 
-def test_asset_key_maps_every_stored_code_onto_the_frozen_key_set() -> None:
-    """The 52 faces plus the joker cover the key set exactly once."""
-    codes = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
+def test_asset_key_maps_every_card_code_onto_the_frozen_key_set() -> None:
+    """The 52 natural codes plus the joker cover the key set once.
+
+    The codes come from ``Card.code()`` itself -- the app's own stored
+    form, ten included -- so a change to that spelling cannot silently
+    pass this mapping.
+    """
+    codes = [Card(rank=rank, suit=suit).code() for rank in Rank for suit in Suit]
 
     keys = [to_asset_key(code) for code in [*codes, JOKER_CODE]]
 

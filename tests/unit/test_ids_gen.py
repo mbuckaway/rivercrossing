@@ -49,10 +49,8 @@ EXPECTED_HAPPY_BODY = (
     'EDIT_CROSSING_DLG = "edit_crossing_dlg"\n'
     'MAIN_FRAME = "main_frame"\n'
     'MANUAL_DEAL_DLG = "manual_deal_dlg"\n'
-    'NEW_PLATE_INPUT = "new_plate_input"\n'
     'PLATE_INPUT = "plate_input"\n'
     'REASON_INPUT = "reason_input"\n'
-    'REASSIGN_DLG = "reassign_dlg"\n'
     'RIDE_NAME_LBL = "ride_name_lbl"\n'
     'UNDO_BTN = "undo_btn"\n'
 )
@@ -62,8 +60,8 @@ def test_render_ids_module_happy_fixture_names_render_as_sorted_constants() -> N
     """A fixture .xrc produces the expected constants exactly.
 
     ``plate_input`` recurs in ``main_frame``, ``edit_crossing_dlg``
-    and ``manual_deal_dlg``; ``reason_input`` recurs in three
-    dialogs. Both collapse to one constant each here.
+    and ``manual_deal_dlg``; ``reason_input`` in two dialogs. Both
+    collapse to one constant each here.
     """
     result = gen_ids.scan_xrc_directory(HAPPY_DIR)
 
@@ -75,9 +73,9 @@ def test_render_ids_module_happy_fixture_names_render_as_sorted_constants() -> N
 def test_scan_xrc_directory_name_recurring_across_windows_collapses_without_raising() -> None:
     """A name shared by different top-level windows is legal.
 
-    ``plate_input``/``reason_input`` each appear in three separate
-    windows across the fixture; scanning must not raise, and each
-    must collapse to exactly one entry in the result.
+    ``plate_input`` recurs in three separate windows across the
+    fixture and ``reason_input`` in two; scanning must not raise, and
+    each must collapse to exactly one entry in the result.
     """
     result = gen_ids.scan_xrc_directory(HAPPY_DIR)
 
@@ -85,10 +83,8 @@ def test_scan_xrc_directory_name_recurring_across_windows_collapses_without_rais
         "edit_crossing_dlg",
         "main_frame",
         "manual_deal_dlg",
-        "new_plate_input",
         "plate_input",
         "reason_input",
-        "reassign_dlg",
         "ride_name_lbl",
         "undo_btn",
     )

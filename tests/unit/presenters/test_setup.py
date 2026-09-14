@@ -23,8 +23,12 @@ from hypothesis import strategies as st
 
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
+    DEFAULT_JOKERS_MODE,
+    DEFAULT_JOKERS_PER_DECK,
     DEFAULT_LAP_KM,
     DEFAULT_TIEBREAK_ORDER,
+    JOKERS_MODE_PER_DECK,
+    JOKERS_MODE_TOTAL,
     RideConfig,
     RideStatus,
 )
@@ -106,13 +110,13 @@ class RecordingSetupView:
         """Record the W4 radio pair's rendered policy (D2 preload)."""
         self.calls.append(("show_short_lap_policy", (hold_short_laps,)))
 
-    def show_jokers_per_deck(self, count: int) -> None:
-        """Record the jokers group's rendered value (D2)."""
-        self.calls.append(("show_jokers_per_deck", (count,)))
+    def show_jokers(self, *, count: int, mode: str) -> None:
+        """Record jokers_spin + the per-deck/total radio pair (D2)."""
+        self.calls.append(("show_jokers", (count, mode)))
 
-    def show_card_cap(self, max_cards: int | None) -> None:
-        """Record cap_chk/cap_spin's rendered cap (D2 preload)."""
-        self.calls.append(("show_card_cap", (max_cards,)))
+    def show_max_cards(self, max_cards: int | None) -> None:
+        """Record cap_choice's rendered cap (D2 preload)."""
+        self.calls.append(("show_max_cards", (max_cards,)))
 
     def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
         """Record tiebreak_list's rendered row order (D2 preload)."""
@@ -171,8 +175,8 @@ _VALID_FORM_KWARGS: dict[str, object] = {
     "plate_model": PlateModel.RIDER_POOLED,
     "deck_count": 8,
     "jokers_per_deck": 2,
-    "cap_enabled": False,
-    "max_cards": 1,
+    "jokers_mode": JOKERS_MODE_TOTAL,
+    "max_cards": None,
     "tiebreak_order": DEFAULT_TIEBREAK_ORDER,
     "logo_path": None,
 }
@@ -205,6 +209,7 @@ def _stored_config(**overrides: object) -> RideConfig:
         "max_team_size": 6,
         "deck_count": 2,
         "jokers_per_deck": 4,
+        "jokers_mode": JOKERS_MODE_PER_DECK,
         "max_cards": 5,
         "tiebreak_order": ("laps", "total_time", "high_card"),
         "hold_short_laps": True,
@@ -229,17 +234,25 @@ _PRELOAD_CALLS: tuple[tuple[str, tuple[object, ...]], ...] = (
     ("show_short_lap_policy", (True,)),
     ("show_entry_settings", (EntryMode.MIXED, 6, PlateModel.TEAM_RELAY)),
     ("show_deck_count", (2,)),
-    ("show_jokers_per_deck", (4,)),
-    ("show_card_cap", (5,)),
+    ("show_jokers", (4, JOKERS_MODE_PER_DECK)),
+    ("show_max_cards", (5,)),
     ("show_tiebreak_order", (("laps", "total_time", "high_card"),)),
     ("show_logo", (None,)),
 )
 _PRELOAD_SEAMS = tuple(name for name, _args in _PRELOAD_CALLS)
 
-# The three seams a New Ride's load ALSO pushes (its own deck/lap
-# defaults and the roster's entry settings) -- so only the other
-# thirteen are config-preload-only.
-_DEFAULTS_LOAD_SEAMS = frozenset({"show_deck_count", "show_lap_km", "show_entry_settings"})
+# The five seams a New Ride's load ALSO pushes (its own deck/lap/jokers/
+# cap defaults and the roster's entry settings) -- so only the other
+# twelve are config-preload-only.
+_DEFAULTS_LOAD_SEAMS = frozenset(
+    {
+        "show_deck_count",
+        "show_lap_km",
+        "show_jokers",
+        "show_max_cards",
+        "show_entry_settings",
+    }
+)
 
 
 # ------------------------------------------------------ construction
@@ -383,7 +396,7 @@ def test_setup_presenter_init_given_an_uncapped_stored_config_preloads_none() ->
         _stored_config(max_cards=None),
     )
 
-    assert ("show_card_cap", (None,)) in view.calls
+    assert ("show_max_cards", (None,)) in view.calls
 
 
 def test_setup_presenter_init_given_no_config_keeps_structure_editing_enabled() -> None:
@@ -523,30 +536,32 @@ def test_on_submit_given_a_valid_form_returns_the_built_config() -> None:
         plate_model=PlateModel.RIDER_POOLED,
         deck_count=8,
         jokers_per_deck=2,
+        jokers_mode=JOKERS_MODE_TOTAL,
         max_cards=None,
         tiebreak_order=DEFAULT_TIEBREAK_ORDER,
         logo_path=None,
     )
 
 
-def test_on_submit_given_cap_disabled_builds_an_uncapped_config() -> None:
-    """cap_chk unticked: max_cards is None regardless of cap_spin."""
+def test_on_submit_given_no_cap_choice_builds_an_uncapped_config() -> None:
+    """cap_choice on "Disabled": max_cards is None (R-13)."""
     presenter = SetupPresenter(RecordingSetupView(), Roster())
 
-    config = presenter.on_submit(_form(cap_enabled=False, max_cards=50))
+    config = presenter.on_submit(_form(max_cards=None))
 
     assert config is not None
     assert config.max_cards is None
 
 
-def test_on_submit_given_cap_enabled_builds_a_capped_config() -> None:
-    """cap_chk ticked: max_cards carries cap_spin's own value."""
+@pytest.mark.parametrize("max_cards", [5, 20], ids=["min", "max"])
+def test_on_submit_given_a_cap_choice_number_builds_a_capped_config(max_cards: int) -> None:
+    """cap_choice on a number: max_cards carries that number."""
     presenter = SetupPresenter(RecordingSetupView(), Roster())
 
-    config = presenter.on_submit(_form(cap_enabled=True, max_cards=50))
+    config = presenter.on_submit(_form(max_cards=max_cards))
 
     assert config is not None
-    assert config.max_cards == 50
+    assert config.max_cards == max_cards
 
 
 def test_on_submit_combines_event_date_and_start_time_into_planned_start() -> None:
@@ -647,22 +662,56 @@ def test_on_submit_given_an_out_of_range_team_size_shows_validation_not_crash() 
     )
 
 
-# ------------------- jokers-per-deck: the 0..4 dropdown (Phase 1)
-# The dialog's jokers_choice offers exactly 0..4; each selection must
-# reach RideConfig unchanged (the presenter never re-reads the XRC).
+# ------------------- jokers: jokers_spin 0..10 + the mode radios
+# The dialog's Phase 5 Cards controls offer 0..10 jokers and exactly two
+# modes; both must reach RideConfig unchanged (the presenter never
+# re-reads the XRC).
 
 
-@pytest.mark.parametrize("jokers_per_deck", [0, 1, 2, 3, 4])
-def test_on_submit_given_each_jokers_choice_value_carries_it_onto_the_config(
+@pytest.mark.parametrize("jokers_per_deck", [0, 1, 2, 9, 10])
+def test_on_submit_given_each_jokers_spin_value_carries_it_onto_the_config(
     jokers_per_deck: int,
 ) -> None:
-    """Every item the dropdown offers round-trips onto RideConfig."""
+    """Every value the spinner offers round-trips onto RideConfig."""
     presenter = SetupPresenter(RecordingSetupView(), Roster())
 
     config = presenter.on_submit(_form(jokers_per_deck=jokers_per_deck))
 
     assert config is not None
     assert config.jokers_per_deck == jokers_per_deck
+
+
+@pytest.mark.parametrize(
+    "jokers_mode", [JOKERS_MODE_TOTAL, JOKERS_MODE_PER_DECK], ids=["total", "per_deck"]
+)
+def test_on_submit_given_a_jokers_mode_radio_carries_it_onto_the_config(
+    jokers_mode: str,
+) -> None:
+    """Either radio's own spelling round-trips onto RideConfig."""
+    presenter = SetupPresenter(RecordingSetupView(), Roster())
+
+    config = presenter.on_submit(_form(jokers_mode=jokers_mode))
+
+    assert config is not None
+    assert config.jokers_mode == jokers_mode
+
+
+def test_setup_presenter_init_shows_the_presenter_supplied_jokers_defaults() -> None:
+    """A New Ride opens on 1 joker in total mode (the XRC defaults)."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, Roster())
+
+    assert ("show_jokers", (DEFAULT_JOKERS_PER_DECK, DEFAULT_JOKERS_MODE)) in view.calls
+
+
+def test_setup_presenter_init_shows_an_uncapped_card_cap_by_default() -> None:
+    """A New Ride's cap_choice opens on "Disabled" (max_cards None)."""
+    view = RecordingSetupView()
+
+    SetupPresenter(view, Roster())
+
+    assert ("show_max_cards", (None,)) in view.calls
 
 
 # ----------------------- minimum-setup gate (R-20, on-submit refusal)

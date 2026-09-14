@@ -2,14 +2,14 @@
 """Shared view-window helpers (SIMPLECODE Rule 3: third real dup).
 
 ``_find`` existed near-identically in ``main_frame.py``,
-``ride_library.py``, ``rider_editor.py``, ``entry_detail.py`` and
-``results_win.py`` -- five copies of "resolve a control by name
-inside this window, raising a useful error naming both the window
-and the missing control if it is absent." ``_default_card_images``'s
-process-lifetime cache repeated the same pattern across
-``main_frame.py`` and ``entry_detail.py``. This module is their one
-shared home; every view still exposes its own thin ``_find`` method
-(existing tests call it as a bound method) that forwards here.
+``ride_library.py``, ``rider_editor.py``, ``entry_detail.py`` (since
+retired in Phase 2) and ``results_win.py`` -- five copies of "resolve
+a control by name inside this window, raising a useful error naming
+both the window and the missing control if it is absent."
+``_default_card_images``'s process-lifetime cache repeated the same
+pattern across ``main_frame.py`` and that same dialog. This module is
+their one shared home; every view still exposes its own thin ``_find``
+method (existing tests call it as a bound method) that forwards here.
 
 :func:`associate_model` is not a duplication extraction -- see its
 own docstring for exactly what it does and does not claim to fix.
@@ -207,8 +207,8 @@ def default_card_images() -> CardImageList:
     """Return the packaged card deck, decoded once per process.
 
     Shared by every view that draws card bitmaps (``main_frame``,
-    ``entry_detail``): there is only ever one console window and
-    one entry-detail dialog open at a time, so neither needs its
+    the teams editor): there is only ever one console window and one
+    editor/dialog open at a time, so neither needs its
     own separate ``CardImageList`` -- and, measured, repeatedly
     decoding and freeing 53 card bitmaps (once per window
     construction) is what pushes this wx build into the

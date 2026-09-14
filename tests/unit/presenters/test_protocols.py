@@ -3,7 +3,7 @@
 
 Every window gets a view-interface so its presenter is testable
 without wx (module-skeletons.md ui.presenters; R-71). This suite
-proves, for each of the eight ``*View`` Protocols and the shared
+proves, for each of the seven ``*View`` Protocols and the shared
 ``DataSource`` Protocol:
 
 1. A ``FakeView``/``FakeDataSource`` implementing the full member set
@@ -31,24 +31,15 @@ from rivercrossing.ui.presenters import (
     AuditPresenter,
     AuditRow,
     AuditView,
-    CardVoid,
     ConsoleView,
     Counters,
-    CrossingEdit,
     CsvPreview,
     Cue,
     DataSource,
-    DetailPresenter,
-    DetailView,
-    DnfMark,
-    EntryDetail,
-    EntryLapRow,
     FeedRow,
     LibraryView,
-    ManualDeal,
     ResultsPresenter,
     ResultsView,
-    RiderMove,
     RiderRow,
     RidersView,
     RideSummary,
@@ -71,7 +62,6 @@ _PRESENTER_MODULES = (
     "rivercrossing.ui.presenters.audit",
     "rivercrossing.ui.presenters.console",
     "rivercrossing.ui.presenters.data_source",
-    "rivercrossing.ui.presenters.detail",
     "rivercrossing.ui.presenters.library",
     "rivercrossing.ui.presenters.results",
     "rivercrossing.ui.presenters.riders",
@@ -229,10 +219,10 @@ class FakeSetupView:
     def show_short_lap_policy(self, *, hold_short_laps: bool) -> None:
         """No-op fake."""
 
-    def show_jokers_per_deck(self, count: int) -> None:
+    def show_jokers(self, *, count: int, mode: str) -> None:
         """No-op fake."""
 
-    def show_card_cap(self, max_cards: int | None) -> None:
+    def show_max_cards(self, max_cards: int | None) -> None:
         """No-op fake."""
 
     def show_tiebreak_order(self, order: tuple[str, str, str]) -> None:
@@ -317,70 +307,6 @@ class FakeLibraryView:
         """No-op fake."""
 
 
-class FakeDetailView:
-    """A complete ``DetailView`` implementation for headless tests."""
-
-    def show_entry(self, detail: EntryDetail) -> None:
-        """No-op fake."""
-
-    def set_move_rider_enabled(self, *, enabled: bool) -> None:
-        """No-op fake."""
-
-    def selected_lap(self) -> EntryLapRow | None:
-        """No-op fake: no lap selected."""
-        return None
-
-    def show_edit_crossing(
-        self,
-        *,
-        adding: bool,  # noqa: ARG002 -- Protocol signature; the fake ignores values
-        plate: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
-        time: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
-    ) -> CrossingEdit | None:
-        """No-op fake: the dialog is cancelled."""
-        return None
-
-    def open_manual_deal(
-        self,
-        *,
-        plate: str,  # noqa: ARG002 -- Protocol signature; the fake ignores the value
-    ) -> ManualDeal | None:
-        """No-op fake: the dialog is cancelled."""
-        return None
-
-    def open_void_card(
-        self,
-        *,
-        card: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
-        entry: str,  # noqa: ARG002 -- Protocol signature; the fake ignores values
-    ) -> CardVoid | None:
-        """No-op fake: the dialog is cancelled."""
-        return None
-
-    def open_dnf(
-        self,
-        *,
-        entry: str,  # noqa: ARG002 -- Protocol signature; the fake ignores the value
-    ) -> DnfMark | None:
-        """No-op fake: the dialog is cancelled."""
-        return None
-
-    def open_move_rider(
-        self,
-        *,
-        riders: tuple[str, ...],  # noqa: ARG002 -- Protocol signature; the fake ignores values
-        teams: tuple[str, ...],  # noqa: ARG002 -- Protocol signature; the fake ignores values
-    ) -> RiderMove | None:
-        """No-op fake: the picker is cancelled."""
-        return None
-
-    def open_audit(self) -> None:
-        """No-op fake."""
-
-    def show_notice(self, text: str) -> None:
-        """No-op fake."""
-
-
 class FakeAuditView:
     """A complete ``AuditView`` implementation for headless tests."""
 
@@ -439,15 +365,6 @@ class FakeDataSource:
         """Return one fixed rider row."""
         return [RiderRow(plate="77", name="A. Roy", team="Trail Blazers")]
 
-    def entry_detail(self, plate: str) -> EntryDetail:
-        """Return one fixed entry detail for any plate."""
-        return EntryDetail(
-            header=f"Team · {plate}",
-            members="A. Roy (77)",
-            cards_held=("9H",),
-            laps=(EntryLapRow(lap=9, time="14:22:18", lap_time="19:55", rider="78", card="KC"),),
-        )
-
     def standings(
         self,
         order: tuple[TieBreak, ...] = DEFAULT_TIEBREAK_ORDER,  # noqa: ARG002 -- DataSource's signature; the fake ignores order
@@ -493,7 +410,6 @@ class FakeDataSource:
         (FakeRidersView(), RidersView),
         (FakeResultsView(), ResultsView),
         (FakeLibraryView(), LibraryView),
-        (FakeDetailView(), DetailView),
         (FakeAuditView(), AuditView),
         (FakeSettingsView(), SettingsView),
         (FakeDataSource(), DataSource),
@@ -514,7 +430,6 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
         # (view, engine, source) -- covered by its own dedicated
         # tests/unit/presenters/test_console.py suite.
         (ResultsPresenter, FakeResultsView()),
-        (DetailPresenter, FakeDetailView()),
         (AuditPresenter, FakeAuditView()),
     ],
 )

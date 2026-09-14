@@ -260,17 +260,20 @@ def _pooled_plate(entry: Entry, lap: int) -> str:
 
 
 def _lap_offsets(entry_count: int, interval_minutes: int) -> list[int]:
-    """Return each entry position's whole-minute offset inside a lap.
+    """Return each entry position's whole-minute offset inside one wave.
 
-    The offsets spread evenly across ``0 .. interval_minutes - 1``: the
-    last position crosses one minute before the next lap's first, so
-    the field always has a minute's gap. A one-entry lap sits at its
-    own start instead -- the gap to the next lap is then the whole
-    interval, which is still at least a minute.
+    The offsets spread evenly across ``0 .. interval_minutes // 2``:
+    the leader opens the wave on minute 0 and the field fills the
+    interval's first half, so the wave's last crossing sits on or
+    before the half-interval mark and the whole second half is clear
+    before the next wave. A one-entry wave sits at its own start
+    instead -- the leader still crosses a full interval after the gun
+    (see :meth:`SimulatorPresenter.run_simulation`), and its gap to
+    the next wave is then the whole interval.
     """
     if entry_count <= 1:
         return [0] * entry_count
-    span = interval_minutes - 1
+    span = interval_minutes // 2
     last = entry_count - 1
     return [index * span // last for index in range(entry_count)]
 
@@ -419,18 +422,22 @@ class SimulatorPresenter:
     ) -> SimOutcome:
         """Replay one scripted race of *laps* laps through the engine.
 
-        The entry order is built once and reused for every lap: lap 1's
-        crossings land at ``actual_start + offset``, lap ``L``'s at
-        ``actual_start + (L - 1) * interval + offset``, so every later
-        lap of an entry is exactly one interval after the one before
-        it. Each offset is a whole number of minutes spread across
-        ``0 .. interval_minutes - 1`` (:func:`_lap_offsets`), so a
-        lap's last crossing sits one minute before the next lap's
-        first. The plate each entry crosses under comes from that
-        lap's own :func:`_plates_to_record`, reproducing a pooled
-        team's rotating representative. A refusal to start -- an empty
-        roster, an incomplete setup, a team below the floor -- comes
-        back as ``blocked``, never a raise.
+        The gun is back-dated so the main screen's elapsed clock reads
+        the whole race once the run finishes: the start instant is
+        ``clock() - laps * interval - interval / 2``, which lands the
+        final wave's last crossing on the live clock. The entry order
+        is built once and reused for every lap, and lap ``L``
+        (0-based) opens its wave at
+        ``actual_start + interval * (L + 1)`` -- a full interval after
+        the gun for lap 1's leader, so no derived lap time is ever
+        ``00:00:00``. Each offset is a whole number of minutes inside
+        ``0 .. interval_minutes // 2`` (:func:`_lap_offsets`), so a
+        wave fills the interval's first half and leaves its second half
+        clear before the next. The plate each entry crosses under comes
+        from that lap's own :func:`_plates_to_record`, reproducing a
+        pooled team's rotating representative. A refusal to start --
+        an empty roster, an incomplete setup, a team below the floor --
+        comes back as ``blocked``, never a raise.
 
         Args:
             laps: How many laps to simulate.
@@ -444,8 +451,13 @@ class SimulatorPresenter:
             The run's outcome: the accepted crossings, whether the
             caller cancelled, and the start refusal when blocked.
         """
+        gun = (
+            self.engine.clock()
+            - timedelta(minutes=laps * interval_minutes)
+            - timedelta(minutes=interval_minutes / 2)
+        )
         try:
-            self.engine.start()
+            self.engine.start(at=gun)
         except StartBlockedError as exc:
             return SimOutcome(cancelled=False, recorded=0, blocked=tuple(exc.reasons))
         start = _actual_start(self.engine)
@@ -459,10 +471,10 @@ class SimulatorPresenter:
         completed = 0
         cancelled = False
         for lap in range(laps):
-            lap_start = start + interval * lap
+            wave_open = start + interval * (lap + 1)
             plates = _plates_to_record(self.roster, lap)
             for index, position in enumerate(order):
-                instant = lap_start + timedelta(minutes=offsets[index])
+                instant = wave_open + timedelta(minutes=offsets[index])
                 if self.engine.record_crossing(plates[position], at=instant).accepted:
                     recorded += 1
                 completed += 1

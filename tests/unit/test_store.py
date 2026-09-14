@@ -33,9 +33,12 @@ import pytest
 from platformdirs import user_data_dir
 
 import rivercrossing.store as store_module
+from rivercrossing.cards import Card, Shoe, ShoeEmpty
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
     DEFAULT_JOKERS_PER_DECK,
+    JOKERS_MODE_PER_DECK,
+    JOKERS_MODE_TOTAL,
     Event,
     RideConfig,
     RideStatus,
@@ -103,6 +106,17 @@ def _fetch_ride_row(path: Path, ride_id: int) -> dict[str, object]:
     if row is None:
         raise AssertionError(f"no ride row with id {ride_id}")
     return dict(row)
+
+
+def _deal_all(shoe: Shoe) -> list[Card]:
+    """Deal every remaining card of *shoe*'s current cycle, in order."""
+    dealt: list[Card] = []
+    while True:
+        try:
+            card, _ = shoe.deal()
+        except ShoeEmpty:
+            return dealt
+        dealt.append(card)
 
 
 # ------------------------------------------------------------- open
@@ -1013,6 +1027,7 @@ def test_store_load_engine_reconstructs_ride_config_from_stored_columns(
                 max_team_size=6,
                 deck_count=2,
                 jokers_per_deck=0,
+                jokers_mode=JOKERS_MODE_PER_DECK,
                 max_cards=5,
                 tiebreak_order=("laps", "high_card", "total_time"),
             )
@@ -1037,6 +1052,7 @@ def test_store_load_engine_reconstructs_ride_config_from_stored_columns(
     assert config.max_team_size == 6
     assert config.deck_count == 2
     assert config.jokers_per_deck == 0
+    assert config.jokers_mode == JOKERS_MODE_PER_DECK
     assert config.max_cards == 5
     assert config.tiebreak_order == ("laps", "high_card", "total_time")
     assert config.logo_path is None
@@ -1066,7 +1082,142 @@ def test_store_load_engine_builds_shoe_from_the_stored_rng_seed(tmp_path: Path) 
     assert engine._shoe.dealt == 1  # one card off the fresh replay shoe
     assert engine.config.deck_count == 8
     assert engine.config.jokers_per_deck == DEFAULT_JOKERS_PER_DECK
-    assert engine._shoe.remaining == DEFAULT_DECK_COUNT * (52 + DEFAULT_JOKERS_PER_DECK) - 1
+    # The default mode is total (ride.jokers_mode's own column default),
+    # so the fresh shoe holds 8 x 52 + 1 joker.
+    assert engine.config.jokers_mode == JOKERS_MODE_TOTAL
+    assert engine._shoe.remaining == DEFAULT_DECK_COUNT * 52 + DEFAULT_JOKERS_PER_DECK - 1
+
+
+# --------------------------------- Phase 5: jokers_mode round trip
+# The ride row's own jokers_mode column: the setup dialog's per-deck /
+# total radio pair, persisted so a reloaded ride rebuilds the same shoe
+# (spec §4/R-40).
+
+
+def test_store_create_ride_jokers_mode_column_round_trips(tmp_path: Path) -> None:
+    """jokers_mode stores its spelling and rebuilds the config field."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        total_id = store.create_ride(_config(name="Total Jokers", jokers_mode=JOKERS_MODE_TOTAL))
+        per_deck_id = store.create_ride(
+            _config(name="Per Deck Jokers", jokers_mode=JOKERS_MODE_PER_DECK)
+        )
+    finally:
+        store.close()
+
+    assert _fetch_ride_row(db_path, total_id)["jokers_mode"] == "total"
+    assert _fetch_ride_row(db_path, per_deck_id)["jokers_mode"] == "per_deck"
+
+    reopened = Store.open(db_path)
+    try:
+        total_engine = reopened.load_engine(total_id)
+        per_deck_engine = reopened.load_engine(per_deck_id)
+    finally:
+        reopened.close()
+    assert total_engine.config.jokers_mode == JOKERS_MODE_TOTAL
+    assert per_deck_engine.config.jokers_mode == JOKERS_MODE_PER_DECK
+
+
+def test_store_load_engine_given_a_row_without_a_jokers_mode_rebuilds_total(
+    tmp_path: Path,
+) -> None:
+    """A row that never set the mode replays as the total default.
+
+    A ``ride`` row written directly -- not through ``create_ride`` --
+    still gets ``'total'`` from the column's NOT NULL DEFAULT, so the
+    rebuilt config never fabricates a mode the row did not record.
+    """
+    db_path = tmp_path / "direct.db"
+    conn = sqlite3.connect(str(db_path))
+    try:
+        for statement in (*SCHEMA_STATEMENTS, SCHEMA_VERSION_DDL):
+            conn.execute(statement)
+        conn.execute("INSERT INTO schema_version (id, version) VALUES (1, 1)")
+        conn.execute(
+            """
+            INSERT INTO ride (
+                name, event_date, venue, course_name, lap_km, organizer, scorer,
+                logo_png, planned_start, planned_duration_s, actual_start,
+                finished_at, status, entry_mode, max_team_size, plate_model,
+                min_lap_s, deck_count, jokers_per_deck, max_cards, tiebreak_order,
+                rng_seed, created_at, updated_at
+            ) VALUES (
+                'Club night', '2026-09-20', 'Gondola', 'Gondola', 8.0,
+                'GORBA', 'K. Singh', NULL, 1789898400, 21600, NULL, NULL,
+                'draft', 'mixed', 4, 'rider_pooled', 1080, 8, 2, NULL,
+                '["laps","total_time","high_card"]', 20260920, 1789898400, 1789898400
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    store = Store.open(db_path)
+    try:
+        ride_id = store.rides()[0].id
+        engine = store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    assert engine.config.jokers_mode == JOKERS_MODE_TOTAL
+
+
+@pytest.mark.parametrize(
+    ("jokers_mode", "expected_jokers"),
+    [(JOKERS_MODE_TOTAL, 2), (JOKERS_MODE_PER_DECK, 4)],
+    ids=["total", "per_deck"],
+)
+def test_store_load_engine_builds_the_shoe_from_the_stored_jokers_mode(
+    tmp_path: Path, jokers_mode: str, expected_jokers: int
+) -> None:
+    """The reloaded shoe spends its jokers the way the row recorded."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(
+            _config(deck_count=2, jokers_per_deck=2, jokers_mode=jokers_mode)
+        )
+        engine = store.load_engine(ride_id)
+    finally:
+        store.close()
+
+    dealt = _deal_all(engine._shoe)
+
+    assert sum(1 for card in dealt if card.joker) == expected_jokers
+
+
+def test_store_duplicate_ride_copies_jokers_mode(tmp_path: Path) -> None:
+    """R-15: the copy keeps the source's own jokers mode."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        source_id = store.create_ride(_config(jokers_mode=JOKERS_MODE_PER_DECK))
+        copy_id = store.duplicate_ride(source_id)
+    finally:
+        store.close()
+
+    assert _fetch_ride_row(db_path, copy_id)["jokers_mode"] == "per_deck"
+
+
+def test_store_update_ride_config_rewrites_jokers_mode(tmp_path: Path) -> None:
+    """Edit Ride: a mode change lands in the row and the config."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(jokers_mode=JOKERS_MODE_TOTAL))
+        store.update_ride_config(ride_id, _config(jokers_mode=JOKERS_MODE_PER_DECK))
+    finally:
+        store.close()
+
+    assert _fetch_ride_row(db_path, ride_id)["jokers_mode"] == "per_deck"
+
+    reopened = Store.open(db_path)
+    try:
+        assert reopened.load_engine(ride_id).config.jokers_mode == JOKERS_MODE_PER_DECK
+    finally:
+        reopened.close()
 
 
 # --------------------------------------- E5.2.1 session bookkeeping

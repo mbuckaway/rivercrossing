@@ -59,7 +59,7 @@ _LETTER_BY_RANK: dict[Rank, str] = {
     Rank.SEVEN: "7",
     Rank.EIGHT: "8",
     Rank.NINE: "9",
-    Rank.TEN: "T",
+    Rank.TEN: "10",
     Rank.JACK: "J",
     Rank.QUEEN: "Q",
     Rank.KING: "K",
@@ -85,9 +85,10 @@ class Card:
     joker: bool = False
 
     def code(self) -> str:
-        """Return this card's stored two-character form.
+        """Return this card's stored code.
 
-        Examples: ``"AS"``, ``"TD"``, ``"JK"`` (joker).
+        Examples: ``"AS"``, ``"10D"``, ``"JK"`` (joker). The ten spells
+        "10", the same rank token its bitmap asset's filename carries.
 
         The two ``cast`` calls document, for mypy, the natural-card
         contract stated above -- a joker never reaches them because
@@ -102,10 +103,15 @@ class Card:
 
     @staticmethod
     def parse(code: str) -> Card:
-        """Parse a stored two-character code back into a Card."""
+        """Parse a stored card code (``"AS"``, ``"10D"``, ``"JK"``).
+
+        The rank is *code*'s whole prefix and the suit its last
+        character, so the ten's three-character "10D" reads rank "10"
+        and suit "D" while "AS" still reads "A" and "S".
+        """
         if code == _JOKER_CODE:
             return Card(rank=None, suit=None, joker=True)
-        return Card(rank=_RANK_BY_LETTER[code[0]], suit=_SUIT_BY_LETTER[code[1]], joker=False)
+        return Card(rank=_RANK_BY_LETTER[code[:-1]], suit=_SUIT_BY_LETTER[code[-1]], joker=False)
 
 
 class ShoeEmpty(Exception):  # noqa: N818 -- frozen name, module-skeletons.md S4
@@ -135,21 +141,56 @@ class RestitutionError(Exception):
     """
 
 
+def _naturals(deck_count: int) -> list[Card]:
+    """Build *deck_count* unshuffled natural decks (jokers excluded).
+
+    The order is rank-major, suit-minor within each deck and deck-major
+    across decks -- the exact sequence ``_fresh_deck`` has always
+    produced, so the per-deck mode's seeded shuffle is unchanged.
+    """
+    return [
+        Card(rank=rank, suit=suit) for _ in range(deck_count) for rank in Rank for suit in Suit
+    ]
+
+
+def _jokers(count: int) -> list[Card]:
+    """Build *count* joker cards."""
+    return [Card(rank=None, suit=None, joker=True) for _ in range(count)]
+
+
 def _fresh_deck(jokers_per_deck: int) -> list[Card]:
     """Build one unshuffled deck: the 52 naturals plus its jokers."""
-    naturals = [Card(rank=rank, suit=suit) for rank in Rank for suit in Suit]
-    jokers = [Card(rank=None, suit=None, joker=True) for _ in range(jokers_per_deck)]
-    return naturals + jokers
+    return _naturals(1) + _jokers(jokers_per_deck)
 
 
-def _shuffled_sequence(decks: int, jokers_per_deck: int, seed: int) -> list[Card]:
-    """Fisher-Yates shuffle *decks* fresh decks under *seed* (§4).
+def _per_deck_cards(decks: int, jokers_per_deck: int) -> list[Card]:
+    """Build *decks* fresh decks, each carrying its own jokers (S4)."""
+    return [card for _ in range(decks) for card in _fresh_deck(jokers_per_deck)]
 
-    ``random.Random(seed).shuffle`` is CPython's Fisher-Yates and
-    is deterministic for a given seed -- R-40's "replaying the
-    seed reproduces every card" guarantee rides on that.
+
+def _total_cards(decks: int, jokers_per_deck: int) -> list[Card]:
+    """Build *decks* natural decks plus the ride's jokers, once."""
+    return _naturals(decks) + _jokers(jokers_per_deck)
+
+
+def _shuffled_sequence(  # noqa: PLR0913 -- decks/jokers/seed + the mode flag
+    decks: int, jokers_per_deck: int, seed: int, *, jokers_total: bool = False
+) -> list[Card]:
+    """Fisher-Yates shuffle one cycle's cards under *seed* (§4).
+
+    The two jokers modes differ only in what goes into the list:
+    per-deck builds ``decks`` decks that each carry
+    ``jokers_per_deck`` jokers, total builds ``decks`` natural decks
+    plus that many jokers once. ``random.Random(seed).shuffle`` is
+    CPython's Fisher-Yates and is deterministic for a given seed --
+    R-40's "replaying the seed reproduces every card" guarantee rides
+    on that.
     """
-    cards = [card for _ in range(decks) for card in _fresh_deck(jokers_per_deck)]
+    cards = (
+        _total_cards(decks, jokers_per_deck)
+        if jokers_total
+        else _per_deck_cards(decks, jokers_per_deck)
+    )
     random.Random(seed).shuffle(cards)  # noqa: S311 -- deterministic Fisher-Yates by design, not crypto
     return cards
 
@@ -194,15 +235,31 @@ class Shoe:
     that fixed order, so the whole sequence -- and therefore every
     card any entry ever received -- is recoverable from just the
     stored config and seed (R-40).
+
+    ``jokers_total`` picks which of the two jokers modes the shoe is
+    built in. The default (``False``) is the frozen S4 per-deck shape:
+    every cycle is ``decks x (52 + jokers_per_deck)`` cards, so each
+    reshuffle re-deals the same joker count. ``True`` spends the ride's
+    jokers once -- cycle 1 is ``decks x 52 + jokers_per_deck`` cards and
+    each dealt joker consumes one from the budget, so later cycles carry
+    only what the deals so far left and a spent budget deals naturals
+    only (Phase 5).
     """
 
-    def __init__(self, decks: int, jokers_per_deck: int, seed: int) -> None:
+    def __init__(  # noqa: PLR0913 -- S4's (decks, jokers_per_deck, seed) + the mode flag
+        self, decks: int, jokers_per_deck: int, seed: int, *, jokers_total: bool = False
+    ) -> None:
         """Build and shuffle cycle 1 from decks/jokers_per_deck/seed."""
         self._decks = decks
         self._jokers_per_deck = jokers_per_deck
         self._seed = seed
+        self._jokers_total = jokers_total
+        # The ride-wide joker allowance total mode spends deal by deal.
+        # Per-deck mode never reads it: there every cycle re-deals
+        # jokers_per_deck jokers.
+        self._joker_budget = jokers_per_deck
         self._cycle = 1
-        self._cards = _shuffled_sequence(decks, jokers_per_deck, seed)
+        self._cards = _shuffled_sequence(decks, jokers_per_deck, seed, jokers_total=jokers_total)
         self._dealt = 0
         self._closed = False
 
@@ -256,6 +313,8 @@ class Shoe:
         deal_index = self._dealt
         card = self._cards[deal_index]
         self._dealt += 1
+        if self._jokers_total and card.joker:
+            self._joker_budget -= 1
         return card, deal_index
 
     def restitute(self, card: Card) -> None:
@@ -273,6 +332,11 @@ class Shoe:
             msg = f"{card.code()} was not the last card dealt from this shoe"
             raise RestitutionError(msg)
         self._dealt -= 1
+        if self._jokers_total and card.joker:
+            # An undone joker never leaves the shoe, so the budget it
+            # consumed returns with it -- the redeal then spends it
+            # again, and a reshuffle in between still counts it.
+            self._joker_budget += 1
 
     def reshuffle(self) -> None:
         """Start a new cycle under seed + (cycle - 1) (spec §4).
@@ -286,9 +350,25 @@ class Shoe:
         """
         self._require_open()
         self._cycle += 1
-        derived_seed = self._seed + (self._cycle - 1)
-        self._cards = _shuffled_sequence(self._decks, self._jokers_per_deck, derived_seed)
+        self._cards = self._cycle_cards(self._seed + (self._cycle - 1))
         self._dealt = 0
+
+    def _cycle_cards(self, seed: int) -> list[Card]:
+        """Shuffle this cycle's cards for *seed* (spec §4).
+
+        Total mode re-builds ``decks x 52`` naturals plus whatever the
+        ride's joker budget has left -- a spent budget deals naturals
+        only for the rest of the ride. Per-deck mode re-deals
+        ``jokers_per_deck`` jokers every cycle, exactly as it has
+        always done.
+        """
+        jokers = self._joker_budget if self._jokers_total else self._jokers_per_deck
+        return _shuffled_sequence(self._decks, jokers, seed, jokers_total=self._jokers_total)
+
+    def _drain(self) -> None:
+        """Deal this cycle's remaining cards, discarding them."""
+        while self.remaining:
+            self.deal()
 
     def close(self) -> None:
         """Close the shoe; ride Finish calls this (task-briefs E2.2.1).
@@ -314,7 +394,13 @@ class Shoe:
 
     @staticmethod
     def replay(  # noqa: PLR0913, PLR0917 -- frozen module-skeletons.md S4 API
-        decks: int, jokers_per_deck: int, seed: int, deals: int, cycles: int
+        decks: int,
+        jokers_per_deck: int,
+        seed: int,
+        deals: int,
+        cycles: int,
+        *,
+        jokers_total: bool = False,
     ) -> Shoe:
         """Rebuild the exact shoe state after *cycles* and *deals*.
 
@@ -326,9 +412,22 @@ class Shoe:
         recorded deal/reshuffle events reconstructs a live shoe
         after a restart, without storing the shuffled sequence
         itself.
+
+        Each earlier cycle is dealt to exhaustion before its
+        reshuffle, because that is the only way a reshuffle happens
+        (spec §4: the caller reshuffles after :class:`ShoeEmpty`). In
+        total mode that drain is what reproduces the live shoe's joker
+        budget by the time the final cycle is built; in per-deck mode
+        every cycle is identical, so the drain changes nothing.
         """
-        shoe = Shoe(decks=decks, jokers_per_deck=jokers_per_deck, seed=seed)
+        shoe = Shoe(
+            decks=decks,
+            jokers_per_deck=jokers_per_deck,
+            seed=seed,
+            jokers_total=jokers_total,
+        )
         for _ in range(cycles - 1):
+            shoe._drain()
             shoe.reshuffle()
         for _ in range(deals):
             shoe.deal()

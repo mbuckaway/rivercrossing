@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for app.py's ``_make_route_handler`` dispatch.
 
-The six Cards/Riders correction rows dispatch through
+The four Cards/Riders correction rows dispatch through
 ``_make_route_handler`` by their own item id -- not by target, since
 ``mi_add_crossing_at`` and ``mi_edit_crossing`` share
 ``EDIT_CROSSING_DLG`` with different modes. The ux-polish wiring of
@@ -29,17 +29,17 @@ from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import commands, ids, std_dialogs
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
-from rivercrossing.ui.presenters.detail import DnfMark
 from rivercrossing.ui.views import corrections, dialogs
 from rivercrossing.ui.views import crossing_detail as crossing_detail_module
+from rivercrossing.ui.views.corrections import DnfMark
 
+# Phase 2 retired the Reassign Plate… and Void Card… menu rows, so the
+# correction dispatch family is four rows now.
 _CORRECTION_ROUTES = (
     ids.MI_ADD_CROSSING_AT,
     ids.MI_EDIT_CROSSING,
-    ids.MI_REASSIGN_PLATE,
     ids.MI_DEAL_MANUAL,
     ids.MI_MARK_DNF,
-    ids.MI_VOID_CARD,
 )
 
 
@@ -121,6 +121,26 @@ def test_shared_edit_crossing_target_dispatch_differs_by_mode(
     app_module._make_route_handler(context, commands.route_for_id(ids.MI_EDIT_CROSSING))(None)  # type: ignore[arg-type]
 
     assert fired == ["add", "edit"]
+
+
+def test_make_route_handler_binds_the_deal_bonus_card_row(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 2: the renamed row still dispatches by mi_deal_manual."""
+    route = commands.route_for_id(ids.MI_DEAL_MANUAL)
+    fired: list[object] = []
+
+    def handler(context: object) -> None:
+        fired.append(context)
+
+    monkeypatch.setitem(app_module._CORRECTION_HANDLERS, ids.MI_DEAL_MANUAL, handler)
+    context = _StubContext()
+    bound = app_module._make_route_handler(context, route)  # type: ignore[arg-type]
+
+    bound(None)
+
+    assert route.label == "Deal Bonus Card…"
+    assert fired == [context]
 
 
 def test_make_route_handler_leaves_non_correction_dialogs_to_open_target(
@@ -246,15 +266,6 @@ class _OpenFlaggedConsole:
         self._on_open_flagged = callback
 
 
-class _EntryDialogSpy:
-    """EntryDetailDialog stand-in recording its constructor inputs."""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """Store the constructor inputs for later assertions."""
-        self.args = args
-        self.kwargs = kwargs
-
-
 class _RouteStub:
     """The route-context surface the W11 seam helpers read."""
 
@@ -273,7 +284,6 @@ class _RouteStub:
         self.presenter = presenter
         self.console_view = console_view
         self.resource = resource
-        self.detail_plate: str | None = None
 
 
 def test_wire_flagged_open_seam_routes_the_flagged_row_to_the_review_handler(
@@ -406,6 +416,33 @@ def test_open_flagged_review_for_given_a_credited_row_resolves_the_crossing(
     """A credited short lap resolves to its recorded crossing."""
     engine = _running_engine(hold_short_laps=False)
     engine.record_crossing("12", at=_dt(10, 0, 5))
+    context = _review_context(engine, frame=_NoticeFrame([]))
+    routed: list[object] = []
+    monkeypatch.setattr(
+        app_module,
+        "_show_crossing_detail_dialog",
+        lambda _context, _engine, target: routed.append(target),
+    )
+
+    app_module._open_flagged_review_for(context, "12", False)  # noqa: FBT003 -- seam's flag
+
+    assert routed == [engine.crossings[-1]]
+
+
+def test_open_flagged_review_for_given_a_duplicate_row_routes_to_the_duplicate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 3: a duplicate row opens Crossing Detail on its own lap.
+
+    The ride records 10:05, 10:06, then 10:05 again -- so the newest
+    crossing is the duplicate (its twin is lap 1) and it is not itself
+    a short-lap flag. Only the duplicate bit routes it here; a flagged
+    row is never what this activation names.
+    """
+    engine = _running_engine(hold_short_laps=False)
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 6))
+    engine.record_crossing("12", at=_dt(10, 5))
     context = _review_context(engine, frame=_NoticeFrame([]))
     routed: list[object] = []
     monkeypatch.setattr(
@@ -643,70 +680,6 @@ def test_show_crossing_detail_dialog_given_a_pending_miss_builds_the_miss_view(
     assert built == [{"miss": miss, "engine": engine}]
 
 
-def test_open_entry_detail_dialog_live_branch_records_and_builds_the_live_dialog(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """F2a: the live branch records ``detail_plate`` and builds live.
-
-    With a live presenter and a concrete plate the dialog opens over
-    the console's engine/source/roster/resource -- the six action
-    buttons act on real data -- and the plate becomes the current
-    entry the menu correction routes target.
-    """
-    import rivercrossing.ui.views.entry_detail as entry_detail_module  # noqa: PLC0415 -- deferred-import spy target
-
-    engine = object()
-    source = object()
-    roster = object()
-    built: list[_EntryDialogSpy] = []
-    monkeypatch.setattr(
-        entry_detail_module,
-        "EntryDetailDialog",
-        lambda *args, **kwargs: built.append(_EntryDialogSpy(*args, **kwargs)) or built[-1],
-    )
-    presenter = type("_Presenter", (), {"engine": engine, "source": source})()
-    context = _RouteStub(frame=_NoticeFrame([]), roster=roster, presenter=presenter)
-
-    app_module._open_entry_detail_dialog(context, object(), "77")  # type: ignore[arg-type]
-
-    assert context.detail_plate == "77"
-    assert len(built) == 1
-    assert built[0].kwargs["engine"] is engine
-    assert built[0].kwargs["data_source"] is source
-    assert built[0].kwargs["roster"] is roster
-    # W11 F2b: the picker's app seam writes the current-entry context.
-    on_plate_picked = built[0].kwargs["on_plate_picked"]
-    on_plate_picked("34")
-    assert context.detail_plate == "34"
-
-
-def test_open_entry_detail_dialog_empty_branch_opens_the_empty_state(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """F2a: no live selection keeps the E5.4.2 empty state.
-
-    The empty branch must not record a plate: a correction menu route
-    after this dialog closes still refuses, which is the honest
-    reading of "open an entry first".
-    """
-    import rivercrossing.ui.views.entry_detail as entry_detail_module  # noqa: PLC0415 -- deferred-import spy target
-
-    built: list[_EntryDialogSpy] = []
-    monkeypatch.setattr(
-        entry_detail_module,
-        "EntryDetailDialog",
-        lambda *args, **kwargs: built.append(_EntryDialogSpy(*args, **kwargs)) or built[-1],
-    )
-    context = _RouteStub(presenter=None)
-
-    app_module._open_entry_detail_dialog(context, object(), "")  # type: ignore[arg-type]
-
-    assert context.detail_plate is None
-    assert len(built) == 1
-    assert built[0].args[1] == app_module._ENTRY_DETAIL_DEFAULT_PLATE
-    assert built[0].kwargs["data_source"] is app_module._EMPTY_SOURCE
-
-
 # ============================================================ W11 F3
 # The FINISHED banner: ``finished_infobar`` was constructed but never
 # shown (xrc-windows.md A's frozen-but-unimplemented state variant).
@@ -772,11 +745,12 @@ def test_wire_finished_banner_actions_without_a_console_view_is_a_no_op(
 #
 # The DNF row is the one correction whose target is typed into the
 # dialog itself: it works with nothing open (the operator types the
-# rider number), marks exactly the plate that comes back, and still
-# prefills the input from ``context.detail_plate`` when an entry is
-# loaded. ``corrections.run_dnf`` is the wx dialog boundary, so it is
-# swapped for a recorder here -- the same seam test_app_ride_menu.py's
-# ``_patch_ride_setup`` uses for the setup dialog.
+# rider number) and marks exactly the plate that comes back. Phase 2
+# dropped the entry-detail deep-link, so the route always opens the
+# dialog unprefilled. ``corrections.run_dnf`` is the wx dialog boundary,
+# so it is swapped for a recorder here -- the same seam
+# test_app_ride_menu.py's ``_patch_ride_setup`` uses for the setup
+# dialog.
 
 
 class _DnfFrame:
@@ -807,11 +781,10 @@ class _DnfPresenter:
 class _DnfContext:
     """The route-context surface ``_handle_mark_dnf_route`` reads."""
 
-    def __init__(self, engine: RideEngine, *, detail_plate: str | None) -> None:
+    def __init__(self, engine: RideEngine) -> None:
         """Wire the engine, its roster and the recording surfaces."""
         self.resource = object()
         self.roster = engine._roster
-        self.detail_plate = detail_plate
         self.frame = _DnfFrame()
         self.presenter = _DnfPresenter(engine)
 
@@ -828,12 +801,12 @@ def _patch_run_dnf(monkeypatch: pytest.MonkeyPatch, result: DnfMark | None) -> d
     return captured
 
 
-def test_handle_mark_dnf_route_without_an_open_entry_asks_for_the_plate(
+def test_handle_mark_dnf_route_opens_the_dialog_unprefilled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Phase 3: nothing has to be open -- the dialog asks the number."""
+    """Phase 2: nothing has to be open -- the dialog asks the number."""
     engine = _running_engine(hold_short_laps=False)
-    context = _DnfContext(engine, detail_plate=None)
+    context = _DnfContext(engine)
     captured = _patch_run_dnf(monkeypatch, DnfMark(plate="12", reason="mechanical failure"))
 
     app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
@@ -844,26 +817,12 @@ def test_handle_mark_dnf_route_without_an_open_entry_asks_for_the_plate(
     assert context.presenter.ticks == 1
 
 
-def test_handle_mark_dnf_route_with_an_open_entry_prefills_its_plate_and_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The deep-linked entry is offered, never required."""
-    engine = _running_engine(hold_short_laps=False)
-    context = _DnfContext(engine, detail_plate="12")
-    captured = _patch_run_dnf(monkeypatch, DnfMark(plate="12", reason="mechanical failure"))
-
-    app_module._handle_mark_dnf_route(context)  # type: ignore[arg-type]
-
-    assert (captured["plate"], captured["entry"]) == ("12", "12 · Rider 12")
-    assert engine.snapshot()[0].dnf is True
-
-
 def test_handle_mark_dnf_route_given_a_cancelled_dialog_marks_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Cancel is a silent no-op: no event, no notice, no refresh."""
     engine = _running_engine(hold_short_laps=False)
-    context = _DnfContext(engine, detail_plate=None)
+    context = _DnfContext(engine)
     before = len(engine.events)
     _patch_run_dnf(monkeypatch, None)
 

@@ -7,11 +7,18 @@ fixed crossing order through a real ``RideEngine``. Every test
 therefore drives the real roster and the real engine -- no wx, no fake
 view, and no test double is needed.
 
-Phase 2 rewrote the schedule and the pooled plate rule: each entry
-crosses once a lap under one plate (a pooled team's representative
-rotates round-robin), lap 1 starts at ``actual_start`` and every
-offset is a whole minute inside the interval, so a team's lap count
-equals a solo's.
+Phase 2 rewrote the pooled plate rule: each entry crosses once a lap
+under one plate (a pooled team's representative rotates round-robin),
+so a team's lap count equals a solo's.
+
+Phase 4 models the rider *wave*. The gun is back-dated so the final
+wave's last rider lands on the live clock, lap ``L`` (0-based) opens
+at ``actual_start + interval * (L + 1)`` -- one full interval after
+the gun, so no derived lap time is ever ``00:00:00`` -- and each
+wave's whole field crosses inside the first half-interval, leaving
+the second half as the gap before the next wave. ``elapsed()``
+therefore reads the whole race once a run finishes, as the main
+screen's clock is meant to.
 
 The clock is the naive fixed instant ``test_results.py``'s
 ``_engine_source_with_correction`` uses: the engine's lap arithmetic
@@ -30,7 +37,7 @@ from hypothesis import strategies as st
 
 from conftest import gorba_config
 from rivercrossing.cards import Shoe
-from rivercrossing.ride import RideEngine, RideStatus
+from rivercrossing.ride import Crossing, RideEngine, RideStatus
 from rivercrossing.roster import (
     DEFAULT_MAX_TEAM_SIZE,
     MIN_TEAM_SIZE,
@@ -44,6 +51,7 @@ from rivercrossing.roster import (
 from rivercrossing.ui.presenters.simulator import (
     SimOutcome,
     SimulatorPresenter,
+    _lap_offsets,
     _plates_to_record,
     check_message,
     default_interval_minutes,
@@ -52,6 +60,11 @@ from rivercrossing.ui.presenters.simulator import (
 
 # The fixed naive clock every engine here is built with.
 _START = datetime(2026, 9, 20, 10, 0)  # noqa: DTZ001
+
+# Phase 4 back-dates the gun and replays history through a fixed clock,
+# so ``elapsed()`` is exact; the tolerance only absorbs the wall time a
+# run takes when a caller-injected clock really ticks.
+_ELAPSED_TOLERANCE_S = 5.0
 
 # The seed every generator test pins, so names, sexes and plates are
 # reproducible run to run.
@@ -105,6 +118,25 @@ def _signature(roster: Roster) -> list[tuple[str, list[tuple[str, str, str | Non
 def _actual_start_of(engine: RideEngine) -> datetime:
     """Return the instant the engine's own start event recorded."""
     return datetime.fromisoformat(str(engine.events[0].payload["actual_start"]))
+
+
+def _laps_of(engine: RideEngine) -> list[list[Crossing]]:
+    """Return each lap's crossings, oldest first, one list per lap."""
+    laps: dict[int, list[Crossing]] = {}
+    for crossing in engine.crossings:
+        laps.setdefault(crossing.seq, []).append(crossing)
+    return [laps[seq] for seq in sorted(laps)]
+
+
+def _waves_of(engine: RideEngine) -> list[tuple[datetime, datetime]]:
+    """Return each lap's (first, last) crossing, oldest lap first."""
+    return [
+        (
+            min(crossing.crossed_at for crossing in lap),
+            max(crossing.crossed_at for crossing in lap),
+        )
+        for lap in _laps_of(engine)
+    ]
 
 
 # --------------------------------------------------------- resolve_solo
@@ -736,61 +768,126 @@ def test_run_simulation_given_the_dialog_defaults_records_660_crossings() -> Non
     assert {result.laps for result in engine.snapshot()} == {12}
 
 
-def test_run_simulation_first_lap_crossing_lands_on_actual_start() -> None:
-    """Lap 1's earliest crossing is the start instant itself."""
+def test_run_simulation_first_lap_opens_one_interval_after_the_gun() -> None:
+    """Phase 4: lap 1's leader crosses a full interval after the gun."""
     presenter, engine, _roster = _draft()
     presenter.generate_riders(6, 2, 2, seed=_SEED)
 
     presenter.run_simulation(laps=1, interval_minutes=45)
 
-    first_lap = [crossing.crossed_at for crossing in engine.crossings if crossing.seq == 1]
-    assert min(first_lap) == _actual_start_of(engine)
+    first_lap = sorted(crossing.crossed_at for crossing in engine.crossings)
+    assert min(first_lap) == _actual_start_of(engine) + timedelta(minutes=45)
 
 
-def test_run_simulation_lap_offsets_are_whole_minutes_inside_the_interval() -> None:
-    """Every lap-2 offset is a whole minute from 0 to interval - 1."""
+def test_run_simulation_no_derived_lap_time_is_zero() -> None:
+    """Phase 4: no lap time is zero; lap 1 clears the interval."""
+    presenter, engine, roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+
+    presenter.run_simulation(laps=3, interval_minutes=45)
+
+    lap_times = [seconds for entry in roster.entries for seconds in engine.lap_times(entry.plate)]
+    assert len(lap_times) == 18
+    assert min(lap_times) == 45 * 60.0
+
+
+def test_run_simulation_lap_offsets_stay_inside_the_first_half_interval() -> None:
+    """Phase 4: a lap's offsets span 0 .. interval // 2, ascending."""
     presenter, engine, _roster = _draft()
     presenter.generate_riders(6, 2, 2, seed=_SEED)
 
     presenter.run_simulation(laps=2, interval_minutes=45)
 
-    lap_two_base = _actual_start_of(engine) + timedelta(minutes=45)
-    offsets = [
-        (crossing.crossed_at - lap_two_base).total_seconds()
-        for crossing in engine.crossings
-        if crossing.seq == 2
-    ]
-    assert len(offsets) == 4
-    assert min(offsets) == 0.0
-    assert max(offsets) == 44 * 60
-    assert sorted(offsets) == offsets
+    waves = _waves_of(engine)
+    second_wave_base = _actual_start_of(engine) + timedelta(minutes=90)
+    assert waves[1][0] == second_wave_base
+    assert waves[1][1] - second_wave_base == timedelta(minutes=22)
+    assert waves[0][0] - _actual_start_of(engine) == timedelta(minutes=45)
 
 
-def test_run_simulation_last_crossing_sits_one_minute_before_the_next_lap() -> None:
-    """A lap's last crossing is a minute before the next lap."""
+def test_run_simulation_half_interval_gap_separates_the_waves() -> None:
+    """Phase 4: each wave opens a half-interval after the last one."""
     presenter, engine, _roster = _draft()
     presenter.generate_riders(6, 2, 2, seed=_SEED)
 
     presenter.run_simulation(laps=3, interval_minutes=5)
 
-    by_lap = {
-        lap: sorted(crossing.crossed_at for crossing in engine.crossings if crossing.seq == lap)
-        for lap in (1, 2, 3)
-    }
-    assert max(by_lap[1]) + timedelta(minutes=1) == min(by_lap[2])
-    assert max(by_lap[2]) + timedelta(minutes=1) == min(by_lap[3])
+    waves = _waves_of(engine)
+    gun = _actual_start_of(engine)
+    assert waves[0][0] == gun + timedelta(minutes=5)
+    assert waves[0][1] <= gun + timedelta(minutes=7.5)
+    assert waves[1][0] - waves[0][1] >= timedelta(minutes=2.5)
+    assert waves[2][0] - waves[1][1] >= timedelta(minutes=2.5)
 
 
-def test_run_simulation_second_lap_starts_one_interval_after_the_first() -> None:
-    """Lap 2's base sits exactly one interval after lap 1's own base."""
+def test_run_simulation_second_lap_opens_one_interval_after_the_first() -> None:
+    """Lap 2's wave opens exactly two intervals after the gun."""
     presenter, engine, _roster = _draft()
     presenter.generate_riders(6, 2, 2, seed=_SEED)
 
     presenter.run_simulation(laps=2, interval_minutes=45)
 
-    lap_two_base = _actual_start_of(engine) + timedelta(minutes=45)
+    lap_two_base = _actual_start_of(engine) + timedelta(minutes=90)
     second_lap = [crossing.crossed_at for crossing in engine.crossings if crossing.seq == 2]
     assert min(second_lap) == lap_two_base
+
+
+def test_run_simulation_keeps_the_same_field_order_for_every_lap() -> None:
+    """Phase 4: the shuffled field order is stable lap after lap."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+
+    presenter.run_simulation(laps=3, interval_minutes=45)
+
+    orders = [[crossing.entry_id for crossing in lap] for lap in _laps_of(engine)]
+    assert len(orders) == 3
+    assert orders[0] == orders[1] == orders[2]
+    assert len(set(orders[0])) == 6
+
+
+def test_run_simulation_backdates_the_gun_by_the_whole_race() -> None:
+    """Phase 4: the gun sits the race plus a half-interval back."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    presenter.run_simulation(laps=12, interval_minutes=45)
+
+    assert engine.actual_start == _START - timedelta(minutes=12 * 45) - timedelta(minutes=22.5)
+
+
+def test_run_simulation_elapsed_reads_the_whole_race_at_completion() -> None:
+    """Phase 4: elapsed() shows the whole race once the run ends."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+
+    presenter.run_simulation(laps=12, interval_minutes=45)
+
+    expected = (12 * 45 + 22.5) * 60
+    assert abs(engine.elapsed() - expected) <= _ELAPSED_TOLERANCE_S
+
+
+def test_run_simulation_last_crossing_lands_on_the_live_clock() -> None:
+    """Phase 4: the final wave's last rider lands on the live clock."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    presenter.run_simulation(laps=2, interval_minutes=45)
+
+    last = max(crossing.crossed_at for crossing in engine.crossings)
+    assert last <= _START
+    assert _START - last <= timedelta(minutes=1)
+
+
+def test_run_simulation_appends_start_and_stop_events() -> None:
+    """Phase 4: the run opens with start and closes with stop."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(6, 2, 2, seed=_SEED)
+
+    presenter.run_simulation(laps=1, interval_minutes=45)
+
+    actions = [event.action for event in engine.events]
+    assert actions[0] == "start"
+    assert actions[-1] == "stop"
 
 
 def test_run_simulation_pooled_team_rotates_its_representative_each_lap() -> None:
@@ -835,17 +932,14 @@ def test_run_simulation_leaves_the_ride_running_and_stopped() -> None:
 
 
 def test_run_simulation_solo_lap_times_match_the_interval() -> None:
-    """A solo entry's later laps are exactly one interval apart."""
+    """A solo entry's every lap is exactly one interval long."""
     presenter, engine, roster = _draft()
     presenter.generate_riders(10, 2, 4, seed=_SEED)
     solo = _entries_of(roster, EntryType.SOLO)[0]
 
     presenter.run_simulation(laps=3, interval_minutes=1)
 
-    lap_times = engine.lap_times(solo.plate)
-    assert len(lap_times) == 3
-    assert 0.0 <= lap_times[0] < 60.0
-    assert lap_times[1:] == (60.0, 60.0)
+    assert engine.lap_times(solo.plate) == (60.0, 60.0, 60.0)
 
 
 def test_run_simulation_reuses_one_entry_order_for_every_lap() -> None:
@@ -1072,3 +1166,50 @@ def test_plates_to_record_given_a_pooled_ride_returns_one_plate_per_entry(
     plates = _plates_to_record(roster)
 
     assert len(plates) == len(roster.entries)
+
+
+# --------------------------------------------------------- _lap_offsets
+
+
+@pytest.mark.parametrize(
+    ("entry_count", "interval_minutes", "expected"),
+    [
+        pytest.param(0, 45, [], id="empty-field"),
+        pytest.param(1, 45, [0], id="single-entry"),
+        pytest.param(2, 45, [0, 22], id="two-entries"),
+        pytest.param(6, 45, [0, 4, 8, 13, 17, 22], id="many-entries"),
+        pytest.param(2, 2, [0, 1], id="two-minute-interval"),
+        pytest.param(2, 1, [0, 0], id="one-minute-interval"),
+        pytest.param(3, 5, [0, 1, 2], id="odd-interval"),
+    ],
+)
+def test_lap_offsets_given_a_field_returns_ascending_first_half_wave_minutes(
+    entry_count: int, interval_minutes: int, expected: list[int]
+) -> None:
+    """T-4: the wave ascends 0 .. interval // 2, one per entry."""
+    offsets = _lap_offsets(entry_count, interval_minutes)
+
+    assert offsets == expected
+
+
+def test_lap_offsets_given_the_widest_field_reaches_the_half_interval() -> None:
+    """A 240-entry wave inside a 240-minute interval spans 0..120."""
+    offsets = _lap_offsets(240, 240)
+
+    assert (len(offsets), offsets[0], offsets[-1]) == (240, 0, 120)
+
+
+@given(
+    entry_count=st.integers(min_value=1, max_value=200),
+    interval_minutes=st.integers(min_value=1, max_value=240),
+)
+def test_lap_offsets_given_any_field_stays_inside_the_first_half_interval(
+    entry_count: int, interval_minutes: int
+) -> None:
+    """Property: the leader opens at 0, all inside the half (T-7)."""
+    offsets = _lap_offsets(entry_count, interval_minutes)
+
+    assert len(offsets) == entry_count
+    assert offsets[0] == 0
+    assert sorted(offsets) == offsets
+    assert max(offsets) <= interval_minutes // 2

@@ -39,6 +39,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from itertools import combinations
 from typing import TYPE_CHECKING
 
 from rivercrossing.cards import Card, RestitutionError, ShoeClosedError, ShoeEmpty
@@ -55,9 +56,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_DECK_COUNT",
+    "DEFAULT_JOKERS_MODE",
     "DEFAULT_JOKERS_PER_DECK",
     "DEFAULT_TIEBREAK_ORDER",
     "FAR_TOO_MANY",
+    "JOKERS_MODES",
+    "JOKERS_MODE_PER_DECK",
+    "JOKERS_MODE_TOTAL",
+    "MAX_JOKERS_PER_DECK",
     "NOT_ENOUGH",
     "OK",
     "REPLAY_ACTIONS",
@@ -160,12 +166,29 @@ _MAX_TEAM_SIZE_LIMIT = 10
 # text is updated in a later phase, not rewritten here).
 DEFAULT_DECK_COUNT = 8
 
-# setup.xrc's jokers_choice dropdown (a wxChoice over 0..4, opening on
-# <selection>1</selection>) is the dialog half of this default; Phase
-# 1 (2026-09-13) re-bound it from the retired jokers_2_radio's 2 to 1.
-# Recorded here so RideConfig's own default never drifts from the
-# authored control.
+# setup.xrc's jokers_spin (a wxSpinCtrl over 0..10, opening on 1) is the
+# dialog half of this default; Phase 1 (2026-09-13) re-bound it from the
+# retired jokers_2_radio's 2 to 1, and Phase 5 kept the same 1 when the
+# jokers_choice dropdown became the spinner. Recorded here so
+# RideConfig's own default never drifts from the authored control.
 DEFAULT_JOKERS_PER_DECK = 1
+
+# The two jokers_mode spellings (the ``ride.jokers_mode`` column,
+# spec §2 Phase 5). Per-deck re-deals jokers_per_deck jokers every
+# cycle; total spends that many jokers once, across the whole ride
+# (Shoe's own jokers_total mode).
+JOKERS_MODE_PER_DECK = "per_deck"
+JOKERS_MODE_TOTAL = "total"
+JOKERS_MODES: tuple[str, str] = (JOKERS_MODE_PER_DECK, JOKERS_MODE_TOTAL)
+
+# setup.xrc's jokers_total_radio is the checked default in the jokers
+# radio pair, so a fresh dialog builds a total-mode ride.
+DEFAULT_JOKERS_MODE = JOKERS_MODE_TOTAL
+
+# setup.xrc's jokers_spin declares the same 0..10 bound (xrc-windows.md
+# section B); recorded so the dialog's control and RideConfig's own
+# validation cannot drift.
+MAX_JOKERS_PER_DECK = 10
 
 # The canvas's lap_km_spin draws "8.0" (the GORBA reference ride's own
 # 8 km loop, spec.md §6) but XRC declares no <value>, so a fresh
@@ -204,6 +227,17 @@ class RideConfig:
     restoring R-34's hold-for-review behaviour
     (:meth:`RideEngine.record_crossing`).
 
+    ``jokers_per_deck``/``jokers_mode`` are the shoe's joker
+    configuration (spec §4, Phase 5's Cards controls). Both persist
+    (the ``ride.jokers_per_deck``/``ride.jokers_mode`` columns);
+    ``jokers_mode`` is :data:`JOKERS_MODE_PER_DECK` (every cycle
+    re-deals that many jokers per deck) or :data:`JOKERS_MODE_TOTAL`
+    (that many jokers for the whole ride, the dialog's checked
+    default), and the Store builds the ride's :class:`~rivercrossing.
+    cards.Shoe` with ``jokers_total=(jokers_mode == JOKERS_MODE_TOTAL)``
+    -- :func:`check_card_sufficiency` reads the same mode for the
+    shoe's capacity.
+
     ``event_date``/``planned_start`` both round-trip the ``ride``
     table's own two separate columns (spec §2): ``ride_setup_dlg``
     itself has only one ``date_picker`` and one time-only
@@ -228,6 +262,7 @@ class RideConfig:
     max_team_size: int = 4
     deck_count: int = DEFAULT_DECK_COUNT
     jokers_per_deck: int = DEFAULT_JOKERS_PER_DECK
+    jokers_mode: str = DEFAULT_JOKERS_MODE
     max_cards: int | None = None
     tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER
     logo_path: Path | None = None
@@ -238,7 +273,11 @@ class RideConfig:
 
         Raises:
             RideConfigError: ``max_team_size`` is outside 2..10
-                (R-12), ``deck_count`` is below 1 (spec §4), or
+                (R-12), ``deck_count`` is below 1 (spec §4),
+                ``jokers_per_deck`` is outside 0..10 (Phase 5's
+                jokers_spin), ``jokers_mode`` is neither
+                :data:`JOKERS_MODE_PER_DECK` nor
+                :data:`JOKERS_MODE_TOTAL`, or
                 ``planned_duration_s``/``min_lap_s`` is not positive
                 (spec §2/§6).
         """
@@ -250,6 +289,12 @@ class RideConfig:
             raise RideConfigError(msg)
         if self.deck_count < 1:
             msg = f"deck_count must be >= 1, got {self.deck_count}"
+            raise RideConfigError(msg)
+        if not 0 <= self.jokers_per_deck <= MAX_JOKERS_PER_DECK:
+            msg = f"jokers_per_deck must be 0..{MAX_JOKERS_PER_DECK}, got {self.jokers_per_deck}"
+            raise RideConfigError(msg)
+        if self.jokers_mode not in JOKERS_MODES:
+            msg = f"jokers_mode must be one of {JOKERS_MODES}, got {self.jokers_mode!r}"
             raise RideConfigError(msg)
         if self.planned_duration_s <= 0:
             msg = f"planned_duration_s must be positive, got {self.planned_duration_s}"
@@ -310,9 +355,11 @@ FAR_TOO_MANY = "far_too_many"
 class CardCheck:
     """One ride's shoe size against its estimated card demand.
 
-    ``shoe_cards`` is the shoe's own capacity (spec §4's
-    ``deck_count x (52 + jokers_per_deck)``); ``expected`` is the
-    crossing count :func:`estimate_cards_needed` predicts for the
+    ``shoe_cards`` is the shoe's own capacity at the ride's jokers mode
+    (spec §4): ``deck_count x (52 + jokers_per_deck)`` per deck, or
+    ``deck_count x 52 + jokers_per_deck`` when
+    :attr:`RideConfig.jokers_mode` spends the jokers once. ``expected``
+    is the crossing count :func:`estimate_cards_needed` predicts for the
     field. ``verdict`` is one of :data:`NOT_ENOUGH` (the shoe runs dry
     before the field stops drawing), :data:`OK`, or :data:`FAR_TOO_MANY`
     (the shoe holds more than twice the demand).
@@ -377,9 +424,12 @@ def check_card_sufficiency(
     prediction at the 1x boundary (demand above capacity is
     :data:`NOT_ENOUGH`) and the 2x boundary (capacity above twice the
     demand is :data:`FAR_TOO_MANY`); everything between is
-    :data:`OK`. ``max_cards`` (R-13) is deliberately not consulted --
-    it caps what an entry's hand scores, not how many cards the shoe
-    must hold.
+    :data:`OK`. The capacity itself follows the ride's jokers mode
+    (Phase 5): per-deck counts ``deck_count x (52 + jokers_per_deck)``,
+    total counts ``deck_count x 52 + jokers_per_deck`` -- the shoe the
+    Store actually builds from that config. ``max_cards`` (R-13) is
+    deliberately not consulted -- it caps what an entry's hand scores,
+    not how many cards the shoe must hold.
 
     Args:
         config: The ride's setup-time settings.
@@ -393,7 +443,10 @@ def check_card_sufficiency(
     expected = estimate_cards_needed(config, roster, avg_speed_kmh)
     if expected is None:
         return None
-    shoe_cards = config.deck_count * (52 + config.jokers_per_deck)
+    if config.jokers_mode == JOKERS_MODE_TOTAL:
+        shoe_cards = config.deck_count * 52 + config.jokers_per_deck
+    else:
+        shoe_cards = config.deck_count * (52 + config.jokers_per_deck)
     if expected > shoe_cards:
         verdict = NOT_ENOUGH
     elif shoe_cards > 2 * expected:
@@ -517,6 +570,27 @@ def _require_reason(reason: str) -> None:
     """
     if not reason.strip():
         msg = "reason must not be empty"
+        raise ValueError(msg)
+
+
+def _require_lap_after(entry_id: str, crossed_at: datetime, previous: datetime) -> None:
+    """Refuse a lap instant at or before *previous* (Phase 3).
+
+    A lap that takes no time is not a lap, so the two correction
+    commands that can date a crossing explicitly -- ``edit_crossing``
+    and ``add_crossing_at`` -- refuse a zero or negative lap time
+    before writing anything. *previous* is the instant the lap would be
+    measured from: the entry's preceding lap, or ``actual_start`` when
+    there is none.
+
+    Raises:
+        ValueError: *crossed_at* is at or before *previous*.
+    """
+    if crossed_at <= previous:
+        msg = (
+            f"lap time must be positive for entry {entry_id}: "
+            f"{crossed_at.isoformat()} is not after {previous.isoformat()}"
+        )
         raise ValueError(msg)
 
 
@@ -815,6 +889,33 @@ class RideEngine:
     - **undo reason label.** The ``undo`` event payload now carries
       ``reason="Undo last crossing"`` (fixed label, E7.1.1).
 
+    Phase 3's own resolutions (minimum lap time, duplicate detection):
+
+    - **No zero or negative lap time.** ``edit_crossing``'s replacement
+      instant must be strictly after the lap it would be measured from
+      (the entry's preceding lap, ``actual_start`` for the earliest
+      one) and ``add_crossing_at``'s explicit instant strictly after
+      the entry's latest crossing (``actual_start`` when it has none);
+      both raise ``ValueError`` before writing anything, so a refused
+      correction touches no crossing, deals no card and appends no
+      event. The refusal is the derived-lap-time rule itself
+      (``lap_times``), not ``config.min_lap_s`` -- a short lap is still
+      a lap and still flags (R-34).
+    - **The gate holds on replay.** ``apply`` re-applies a persisted
+      ``edit_crossing``/``add_crossing_at`` through the public command
+      -- never a private ungated half -- so a replayed event is judged
+      by the same zero/negative-lap gate as a live correction. A legal
+      live command already satisfied that gate when it ran, so
+      replaying it still rebuilds the ride exactly. The app is
+      unreleased and its databases are erased, so no pre-gate row
+      exists to preserve (E5.1.2).
+    - **Duplicates are a projection, never a mutation.**
+      ``duplicate_crossings`` names every live pair sharing one entry
+      and one identical instant, oldest first; it changes nothing and
+      nothing is auto-removed. The console's Needs Review tab lists
+      exactly those pairs (``FeedRow.duplicate``) so the operator opens
+      Crossing Detail and deletes one deliberately.
+
     K's own resolution (record a miss):
 
     - **A miss is not a Crossing.** ``record_miss`` records a passing
@@ -1024,6 +1125,31 @@ class RideEngine:
         the current live state -- the console feed's source of truth.
         """
         return tuple(self._crossings)
+
+    def duplicate_crossings(self) -> tuple[tuple[Crossing, Crossing], ...]:
+        """Return each live pair sharing one entry and one instant.
+
+        Phase 3's double-entry detector: the same plate recorded twice
+        at the identical instant -- a mis-key, a CSV/store import, or a
+        miss assigned onto a crossing already on the line -- leaves two
+        laps the operator must delete one of. Identity is
+        (``entry_id``, ``crossed_at``) with exact datetime equality, so
+        two entries crossing together are never a pair, and two laps of
+        one entry a second apart are not either.
+
+        Read-only and side-effect free (the console's Needs Review tab
+        is a pure projection of it). Pairs are (older, newer) in record
+        order, and the pairs themselves are oldest instant first.
+
+        Returns:
+            One ``(Crossing, Crossing)`` tuple per duplicate pair,
+            empty when the ride holds none.
+        """
+        by_instant: dict[tuple[str, datetime], list[Crossing]] = {}
+        for crossing in self._crossings:
+            by_instant.setdefault((crossing.entry_id, crossing.crossed_at), []).append(crossing)
+        ordered = sorted(by_instant, key=lambda key: (key[1], key[0]))
+        return tuple(pair for key in ordered for pair in combinations(by_instant[key], 2))
 
     def card_for(self, crossing: Crossing) -> Card:
         """Return the shoe card dealt for *crossing* (R-40).
@@ -1460,14 +1586,17 @@ class RideEngine:
     def deal_manual(self, plate: str, reason: str) -> Event:
         """Deal one shoe card to *plate*'s entry by hand (spec §4).
 
-        The operator's "manual add" correction from the entry detail:
-        one card comes off the shoe and credits straight into the
-        entry's hand -- never the held queue, whose short-lap path
-        (R-34) a deliberate manual deal must not bypass -- the entry
-        is marked has_data, and an audit ``Event`` carrying *reason*
-        lands. The card joins the credited sequence, so it obeys
-        ``config.max_cards`` exactly like a crossing's card: a manual
-        card past the cap is dealt but non-scoring (R-13). A
+        The operator's bonus-card correction: one card comes off the
+        shoe and credits straight into the entry's hand -- never the
+        held queue, whose short-lap path (R-34) a deliberate manual
+        deal must not bypass -- the entry is marked has_data, and an
+        audit ``Event`` carrying *reason* lands. The card is
+        **entry-scoped** (no rider tag): a bonus card is not a lap
+        crossing, so a pooled rider's DNF never forfeits it, and the
+        typed *plate* rides in the audit payload only. The card joins
+        the credited sequence, so it obeys ``config.max_cards`` exactly
+        like a crossing's card: a manual card past the cap is dealt but
+        non-scoring (R-13). A
         ``ShoeEmpty`` mid-deal reshuffles and audits it, exactly as
         ``record_crossing``'s own deal does (R-40). REOPENED after
         Finish deals too: ``reopen()`` re-opens the shoe (spec §15),
@@ -1494,7 +1623,10 @@ class RideEngine:
             raise IllegalStateError(f"cannot deal manually from {self._state}")
         entry = self._require_entry(plate)
         card = self._deal_card()
-        self._credit(entry.plate, card, plate)
+        # Entry-scoped, not rider-tagged: a bonus card is not a lap
+        # crossing, so a pooled rider's DNF never forfeits it (the typed
+        # plate rides in the audit payload only).
+        self._credit(entry.plate, card, None)
         self._roster.mark_has_data(entry)
         return self._append(
             Event(
@@ -1525,7 +1657,8 @@ class RideEngine:
         Args:
             entry_id: The entry whose crossing to edit.
             seq: The crossing's 1-based lap number within that entry.
-            crossed_at: The corrected crossing instant.
+            crossed_at: The corrected crossing instant; must be
+                strictly after the lap before it (Phase 3).
             reason: Why the time was wrong; carried in the audit
                 payload.
 
@@ -1533,7 +1666,10 @@ class RideEngine:
             The appended ``edit_crossing`` audit event.
 
         Raises:
-            ValueError: *reason* is empty or whitespace-only.
+            ValueError: *reason* is empty or whitespace-only, or
+                *crossed_at* would give the crossing a zero or negative
+                lap time (at or before the previous crossing, or
+                ``actual_start`` for the earliest lap).
             IllegalStateError: the ride is not RUNNING or REOPENED, or
                 no crossing matches *entry_id*/*seq*.
         """
@@ -1541,6 +1677,13 @@ class RideEngine:
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot edit crossing from {self._state}")
         crossing = self._require_crossing(entry_id, seq)
+        # A lap is measured from the crossing before it in the entry's
+        # own time-ordered lap sequence -- lap 1 from the gun (spec §6)
+        # -- so the refusal is exactly the lap time `lap_times` derives.
+        laps = self._laps_for(crossing.entry_id)
+        position = laps.index(crossing)
+        previous = laps[position - 1].crossed_at if position > 0 else self._require_actual_start()
+        _require_lap_after(crossing.entry_id, crossed_at, previous)
         replacement = Crossing(
             entry_id=crossing.entry_id,
             seq=crossing.seq,
@@ -1621,7 +1764,12 @@ class RideEngine:
         for the live console path). RUNNING or REOPENED only; REOPENED
         after Finish passes the state gate and deals too, because
         ``reopen()`` re-opens the shoe (spec §15) -- the missed
-        crossing's card comes off the same continuing deal order.
+        crossing's card comes off the same continuing deal order. A
+        zero or negative lap time is refused (Phase 3): *crossed_at*
+        must be strictly after the entry's own latest crossing, or
+        after ``actual_start`` when the entry has none yet, so a
+        back-filled correction can never manufacture a duplicate of a
+        lap already on the line.
 
         Args:
             plate: The recorded plate, resolved like a crossing's
@@ -1634,7 +1782,9 @@ class RideEngine:
             The appended ``add_crossing_at`` audit event.
 
         Raises:
-            ValueError: *reason* is empty or whitespace-only.
+            ValueError: *reason* is empty or whitespace-only, or
+                *crossed_at* is at or before the entry's latest
+                crossing (``actual_start`` when it has none).
             IllegalStateError: the ride is not RUNNING or REOPENED.
             UnknownPlateError: *plate* resolves to no entry.
         """
@@ -1642,6 +1792,9 @@ class RideEngine:
         if self._state not in (RideStatus.RUNNING, RideStatus.REOPENED):
             raise IllegalStateError(f"cannot add crossing from {self._state}")
         entry = self._require_entry(plate)
+        laps = self._laps_for(entry.plate)
+        latest = laps[-1].crossed_at if laps else self._require_actual_start()
+        _require_lap_after(entry.plate, crossed_at, latest)
         self._record_crossing_at(entry, crossed_at, rider_plate=plate)
         return self._append(
             Event(
@@ -2375,7 +2528,12 @@ class RideEngine:
         :meth:`_begin_start` directly -- never through :meth:`start`'s
         readiness gates, which a live start already cleared -- so a
         persisted running ride rebuilds even when its stored state
-        would not pass today's gates (an empty roster, say).
+        would not pass today's gates (an empty roster, say). The Phase 3
+        lap-time gate is *not* bypassed that way: a replayed
+        ``edit_crossing``/``add_crossing_at`` goes through the public
+        command, so a stored row whose ``crossed_at`` yields a zero or
+        negative lap time is refused (class docstring's Phase 3
+        resolutions).
         ``stop`` re-stamps its payload timestamp from the engine's
         clock, so its audit bytes differ by design on replay (class
         docstring's E5.1.2 resolutions); ``finish``/``reopen``
@@ -2394,6 +2552,9 @@ class RideEngine:
         Raises:
             UnknownEventActionError: *event.action* is not a known
                 ride mutation.
+            ValueError: a replayed correction's reason is empty, or a
+                replayed ``edit_crossing``/``add_crossing_at`` violates
+                Phase 3's zero/negative-lap gate.
             RideEngineError: ``confirm_held``/``void_held`` name a
                 crossing this engine never recorded (an inconsistent
                 event stream).

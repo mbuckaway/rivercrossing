@@ -103,7 +103,7 @@ def test_rank_best_hand_places_first_worst_last() -> None:
     """Best hand first: royal flush, then straight, then high card."""
     results = [
         _result("1", "AS QD 9H 5C 3S"),
-        _result("2", "AS KS QS JS TS"),
+        _result("2", "AS KS QS JS 10S"),
         _result("3", "9H 8C 7D 6S 5H"),
     ]
 
@@ -133,8 +133,8 @@ def test_rank_hand_tie_resolved_by_most_laps() -> None:
     Phase 3's stored default puts the venue draw first, so the default
     leaves this tie unresolved (pinned below).
     """
-    more_laps = _result("1", "AS KS QS JS TS", laps=5)
-    fewer_laps = _result("2", "AH KH QH JH TH", laps=4)
+    more_laps = _result("1", "AS KS QS JS 10S", laps=5)
+    fewer_laps = _result("2", "AH KH QH JH 10H", laps=4)
     laps_first = (TieBreak.MOST_LAPS, TieBreak.TOTAL_TIME, TieBreak.HIGH_CARD_DRAW)
 
     placed = rank([fewer_laps, more_laps], laps_first)
@@ -145,8 +145,8 @@ def test_rank_hand_tie_resolved_by_most_laps() -> None:
 
 def test_rank_hand_tie_resolved_by_shortest_total_time() -> None:
     """Equal hand ranks and laps: the shorter total time wins (②)."""
-    fast = _result("1", "AS KS QS JS TS", laps=5, total_time=90.0)
-    slow = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    fast = _result("1", "AS KS QS JS 10S", laps=5, total_time=90.0)
+    slow = _result("2", "AH KH QH JH 10H", laps=5, total_time=100.0)
     laps_first = (TieBreak.MOST_LAPS, TieBreak.TOTAL_TIME, TieBreak.HIGH_CARD_DRAW)
 
     placed = rank([slow, fast], laps_first)
@@ -156,8 +156,8 @@ def test_rank_hand_tie_resolved_by_shortest_total_time() -> None:
 
 def test_rank_live_order_resolves_a_hand_tie_by_laps_then_time() -> None:
     """The live order ranks a hand tie without the venue draw."""
-    more_laps = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    fewer_laps = _result("2", "AH KH QH JH TH", laps=4, total_time=50.0)
+    more_laps = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    fewer_laps = _result("2", "AH KH QH JH 10H", laps=4, total_time=50.0)
 
     placed = rank([fewer_laps, more_laps], LIVE_TIEBREAK_ORDER)
 
@@ -167,8 +167,8 @@ def test_rank_live_order_resolves_a_hand_tie_by_laps_then_time() -> None:
 
 def test_rank_live_order_equal_laps_and_time_still_flags_draw() -> None:
     """An equal pair with no venue draw stays a draw (R-43)."""
-    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    second = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    first = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH 10H", laps=5, total_time=100.0)
 
     placed = rank([first, second], LIVE_TIEBREAK_ORDER)
 
@@ -177,8 +177,8 @@ def test_rank_live_order_equal_laps_and_time_still_flags_draw() -> None:
 
 def test_rank_unresolved_hand_tie_flags_draw_required_and_shares_place() -> None:
     """Equal hand, laps, time: flagged draw, never silently ordered."""
-    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    second = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    first = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH 10H", laps=5, total_time=100.0)
 
     placed = rank([first, second])
 
@@ -202,7 +202,7 @@ def test_rank_given_distinct_hands_numbers_them_one_to_n_without_draws() -> None
     """Distinct hands: consecutive places, no ⚠, no shared place."""
     results = [
         _result("1", "AS QD 9H 5C 3S"),
-        _result("2", "AS KS QS JS TS"),
+        _result("2", "AS KS QS JS 10S"),
         _result("3", "9H 8C 7D 6S 5H"),
         _result("4", "JH JC JD 4H 4C"),
     ]
@@ -226,7 +226,7 @@ def test_rank_given_distinct_hands_orders_them_by_strength_best_first() -> None:
     """
     results = [
         _result("1", "AS QD 9H 5C 3S"),
-        _result("2", "AS KS QS JS TS"),
+        _result("2", "AS KS QS JS 10S"),
         _result("3", "9H 8C 7D 6S 5H"),
         _result("4", "JH JC JD 4H 4C"),
     ]
@@ -238,8 +238,8 @@ def test_rank_given_distinct_hands_orders_them_by_strength_best_first() -> None:
 
 def test_rank_given_two_identical_hands_flags_only_that_pair_a_draw() -> None:
     """Two identical hands share a place and carry the ⚠ note."""
-    twin_a = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    twin_b = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    twin_a = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    twin_b = _result("2", "AH KH QH JH 10H", laps=5, total_time=100.0)
     other = _result("3", "9H 8C 7D 6S 5H", laps=4, total_time=50.0)
 
     placed = rank([other, twin_b, twin_a])
@@ -253,7 +253,7 @@ def test_rank_given_two_identical_hands_flags_only_that_pair_a_draw() -> None:
 
 def test_rank_given_a_dnf_amid_distinct_hands_still_excludes_it() -> None:
     """The prior phase's DNF exclusion survives: no place is issued."""
-    active_a = _result("1", "AS KS QS JS TS", laps=5)
+    active_a = _result("1", "AS KS QS JS 10S", laps=5)
     dnf = _result("2", "KH KC 5H 5D AS", laps=9, dnf=True)
     active_b = _result("3", "9H 8C 7D 6S 5H", laps=4)
 
@@ -264,8 +264,8 @@ def test_rank_given_a_dnf_amid_distinct_hands_still_excludes_it() -> None:
 
 def test_rank_draw_pair_share_place_and_next_place_uses_competition_numbering() -> None:
     """A two-way draw at joint 1st leaves the next entry at 3rd."""
-    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    second = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    first = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH 10H", laps=5, total_time=100.0)
     next_entry = _result("3", "9H 8C 7D 6S 5H")
 
     placed = rank([first, second, next_entry])
@@ -275,8 +275,8 @@ def test_rank_draw_pair_share_place_and_next_place_uses_competition_numbering() 
 
 def test_rank_empty_tiebreak_order_flags_every_hand_tie_as_draw() -> None:
     """With no criteria to resolve by, every hand tie is a draw."""
-    first = _result("1", "AS KS QS JS TS", laps=5)
-    second = _result("2", "AH KH QH JH TH", laps=4)
+    first = _result("1", "AS KS QS JS 10S", laps=5)
+    second = _result("2", "AH KH QH JH 10H", laps=4)
 
     placed = rank([first, second], order=())
 
@@ -289,9 +289,9 @@ def test_rank_empty_tiebreak_order_flags_every_hand_tie_as_draw() -> None:
 
 def test_rank_reordered_tiebreak_order_changes_placings() -> None:
     """Swapping MOST_LAPS and TOTAL_TIME re-ranks the same results."""
-    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    second = _result("2", "AH KH QH JH TH", laps=4, total_time=50.0)
-    third = _result("3", "AD KD QD JD TD", laps=4, total_time=60.0)
+    first = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH 10H", laps=4, total_time=50.0)
+    third = _result("3", "AD KD QD JD 10D", laps=4, total_time=60.0)
     by_laps = rank(
         [first, second, third],
         (TieBreak.MOST_LAPS, TieBreak.TOTAL_TIME, TieBreak.HIGH_CARD_DRAW),
@@ -307,8 +307,8 @@ def test_rank_reordered_tiebreak_order_changes_placings() -> None:
 
 def test_rank_high_card_draw_first_leaves_every_hand_tie_unresolved() -> None:
     """A front HIGH_CARD_DRAW draws before later criteria apply."""
-    first = _result("1", "AS KS QS JS TS", laps=5)
-    second = _result("2", "AH KH QH JH TH", laps=4)
+    first = _result("1", "AS KS QS JS 10S", laps=5)
+    second = _result("2", "AH KH QH JH 10H", laps=4)
 
     placed = rank([first, second], (TieBreak.HIGH_CARD_DRAW, TieBreak.MOST_LAPS))
 
@@ -336,8 +336,8 @@ def test_rank_default_order_flags_a_laps_resolvable_tie_for_the_venue_draw() -> 
     two identical hands are flagged even though their laps differ --
     the pre-Phase-3 default silently ordered this pair by laps.
     """
-    more_laps = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    fewer_laps = _result("2", "AH KH QH JH TH", laps=4, total_time=50.0)
+    more_laps = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    fewer_laps = _result("2", "AH KH QH JH 10H", laps=4, total_time=50.0)
 
     placed = rank([fewer_laps, more_laps])
 
@@ -350,8 +350,8 @@ def test_rank_default_order_flags_a_laps_resolvable_tie_for_the_venue_draw() -> 
 def test_rank_omitted_order_uses_default_constant() -> None:
     """Omitting order ranks like the DEFAULT_TIEBREAK_ORDER."""
     results = [
-        _result("1", "AS KS QS JS TS", laps=5, total_time=100.0),
-        _result("2", "AH KH QH JH TH", laps=5, total_time=90.0),
+        _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0),
+        _result("2", "AH KH QH JH 10H", laps=5, total_time=90.0),
     ]
 
     assert rank(results) == rank(results, DEFAULT_TIEBREAK_ORDER)
@@ -368,7 +368,7 @@ def test_rank_omitted_order_uses_default_constant() -> None:
 def test_rank_excludes_dnf_entries_and_keeps_the_active_numbering() -> None:
     """Two actives plus a DNF rank 1..2 -- no third place is issued."""
     active = [
-        _result("1", "AS KS QS JS TS", laps=5),
+        _result("1", "AS KS QS JS 10S", laps=5),
         _result("2", "9H 8C 7D 6S 5H", laps=4),
     ]
     dnf = _result("3", "KH KC 5H 5D AS", laps=6, dnf=True)
@@ -380,7 +380,7 @@ def test_rank_excludes_dnf_entries_and_keeps_the_active_numbering() -> None:
 
 def test_rank_given_a_laps_leading_dnf_excludes_it_entirely() -> None:
     """A DNF never displaces, or sits beside, an ACTIVE placing."""
-    dnf = _result("1", "AS KS QS JS TS", laps=99, dnf=True)
+    dnf = _result("1", "AS KS QS JS 10S", laps=99, dnf=True)
     active = _result("2", "9H 8C 7D 6S 5H", laps=4)
 
     placed = rank([dnf, active])
@@ -390,7 +390,7 @@ def test_rank_given_a_laps_leading_dnf_excludes_it_entirely() -> None:
 
 def test_rank_given_only_dnf_results_returns_an_empty_list() -> None:
     """An all-DNF field publishes nothing at all."""
-    first = _result("1", "AS KS QS JS TS", dnf=True)
+    first = _result("1", "AS KS QS JS 10S", dnf=True)
     second = _result("2", "9H 8C 7D 6S 5H", dnf=True)
 
     placed = rank([second, first])
@@ -404,7 +404,7 @@ def test_rank_given_only_dnf_results_returns_an_empty_list() -> None:
 def test_rank_by_kind_splits_mixed_results_into_two_ranked_lists() -> None:
     """Teams rank against teams; solos rank against solos (Phase 3)."""
     team_weak = _result("1", "AS QD 9H 5C 3S", kind="team")
-    team_strong = _result("2", "AS KS QS JS TS", kind="team")
+    team_strong = _result("2", "AS KS QS JS 10S", kind="team")
     solo_weak = _result("3", "9H 8C 7D 6S 5H", kind="solo")
     solo_strong = _result("4", "JH JC JD 4H 4C", kind="solo")
 
@@ -418,7 +418,7 @@ def test_rank_by_kind_splits_mixed_results_into_two_ranked_lists() -> None:
 
 def test_rank_by_kind_renumbers_each_section_places_from_one() -> None:
     """Each section starts at place 1, however the kinds interleave."""
-    team_a = _result("1", "AS KS QS JS TS", kind="team")
+    team_a = _result("1", "AS KS QS JS 10S", kind="team")
     team_b = _result("2", "9H 8C 7D 6S 5H", kind="team")
     solo_a = _result("3", "AS QD 9H 5C 3S", kind="solo")
     solo_b = _result("4", "JH JC JD 4H 4C", kind="solo")
@@ -432,7 +432,7 @@ def test_rank_by_kind_renumbers_each_section_places_from_one() -> None:
 
 def test_rank_by_kind_excludes_dnf_entries_from_both_sections() -> None:
     """Each section drops its DNF entries, numbering its actives."""
-    team_active = _result("1", "AS KS QS JS TS", kind="team", laps=5)
+    team_active = _result("1", "AS KS QS JS 10S", kind="team", laps=5)
     team_dnf = _result("2", "9H 8C 7D 6S 5H", kind="team", laps=9, dnf=True)
     solo_active = _result("3", "JH JC JD 4H 4C", kind="solo", laps=4)
     solo_dnf = _result("4", "KH KC 5H 5D AS", kind="solo", laps=6, dnf=True)
@@ -445,7 +445,7 @@ def test_rank_by_kind_excludes_dnf_entries_from_both_sections() -> None:
 
 def test_rank_by_kind_solo_only_results_return_an_empty_teams_section() -> None:
     """A solo-only ride has an empty Teams section."""
-    solo = [_result("1", "AS KS QS JS TS", kind="solo")]
+    solo = [_result("1", "AS KS QS JS 10S", kind="solo")]
 
     teams, solo_rows = rank_by_kind(solo)
 
@@ -455,7 +455,7 @@ def test_rank_by_kind_solo_only_results_return_an_empty_teams_section() -> None:
 
 def test_rank_by_kind_team_only_results_return_an_empty_solo_section() -> None:
     """A team-only ride has an empty Solo section."""
-    teams = [_result("1", "AS KS QS JS TS", kind="team")]
+    teams = [_result("1", "AS KS QS JS 10S", kind="team")]
 
     team_rows, solo = rank_by_kind(teams)
 
@@ -471,8 +471,8 @@ def test_rank_by_kind_empty_results_returns_two_empty_lists() -> None:
 def test_rank_by_kind_default_order_matches_the_r14_constant() -> None:
     """Omitting order behaves like passing DEFAULT_TIEBREAK_ORDER."""
     results = [
-        _result("1", "AS KS QS JS TS", kind="team", laps=5, total_time=100.0),
-        _result("2", "AH KH QH JH TH", kind="team", laps=5, total_time=90.0),
+        _result("1", "AS KS QS JS 10S", kind="team", laps=5, total_time=100.0),
+        _result("2", "AH KH QH JH 10H", kind="team", laps=5, total_time=90.0),
         _result("3", "9H 8C 7D 6S 5H", kind="solo"),
     ]
 
@@ -481,8 +481,8 @@ def test_rank_by_kind_default_order_matches_the_r14_constant() -> None:
 
 def test_rank_by_kind_sections_flag_their_draws_independently() -> None:
     """A draw in one section never flags a same-hand pair elsewhere."""
-    team_first = _result("1", "AS KS QS JS TS", kind="team", laps=5, total_time=100.0)
-    team_second = _result("2", "AH KH QH JH TH", kind="team", laps=5, total_time=100.0)
+    team_first = _result("1", "AS KS QS JS 10S", kind="team", laps=5, total_time=100.0)
+    team_second = _result("2", "AH KH QH JH 10H", kind="team", laps=5, total_time=100.0)
     solo_first = _result("3", "9H 8C 7D 6S 5H", kind="solo", laps=4, total_time=50.0)
     solo_second = _result("4", "9C 8D 7H 6C 5D", kind="solo", laps=4, total_time=50.0)
 
@@ -502,7 +502,7 @@ def test_rank_by_kind_unknown_tiebreak_member_raises_type_error() -> None:
     """A non-TieBreak criterion is rejected in the split path too."""
     with pytest.raises(TypeError, match=re.escape("non-TieBreak")):
         rank_by_kind(
-            [_result("1", "AS KS QS JS TS")],
+            [_result("1", "AS KS QS JS 10S")],
             order=(TieBreak.MOST_LAPS, "laps"),
         )
 
@@ -527,7 +527,7 @@ def test_leaderboard_empty_results_returns_empty_list(leaderboard: object) -> No
 def test_laps_leaderboard_orders_by_most_laps_then_shortest_time() -> None:
     """Most laps first; a 3-lap 80s entry beats a 3-lap 90s entry."""
     results = [
-        _result("1", "AS KS QS JS TS", laps=5, total_time=100.0),
+        _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0),
         _result("2", "9H 8C 7D 6S 5H", laps=3, total_time=90.0),
         _result("3", "JH JC JD 4H 4C", laps=3, total_time=80.0),
         _result("4", "KH KC 5H 5D AS", laps=2, total_time=50.0),
@@ -541,7 +541,7 @@ def test_laps_leaderboard_orders_by_most_laps_then_shortest_time() -> None:
 
 def test_time_leaderboard_orders_by_most_laps_then_shortest_time() -> None:
     """Binding: the skeleton says "most laps, then time"."""
-    many_laps_slow = _result("1", "AS KS QS JS TS", laps=3, total_time=300.0)
+    many_laps_slow = _result("1", "AS KS QS JS 10S", laps=3, total_time=300.0)
     few_laps_fast = _result("2", "9H 8C 7D 6S 5H", laps=2, total_time=50.0)
 
     placed = time_leaderboard([many_laps_slow, few_laps_fast], top=1)
@@ -559,7 +559,7 @@ def test_leaderboard_orders_by_laps_then_time_not_time_alone(
     laps-then-time order, so sorting by time alone would put the 3-lap
     rider on top.
     """
-    three_laps_fast = _result("1", "AS KS QS JS TS", laps=3, total_time=1200.0)
+    three_laps_fast = _result("1", "AS KS QS JS 10S", laps=3, total_time=1200.0)
     five_laps_slow = _result("2", "9H 8C 7D 6S 5H", laps=5, total_time=3600.0)
     five_laps_slower = _result("3", "JH JC JD 4H 4C", laps=5, total_time=4200.0)
 
@@ -573,7 +573,7 @@ def test_laps_leaderboard_top_boundary_rows_return_capped_length(
     top: int, expected_len: int
 ) -> None:
     """Top 0..11 over a 12-entry field caps the board (T-4)."""
-    results = [_result(str(i), "AS KS QS JS TS", laps=i) for i in range(12)]
+    results = [_result(str(i), "AS KS QS JS 10S", laps=i) for i in range(12)]
 
     placed = laps_leaderboard(results, top=top)
 
@@ -585,8 +585,8 @@ def test_leaderboard_equal_laps_and_time_flags_draw_not_silently_ordered(
     leaderboard: object,
 ) -> None:
     """A (laps, time) tie is a draw: flagged, shared place (R-43)."""
-    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    second = _result("2", "AH KH QH JH TH", laps=5, total_time=100.0)
+    first = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH 10H", laps=5, total_time=100.0)
 
     placed = leaderboard([first, second])
 
@@ -599,7 +599,7 @@ def test_leaderboard_equal_laps_and_time_flags_draw_not_silently_ordered(
 @pytest.mark.parametrize("leaderboard", [laps_leaderboard, time_leaderboard])
 def test_leaderboard_excludes_dnf_entries(leaderboard: object) -> None:
     """Leaderboards are ACTIVE-only: no DNF entry ever appears."""
-    dnf = _result("1", "AS KS QS JS TS", laps=99, dnf=True)
+    dnf = _result("1", "AS KS QS JS 10S", laps=99, dnf=True)
     active = _result("2", "9H 8C 7D 6S 5H", laps=4)
 
     placed = leaderboard([dnf, active])
@@ -614,14 +614,14 @@ def test_leaderboard_excludes_dnf_entries(leaderboard: object) -> None:
 def test_leaderboard_negative_top_raises_value_error(leaderboard: object) -> None:
     """A negative top is rejected, never silently sliced."""
     with pytest.raises(ValueError, match=re.escape("top must be >= 0")):
-        leaderboard([_result("1", "AS KS QS JS TS")], top=-1)
+        leaderboard([_result("1", "AS KS QS JS 10S")], top=-1)
 
 
 def test_rank_unknown_tiebreak_member_raises_type_error() -> None:
     """A non-TieBreak criterion is rejected, never silently ignored."""
     with pytest.raises(TypeError, match=re.escape("non-TieBreak")):
         rank(
-            [_result("1", "AS KS QS JS TS")],
+            [_result("1", "AS KS QS JS 10S")],
             order=(TieBreak.MOST_LAPS, "laps"),
         )
 
@@ -630,7 +630,7 @@ def test_rank_unknown_tiebreak_member_raises_type_error() -> None:
 
 
 _HAND_POOL: tuple[EvaluatedHand, ...] = (
-    best_hand(_cards("AS KS QS JS TS")),
+    best_hand(_cards("AS KS QS JS 10S")),
     best_hand(_cards("8S 7S 6S 5S 4S")),
     best_hand(_cards("9H 9C 9D 9S KS")),
     best_hand(_cards("JH JC JD 4H 4C")),
@@ -775,8 +775,8 @@ def test_rank_by_kind_partitions_every_active_result_into_its_kind_and_numbers_f
         ("KS JS 8S 6S 2S", "Flush — King high"),
         ("JH JC JD 4H 4C", "Full House — Jacks over Fours"),
         ("9H 9C 9D 9S KS", "Four of a Kind — Nines"),
-        ("QS JS TS 9S 8S", "Straight Flush — Queen high"),
-        ("AS KS QS JS TS", "Royal Flush"),
+        ("QS JS 10S 9S 8S", "Straight Flush — Queen high"),
+        ("AS KS QS JS 10S", "Royal Flush"),
         ("AS AD AH AC JK", "Five of a Kind — Aces"),
     ],
 )
@@ -855,9 +855,9 @@ def test_tiebreak_order_from_spellings_unknown_spelling_raises_value_error() -> 
 
 def test_rank_spelled_tiebreak_order_changes_placings() -> None:
     """ride.py's stored spellings drive rank() via the conversion."""
-    first = _result("1", "AS KS QS JS TS", laps=5, total_time=100.0)
-    second = _result("2", "AH KH QH JH TH", laps=4, total_time=50.0)
-    third = _result("3", "AD KD QD JD TD", laps=4, total_time=60.0)
+    first = _result("1", "AS KS QS JS 10S", laps=5, total_time=100.0)
+    second = _result("2", "AH KH QH JH 10H", laps=4, total_time=50.0)
+    third = _result("3", "AD KD QD JD 10D", laps=4, total_time=60.0)
 
     placed = rank(
         [first, second, third],

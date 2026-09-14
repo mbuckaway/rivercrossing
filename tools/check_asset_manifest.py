@@ -65,11 +65,11 @@ XRC_SUBDIR = "xrc"
 CARDS_SUBDIR = "assets/cards"
 SOUNDS_SUBDIR = "assets/sounds"
 
-# spec.md section 15b, "Files (src/rivercrossing/ui/xrc/)" -- the ten
-# files that hold the frozen windows.
+# spec.md section 15b, "Files (src/rivercrossing/ui/xrc/)" -- the nine
+# files that hold the frozen windows (detail.xrc retired in Phase 2
+# with the Entry Detail window).
 REQUIRED_XRC: tuple[str, ...] = (
     "audit.xrc",
-    "detail.xrc",
     "dialogs.xrc",
     "library.xrc",
     "main.xrc",

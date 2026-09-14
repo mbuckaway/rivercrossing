@@ -55,7 +55,8 @@ if TYPE_CHECKING:
 
 INDEX_FOR_CODE_CASES = (
     ("AS", "As"),
-    ("TD", "10d"),
+    ("10D", "10d"),
+    ("10H", "10h"),
     ("2C", "2c"),
     (JOKER_CODE, JOKER_KEY),
 )

@@ -15,7 +15,6 @@ import re
 
 import pytest
 
-from rivercrossing.ui.views.entry_detail import EntryDetailDialog
 from rivercrossing.ui.views.main_frame import MainFrame
 from rivercrossing.ui.views.results_win import ResultsWindow
 from rivercrossing.ui.views.ride_library import RideLibrary
@@ -27,7 +26,6 @@ from rivercrossing.ui.views.simulator import SimulatorDialog
 _VIEW_CONSTRUCTION_CASES = (
     pytest.param(MainFrame, (object(),), id="MainFrame"),
     pytest.param(RideLibrary, (object(),), id="RideLibrary"),
-    pytest.param(EntryDetailDialog, (object(), "77"), id="EntryDetailDialog"),
     pytest.param(ResultsWindow, (object(),), id="ResultsWindow"),
 )
 

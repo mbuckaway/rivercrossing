@@ -354,11 +354,14 @@ _PHEVALUATOR_ID_BY_CARD: dict[Card, int] = {
 def _phevaluator_card_id(card: Card) -> int:
     """Look up phevaluator's native card id for *card*.
 
-    ``Card.code()`` followed by phevaluator's own string parser reaches
-    the exact same id; skipping the format-then-reparse round trip,
-    and the per-call arithmetic in favour of a precomputed table,
-    both matter here because this runs on every wild-search candidate
-    (R-42's 180x12 field budget).
+    The id comes straight from the card's rank and suit, exactly as
+    phevaluator's own ``card.Card.to_id`` derives it: a card-code
+    round trip would no longer reach it, since ``Card.code()`` spells
+    the ten "10" while phevaluator's parser accepts only its own two
+    characters. Skipping that format-then-reparse round trip, and the
+    per-call arithmetic in favour of a precomputed table, both matter
+    here because this runs on every wild-search candidate (R-42's
+    180x12 field budget).
     """
     return _PHEVALUATOR_ID_BY_CARD[card]
 
@@ -1074,14 +1077,14 @@ def _check_joker_vectors() -> tuple[bool, str]:
 def _check_five_of_a_kind_ordering() -> tuple[bool, str]:
     """Check (c): a wild five-of-a-kind beats a royal flush."""
     five_of_a_kind = eval5([Card.parse(code) for code in ["AS", "AD", "AH", "AC", "JK"]])
-    royal_flush = eval5([Card.parse(code) for code in ["AS", "KS", "QS", "JS", "TS"]])
+    royal_flush = eval5([Card.parse(code) for code in ["AS", "KS", "QS", "JS", "10S"]])
     return compare(five_of_a_kind, royal_flush) == 1, ""
 
 
 def _seeded_field() -> list[list[Card]]:
     """Build the R-42 180x12 field, same seed/shape as its own test."""
     rng = random.Random(_FIELD_SEED)  # noqa: S311 -- a deterministic self-test fixture
-    deck_codes = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
+    deck_codes = [Card(rank=rank, suit=suit).code() for rank in Rank for suit in Suit]
     return [
         [
             Card(rank=None, suit=None, joker=True)

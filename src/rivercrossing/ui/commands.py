@@ -2,13 +2,15 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 41 menu rows reaches ("Opens / does"), and when it is allowed to
+the 38 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 41 :class:`MenuRoute` rows
+once, so both jobs read off the same 38 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
-split per format -- HTML and PDF -- in Part D.)
+split per format -- HTML and PDF -- in Part D. Phase 2 retired the
+dead Entry Detail… row and the duplicate Reassign Plate… / Void
+Card… rows -- Crossing Detail now owns both corrections.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -93,7 +95,10 @@ class Enablement:
             threshold so boundary tests can vary it.
         min_held_cards: Review Held Cards' "held cards > 0".
         min_audit_rows: Audit Trail's "≥1 audit row".
-        requires_entry_has_cards: Void Card's "entry has cards".
+        requires_entry_has_cards: An "entry has cards" condition. No
+            live row declares one since Phase 2 retired the Void Card…
+            row (Crossing Detail owns the card void); the field stays
+            part of the §15 rule model.
         requires_html_export: Preview HTML in Browser's "an HTML
             export exists".
         requires_pdf_export: Preview PDF in Browser's "a PDF export
@@ -359,7 +364,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
             requires_ride_open=True,
         ),
     ),
-    # --- Riders: 5 rows ---
+    # --- Riders: 4 rows ---
     MenuRoute(
         menu="Riders",
         label="Rider Editor",
@@ -397,15 +402,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.DNF_CONFIRM_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    MenuRoute(
-        menu="Riders",
-        label="Entry Detail…",
-        ids=("mi_entry_detail",),
-        kind=TargetKind.WINDOW,
-        target=ids.ENTRY_DETAIL_DLG,
-        enabled_when=Enablement(requires_ride_open=True),  # "ride open"
-    ),
-    # --- Cards: 7 rows ---
+    # --- Cards: 5 rows ---
     MenuRoute(
         menu="Cards",
         label="Undo Last Crossing",
@@ -434,33 +431,16 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
             allowed_states=_RUNNING_REOPENED, min_crossings=1
         ),  # "RUNNING · REOPENED, ≥1 crossing"
     ),
+    # Phase 2: Reassign Plate… and Void Card… retired -- Crossing
+    # Detail owns both corrections now. mi_deal_manual is the bonus-card
+    # deal (the manual correction's remaining row).
     MenuRoute(
         menu="Cards",
-        label="Reassign Plate…",
-        ids=("mi_reassign_plate",),
-        kind=TargetKind.DIALOG,
-        target=ids.REASSIGN_DLG,
-        enabled_when=Enablement(
-            allowed_states=_RUNNING_REOPENED, min_crossings=1
-        ),  # "RUNNING · REOPENED, ≥1 crossing"
-    ),
-    MenuRoute(
-        menu="Cards",
-        label="Deal Manual Card…",
+        label="Deal Bonus Card…",
         ids=("mi_deal_manual",),
         kind=TargetKind.DIALOG,
         target=ids.MANUAL_DEAL_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
-    ),
-    MenuRoute(
-        menu="Cards",
-        label="Void Card…",
-        ids=("mi_void_card",),
-        kind=TargetKind.DIALOG,
-        target=ids.VOID_CARD_CONFIRM_DLG,
-        enabled_when=Enablement(
-            allowed_states=_RUNNING_REOPENED, requires_entry_has_cards=True
-        ),  # "RUNNING · REOPENED, entry has cards"
     ),
     MenuRoute(
         menu="Cards",
@@ -634,8 +614,8 @@ class RideState:
         crossings: How many crossings the open ride has recorded.
         held_cards: How many cards are held (short-lap, unconfirmed).
         audit_rows: How many audit rows the open ride has.
-        entry_has_cards: Whether the entry Void Card targets holds
-            any cards.
+        entry_has_cards: Whether a targeted entry holds any cards (the
+            generic "entry has cards" rule input).
         html_exported: Whether an HTML results export has been
             written this session.
         pdf_exported: Whether a PDF results export (the report or the

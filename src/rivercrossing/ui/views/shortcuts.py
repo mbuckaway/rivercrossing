@@ -33,7 +33,9 @@ if TYPE_CHECKING:
 __all__ = [
     "COL_ACTION",
     "COL_KEY",
+    "SHORTCUTS_MIN_SIZE",
     "SHORTCUT_COLUMN_LABELS",
+    "SHORTCUT_COLUMN_WIDTHS",
     "ShortcutsDialog",
     "ShortcutsListModel",
 ]
@@ -43,6 +45,19 @@ COL_ACTION = 1
 
 # xrc-windows.md E's exact column order.
 SHORTCUT_COLUMN_LABELS: tuple[str, ...] = ("Key", "Action")
+
+# Phase 6: a DataViewCtrl column never sizes itself to its content, so
+# an unpinned column keeps the platform's 80 DIP default and the Action
+# text clips on first open (ride_library.py's own measured note). Key
+# takes the accelerator column's 120 px, Action the wider 320 px -- the
+# canvas's own two-column proportions.
+SHORTCUT_COLUMN_WIDTHS: tuple[int, ...] = (120, 320)
+
+# Phase 6: the dialog's own floor. XRC has no window-level minsize and
+# dialogs.xrc declares no <size>, so ShortcutsDialog applies this in
+# code. 480x300 fits the two pinned columns above plus the button row,
+# and sits inside the 1366x768 floor display (UX-DESKTOP section 6).
+SHORTCUTS_MIN_SIZE = (480, 300)
 
 _TEXT_ACCESSORS: tuple[Callable[[Accelerator], str], ...] = (
     lambda accel: accel.key,
@@ -115,6 +130,7 @@ class ShortcutsDialog:
         # The ``frame.console = self`` / ``frame.presenter`` precedent
         # (main_frame.py, results_win.py) attaches the same way.
         dialog.shortcuts_view = self
+        self._apply_min_size()
 
     def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
         """Resolve one of this dialog's own child controls by name.
@@ -130,6 +146,25 @@ class ShortcutsDialog:
         return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
-        """Append the dialog's two text columns in canvas order."""
+        """Append the dialog's two text columns in canvas order.
+
+        Each column takes its own pinned width from
+        :data:`SHORTCUT_COLUMN_WIDTHS` (Phase 6) -- see that constant
+        for the measured reason an unpinned DataView column clips
+        ``shortcuts_list``'s Action text.
+        """
         for col, label in enumerate(SHORTCUT_COLUMN_LABELS):
-            self.shortcuts_list.AppendTextColumn(label, col)
+            self.shortcuts_list.AppendTextColumn(label, col, width=SHORTCUT_COLUMN_WIDTHS[col])
+
+    def _apply_min_size(self) -> None:
+        """Floor the dialog at :data:`SHORTCUTS_MIN_SIZE`, then Fit().
+
+        ``SetMinSize`` is the floor, ``Fit()`` is what grows the loaded
+        window to respect it now (``ride_library._apply_min_size``'s
+        measured note), and the floor is re-applied afterwards -- belt
+        and braces, so no platform's ``Fit()`` can leave the minimum
+        lower than :data:`SHORTCUTS_MIN_SIZE`.
+        """
+        self.dialog.SetMinSize(wx.Size(*SHORTCUTS_MIN_SIZE))
+        self.dialog.Fit()
+        self.dialog.SetMinSize(wx.Size(*SHORTCUTS_MIN_SIZE))

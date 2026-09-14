@@ -14,10 +14,22 @@
   Phase 1 re-shaped the jokers-per-deck group: the jokers_0/2/4_radio
   trio became one wxChoice (jokers_choice) over 0..4, opening on 1
   (<selection>1</selection>; measured honoured, like <content>'s item
-  list). spec.md 13's "radio groups always have a default" is why the
-  old trio carried one; the dropdown keeps the same rule - a fresh
-  dialog never opens unselected. ride.py's DEFAULT_JOKERS_PER_DECK is
-  that same 1, recorded so the two cannot drift.
+  list). Phase 5 re-shaped it again, to the shipped pair of controls:
+  jokers_spin (a wxSpinCtrl over 0..10, <value>1</value>) beside the
+  jokers_per_deck_radio / jokers_total_radio pair, which answers "do
+  those jokers come back every shuffle?" - per-deck re-deals them each
+  cycle, total (the checked default, jokers_total_radio) spends them
+  once per ride. spec.md 13's "radio groups always have a default" is
+  why the pair carries one; jokers_spin's own <value> keeps the same
+  rule for the count. ride.py's DEFAULT_JOKERS_PER_DECK /
+  DEFAULT_JOKERS_MODE are those same two defaults, recorded so the
+  controls and the domain cannot drift.
+
+  Phase 5 also replaced the cap_chk + cap_spin pair with one cap_choice
+  dropdown: "Disabled" (the default selection, no cap at all) and then
+  one item per cap 5..20. A single control cannot express the retired
+  pair's "checkbox off, spinner holding a stale number" state, so the
+  dialog can no longer submit a cap the operator did not choose.
 
   Code-side per the canvas footnote: field values are loaded from the ride
   record (this file declares structure and ranges only); the entry-mode and
@@ -26,16 +38,16 @@
 
   Plan sections 3c/3d reshaped the Cards box: the standalone Logo row's
   wxFilePickerCtrl is retired, tiebreak_list carries its own bounded
-  160x120 box, and the logo column (preview bitmap, status label, Browse…
+  120x120 box, and the logo column (preview bitmap, status label, Browse…
   button) sits beside it. The staged PNG itself is code-side: the view
   resizes the browsed file into LOGO_STANDARD_SIZE, writes the copy to a
   temp file and previews it.
 
   Ranges: max riders per team has documented bounds (spec.md 1 and 2 -
-  2 to 10, default 4), and jokers_choice's own item list fixes its
-  0..4 set. decks_spin and cap_spin get a floor of 1 and no ceiling;
-  lap_km_spin gets one decimal, matching the canvas's "8.0".
-  Everything else is validated in code.
+  2 to 10, default 4), jokers_spin's own <min>/<max> fix its 0..10 set
+  (Phase 5), and cap_choice's item list fixes 5..20. decks_spin gets a
+  floor of 1 and no ceiling; lap_km_spin gets one decimal, matching the
+  canvas's "8.0". Everything else is validated in code.
 -->
 <resource>
 
@@ -281,6 +293,11 @@
           <label>Cards</label>
           <orient>wxVERTICAL</orient>
 
+          <!-- Phase 5's Cards controls: the joker count, the per-deck /
+               total mode pair (total checked, ride.DEFAULT_JOKERS_MODE),
+               and the card cap dropdown. The cap's "Disabled" item is
+               the uncapped default; the view reads the item's own text,
+               so the numbers 5..20 are domain values, not indices. -->
           <object class="sizeritem">
             <flag>wxEXPAND|wxBOTTOM</flag>
             <border>6</border>
@@ -304,34 +321,71 @@
                 <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
                 <border>6</border>
                 <object class="wxStaticText">
-                  <label>Jokers/deck:</label>
+                  <label>Jokers</label>
                 </object>
               </object>
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
                 <border>14</border>
-                <object class="wxChoice" name="jokers_choice">
-                  <content>
-                    <item>0</item>
-                    <item>1</item>
-                    <item>2</item>
-                    <item>3</item>
-                    <item>4</item>
-                  </content>
-                  <selection>1</selection>
+                <object class="wxSpinCtrl" name="jokers_spin">
+                  <min>0</min>
+                  <max>10</max>
+                  <value>1</value>
                 </object>
               </object>
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
                 <border>6</border>
-                <object class="wxCheckBox" name="cap_chk">
+                <object class="wxRadioButton" name="jokers_per_deck_radio">
+                  <label>Per deck</label>
+                  <style>wxRB_GROUP</style>
+                </object>
+              </object>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                <object class="wxRadioButton" name="jokers_total_radio">
+                  <label>Total</label>
+                  <value>1</value>
+                </object>
+              </object>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxEXPAND|wxBOTTOM</flag>
+            <border>6</border>
+            <object class="wxBoxSizer">
+              <orient>wxHORIZONTAL</orient>
+              <object class="sizeritem">
+                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
+                <border>6</border>
+                <object class="wxStaticText">
                   <label>Card cap</label>
                 </object>
               </object>
               <object class="sizeritem">
                 <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxSpinCtrl" name="cap_spin">
-                  <min>1</min>
+                <object class="wxChoice" name="cap_choice">
+                  <content>
+                    <item>Disabled</item>
+                    <item>5</item>
+                    <item>6</item>
+                    <item>7</item>
+                    <item>8</item>
+                    <item>9</item>
+                    <item>10</item>
+                    <item>11</item>
+                    <item>12</item>
+                    <item>13</item>
+                    <item>14</item>
+                    <item>15</item>
+                    <item>16</item>
+                    <item>17</item>
+                    <item>18</item>
+                    <item>19</item>
+                    <item>20</item>
+                  </content>
+                  <selection>0</selection>
                 </object>
               </object>
             </object>
@@ -339,7 +393,7 @@
 
           <!-- Rows and their order come from the ride's tiebreak_order
                (spec.md 5); the control supplies the reorder arrows.
-               The list carries its own bounded 160x120 box (the view
+               The list carries its own bounded 120x120 box (the view
                floors it at the same size): full-width, the reorder
                control stretched to the whole dialog and pushed the
                logo column out of the Cards box.
@@ -363,7 +417,7 @@
                 <flag>wxEXPAND</flag>
                 <object class="wxEditableListBox" name="tiebreak_list">
                   <label>Tie-break order</label>
-                  <size>160,120</size>
+                  <size>120,120</size>
                 </object>
               </object>
 
@@ -376,7 +430,7 @@
                   <object class="sizeritem">
                     <flag>wxALIGN_CENTRE_HORIZONTAL</flag>
                     <object class="wxStaticBitmap" name="logo_preview_bmp">
-                      <size>96,96</size>
+                      <size>240,240</size>
                     </object>
                   </object>
 

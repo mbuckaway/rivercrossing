@@ -7,7 +7,7 @@ that *applies* those rules to a real menu bar. This module pins the
 binder headlessly:
 
 1. ``enablement_table`` produces one enable/disable verdict per routed
-   menu item id (48 ids, one per ``commands.ROUTE_TABLE`` row), and
+   menu item id (45 ids, one per ``commands.ROUTE_TABLE`` row), and
    the verdicts agree with ``commands.is_route_enabled`` for every
    generated ``RideState`` (a Hypothesis property).
 2. The correction rows' verdicts are parametrized over the four ride
@@ -46,9 +46,7 @@ _CORRECTION_CASES: tuple[tuple[str, frozenset[RideStatus]], ...] = (
     ("Undo Last Crossing", frozenset({RideStatus.RUNNING})),
     ("Add Crossing at Time…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
     ("Edit Crossing…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
-    ("Reassign Plate…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
-    ("Deal Manual Card…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
-    ("Void Card…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
+    ("Deal Bonus Card…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
     ("Mark DNF…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
 )
 _CORRECTION_ROUTES = {
@@ -128,8 +126,8 @@ def test_enablement_table_correction_route_follows_ride_state(
 
 
 @pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
-def test_enablement_table_edit_and_reassign_need_a_crossing(status: RideStatus) -> None:
-    """Edit/Reassign's ≥1-crossing condition gates the binder too.
+def test_enablement_table_edit_crossing_needs_a_crossing(status: RideStatus) -> None:
+    """Edit Crossing's ≥1-crossing condition gates the binder too.
 
     The condition only ever enables within the row's §15 states
     (RUNNING · REOPENED): a DRAFT/FINISHED ride stays disabled
@@ -141,8 +139,6 @@ def test_enablement_table_edit_and_reassign_need_a_crossing(status: RideStatus) 
 
     assert menu_state.enablement_table(empty)[ids.MI_EDIT_CROSSING] is False
     assert menu_state.enablement_table(one)[ids.MI_EDIT_CROSSING] is allowed
-    assert menu_state.enablement_table(empty)[ids.MI_REASSIGN_PLATE] is False
-    assert menu_state.enablement_table(one)[ids.MI_REASSIGN_PLATE] is allowed
 
 
 @pytest.mark.parametrize(
@@ -235,20 +231,15 @@ def test_enablement_table_carries_no_row_for_the_retired_add_entry_id() -> None:
     assert "mi_add_entry" not in table
 
 
-@pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
-def test_enablement_table_void_card_needs_the_entry_to_have_cards(status: RideStatus) -> None:
-    """Void Card's 'entry has cards' condition gates the binder too.
+_RETIRED_PHASE_2_IDS = ("mi_entry_detail", "mi_reassign_plate", "mi_void_card")
 
-    The condition only ever enables within the row's §15 states
-    (RUNNING · REOPENED): a DRAFT/FINISHED ride stays disabled
-    regardless of the entry's cards.
-    """
-    no_cards = commands.RideState(status=status, ride_open=True, entry_has_cards=False)
-    has_cards = commands.RideState(status=status, ride_open=True, entry_has_cards=True)
-    allowed = status in (RideStatus.RUNNING, RideStatus.REOPENED)
 
-    assert menu_state.enablement_table(no_cards)[ids.MI_VOID_CARD] is False
-    assert menu_state.enablement_table(has_cards)[ids.MI_VOID_CARD] is allowed
+@pytest.mark.parametrize("item_id", _RETIRED_PHASE_2_IDS)
+def test_enablement_table_carries_no_row_for_a_retired_phase_2_id(item_id: str) -> None:
+    """Phase 2: the retired correction ids are no longer bound."""
+    table = menu_state.enablement_table(_baseline_state(RideStatus.RUNNING))
+
+    assert item_id not in table
 
 
 def test_enablement_table_standings_needs_no_ride() -> None:

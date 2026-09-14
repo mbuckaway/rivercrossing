@@ -25,12 +25,11 @@ elapsed reading since ``actual_start`` -- W9: the card cell always
 carries the real code; a held crossing's row is flagged and shows the
 held card's own code, never the literal placeholder "held"), the
 counters, and the non-console methods
-(standings/entry_detail/audit_rows/riders/rides) implemented simply for
-E5/E6 to replace.
+(standings/audit_rows/riders/rides) implemented simply for E5/E6 to
+replace.
 """
 
 import dataclasses
-import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -69,7 +68,6 @@ from rivercrossing.ui.presenters.data_source import (
     Counters,
     DataSource,
     EmptyDataSource,
-    EntryDetail,
     FeedRow,
     RiderRow,
     StandingsRow,
@@ -440,19 +438,6 @@ def test_empty_data_source_counters_and_status_report_no_ride() -> None:
         teams=0,
     )
     assert source.ride_status() is RideStatus.DRAFT
-
-
-def test_empty_data_source_entry_detail_returns_an_empty_view_model() -> None:
-    """E5.4.2: any plate resolves to an empty detail, never raises.
-
-    ``entry_detail_dlg`` opens with no ride selected; the view renders
-    the empty header/members/cards/laps rather than crashing on a
-    plate that no store-backed entry owns yet (E7 wires the real
-    per-entry lookup).
-    """
-    detail = EmptyDataSource().entry_detail("77")
-
-    assert detail == EntryDetail(header="", members="", cards_held=(), laps=())
 
 
 # ------------------------------------------------------------- feed
@@ -889,34 +874,6 @@ def test_empty_data_source_standings_accepts_the_order_argument() -> None:
     source = EmptyDataSource()
 
     assert source.standings(order=(TieBreak.TOTAL_TIME, TieBreak.MOST_LAPS)) == ([], [])
-
-
-# -------------------------------------------------------- entry detail
-
-
-def test_engine_data_source_entry_detail_given_known_plate_builds_the_view_model() -> None:
-    """Entry detail's laps/cards render from the engine's crossings."""
-    engine, clock = _running_engine()
-    _record(engine, clock, "12", lap_time_s=100)
-    source = EngineDataSource(engine, engine._roster)
-
-    detail = source.entry_detail("12")
-
-    assert len(detail.laps) == 1
-    assert detail.laps[0].lap == 1
-    assert detail.laps[0].card == engine.card_for(engine.crossings[-1]).code()
-    assert detail.cards_held == ()
-    assert detail.header == "Solo · 1 riders · 1 laps · 0:01:40"
-    assert detail.members == "Rider 12"
-
-
-def test_engine_data_source_entry_detail_given_unknown_plate_raises() -> None:
-    """Negative: a plate no entry owns cannot build a detail view."""
-    engine, _clock = _running_engine()
-    source = EngineDataSource(engine, engine._roster)
-
-    with pytest.raises(LookupError, match=re.escape("no entry detail for plate '99'")):
-        source.entry_detail("99")
 
 
 # --------------------------------------------------------------- audit
@@ -2316,6 +2273,36 @@ def test_on_plate_entered_given_a_credited_short_lap_lists_it_in_the_flagged_row
     )
 
 
+def test_tick_given_an_instant_recorded_twice_lists_both_rows_in_the_review_tab() -> None:
+    """Phase 3: both halves of a double entry land in Needs Review.
+
+    Only the later twin's derived lap time is zero (so only it flags);
+    the earlier twin's is real, so the duplicate bit is what lists it.
+    """
+    engine, _clock = _running_engine()
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 5))
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+
+    assert [(row.lap, row.duplicate) for row in view.last_flagged] == [(2, True), (1, True)]
+
+
+def test_tick_given_no_duplicates_leaves_the_review_tab_empty() -> None:
+    """T-3 negative: two real laps put nothing in Needs Review."""
+    engine, _clock = _running_engine()
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 6))
+    view = FakeConsoleView()
+    presenter = _make_presenter(engine, view)
+
+    presenter.tick()
+
+    assert view.last_flagged == []
+
+
 def test_on_undo_given_an_engine_refusal_after_the_confirm_posts_a_notice(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2838,9 +2825,7 @@ def _reopened_ride_state(engine: RideEngine) -> commands.RideState:
 _REOPENED_ENABLED_ROWS = (
     ids.MI_ADD_CROSSING_AT,
     ids.MI_EDIT_CROSSING,
-    ids.MI_REASSIGN_PLATE,
     ids.MI_DEAL_MANUAL,
-    ids.MI_VOID_CARD,
     ids.MI_MARK_DNF,
     ids.MI_FINISH_RIDE,
     # C2: Start Ride continues a REOPENED ride (REOPENED -> RUNNING).

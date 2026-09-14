@@ -62,7 +62,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from rivercrossing import csvio
-from rivercrossing.cards import Card
+from rivercrossing.cards import Card, Rank, Suit
 from rivercrossing.csvio import (
     CsvIoError,
     ImportConflict,
@@ -2537,7 +2537,7 @@ def test_export_finished_ride_with_empty_placed_raises_naming_plate(tmp_path: Pa
         export(roster, path, placed=[])
 
 
-_CARD_CODES = [f"{rank}{suit}" for rank in "23456789TJQKA" for suit in "CDHS"]
+_CARD_CODES = [Card(rank=rank, suit=suit).code() for rank in Rank for suit in Suit]
 
 
 @given(
@@ -2677,7 +2677,7 @@ def test_export_standings_sex_cell_is_the_solo_letter_or_blank(
 
 def test_export_standings_keeps_dnf_rows() -> None:
     """DNF entries keep their row (R-33: laps/cards retained)."""
-    placed = [_placed("3", "AS KS QS JS TS", laps=5, dnf=True)]
+    placed = [_placed("3", "AS KS QS JS 10S", laps=5, dnf=True)]
     with tempfile.TemporaryDirectory() as tmp_dir:
         path = Path(tmp_dir) / "standings.csv"
         export_standings(placed, path)

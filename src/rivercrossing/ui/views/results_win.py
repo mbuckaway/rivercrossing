@@ -9,8 +9,8 @@ name). This module is that binding.
 The canvas's "Best 5" cell is plain text carrying suit glyphs ("K♠
 K♣ K♦ JK★ 9♥"), confirmed against ``design/docs-html``'s own table
 markup (a literal ``<td>`` string, not five drawn bitmaps) -- unlike
-``main_frame.py``'s Card column or ``entry_detail.py``'s cards_list/
-laps_list, the standings lists need no ``DataViewBitmapRenderer``.
+``main_frame.py``'s Card column, the standings lists need no
+``DataViewBitmapRenderer``.
 :func:`format_best5` is the pure text formatter this column uses, and
 :func:`format_place` the E6.4.1 ⚠ badge formatter (a draw_required row
 renders ``"⚠ 2"`` in its Place cell -- this task's own reading of the
@@ -546,8 +546,9 @@ class ResultsWindow:
 
         ``show_times_chk`` also toggles the two time columns and gates
         the Fastest-time board (results.xrc's own footnote) -- a
-        structural sibling-control fact the view owns, the same
-        ``RideSetup._on_cap_toggle`` precedent.
+        structural sibling-control fact the view owns and applies
+        itself, the same view-side enablement ``RideSetup.
+        set_structure_enabled`` performs.
         """
         event.Skip()
         if event.GetEventObject() is self.show_times_chk:

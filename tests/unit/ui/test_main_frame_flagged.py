@@ -138,8 +138,31 @@ class _Notebook:
         self.selection = index
 
 
+class _Selection:
+    """A ``wx.dataview.DataViewItem`` double for the selection.
+
+    ``GetSelection()`` answers an invalid item when nothing is selected,
+    which is why the handler asks ``IsOk()`` before resolving the row.
+    """
+
+    def __init__(self, *, ok: bool = True) -> None:
+        """Carry whether the item references a real row."""
+        self._ok = ok
+
+    def IsOk(self) -> bool:  # noqa: N802 -- wx API name the double mirrors
+        """Return whether the item references a real row."""
+        return self._ok
+
+
 class _FlaggedList:
-    """A ``wx.dataview.DataViewCtrl`` double for ``flagged_list``."""
+    """A ``wx.dataview.DataViewCtrl`` double for ``flagged_list``.
+
+    ``main.xrc`` authors the control as a plain ``DataViewCtrl``, whose
+    selection surface is ``GetSelection()`` -> ``DataViewItem``. A
+    ``GetSelectedRow`` is a ``wxDataViewListCtrl`` method and does not
+    exist here, so the double omits it: a regression to the list-ctrl
+    API then fails in this suite rather than in the operator's hands.
+    """
 
     def __init__(self, *, selected: int = wx.NOT_FOUND) -> None:
         """Carry the control's current selection and a focus count."""
@@ -150,9 +173,9 @@ class _FlaggedList:
         """Record one focus request."""
         self.focused += 1
 
-    def GetSelectedRow(self) -> int:  # noqa: N802 -- wx API name
-        """Return the currently selected row, or wx's NOT_FOUND."""
-        return self.selected
+    def GetSelection(self) -> _Selection:  # noqa: N802 -- wx API name
+        """Return the selected item, invalid when no row is selected."""
+        return _Selection(ok=self.selected != wx.NOT_FOUND)
 
 
 class _Shell:
@@ -292,6 +315,20 @@ def test_on_review_clicked_given_no_model_only_focuses() -> None:
     main_frame.MainFrame._on_review_clicked(shell)
 
     assert (shell.flagged_list.focused, fired) == (1, [])
+
+
+def test_on_review_clicked_given_a_stale_selection_only_focuses() -> None:
+    """A selected item that resolves to no row acts on nothing."""
+    fired: list[tuple[str, bool]] = []
+    shell = _Shell(
+        model=_FlaggedModel([_row()], wx_row=None),
+        callback=lambda plate, held: fired.append((plate, held)),
+        selected=0,
+    )
+
+    main_frame.MainFrame._on_review_clicked(shell)
+
+    assert (shell.review_notebook.selection, shell.flagged_list.focused, fired) == (1, 1, [])
 
 
 def test_focus_review_panel_given_a_selected_row_fires_no_seam() -> None:

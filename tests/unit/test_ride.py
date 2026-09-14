@@ -8,8 +8,9 @@ it here next to ``RideStatus``, mirroring how ``RideStatus`` itself was
 pre-created ahead of the state machine that consumes it. Boundary rows
 follow this repo's own T-4 convention (min-1, min, min+1, max-1, max,
 max+1) for every bounded field: ``max_team_size`` (2..10, R-12),
-``deck_count`` (>=1, spec.md §4), ``planned_duration_s``/``min_lap_s``
-(positive, spec.md §2/§6).
+``deck_count`` (>=1, spec.md §4), ``jokers_per_deck`` (0..10, Phase 5's
+jokers_spin) and ``planned_duration_s``/``min_lap_s`` (positive,
+spec.md §2/§6).
 
 RideEngine (E4.1, below) is the state machine + timing core: spec §3's
 DRAFT -> RUNNING -> FINISHED <-> REOPENED transitions with every
@@ -45,8 +46,11 @@ from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
 from rivercrossing.ride import (
     DEFAULT_DECK_COUNT,
+    DEFAULT_JOKERS_MODE,
     DEFAULT_JOKERS_PER_DECK,
     FAR_TOO_MANY,
+    JOKERS_MODE_PER_DECK,
+    JOKERS_MODE_TOTAL,
     NOT_ENOUGH,
     OK,
     TIEBREAK_HIGH_CARD,
@@ -124,14 +128,14 @@ def test_ride_config_bare_required_fields_defaults_deck_count_to_eight() -> None
 
 
 def test_ride_config_bare_required_fields_defaults_jokers_per_deck_to_one() -> None:
-    """jokers_choice's XRC default: 1 joker per deck (setup.xrc)."""
+    """jokers_spin's XRC value: 1 joker per deck (setup.xrc)."""
     config = _config()
 
     assert (config.jokers_per_deck, DEFAULT_JOKERS_PER_DECK) == (1, 1)
 
 
 def test_ride_config_bare_required_fields_defaults_max_cards_to_uncapped() -> None:
-    """cap_chk unticked by default: max_cards is None (uncapped)."""
+    """cap_choice defaults to "Disabled": max_cards is None (R-13)."""
     config = _config()
 
     assert config.max_cards is None
@@ -234,6 +238,59 @@ def test_ride_config_deck_count_at_or_above_one_is_accepted(deck_count: int) -> 
     config = _config(deck_count=deck_count)
 
     assert config.deck_count == deck_count
+
+
+# --------------------------------------- Phase 5: jokers mode + range
+# The setup dialog's Phase 5 Cards controls: a jokers_spin over
+# 0..10 and a per-deck/total radio pair (total checked, setup.xrc), so
+# the dialog
+# can neither build a count outside 0..10 nor store a mode spelling the
+# shoe does not know.
+
+
+def test_ride_config_bare_required_fields_defaults_jokers_mode_to_total() -> None:
+    """jokers_total_radio's XRC default: one ride-wide joker budget."""
+    config = _config()
+
+    assert (config.jokers_mode, DEFAULT_JOKERS_MODE) == (JOKERS_MODE_TOTAL, JOKERS_MODE_TOTAL)
+
+
+@pytest.mark.parametrize(
+    "jokers_mode", [JOKERS_MODE_PER_DECK, JOKERS_MODE_TOTAL], ids=["per_deck", "total"]
+)
+def test_ride_config_jokers_mode_given_a_known_spelling_is_accepted(jokers_mode: str) -> None:
+    """Both stored spellings round-trip onto the config unchanged."""
+    config = _config(jokers_mode=jokers_mode)
+
+    assert config.jokers_mode == jokers_mode
+
+
+@pytest.mark.parametrize(
+    "jokers_mode",
+    ["perdeck", "Per_Deck", "per-deck", "both", ""],
+    ids=["no_underscore", "mixed_case", "hyphen", "both", "empty"],
+)
+def test_ride_config_jokers_mode_given_an_unknown_spelling_raises(jokers_mode: str) -> None:
+    """T-5: a mode the shoe cannot read refuses loudly, not silently."""
+    with pytest.raises(RideConfigError, match=re.escape("jokers_mode")):
+        _config(jokers_mode=jokers_mode)
+
+
+@pytest.mark.parametrize("jokers_per_deck", [-1, 11], ids=["min-1", "max+1"])
+def test_ride_config_jokers_per_deck_out_of_range_raises(jokers_per_deck: int) -> None:
+    """T-4: jokers_spin's own 0..10 bound is enforced on the config."""
+    with pytest.raises(RideConfigError, match=re.escape("jokers_per_deck")):
+        _config(jokers_per_deck=jokers_per_deck)
+
+
+@pytest.mark.parametrize(
+    "jokers_per_deck", [0, 1, 2, 9, 10], ids=["min", "min+1", "two", "max-1", "max"]
+)
+def test_ride_config_jokers_per_deck_in_range_is_accepted(jokers_per_deck: int) -> None:
+    """Every value the spinner offers is accepted as given."""
+    config = _config(jokers_per_deck=jokers_per_deck)
+
+    assert config.jokers_per_deck == jokers_per_deck
 
 
 # ------------------------------------------- planned_duration_s bound
@@ -1784,6 +1841,25 @@ def test_deal_manual_pooled_rider_plate_credits_the_team() -> None:
     assert results["9"].cards == (Card.parse(str(event.payload["card"])),)
 
 
+def test_deal_manual_bonus_card_is_entry_scoped_and_survives_a_riders_dnf() -> None:
+    """A bonus card carries no rider tag, so no DNF forfeits it.
+
+    ``deal_manual`` credits the entry with no rider tag (the typed
+    plate rides in the audit payload only), so a pooled rider's DNF
+    forfeits only the cards their own crossings dealt -- the bonus card
+    stays in the entry's scoring hand.
+    """
+    engine = _pooled_team_engine()
+    manual = engine.deal_manual("45", reason="bonus card")
+    bonus = Card.parse(str(manual.payload["card"]))
+    engine.record_crossing("45", at=_dt(10, 2))
+
+    engine.mark_dnf("45", reason="mechanical failure")
+
+    results = {entry.plate: entry for entry in engine.snapshot()}
+    assert results["9"].cards == (bonus,)
+
+
 @pytest.mark.parametrize(
     ("start_state", "match"),
     [
@@ -3002,12 +3078,15 @@ def test_apply_replay_record_miss_then_assign_is_equivalent() -> None:
 
 # A lap length of 1 km at 3600 km/h makes one lap exactly 1 second, so
 # ``planned_duration_s`` is the expected lap count verbatim -- the
-# verdict boundary rows below can then name the shoe's own 424 cards.
+# verdict boundary rows below can then name the default shoe's own 417
+# cards (8 decks x 52 + 1 joker: the default config's jokers mode is
+# ``total``).
 _ONE_SECOND_LAP_KM = 1.0
 _ONE_SECOND_LAP_SPEED_KMH = 3600.0
 
-# The default shoe: DEFAULT_DECK_COUNT x (52 + DEFAULT_JOKERS_PER_DECK).
-_DEFAULT_SHOE_CARDS = DEFAULT_DECK_COUNT * (52 + DEFAULT_JOKERS_PER_DECK)
+# The default shoe: DEFAULT_DECK_COUNT x 52 + DEFAULT_JOKERS_PER_DECK
+# (the total-mode capacity check_card_sufficiency reports).
+_DEFAULT_SHOE_CARDS = DEFAULT_DECK_COUNT * 52 + DEFAULT_JOKERS_PER_DECK
 
 
 def _card_check_roster(*, plate_model: PlateModel = PlateModel.RIDER_POOLED) -> Roster:
@@ -3180,10 +3259,10 @@ def test_estimate_cards_needed_given_any_two_speeds_is_monotonic_in_speed(
     ("planned_duration_s", "verdict"),
     [
         (1, FAR_TOO_MANY),  # T-4: far below the 2x boundary
-        (211, FAR_TOO_MANY),  # T-4: 2x boundary - 1
-        (212, OK),  # T-4: the 2x boundary itself
-        (424, OK),  # T-4: the 1x boundary (exactly the shoe)
-        (425, NOT_ENOUGH),  # T-4: 1x boundary + 1
+        (208, FAR_TOO_MANY),  # T-4: 2x boundary - 1
+        (209, OK),  # T-4: the 2x boundary itself
+        (417, OK),  # T-4: the 1x boundary (exactly the shoe)
+        (418, NOT_ENOUGH),  # T-4: 1x boundary + 1
     ],
     ids=["far_below", "below_2x", "at_2x", "at_1x", "above_1x"],
 )
@@ -3191,7 +3270,11 @@ def test_check_card_sufficiency_given_each_boundary_returns_its_verdict(
     planned_duration_s: int, verdict: str
 ) -> None:
     """The shoe's 1x/2x boundaries decide the three verdicts."""
-    config = _config(lap_km=_ONE_SECOND_LAP_KM, planned_duration_s=planned_duration_s)
+    config = _config(
+        lap_km=_ONE_SECOND_LAP_KM,
+        planned_duration_s=planned_duration_s,
+        jokers_mode=JOKERS_MODE_TOTAL,
+    )
 
     result = check_card_sufficiency(config, _single_rider_roster(), _ONE_SECOND_LAP_SPEED_KMH)
 
@@ -3202,18 +3285,29 @@ def test_check_card_sufficiency_given_each_boundary_returns_its_verdict(
     )
 
 
-def test_check_card_sufficiency_given_a_custom_shoe_counts_decks_and_jokers() -> None:
-    """shoe_cards is deck_count x (52 + jokers), not a constant."""
+@pytest.mark.parametrize(
+    ("jokers_mode", "expected_shoe_cards"),
+    [
+        (JOKERS_MODE_PER_DECK, 112),  # deck_count x (52 + jokers_per_deck)
+        (JOKERS_MODE_TOTAL, 108),  # deck_count x 52 + jokers_per_deck
+    ],
+    ids=["per_deck", "total"],
+)
+def test_check_card_sufficiency_given_a_custom_shoe_counts_the_rides_jokers_mode(
+    jokers_mode: str, expected_shoe_cards: int
+) -> None:
+    """shoe_cards follows the ride's own jokers mode, not one rule."""
     config = _config(
         lap_km=_ONE_SECOND_LAP_KM,
         planned_duration_s=100,
         deck_count=2,
         jokers_per_deck=4,
+        jokers_mode=jokers_mode,
     )
 
     result = check_card_sufficiency(config, _single_rider_roster(), _ONE_SECOND_LAP_SPEED_KMH)
 
-    assert (result.shoe_cards, result.expected, result.verdict) == (112, 100, OK)
+    assert (result.shoe_cards, result.expected, result.verdict) == (expected_shoe_cards, 100, OK)
 
 
 def test_check_card_sufficiency_given_no_estimate_returns_none() -> None:
@@ -3223,3 +3317,437 @@ def test_check_card_sufficiency_given_no_estimate_returns_none() -> None:
     result = check_card_sufficiency(config, _single_rider_roster(), 36.0)
 
     assert result is None
+
+
+# ============== Phase 3: minimum lap time + duplicate crossings
+#
+# A lap that takes no time is not a lap: the corrections surface
+# refuses to write one, so a mis-keyed add or edit can never
+# manufacture a second identical crossing. ``edit_crossing``'s
+# replacement instant must be strictly after the entry's preceding lap
+# (``actual_start`` for the earliest one) and ``add_crossing_at``'s
+# explicit instant strictly after the entry's latest crossing
+# (``actual_start`` when the entry has none). ``duplicate_crossings``
+# is the read-only projection the console's Needs Review tab reads:
+# every live pair sharing one entry and one instant, oldest first, with
+# no side effects.
+#
+# logic-coverage-exempt: T-7 -- duplicate_crossings and the refusals
+# are projections/mutations over live engine state, not a pure-function
+# module, and AGENTS.md allows no property tests without permission.
+
+_REFUSAL = "lap time must be positive"
+
+
+def test_edit_crossing_given_a_time_at_the_previous_lap_is_refused() -> None:
+    """A zero-second lap is refused, not credited."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.edit_crossing("12", 2, _dt(10, 30), reason="mis-keyed time")
+
+
+def test_edit_crossing_given_a_time_before_the_previous_lap_is_refused() -> None:
+    """A negative lap time is refused, not credited."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.edit_crossing("12", 2, _dt(10, 29), reason="mis-keyed time")
+
+
+def test_edit_crossing_given_a_time_at_actual_start_on_lap_one_is_refused() -> None:
+    """Lap 1 is measured from the gun: the gun itself is refused."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.edit_crossing("12", 1, _dt(10, 0), reason="mis-keyed time")
+
+
+def test_edit_crossing_given_a_time_before_actual_start_on_lap_one_is_refused() -> None:
+    """Lap 1 may not be dated before the gun either."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.edit_crossing("12", 1, _dt(9, 59, 59), reason="mis-keyed time")
+
+
+def test_edit_crossing_given_a_time_one_second_after_the_previous_lap_is_accepted() -> None:
+    """The first instant past the previous lap is a real lap."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+
+    engine.edit_crossing("12", 2, _dt(10, 30, 1), reason="mis-keyed time")
+
+    assert engine.lap_times("12") == (1800.0, 1.0)
+
+
+def test_edit_crossing_given_a_later_time_recomputes_the_lap() -> None:
+    """A positive replacement time still re-times the lap (spec §6)."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+
+    engine.edit_crossing("12", 2, _dt(10, 45), reason="mis-keyed time")
+
+    assert engine.lap_times("12") == (1800.0, 900.0)
+
+
+def test_edit_crossing_given_a_refused_time_leaves_the_ride_untouched() -> None:
+    """A refusal writes nothing: no audit row, no re-timed crossing."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+    events_before = len(engine.events)
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.edit_crossing("12", 2, _dt(10, 30), reason="mis-keyed time")
+
+    assert (len(engine.events), engine.crossings[-1].crossed_at) == (
+        events_before,
+        _dt(10, 40),
+    )
+
+
+def test_add_crossing_at_given_a_time_at_the_latest_crossing_is_refused() -> None:
+    """The latest crossing's own instant is not a new lap."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.add_crossing_at("12", _dt(10, 30), reason="missed crossing")
+
+
+def test_add_crossing_at_given_a_time_before_the_latest_crossing_is_refused() -> None:
+    """A back-dated add that precedes the last lap is refused."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.add_crossing_at("12", _dt(10, 25), reason="missed crossing")
+
+
+def test_add_crossing_at_given_a_time_at_actual_start_with_no_crossings_is_refused() -> None:
+    """A first lap is measured from the gun: the gun is refused."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.add_crossing_at("12", _dt(10, 0), reason="missed crossing")
+
+
+def test_add_crossing_at_given_a_time_before_actual_start_with_no_crossings_is_refused() -> None:
+    """A first lap may not be dated before the gun either."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.add_crossing_at("12", _dt(9, 59, 59), reason="missed crossing")
+
+
+def test_add_crossing_at_given_a_time_after_the_latest_crossing_is_accepted() -> None:
+    """One second past the entry's last lap is a real lap."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    engine.add_crossing_at("12", _dt(10, 30, 1), reason="missed crossing")
+
+    assert engine.lap_times("12") == (1800.0, 1.0)
+
+
+def test_add_crossing_at_given_a_time_after_actual_start_with_no_crossings_is_accepted() -> None:
+    """An entry's first lap may be any instant after the gun."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    engine.add_crossing_at("12", _dt(10, 0, 1), reason="missed crossing")
+
+    assert engine.lap_times("12") == (1.0,)
+
+
+def test_add_crossing_at_given_a_refused_time_deals_no_card_and_appends_no_event() -> None:
+    """A refusal is atomic: no card leaves the shoe, no row lands."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    before = (engine._shoe.dealt, len(engine.events))
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.add_crossing_at("12", _dt(10, 30), reason="missed crossing")
+
+    assert (engine._shoe.dealt, len(engine.events)) == before
+
+
+def test_duplicate_crossings_given_no_crossings_returns_an_empty_tuple() -> None:
+    """An empty ride has no duplicates to review."""
+    engine, _ = _make_engine()
+    engine.start()
+
+    assert engine.duplicate_crossings() == ()
+
+
+def test_duplicate_crossings_given_one_instant_recorded_twice_returns_the_pair() -> None:
+    """The double entry the review tab exists to catch."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 30))
+    first, second = engine.crossings
+
+    assert engine.duplicate_crossings() == ((first, second),)
+
+
+def test_duplicate_crossings_given_distinct_instants_returns_an_empty_tuple() -> None:
+    """Two laps of one entry are not duplicates however close."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 30, 1))
+
+    assert engine.duplicate_crossings() == ()
+
+
+def test_duplicate_crossings_given_two_entries_at_one_instant_returns_an_empty_tuple() -> None:
+    """One instant on two entries is two riders, not a double entry."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("34", at=_dt(10, 30))
+
+    assert engine.duplicate_crossings() == ()
+
+
+def test_duplicate_crossings_given_several_pairs_returns_them_oldest_first() -> None:
+    """Pairs order by instant, each pair in record order.
+
+    Recorded out of chronological order (10:40, then 10:35, then
+    10:30) so the oldest-first ordering is the projection's, not the
+    record log's.
+    """
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 40))
+    engine.record_crossing("12", at=_dt(10, 40))
+    engine.record_crossing("34", at=_dt(10, 35))
+    engine.record_crossing("34", at=_dt(10, 35))
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 30))
+    crossings = engine.crossings
+
+    assert engine.duplicate_crossings() == (
+        (crossings[4], crossings[5]),  # 12 @ 10:30
+        (crossings[2], crossings[3]),  # 34 @ 10:35
+        (crossings[0], crossings[1]),  # 12 @ 10:40
+    )
+
+
+def test_duplicate_crossings_given_one_twin_voided_returns_an_empty_tuple() -> None:
+    """Voiding one of the pair clears it: only live crossings count."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 30))
+
+    engine.void_crossing("12", 2, reason="double entry")
+
+    assert engine.duplicate_crossings() == ()
+
+
+def test_duplicate_crossings_leaves_the_ride_untouched() -> None:
+    """The projection is read-only: no event, no crossing moves."""
+    engine, _ = _make_engine()
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 30))
+    before = (engine.crossings, len(engine.events))
+
+    engine.duplicate_crossings()
+
+    assert (engine.crossings, len(engine.events)) == before
+
+
+# ==================== Phase 3's lap gate is absolute on replay
+# The audit log *is* the ride, but the gate is absolute: ``apply``
+# re-applies a persisted ``edit_crossing``/``add_crossing_at`` through
+# the public command, so a stored row that violates the zero/negative
+# lap rule is refused exactly as a live correction would be. The app is
+# unreleased and its databases are erased, so there are no pre-gate rows
+# to preserve. A legal live command always met the gate when it ran, so
+# replaying one still rebuilds the ride.
+
+
+def test_apply_edit_crossing_given_a_zero_lap_event_raises_value_error() -> None:
+    """A persisted zero-lap edit is re-judged, not replayed."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+    event = Event(
+        action="edit_crossing",
+        payload={
+            "entry_id": "12",
+            "seq": 2,
+            "previous_crossed_at": "2026-09-20T10:40:00",
+            "crossed_at": "2026-09-20T10:30:00",
+            "reason": "mis-keyed time",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_edit_crossing_given_a_negative_lap_event_raises_value_error() -> None:
+    """A persisted edit before the previous lap is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+    event = Event(
+        action="edit_crossing",
+        payload={
+            "entry_id": "12",
+            "seq": 2,
+            "previous_crossed_at": "2026-09-20T10:40:00",
+            "crossed_at": "2026-09-20T10:29:00",
+            "reason": "mis-keyed time",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_edit_crossing_given_lap_one_at_actual_start_raises_value_error() -> None:
+    """Lap 1 is measured from the gun, replay included (Phase 3)."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="edit_crossing",
+        payload={
+            "entry_id": "12",
+            "seq": 1,
+            "previous_crossed_at": "2026-09-20T10:30:00",
+            "crossed_at": "2026-09-20T10:00:00",
+            "reason": "mis-keyed time",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_add_crossing_at_given_a_time_at_the_latest_crossing_raises_value_error() -> None:
+    """A persisted add at the latest lap is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:30:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_add_crossing_at_given_a_back_dated_event_raises_value_error() -> None:
+    """A persisted add before the latest lap is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:25:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_add_crossing_at_given_a_first_lap_at_actual_start_raises_value_error() -> None:
+    """A persisted first lap at the gun is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:00:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_edit_crossing_given_a_legal_event_still_replays_it() -> None:
+    """A legal persisted edit met the gate and still rebuilds."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+    event = Event(
+        action="edit_crossing",
+        payload={
+            "entry_id": "12",
+            "seq": 2,
+            "previous_crossed_at": "2026-09-20T10:40:00",
+            "crossed_at": "2026-09-20T10:45:00",
+            "reason": "mis-keyed time",
+        },
+    )
+
+    engine.apply(event)
+
+    assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 900.0), event)
+
+
+def test_apply_add_crossing_at_given_a_legal_event_still_replays_it() -> None:
+    """A legal persisted add met the gate and still rebuilds."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:35:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    engine.apply(event)
+
+    assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 300.0), event)

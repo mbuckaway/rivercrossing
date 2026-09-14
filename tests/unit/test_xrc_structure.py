@@ -99,21 +99,21 @@ RIDE_MENU_ITEMS = (
     "mi_clear_ride",
 )
 # D4: mi_add_entry retired -- the Rider Editor row is the single entry
-# point for adding riders.
+# point for adding riders. Phase 2 retired mi_entry_detail with its
+# window.
 RIDERS_MENU_ITEMS = (
     "mi_rider_editor",
     "mi_team_editor",
     "mi_check_rider_issues",
     "mi_mark_dnf",
-    "mi_entry_detail",
 )
+# Phase 2 retired mi_reassign_plate and mi_void_card: Crossing Detail
+# now owns both corrections, not the Cards menu.
 CARDS_MENU_ITEMS = (
     "mi_undo_crossing",
     "mi_add_crossing_at",
     "mi_edit_crossing",
-    "mi_reassign_plate",
     "mi_deal_manual",
-    "mi_void_card",
     "mi_review_held",
 )
 # Part D: the single Preview in Browser row split per format -- each
@@ -156,8 +156,9 @@ MAIN_MENUBAR_CONTROLS = (
 # button row. The standalone Logo row's wxFilePickerCtrl is retired
 # (plan §3d): the Cards box now carries the logo *column* beside
 # tiebreak_list -- logo_preview_bmp, logo_status_lbl and
-# logo_browse_btn. Phase 1 re-shaped the jokers-per-deck group: the
-# jokers_0/2/4_radio trio is one jokers_choice dropdown over 0..4.
+# logo_browse_btn. Phase 5 re-shaped the Cards controls: the
+# jokers_choice dropdown became jokers_spin plus the per-deck/total
+# radio pair, and cap_chk + cap_spin became one cap_choice dropdown.
 RIDE_SETUP_CONTROLS = (
     "name_input",
     "date_picker",
@@ -179,9 +180,10 @@ RIDE_SETUP_CONTROLS = (
     "pooled_radio",
     "relay_radio",
     "decks_spin",
-    "jokers_choice",
-    "cap_chk",
-    "cap_spin",
+    "jokers_spin",
+    "jokers_per_deck_radio",
+    "jokers_total_radio",
+    "cap_choice",
     "tiebreak_list",
     "wxID_OK",
     "wxID_CANCEL",
@@ -203,17 +205,18 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4 (Results lost its tie-break row
-# in Part C and split its Preview row per format): File 8 (mi_simulation
-# added), Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4. The
-# single View row expands into the 8 items section 15b names for it
-# (W13: hide-times + the seven zoom radios; the theme trio left the View
-# menu).
+# spec.md section 15's rows after D1/D4 and Phase 2 (Results lost its
+# tie-break row in Part C and split its Preview row per format; Phase 2
+# retired mi_entry_detail, mi_reassign_plate and mi_void_card): File 8
+# (mi_simulation added), Ride 9, Riders 4, Cards 5, Results 7, View 1,
+# Help 4. The single View row expands into the 8 items section 15b names
+# for it (W13: hide-times + the seven zoom radios; the theme trio left
+# the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
-    ("Ri&ders", 5),
-    ("&Cards", 7),
+    ("Ri&ders", 4),
+    ("&Cards", 5),
     ("Re&sults", 7),
     ("&View", 8),
     ("&Help", 4),
@@ -228,24 +231,32 @@ ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
 RADIO_MENU_ITEMS = ZOOM_MENU_ITEMS
 
-# Canvas defaults, and the first member of each of the dialog's three
-# radio groups (short-lap policy, entry mode, plate model -- the
-# jokers-per-deck group is Phase 1's jokers_choice dropdown now).
-SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio")
-GROUP_OPENING_RADIOS = ("hold_short_radio", "solo_radio", "pooled_radio")
+# Canvas defaults, and the first member of each of the dialog's four
+# radio groups (short-lap policy, entry mode, plate model, jokers mode
+# -- Phase 5's jokers_per_deck_radio opens it, jokers_total_radio is
+# the checked default).
+SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio", "jokers_total_radio")
+GROUP_OPENING_RADIOS = (
+    "hold_short_radio",
+    "solo_radio",
+    "pooled_radio",
+    "jokers_per_deck_radio",
+)
 GROUP_FOLLOWING_RADIOS = (
     "always_deal_radio",
     "mixed_radio",
     "relay_radio",
+    "jokers_total_radio",
 )
 
 FEED_LIST_NAMES = ("crossings_list", "flagged_list")
 
-# ride_setup_dlg's Cards box after plan §3c/§3d: tiebreak_list's own
-# three-row box (the view floors it at the same 160x120) sits left of
-# the logo column, whose preview bitmap carries the 96x96 box.
-TIEBREAK_LIST_BOX = "160,120"
-LOGO_PREVIEW_BOX = "96,96"
+# ride_setup_dlg's Cards box after plan §3c/§3d, re-sized in Phase 6:
+# tiebreak_list's own three-row box (the view floors it at the same
+# 120x120) sits left of the logo column, whose preview bitmap carries
+# the 240x240 box.
+TIEBREAK_LIST_BOX = "120,120"
+LOGO_PREVIEW_BOX = "240,240"
 LOGO_COLUMN_NAMES = ("logo_preview_bmp", "logo_status_lbl", "logo_browse_btn")
 
 # The name wxDataViewListCtrl's XRC handler forces onto its control,
@@ -455,13 +466,13 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_five_menu_item_names() -> None:
-    """D1/D4/C6/Part D: 45 ``mi_*`` items -- Preview split."""
+def test_main_menubar_declares_forty_two_menu_item_names() -> None:
+    """D1/D4/C6/Part D + Phase 2: 42 ``mi_*`` items."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 45
+    assert len(menu_item_names) == 42
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:
@@ -899,21 +910,40 @@ def test_radio_group_later_member_omits_rb_group(radio_name: str) -> None:
     assert "wxRB_GROUP" not in _param(radio, "style")
 
 
-def test_ride_setup_jokers_choice_declares_the_zero_to_four_items() -> None:
-    """Phase 1: the jokers-per-deck dropdown offers 0..4."""
-    choice = _objects_by_name(_window("ride_setup_dlg"))["jokers_choice"]
+def test_ride_setup_jokers_spin_declares_the_zero_to_ten_range() -> None:
+    """Phase 5: the jokers spinner offers 0..10, opening on 1."""
+    spin = _objects_by_name(_window("ride_setup_dlg"))["jokers_spin"]
 
-    assert (
-        choice.attrib["class"],
-        [item.text for item in choice.findall("content/item")],
-    ) == ("wxChoice", ["0", "1", "2", "3", "4"])
+    bounds = (_param(spin, "min"), _param(spin, "max"), _param(spin, "value"))
+
+    assert (spin.attrib["class"], bounds) == ("wxSpinCtrl", ("0", "10", "1"))
 
 
-def test_ride_setup_jokers_choice_opens_on_one_joker_per_deck() -> None:
-    """The dropdown's default is 1, not the retired trio's 2."""
-    choice = _objects_by_name(_window("ride_setup_dlg"))["jokers_choice"]
+def test_ride_setup_jokers_radios_declare_the_two_mode_labels() -> None:
+    """jokers_per_deck_radio/jokers_total_radio carry the mode copy."""
+    window = _window("ride_setup_dlg")
+    per_deck = _objects_by_name(window)["jokers_per_deck_radio"]
+    total = _objects_by_name(window)["jokers_total_radio"]
 
-    assert _param(choice, "selection") == "1"
+    assert (_param(per_deck, "label"), _param(total, "label")) == ("Per deck", "Total")
+
+
+def test_ride_setup_cap_choice_declares_disabled_then_five_to_twenty() -> None:
+    """Phase 5: one dropdown, "Disabled" first, then 5..20."""
+    choice = _objects_by_name(_window("ride_setup_dlg"))["cap_choice"]
+
+    items = [item.text for item in choice.findall("content/item")]
+
+    assert choice.attrib["class"] == "wxChoice"
+    assert items[0] == "Disabled"
+    assert items[1:] == [str(cap) for cap in range(5, 21)]
+
+
+def test_ride_setup_cap_choice_opens_on_disabled() -> None:
+    """The dropdown's default is no cap (R-13's uncapped default)."""
+    choice = _objects_by_name(_window("ride_setup_dlg"))["cap_choice"]
+
+    assert _param(choice, "selection") == "0"
 
 
 def test_ride_setup_ok_button_declares_the_save_label() -> None:
@@ -1010,7 +1040,7 @@ def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
 
 
 def test_ride_setup_tiebreak_list_declares_the_three_row_box() -> None:
-    """§3c: a bounded 160x120 box, not a full-width stretch."""
+    """§3c: a bounded 120x120 box, not a full-width stretch."""
     control = _objects_by_name(_window("ride_setup_dlg"))["tiebreak_list"]
 
     assert _param(control, "size") == TIEBREAK_LIST_BOX
@@ -1045,7 +1075,7 @@ def test_ride_setup_logo_column_stacks_its_three_controls_vertically() -> None:
 
 
 def test_ride_setup_logo_preview_is_declared_as_a_sized_static_bitmap() -> None:
-    """§3d: a bitmap-less 96x96 wxStaticBitmap the view fills in."""
+    """§3d: a bitmap-less 240x240 wxStaticBitmap the view fills in."""
     control = _objects_by_name(_window("ride_setup_dlg"))["logo_preview_bmp"]
 
     assert (control.attrib["class"], _param(control, "size"), control.find("bitmap")) == (

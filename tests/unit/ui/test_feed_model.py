@@ -75,7 +75,7 @@ def test_column_labels_rename_entry_to_name_throughout() -> None:
 # One width per canvas column, in canvas order: enough for the widest
 # demo value in each text column ("14:22:41", "9999", "Trail Blazers
 # (T)", "999", "3:02:11") and the 24x32 card face plus padding in the
-# bitmap one (entry_detail's own D16 width precedent).
+# bitmap one (the rider editor's card columns use the same width).
 CANVAS_COLUMN_WIDTHS = (80, 50, 150, 60, 50, 80, 80)
 
 
@@ -239,7 +239,7 @@ DEALT_CARD_TEXT_CASES = (
     ("9H", "9♥"),
     ("6H", "6♥"),
     ("KS", "K♠"),
-    ("TD", "T♦"),
+    ("10D", "10♦"),
     ("JK", "JK★"),
 )
 
@@ -433,10 +433,10 @@ def _flash_row(*, card: str = "9H", flagged: bool = False, held: bool = False) -
         ("KS", "K♠"),
         ("4D", "4♦"),
         ("7C", "7♣"),
-        ("TD", "T♦"),
+        ("10D", "10♦"),
         ("JK", "JK★"),
     ],
-    ids=["hearts", "spades", "diamonds", "clubs", "ten_keeps_t", "joker_star"],
+    ids=["hearts", "spades", "diamonds", "clubs", "ten_spells_10", "joker_star"],
 )
 def test_flash_crossing_label_given_a_dealt_code_spells_its_suit_glyph(
     card: str, display: str
@@ -489,7 +489,7 @@ def test_flash_crossing_label_given_an_unknown_suit_letter_raises_key_error() ->
 
 
 @given(
-    rank=st.text(alphabet="23456789TJQKA", min_size=1, max_size=1),
+    rank=st.sampled_from(("2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A")),
     suit=st.sampled_from("SHDC"),
     held=st.booleans(),
 )
