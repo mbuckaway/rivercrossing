@@ -4,6 +4,34 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.16] - 2026-09-13
+
+### Added
+
+- **A Card cap dropdown in Ride Setup** — replaces the checkbox + spin. "Disabled" (the default, no cap) or a number 5–20, against which an entry scores the best 5 of its first N credited cards; laps and total time are unaffected.
+- **A Jokers mode in Ride Setup** — a 0–10 "Jokers" spin plus Total / Per Deck radios (Total the default). Per Deck deals N jokers in every shuffle cycle; Total spends N jokers across the whole shoe, and once they are dealt no further jokers are handed out.
+- **Edit Time… and Void Card… on the Crossing Detail window** — re-time a crossing, or void only its dealt card, without leaving the dialog.
+- **F2 opens the Crossing Detail** for the selected crossing.
+- **Duplicate-crossing detection** — duplicate crossings are surfaced in the console's Needs Review tab.
+
+### Changed
+
+- **A crossing's ten is written "10"** (was "T"), matching the card's own bitmap; the joker still renders "JK★".
+- **Cards ▸ Deal Manual Card… is now Deal Bonus Card…**, and a bonus card is entry-scoped: a pooled rider's DNF no longer forfeits a card dealt to their team.
+- **The Crossing Detail Delete confirm reads "Delete"**, not "Void".
+- **The Rider Simulator records a rider wave** — the field crosses within the first half of the lap interval, the first wave opens one full interval after the gun, and the gun is back-dated so the clock reflects the whole simulated race.
+- **Ride Setup's tie-break panel is 120×120 and the logo preview 240×240**, and the Keyboard Shortcuts dialog is sized to its contents.
+
+### Removed
+
+- **The Cards ▸ Reassign Plate… and Cards ▸ Void Card… menu rows** — reassigning a plate and voiding a card now live on the Crossing Detail window.
+- **The Riders ▸ Entry Detail… window** — its actions are the Cards/Riders/Ride menu rows and the Crossing Detail window.
+
+### Fixed
+
+- **The Review button no longer crashes** — the Needs Review panel's Review button reads the list's selection through `GetSelection()` instead of a method the control does not have.
+- **A crossing can no longer be re-timed to a zero or negative lap** — the correction is refused, on replay as well as on live entry.
+
 ## [1.0.15] - 2026-09-13
 
 ### Added
