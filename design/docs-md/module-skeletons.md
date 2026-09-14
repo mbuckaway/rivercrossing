@@ -43,6 +43,7 @@ rivercrossing/
 │   ├── standings.py            # ordering, tie-breaks ①②③, leaderboards
 │   ├── ride.py                 # state machine, crossings, timing, undo; RideConfig (E3.5)
 │   ├── roster.py               # in-memory entries/riders/teams + lock matrix (§1–§2, E3)
+│   ├── rider_issues.py         # roster defect report (R-78, §S4)
 │   ├── store/
 │   │   ├── __init__.py         # Store facade (public API)
 │   │   ├── schema.py           # DDL v1 + PRAGMAs (WAL, foreign_keys)
