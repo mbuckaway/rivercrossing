@@ -36,7 +36,12 @@ from rivercrossing.ride import FAR_TOO_MANY, NOT_ENOUGH, CardCheck, check_card_s
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.rider_issues import RiderIssueRow, RiderIssuesPresenter
 from rivercrossing.ui.views import dialogs
-from rivercrossing.ui.views._support import associate_model, clamp_to_display, find_control
+from rivercrossing.ui.views._support import (
+    associate_model,
+    clamp_to_display,
+    find_control,
+    load_dialog,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -294,7 +299,7 @@ class RiderIssuesView:
         from rivercrossing.ui.views.team_editor import TeamEditor  # noqa: PLC0415
 
         dialog_name = ids.TEAM_EDITOR_DLG if target == "team" else ids.RIDER_EDITOR_DLG
-        window = wx.xrc.XmlResource.Get().LoadDialog(None, dialog_name)
+        window = load_dialog(wx.xrc.XmlResource.Get(), dialog_name)
         if window is None:
             return
         try:
@@ -417,7 +422,7 @@ def run_rider_issues_flow(  # noqa: PLR0913 -- (parent, roster) + the two option
         ``load_entries`` (the store restore that does not audit) never
         runs here.
     """
-    window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.RIDER_ISSUES_DLG)
+    window = load_dialog(wx.xrc.XmlResource.Get(), ids.RIDER_ISSUES_DLG)
     if window is None:
         return False
 

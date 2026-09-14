@@ -33,6 +33,7 @@ import pytest
 import wx
 from hypothesis import given
 from hypothesis import strategies as st
+from xrc_fixtures import pin_no_authored_window
 
 from conftest import gorba_config
 from rivercrossing.cards import Card, Shoe
@@ -2149,13 +2150,16 @@ def test_open_crossing_detail_for_given_a_stale_row_opens_nothing() -> None:
     app_module._open_crossing_detail_for(context, 5)
 
 
-def test_open_crossing_detail_for_given_no_authored_window_posts_a_notice() -> None:
+def test_open_crossing_detail_for_given_no_authored_window_posts_a_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """T-3 negative: a missing XRC dialog reports on the status bar."""
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
     source = EngineDataSource(engine, roster)
     frame = _StubFrame()
+    pin_no_authored_window(monkeypatch, _no_dialog_resource)
     context = app_module._RouteContext(
         frame=frame,
         resource=_StubResource(None),
@@ -2259,6 +2263,11 @@ def _refuse_lookup(*_args: object, **_kwargs: object) -> object:
     raise AssertionError("no control may be looked up")
 
 
+def _no_dialog_resource() -> _StubResource:
+    """Return a resource double whose ``LoadDialog`` finds no window."""
+    return _StubResource(None)
+
+
 def _stub_loader(
     monkeypatch: pytest.MonkeyPatch, window: _StubNumberWindow, answer: str | None
 ) -> None:
@@ -2336,6 +2345,7 @@ def test_run_number_dialog_given_an_unauthored_window_returns_none(
 ) -> None:
     """T-3 negative: LoadDialog returns None when unauthored."""
     monkeypatch.setattr(crossing_detail, "find_control", _refuse_lookup)
+    pin_no_authored_window(monkeypatch, _no_dialog_resource)
 
     result = crossing_detail.run_number_dialog(_StubResource(None), opener=object(), plate="12")
 

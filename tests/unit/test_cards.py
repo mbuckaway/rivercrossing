@@ -107,6 +107,61 @@ def test_shoe_deal_sequence_different_seed_differs_from_original() -> None:
     assert original_sequence != other_sequence
 
 
+def test_shoe_deal_sequence_given_the_same_seed_matches_after_a_full_cycle() -> None:
+    """A second instance reproduces the order an earlier shoe dealt.
+
+    The pin above builds its two instances back to back; this one
+    builds the second only after the first has dealt its whole cycle
+    and reshuffled, so state an earlier shoe left behind -- a shared
+    deal cursor, the process-wide RNG -- shows up as a mismatched
+    order.
+    """
+    first = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+    first_sequence = _codes(_deal_all(first))
+    first.reshuffle()
+    _deal_all(first)
+
+    second = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+
+    assert _codes(_deal_all(second)) == first_sequence
+
+
+def test_shoe_deal_sequence_given_the_cards_config_is_the_fresh_multiset_shuffled() -> None:
+    """T-7 invariant: the shuffle permutes the cards, never edits them.
+
+    The oracle is the configured multiset built from the public
+    ``Rank``/``Suit`` enums: every natural card once per deck, plus
+    ``decks x jokers_per_deck`` jokers. A shuffle that lost,
+    duplicated or invented a card fails here instead of passing on a
+    matching total count.
+    """
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+    naturals = Counter(
+        Card(rank=rank, suit=suit) for _ in range(_DECKS) for rank in Rank for suit in Suit
+    )
+    jokers = Counter({Card(rank=None, suit=None, joker=True): _DECKS * _JOKERS_PER_DECK})
+    expected = naturals + jokers
+
+    dealt = Counter(_deal_all(shoe))
+
+    assert dealt == expected
+
+
+def test_shoe_deal_sequence_given_seeds_differing_only_above_bit_62_differs() -> None:
+    """Seeds 1 and 1 + 2**62 deal different orders: no seed truncation.
+
+    The pair differs only in its high bits, so a shoe that folded the
+    seed down to its low bits before shuffling would deal one order
+    twice -- a failure the adjacent-seed pin above cannot see. Pinned
+    as a known-differing pair (confirmed against CPython's
+    ``random.Random(seed).shuffle`` before writing this test).
+    """
+    low = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=1)
+    high = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=1 + 2**62)
+
+    assert _codes(_deal_all(low)) != _codes(_deal_all(high))
+
+
 # ------------------------------------ deal_index/dealt/remaining/cycle
 
 
@@ -755,3 +810,69 @@ def test_shoe_total_mode_never_deals_more_than_the_budget(  # noqa: PLR0913, PLR
         shoe.reshuffle()
 
     assert dealt_jokers == jokers_per_deck
+
+
+# ==================== D2: reconfigure (a DRAFT shoe-size edit)
+#
+# A DRAFT ride's shoe-structure edit (Edit Ride…) rebuilds the live shoe
+# from the SAME stored seed under the new deck/joker settings, so the
+# stored config and the live shoe can never silently diverge
+# (SHOWMECHANICS.md's Edit-gating promise).
+
+
+def test_shoe_reconfigure_given_new_decks_rebuilds_cycle_one_at_the_new_size() -> None:
+    """A reconfigured shoe holds the new deck count, nothing dealt."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+    shoe.deal()
+
+    shoe.reconfigure(4, _JOKERS_PER_DECK, jokers_total=False)
+
+    assert (shoe.cycle, shoe.dealt, shoe.remaining) == (1, 0, 4 * (52 + _JOKERS_PER_DECK))
+
+
+def test_shoe_reconfigure_given_the_same_config_re_deals_the_stored_seed_sequence() -> None:
+    """The rebuild keeps the stored seed, so the order is unchanged."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+
+    shoe.reconfigure(_DECKS, _JOKERS_PER_DECK, jokers_total=False)
+
+    reference = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+    assert _codes(_deal_all(shoe)) == _codes(_deal_all(reference))
+
+
+@pytest.mark.parametrize(
+    ("jokers_total", "expected"),
+    [(False, (_DECKS * (52 + 3), _DECKS * 3)), (True, (_DECKS * 52 + 3, 3))],
+    ids=["per_deck", "total"],
+)
+def test_shoe_reconfigure_given_the_mode_flag_builds_that_modes_composition(
+    jokers_total: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+    expected: tuple[int, int],
+) -> None:
+    """T-13 both arms: the cycle follows the requested jokers mode."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED, jokers_total=False)
+
+    shoe.reconfigure(_DECKS, 3, jokers_total=jokers_total)
+
+    dealt = _deal_all(shoe)
+    assert (len(dealt), _joker_count(dealt)) == expected
+
+
+def test_shoe_reconfigure_given_a_total_mode_rebuild_restores_the_joker_budget() -> None:
+    """A spent budget is restored by the rebuild."""
+    shoe = Shoe(decks=1, jokers_per_deck=2, seed=_SEED, jokers_total=True)
+    _deal_all(shoe)
+
+    shoe.reconfigure(1, 2, jokers_total=True)
+    rebuilt = _deal_all(shoe)
+
+    assert (len(rebuilt), _joker_count(rebuilt)) == (54, 2)
+
+
+def test_shoe_reconfigure_given_a_closed_shoe_raises_shoe_closed_error() -> None:
+    """T-5: a closed shoe refuses a rebuild, like any mutation."""
+    shoe = Shoe(decks=_DECKS, jokers_per_deck=_JOKERS_PER_DECK, seed=_SEED)
+    shoe.close()
+
+    with pytest.raises(ShoeClosedError, match=re.escape("shoe is closed")):
+        shoe.reconfigure(_DECKS, 0, jokers_total=False)

@@ -573,7 +573,14 @@ def test_on_go_given_valid_settings_runs_the_race_and_snapshots_the_spins(
         created.append(running)
         return running
 
-    monkeypatch.setattr(simulator_module, "_load_running_window", lambda _parent: _Control())
+    control = _Control()
+    parents: list[object] = []
+
+    def _load(parent: object) -> _Control:
+        parents.append(parent)
+        return control
+
+    monkeypatch.setattr(simulator_module, "_load_running_window", _load)
     monkeypatch.setattr(simulator_module, "SimRunningDialog", _build)
 
     SimulatorDialog._on_go(shell, None)
@@ -584,6 +591,9 @@ def test_on_go_given_valid_settings_runs_the_race_and_snapshots_the_spins(
         7,
     )
     assert (created[0].ran, shell.dialog.ended) == (True, [wx.ID_OK])
+    # The running dialog stacks over the modal simulation dialog, so
+    # the loader must be handed that window (never a fresh top-level).
+    assert parents == [shell.dialog]
 
 
 def test_on_go_given_an_out_of_range_lap_count_warns_and_keeps_the_dialog_open() -> None:

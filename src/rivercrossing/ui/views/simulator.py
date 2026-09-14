@@ -54,7 +54,7 @@ from rivercrossing.ui.presenters.simulator import (
     default_interval_minutes,
     resolve_solo,
 )
-from rivercrossing.ui.views._support import find_control
+from rivercrossing.ui.views._support import find_control, load_dialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -112,9 +112,13 @@ def _load_running_window(parent: wx.Window) -> wx.Dialog:
 
     The app's own bootstrap fills the process-global ``XmlResource``
     (``app._load_xrc_resources``), so the runner loads from the same
-    resource every other app-owned window comes from.
+    resource every other app-owned window comes from -- through
+    :func:`~rivercrossing.ui.views._support.load_dialog`, so a
+    degraded singleton load self-heals instead of answering ``None``.
+    The *parent* is the modal ``simulation_dlg`` this dialog stacks
+    over, and it survives the self-heal's rebuild.
     """
-    return wx.xrc.XmlResource.Get().LoadDialog(parent, ids.SIM_RUNNING_DLG)
+    return load_dialog(wx.xrc.XmlResource.Get(), ids.SIM_RUNNING_DLG, parent=parent)
 
 
 class SimulatorDialog:

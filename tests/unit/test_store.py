@@ -17,7 +17,10 @@ No mocks anywhere: every test drives real sqlite3 against a
 ``tmp_path`` file (the task's own "no mocks of sqlite3 beyond
 tmp_path DB files" rule). Assertions that inspect stored columns read
 the file back through a second, independent connection -- the point is
-what landed on disk, not what the facade keeps in memory.
+what landed on disk, not what the facade keeps in memory. The one
+seam two tests fake is ``secrets.randbits`` -- the OS CSPRNG
+``create_ride`` draws a missing seed from (T-10's I/O boundary) --
+where a recording stand-in pins the draw's width and count.
 """
 
 import base64
@@ -452,6 +455,56 @@ def test_store_create_ride_honours_an_explicit_rng_seed(tmp_path: Path) -> None:
 
     row = _fetch_ride_row(db_path, ride_id)
     assert row["rng_seed"] == 20260920
+
+
+def test_store_create_ride_without_a_seed_draws_one_63_bit_os_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absent rng_seed draws exactly one 63-bit seed from the CSPRNG.
+
+    T-10 boundary: ``secrets.randbits`` is the OS entropy source, so a
+    recording stand-in is the one seam this module fakes -- it pins
+    the draw's own width, and that the value it returns is the one
+    stored.
+    """
+    db_path = tmp_path / "rides.db"
+    widths: list[int] = []
+
+    def _draw(width: int) -> int:
+        widths.append(width)
+        return 20260920
+
+    monkeypatch.setattr(store_module.secrets, "randbits", _draw)
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config())
+    finally:
+        store.close()
+
+    row = _fetch_ride_row(db_path, ride_id)
+    assert (widths, row["rng_seed"]) == ([63], 20260920)
+
+
+def test_store_create_ride_given_an_injected_seed_skips_the_csprng_draw(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An injected rng_seed is stored as given, with no OS draw (T-3).
+
+    The mirror of the pin above: the 63-bit draw happens only when the
+    caller offers no seed. ``drawn.append`` returns None, so a stray
+    draw would store None and fail the row assertion too.
+    """
+    db_path = tmp_path / "rides.db"
+    drawn: list[int] = []
+    monkeypatch.setattr(store_module.secrets, "randbits", drawn.append)
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(), rng_seed=20260920)
+    finally:
+        store.close()
+
+    row = _fetch_ride_row(db_path, ride_id)
+    assert (drawn, row["rng_seed"]) == ([], 20260920)
 
 
 def test_store_create_ride_hold_short_laps_column_round_trips(tmp_path: Path) -> None:

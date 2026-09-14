@@ -24,7 +24,10 @@ decision logic runs headless (the same reason ``test_view_support.py``
 carries no window).
 """
 
+from __future__ import annotations
+
 import re
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
@@ -32,7 +35,11 @@ import wx
 import wx.dataview
 
 from rivercrossing.ui import app, ids
+from rivercrossing.ui.views import _support
 from rivercrossing.ui.views.main_frame import REQUIRED_CONTROL_CLASSES, REQUIRED_CONTROLS
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class _FakeControl:
@@ -233,7 +240,7 @@ def test_load_frame_verified_returns_the_first_frame_when_complete(
     def _fresh_must_not_run() -> None:
         raise AssertionError("a complete frame must not trigger a rebuild")
 
-    monkeypatch.setattr(app, "_fresh_xrc_resource", _fresh_must_not_run)
+    monkeypatch.setattr(_support, "fresh_resource", _fresh_must_not_run)
 
     result = app._load_frame_verified(resource, required, classes)
 
@@ -258,7 +265,7 @@ def test_load_frame_verified_rebuilds_once_from_a_fresh_resource(
     resource.LoadFrame.return_value = degraded
     fresh = MagicMock()
     fresh.LoadFrame.return_value = rebuilt
-    monkeypatch.setattr(app, "_fresh_xrc_resource", lambda: fresh)
+    monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
     monkeypatch.setattr(
         wx.Window,
         "FindWindowByName",
@@ -286,7 +293,7 @@ def test_load_frame_verified_rebuilds_when_a_control_is_the_wrong_class(
     resource.LoadFrame.return_value = degraded
     fresh = MagicMock()
     fresh.LoadFrame.return_value = rebuilt
-    monkeypatch.setattr(app, "_fresh_xrc_resource", lambda: fresh)
+    monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
     monkeypatch.setattr(
         wx.Window,
         "FindWindowByName",
@@ -316,7 +323,7 @@ def test_load_frame_verified_raises_when_rebuild_is_still_incomplete(
     resource.LoadFrame.return_value = degraded
     fresh = MagicMock()
     fresh.LoadFrame.return_value = rebuilt
-    monkeypatch.setattr(app, "_fresh_xrc_resource", lambda: fresh)
+    monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
     monkeypatch.setattr(wx.Window, "FindWindowByName", lambda _name, _parent=None: None)
 
     with pytest.raises(
@@ -343,7 +350,7 @@ def test_load_frame_verified_raises_when_the_fresh_resource_has_no_frame(
     resource.LoadFrame.return_value = degraded
     fresh = MagicMock()
     fresh.LoadFrame.return_value = None
-    monkeypatch.setattr(app, "_fresh_xrc_resource", lambda: fresh)
+    monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
     monkeypatch.setattr(wx.Window, "FindWindowByName", lambda _name, _parent=None: None)
 
     with pytest.raises(
@@ -382,3 +389,31 @@ def test_load_xrc_resources_memoizes_the_global_resource(
 
     assert first is second
     assert get_calls == 1
+
+
+# --------- Fault-B: a menubar miss must never reach SetMenuBar(None)
+#
+# ``load_menubar`` answers ``None`` when neither the singleton nor the
+# fresh rebuild authors the menubar. The bootstrap then called
+# ``frame.SetMenuBar(None)`` and dereferenced it in the two
+# ``_check_loaded_*`` helpers -- a crash on a broken install instead of
+# a named failure. The guard raises before either call.
+
+
+def test_build_main_window_given_no_authored_menubar_raises_lookup_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """T-5: an unauthored menubar fails loud, never SetMenuBar(None)."""
+    resource = MagicMock()
+    resource.LoadMenuBar.return_value = None
+    monkeypatch.setattr(app, "_load_xrc_resources", lambda: resource)
+    monkeypatch.setattr(app, "_load_frame_verified", lambda *_args, **_kwargs: MagicMock())
+    monkeypatch.setattr(_support, "fresh_resource", lambda: resource)
+    monkeypatch.setattr(
+        app.settings_store,
+        "load_settings",
+        lambda *_args, **_kwargs: app.settings_store.default_settings(),
+    )
+
+    with pytest.raises(LookupError, match=re.escape(f"no menubar named {ids.MAIN_MENUBAR!r}")):
+        app.build_main_window(MagicMock(), settings_path=tmp_path / "settings.json")

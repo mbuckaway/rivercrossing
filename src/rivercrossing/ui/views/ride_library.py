@@ -23,7 +23,12 @@ import wx.dataview
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
-from rivercrossing.ui.views._support import associate_model, clamp_to_display, find_control
+from rivercrossing.ui.views._support import (
+    associate_model,
+    clamp_to_display,
+    find_control,
+    load_dialog,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -530,7 +535,7 @@ class RideLibrary:
 
         from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- wx-touching, deferred
 
-        dialog = wx.xrc.XmlResource.Get().LoadDialog(self.dialog, ids.DELETE_RIDE_DLG)
+        dialog = load_dialog(wx.xrc.XmlResource.Get(), ids.DELETE_RIDE_DLG, parent=self.dialog)
         if dialog is None:
             # logic-coverage-exempt: T-3 -- delete_ride_dlg is authored
             # in library.xrc and loaded before any route opens the

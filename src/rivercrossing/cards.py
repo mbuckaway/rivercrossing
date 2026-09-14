@@ -182,9 +182,16 @@ def _shuffled_sequence(  # noqa: PLR0913 -- decks/jokers/seed + the mode flag
     per-deck builds ``decks`` decks that each carry
     ``jokers_per_deck`` jokers, total builds ``decks`` natural decks
     plus that many jokers once. ``random.Random(seed).shuffle`` is
-    CPython's Fisher-Yates and is deterministic for a given seed --
-    R-40's "replaying the seed reproduces every card" guarantee rides
-    on that.
+    CPython's Fisher-Yates, so the cycle comes back as one uniform
+    permutation of its cards -- every order equally likely under the
+    caller's seed. The store draws that seed from the OS CSPRNG
+    (``secrets.randbits(63)``, spec §4).
+
+    That determinism is R-40's "replaying the seed reproduces every
+    card" guarantee, and it is pinned to the running interpreter: the
+    ``shuffle()`` algorithm is fixed within a CPython version, but not
+    guaranteed across versions, so a replay under a different Python
+    version can deal a different order.
     """
     cards = (
         _total_cards(decks, jokers_per_deck)
@@ -364,6 +371,30 @@ class Shoe:
         """
         jokers = self._joker_budget if self._jokers_total else self._jokers_per_deck
         return _shuffled_sequence(self._decks, jokers, seed, jokers_total=self._jokers_total)
+
+    def reconfigure(self, decks: int, jokers_per_deck: int, *, jokers_total: bool) -> None:
+        """Rebuild cycle 1 from the stored seed under new deck settings.
+
+        D2's Edit Ride… seam: a DRAFT ride's shoe-structure edit must
+        leave the stored config and the live shoe telling the same
+        story. The rebuild re-shuffles the *same* stored seed with the
+        new settings, so R-40's replay guarantee holds for the edited
+        configuration and the next deal is the card a fresh shoe of
+        that configuration would deal.
+
+        Raises:
+            ShoeClosedError: the shoe is closed (see :meth:`close`).
+        """
+        self._require_open()
+        self._decks = decks
+        self._jokers_per_deck = jokers_per_deck
+        self._jokers_total = jokers_total
+        self._joker_budget = jokers_per_deck
+        self._cycle = 1
+        self._dealt = 0
+        self._cards = _shuffled_sequence(
+            decks, jokers_per_deck, self._seed, jokers_total=jokers_total
+        )
 
     def _drain(self) -> None:
         """Deal this cycle's remaining cards, discarding them."""

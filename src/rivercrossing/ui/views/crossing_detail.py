@@ -65,7 +65,7 @@ from rivercrossing.ui import ids, std_dialogs
 from rivercrossing.ui.card_text import format_card
 from rivercrossing.ui.presenters.data_source import format_duration
 from rivercrossing.ui.views import corrections, dialogs
-from rivercrossing.ui.views._support import find_control
+from rivercrossing.ui.views._support import find_control, load_dialog
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -337,7 +337,7 @@ def run_number_dialog(
         The number the operator saved, trimmed, or ``None`` on cancel
         (or when no ``crossing_number_dlg`` is authored).
     """
-    window = resource.LoadDialog(None, ids.CROSSING_NUMBER_DLG)
+    window = load_dialog(resource, ids.CROSSING_NUMBER_DLG)
     if window is None:
         return None
     try:

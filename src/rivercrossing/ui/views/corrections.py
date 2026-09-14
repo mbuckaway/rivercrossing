@@ -46,7 +46,7 @@ import wx.adv as _wx_adv  # submodule, not loaded by plain `import wx`
 
 from rivercrossing.ui import ids, require_wx
 from rivercrossing.ui.views import dialogs
-from rivercrossing.ui.views._support import find_control
+from rivercrossing.ui.views._support import find_control, load_dialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -294,7 +294,7 @@ def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time
     Returns:
         The confirmed submission, or ``None`` on cancel.
     """
-    dialog = resource.LoadDialog(None, ids.EDIT_CROSSING_DLG)
+    dialog = load_dialog(resource, ids.EDIT_CROSSING_DLG)
     if dialog is None:
         return None
     try:
@@ -353,7 +353,7 @@ def run_manual_deal(
     plate: str,
 ) -> ManualDeal | None:
     """Open ``manual_deal_dlg``; return the confirmed deal, or None."""
-    dialog = resource.LoadDialog(None, ids.MANUAL_DEAL_DLG)
+    dialog = load_dialog(resource, ids.MANUAL_DEAL_DLG)
     if dialog is None:
         return None
     try:
@@ -391,7 +391,7 @@ def run_void_card(  # noqa: PLR0913 -- (resource, frame, entry_id, card, entry)
     ``dialogs.void_card_message``), so the operator sees exactly which
     dealt card they are about to void.
     """
-    dialog = resource.LoadDialog(None, ids.VOID_CARD_CONFIRM_DLG)
+    dialog = load_dialog(resource, ids.VOID_CARD_CONFIRM_DLG)
     if dialog is None:
         return None
     try:
@@ -434,7 +434,7 @@ def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's f
     naming sentence (``dialogs.dnf_message``) when a target is already
     known; with none, XRC's own standing copy stays.
     """
-    dialog = resource.LoadDialog(None, ids.DNF_CONFIRM_DLG)
+    dialog = load_dialog(resource, ids.DNF_CONFIRM_DLG)
     if dialog is None:
         return None
     try:
@@ -498,7 +498,7 @@ def run_set_start_time(
     Returns:
         The confirmed start instant, or ``None`` on cancel.
     """
-    dialog = resource.LoadDialog(None, ids.SET_START_DLG)
+    dialog = load_dialog(resource, ids.SET_START_DLG)
     if dialog is None:
         return None
     try:
@@ -570,7 +570,7 @@ def run_audit(  # noqa: PLR0913 -- (resource, frame) + the viewer's data seams
     """
     from rivercrossing.ui.views.audit import AuditDialog  # noqa: PLC0415
 
-    dialog = resource.LoadDialog(None, ids.AUDIT_DLG)
+    dialog = load_dialog(resource, ids.AUDIT_DLG)
     if dialog is None:
         return
     try:

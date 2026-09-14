@@ -36,12 +36,14 @@ from typing import TYPE_CHECKING
 import pytest
 import wx
 import wx.xrc
+from xrc_fixtures import pin_no_authored_window
 
 from rivercrossing.roster import Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import commands
 from rivercrossing.ui.logging import Logging, build_log_path
 from rivercrossing.ui.presenters.settings import AppSettings
+from rivercrossing.ui.views import _support, dialogs, results_win
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -403,11 +405,12 @@ class _MissingWindowResource:
 
 
 def test_open_target_given_no_authored_window_records_the_marker_and_posts_the_notice(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """D1: a click-through to nothing is in log and notice."""
     log = Logging(_log_path(tmp_path))
     frame = _NoticeFrame()
+    pin_no_authored_window(monkeypatch, _MissingWindowResource)
     context = _context(frame=frame, log=log, resource=_MissingWindowResource())
     route = commands.route_for_id("mi_standings")
 
@@ -423,11 +426,79 @@ def test_open_target_given_no_authored_window_records_the_marker_and_posts_the_n
     assert frame.notices == ["Standings — no window authored yet"]
 
 
-def test_open_target_given_no_authored_window_and_no_log_still_posts_the_notice() -> None:
+def test_open_target_given_no_authored_window_and_no_log_still_posts_the_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """D1: an app with no log still posts the notice."""
     frame = _NoticeFrame()
+    pin_no_authored_window(monkeypatch, _MissingWindowResource)
     context = _context(frame=frame, log=None, resource=_MissingWindowResource())
 
     app_module._open_target(context, commands.route_for_id("mi_standings"))
 
     assert frame.notices == ["Standings — no window authored yet"]
+
+
+class _RecoveredWindow:
+    """A recovered-dialog double: identity and a destroy record."""
+
+    def __init__(self) -> None:
+        """Start alive and undestroyed."""
+        self.destroyed = False
+
+    def IsBeingDeleted(self) -> bool:  # noqa: N802 -- wx API name
+        """Report this stub is never mid-delete."""
+        return False
+
+    def Destroy(self) -> None:  # noqa: N802 -- wx API name
+        """Record the destroy ``_open_target``'s finally runs."""
+        self.destroyed = True
+
+
+class _RecoveringResource:
+    """A fresh-resource double answering the recovered window."""
+
+    def __init__(self, window: _RecoveredWindow) -> None:
+        """Answer *window* from every LoadDialog call."""
+        self.window = window
+
+    def LoadDialog(  # noqa: N802 -- wx API name
+        self, _parent: object, _name: object
+    ) -> _RecoveredWindow:
+        """Return the recovered window."""
+        return self.window
+
+
+def test_open_target_given_a_skipped_dialog_recovers_it_and_posts_no_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fault-B: a dialog the singleton skipped opens, never a notice.
+
+    The reported bug: ``LoadDialog`` answered ``None`` for a shipped
+    dialog, so a menu row posted "no window authored yet" and clicked
+    through to nothing. The miss now retries against
+    ``_support.fresh_resource``, so the recovered window is the one the
+    route opens, the status bar stays silent and nothing reaches the
+    log.
+    """
+    log = Logging(_log_path(tmp_path))
+    frame = _NoticeFrame()
+    recovered = _RecoveredWindow()
+    shown: list[object] = []
+    monkeypatch.setattr(_support, "fresh_resource", lambda: _RecoveringResource(recovered))
+    monkeypatch.setattr(app_module.zoom, "apply_to", lambda _window: None)
+    monkeypatch.setattr(app_module, "_apply_dialog_defaults", lambda _window, _route: None)
+    monkeypatch.setattr(results_win, "ResultsWindow", lambda _dialog, **_kwargs: None)
+    monkeypatch.setattr(
+        dialogs,
+        "run_dialog",
+        lambda dialog, opener: shown.append(dialog),  # noqa: ARG005 -- the SUT passes opener=
+    )
+    context = _context(frame=frame, log=log, resource=_MissingWindowResource())
+
+    app_module._open_target(context, commands.route_for_id("mi_standings"))
+
+    assert shown == [recovered]
+    assert recovered.destroyed is True
+    assert frame.notices == []
+    assert _entries(_log_path(tmp_path)) == []

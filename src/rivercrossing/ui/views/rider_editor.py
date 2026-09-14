@@ -112,6 +112,7 @@ from rivercrossing.ui.views._support import (
     associate_model,
     clamp_to_display,
     find_control,
+    load_dialog,
 )
 
 if TYPE_CHECKING:
@@ -1225,7 +1226,7 @@ def run_csv_import_flow(parent: wx.Window, roster: Roster) -> bool:
     path = _pick_import_path(parent)
     if path is None:
         return False
-    window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.CSV_PREVIEW_DLG)
+    window = load_dialog(wx.xrc.XmlResource.Get(), ids.CSV_PREVIEW_DLG)
     if window is None:
         return False
 
@@ -1306,7 +1307,7 @@ def _run_rider_form_flow(
     :func:`run_edit_rider_flow` share: only ``editing`` (and so the
     title and the presenter class) differs between them.
     """
-    window = wx.xrc.XmlResource.Get().LoadDialog(None, ids.ADD_RIDER_DLG)
+    window = load_dialog(wx.xrc.XmlResource.Get(), ids.ADD_RIDER_DLG)
     if window is None:
         return False
     try:

@@ -458,9 +458,9 @@ def test_show_no_ride_given_a_live_header_puts_the_status_lamp_red() -> None:
     """Phase 6: no ride renders the DRAFT lamp (red), not a dark one.
 
     The no-ride console still names its state -- ``ride_status_lbl``
-    reads DRAFT -- and a labelled state is never carried by colour
-    alone (UX-DESKTOP section 7), so the lamp lights DRAFT's own red
-    rather than going dark.
+    reads CREATE RIDE -- and a labelled state is never carried by
+    colour alone (UX-DESKTOP section 7), so the lamp lights DRAFT's
+    own red rather than going dark.
     """
     view = _bare_view()
     view.ride_status_light.set_mode("green")
@@ -470,14 +470,19 @@ def test_show_no_ride_given_a_live_header_puts_the_status_lamp_red() -> None:
     assert view.ride_status_light.mode == "red"
 
 
-def test_show_no_ride_given_a_live_header_labels_the_status_draft() -> None:
-    """Phase 6: the status label reads DRAFT with no ride open."""
+def test_show_no_ride_given_a_live_header_labels_create_ride() -> None:
+    """W1: the no-ride label tells the operator to create a ride.
+
+    The internal status stays DRAFT -- the menu binder reads that,
+    not the label -- but DRAFT on screen would suggest a ride already
+    exists.
+    """
     view = _bare_view()
     view.ride_status_lbl.SetLabel("RUNNING")
 
     view.show_no_ride()
 
-    assert view.ride_status_lbl.label == "DRAFT"
+    assert view.ride_status_lbl.label == "CREATE RIDE"
 
 
 def test_show_no_ride_given_a_live_header_returns_the_console_to_draft() -> None:
@@ -560,6 +565,7 @@ def test_set_state_given_a_lifecycle_status_lights_the_lamp(
 def test_status_label_words_given_the_lifecycle_cover_every_rendered_word() -> None:
     """The floor is computed from the real labels, STOPPED included."""
     assert set(main_frame.STATUS_LABEL_WORDS) == {
+        "CREATE RIDE",
         "DRAFT",
         "RUNNING",
         "FINISHED",
@@ -568,15 +574,29 @@ def test_status_label_words_given_the_lifecycle_cover_every_rendered_word() -> N
     }
 
 
+def test_no_ride_status_text_given_the_no_ride_label_is_create_ride() -> None:
+    """W1: the operator is told to create a ride, never shown DRAFT."""
+    assert main_frame.NO_RIDE_STATUS_TEXT == "CREATE RIDE"
+
+
+def test_status_label_words_given_the_no_ride_label_reserves_its_room() -> None:
+    """The widest floor covers the no-ride label, or it clips."""
+    assert main_frame.NO_RIDE_STATUS_TEXT in main_frame.STATUS_LABEL_WORDS
+
+
 def test_pin_status_label_width_given_a_label_pins_the_widest_word() -> None:
-    """The pin is the widest word's own extent, nothing invented."""
+    """The pin is the widest word's own extent, nothing invented.
+
+    CREATE RIDE is eleven characters, wider than DRAFT, RUNNING,
+    FINISHED, REOPENED or STOPPED, so the floor follows it.
+    """
     label = _RecordingLabel()
 
     width = main_frame._pin_status_label_width(label)
 
     assert (width, label.min_size.width, label.min_size.height) == (
-        label.GetTextExtent("REOPENED").width,
-        label.GetTextExtent("REOPENED").width,
+        label.GetTextExtent("CREATE RIDE").width,
+        label.GetTextExtent("CREATE RIDE").width,
         -1,
     )
 
