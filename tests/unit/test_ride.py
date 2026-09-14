@@ -3583,37 +3583,18 @@ def test_duplicate_crossings_leaves_the_ride_untouched() -> None:
     assert (engine.crossings, len(engine.events)) == before
 
 
-# ------------------------------------------- the replay seam is exempt
-# The audit log *is* the ride: a persisted add/edit row was already
-# judged when it ran live, so applying it again must reproduce the
-# recorded state rather than re-judge it under today's gate -- the same
-# rule `_begin_start` records for `start`'s readiness gates (E5.1.2).
-# Rows written before Phase 3 can be out of order or zero-lap, because
-# the operator's whole "the number was missed" flow back-dates a lap.
+# ==================== Phase 3's lap gate is absolute on replay
+# The audit log *is* the ride, but the gate is absolute: ``apply``
+# re-applies a persisted ``edit_crossing``/``add_crossing_at`` through
+# the public command, so a stored row that violates the zero/negative
+# lap rule is refused exactly as a live correction would be. The app is
+# unreleased and its databases are erased, so there are no pre-gate rows
+# to preserve. A legal live command always met the gate when it ran, so
+# replaying one still rebuilds the ride.
 
 
-def test_apply_add_crossing_at_given_a_pre_gate_event_replays_it() -> None:
-    """A back-dated add recorded before the gate still rebuilds."""
-    engine, _ = _make_engine()
-    engine.start(at=_dt(10, 0))
-    engine.record_crossing("12", at=_dt(10, 30))
-    event = Event(
-        action="add_crossing_at",
-        payload={
-            "plate": "12",
-            "entry_id": "12",
-            "crossed_at": "2026-09-20T10:25:00",
-            "reason": "missed crossing",
-        },
-    )
-
-    engine.apply(event)
-
-    assert (engine.lap_times("12"), engine.events[-1]) == ((1500.0, 300.0), event)
-
-
-def test_apply_edit_crossing_given_a_pre_gate_event_replays_it() -> None:
-    """A zero-lap edit recorded before the gate still rebuilds."""
+def test_apply_edit_crossing_given_a_zero_lap_event_raises_value_error() -> None:
+    """A persisted zero-lap edit is re-judged, not replayed."""
     engine, _ = _make_engine()
     engine.start(at=_dt(10, 0))
     engine.record_crossing("12", at=_dt(10, 30))
@@ -3629,6 +3610,144 @@ def test_apply_edit_crossing_given_a_pre_gate_event_replays_it() -> None:
         },
     )
 
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_edit_crossing_given_a_negative_lap_event_raises_value_error() -> None:
+    """A persisted edit before the previous lap is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+    event = Event(
+        action="edit_crossing",
+        payload={
+            "entry_id": "12",
+            "seq": 2,
+            "previous_crossed_at": "2026-09-20T10:40:00",
+            "crossed_at": "2026-09-20T10:29:00",
+            "reason": "mis-keyed time",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_edit_crossing_given_lap_one_at_actual_start_raises_value_error() -> None:
+    """Lap 1 is measured from the gun, replay included (Phase 3)."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="edit_crossing",
+        payload={
+            "entry_id": "12",
+            "seq": 1,
+            "previous_crossed_at": "2026-09-20T10:30:00",
+            "crossed_at": "2026-09-20T10:00:00",
+            "reason": "mis-keyed time",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_add_crossing_at_given_a_time_at_the_latest_crossing_raises_value_error() -> None:
+    """A persisted add at the latest lap is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:30:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_add_crossing_at_given_a_back_dated_event_raises_value_error() -> None:
+    """A persisted add before the latest lap is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:25:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_add_crossing_at_given_a_first_lap_at_actual_start_raises_value_error() -> None:
+    """A persisted first lap at the gun is refused on replay."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:00:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    with pytest.raises(ValueError, match=re.escape(_REFUSAL)):
+        engine.apply(event)
+
+
+def test_apply_edit_crossing_given_a_legal_event_still_replays_it() -> None:
+    """A legal persisted edit met the gate and still rebuilds."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    engine.record_crossing("12", at=_dt(10, 40))
+    event = Event(
+        action="edit_crossing",
+        payload={
+            "entry_id": "12",
+            "seq": 2,
+            "previous_crossed_at": "2026-09-20T10:40:00",
+            "crossed_at": "2026-09-20T10:45:00",
+            "reason": "mis-keyed time",
+        },
+    )
+
     engine.apply(event)
 
-    assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 0.0), event)
+    assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 900.0), event)
+
+
+def test_apply_add_crossing_at_given_a_legal_event_still_replays_it() -> None:
+    """A legal persisted add met the gate and still rebuilds."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    engine.record_crossing("12", at=_dt(10, 30))
+    event = Event(
+        action="add_crossing_at",
+        payload={
+            "plate": "12",
+            "entry_id": "12",
+            "crossed_at": "2026-09-20T10:35:00",
+            "reason": "missed crossing",
+        },
+    )
+
+    engine.apply(event)
+
+    assert (engine.lap_times("12"), engine.events[-1]) == ((1800.0, 300.0), event)
