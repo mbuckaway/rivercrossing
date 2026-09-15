@@ -4,7 +4,7 @@
 ``show_ride_header`` renders the two ride-info groups beside the stop
 light: the ride's own logo plus six read-only values -- Name, Date,
 Venue in the "Ride" box, Organizer, Scorer and Lap length km in
-"Details". Five things are pinned here:
+"Details". Six things are pinned here:
 
 - :func:`rivercrossing.ui.views.main_frame._ride_logo_bitmap` -- a path
   decodes to an OK bitmap fitted into ``RIDE_LOGO_DISPLAY_SIZE``, or the
@@ -24,6 +24,12 @@ Venue in the "Ride" box, Organizer, Scorer and Lap length km in
   status word (so the box's fixed column never reflows on a state
   change), ``_pin_current_lap_width`` floors the reading at its own two
   digits, and ``show_current_lap`` renders ``00``..``99``.
+- G4's corrections banner -- ``set_state`` on REOPENED posts
+  ``REOPENED_BANNER`` to the status bar's first field and leaves that
+  field alone for every other state. The console no longer builds any
+  top ``wxInfoBar``, so no code-side bar can disturb the frame's own
+  sizing (``test_xrc_structure.py`` holds the authored slot's removal,
+  and the module/constructor pins below hold the code side).
 
 The bitmap arm needs a live ``wx.App`` to decode and rescale a PNG, so
 this module builds one -- the module-cache strong reference
@@ -37,6 +43,7 @@ hangs at exit on an undismissable "Several errors occurred" modal
 """
 
 import base64
+import inspect
 from datetime import date, datetime
 from functools import cache
 from pathlib import Path
@@ -53,6 +60,7 @@ from rivercrossing.roster import EntryMode
 from rivercrossing.ui.views import main_frame
 from rivercrossing.ui.views.gauges import StopLight
 from rivercrossing.ui.views.main_frame import (
+    REOPENED_BANNER,
     RIDE_INFO_VALUE_WIDTH,
     RIDE_LOGO_DISPLAY_SIZE,
     MainFrame,
@@ -226,11 +234,27 @@ class _NoOp:
         return _no_op
 
 
+class _RecordingFrame:
+    """The ``wx.Frame`` double: records its status bar's readings."""
+
+    def __init__(self) -> None:
+        """Start with an empty status bar."""
+        self.status: dict[int, str] = {}
+
+    def SetStatusText(self, text: str, field: int = 0) -> None:  # noqa: N802 -- wx API name
+        """Record *text* as the field's new reading."""
+        self.status[field] = text
+
+    def GetStatusText(self, field: int = 0) -> str:  # noqa: N802 -- wx API name
+        """Return *field*'s reading, ``""`` when never posted."""
+        return self.status.get(field, "")
+
+
 def _bare_view() -> MainFrame:
     """Return a ``MainFrame`` over recording doubles.
 
-    ``__init__`` resolves every frozen name, builds real ``wx.InfoBar``s
-    and takes over a desktop, so the instance is made without it
+    ``__init__`` resolves every frozen name, builds real wx windows and
+    takes over a desktop, so the instance is made without it
     (``test_ride_setup_logo_wx.py``'s own stand-in shape): the header
     steps read and write only these attributes.
     """
@@ -248,14 +272,18 @@ def _bare_view() -> MainFrame:
     view.ride_status_lbl = _RecordingLabel()
     view.current_lap_lbl = _RecordingLabel(label="00")
     view.ride_status_light = _RecordingLight()
+    # G4: ``resume_infobar``/``reopened_infobar`` are deliberately not
+    # here. The console builds no top InfoBar any more -- the REOPENED
+    # banner rides the status bar -- so set_state and show_no_ride must
+    # never reach for one. Leaving the names off this list is what turns
+    # a reintroduced call into an AttributeError rather than a silent
+    # no-op the pin would not notice.
     for name in (
         "plate_input",
         "record_btn",
         "start_btn",
         "stop_btn",
         "undo_btn",
-        "resume_infobar",
-        "reopened_infobar",
     ):
         setattr(view, name, _NoOp())
     for name in _SILENCED_METHODS:
@@ -554,6 +582,73 @@ def test_set_state_given_a_lifecycle_status_lights_the_lamp(
     view.set_state(status, stopped=stopped)
 
     assert view.ride_status_light.mode == expected
+
+
+# -------------------------------------------- G4: the REOPENED banner
+# The corrections banner used to be shown on a code-side wxInfoBar
+# inserted at the top of the frame's sizer. It rides the status bar's
+# first field now (G4), so nothing above the ride-info block can add a
+# row to the frame and move the sizing the canvas fixes.
+
+
+def test_set_state_given_a_reopened_ride_posts_the_banner_to_the_status_bar() -> None:
+    """G4/§3/R-36: the corrections notice is status text at field 0."""
+    view = _bare_view()
+    frame = _RecordingFrame()
+    view.frame = frame
+
+    view.set_state(RideStatus.REOPENED)
+
+    assert frame.GetStatusText(0) == REOPENED_BANNER
+
+
+@pytest.mark.parametrize(
+    "status",
+    [RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED],
+    ids=["draft", "running", "finished"],
+)
+def test_set_state_given_a_non_reopened_status_leaves_the_status_bar_alone(
+    status: RideStatus,
+) -> None:
+    """G4: the other states write nothing -- no Dismiss, no clear."""
+    view = _bare_view()
+    frame = _RecordingFrame()
+    view.frame = frame
+
+    view.set_state(status)
+
+    assert frame.status == {}
+
+
+# ----------------------------------------- G4: no code-side top InfoBar
+# xrc-windows.md section A's footnote (measured): XRC cannot author a
+# wxInfoBar, so the console used to build two in code and insert them
+# at the top of the frame's sizer -- above the ride-info block, where
+# any text they held changed the frame's own height. Both are gone. A
+# unit test builds no real window, so the removal is pinned as the
+# transcription contract ``test_frame_screen_fit.py`` uses for the same
+# reason; the behaviour they carried is the status-bar pins above.
+
+
+def test_main_frame_declares_no_top_infobar_name_or_builder() -> None:
+    """G4: both frozen names and their one builder are removed."""
+    assert (
+        hasattr(main_frame, "RESUME_INFOBAR"),
+        hasattr(main_frame, "REOPENED_INFOBAR"),
+        hasattr(main_frame.MainFrame, "_build_infobar"),
+    ) == (False, False, False)
+
+
+def test_main_frame_init_given_a_new_console_builds_no_infobar() -> None:
+    """G4: the constructor shells no wxInfoBar into the frame's sizer.
+
+    logic-coverage-exempt: T-3 -- ``MainFrame.__init__`` cannot run
+    headless (it resolves every frozen name and needs a desktop), so
+    the absence is read off its own source rather than branch-covered.
+    """
+    source = inspect.getsource(main_frame.MainFrame.__init__)
+
+    assert ("wx.InfoBar" in source, "_build_infobar" in source) == (False, False)
 
 
 # --------------------------------------- the Status group's fixed width

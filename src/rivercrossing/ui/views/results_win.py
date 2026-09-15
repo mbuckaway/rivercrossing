@@ -187,8 +187,8 @@ STANDINGS_LIST_MIN_HEIGHT = STANDINGS_HEADER_HEIGHT + STANDINGS_MIN_ROWS * STAND
 # The stale-export InfoBar's frozen name (xrc-windows.md D / spec.md
 # §15b). XRC cannot author a wxInfoBar at all (results.xrc's own
 # header), so this name never appears in ui/ids.py -- the bar is built
-# code-side and named with SetName(), mirroring main_frame.py's
-# RESUME_INFOBAR/REOPENED_INFOBAR precedent.
+# code-side and named with SetName(), the pattern rider_editor.py's
+# ROSTER_INFOBAR follows.
 STALE_INFOBAR = "stale_infobar"
 
 # AppendTextColumn's own default flags include

@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """``main_frame``: the console (1a), wired to its live DataSource.
 
-xrc-windows.md section A's code-side footnote lists six things
+xrc-windows.md section A's code-side footnote lists the things
 ``main.xrc`` cannot express: the crossings feed's DataView columns
-and per-row attributes, the card imagelist, the three ``wxInfoBar``
-shells, the ``main_splitter`` sash restore, per-state menu enabling,
-and ``SetAppearance``. This module covers the first four for
-``main_frame`` -- per-state menu enabling is ``commands.py``'s route
-table (E1.4) and ``SetAppearance`` is ``theme.py``'s job (wired by
-the app bootstrap, Phase 8); neither lives here. WS-D/WS-H extend
+and per-row attributes, the card imagelist, the ``main_splitter``
+sash restore, per-state menu enabling, and ``SetAppearance``. This
+module covers the first three for ``main_frame`` -- per-state menu
+enabling is ``commands.py``'s route table (E1.4) and
+``SetAppearance`` is ``theme.py``'s job (wired by the app bootstrap,
+Phase 8); neither lives here. WS-D/WS-H extend
 the same code-side list with the header gauges (two ``RaceClock``
 dials and the ``StopLight``, built into main.xrc's placeholder
 panels because XRC cannot author a ``wx.Control`` subclass), the
@@ -33,8 +33,8 @@ second.
 module until a split earns its keep):** module-skeletons.md names
 one for "feed, entry field, counters", but ``main.xrc`` never splits
 those controls into their own XRC panel resource -- they are plain
-children of this one frame, alongside the InfoBars, splitter and
-statusbar this module already owns. Two Python files sharing one XRC
+children of this one frame, alongside the splitter and statusbar this
+module already owns. Two Python files sharing one XRC
 window and one set of ``FindWindowByName`` calls would be a
 same-window split with no separable XRC boundary behind it, the
 paper-cut kind Rule 7 warns against. If a second real window ever
@@ -97,10 +97,8 @@ __all__ = [
     "NO_RIDE_STATUS_TEXT",
     "REMAINING_CLOCK",
     "REMAINING_CLOCK_PANEL",
-    "REOPENED_INFOBAR",
     "REQUIRED_CONTROLS",
     "REQUIRED_CONTROL_CLASSES",
-    "RESUME_INFOBAR",
     "REVIEW_NOTEBOOK",
     "RIDERS_COLUMN_LABELS",
     "RIDERS_COLUMN_WIDTHS",
@@ -131,15 +129,10 @@ _TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
     feed_model.COL_TOTAL: lambda row: row.total,
 }
 
-# ui/ids.py is generated from the .xrc files (R-05); these two names
-# never appear there since XRC cannot author a wxInfoBar at all
-# (xrc-windows.md's own code-side footnote, main.xrc's header).
-RESUME_INFOBAR = "resume_infobar"
-REOPENED_INFOBAR = "reopened_infobar"
-
 # The WS-D gauges' frozen names, applied with SetName() because XRC
-# cannot author a wx.Control subclass either -- the InfoBar rule
-# above extended to RaceClock and StopLight (main.xrc's header).
+# cannot author a wx.Control subclass (main.xrc's header). The console
+# carries no wxInfoBar at all: the REOPENED banner is status-bar text
+# (G4), so nothing sits above the ride-info block.
 ELAPSED_CLOCK = "elapsed_clock"
 REMAINING_CLOCK = "remaining_clock"
 RIDE_STATUS_LIGHT = "ride_status_light"
@@ -266,7 +259,9 @@ NEEDS_REVIEW_PAGE_LABEL = "Needs Review"
 
 # The REOPENED corrections banner (spec §3, R-36): the clock stays
 # closed and live plate entry stays off; the operator edits, voids or
-# adds crossings, then finishes again. Shown by set_state on REOPENED.
+# adds crossings, then finishes again. set_state posts it to the status
+# bar's first field -- no top-of-window InfoBar, so no banner text can
+# change the frame's own height (G4).
 REOPENED_BANNER = (
     "This ride is open for corrections — entry is locked. "
     "Edit, void, or add crossings, then finish again."
@@ -718,7 +713,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self.undo_btn = self._find(ids.UNDO_BTN, wx.Button)
         # WS-D gauge slots: the dials and the status lamp are built
         # code-side inside main.xrc's placeholder panels (XRC cannot
-        # author a wx.Control subclass -- the InfoBar rule above).
+        # author a wx.Control subclass -- its header footnote).
         self.elapsed_clock_panel = self._find(ELAPSED_CLOCK_PANEL, wx.Panel)
         self.remaining_clock_panel = self._find(REMAINING_CLOCK_PANEL, wx.Panel)
         self.ride_status_panel = self._find(RIDE_STATUS_PANEL, wx.Panel)
@@ -867,10 +862,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # ``frame.presenter`` precedent (results_win.py).
         self.frame.console = self
 
-        self._next_infobar_slot = 1  # main.xrc's spacer placeholder sits at index 0
-        self.resume_infobar = self._build_infobar(RESUME_INFOBAR)
-        self.reopened_infobar = self._build_infobar(REOPENED_INFOBAR)
-
         self._total_column: Any = None
         self._lap_time_column: Any = None
         self._build_columns()
@@ -941,32 +932,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
     # ``self.frame`` -- the console's window is a wx.Frame, not a
     # dialog.
     _window_attr = "frame"
-
-    # ------------------------------------------------------- InfoBars
-
-    def _build_infobar(self, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Build one code-side InfoBar and insert it after the spacer.
-
-        ``main.xrc``'s spacer placeholder sits at sizer index 0; each
-        InfoBar is inserted right after it (and after any InfoBar
-        already inserted), so the two stack in call order. A fresh
-        ``wx.InfoBar`` starts hidden (measured) -- nothing further is
-        needed for R-73's "hidden by default".
-
-        Measured (wxPython 4.3.1 / wxWidgets 3.3.3, macOS, a throwaway
-        probe script per this repo's convention, first reproduced
-        wiring ``rider_editor_dlg``'s ``roster_infobar``, E3.2):
-        ``Dismiss()``/``ShowMessage()`` on a ``wx.InfoBar`` with its
-        default slide effect never returns, shown or not -- disabling
-        both effects here is what keeps a future ``ShowMessage()``/
-        ``Dismiss()`` call on either of these two safe.
-        """
-        bar = wx.InfoBar(self.frame)
-        bar.SetName(name)
-        bar.SetShowHideEffects(wx.SHOW_EFFECT_NONE, wx.SHOW_EFFECT_NONE)
-        self.frame.GetSizer().Insert(self._next_infobar_slot, bar, 0, wx.EXPAND)
-        self._next_infobar_slot += 1
-        return bar
 
     # --------------------------------------------------------- gauges
 
@@ -1630,9 +1595,12 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         ``record_btn`` tracks ``plate_input``, both live only in
         RUNNING), plus the REOPENED state's corrections banner:
         REOPENED is a corrections-only state (spec §3, R-36), so the
-        console shows ``reopened_infobar`` to say entry is off and
-        corrections are on (E5.2.2), and dismisses it for every other
-        status. FINISHED carries no banner -- its red lamp and
+        console posts :data:`REOPENED_BANNER` to the status bar's first
+        field to say entry is off and corrections are on (E5.2.2). The
+        banner is status-bar text, not a top-of-window InfoBar, so its
+        text can never change the frame's own height (G4); every other
+        status leaves that field untouched -- the operator's last notice
+        stands. FINISHED carries no banner -- its red lamp and
         "FINISHED" label hold the state, and the status bar's own
         notice names the Results menu.
 
@@ -1652,9 +1620,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self.plate_input.Enable(running)
         self.record_btn.Enable(running)
         if status is RideStatus.REOPENED:
-            self.reopened_infobar.ShowMessage(REOPENED_BANNER, wx.ICON_INFORMATION)
-        else:
-            self.reopened_infobar.Dismiss()
+            self.show_notice(REOPENED_BANNER)
         self._status = status
         self._notify_ride_changed()
         if self._presenter is not None:
@@ -1672,8 +1638,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         create one; a DRAFT reading would suggest one already exists)
         with its lamp lit red (Phase 6 -- a labelled state is never
         carried by colour alone, UX-DESKTOP section 7), every ride
-        control is inert, both banners are dismissed, and the
-        clocks/feed/counters/lap show their zero state. ``_status``
+        control is inert, and the clocks/feed/counters/lap show their
+        zero state. ``_status``
         returns to DRAFT so the menu binder's ride-state seam sees
         DRAFT; the app's own ``ride_open=False`` state keeps the
         ride-gated rows off.
@@ -1699,8 +1665,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             self.undo_btn,
         ):
             control.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.resume_infobar.Dismiss()
-        self.reopened_infobar.Dismiss()
         self.show_clock("0:00:00", "0:00:00")
         self.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
         self.show_feed([])

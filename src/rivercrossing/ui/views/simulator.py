@@ -77,7 +77,7 @@ MIN_WIDTH = 425
 # The error InfoBar's frozen name (spec.md 15b). XRC cannot author a
 # wxInfoBar at all (simulation.xrc's own header), so this name never
 # appears in ui/ids.py -- the bar is built code-side and named with
-# SetName(), mirroring main_frame.py's RESUME_INFOBAR precedent.
+# SetName(), the pattern rider_editor.py's ROSTER_INFOBAR follows.
 SIM_INFOBAR = "sim_infobar"
 
 # The Check button's message-box caption (plan §2).

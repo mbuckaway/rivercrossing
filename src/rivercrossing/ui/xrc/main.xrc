@@ -8,8 +8,9 @@
 
     * wxInfoBar cannot be authored here. XRC yields a generic wx.Control and
       silently drops the name attribute, so FindWindowByName returns None.
-      resume_infobar and reopened_infobar are built with
-      wx.InfoBar() in code and given their frozen names with SetName().
+      (This window carries none: the REOPENED corrections banner rides the
+      status bar's first field, so nothing sits above the ride-info block
+      and no code-side bar can disturb the frame's own sizing.)
     * wxDataViewListCtrl cannot be authored here either: its XRC handler
       hard-forces the control name to "dataviewCtrl". crossings_list and
       flagged_list are therefore wxDataViewCtrl, whose name IS honoured;
@@ -44,10 +45,10 @@
 
   Code-side per the canvas footnotes: feed columns/rows (with their
   header sort), bold flagged-row attributes, the feed's search filter,
-  card bitmaps from the imagelist, InfoBar text and show/hide,
-  main_splitter sash restore from settings, per-ride-state enabling of
-  menus and buttons, radio menu-item defaults (see main_menubar below),
-  and every data label's text.
+  card bitmaps from the imagelist, main_splitter sash restore from
+  settings, per-ride-state enabling of menus and buttons, radio
+  menu-item defaults (see main_menubar below), and every data label's
+  text.
 -->
 <resource>
 
@@ -59,15 +60,6 @@
       <orient>wxVERTICAL</orient>
 
       <!--
-        InfoBar slot. resume_infobar / reopened_infobar are
-        constructed in code and inserted at index 0 of this sizer; see the file
-        header for why they cannot be declared here.
-      -->
-      <object class="spacer">
-        <size>0,0</size>
-      </object>
-
-      <!--
         The ride-info block (plan §11: the stop light's status column,
         then the "Ride" and "Details" group boxes, then the ride logo
         slot), the two gauge-clock columns (WS-D) and the start/stop
@@ -75,7 +67,7 @@
         ride_status_panel are code-side slots: XRC cannot author a
         wx.Control subclass, so RaceClock / StopLight (views/gauges.py)
         are built into these panels and named with SetName() in code
-        (the same code-side rule as the InfoBars). The dials' numeric
+        (the code-side rule in the header above). The dials' numeric
         labels stay declared here under their frozen names
         (clock_elapsed_lbl / clock_remaining_lbl), and start_btn /
         stop_btn are wxBitmapButton shells whose SVG glyphs are set in

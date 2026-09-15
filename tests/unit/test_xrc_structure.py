@@ -34,9 +34,9 @@ XRC_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" /
 XRC_FILES = ("main.xrc", "setup.xrc", "settings.xrc")
 
 # xrc-windows.md section A. main_menubar is the *menubar* resource's
-# own name, so it is not one of the frame's controls. resume_infobar
-# and reopened_infobar are deliberately absent: XRC drops the name of
-# a wxInfoBar, so they are built in code.
+# own name, so it is not one of the frame's controls. The console
+# declares no ``wxInfoBar`` at all: XRC drops its name, and G4 retired
+# the two code-side bars that once stood in for one.
 MAIN_FRAME_CONTROLS = (
     "ride_logo_bmp",
     "ride_name_value",
@@ -285,6 +285,12 @@ def _window(window_name: str) -> Element:
     return _top_level_windows(filename)[window_name]
 
 
+def _main_frame_top_sizer() -> Element:
+    """Return the frame's own outermost sizer (its direct child)."""
+    frame = _top_level_windows("main.xrc")["main_frame"]
+    return next(child for child in frame if child.attrib.get("class") == "wxBoxSizer")
+
+
 def _control_names_in(window: Element) -> list[str]:
     """List every named ``<object>`` below *window*, excluding it."""
     return [
@@ -438,6 +444,26 @@ def test_main_frame_declares_the_canvas_minimum_size() -> None:
     frame = _top_level_windows("main.xrc")["main_frame"]
 
     assert _param(frame, "size") == "1100,780"
+
+
+def test_main_frame_top_sizer_declares_no_spacer_slot() -> None:
+    """G4: the retired InfoBar slot is gone from the frame's top sizer.
+
+    The console's vertical sizer used to carry a zero-size ``spacer``
+    at index 0 as the insertion point for the two code-side InfoBars,
+    so a code-built bar could add a row above the ride-info block.
+    Nothing may occupy that slot now.
+    """
+    classes = [child.attrib["class"] for child in _main_frame_top_sizer() if child.tag == "object"]
+
+    assert "spacer" not in classes
+
+
+def test_main_frame_top_sizer_leads_with_the_header_row() -> None:
+    """G4: the frame's first child is the header, not an empty slot."""
+    first = next(child for child in _main_frame_top_sizer() if child.tag == "object")
+
+    assert first.attrib["class"] == "sizeritem"
 
 
 def test_main_splitter_is_declared_as_a_splitter_window() -> None:
