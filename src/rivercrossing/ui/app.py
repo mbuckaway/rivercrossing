@@ -3059,18 +3059,15 @@ def _wire_rider_open_seam(context: _RouteContext) -> None:
     console_view.set_on_open_rider(lambda plate: _open_rider_editor_for(context, plate))
 
 
-# The held-card review copy (plan §6). The confirm question is the
-# non-destructive one (info icon, Enter confirms a card into the hand);
-# declining it asks the destructive void question, whose Cancel is the
-# safe keep-held answer. Two native confirms rather than a new XRC
-# window: spec §15b's frozen name registry carries no review-dialog
-# names, and native dialogs need none.
+# The held-card review copy (plan §6). One native three-button prompt
+# rather than a new XRC window: spec §15b's frozen name registry
+# carries no review-dialog names, and native dialogs need none. Yes
+# confirms the card into the hand, No voids it, and Cancel -- the
+# default button -- leaves it held, so a reflex Enter decides nothing.
 _HELD_REVIEW_TITLE = "Review Held Card"
 _HELD_CONFIRM_LABEL = "Confirm card"
-_HELD_CONFIRM_CANCEL_LABEL = "Cancel"
-_HELD_VOID_TITLE = "Void Held Card?"
 _HELD_VOID_LABEL = "Void card"
-_HELD_VOID_CANCEL_LABEL = "Keep held"
+_HELD_CANCEL_LABEL = "Cancel"
 
 
 def _held_card_facts(engine: RideEngine, crossing: Crossing, roster: Roster) -> str:
@@ -3098,9 +3095,9 @@ def _review_held_crossing(context: _RouteContext, engine: RideEngine, crossing: 
     """Ask what to do with *crossing*'s held card, then commit it.
 
     The held half of the flagged review routing (plan §6): one native
-    confirm asks whether to confirm the card into the entry's hand;
-    declining it asks the destructive void question instead. Confirm
-    runs ``engine.confirm_held`` and Void ``engine.void_held`` -- both
+    three-button prompt asks whether to confirm the card into the
+    entry's hand or void it, and Cancel leaves the decision open. Yes
+    runs ``engine.confirm_held`` and No ``engine.void_held`` -- both
     already emit audited events -- and each posts a status notice. The
     console feed re-renders from the engine on its own next tick, so
     nothing is refreshed here.
@@ -3110,27 +3107,51 @@ def _review_held_crossing(context: _RouteContext, engine: RideEngine, crossing: 
 
     facts = _held_card_facts(engine, crossing, context.roster)
     plate = crossing.rider_plate or crossing.entry_id
-    confirmed = std_dialogs.show_prompt(
+    choice = std_dialogs.show_three_choice(
         context.frame,
         _HELD_REVIEW_TITLE,
-        f"{facts}\n\nConfirm this card into the entry's hand?",
-        _HELD_CONFIRM_LABEL,
-        _HELD_CONFIRM_CANCEL_LABEL,
+        f"{facts}\n\nConfirm the card into the entry's hand, or void it.",
+        yes_label=_HELD_CONFIRM_LABEL,
+        no_label=_HELD_VOID_LABEL,
+        cancel_label=_HELD_CANCEL_LABEL,
     )
-    if confirmed == wx.ID_OK:
+    if choice == wx.ID_YES:
         engine.confirm_held(crossing)
         context.frame.SetStatusText(f"Card confirmed for plate {plate}")
-        return
-    voided = std_dialogs.show_danger(
-        context.frame,
-        _HELD_VOID_TITLE,
-        f"{facts}\n\nVoid this card? It will not be credited.",
-        _HELD_VOID_LABEL,
-        _HELD_VOID_CANCEL_LABEL,
-    )
-    if voided == wx.ID_OK:
+    elif choice == wx.ID_NO:
         engine.void_held(crossing)
         context.frame.SetStatusText(f"Card voided for plate {plate}")
+
+
+def _return_to_held_confirm(
+    context: _RouteContext, engine: RideEngine, crossing: Crossing
+) -> None:
+    """Offer *crossing*'s card back to the hold queue (plan §6).
+
+    The credited/voided half of the flagged review routing: a card the
+    hold queue does not carry -- credited by an always-deal lap, or
+    voided off it -- is put back into the queue through
+    ``engine.return_to_held`` (audited) so it awaits confirm or void
+    again. One non-destructive native prompt, since returning a card
+    loses nothing; Cancel leaves it where it sits. The console feed
+    re-renders from the engine on its own next tick, so nothing is
+    refreshed here.
+    """
+    wx = require_wx()
+    from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see module docstring
+
+    facts = _held_card_facts(engine, crossing, context.roster)
+    plate = crossing.rider_plate or crossing.entry_id
+    returned = std_dialogs.show_prompt(
+        context.frame,
+        "Return Card to Held",
+        f"{facts}\n\nReturn this card to held for review?",
+        "Return to Held",
+        "Cancel",
+    )
+    if returned == wx.ID_OK:
+        engine.return_to_held(crossing)
+        context.frame.SetStatusText(f"Card returned to held for plate {plate}")
 
 
 def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, held) pair
@@ -3180,17 +3201,21 @@ def _flagged_crossing_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, h
     )
 
 
-def _open_flagged_review_for(
+def _open_flagged_review_for(  # noqa: PLR0913, PLR0917 -- the seam's own (plate, card_status, duplicate)
     context: _RouteContext,
     plate: str,
-    held: bool,  # noqa: FBT001 -- the seam's flag travels positionally
+    card_status: str,
+    duplicate: bool,  # noqa: FBT001 -- the seam's bit travels positionally
 ) -> None:
-    """Route a flagged-row activation by card disposition (§6).
+    """Route a flagged-row activation by duplicate bit and disposition.
 
     The app half of :meth:`MainFrame.set_on_open_flagged` (which fires
-    ``callback(plate, held)``): a **held** card gets the confirm/void
-    decision, a **credited** short lap (always-deal mode) opens
-    ``crossing_detail_dlg`` on the lap. A row that resolves to no live
+    ``callback(plate, card_status, duplicate)``): a **duplicate** row
+    opens ``crossing_detail_dlg`` on its lap -- the pair is what needs
+    the correction, and the detail deletes either half -- while a
+    **held** card gets the confirm/void choice and a card the hold
+    queue does not carry (**credited** or **voided**) is offered back
+    to the queue for another look. A row that resolves to no live
     crossing -- a stale activation after an undo or correction -- posts
     a status notice instead of opening anything. A console-less
     route-level context has nothing to review.
@@ -3199,30 +3224,35 @@ def _open_flagged_review_for(
     if presenter is None:
         return
     engine = presenter.engine
-    crossing = _flagged_crossing_for(presenter.source, engine, plate, held)
+    crossing = _flagged_crossing_for(presenter.source, engine, plate, card_status == "held")
     if crossing is None:
         context.frame.SetStatusText(f"Review — no crossing found for plate {plate}")
         return
-    if held:
+    if duplicate:
+        _show_crossing_detail_dialog(context, engine, crossing)
+    elif card_status == "held":
         _review_held_crossing(context, engine, crossing)
     else:
-        _show_crossing_detail_dialog(context, engine, crossing)
+        _return_to_held_confirm(context, engine, crossing)
 
 
 def _wire_flagged_open_seam(context: _RouteContext) -> None:
     """Wire the console flagged tab's activation to the review router.
 
     W11 F2a/§6: :meth:`MainFrame.set_on_open_flagged` is the view's
-    pure seam (it fires ``callback(plate, held)``); this is the app's
-    half that resolves the activated row back to its live crossing and
-    routes it by card disposition (:func:`_open_flagged_review_for`). A
-    console-less route-level context has nothing to wire.
+    pure seam (it fires ``callback(plate, card_status, duplicate)``);
+    this is the app's half that resolves the activated row back to its
+    live crossing and routes it by duplicate bit and card disposition
+    (:func:`_open_flagged_review_for`). A console-less route-level
+    context has nothing to wire.
     """
     console_view = context.console_view
     if console_view is None:
         return
     console_view.set_on_open_flagged(
-        lambda plate, held: _open_flagged_review_for(context, plate, held)
+        lambda plate, card_status, duplicate: _open_flagged_review_for(
+            context, plate, card_status, duplicate
+        )
     )
 
 
@@ -4273,10 +4303,11 @@ def build_main_window(
     ux-polish adds one post-wiring step: the console Riders tab's
     double-click seam is wired to the rider editor
     (:func:`_wire_rider_open_seam`); W11 adds the flagged tab's
-    activation seam the same way, routed by the row's card
-    disposition (:func:`_wire_flagged_open_seam` ->
-    :func:`_open_flagged_review_for`: a held card's confirm/void
-    decision, a credited short lap's crossing detail); J2 adds the
+    activation seam the same way, routed by the row's duplicate bit
+    and card disposition (:func:`_wire_flagged_open_seam` ->
+    :func:`_open_flagged_review_for`: a duplicate pair's crossing
+    detail, a held card's confirm/void choice, a credited or voided
+    card's return to the hold queue); J2 adds the
     crossings feed's own activation
     seam (:func:`_wire_crossing_open_seam` -> the read-only Crossing
     Detail dialog on the activated row's live crossing). W3 retired
