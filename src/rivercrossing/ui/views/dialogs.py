@@ -17,9 +17,11 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   dismiss button is ``wxID_CLOSE`` (``about_dlg``, ``audit_dlg``,
   ``rider_editor_dlg``, ...) is otherwise inert to both Escape and a
   mouse/keyboard activation of that button. :func:`wire_close_button`
-  fixes both in one call; it is a no-op on the 17 dialogs that carry
-  a ``wxID_CANCEL`` instead, so callers never need to branch on which
-  case a given dialog is.
+  fixes both in one call; it is a no-op on every dialog that carries
+  no ``wxID_CLOSE`` control -- one whose only dismiss button is
+  ``wxID_CANCEL`` needs no wiring, since wx already binds Escape and
+  a click on Cancel by itself -- so callers never need to branch on
+  which case a given dialog is.
 * **Form dialogs focus their first field, not their default button.**
   ``set_start_dlg``, ``edit_crossing_dlg``, ``manual_deal_dlg``,
   ``ride_setup_dlg`` and ``rider_editor_dlg``
@@ -46,15 +48,17 @@ tasks opening these dialogs would otherwise have to repeat 25 times:
   a dialog of its own.
 
 ``ride_setup_dlg``, ``rider_editor_dlg``, ``csv_preview_dlg``, W7's
-``add_rider_dlg``, Phase 4's ``team_editor_dlg`` and R-76's
-``rider_issues_dlg`` carry no ``<default>`` button at all in their
-already-authored XRC, so "Enter activates the marked default button"
-has nothing to activate for these six --
+``add_rider_dlg``, Phase 4's ``team_editor_dlg``, W8's
+``add_team_dlg`` and R-76's ``rider_issues_dlg`` carry no
+``<default>`` button at all in their already-authored XRC, so
+"Enter activates the marked default button" has nothing to activate
+for these seven --
 :data:`DEFAULT_BUTTON_DECISIONS` is the per-dialog product call
 (E1.5.3) that fills the gap, and :data:`FORM_FIRST_FIELDS` is
 spec.md §13's matching initial-focus decision for every form dialog,
-``rider_editor_dlg``, ``add_rider_dlg`` and ``team_editor_dlg``
-included. Both are the one place these decisions are recorded --
+``rider_editor_dlg``, ``add_rider_dlg``, ``team_editor_dlg`` and
+``add_team_dlg`` included. Both are the one place these decisions are
+recorded --
 ``app.py``'s ``_apply_dialog_defaults`` applies them when a real
 menu route opens the dialog, reading these tables rather than
 copying them.
@@ -64,8 +68,7 @@ import gc
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.ui import ids, require_wx, theme
-from rivercrossing.ui.card_text import format_card
-from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS
+from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS, find_window_by_name
 
 if TYPE_CHECKING:
     from rivercrossing.ui.logging import Logging
@@ -88,9 +91,10 @@ __all__ = [
     "first_field_for",
     "reopen_ride_message",
     "run_dialog",
+    "set_default_button",
     "set_initial_focus",
-    "void_card_message",
     "wire_close_button",
+    "wire_escape_to",
 ]
 
 # Real XRC names FindWindowByName resolves, but excluded from ui/ids.py
@@ -122,7 +126,7 @@ DEFAULT_BUTTON_DECISIONS: tuple[tuple[str, str], ...] = (
 # same first input the editor itself opens on; add_team_dlg (W8)
 # starts on its name field, like team_editor_dlg. dnf_confirm_dlg
 # (Phase 3) became a form when it gained its plate_input: the operator
-# types the rider number there, so that is where the caret starts.
+# types the rider plate there, so that is where the caret starts.
 FORM_FIRST_FIELDS: tuple[tuple[str, str], ...] = (
     (ids.SET_START_DLG, ids.START_DATE_PICKER),
     (ids.EDIT_CROSSING_DLG, ids.PLATE_INPUT),
@@ -162,27 +166,29 @@ class MissingDialogControlError(LookupError):
 def _control(dialog: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
     """Return the *expected_type* control named *name* in *dialog*.
 
-    Mirrors ``_support.find_control``'s shape: the lookup always
-    passes *dialog* as the explicit ``parent`` argument to
-    ``FindWindowByName``, never as an instance-method call, since
-    the latter silently searches every top-level window in the
-    process instead (measured).
+    Mirrors ``_support.find_control``'s shape: the lookup is scoped to
+    *dialog* -- never the bare static ``wx.Window.FindWindowByName``,
+    which searches every top-level window in the process instead
+    (measured) -- and it goes through ``_support.find_window_by_name``'s
+    recursive walk, never ``wx.Window.FindWindowByName(..., dialog)``:
+    on Windows ARM64 (wxPython 4.3.1) that call does not resolve
+    children that are present.
 
     The ``isinstance`` check is not decoration: under the address-
     reuse hazard ``_support.find_control`` documents, a freshly
-    allocated control can transiently answer ``FindWindowByName``
-    with a different, already-destroyed control's Python class --
-    only the wrapper's Python *type* gives that away, and generic
-    methods (``GetName()`` among them) still dispatch correctly even
-    then. Retrying with ``del``/``gc.collect()`` reference hygiene
-    between attempts resolves it, exactly as ``find_control`` does.
+    allocated control can transiently answer the lookup with a
+    different, already-destroyed control's Python class -- only the
+    wrapper's Python *type* gives that away, and generic methods
+    (``GetName()`` among them) still dispatch correctly even then.
+    Retrying with ``del``/``gc.collect()`` reference hygiene between
+    attempts resolves it, exactly as ``find_control`` does.
 
     Raises:
         MissingDialogControlError: If *name* does not resolve to an
             *expected_type* instance inside *dialog*, even after
             settling.
     """
-    control = wx.Window.FindWindowByName(name, dialog)
+    control = find_window_by_name(dialog, name)
     attempts = 0
     while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
         wx.SafeYield()
@@ -191,7 +197,7 @@ def _control(dialog: Any, name: str, expected_type: type = wx.Window) -> Any:  #
         # query keeps the poison entry alive -- find_control's remedy).
         del control
         gc.collect()
-        control = wx.Window.FindWindowByName(name, dialog)
+        control = find_window_by_name(dialog, name)
         attempts += 1
     if not isinstance(control, expected_type):
         raise MissingDialogControlError(
@@ -207,7 +213,7 @@ def wire_close_button(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
     that instead carries ``wxID_CANCEL`` needs no wiring here, since
     wx already binds Escape and a click on Cancel by itself.
     """
-    close_button = wx.Window.FindWindowByName("wxID_CLOSE", dialog)
+    close_button = find_window_by_name(dialog, "wxID_CLOSE")
     if close_button is None:
         return
     dialog.SetEscapeId(close_button.GetId())
@@ -244,7 +250,7 @@ def wire_escape_to(dialog: Any, control_name: str) -> None:  # noqa: ANN401
 def set_default_button(dialog: Any, control_name: str) -> None:  # noqa: ANN401
     """Mark the named button as *dialog*'s default, for Enter.
 
-    Six dialogs declare no ``<default>`` in XRC -- the six of
+    Seven dialogs declare no ``<default>`` in XRC -- the seven of
     :data:`DEFAULT_BUTTON_DECISIONS` -- so Enter did nothing in them,
     measured via ``GetDefaultItem()``, a breach of R-76's "Enter =
     default". Set here rather than in the .xrc files so the choice
@@ -355,27 +361,6 @@ def finish_again_labels() -> tuple[str, str]:
     :func:`finish_ride_message` / "Finish ride".
     """
     return "Finish again?", "Finish again"
-
-
-def _format_card_code(code: str) -> str:
-    """Return one stored card code's canvas display text.
-
-    Delegates to the one shared formatter (``ui.card_text``), which
-    replaced this module's own copy of the suit map.
-    """
-    return format_card(code)
-
-
-def void_card_message(card_code: str, entry: str) -> str:
-    """Return ``void_card_confirm_dlg``'s ``card_lbl`` copy (E7.2.1).
-
-    Names the card being voided and the entry it belongs to
-    (``"9♥ — 45 · J. Okafor"``) -- UX-DESKTOP §4: the confirm names
-    the object; a blank label is a failed assertion, never cosmetic
-    (the same rule the E5.4.1 message helpers pin). Mirrors
-    dialogs.xrc's own data-bearing sentence.
-    """
-    return f"{_format_card_code(card_code)} — {entry}"
 
 
 def dnf_message(plate: str, name: str) -> str:

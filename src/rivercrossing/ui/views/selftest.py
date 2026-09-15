@@ -20,12 +20,12 @@ import wx
 from rivercrossing.hands import self_test
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.selftest import SelfTestPresenter
-from rivercrossing.ui.views._support import find_control
+from rivercrossing.ui.views._support import DialogFindMixin
 
 __all__ = ["SelfTestDialog"]
 
 
-class SelfTestDialog:
+class SelfTestDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``selftest_dlg`` (3f).
 
     Implements ``SelfTestView`` (module-skeletons.md's presenter
@@ -47,14 +47,6 @@ class SelfTestDialog:
 
         self.presenter = SelfTestPresenter(self, self_test)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_rerun, self.rerun_button)
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _on_rerun(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``rerun_btn``: ask the presenter to run again."""

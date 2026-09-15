@@ -53,8 +53,6 @@ if TYPE_CHECKING:
 
     from rivercrossing.roster import EntryMode, PlateModel
 
-from rivercrossing.htmlexport import ExportOptions
-
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -107,13 +105,13 @@ class FakeConsoleView:
     # E4.4.1-E4.4.3: the Protocol grew the four members the live
     # presenter actually calls (the same "add the member once the
     # presenter calls it" precedent main_frame.py's own docstring
-    # records for set_hide_times). Behavioral coverage lives in
+    # records for set_time_columns). Behavioral coverage lives in
     # tests/unit/presenters/test_console.py; these stay no-ops.
     def set_stop_enabled(self, *, enabled: bool) -> None:
         """Record the stop-button enablement (unused here)."""
 
-    def set_hide_times(self, *, hide: bool) -> None:
-        """Record the hide-times toggle (unused here)."""
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Record the two time-column show flags (unused here)."""
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Record the clock labels (unused here)."""
@@ -289,13 +287,6 @@ class FakeResultsView:
     def set_stale(self, *, stale: bool) -> None:
         """No-op fake."""
 
-    def show_publish_options(self, options: ExportOptions) -> None:
-        """No-op fake."""
-
-    def publish_options(self) -> ExportOptions:
-        """No-op fake."""
-        return ExportOptions()
-
 
 class FakeLibraryView:
     """A complete ``LibraryView`` implementation for headless tests."""
@@ -420,6 +411,17 @@ def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type
     assert isinstance(fake, protocol)
 
 
+def test_results_view_protocol_given_the_reworked_dialog_declares_two_members() -> None:
+    """G6: the publish-options members left the ResultsView contract.
+
+    ``FakeResultsView`` above implements exactly these two, so it is
+    the isinstance case that fails the day one of them returns.
+    """
+    declared = set(getattr(ResultsView, "__protocol_attrs__"))  # noqa: B009 -- the Protocol's own member set
+
+    assert declared == {"show_standings", "set_stale"}
+
+
 # ------------------------------------------------ presenter/DataSource
 
 
@@ -456,7 +458,7 @@ def test_presenter_holds_the_view_and_data_source_it_was_given(
 # ConsolePresenter behavior moved to test_console.py (E4.4.1):
 # it holds (view, engine, source) and drives a real
 # RideEngine -- every event handler (on_plate_entered/on_undo/
-# on_stop_confirmed/on_start/on_hide_times/tick/on_finish) is covered
+# on_stop_confirmed/on_start/on_time_columns/tick/on_finish) is covered
 # there against a recording fake view and real engine
 # fixtures. What remains here is Protocol conformance (FakeConsoleView
 # above) and the wx-free import probe below.

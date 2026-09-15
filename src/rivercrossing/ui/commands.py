@@ -8,9 +8,12 @@ once, so both jobs read off the same 38 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
-split per format -- HTML and PDF -- in Part D. Phase 2 retired the
-dead Entry Detail… row and the duplicate Reassign Plate… / Void
-Card… rows -- Crossing Detail now owns both corrections.)
+split per format -- HTML and PDF -- in Part D, and G6 moved the five
+results publish options out of the results dialog onto a checkable
+Results row.) Phase 2 retired the dead Entry Detail… row and the
+duplicate Reassign Plate… / Void Card… rows -- Crossing Detail now
+owns both corrections -- and G7 retired Edit Crossing…, whose ground
+Crossing Detail's Edit Time and the F2 accelerator already cover.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -132,10 +135,10 @@ class MenuRoute:
         label: The row's own text, transcribed from the "Menu item"
             column (the part after "▸").
         ids: The XRC names this row covers -- one for almost every
-            row; the View row's single "Hide Times · Zoom"
-            entry covers all eight of its radio/check items, since
-            §15 itself groups them into one row (W13 removed the three
-            theme radios -- Settings owns appearance now).
+            row; the View row's single "Times · Zoom" entry covers all
+            nine of its radio/check items, since §15 itself groups them
+            into one row (W13 removed the three theme radios --
+            Settings owns appearance now).
         kind: Which :class:`TargetKind` *target* is.
         target: A ``ui/ids.py`` frozen name for ``WINDOW``/``DIALOG``
             kinds, or a short symbolic action name for ``COMMAND``.
@@ -264,8 +267,8 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         label="Edit Ride…",
         ids=("mi_edit_ride",),
         # The same dialog as New Ride… in its preload mode; app.py's
-        # _decorate distinguishes them by the row's own id (the
-        # mi_add_crossing_at/mi_edit_crossing precedent). Only the
+        # _decorate distinguishes them by the row's own id (the same
+        # id-keyed dispatch the Cards correction rows use). Only the
         # ride-open gate applies -- the structural fields are locked
         # inside the dialog for any ride past DRAFT (D2).
         kind=TargetKind.WINDOW,
@@ -353,13 +356,18 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # -- no XRC window, so a COMMAND target like Stop Ride…'s.
         kind=TargetKind.COMMAND,
         target="clear_ride",
-        # DRAFT, or stopped RUNNING, or FINISHED -- REOPENED is not
-        # clearable (finish it first) and a live RUNNING ride must
-        # stop first; the stopped clause only gates a RUNNING ride.
+        # DRAFT, or stopped RUNNING, or FINISHED, or REOPENED -- a
+        # REOPENED ride IS clearable: clearing is the only way to
+        # unload it from memory, and it is never removed from the
+        # store. A live RUNNING ride must stop first; the stopped
+        # clause only gates a RUNNING ride, so it never refuses
+        # REOPENED.
         # W1: an open ride is also required -- there is nothing to
         # clear on the no-ride bootstrap console.
         enabled_when=Enablement(
-            allowed_states=frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}),
+            allowed_states=frozenset(
+                {RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED}
+            ),
             requires_ride_stopped=True,
             requires_ride_open=True,
         ),
@@ -402,7 +410,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.DNF_CONFIRM_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    # --- Cards: 5 rows ---
+    # --- Cards: 4 rows ---
     MenuRoute(
         menu="Cards",
         label="Undo Last Crossing",
@@ -421,19 +429,11 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.EDIT_CROSSING_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    MenuRoute(
-        menu="Cards",
-        label="Edit Crossing…",
-        ids=("mi_edit_crossing",),
-        kind=TargetKind.DIALOG,
-        target=ids.EDIT_CROSSING_DLG,
-        enabled_when=Enablement(
-            allowed_states=_RUNNING_REOPENED, min_crossings=1
-        ),  # "RUNNING · REOPENED, ≥1 crossing"
-    ),
-    # Phase 2: Reassign Plate… and Void Card… retired -- Crossing
-    # Detail owns both corrections now. mi_deal_manual is the bonus-card
-    # deal (the manual correction's remaining row).
+    # Phase 2 retired the Reassign Plate… and Void Card… rows --
+    # Crossing Detail owns both corrections now -- and G7 retired Edit
+    # Crossing…, whose ground Crossing Detail's Edit Time and the F2
+    # accelerator already cover. mi_deal_manual is the bonus-card deal
+    # (the manual correction's remaining row).
     MenuRoute(
         menu="Cards",
         label="Deal Bonus Card…",
@@ -451,7 +451,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="focus_review_panel",
         enabled_when=Enablement(min_held_cards=1),  # "held cards > 0 (shows count)"
     ),
-    # --- Results: 7 rows ---
+    # --- Results: 8 rows (G6 adds the publish options) ---
     MenuRoute(
         menu="Results",
         label="Standings",
@@ -465,7 +465,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
     ),
     MenuRoute(
         menu="Results",
-        label="Generate HTML…",
+        label="Export HTML…",
         ids=("mi_export_html",),
         kind=TargetKind.COMMAND,  # OS-native save dialog -- no app window
         target="export_html",
@@ -518,13 +518,28 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # row.
         enabled_when=Enablement(allowed_states=_FINISHED, requires_pdf_export=True),
     ),
-    # --- View: 1 row, 8 ids (W13: the theme trio left the View menu;
+    MenuRoute(
+        menu="Results",
+        label="Publish Options",
+        ids=(
+            "mi_show_times",
+            "mi_laps_board",
+            "mi_time_board",
+            "mi_full_field",
+            "mi_all_cards",
+        ),
+        kind=TargetKind.COMMAND,  # "Direct commands"
+        target="results_publish",
+        enabled_when=ALWAYS,  # "always"
+    ),
+    # --- View: 1 row, 9 ids (W13: the theme trio left the View menu;
     # the Settings appearance radios are the single theme surface) ---
     MenuRoute(
         menu="View",
-        label="Hide Times · Zoom",
+        label="Times · Zoom",
         ids=(
-            "mi_hide_times",
+            "mi_show_total_times",
+            "mi_show_lap_time",
             "mi_zoom_90",
             "mi_zoom_100",
             "mi_zoom_110",

@@ -21,9 +21,13 @@ import pytest
 import wx
 
 from rivercrossing.roster import EntryMode, EntryType, PlateModel, Roster
-from rivercrossing.ui.presenters.simulator import SimulatorPresenter, check_message
+from rivercrossing.ui.presenters.simulator import (
+    SimOutcome,
+    SimulatorPresenter,
+    check_message,
+)
 from rivercrossing.ui.views import simulator as simulator_module
-from rivercrossing.ui.views.simulator import SimulatorDialog
+from rivercrossing.ui.views.simulator import SimRunningDialog, SimulatorDialog
 
 
 class _Control:
@@ -65,6 +69,23 @@ class _Spin(_Control):
     def SetValue(self, value: int) -> None:  # noqa: N802 -- wx API name
         """Set the spin value."""
         self.value = value
+
+
+class _Choice(_Control):
+    """A wxChoice double carrying one selection index (G9)."""
+
+    def __init__(self, selection: int) -> None:
+        """Start shown, enabled and on item *selection*."""
+        super().__init__()
+        self.selection = selection
+
+    def GetSelection(self) -> int:  # noqa: N802 -- wx API name
+        """Return the selected item index."""
+        return self.selection
+
+    def SetSelection(self, selection: int) -> None:  # noqa: N802 -- wx API name
+        """Select item *selection*."""
+        self.selection = selection
 
 
 class _Roster:
@@ -232,12 +253,18 @@ class _RecordingRunning:
         roster: object,
         laps: int,
         interval_minutes: int,
+        short_laps: int = 0,
+        lapped: int = 0,
+        team_stop: int = 0,
     ) -> None:
         """Record the race settings handed to the running dialog."""
         self.engine = engine
         self.roster = roster
         self.laps = laps
         self.interval_minutes = interval_minutes
+        self.short_laps = short_laps
+        self.lapped = lapped
+        self.team_stop = team_stop
         self.ran = False
 
     def run(self) -> None:
@@ -258,7 +285,7 @@ class _RefusingPresenter:
         raise self.error
 
 
-def _generator_shell(  # noqa: PLR0913 -- (roster) + the five spin overrides
+def _generator_shell(  # noqa: PLR0913 -- (roster) + the five spin and three choice overrides
     roster: Roster,
     *,
     riders: int = 175,
@@ -266,9 +293,12 @@ def _generator_shell(  # noqa: PLR0913 -- (roster) + the five spin overrides
     solo: int = 15,
     laps: int = 1,
     interval: int = 45,
+    short_laps: int = 1,
+    lapped: int = 0,
+    team_stop: int = 0,
     engine: object = None,
 ) -> SimulatorDialog:
-    """Build a dialog shell over a real presenter and spin doubles."""
+    """Build a shell over a real presenter and the control doubles."""
     shell = object.__new__(SimulatorDialog)
     shell.presenter = SimulatorPresenter(engine, roster)
     shell.riders_spin = _Spin(riders)
@@ -276,12 +306,16 @@ def _generator_shell(  # noqa: PLR0913 -- (roster) + the five spin overrides
     shell.solo_spin = _Spin(solo)
     shell.laps_spin = _Spin(laps)
     shell.interval_spin = _Spin(interval)
+    shell.short_lap_choice = _Choice(short_laps)
+    shell.lapped_choice = _Choice(lapped)
+    shell.team_stop_choice = _Choice(team_stop)
     shell.check_btn = _Control()
     shell.gen_riders_btn = _Control()
     shell.go_btn = _Control()
     shell.sim_infobar = _FakeInfobar()
     shell.dialog = _FakeDialog()
     shell.sim_values = (riders, teams, solo, laps, interval)
+    shell.sim_behaviors = (short_laps, lapped, team_stop)
     return shell
 
 
@@ -298,6 +332,9 @@ def _controls() -> dict[str, _Control]:
         "solo_spin": _Spin(15),
         "laps_spin": _Spin(1),
         "interval_spin": _Spin(45),
+        "short_lap_choice": _Choice(1),
+        "lapped_choice": _Choice(0),
+        "team_stop_choice": _Choice(0),
         "check_btn": _Control(),
         "gen_riders_btn": _Control(),
         "go_btn": _Control(),
@@ -436,6 +473,54 @@ def test_simulator_dialog_binds_check_and_the_two_team_count_spins(
     ]
 
 
+@pytest.mark.parametrize(
+    ("short_laps", "lapped", "team_stop"),
+    [
+        pytest.param(0, 0, 0, id="every-choice-disabled"),
+        pytest.param(1, 0, 0, id="the-product-defaults"),
+        pytest.param(10, 10, 10, id="every-choice-at-its-ceiling"),
+    ],
+)
+def test_simulator_dialog_seeds_the_three_behaviour_choices(  # noqa: PLR0913, PLR0917
+    monkeypatch: pytest.MonkeyPatch, short_laps: int, lapped: int, team_stop: int
+) -> None:
+    """G9: the three dropdowns open on the persisted counts."""
+    spins = _controls()
+    _patch_find(monkeypatch, spins)
+
+    view = SimulatorDialog(
+        _FakeDialog(),
+        engine=None,
+        roster=Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED),
+        sim_short_laps=short_laps,
+        sim_lapped=lapped,
+        sim_team_stop=team_stop,
+    )
+
+    assert (
+        view.short_lap_choice.GetSelection(),
+        view.lapped_choice.GetSelection(),
+        view.team_stop_choice.GetSelection(),
+    ) == (short_laps, lapped, team_stop)
+    assert view.sim_behaviors == (short_laps, lapped, team_stop)
+
+
+def test_simulator_dialog_seeds_the_behaviour_defaults_when_none_are_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The view's own defaults: one short-lap rider, nothing else."""
+    spins = _controls()
+    _patch_find(monkeypatch, spins)
+
+    view = SimulatorDialog(
+        _FakeDialog(),
+        engine=None,
+        roster=Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED),
+    )
+
+    assert view.sim_behaviors == (1, 0, 0)
+
+
 def test_snapshot_sim_values_records_the_current_spins() -> None:
     """sim_values always reflects the five spins at snapshot time."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
@@ -444,6 +529,19 @@ def test_snapshot_sim_values_records_the_current_spins() -> None:
     SimulatorDialog._snapshot_sim_values(shell)
 
     assert shell.sim_values == (3, 4, 5, 6, 7)
+
+
+def test_snapshot_sim_values_records_the_current_behaviour_choices() -> None:
+    """G9: sim_behaviors reflects the three choices at snapshot time."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, short_laps=2, lapped=1, team_stop=0)
+    shell.short_lap_choice.SetSelection(3)
+    shell.lapped_choice.SetSelection(4)
+    shell.team_stop_choice.SetSelection(5)
+
+    SimulatorDialog._snapshot_sim_values(shell)
+
+    assert shell.sim_behaviors == (3, 4, 5)
 
 
 def test_on_generate_riders_given_a_mixed_roster_creates_teams_then_riders() -> None:
@@ -594,6 +692,70 @@ def test_on_go_given_valid_settings_runs_the_race_and_snapshots_the_spins(
     # The running dialog stacks over the modal simulation dialog, so
     # the loader must be handed that window (never a fresh top-level).
     assert parents == [shell.dialog]
+
+
+def test_on_go_given_behaviour_selections_threads_the_three_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G9: GO hands the three selected counts to the running dialog."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    shell = _generator_shell(roster, laps=3, interval=7, short_laps=2, lapped=1, team_stop=4)
+    created: list[_RecordingRunning] = []
+
+    def _build(dialog: object, **kwargs: object) -> _RecordingRunning:
+        running = _RecordingRunning(dialog, **kwargs)
+        created.append(running)
+        return running
+
+    monkeypatch.setattr(simulator_module, "_load_running_window", lambda _parent: _Control())
+    monkeypatch.setattr(simulator_module, "SimRunningDialog", _build)
+
+    SimulatorDialog._on_go(shell, None)
+
+    assert (created[0].short_laps, created[0].lapped, created[0].team_stop) == (2, 1, 4)
+    assert shell.sim_behaviors == (2, 1, 4)
+
+
+class _RecordingPresenter:
+    """A presenter double recording one run_simulation call."""
+
+    def __init__(self) -> None:
+        """Start with no recorded call and its own outcome."""
+        self.calls: list[dict[str, object]] = []
+        self.outcome = SimOutcome(cancelled=False, recorded=7, blocked=None)
+
+    def run_simulation(self, laps: int, interval_minutes: int, **kwargs: object) -> SimOutcome:
+        """Record the race settings and return the stored outcome."""
+        self.calls.append({"laps": laps, "interval_minutes": interval_minutes, **kwargs})
+        return self.outcome
+
+
+def test_sim_running_dialog_run_threads_the_three_counts_into_the_presenter() -> None:
+    """G9: the running dialog passes the counts through to the race."""
+    shell = object.__new__(SimRunningDialog)
+    shell.presenter = _RecordingPresenter()
+    shell.laps = 3
+    shell.interval_minutes = 7
+    shell.short_laps = 2
+    shell.lapped = 1
+    shell.team_stop = 4
+    shell.dialog = _FakeDialog()
+    shell.outcome = None
+
+    SimRunningDialog._run(shell)
+
+    assert shell.presenter.calls == [
+        {
+            "laps": 3,
+            "interval_minutes": 7,
+            "short_laps": 2,
+            "lapped": 1,
+            "team_stop": 4,
+            "on_progress": shell.update,
+            "is_cancelled": shell.is_cancelled,
+        }
+    ]
+    assert (shell.outcome, shell.dialog.ended) == (shell.presenter.outcome, [wx.ID_OK])
 
 
 def test_on_go_given_an_out_of_range_lap_count_warns_and_keeps_the_dialog_open() -> None:

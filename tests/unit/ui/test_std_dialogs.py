@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for ui.std_dialogs' native message-dialog helpers.
 
-The six ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
-construct with a fixed style, optionally override the OK/Cancel
-labels, show modally, destroy, and return the modal id. Real dialogs
+The seven ``show_*`` functions are thin ``wx.MessageDialog`` wiring:
+construct with a fixed style, optionally override the button labels,
+show modally, destroy, and return the modal id. Real dialogs
 need a desktop and would block on ``ShowModal``, so every test swaps
 ``std_dialogs.wx.MessageDialog`` for a recording double. Importing wx
 is safe without a display; constructing wx windows is not, so this
@@ -18,6 +18,11 @@ also carry ``wx.CANCEL`` + ``wx.CANCEL_DEFAULT``, while the
 non-destructive ``show_prompt`` carries ``wx.CANCEL`` but leaves OK
 as the default button -- a reflex Enter must never destroy data, and
 must never block a safe action either.
+
+``show_three_choice`` is the one dialog with three outcomes -- Yes
+confirms, No voids, Cancel leaves the record alone -- so it carries
+``wx.YES_NO | wx.CANCEL`` with ``wx.CANCEL_DEFAULT``: only Cancel is
+safe to reach by a reflex Enter, and it neither confirms nor voids.
 """
 
 from functools import partial
@@ -41,12 +46,23 @@ _ERROR_STYLE = wx.OK | wx.CENTRE | wx.ICON_ERROR
 _CONFIRM_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_WARNING | wx.CANCEL_DEFAULT
 _DANGER_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_ERROR | wx.CANCEL_DEFAULT
 _PROMPT_STYLE = wx.OK | wx.CANCEL | wx.CENTRE | wx.ICON_INFORMATION
+_THREE_CHOICE_STYLE = wx.YES_NO | wx.CANCEL | wx.CENTRE | wx.ICON_QUESTION | wx.CANCEL_DEFAULT
+_THREE_CHOICE_OK_DEFAULT_STYLE = wx.YES_NO | wx.CANCEL | wx.CENTRE | wx.ICON_QUESTION
 
 _OK_LABEL = "Delete ride"
 _CANCEL_LABEL = "Keep ride"
+_YES_LABEL = "Confirm crossing"
+_NO_LABEL = "Void crossing"
+_LEAVE_LABEL = "Leave as is"
 _CONFIRM_ACT = partial(std_dialogs.show_confirm, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
 _DANGER_ACT = partial(std_dialogs.show_danger, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
 _PROMPT_ACT = partial(std_dialogs.show_prompt, ok_label=_OK_LABEL, cancel_label=_CANCEL_LABEL)
+_THREE_CHOICE_ACT = partial(
+    std_dialogs.show_three_choice,
+    yes_label=_YES_LABEL,
+    no_label=_NO_LABEL,
+    cancel_label=_LEAVE_LABEL,
+)
 
 # Rows align with _SHOW_CASE_IDS by index: (act, expected style).
 _SHOW_CASES = (
@@ -56,6 +72,7 @@ _SHOW_CASES = (
     (_CONFIRM_ACT, _CONFIRM_STYLE),
     (_DANGER_ACT, _DANGER_STYLE),
     (_PROMPT_ACT, _PROMPT_STYLE),
+    (_THREE_CHOICE_ACT, _THREE_CHOICE_STYLE),
 )
 _SHOW_CASE_IDS = (
     "show_info",
@@ -64,6 +81,7 @@ _SHOW_CASE_IDS = (
     "show_confirm",
     "show_danger",
     "show_prompt",
+    "show_three_choice",
 )
 _ALERT_CASES = _SHOW_CASES[:3]
 _ALERT_CASE_IDS = _SHOW_CASE_IDS[:3]
@@ -83,6 +101,18 @@ _CONFIRM_ICON_AND_DEFAULT_CASES = (
     (_PROMPT_ACT, wx.ICON_INFORMATION, False),
 )
 _CONFIRM_ICON_AND_DEFAULT_CASE_IDS = ("show_confirm", "show_danger", "show_prompt")
+
+# The three-outcome dialog: only Cancel is safe to reach by a reflex
+# Enter -- (default_cancel, expected style).
+_THREE_CHOICE_CANCEL_DEFAULT_CASES = (
+    (True, _THREE_CHOICE_STYLE),
+    (False, _THREE_CHOICE_OK_DEFAULT_STYLE),
+)
+_THREE_CHOICE_CANCEL_DEFAULT_CASE_IDS = ("cancel_default", "yes_no_default")
+
+# Every modal id the three-choice dialog can return.
+_THREE_CHOICE_RESULT_CASES = (wx.ID_YES, wx.ID_NO, wx.ID_CANCEL)
+_THREE_CHOICE_RESULT_CASE_IDS = ("yes", "no", "cancel")
 
 _PARENT = object()  # a stand-in owning window; real windows never exist here
 _TITLE = "Delete the ride?"
@@ -111,6 +141,7 @@ class _FakeMessageDialog:
         self.caption = caption
         self.style = style
         self.ok_cancel_labels: tuple[str, str] | None = None
+        self.yes_no_cancel_labels: tuple[str, str, str] | None = None
         self.show_modal_count = 0
         self.destroy_count = 0
         _FAKE_CREATIONS.append(self)
@@ -119,6 +150,11 @@ class _FakeMessageDialog:
         self, ok_label: str, cancel_label: str
     ) -> None:
         self.ok_cancel_labels = (ok_label, cancel_label)
+
+    def SetYesNoCancelLabels(  # noqa: N802 -- wx API method name the SUT calls
+        self, yes_label: str, no_label: str, cancel_label: str
+    ) -> None:
+        self.yes_no_cancel_labels = (yes_label, no_label, cancel_label)
 
     def ShowModal(self) -> int:  # noqa: N802 -- wx API method name the SUT calls
         self.show_modal_count += 1
@@ -266,3 +302,66 @@ def test_show_function_given_none_parent_constructs_unparented_dialog(
 
     assert len(created_dialogs) == 1
     assert created_dialogs[0].parent is None
+
+
+# --- three-choice dialog ---------------------------------------------
+
+
+def test_show_three_choice_sets_yes_no_cancel_labels_from_arguments(
+    created_dialogs: list[_FakeMessageDialog],
+) -> None:
+    """Yes, No then Cancel name the three buttons, all verbatim."""
+    _THREE_CHOICE_ACT(_PARENT, _TITLE, _MESSAGE)
+
+    assert len(created_dialogs) == 1
+    assert created_dialogs[0].yes_no_cancel_labels == (_YES_LABEL, _NO_LABEL, _LEAVE_LABEL)
+
+
+@pytest.mark.parametrize(
+    "scripted_result", _THREE_CHOICE_RESULT_CASES, ids=_THREE_CHOICE_RESULT_CASE_IDS
+)
+def test_show_three_choice_returns_the_operators_chosen_modal_id(
+    created_dialogs: list[_FakeMessageDialog],
+    monkeypatch: pytest.MonkeyPatch,
+    scripted_result: int,
+) -> None:
+    """Yes, No and Cancel each reach the caller unchanged."""
+    monkeypatch.setattr(_FakeMessageDialog, "scripted_result", scripted_result)
+
+    result = _THREE_CHOICE_ACT(_PARENT, _TITLE, _MESSAGE)
+
+    assert result == scripted_result
+    assert created_dialogs[0].show_modal_count == 1
+    assert created_dialogs[0].destroy_count == 1
+
+
+@pytest.mark.parametrize(
+    ("default_cancel", "expected_style"),
+    _THREE_CHOICE_CANCEL_DEFAULT_CASES,
+    ids=_THREE_CHOICE_CANCEL_DEFAULT_CASE_IDS,
+)
+def test_show_three_choice_cancel_flag_decides_the_default_button(
+    created_dialogs: list[_FakeMessageDialog],
+    expected_style: int,
+    *,
+    default_cancel: bool,
+) -> None:
+    """Cancel is the default button only when the caller asks for it."""
+    act = partial(_THREE_CHOICE_ACT, default_cancel=default_cancel)
+
+    act(_PARENT, _TITLE, _MESSAGE)
+
+    style = created_dialogs[0].style
+    assert style == expected_style
+    assert style & (wx.YES_NO | wx.CANCEL) == wx.YES_NO | wx.CANCEL
+
+
+def test_show_three_choice_honours_a_non_question_icon(
+    created_dialogs: list[_FakeMessageDialog],
+) -> None:
+    """The default question icon steps aside for a sterner one."""
+    _THREE_CHOICE_ACT(_PARENT, _TITLE, _MESSAGE, icon=wx.ICON_WARNING)
+
+    style = created_dialogs[0].style
+    assert style & wx.ICON_WARNING == wx.ICON_WARNING
+    assert style & wx.ICON_QUESTION == 0

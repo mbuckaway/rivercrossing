@@ -458,7 +458,7 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- Phase 3: the target is typed in (a pooled rider's number, or
+      <!-- Phase 3: the target is typed in (a pooled rider's plate, or
            a whole entry's plate), so this dialog no longer needs an
            entry to be open first. entry_lbl carries the consequence
            copy; when a target is already known (the entry-detail
@@ -475,7 +475,7 @@
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>8</border>
             <object class="wxStaticText">
-              <label>Rider number</label>
+              <label>Rider plate</label>
             </object>
           </object>
           <object class="sizeritem">
@@ -545,27 +545,53 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- The card being voided ("9♥ — 45 · J. Okafor"); the consequence
-           beside it is fixed wording and stays in XRC. -->
+      <!-- The card being voided and the entry it belongs to, in the same
+           two-column caption/data grid crossing_detail_dlg uses. Both cells
+           are code-written (run_void_card), never blank (UX-DESKTOP §4). -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxBoxSizer">
-          <orient>wxHORIZONTAL</orient>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
           <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-            <border>6</border>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Card</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText" name="card_lbl">
               <label></label>
             </object>
           </object>
+
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText">
-              <label>— removes the card from the entry's scored hand. Audit-logged.</label>
+              <label>Entry</label>
             </object>
           </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="entry_lbl">
+              <label></label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <!-- The consequence, below the grid and above the Reason row; fixed
+           wording and stays in XRC. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Removes the card from the entry's scored hand. Audit-logged.</label>
         </object>
       </object>
 
@@ -805,17 +831,18 @@
   <!-- ============================ section F ============================ -->
 
   <!-- J2: the read-only Crossing Detail dialog, opened by double-clicking
-       a row of the console's crossings feed. Every value label is empty
-       here and written by views/crossing_detail.py's CrossingDetailView
-       (the view-model is code-side, like every other DataView/label
-       content on this canvas); the captions are fixed copy and carry no
-       frozen name.
-
-       edit_plate_input is the dialog's one editable control: it starts
-       disabled at the crossing's current plate and Edit unlocks it, so
-       OK only ever commits a plate the operator deliberately changed.
-       It is deliberately not wxTE_READONLY: a read-only control cannot
-       be unlocked, and the disabled state is what says "press Edit".
+       a row of the console's crossings feed. The nine value fields are
+       read-only entry boxes, empty here and written by
+       views/crossing_detail.py's CrossingDetailView with SetValue (the
+       view-model is code-side, like every other DataView/label content
+       on this canvas). They sit in one "Details" group as four columns
+       in a row (G2: caption, value, caption, value), and the captions
+       are fixed copy carrying no frozen name. The plate is
+       read-only copy too, in crossing_plate_lbl, so edit_btn, which
+       says "Edit Plate", opens the §9 Plate prompt instead of an
+       editable field here, and every correction re-renders this dialog
+       in place: OK is the one control that closes it (Delete closes it
+       too, its crossing being gone).
 
        edit_btn, edit_time_btn, void_card_btn and delete_btn sit in a
        sibling wxBoxSizer beside the stock button sizer:
@@ -838,138 +865,217 @@
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxFlexGridSizer">
-          <cols>2</cols>
-          <vgap>6</vgap>
-          <hgap>8</hgap>
-          <growablecols>1</growablecols>
+        <object class="wxStaticBoxSizer">
+          <label>Details</label>
+          <orient>wxHORIZONTAL</orient>
+
+          <!-- The four columns of G2: caption, value, caption, value.
+               A caption column carries no <option> and no width, so it
+               auto-sizes to its longest label; the read-only column
+               beside it keeps its own 180 px, with an 8 px right border
+               between every pair.
+
+               The two columns are separate sizers, so nothing aligns
+               their rows for them: measured at 100% zoom, a caption
+               stands 16 px tall and a read-only box 24 px, so the
+               captions take a 14 px bottom border against the boxes'
+               6 px and both columns hold a 30 px row stride. The 6 px
+               keeps the flex grid's own vgap this sizer replaces. -->
 
           <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Rider</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_rider_lbl">
-              <label></label>
-            </object>
-          </object>
+            <flag>wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
 
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Team</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_team_lbl">
-              <label></label>
-            </object>
-          </object>
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Rider</label>
+                </object>
+              </object>
 
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Plate</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_plate_lbl">
-              <label></label>
-            </object>
-          </object>
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Team</label>
+                </object>
+              </object>
 
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Lap #</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_lap_lbl">
-              <label></label>
-            </object>
-          </object>
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Plate</label>
+                </object>
+              </object>
 
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Crossing time</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_time_lbl">
-              <label></label>
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Lap #</label>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Crossing time</label>
+                </object>
+              </object>
+
             </object>
           </object>
 
           <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Lap time</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_lap_time_lbl">
-              <label></label>
+            <flag>wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_rider_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_team_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_plate_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_lap_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_time_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
             </object>
           </object>
 
           <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Total time</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_total_lbl">
-              <label></label>
+            <flag>wxRIGHT</flag>
+            <border>8</border>
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
+
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Lap time</label>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Total time</label>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Card</label>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxBOTTOM</flag>
+                <border>14</border>
+                <object class="wxStaticText">
+                  <label>Status</label>
+                </object>
+              </object>
+
             </object>
           </object>
 
           <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Card</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_card_lbl">
-              <label></label>
-            </object>
-          </object>
+            <object class="wxBoxSizer">
+              <orient>wxVERTICAL</orient>
 
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>Held / flagged</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText" name="crossing_held_lbl">
-              <label></label>
-            </object>
-          </object>
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_lap_time_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
 
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>New plate</label>
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_total_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_card_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
+              <object class="sizeritem">
+                <flag>wxEXPAND|wxBOTTOM</flag>
+                <border>6</border>
+                <object class="wxTextCtrl" name="crossing_held_lbl">
+                  <style>wxTE_READONLY</style>
+                  <size>180,-1</size>
+                  <value></value>
+                </object>
+              </object>
+
             </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxEXPAND</flag>
-            <object class="wxTextCtrl" name="edit_plate_input"/>
           </object>
 
         </object>
@@ -985,7 +1091,7 @@
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="edit_btn">
-              <label>Edit</label>
+              <label>Edit Plate</label>
             </object>
           </object>
 
@@ -1041,7 +1147,7 @@
   </object>
 
   <!-- J2/§9: the Crossing Detail Edit prompt. Edit is the "wrong plate
-       on the line" correction, so it asks for the number in a small
+       on the line" correction, so it asks for the plate in a small
        Save/Cancel dialog rather than unlocking the detail window's own
        read-only plate field; OK still commits that field, but only
        miss mode unlocks it. The one field is a plain wxTextCtrl sized
@@ -1050,12 +1156,12 @@
        placeholder text (UX-DESKTOP §7). Save is the marked default so
        Enter commits and Escape keeps the stock Cancel route; the
        stock sizer and stock ids give both for free (UX-DESKTOP §3). The
-       view (views/crossing_detail.py's run_number_dialog) seeds
+       view (views/crossing_detail.py's run_plate_dialog) seeds
        number_input with the crossing's current plate, focuses and
        selects it, and reads Save's trimmed text; nothing here resolves
        the plate, since RideEngine.reassign_crossing owns the refusal. -->
   <object class="wxDialog" name="crossing_number_dlg">
-    <title>Number</title>
+    <title>Plate</title>
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
 
     <object class="wxBoxSizer">
@@ -1072,7 +1178,7 @@
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText">
-              <label>Number</label>
+              <label>Plate</label>
             </object>
           </object>
           <object class="sizeritem">

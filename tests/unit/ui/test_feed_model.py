@@ -21,31 +21,36 @@ from rivercrossing.ui.feed_model import (
     COL_LAP_TIME,
     COL_NAME,
     COL_PLATE,
+    COL_TEAM,
     COL_TIME,
     COL_TOTAL,
     COLUMN_LABELS,
     COLUMN_SORT_KEYS,
     COLUMN_WIDTHS,
-    TIME_COLUMNS,
+    LAP_TIME_COLUMN,
+    TOTAL_COLUMN,
+    card_status_text,
     card_text_or_blank,
     edited_row_indexes,
     entry_text,
     flagged_row_indexes,
     flash_crossing_label,
     lap_text,
+    review_issue,
 )
 from rivercrossing.ui.presenters.data_source import FeedRow
 
 # --- column layout (pure data, matches xrc-windows.md section A) ------
 
 # W9 column order: the Entry header is renamed "Name" and the Card
-# column moves ahead of Lap -- Time | Plate | Name | Card | Lap |
-# Lap time | Total.
-CANVAS_COLUMN_ORDER = ("Time", "Plate", "Name", "Card", "Lap", "Lap time", "Total")
+# column moves ahead of Lap; the Team column sits right after Name --
+# Time | Plate | Name | Team | Card | Lap | Lap time | Total.
+CANVAS_COLUMN_ORDER = ("Time", "Plate", "Name", "Team", "Card", "Lap", "Lap time", "Total")
 CANVAS_COLUMN_INDEXES = (
     COL_TIME,
     COL_PLATE,
     COL_NAME,
+    COL_TEAM,
     COL_CARD,
     COL_LAP,
     COL_LAP_TIME,
@@ -54,14 +59,14 @@ CANVAS_COLUMN_INDEXES = (
 
 
 def test_column_labels_matches_the_canvas_exact_order() -> None:
-    """W9: Time-Plate-Name-Card-Lap-Lap time-Total."""
+    """W9: Time-Plate-Name-Team-Card-Lap-Lap time-Total."""
     assert COLUMN_LABELS == CANVAS_COLUMN_ORDER
 
 
-def test_column_indexes_pin_card_before_lap_under_the_name_header() -> None:
-    """W9: index 2 is Name, Card is 3, Lap is 4 -- in that order."""
-    assert (COL_NAME, COL_CARD, COL_LAP) == (2, 3, 4)
-    assert COLUMN_LABELS[COL_NAME] == "Name"
+def test_column_indexes_pin_team_between_name_and_card() -> None:
+    """Team sits right after Name: Name 2, Team 3, Card 4, Lap 5."""
+    assert (COL_NAME, COL_TEAM, COL_CARD, COL_LAP) == (2, 3, 4, 5)
+    assert COLUMN_LABELS[COL_TEAM] == "Team"
 
 
 def test_column_labels_rename_entry_to_name_throughout() -> None:
@@ -74,9 +79,10 @@ def test_column_labels_rename_entry_to_name_throughout() -> None:
 
 # One width per canvas column, in canvas order: enough for the widest
 # demo value in each text column ("14:22:41", "9999", "Trail Blazers
-# (T)", "999", "3:02:11") and the 24x32 card face plus padding in the
-# bitmap one (the rider editor's card columns use the same width).
-CANVAS_COLUMN_WIDTHS = (80, 50, 150, 60, 50, 80, 80)
+# (T)", "Dirt Dynamos", "999", "3:02:11") and the 24x32 card face plus
+# padding in the bitmap one (the rider editor's card columns use the
+# same width).
+CANVAS_COLUMN_WIDTHS = (80, 50, 150, 130, 60, 50, 80, 80)
 
 
 def test_column_widths_length_matches_the_column_labels() -> None:
@@ -90,6 +96,7 @@ def test_column_widths_zipped_by_label_cover_each_canvas_column() -> None:
         "Time": 80,
         "Plate": 50,
         "Name": 150,
+        "Team": 130,
         "Card": 60,
         "Lap": 50,
         "Lap time": 80,
@@ -102,9 +109,9 @@ def test_column_indexes_are_contiguous_from_zero_with_no_duplicate() -> None:
     assert sorted(CANVAS_COLUMN_INDEXES) == list(range(len(COLUMN_LABELS)))
 
 
-def test_time_columns_is_exactly_lap_time_and_total() -> None:
-    """R-37 hides these two only; the clock is a separate control."""
-    assert TIME_COLUMNS == (COL_LAP_TIME, COL_TOTAL)
+def test_total_and_lap_time_columns_are_distinct_single_column_tuples() -> None:
+    """R-37: each independent toggle owns exactly its own column."""
+    assert (LAP_TIME_COLUMN, TOTAL_COLUMN) == ((COL_LAP_TIME,), (COL_TOTAL,))
 
 
 # --- column sort keys (Phase 4: the list's native header sort) -------
@@ -163,6 +170,30 @@ def test_name_sort_key_given_a_dnf_row_ignores_the_rendered_marker() -> None:
     keys = [COLUMN_SORT_KEYS[COL_NAME](row) for row in (plain, marked)]
 
     assert keys == ["amy", "amy"]
+
+
+def test_team_sort_key_given_mixed_case_teams_orders_case_insensitively() -> None:
+    """The key casefolds, so "aces" sorts with "Aces"."""
+    aces = _feed_row(team="Aces")
+    zoe = _feed_row(team="Zoe")
+
+    ordered = sorted((zoe, aces), key=COLUMN_SORT_KEYS[COL_TEAM])
+
+    assert ordered == [aces, zoe]
+
+
+def test_team_sort_key_given_a_miss_row_returns_the_blank_key() -> None:
+    """A miss has no entry and no team: its key is empty."""
+    assert COLUMN_SORT_KEYS[COL_TEAM](_feed_row(entry="missed", team="", missed=True)) == ""
+
+
+@given(team=st.text(max_size=20))
+def test_team_sort_key_given_any_team_returns_the_casefolded_text(team: str) -> None:
+    """Property: the key is the casefolded team, idempotently."""
+    key = COLUMN_SORT_KEYS[COL_TEAM](_feed_row(team=team))
+
+    assert key == team.casefold()
+    assert key.casefold() == key
 
 
 def test_card_sort_key_given_codes_orders_by_the_stored_code() -> None:
@@ -286,13 +317,16 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     *,
     plate: str = "1",
     entry: str = "Rider",
+    team: str = "",
     lap: int = 1,
     flagged: bool = False,
     held: bool = False,
     edited: bool = False,
     missed: bool = False,
+    duplicate: bool = False,
     dnf: bool = False,
     card: str = "9H",
+    card_status: str = "",
     elapsed_s: float = 0.0,
     lap_time_s: float = 0.0,
     total_s: float = 0.0,
@@ -302,6 +336,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         time="0:10:00",
         plate=plate,
         entry=entry,
+        team=team,
         lap=lap,
         lap_time="10:00",
         total="10:00",
@@ -310,7 +345,9 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         held=held,
         edited=edited,
         missed=missed,
+        duplicate=duplicate,
         dnf=dnf,
+        card_status=card_status,
         elapsed_s=elapsed_s,
         lap_time_s=lap_time_s,
         total_s=total_s,
@@ -541,3 +578,115 @@ def test_flash_crossing_label_given_a_missed_row_names_the_plate_and_miss() -> N
     row = _feed_row(plate="-", entry="missed", lap=0, missed=True)
 
     assert flash_crossing_label(row) == "- · missed"
+
+
+# --- card_status_text (Scope 1b: the Card column's disposition) ------
+# ``FeedRow.card_status`` is the feed's card state, derived by
+# elimination in ``data_source._crossing_feed_row``: "held" (R-34,
+# awaiting confirm/void), "credited" (in the entry's hand), "voided"
+# (in neither). This helper is its display word, so the console's Card
+# column can carry the state the Needs Review Issue cell no longer
+# repeats (``review_issue``).
+
+CARD_STATUS_CASES = (
+    ("", ""),
+    ("held", "Held"),
+    ("credited", "Credited"),
+    ("voided", "Void"),
+)
+
+
+@pytest.mark.parametrize(("status", "text"), CARD_STATUS_CASES)
+def test_card_status_text_given_a_card_status_returns_its_display_word(
+    status: str, text: str
+) -> None:
+    """Each of the three dispositions has its own Card-cell word.
+
+    ``""`` is the blank-cell case: a miss row (and every other row that
+    dealt no card) carries the field's default, not a disposition.
+    """
+    assert card_status_text(_feed_row(card_status=status)) == text
+
+
+@given(status=st.sampled_from(("", "held", "credited", "voided")))
+def test_card_status_text_given_any_known_status_is_blank_exactly_when_that_status_is(
+    status: str,
+) -> None:
+    """Property: only the undealt default renders the blank cell."""
+    text = card_status_text(_feed_row(card_status=status))
+
+    assert (text == "") is (status == "")
+
+
+# --- review_issue (Needs Review tab: why this row is here) -----------
+
+
+# The three texts the Needs Review tab can show, and the full
+# decision table (T-13): three independent booleans, 2^3 rows. A
+# duplicate outranks a short lap. ``held`` no longer refines the
+# wording -- the Card column carries the held/credited/voided state
+# (``FeedRow.card_status``, ``card_status_text``), so a held short lap
+# reads exactly like the credited one and the held rows pin that.
+REVIEW_ISSUE_TEXT = "Short lap"
+REVIEW_ISSUE_HELD_TEXT = REVIEW_ISSUE_TEXT
+REVIEW_ISSUE_DUPLICATE_TEXT = "Duplicate crossing"
+REVIEW_ISSUE_TEXTS = frozenset(
+    {"", REVIEW_ISSUE_TEXT, REVIEW_ISSUE_HELD_TEXT, REVIEW_ISSUE_DUPLICATE_TEXT}
+)
+
+REVIEW_ISSUE_CASES = (
+    (False, False, False, ""),
+    (False, False, True, ""),
+    (False, True, False, REVIEW_ISSUE_TEXT),
+    (False, True, True, REVIEW_ISSUE_HELD_TEXT),
+    (True, False, False, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, False, True, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, True, False, REVIEW_ISSUE_DUPLICATE_TEXT),
+    (True, True, True, REVIEW_ISSUE_DUPLICATE_TEXT),
+)
+
+
+@pytest.mark.parametrize(
+    ("duplicate", "flagged", "held", "expected"),
+    REVIEW_ISSUE_CASES,
+    ids=[
+        "clean",
+        "clean_held",
+        "credited_short_lap",
+        "held_short_lap",
+        "duplicate",
+        "duplicate_held",
+        "duplicate_short_lap",
+        "duplicate_held_short_lap",
+    ],
+)
+def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR0913, PLR0917 -- the three flags plus the reason
+    duplicate: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    flagged: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
+    expected: str,
+) -> None:
+    """T-13: duplicate outranks short lap; held never changes it."""
+    row = _feed_row(duplicate=duplicate, flagged=flagged, held=held)
+
+    assert review_issue(row) == expected
+
+
+def test_review_issue_given_a_held_short_lap_reads_as_a_plain_short_lap() -> None:
+    """Scope 1b: the Card column carries the hold, not the Issue."""
+    row = _feed_row(flagged=True, held=True, card="9H", card_status="held")
+
+    assert review_issue(row) == "Short lap"
+
+
+@given(duplicate=st.booleans(), flagged=st.booleans(), held=st.booleans())
+def test_review_issue_given_any_flags_is_blank_exactly_when_clean(
+    *, duplicate: bool, flagged: bool, held: bool
+) -> None:
+    """T-7: an issue shows iff the row is duplicated or flagged."""
+    row = _feed_row(duplicate=duplicate, flagged=flagged, held=held)
+
+    issue = review_issue(row)
+
+    assert (issue == "") is not (duplicate or flagged)
+    assert issue in REVIEW_ISSUE_TEXTS

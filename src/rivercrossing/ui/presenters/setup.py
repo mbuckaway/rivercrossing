@@ -28,7 +28,7 @@ roster's own values instead
 (xrc-windows.md's own "field values are loaded from the ride record"
 footnote); :meth:`SetupPresenter._load` overrides XRC there too. The
 W4 short-lap policy radio pair (``hold_short_radio``/
-``always_deal_radio``, always-deal checked by XRC) translates to the
+``always_deal_radio``, hold-short checked by XRC) translates to the
 boolean ``SetupFormValues.hold_short_laps`` the view reads straight
 off the radio, and ``on_submit`` carries it onto
 :class:`~rivercrossing.ride.RideConfig`.
@@ -121,8 +121,8 @@ class SetupFormValues:
     plain ``wxTextCtrl``, so parsing them into seconds is this
     module's own job (:func:`_parse_duration`/:func:`_parse_min_lap`),
     not the view's. ``hold_short_laps`` mirrors the W4 radio pair:
-    True when ``hold_short_radio`` is checked, False (always deal)
-    when ``always_deal_radio`` is -- the pair's XRC default.
+    True when ``hold_short_radio`` is checked -- the pair's XRC
+    default -- and False (always deal) when ``always_deal_radio`` is.
     ``jokers_mode`` is the Phase 5 jokers radio pair's own spelling
     (True/False from a radio is not a domain value, so the view reads
     it) and ``max_cards`` is cap_choice's item -- ``None`` for

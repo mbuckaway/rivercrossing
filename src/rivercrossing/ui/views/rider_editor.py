@@ -52,8 +52,8 @@ into it -- and both disable ``wx.InfoBar``'s default slide effect
 ``Dismiss()`` on this build otherwise (first found wiring
 ``ROSTER_INFOBAR``, E3.2's follow-on sweep).
 
-``_find`` is shared via ``ui.views._support.find_control`` -- see
-that module's docstring for why it used to be duplicated here.
+``_find`` is inherited from ``ui.views._support.DialogFindMixin`` --
+see that module's docstring for why it used to be duplicated here.
 
 Phase 3 (Sex + sortable rider lists) changes four things here. The
 editor's Team field becomes a read-only ``wxTextCtrl`` (it shows the
@@ -108,10 +108,10 @@ from rivercrossing.ui.presenters.riders import (
 )
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
+    DialogFindMixin,
     RiderRowListModel,
     associate_model,
     clamp_to_display,
-    find_control,
     load_dialog,
 )
 
@@ -344,7 +344,7 @@ def _set_team_choice_row_visible(control: wx.Window, *, visible: bool) -> None:
     sizer.Show(control, visible)
 
 
-class RiderEditor:
+class RiderEditor(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``rider_editor_dlg`` (1d/2b, R-11/15/20).
 
     Implements ``RidersView`` (``ui.presenters.riders``) and
@@ -398,19 +398,6 @@ class RiderEditor:
 
         self._bind_events()
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> list[Any]:
         """Append ``riders_list``'s sortable columns in canvas order.
@@ -726,7 +713,7 @@ class RiderEditor:
         self.dialog.Fit()
 
 
-class AddRiderDialog:
+class AddRiderDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``add_rider_dlg`` (W7, R-20).
 
     Implements ``AddRiderView`` (``ui.presenters.riders``) over its
@@ -786,19 +773,6 @@ class AddRiderDialog:
 
         self._bind_events()
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _widen_ok_button(self) -> None:
         """Give ``wxID_OK`` its 3x width floor (B2).
@@ -944,7 +918,7 @@ class CsvConflictsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore
         return str(conflict.row) if col == COL_ROW else conflict.problem
 
 
-class CsvPreviewDialog:
+class CsvPreviewDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``csv_preview_dlg`` (3e, R-21, E3.4).
 
     Implements ``RidersView``'s CSV trio for real (module docstring)
@@ -981,19 +955,6 @@ class CsvPreviewDialog:
 
         self._bind_events()
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append ``conflicts_list``'s two columns in canvas order."""
@@ -1343,9 +1304,8 @@ def run_csv_export_flow(
     picker is a silent no-op. A failed write -- ``csvio.export``
     raising ``OSError`` on an unwritable target -- is caught here and
     reported through *on_error* as ``Export failed: {exc}``, never an
-    unguarded raise into a wx handler that swallows it (the measured
-    note ``docs/EPIC3-SESSION-SUMMARY.md`` records), which would leave
-    the operator believing the export succeeded.
+    unguarded raise into a wx handler that swallows it (measured),
+    which would leave the operator believing the export succeeded.
 
     Args:
         parent: The window to parent the native save picker on.

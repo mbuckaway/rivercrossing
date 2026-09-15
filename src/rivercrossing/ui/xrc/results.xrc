@@ -19,8 +19,8 @@
     * <checked>1</checked> IS honoured on wxCheckBox - unlike the
       <checked> property of a wxITEM_RADIO menu item, which XRC
       silently ignores (wxWidgets src/xrc/xh_chckb.cpp calls SetValue
-      unconditionally). All five publish options therefore declare
-      their canvas default here rather than in code.
+      unconditionally). No wxCheckBox is authored here any more (G6
+      removed the five publish checkboxes).
     * XRC has no minsize property for windows - only for sizeritem and
       wxSplitterWindow (wxWidgets src/xrc/xmlres.cpp SetupWindow). No
       minimum is documented for this window (spec.md 13 sizes the
@@ -33,11 +33,17 @@
   SOLO-only ride hides the notebook and shows the standalone
   standings_list (the view decides per entry_mode).
 
-  Code-side per the canvas footnote: the round-robin standings rows,
-  with "draw required" tie rows carrying a warning badge in the Place
-  cell; the stale-export banner after reopened corrections;
-  show_times_chk also hiding the Total column on every list here, and
-  clearing/disabling the Fastest-time box while times are off (R-63).
+  Code-side per the canvas footnote: the round-robin standings rows
+  (six columns, each pinned to its own width - G6 dropped the Total and
+  Best lap columns), with "draw required" tie rows carrying a warning
+  badge in the Place cell, and the stale-export banner after reopened
+  corrections.
+
+  G6 moved the publish options out of this dialog: the five checkboxes
+  and their <checked> defaults are now checkable Results menu items
+  whose defaults persist in AppSettings.publish_*, and R-63's gate
+  (show-times off makes the Fastest-time board unrequestable) moved
+  with them to app._apply_publish_gate.
 -->
 <resource>
 
@@ -106,68 +112,6 @@
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
         <border>10</border>
         <object class="wxDataViewCtrl" name="standings_list"/>
-      </object>
-
-      <!-- Canvas defaults, and E1.5.2 asserts them: times off, laps
-           board on, time board off, full field on, all cards on. Each
-           box is independent, so each declares its own state. The
-           literal ampersand in the first label is written "&&" - a
-           single "&" is a mnemonic marker and is stripped from the
-           displayed text. -->
-      <object class="sizeritem">
-        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxBOTTOM</flag>
-        <border>10</border>
-        <object class="wxStaticBoxSizer">
-          <label>Publish options</label>
-          <orient>wxVERTICAL</orient>
-          <object class="sizeritem">
-            <flag>wxEXPAND</flag>
-            <object class="wxWrapSizer">
-              <orient>wxHORIZONTAL</orient>
-
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>16</border>
-                <object class="wxCheckBox" name="show_times_chk">
-                  <label>Show lap &amp;&amp; total times</label>
-                  <checked>0</checked>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>16</border>
-                <object class="wxCheckBox" name="laps_board_chk">
-                  <label>Laps leaderboard</label>
-                  <checked>1</checked>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>16</border>
-                <object class="wxCheckBox" name="time_board_chk">
-                  <label>Fastest-time leaderboard</label>
-                  <checked>0</checked>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-                <border>16</border>
-                <object class="wxCheckBox" name="full_field_chk">
-                  <label>Full field</label>
-                  <checked>1</checked>
-                </object>
-              </object>
-              <object class="sizeritem">
-                <flag>wxALIGN_CENTRE_VERTICAL</flag>
-                <object class="wxCheckBox" name="all_cards_chk">
-                  <label>All cards drawn</label>
-                  <checked>1</checked>
-                </object>
-              </object>
-
-            </object>
-          </object>
-        </object>
       </object>
 
       <object class="sizeritem">

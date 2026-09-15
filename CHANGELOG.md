@@ -4,6 +4,81 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.17] - 2026-09-14
+
+### Added
+
+- **The Needs Review tab reworked** — columns are now Issue | Card | Plate | Lap | Rider | Team with a Card state of Held/Credited/Void; a single Confirm/Void/Cancel dialog replaces the two-step confirm-then-void; a Return to Held action re-opens a credited or voided card; and a Show Held Cards Only checkbox filters to unresolved items.
+- **A self-healing XRC load** — a dialog or menubar the process-wide XRC resource silently
+  skips is rebuilt from a fresh private resource (up to twice, evicting the memoized rebuild
+  between attempts), so a menu row no longer clicks through to "no window authored yet".
+- **A "CREATE RIDE" status on the no-ride console** — the empty console says what to do next;
+  menu enablement is unchanged.
+- **The card-shoe mechanics documented** — `docs/SHOWMECHANICS.md`, plus a new "Card shoe"
+  section in the user guide.
+- **The publish options moved to the Results menu** — the results dialog's five checkboxes are
+  now five checkable Results-menu items after a separator (Show lap & total times, Laps
+  leaderboard, Fastest-time leaderboard, Full field, All cards drawn), persisted as
+  `AppSettings.publish_*`; R-63's gate rides on the pair, so with times off the Fastest-time
+  board is unchecked and disabled.
+- **Three Rider Simulator behaviours** — Short-lap riders, Lapped riders and "Team riders stop
+  after 4 laps" dropdowns (Disabled or 1–10) bend the scripted race so the console's review
+  surfaces show: short-lap riders cross under the ride's minimum lap, lapped riders miss the
+  first wave, and stopped team riders never cross again.
+
+### Changed
+
+- **A DRAFT ride's deck/joker edit rebuilds the live shoe** — changing decks, jokers-per-deck
+  or jokers-total on a draft ride reconfigures the in-session shoe, so the live shoe cannot
+  diverge from the stored seed's replay.
+- **The Crossing Detail's corrections return to the dialog** — the "New plate" caption and its
+  `edit_plate_input` field are gone (the nine `crossing_*_lbl` labels are the window's value
+  fields), `edit_btn` reads "Edit Plate" and opens the Plate prompt (`crossing_number_dlg`), and
+  `edit_time_btn` opens `edit_crossing_dlg` titled "Edit Time" with a read-only plate and no void
+  button; `void_card_btn` carries the same two-column caption grid (`card_lbl`/`entry_lbl`) with
+  its OK disabled until a reason is typed. Every correction re-renders the dialog in place, so
+  only OK (and Delete, on success) closes it.
+- **Finishing a ride publishes nothing** — the FINISHED banner (`finished_infobar` with its
+  Reopen…/View results… buttons) is gone and the finish-time auto-export no longer writes HTML
+  and PDF into `user_data_dir("RiverCrossing")/exports`; the red lamp and the `FINISHED` label
+  hold the state, the status bar reads "Ride is finished. Results are available", and the operator
+  exports from the Results menu.
+- **The results standings lists floor at 198 px** — the three lists (`standings_list`,
+  `teams_standings_list`, `solo_standings_list`) reserve a 28 px header plus ten 17 px rows, so a
+  ride's top ten are visible.
+- **The results standings table is six columns** — Place, Plate, Entry, Laps, Best 5, Hand, each
+  pinned to its own width (60 / 50 / 160 / 50 / 160 / 210; the Team list's Hand takes 260 when
+  its Plate column is hidden under `rider_pooled`). The Total and Best lap columns and the
+  "Publish options" box are gone, and the dialog floors at 740 px wide (was 755).
+- **`Results ▸ Generate HTML…` is now `Export HTML…`** — the menu row and the dialog's button.
+- **`Cards ▸ Edit Crossing…` is retired** — Crossing Detail's Edit Time and the F2 accelerator
+  cover the same ground; `mi_edit_crossing` left the generated ids.
+- **A fresh ride holds short-lap cards for review** — the ride's short-lap card policy default
+  flipped (`ride.hold_short_laps`' CREATE default 0 → 1), so a short lap's card is held until the
+  operator confirms or voids it; Always deal is the operator's explicit setup choice.
+- **Solo entries read "solo"** — the crossings feed's Team cell and the Crossing Detail's Team
+  box show `solo` for a solo entry instead of a blank cell or the rider's own name repeated.
+- **The Crossing Detail's nine values are read-only entry boxes** — one "Details" group holding
+  four columns in a row (caption, value, caption, value), replacing the label fields.
+- **A reopened ride is clearable** — Ride ▸ Clear Ride… is enabled for a REOPENED ride too:
+  clearing unloads it from memory and is never a delete. The reopened-ride notice is now
+  status-bar text rather than console InfoBar text.
+- **The shortcuts help shows Cmd on macOS** — the Mac modifier renders as `Cmd` instead of
+  `Ctrl`.
+
+### Fixed
+
+- **The Rider Simulator's "no window authored yet" failure** — the simulator dialog is
+  recovered from a fresh resource instead of answering `None`.
+- **CSV fixtures now carry the SEX column** — the canonical-format fixtures match the unified
+  `FIRSTNAME,…,SEX` format, and the one exact-row assertion was updated.
+- **The open/quit smoke drives the full path** — it creates a DRAFT ride, imports the GORBA
+  CSV and opens the Rider Simulator before quitting.
+- **A control that is present in a window resolves on Windows ARM64** — the lookup walks the
+  window's children through `_support.find_window_by_name` instead of calling
+  `wx.Window.FindWindowByName(..., window)`, which on the ARM builds does not resolve a child the
+  window does carry.
+
 ## [1.0.16] - 2026-09-13
 
 ### Added

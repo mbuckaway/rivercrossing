@@ -25,7 +25,7 @@ import wx.dataview
 
 from rivercrossing.ui import ids
 from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import DialogFindMixin, associate_model
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -59,8 +59,36 @@ SHORTCUT_COLUMN_WIDTHS: tuple[int, ...] = (120, 320)
 # and sits inside the 1366x768 floor display (UX-DESKTOP section 6).
 SHORTCUTS_MIN_SIZE = (480, 300)
 
+
+def _display_key(key: str, *, is_mac: bool) -> str:
+    """Return *key* spelled as the platform names its modifier key.
+
+    Spec §15: one menu tree on both platforms, "Ctrl ⇒ ⌘". wx renders
+    the same accelerator as the Cmd key on macOS, so the Help dialog's
+    Key column says ``Cmd`` there; the shortcuts dialog spells its rows
+    literally from :data:`ACCELERATOR_TABLE` (E8.2.1), so the respelling
+    happens here, at render time only -- the table keeps the spelling
+    ``main.xrc``'s ``<accel>`` elements cross-check against, and the
+    bound accelerators are untouched.
+
+    Args:
+        key: An accelerator's key text, e.g. ``"Ctrl+D"``.
+        is_mac: Whether the running platform is macOS.
+
+    Returns:
+        *key* with every ``"Ctrl"`` respelled ``"Cmd"`` on macOS,
+        unchanged otherwise.
+    """
+    if not is_mac:
+        return key
+    return key.replace("Ctrl", "Cmd")
+
+
 _TEXT_ACCESSORS: tuple[Callable[[Accelerator], str], ...] = (
-    lambda accel: accel.key,
+    # wx.Platform is read per cell, not hoisted into a module constant:
+    # the Key column's spelling is a render-time fact of the running
+    # toolkit, and reading it here keeps the transform App-free.
+    lambda accel: _display_key(accel.key, is_mac=wx.Platform == "__WXMAC__"),
     lambda accel: accel.action,
 )
 
@@ -91,7 +119,7 @@ class ShortcutsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return _TEXT_ACCESSORS[col](self._rows[row])
 
 
-class ShortcutsDialog:
+class ShortcutsDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``shortcuts_dlg`` (section E).
 
     The dialog's whole content is the generated shortcuts table, so
@@ -131,19 +159,6 @@ class ShortcutsDialog:
         # (main_frame.py, results_win.py) attaches the same way.
         dialog.shortcuts_view = self
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append the dialog's two text columns in canvas order.

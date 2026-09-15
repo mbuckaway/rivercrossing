@@ -62,7 +62,7 @@
 
 <section id="getting-started">
 <h2>1 · Getting started</h2>
-<p>RiverCrossing is a keyboard-first desktop app for Windows and macOS. The operator types a rider's plate number and presses <kbd>Enter</kbd> at each lap crossing; the app records the lap, deals a card from a seeded virtual shoe, and at the finish scores every entry's best 5-card poker hand.</p>
+<p>RiverCrossing is a keyboard-first desktop app for Windows and macOS. The operator types a rider's plate and presses <kbd>Enter</kbd> at each lap crossing; the app records the lap, deals a card from a seeded virtual shoe, and at the finish scores every entry's best 5-card poker hand.</p>
 
 <h3 id="about">About RiverCrossing</h3>
 <p>Version and credits live in <strong>Help ▸ About RiverCrossing</strong>: the product name and installed version, the author line, © 2026 Mark Buckaway, and the GPL-3.0-only licence. The version comes from the installed package, so it always matches the build you are running.</p>
@@ -80,12 +80,13 @@
 <p><strong>File ▸ Settings</strong> (or the app menu on macOS) controls the operator-comfort layer:</p>
 <ul>
   <li><strong>Appearance</strong> — System (follow the OS), Light, or Dark. All three work on both platforms. On Windows a change applies at next launch; macOS applies it live.</li>
-  <li><strong>Sound on crossing</strong> — three cues: a click when a crossing records, a two-tone alert when a ride set to hold short laps flags one, and a buzz for an unknown plate or empty entry.</li>
-  <li><strong>Hide times on the console</strong> — hides lap/total times mid-ride (it's-not-a-race mode). Times are still recorded underneath. The ride clock stays.</li>
+  <li><strong>Sound on crossing</strong> — three cues: a click when a crossing records, a two-tone alert when a short-lap crossing is held for review, and a buzz for an unknown plate or empty entry.</li>
+  <li><strong>Show Total Times on Crossings Panel</strong> — off by default; turns the console feed's Total column on or off mid-ride. Times are still recorded underneath. The ride clock stays.</li>
+  <li><strong>Show Lap Time in Crossings Panel</strong> — on by default; turns the feed's Lap time column on or off mid-ride. The two are independent.</li>
   <li><strong>Verbose logging</strong> — on by default; writes a diagnostic log for support. Each launch gets its own file, <code>rivercrossing-&lt;date-time&gt;.log</code>, in your per-user configuration folder (beside your settings — <code>~/Library/Application Support/RiverCrossing</code> on macOS; under <code>%LOCALAPPDATA%</code> on Windows). It records the launch, the ride loaded and any crash as one JSON record per line, plus — while this is on — the action trail of menu picks, dialogs opened, and button and control events. Turning it off stops the trail immediately; the newest 20 session files are kept.</li>
   <li><strong>Avg Lap Time (kmh)</strong> — the rider field's average speed, a decimal entry, 12.0 by default; it sets the simulator's default minutes between laps.</li>
 </ul>
-<p>Appearance and text zoom each live on one surface: the theme radios are in <strong>Settings</strong> only (the View menu no longer mirrors them), and text zoom is <strong>View ▸ Zoom</strong> only (90–150%). Hide times on the console is the one setting with two controls — the Settings checkbox and the View-menu item — and they stay in sync.</p>
+<p>Appearance and text zoom each live on one surface: the theme radios are in <strong>Settings</strong> only (the View menu no longer mirrors them), and text zoom is <strong>View ▸ Zoom</strong> only (90–150%). The two time-column settings (<strong>Show Total Times</strong> and <strong>Show Lap Time</strong>) each keep two controls — their Settings checkbox and their View-menu item — and each pair stays in sync.</p>
 
 <h3>Where your data lives</h3>
 <p>All rides live in one SQLite database (<code>rides.db</code>) in your user data folder. Every crossing commits as it happens (WAL journal), so a crash loses at most a keystroke. Backups are written on open and hourly while a ride runs, kept in a <code>&lt;db&gt;.backups/</code> sibling folder, pruned to the newest 20.</p>
@@ -98,7 +99,7 @@
 <ul>
   <li><strong>Name, date, venue, organizer, scorer, logo</strong> — the identity shown on the console and in published results. The logo file is embedded in exports.</li>
   <li><strong>Planned start &amp; duration</strong> — the riding window; the console counts down the time to close.</li>
-  <li><strong>Lap length &amp; minimum lap time</strong> — a crossing faster than the minimum is flagged (a mistyped plate or a double entry usually explains it); the ride's short-lap policy — <em>always deal</em> (the default), or <em>hold short-lap cards for review</em> — decides what happens to its card.</li>
+  <li><strong>Lap length &amp; minimum lap time</strong> — a crossing faster than the minimum is flagged (a mistyped plate or a double entry usually explains it); the ride's short-lap policy — <em>hold short-lap cards for review</em> (the default), or <em>always deal</em> — decides what happens to its card.</li>
   <li><strong>Entries</strong> — solo only, or solo + teams (the default) with a max riders-per-team (2–10, default 4).</li>
   <li><strong>Plate model</strong> — <em>rider-pooled</em> (default): every rider has their own plate and draws one card per lap, uncapped; the team's hand scores from the pooled cards. <em>Team-relay</em>: one plate per team, one rider on course at a time.</li>
   <li><strong>The shoe</strong> — decks (default 8) and jokers (0–10; default 1, wild). <em>Per deck</em> gives each deck its own jokers, so a reshuffle brings them back; <em>Total</em> (the default) gives the whole ride that many jokers once — after they are dealt, the shoe deals naturals only. All decks are shuffled together and dealt in order; the shoe reshuffles automatically if it empties.</li>
@@ -111,6 +112,13 @@
 <h3 id="simulator">Filling a field with the simulator</h3>
 <p><strong>File ▸ Simulation…</strong> fills the open draft ride with a placeholder field and rehearses a race on it — the way to demo the app or practise the console before the real riders arrive. It defaults to 175 riders, 40 teams and 15 solo riders; the solo count fills itself in from the riders and teams you set, and <strong>Check</strong> answers "do these counts agree?" in an OK-only dialog that spells out how to fix them when they cannot.</p>
 <p><strong>Minutes between first rider</strong> opens on one lap at your <strong>Avg Lap Time (kmh)</strong> — the Settings value, 12.0 by default — plus a five-minute buffer, so 8 km at 12 km/h gives 45 minutes; the field stays editable. <strong>GO</strong> lays deterministic times into the ride: lap 1 starts at the ride start, riders cross at whole minutes within the interval, and the next lap opens a clear minute after the last crossing. A team records one rider per lap, so a team's lap count matches a solo rider's instead of multiplying by the team size.</p>
+<p>Three dropdowns bend that rehearsal so you can see the console's review surfaces without waiting for a real problem. Each offers <strong>Disabled</strong> and <strong>1</strong>–<strong>10</strong>, and each count takes the leading riders of the run's own crossing order — which the seed fixes, so one seed still rehearses one identical race:</p>
+<ul>
+  <li><strong>Short-lap riders</strong> — <strong>1</strong> by default. Those riders cross impossibly fast: each of their laps is timed under the ride's minimum lap time, so every one is flagged for review and, under <em>hold short-lap cards for review</em>, its card is held. Set <em>always deal</em> in ride setup and the same laps are still flagged, but their cards are credited.</li>
+  <li><strong>Lapped riders</strong> — <em>Disabled</em> by default. Those riders sit out the first wave only (lapped at the gun), then lap normally and finish one lap behind the rest of the field.</li>
+  <li><strong>Team riders stop after 4 laps</strong> — <em>Disabled</em> by default. Those team riders record their first four laps and then never cross again — they are not marked DNF. On a <em>rider-pooled</em> ride the team still completes every lap: a rotation slot that lands on a stopped rider passes to the next active rider on that team, so only the plates the team laps under change. On a <em>team-relay</em> ride the team crosses under its own plate, so this dropdown changes nothing.</li>
+</ul>
+<p>The three counts are remembered with the rest of the simulator fields, so they come back the next time you open the window.</p>
 </section>
 
 <section id="riders-entries">
@@ -132,11 +140,13 @@
   <li><strong>Start</strong> — press the green GO button (or Ride ▸ Start Ride). A ride with no riders, or a setup missing a required field, cannot start — the app says what is missing. A stopped ride resumes with the same button and keeps all data. Missed the gun? <strong>Ride ▸ Set Start Time…</strong> back-dates the start and recomputes lap-1 times.</li>
   <li><strong>Record a crossing</strong> — type the plate, press <kbd>Enter</kbd> (or click Record). The crossing commits instantly, a card is dealt from the shoe, and the crossings list updates.</li>
   <li><strong>The crossings list</strong> — every crossing the ride records, not just the latest; the list scrolls the whole ride. The search box above it narrows the list as you type, and its columns sort on a header click and resize from their edges — it opens sorted by <strong>Time</strong>. Time is the elapsed time since the ride start, counting from 0, and a DNF rider's row carries a "DNF" marker beside the name.</li>
-  <li><strong>The sounds</strong> — a click on every recorded crossing, a two-tone alert when a ride set to hold short laps flags one, and a buzz for an unknown plate or an empty entry. Toggle them in Settings.</li>
+  <li><strong>The sounds</strong> — a click on every recorded crossing, a two-tone alert when a short-lap crossing is held for review, and a buzz for an unknown plate or an empty entry. Toggle them in Settings.</li>
   <li><strong>Undo</strong> — <kbd>Ctrl+Z</kbd> (or the Undo button) removes the last crossing and returns its card.</li>
-  <li><strong>Short-lap review</strong> — in a ride set to hold short laps, a lap under the minimum is flagged and its card held until you confirm or void it; rides on the default "always deal" policy credit every lap immediately. The sidebar's <strong>Needs Review</strong> tab lists every flagged crossing; the <strong>Riders</strong> tab lists the whole roster — double-click a rider there (or select one and press Enter) to open the Rider Editor on that rider.</li>
+  <li><strong>Short-lap review</strong> — a lap under the ride's minimum lap time is flagged for review and listed on the <strong>Needs Review</strong> tab (Issue | Card | Plate | Lap | Rider | Team). The <strong>Card</strong> column shows the card's state — <strong>Held</strong> (waiting for a decision), <strong>Credited</strong>, or <strong>Void</strong>. Under the default short-lap policy (<em>hold short-lap cards for review</em>) the card is Held until you decide; under <em>always deal</em> the card is already Credited. The <strong>Riders</strong> tab lists the whole roster — double-click a rider there (or select one and press Enter) to open the Rider Editor on that rider.</li>
+  <li><strong>Duplicate crossings</strong> — the same entry recorded twice at the identical instant (a mis-key at the line, or a missed rider assigned onto a crossing already on it) puts both halves on the <strong>Needs Review</strong> tab as <strong>Duplicate crossing</strong>; one of the two has to go. See <a href="#fixing-mistakes">Fixing mistakes</a>.</li>
+  <li><strong>Review</strong> — select a row on the <strong>Needs Review</strong> tab and press <strong>Review…</strong> (or just double-click the row): a <strong>Held</strong> card opens one dialog with <strong>Confirm</strong>, <strong>Void</strong> and <strong>Cancel</strong>; a <strong>Credited</strong> or <strong>Void</strong> card opens <strong>Return to Held</strong> so you can put it back for review; a <strong>Duplicate crossing</strong> opens that crossing's detail. <strong>Cards ▸ Review Held Cards</strong> jumps straight to the tab, and with no row selected <strong>Review…</strong> simply focuses it. Tick <strong>Show Held Cards Only</strong> to list only unresolved items (held cards and duplicates).</li>
   <li><strong>Relay teams</strong> — one rider per team is on course at a time; the crossing credits the team.</li>
-  <li><strong>Hide times</strong> — Settings (or the View menu) can hide lap/total times mid-ride; times are still recorded underneath and the ride clock stays visible.</li>
+  <li><strong>Time columns</strong> — Settings (or the View menu) can show or hide the feed's Total and Lap time columns independently, mid-ride; times are still recorded underneath and the ride clock stays visible.</li>
 </ul>
 </section>
 
@@ -151,6 +161,13 @@
   <li><strong>Deal / void a manual card</strong> — fix a mis-dealt card; a manual deal takes the next card from the shoe.</li>
   <li><strong>Mark DNF</strong> — <strong>Riders ▸ Mark DNF…</strong> takes the rider's number (or a whole entry's plate) and marks that rider out: every lap and card they recorded is kept, a pooled team member can be marked without ending the team, and that rider's cards are forfeit from the team's hand. A team drops only when every one of its riders is out, and DNF riders are excluded from the results.</li>
   <li><strong>Audit trail</strong> — <strong>Ride ▸ Audit Trail…</strong> shows every action (who, when, what, entry, reason), newest first, with plate search and action filters.</li>
+</ul>
+<h3>Clearing the Needs Review tab</h3>
+<p>The <strong>Needs Review</strong> tab lists crossings that want a decision, with the reason in the <strong>Issue</strong> column and the card's state in the <strong>Card</strong> column. Select the row and press <strong>Review…</strong> — or double-click it — and the app asks the right question for that row:</p>
+<ul>
+  <li><strong>Short lap</strong> — the card is <strong>Held</strong>: dealt but not credited, so the hand is waiting on you. <strong>Review…</strong> opens one dialog with three choices — <strong>Confirm</strong> releases the card to the entry's hand, <strong>Void</strong> keeps it out of the hand for good, and <strong>Cancel</strong> leaves it held. Either way the crossing itself stays in the ride, and the decision is audit-logged.</li>
+  <li><strong>Credited or Void</strong> — a card you already confirmed or voided. <strong>Review…</strong> opens <strong>Return to Held</strong> (OK / Cancel) so you can put the card back for review; the <strong>Card</strong> column then reads <strong>Held</strong> again.</li>
+  <li><strong>Duplicate crossing</strong> — the same entry was recorded twice at the identical instant, so the ride has two laps where it should have one. <strong>Review…</strong> opens the crossing's <strong>Crossing Detail</strong>; press its <strong>Delete</strong> button and confirm to remove one of the pair — the ride's newest crossing is undone and its card returned, any other is voided (card included) and the entry's later laps renumber. The other half of the pair stays in the ride. It is your call which of the two goes: only you saw which keystroke was the mistake.</li>
 </ul>
 <p id="entry-detail">The <strong>Entry Detail</strong> window shows one entry's laps, cards, and current hand, with the correction buttons (edit crossing, deal/void card, move rider, mark DNF) on the same screen.</p>
 </section>
@@ -169,9 +186,9 @@
 <section id="finishing-standings">
 <h2>7 · Finishing &amp; standings</h2>
 <ul>
-  <li><strong>Finish ride</strong> — <strong>Ride ▸ Finish Ride…</strong> locks entry, runs the hand evaluator's self-test (a red self-test blocks finishing, R-44), computes the final standings, and publishes the ride's HTML and PDF results into the <code>exports</code> folder in your user data directory. The finished banner's <strong>View results…</strong> button — or <strong>Results ▸ Standings</strong> (<kbd>F5</kbd>) — opens the results dialog.</li>
+  <li><strong>Finish ride</strong> — <strong>Ride ▸ Finish Ride…</strong> locks entry, runs the hand evaluator's self-test (a red self-test blocks finishing, R-44), and computes the final standings — it publishes nothing by itself: the lamp turns red, the status label reads <code>FINISHED</code>, and the status bar says the ride is finished and the results are available. Generate the results yourself from the <strong>Results</strong> menu — <strong>Generate HTML…</strong>, <strong>Export PDF…</strong>, <strong>Podium Poster PDF…</strong>, <strong>Export Standings CSV…</strong> — or from the results dialog's own export buttons. Open the standings with <strong>Results ▸ Standings</strong> (<kbd>F5</kbd>).</li>
   <li><strong>Finish gate</strong> — the evaluator self-test runs fresh on every finish; a red result blocks it. DNF riders are excluded from the results outright — not ranked, not listed, not exported — and held cards never count until you confirm them.</li>
-  <li><strong>Ties</strong> — identical best hands are resolved by the ride's tie-break order (it opens on high-card draw, then most laps, then shortest total time). The order is set in ride setup and locks once the ride starts; <strong>Ride ▸ Edit Ride…</strong> can still change it while the ride is a draft.</li>
+  <li><strong>Ties</strong> — the hand that used fewer jokers wins first; otherwise identical best hands — same hand and same joker count — are resolved by the ride's tie-break order (it opens on high-card draw, then most laps, then shortest total time). The order is set in ride setup and locks once the ride starts; <strong>Ride ▸ Edit Ride…</strong> can still change it while the ride is a draft.</li>
   <li><strong>Reopen for corrections</strong> — <strong>Ride ▸ Reopen Ride</strong> reopens a finished ride for corrections: entry is locked, edits are highlighted in the crossings list, and <em>Finish again</em> re-locks and re-ranks. After corrections, the results dialog flags the published results as stale until you export again.</li>
   <li><strong>Continue a reopened ride</strong> — Start stays live while a ride is reopened: pressing GO (or <strong>Ride ▸ Start Ride</strong>) continues it — entry unlocks, the clock (held at the recorded finish while reopened) goes live again from the ride's original start, and that recorded finish is discarded. Finish again when the riding is truly over.</li>
 </ul>
@@ -192,10 +209,11 @@
 
 <section id="poker-the-run-way">
 <h2>9 · Poker, the run way</h2>
-<p>It is not a race — it is a poker run. Each completed lap deals one card; at the finish, every entry's <strong>best 5-card hand from all cards drawn</strong> is scored. Jokers are wild: a joker plays as any card you need.</p>
+<p>It is not a race — it is a poker run. Each completed lap deals one card; at the finish, every entry's <strong>best 5-card hand from all cards drawn</strong> is scored. Jokers are wild: a joker plays as any card you need — but only when it actually improves the hand; a spare joker that does not improve it is left unused.</p>
 <p>Hand rankings, best to worst:</p>
 <ol>
-  <li>Five of a kind (with jokers)</li>
+  <li>Five of a kind (wild or natural)</li>
+  <li>Royal flush</li>
   <li>Straight flush</li>
   <li>Four of a kind</li>
   <li>Full house</li>
@@ -206,14 +224,16 @@
   <li>One pair</li>
   <li>High card</li>
 </ol>
-<p>Duplicates across entries are expected — the shoe is shuffled, not dealt from a single deck — and the shoe reshuffles automatically if it empties. Two entries with identical best hands are resolved by the ride's tie-break order, never guessed.</p>
+<p><strong>Natural beats wild.</strong> Two hands of the same class and the same kickers are separated by joker count: the hand that used fewer jokers wins, so a natural hand beats an equal hand that used any joker, and one joker beats two. This is part of hand strength, so it is settled before the ride's laps and total-time tie-breaks. A natural five of a kind beats a wild five of a kind of the same rank the same way.</p>
+<p>Only the best five cards score — cards beyond the fifth never change the hand. An entry holding fewer than five cards still ranks: its cards score as the best partial hand they make, and a missing kicker always ranks below a present one.</p>
+<p>Duplicates across entries are expected — the shoe is shuffled, not dealt from a single deck — and the shoe reshuffles automatically if it empties. Two entries with identical best hands — same hand <em>and</em> same joker count — are resolved by the ride's tie-break order, never guessed.</p>
 </section>
 
 <section id="card-shoe">
 <h2>10 · Card shoe — how cards are dealt</h2>
 <p>Every lap deals one card from the ride's <strong>shoe</strong>: the single shuffled list of cards the ride builds once and draws from, in order, for its whole life.</p>
 <ul>
-  <li><strong>Created once.</strong> When the ride is created, the app draws a random <strong>seed</strong> from your operating system's secure random source and stores it with the ride. The shoe is that seed's shuffled list of decks (and jokers). It is not re-shuffled for the ride's life; the only way the order changes is if the shoe empties, when it reshuffles automatically and keeps dealing.</li>
+  <li><strong>Created once.</strong> When the ride is created, the app draws a random <strong>seed</strong> from your operating system's secure random source and stores it with the ride. The shoe is that seed's shuffled list of decks (and jokers). It is not re-shuffled for the ride's life; the only way the order changes is if the shoe empties (when it reshuffles automatically and keeps dealing), or while the ride is still a draft and you change its decks or jokers.</li>
   <li><strong>Dealt from the front, in order.</strong> The next card is always the front of the remaining list. Every crossing takes the next card — the dealt order is exactly the shuffled list, first to last.</li>
   <li><strong>Undo puts a card back at the front.</strong> Undo Last Crossing returns the card to the front of the shoe, so the next deal re-deals it.</li>
   <li><strong>Voiding does not return the card.</strong> Voiding a crossing (or a card) takes the card out of the system — it does not go back into the shoe. Only Undo returns a card.</li>
@@ -246,6 +266,10 @@
     <tr><td><kbd>Ctrl+Z</kbd></td><td>Undo last crossing</td></tr>
     <tr><td><kbd>F5</kbd></td><td>Standings (Results window)</td></tr>
     <tr><td><kbd>F1</kbd></td><td>User guide (this page)</td></tr>
+    <tr><td><kbd>F2</kbd></td><td>Edit crossing (open detail)</td></tr>
+    <tr><td><kbd>Delete</kbd></td><td>Delete selected crossing</td></tr>
+    <tr><td><kbd>Ctrl+D</kbd></td><td>Delete selected crossing</td></tr>
+    <tr><td><kbd>Ctrl+E</kbd></td><td>Edit crossing plate</td></tr>
   </tbody>
 </table>
 </section>

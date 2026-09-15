@@ -2157,7 +2157,7 @@ def test_on_pick_csv_import_given_an_unreadable_file_shows_validation_and_disabl
     between the pick and the read (or one that is unreadable for
     another reason), so ``csvio.preview``'s ``OSError`` must reach the
     operator -- wx swallows an exception that escapes the presenter's
-    caller (EPIC3-SESSION-SUMMARY.md's measured note), leaving the
+    caller (measured), leaving the
     dialog open with nothing happening.
     """
     view = RecordingRidersView()
@@ -2181,8 +2181,7 @@ def test_on_pick_csv_import_given_a_preview_value_error_shows_validation_not_cra
     decode/parse failure that still escapes it raises ``ValueError``;
     the handler surfaces it through ``show_validation`` with Import
     disabled, keeping the dialog open (wx swallows an exception that
-    escapes the presenter's caller -- EPIC3-SESSION-SUMMARY.md's
-    measured note).
+    escapes the presenter's caller -- the measured note).
     """
 
     def _preview_that_raises(_path: object, _ride: object, **_kwargs: object) -> object:

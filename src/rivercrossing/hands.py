@@ -21,17 +21,20 @@ hand's class and tiebreak always compare consistently regardless of
 which path produced it. ``tools/gen_rank_vectors.py`` imports
 ``classify_pattern`` rather than keeping its own copy.
 
-``best_hand`` finds the best 5-of-N hand with every joker kept in play
-(spec section 5's ``best_hand`` pseudocode -- a wild never hurts). For
-5 or more cards (E2.3.1) it builds one candidate 5-card hand per
-reachable :class:`HandClass` shape directly from rank/suit counts --
-never by enumerating C(n, 5-j) natural subsets -- so it stays linear
-in the pool size: R-16's uncapped rider-pooled default can hand this
-30-120+ cards over a 6h ride, where the original subset enumeration's
-own pruning (rank/suit "plausibility" heuristics sized for a 5-card
-window) silently stopped pruning anything past ~20 cards and both
-grew unusably slow *and*, independently, could drop a straight- or
-flush-completing card the pruned subset search never considered.
+``best_hand`` finds the best 5-of-N hand (spec section 5's
+``best_hand`` pseudocode). For 5 or more cards (E2.3.1) it builds one
+candidate 5-card hand per reachable :class:`HandClass` shape directly
+from rank/suit counts -- never by enumerating C(n, 5-j) natural subsets
+-- so it stays linear in the pool size: R-16's uncapped rider-pooled
+default can hand this 30-120+ cards over a 6h ride, where the original
+subset enumeration's own pruning (rank/suit "plausibility" heuristics
+sized for a 5-card window) silently stopped pruning anything past ~20
+cards and both grew unusably slow *and*, independently, could drop a
+straight- or flush-completing card the pruned subset search never
+considered. It builds those candidates once per joker count that can
+actually assemble 5 cards, so a joker plays only where it improves the
+hand: a surplus joker that does not improve the hand is not played, and
+an equal-rank natural hand beats a wild one (:func:`compare`).
 Fewer than 5 cards score as the best *partial* hand those cards can
 make (E2.1.3), and a missing kicker always ranks below a present one.
 Card cap X is a caller concern (R-13): slice to the first X dealt
@@ -408,9 +411,9 @@ def _uniform_natural_rank(naturals: Sequence[Card]) -> Rank | None:
     HandClass always dominates any kicker, so growing this rank's
     group (pair -> trips -> quads -> five-of-a-kind) beats any
     alternative regardless of what other ranks might offer. With no
-    naturals at all, Ace is the unconstrained best choice -- spec
-    section 5's ``j >= 5 -> FIVE_OF_KIND(Ace)`` shortcut falls out of
-    this same rule with no extra branch.
+    naturals at all, Ace is the unconstrained best choice, so the
+    all-joker five-of-a-kind hand falls out of this same rule with no
+    extra branch.
     """
     ranks = {card.rank for card in naturals}
     if len(ranks) > 1:
@@ -709,12 +712,14 @@ def _spend_leftover_jokers(
 ) -> list[_RankAssignment]:
     """Convert *leftover* natural card slots in *assignment* to jokers.
 
-    Every joker in the pool always plays (module docstring), so any
-    left over once a class's minimum joker cost is paid must still
-    land somewhere in the final 5 cards. Re-labelling an already-
-    decided rank's natural card as a joker of that same rank changes
-    nothing about the class or tiebreak -- a joker can always stand in
-    for the natural card it replaces (E2.1.2's own wild-fill rule).
+    Every joker passed in here plays: the caller's candidate is built
+    for exactly this many jokers (module docstring -- ``best_hand``
+    picks the count), so any left over once a class's minimum joker
+    cost is paid must still land in the final 5 cards. Re-labelling an
+    already-decided rank's natural card as a joker of that same rank
+    changes nothing about the class or tiebreak -- a joker can always
+    stand in for the natural card it replaces (E2.1.2's own wild-fill
+    rule).
     """
     remaining = leftover
     spent: list[_RankAssignment] = []
@@ -825,10 +830,13 @@ def _flush_candidate(naturals: Sequence[Card], jokers: Sequence[Card]) -> Evalua
     A flush's kickers compare by raw rank alone (module docstring), so
     among a suit's own naturals the top ``need`` by rank -- duplicates
     included, physical-cards semantics -- always maximizes that suit's
-    result; every joker then plays as an ace of that suit, which is
-    always at least as good as any other fill and duplicate-legal even
-    when the suit already holds a natural ace (E2.1.2's own "K J 8 6
-    suited" vector: an ace, maximizing the kicker, full stop).
+    result; the jokers passed in then play as aces of that suit, always
+    at least as good as any other fill and duplicate-legal even when
+    the suit already holds a natural ace (E2.1.2's own "K J 8 6 suited"
+    vector: an ace, maximizing the kicker, full stop). ``need`` is 5
+    minus the jokers passed in, so a pool holding more jokers than the
+    hand needs simply passes fewer (module docstring: a surplus joker
+    is not played).
     """
     need = NATURAL_HAND_SIZE - len(jokers)
     best: tuple[Suit, list[Card]] | None = None
@@ -890,11 +898,13 @@ def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
             best partial hand those cards can make -- a missing
             kicker always ranks below a present one, however good the
             rest of the hand is (:func:`_partial_hand`). 5 or more
-            cards build the best 5-card hand with every joker kept in
-            play (spec section 5's own pseudocode comment: "a wild
-            never hurts -> all jokers play"), one directly-constructed
-            candidate per reachable :class:`HandClass` shape (module
-            docstring) rather than by enumerating natural subsets.
+            cards build the best 5-card hand over every joker count
+            that can actually assemble 5 cards, one directly-
+            constructed candidate per reachable :class:`HandClass`
+            shape (module docstring) rather than by enumerating
+            natural subsets: a joker plays only where it improves the
+            hand, so a surplus joker is left unplayed and an equal-rank
+            natural hand beats a wild one (:func:`compare`).
 
     Returns:
         The best :class:`EvaluatedHand` reachable from *cards*.
@@ -908,28 +918,44 @@ def best_hand(cards: Sequence[Card]) -> EvaluatedHand:
         return _partial_hand(cards)
     naturals = [card for card in cards if not card.joker]
     jokers = [card for card in cards if card.joker]
-    if len(jokers) >= NATURAL_HAND_SIZE:
-        chosen = tuple(jokers[:NATURAL_HAND_SIZE])
-        return _five_of_a_kind_hand(chosen, Rank.ACE, NATURAL_HAND_SIZE)
-    candidates = (
-        _straight_flush_candidate(naturals, jokers),
-        _flush_candidate(naturals, jokers),
-        _straight_candidate(naturals, jokers),
-        *(_grouped_candidate(naturals, jokers, shape) for shape in _GROUP_SHAPES),
-    )
-    reachable = [candidate for candidate in candidates if candidate is not None]
-    return max(reachable, key=lambda hand: (hand.cls, hand.tiebreak))
+    # A joker count below the lower bound cannot assemble 5 cards, so
+    # every builder returns None there: the loop skips those counts
+    # rather than doing the work for nothing. The upper bound is the
+    # top of the range, where len(naturals) + joker_count >= 5 holds,
+    # so the all-joker five-of-a-kind needs no separate shortcut.
+    candidates: list[tuple[int, EvaluatedHand]] = []
+    for joker_count in range(
+        max(0, NATURAL_HAND_SIZE - len(naturals)),
+        min(NATURAL_HAND_SIZE, len(jokers)) + 1,
+    ):
+        active = jokers[:joker_count]
+        built = (
+            _straight_flush_candidate(naturals, active),
+            _flush_candidate(naturals, active),
+            _straight_candidate(naturals, active),
+            *(_grouped_candidate(naturals, active, shape) for shape in _GROUP_SHAPES),
+        )
+        candidates.extend((joker_count, candidate) for candidate in built if candidate is not None)
+    return max(candidates, key=lambda pair: (pair[1].cls, pair[1].tiebreak, -pair[0]))[1]
 
 
 def compare(a: EvaluatedHand, b: EvaluatedHand) -> int:
-    """Compare two evaluated hands by ``(cls, tiebreak)``.
+    """Compare two evaluated hands by ``(cls, tiebreak, jokers)``.
+
+    Fewer jokers wins once class and tiebreak are equal -- a natural
+    hand beats an equal wild one, one joker beats two. This is part of
+    hand strength, so it is decided here, before the ride's laps/time
+    tie-breaks, and such a pair is never a "draw required" case. The
+    count is ``len(jokers_played_as)``: exactly one resolution is
+    recorded per joker played on every evaluation path, so no second
+    derivation is needed.
 
     Returns:
         -1 if *a* is the worse hand, 1 if *a* is the better hand, or
         0 if they tie exactly.
     """
-    key_a = (a.cls, a.tiebreak)
-    key_b = (b.cls, b.tiebreak)
+    key_a = (a.cls, a.tiebreak, -len(a.jokers_played_as))
+    key_b = (b.cls, b.tiebreak, -len(b.jokers_played_as))
     if key_a < key_b:
         return -1
     if key_a > key_b:
@@ -1075,10 +1101,16 @@ def _check_joker_vectors() -> tuple[bool, str]:
 
 
 def _check_five_of_a_kind_ordering() -> tuple[bool, str]:
-    """Check (c): a wild five-of-a-kind beats a royal flush."""
-    five_of_a_kind = eval5([Card.parse(code) for code in ["AS", "AD", "AH", "AC", "JK"]])
+    """Check (c): five of a kind outranks a royal flush.
+
+    Also checks that a natural five of a kind outranks a wild one of
+    the same rank -- fewer jokers wins once class and kicker tie.
+    """
+    wild_five = eval5([Card.parse(code) for code in ["AS", "AD", "AH", "AC", "JK"]])
+    natural_five = eval5([Card.parse(code) for code in ["AS", "AD", "AH", "AC", "AD"]])
     royal_flush = eval5([Card.parse(code) for code in ["AS", "KS", "QS", "JS", "10S"]])
-    return compare(five_of_a_kind, royal_flush) == 1, ""
+    passed = compare(wild_five, royal_flush) == 1 and compare(natural_five, wild_five) == 1
+    return passed, ""
 
 
 def _seeded_field() -> list[list[Card]]:
@@ -1119,11 +1151,12 @@ def self_test() -> SelfTestReport:
 
     Four independently-timed checks, in the selftest_dlg canvas's own
     order: the 7,462-rank sweep, the 28 authored joker vectors,
-    five-of-a-kind ranking above the royal flush, and the whole
-    180x12 field scoring inside its R-42 budget. The two vector-CSV
-    checks read through :func:`_load_rank_sweep_vectors` /
-    :func:`_load_joker_vectors`, so a corrupted table genuinely turns
-    that check red rather than being trusted unread.
+    five-of-a-kind ordering (above the royal flush, and natural above
+    wild), and the whole 180x12 field scoring inside its R-42 budget.
+    The vector-CSV checks read through
+    :func:`_load_rank_sweep_vectors` / :func:`_load_joker_vectors`, so
+    a corrupted table genuinely turns that check red rather than being
+    trusted unread.
 
     Wired to both app launch and Help ▸ Run Evaluator Self-test;
     a failing report blocks Finish (E6.4.3, module-skeletons.md S4).

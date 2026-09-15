@@ -532,15 +532,15 @@ def test_store_create_ride_hold_short_laps_column_round_trips(tmp_path: Path) ->
     assert deal_engine.config.hold_short_laps is False
 
 
-def test_store_load_engine_given_a_row_without_a_policy_rebuilds_false(
+def test_store_load_engine_given_a_row_without_a_policy_rebuilds_the_hold_default(
     tmp_path: Path,
 ) -> None:
-    """A stored row that never set the policy replays as "always deal".
+    """A row that never set the policy replays as the hold default.
 
     A ``ride`` row written directly -- not through ``create_ride`` --
-    still gets ``hold_short_laps=0`` from the column's NOT NULL
-    DEFAULT, so the rebuilt config never fabricates a hold it did not
-    record.
+    still gets ``hold_short_laps=1`` from the column's NOT NULL
+    DEFAULT, so the rebuilt config matches the dialog's own default
+    rather than fabricating an always-deal ride the row never recorded.
     """
     db_path = tmp_path / "direct.db"
     conn = sqlite3.connect(str(db_path))
@@ -575,7 +575,21 @@ def test_store_load_engine_given_a_row_without_a_policy_rebuilds_false(
     finally:
         store.close()
 
-    assert engine.config.hold_short_laps is False
+    assert engine.config.hold_short_laps is True
+
+
+def test_store_open_ride_hold_short_laps_column_defaults_to_the_hold_policy(
+    tmp_path: Path,
+) -> None:
+    """The DDL default is 1: hold-for-review, W4's shipped default."""
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    store.close()
+
+    with closing(sqlite3.connect(str(db_path))) as conn:
+        defaults = {row[1]: row[4] for row in conn.execute("PRAGMA table_info(ride)")}
+
+    assert defaults["hold_short_laps"] == "1"
 
 
 def test_store_create_ride_stores_logo_blob_round_trip(tmp_path: Path) -> None:
@@ -3206,6 +3220,35 @@ def test_store_load_engine_given_no_logo_bytes_leaves_logo_path_none(
         store.close()
 
     assert engine.config.logo_path is None
+
+
+def test_store_load_engine_materializes_each_ride_logo_to_its_own_temp_file(
+    tmp_path: Path,
+) -> None:
+    """CWE-377: each load writes a fresh, uniquely-named temp file.
+
+    ``tempfile.mkstemp`` creates the file atomically under a random
+    name (``O_CREAT``/``O_EXCL``), so there is no data-derived path for
+    a pre-planted symlink to sit at -- and two loads of one ride can
+    never share, or overwrite, a single file.
+    """
+    db_path = tmp_path / "rides.db"
+    logo_bytes = base64.b64decode(_TINY_PNG_B64)
+    logo_path = tmp_path / "logo.png"
+    logo_path.write_bytes(logo_bytes)
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(logo_path=logo_path))
+        first = store.load_engine(ride_id, _replay_roster()).config.logo_path
+        second = store.load_engine(ride_id, _replay_roster()).config.logo_path
+    finally:
+        store.close()
+
+    assert isinstance(first, Path)
+    assert isinstance(second, Path)
+    assert first != second
+    assert first.read_bytes() == logo_bytes
+    assert second.read_bytes() == logo_bytes
 
 
 # --------------------------------------- D2: updating a stored ride

@@ -10,9 +10,10 @@ separate crash log -- exceptions go through :meth:`Logging.exception`.
 Records come in two kinds:
 
 * always-on -- :meth:`Logging.startup`, :meth:`Logging.launch`,
-  :meth:`Logging.ride_loaded` and :meth:`Logging.exception` survive
-  ``verbose=False``: a support session needs the launch context and any
-  crash even when the operator opted out of the trace;
+  :meth:`Logging.ride_loaded`, :meth:`Logging.warn` and
+  :meth:`Logging.exception` survive ``verbose=False``: a support
+  session needs the launch context, an unauthored window and any crash
+  even when the operator opted out of the trace;
 * trace -- :meth:`Logging.marker`, :meth:`Logging.menu`,
   :meth:`Logging.dialog`, :meth:`Logging.button` and
   :meth:`Logging.control` are the opt-out "what did the operator do"
@@ -122,11 +123,12 @@ class Logging:
     """The structured log for one app invocation.
 
     One instance per launch, one file per instance. ``verbose`` gates
-    only the trace methods, so the always-on launch and crash records
-    are written even when the operator turned the trace off. Every
-    public method calls its logger directly with ``stacklevel=2`` -- a
-    single hop, so ``file``/``line``/``func`` name the app frame that
-    logged rather than this wrapper.
+    only the trace methods, so the always-on records -- :meth:`startup`,
+    :meth:`launch`, :meth:`ride_loaded`, :meth:`warn` and
+    :meth:`exception` -- are written even when the operator turned the
+    trace off. Every public method calls its logger directly with
+    ``stacklevel=2`` -- a single hop, so ``file``/``line``/``func`` name
+    the app frame that logged rather than this wrapper.
 
     A failed write is handled by the stdlib handler's own error path
     and never re-raised into the app.
@@ -248,6 +250,23 @@ class Logging:
         self._logger.info(
             "ride_loaded",
             extra={"event": "ride_loaded", "fields": {"ride_id": ride_id}},
+            stacklevel=2,
+        )
+
+    def warn(self, msg: str) -> None:
+        """Record a warning, whatever the trace setting.
+
+        Always on: a degraded load that authored no window is exactly
+        the failure an operator must be able to hand a support session
+        from the log alone, so this is not gated by
+        :meth:`set_verbose`.
+
+        Args:
+            msg: The message, e.g. ``"no window authored"``.
+        """
+        self._logger.warning(
+            "warn",
+            extra={"event": "warn", "fields": {"msg": msg}},
             stacklevel=2,
         )
 

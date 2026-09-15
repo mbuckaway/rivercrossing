@@ -115,12 +115,13 @@ def _bare_view(*, logo_path: Path | None = None) -> RideSetup:
 
     ``__init__`` resolves every frozen name and builds a real
     ``wx.InfoBar``, which needs a desktop; the logo steps read/write
-    only their own three attributes, so the instance is made without
+    only their own attributes, so the instance is made without
     it (``test_team_editor_dialog_size.py``'s own stand-in shape).
     """
     view = object.__new__(RideSetup)
     view.dialog = _RecordingDialog()
     view._logo_path = logo_path
+    view._staged_logo_dir = None
     view.logo_preview_bmp = _RecordingBitmap()
     view.logo_status_lbl = _RecordingLabel()
     return view
@@ -294,6 +295,77 @@ def test_ride_setup_browse_given_a_click_forwards_the_event(
     view._on_browse_logo(event)
 
     assert event.skipped is True
+
+
+# --------------------------------- staging: the temp dir is not leaked
+# Every pick stages its fitted copy in a fresh ``mkdtemp`` directory;
+# those live in the process temp directory, so each one must be
+# removed -- when a later pick replaces it, and when the dialog ends.
+
+
+def test_ride_setup_stage_logo_given_a_second_pick_removes_the_first_directory(
+    tmp_path: Path,
+) -> None:
+    """A re-pick discards the previous pick's staged directory."""
+    view = _bare_view()
+    view.stage_logo(_write_png(tmp_path / "first.png", WIDE_PNG))
+    first_dir = view._logo_path.parent
+
+    view.stage_logo(_write_png(tmp_path / "second.png", WIDE_PNG))
+
+    assert (first_dir.exists(), view._logo_path.parent.exists()) == (False, True)
+
+
+def test_ride_setup_stage_logo_given_a_second_pick_tracks_only_the_new_directory(
+    tmp_path: Path,
+) -> None:
+    """The dialog tracks one staged directory at a time."""
+    view = _bare_view()
+    view.stage_logo(_write_png(tmp_path / "first.png", WIDE_PNG))
+
+    view.stage_logo(_write_png(tmp_path / "second.png", WIDE_PNG))
+
+    assert view._staged_logo_dir == view._logo_path.parent
+    assert view._logo_path.name == "second.png"
+
+
+def test_ride_setup_discard_staged_logo_given_a_staged_pick_removes_its_directory(
+    tmp_path: Path,
+) -> None:
+    """The dialog end removes the staged copy's directory."""
+    view = _bare_view()
+    view.stage_logo(_write_png(tmp_path / "gorba.png", WIDE_PNG))
+    staged_dir = view._logo_path.parent
+
+    view.discard_staged_logo()
+
+    assert (staged_dir.exists(), view._staged_logo_dir) == (False, None)
+
+
+def test_ride_setup_discard_staged_logo_given_nothing_staged_keeps_it_none() -> None:
+    """T-4 empty boundary: nothing staged means nothing to remove."""
+    view = _bare_view()
+
+    view.discard_staged_logo()
+
+    assert view._staged_logo_dir is None
+
+
+def test_ride_setup_destroy_handler_discards_the_staged_directory(tmp_path: Path) -> None:
+    """The dialog's own destroy is the teardown that cannot be skipped.
+
+    Cancel and Escape end the modal without running ``_on_ok``, so the
+    destroy event -- which every route out of the dialog goes through
+    -- owns the cleanup.
+    """
+    view = _bare_view()
+    view.stage_logo(_write_png(tmp_path / "gorba.png", WIDE_PNG))
+    staged_dir = view._logo_path.parent
+    event = _StubEvent()
+
+    view._on_destroy(event)
+
+    assert (staged_dir.exists(), view._staged_logo_dir, event.skipped) == (False, None, True)
 
 
 # ------------------------------------------- stored logos (show_logo)

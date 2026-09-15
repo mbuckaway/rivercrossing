@@ -8,8 +8,9 @@
 
     * wxInfoBar cannot be authored here. XRC yields a generic wx.Control and
       silently drops the name attribute, so FindWindowByName returns None.
-      resume_infobar, reopened_infobar and finished_infobar are built with
-      wx.InfoBar() in code and given their frozen names with SetName().
+      (This window carries none: the REOPENED corrections banner rides the
+      status bar's first field, so nothing sits above the ride-info block
+      and no code-side bar can disturb the frame's own sizing.)
     * wxDataViewListCtrl cannot be authored here either: its XRC handler
       hard-forces the control name to "dataviewCtrl". crossings_list and
       flagged_list are therefore wxDataViewCtrl, whose name IS honoured;
@@ -44,10 +45,10 @@
 
   Code-side per the canvas footnotes: feed columns/rows (with their
   header sort), bold flagged-row attributes, the feed's search filter,
-  card bitmaps from the imagelist, InfoBar text and show/hide,
-  main_splitter sash restore from settings, per-ride-state enabling of
-  menus and buttons, radio menu-item defaults (see main_menubar below),
-  and every data label's text.
+  card bitmaps from the imagelist, main_splitter sash restore from
+  settings, per-ride-state enabling of menus and buttons, radio
+  menu-item defaults (see main_menubar below), and every data label's
+  text.
 -->
 <resource>
 
@@ -59,15 +60,6 @@
       <orient>wxVERTICAL</orient>
 
       <!--
-        InfoBar slot. resume_infobar / reopened_infobar / finished_infobar are
-        constructed in code and inserted at index 0 of this sizer; see the file
-        header for why they cannot be declared here.
-      -->
-      <object class="spacer">
-        <size>0,0</size>
-      </object>
-
-      <!--
         The ride-info block (plan §11: the stop light's status column,
         then the "Ride" and "Details" group boxes, then the ride logo
         slot), the two gauge-clock columns (WS-D) and the start/stop
@@ -75,7 +67,7 @@
         ride_status_panel are code-side slots: XRC cannot author a
         wx.Control subclass, so RaceClock / StopLight (views/gauges.py)
         are built into these panels and named with SetName() in code
-        (the same code-side rule as the InfoBars). The dials' numeric
+        (the code-side rule in the header above). The dials' numeric
         labels stay declared here under their frozen names
         (clock_elapsed_lbl / clock_remaining_lbl), and start_btn /
         stop_btn are wxBitmapButton shells whose SVG glyphs are set in
@@ -407,7 +399,7 @@
             <object class="wxTextCtrl" name="plate_input">
               <style>wxTE_PROCESS_ENTER</style>
               <size>240,-1</size>
-              <hint>Plate number</hint>
+              <hint>Rider plate</hint>
               <font>
                 <sysfont>wxSYS_DEFAULT_GUI_FONT</sysfont>
                 <relativesize>1.5</relativesize>
@@ -659,9 +651,22 @@
                           <object class="wxDataViewCtrl" name="flagged_list"/>
                         </object>
                         <object class="sizeritem">
-                          <flag>wxALIGN_RIGHT</flag>
-                          <object class="wxButton" name="review_btn">
-                            <label>Review…</label>
+                          <flag>wxEXPAND</flag>
+                          <object class="wxBoxSizer">
+                            <orient>wxHORIZONTAL</orient>
+                            <object class="sizeritem">
+                              <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                              <object class="wxCheckBox" name="show_held_only_chk">
+                                <label>Show Held Cards Only</label>
+                              </object>
+                            </object>
+                            <object class="sizeritem">
+                              <option>1</option>
+                              <flag>wxALIGN_CENTRE_VERTICAL|wxALIGN_RIGHT</flag>
+                              <object class="wxButton" name="review_btn">
+                                <label>Review…</label>
+                              </object>
+                            </object>
                           </object>
                         </object>
                       </object>
@@ -686,16 +691,19 @@
   </object>
 
   <!--
-    Seven menus, 45 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 9 - Riders 5 - Cards 7 - Results 7 -
-    View 1 row, 8 items - Help 4). File order follows the 15 table
+    Seven menus, 47 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 8 - Ride 9 - Riders 4 - Cards 4 - Results 12 -
+    View 1 row, 9 items - Help 4). File order follows the 15 table
     (Import CSV, Export CSV, Back Up, Simulation), not 15b's listing
     order.
 
-    Results 7: mi_tiebreak_order retired; the tie-break order now comes
+    Results 12: mi_tiebreak_order retired; the tie-break order now comes
     only from the ride's stored config, set in Ride Setup. The single
     mi_preview_browser split into the per-format HTML/PDF preview
-    items (Part D), each gated on its own export existing. File 8:
+    items (Part D), each gated on its own export existing, and G6
+    added the five checkable publish options after them (a separator
+    first, since they are a second group), plus its rename of the
+    HTML row to "Export HTML…". File 8:
     mi_simulation opens the Rider Simulator after Back Up Database.
 
     W14: mi_ride_setup left the Ride menu with its spec.md 15 row; the
@@ -708,6 +716,9 @@
     menu's one destructive row) resets the open ride to a fresh
     DRAFT. D4 retires mi_add_entry from the Riders menu: the Rider
     Editor row is the single entry point for adding riders.
+
+    G7 retires mi_edit_crossing from the Cards menu: Crossing Detail's
+    Edit Time and the F2 accelerator cover the same ground.
 
     Part D: mi_standings' "Enabled when" is now "always"; with no ride
     open the dialog's empty-state source covers it.
@@ -807,9 +818,6 @@
       <object class="wxMenuItem" name="mi_add_crossing_at">
         <label>&amp;Add Crossing at Time…</label>
       </object>
-      <object class="wxMenuItem" name="mi_edit_crossing">
-        <label>&amp;Edit Crossing…</label>
-      </object>
       <object class="wxMenuItem" name="mi_deal_manual">
         <label>&amp;Deal Bonus Card…</label>
       </object>
@@ -825,7 +833,7 @@
         <accel>F5</accel>
       </object>
       <object class="wxMenuItem" name="mi_export_html">
-        <label>Generate &amp;HTML…</label>
+        <label>Export &amp;HTML…</label>
       </object>
       <object class="wxMenuItem" name="mi_export_pdf">
         <label>Export &amp;PDF…</label>
@@ -842,22 +850,58 @@
       <object class="wxMenuItem" name="mi_preview_pdf_browser">
         <label>Preview P&amp;DF in Browser</label>
       </object>
+      <!--
+        G6: the five publish options moved here from the results
+        dialog's removed "Publish options" box. They are checkable
+        (no <checked>: a check item's state comes from the persisted
+        AppSettings.publish_* flags at startup, applied by
+        app._check_loaded_publish_options). R-63's gate rides on the
+        pair: with show times off, mi_time_board is unchecked and
+        disabled (app._apply_publish_gate).
+      -->
+      <object class="separator"/>
+      <object class="wxMenuItem" name="mi_show_times">
+        <label>Show lap &amp;&amp; total times</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_laps_board">
+        <label>Laps leaderboard</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_time_board">
+        <label>Fastest-time leaderboard</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_full_field">
+        <label>Full field</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_all_cards">
+        <label>All cards drawn</label>
+        <checkable>1</checkable>
+      </object>
     </object>
 
     <!--
       W13: the theme trio left this menu (the Settings appearance radios
-      are the single theme surface). The zoom ladder is one radio group;
-      wx groups consecutive wxITEM_RADIO entries, and the checkable
-      mi_hide_times between the menu's start and the ladder keeps the
-      zoom group from ever merging with a neighbouring radio item. The
-      zoom items carry no mnemonic: seven numeric labels cannot hold
-      unique ones, and the whole ladder is reachable with Alt+V then the
-      arrow keys.
+      are the single theme surface). R-37's two independent time-column
+      check items lead the menu: the Total column and the Lap time
+      column, each mirrored by its own Settings checkbox. The zoom
+      ladder is one radio group; wx groups consecutive wxITEM_RADIO
+      entries, and the two checkable items between the menu's start and
+      the ladder keep the zoom group from ever merging with a
+      neighbouring radio item. The zoom items carry no mnemonic: seven
+      numeric labels cannot hold unique ones, and the whole ladder is
+      reachable with Alt+V then the arrow keys.
     -->
     <object class="wxMenu">
       <label>&amp;View</label>
-      <object class="wxMenuItem" name="mi_hide_times">
-        <label>&amp;Hide Times on Console</label>
+      <object class="wxMenuItem" name="mi_show_total_times">
+        <label>&amp;Show Total Times on Crossings Panel</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_show_lap_time">
+        <label>&amp;Show Lap Time in Crossings Panel</label>
         <checkable>1</checkable>
       </object>
       <object class="separator"/>

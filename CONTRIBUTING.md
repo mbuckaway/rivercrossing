@@ -238,7 +238,10 @@ A version tag is the whole release procedure — the pipeline does the rest (spe
    `RiverCrossing-<version>-macos.dmg`, `RiverCrossing-<version>-windows-x64-setup.exe`,
    `RiverCrossing-<version>-windows-arm64-setup.exe` and `SHA256SUMS.txt`. The macOS DMG is
    Developer-ID signed, notarized and stapled when all six `APPLE_*` secrets are set (see below);
-   otherwise it ships unsigned. Nothing publishes if any gate is red.
+   otherwise it ships unsigned. Nothing publishes if any gate is red. The published release body
+   appends the version's `CHANGELOG.md` section to GitHub's auto-generated notes (additive, never
+   overwriting them); the job fails if the current version has no CHANGELOG section, so a release
+   can never silently ship without release notes.
 
 ## CI secrets contract
 

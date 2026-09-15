@@ -38,7 +38,8 @@ from rivercrossing.ui.theme import ThemeMode
 _ALL_FIELDS = {
     "appearance",
     "sound_on",
-    "hide_times",
+    "show_total_times",
+    "show_lap_time",
     "zoom_percent",
     "splitter_sash",
     "window_geometry",
@@ -48,12 +49,30 @@ _ALL_FIELDS = {
     "sim_solo",
     "sim_laps",
     "sim_interval",
+    "sim_short_laps",
+    "sim_lapped",
+    "sim_team_stop",
     "avg_speed_kmh",
+    # G6: the five publish options, moved off the results dialog.
+    "publish_show_times",
+    "publish_laps_board",
+    "publish_time_board",
+    "publish_full_field",
+    "publish_all_cards",
 }
+
+# G6: the defaults the results dialog's five checkboxes used to declare
+# (results.xrc, before the box was removed): times off, laps board on,
+# time board off, full field on, all cards on.
+_PUBLISH_DEFAULTS = (False, True, False, True, True)
 
 # The simulator dialog's XRC spin defaults (simulation.xrc): riders
 # 175, teams 40, solo 15, laps 1, interval 45 (plan §1/§3).
 _SIM_DEFAULTS = (175, 40, 15, 1, 45)
+
+# G9's three behaviour dropdown defaults (simulation.xrc): one
+# short-lap rider, no lapped riders, no team riders stopping.
+_SIM_BEHAVIOUR_DEFAULTS = (1, 0, 0)
 
 # The 90-150 zoom ladder, as the JSON-safe rung list files carry.
 _ZOOM_RUNGS = list(ZOOM_LADDER)
@@ -68,7 +87,8 @@ def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
     original = AppSettings(
         appearance="dark",
         sound_on=False,
-        hide_times=True,
+        show_total_times=True,
+        show_lap_time=False,
         zoom_percent=140,
         splitter_sash=320,
         window_geometry=(40, 60, 1200, 800),
@@ -84,6 +104,102 @@ def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
     loaded = load_settings(path)
 
     assert loaded == original
+
+
+def test_default_settings_hide_the_total_and_show_the_lap_time() -> None:
+    """The two independent time-column defaults (Total off, Lap on)."""
+    settings = default_settings()
+
+    assert (settings.show_total_times, settings.show_lap_time) == (False, True)
+
+
+def test_default_settings_publish_flags_are_the_retired_xrc_checkbox_defaults() -> None:
+    """G6: times off, laps leaderboard on, time board off, cards on."""
+    settings = default_settings()
+
+    assert (
+        settings.publish_show_times,
+        settings.publish_laps_board,
+        settings.publish_time_board,
+        settings.publish_full_field,
+        settings.publish_all_cards,
+    ) == _PUBLISH_DEFAULTS
+
+
+def test_save_then_load_round_trips_the_publish_flags(tmp_path: Path) -> None:
+    """G6: every publish flag survives a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(
+        default_settings(),
+        publish_show_times=True,
+        publish_laps_board=False,
+        publish_time_board=True,
+        publish_full_field=False,
+        publish_all_cards=False,
+    )
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (
+        loaded.publish_show_times,
+        loaded.publish_laps_board,
+        loaded.publish_time_board,
+        loaded.publish_full_field,
+        loaded.publish_all_cards,
+    ) == (True, False, True, False, False)
+
+
+def test_load_settings_missing_the_publish_keys_uses_the_defaults(tmp_path: Path) -> None:
+    """An older file with no publish keys seeds the canvas defaults."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (
+        loaded.publish_show_times,
+        loaded.publish_laps_board,
+        loaded.publish_time_board,
+        loaded.publish_full_field,
+        loaded.publish_all_cards,
+    ) == _PUBLISH_DEFAULTS
+
+
+@pytest.mark.parametrize("stored", ["yes", 1, None, [], {}])
+def test_load_settings_non_bool_publish_values_use_the_defaults(
+    tmp_path: Path, stored: object
+) -> None:
+    """T-4: a non-bool publish value is corrupt for its field."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"publish_show_times": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.publish_show_times is False
+
+
+def test_save_then_load_round_trips_the_two_time_column_flags(tmp_path: Path) -> None:
+    """Both show flags survive a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), show_total_times=True, show_lap_time=False)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (loaded.show_total_times, loaded.show_lap_time) == (True, False)
+
+
+def test_load_settings_missing_both_time_column_keys_uses_the_defaults(
+    tmp_path: Path,
+) -> None:
+    """An older file with neither key seeds Total off and Lap on."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (loaded.show_total_times, loaded.show_lap_time) == (False, True)
 
 
 def test_default_settings_sim_fields_are_the_dialog_xrc_defaults() -> None:
@@ -137,6 +253,75 @@ def test_load_settings_missing_sim_keys_falls_back_to_defaults(tmp_path: Path) -
         loaded.sim_laps,
         loaded.sim_interval,
     ) == _SIM_DEFAULTS
+
+
+# --- the three simulator behaviours (G9) ---------------------------
+
+
+def test_default_settings_sim_behaviour_fields_are_the_dialog_defaults() -> None:
+    """G9: a first launch seeds one short-lap rider, nothing else."""
+    settings = default_settings()
+
+    assert (
+        settings.sim_short_laps,
+        settings.sim_lapped,
+        settings.sim_team_stop,
+    ) == _SIM_BEHAVIOUR_DEFAULTS
+
+
+def test_save_then_load_round_trips_the_sim_behaviour_fields(tmp_path: Path) -> None:
+    """The three behaviour counts survive a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), sim_short_laps=3, sim_lapped=7, sim_team_stop=10)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (loaded.sim_short_laps, loaded.sim_lapped, loaded.sim_team_stop) == (3, 7, 10)
+
+
+def test_load_settings_missing_sim_behaviour_keys_uses_the_defaults(tmp_path: Path) -> None:
+    """An older file with none of the three keys seeds the defaults."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (
+        loaded.sim_short_laps,
+        loaded.sim_lapped,
+        loaded.sim_team_stop,
+    ) == _SIM_BEHAVIOUR_DEFAULTS
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param(-1, id="min-minus-one"),
+        pytest.param(0, id="min"),
+        pytest.param(1, id="min-plus-one"),
+        pytest.param(9, id="max-minus-one"),
+        pytest.param(10, id="max"),
+        pytest.param(11, id="max-plus-one"),
+    ],
+)
+def test_load_settings_keeps_a_stored_behaviour_count_unchanged(
+    tmp_path: Path, stored: int
+) -> None:
+    """T-4: the loader never clamps the 0..10 dropdown range."""
+    path = tmp_path / "settings.json"
+    original = replace(
+        default_settings(), sim_short_laps=stored, sim_lapped=stored, sim_team_stop=stored
+    )
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (loaded.sim_short_laps, loaded.sim_lapped, loaded.sim_team_stop) == (
+        stored,
+        stored,
+        stored,
+    )
 
 
 # --- average rider speed (plan §10) --------------------------------
@@ -264,7 +449,8 @@ def test_load_settings_missing_keys_use_defaults_for_each_field(
     assert loaded == AppSettings(
         appearance="dark",
         sound_on=True,
-        hide_times=False,
+        show_total_times=False,
+        show_lap_time=True,
         zoom_percent=100,
         splitter_sash=None,
         window_geometry=None,
@@ -282,7 +468,8 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
             {
                 "appearance": 42,
                 "sound_on": "yes",
-                "hide_times": 1,
+                "show_total_times": 1,
+                "show_lap_time": "yes",
                 "zoom_percent": "140",
                 "splitter_sash": "320",
                 "window_geometry": [1, 2],
@@ -292,6 +479,9 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
                 "sim_solo": 2.5,
                 "sim_laps": None,
                 "sim_interval": "1",
+                "sim_short_laps": "one",
+                "sim_lapped": True,
+                "sim_team_stop": 2.5,
                 "avg_speed_kmh": "fast",
             }
         ),
@@ -372,7 +562,8 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
         AppSettings(
             appearance="light",
             sound_on=False,
-            hide_times=True,
+            show_total_times=True,
+            show_lap_time=False,
             zoom_percent=120,
             splitter_sash=250,
             window_geometry=(10, 20, 30, 40),
@@ -382,7 +573,15 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
             sim_solo=4,
             sim_laps=2,
             sim_interval=5,
+            sim_short_laps=2,
+            sim_lapped=1,
+            sim_team_stop=3,
             avg_speed_kmh=17.5,
+            publish_show_times=True,
+            publish_laps_board=False,
+            publish_time_board=True,
+            publish_full_field=False,
+            publish_all_cards=False,
         ),
         path,
     )
@@ -392,9 +591,19 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     assert set(raw) == _ALL_FIELDS
     assert raw["window_geometry"] == [10, 20, 30, 40]
     assert raw["verbose_logging"] is False
+    assert raw["show_total_times"] is True
+    assert raw["show_lap_time"] is False
     assert raw["sim_riders"] == 12
     assert raw["sim_interval"] == 5
+    assert raw["sim_short_laps"] == 2
+    assert raw["sim_lapped"] == 1
+    assert raw["sim_team_stop"] == 3
     assert raw["avg_speed_kmh"] == 17.5
+    assert raw["publish_show_times"] is True
+    assert raw["publish_laps_board"] is False
+    assert raw["publish_time_board"] is True
+    assert raw["publish_full_field"] is False
+    assert raw["publish_all_cards"] is False
 
 
 # --- default-path wiring (path=None branches) ----------------------
@@ -459,7 +668,8 @@ _SETTINGS_STRATEGY = st.builds(
     AppSettings,
     appearance=st.sampled_from(tuple(mode.value for mode in ThemeMode)),
     sound_on=st.booleans(),
-    hide_times=st.booleans(),
+    show_total_times=st.booleans(),
+    show_lap_time=st.booleans(),
     zoom_percent=st.sampled_from(ZOOM_LADDER),
     splitter_sash=st.none() | st.integers(min_value=0, max_value=5000),
     window_geometry=st.none()
@@ -475,7 +685,15 @@ _SETTINGS_STRATEGY = st.builds(
     sim_solo=st.integers(min_value=0, max_value=1000),
     sim_laps=st.integers(min_value=0, max_value=1000),
     sim_interval=st.integers(min_value=0, max_value=240),
+    sim_short_laps=st.integers(min_value=0, max_value=10),
+    sim_lapped=st.integers(min_value=0, max_value=10),
+    sim_team_stop=st.integers(min_value=0, max_value=10),
     avg_speed_kmh=st.floats(min_value=1.0, max_value=400.0, allow_nan=False, allow_infinity=False),
+    publish_show_times=st.booleans(),
+    publish_laps_board=st.booleans(),
+    publish_time_board=st.booleans(),
+    publish_full_field=st.booleans(),
+    publish_all_cards=st.booleans(),
 )
 
 

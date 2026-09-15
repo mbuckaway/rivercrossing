@@ -34,9 +34,9 @@ XRC_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" /
 XRC_FILES = ("main.xrc", "setup.xrc", "settings.xrc")
 
 # xrc-windows.md section A. main_menubar is the *menubar* resource's
-# own name, so it is not one of the frame's controls. resume_infobar,
-# reopened_infobar and finished_infobar are deliberately absent: XRC
-# drops the name of a wxInfoBar, so they are built in code.
+# own name, so it is not one of the frame's controls. The console
+# declares no ``wxInfoBar`` at all: XRC drops its name, and G4 retired
+# the two code-side bars that once stood in for one.
 MAIN_FRAME_CONTROLS = (
     "ride_logo_bmp",
     "ride_name_value",
@@ -71,6 +71,7 @@ MAIN_FRAME_CONTROLS = (
     "teams_count_lbl",
     "review_notebook",
     "flagged_list",
+    "show_held_only_chk",
     "review_btn",
     "console_riders_list",
     "main_statusbar",
@@ -112,16 +113,18 @@ RIDERS_MENU_ITEMS = (
     "mi_mark_dnf",
 )
 # Phase 2 retired mi_reassign_plate and mi_void_card: Crossing Detail
-# now owns both corrections, not the Cards menu.
+# now owns both corrections, not the Cards menu. G7 retired
+# mi_edit_crossing: Crossing Detail's Edit Time and the F2 accelerator
+# cover the same ground.
 CARDS_MENU_ITEMS = (
     "mi_undo_crossing",
     "mi_add_crossing_at",
-    "mi_edit_crossing",
     "mi_deal_manual",
     "mi_review_held",
 )
 # Part D: the single Preview in Browser row split per format -- each
-# new item gates on its own export existing (HTML / PDF).
+# new item gates on its own export existing (HTML / PDF). G6: the five
+# checkable publish options follow a separator, after the Preview rows.
 RESULTS_MENU_ITEMS = (
     "mi_standings",
     "mi_export_html",
@@ -130,6 +133,11 @@ RESULTS_MENU_ITEMS = (
     "mi_export_results_csv",
     "mi_preview_html_browser",
     "mi_preview_pdf_browser",
+    "mi_show_times",
+    "mi_laps_board",
+    "mi_time_board",
+    "mi_full_field",
+    "mi_all_cards",
 )
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
@@ -142,8 +150,9 @@ ZOOM_MENU_ITEMS = (
 )
 # W13 (testing notes #14): the theme trio left the View menu -- the
 # Settings appearance radios are the single theme surface -- so the
-# View row is hide-times plus the seven zoom radios.
-VIEW_MENU_ITEMS = ("mi_hide_times", *ZOOM_MENU_ITEMS)
+# View row is the two time-column check items plus the seven zoom
+# radios.
+VIEW_MENU_ITEMS = ("mi_show_total_times", "mi_show_lap_time", *ZOOM_MENU_ITEMS)
 HELP_MENU_ITEMS = ("mi_user_guide", "mi_shortcuts", "mi_selftest", "wxID_ABOUT")
 
 MAIN_MENUBAR_CONTROLS = (
@@ -209,20 +218,22 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4 and Phase 2 (Results lost its
-# tie-break row in Part C and split its Preview row per format; Phase 2
-# retired mi_entry_detail, mi_reassign_plate and mi_void_card): File 8
-# (mi_simulation added), Ride 9, Riders 4, Cards 5, Results 7, View 1,
-# Help 4. The single View row expands into the 8 items section 15b names
-# for it (W13: hide-times + the seven zoom radios; the theme trio left
-# the View menu).
+# spec.md section 15's rows after D1/D4, Phase 2, G6 and G7 (Results
+# lost its tie-break row in Part C and split its Preview row per
+# format, then gained G6's five publish items; Phase 2 retired
+# mi_entry_detail, mi_reassign_plate and mi_void_card, G7 retired
+# mi_edit_crossing): File 8 (mi_simulation added), Ride 9, Riders 4,
+# Cards 4, Results 12, View 1, Help 4. The single
+# View row expands into the 9 items section 15b names for it (W13: the
+# two time-column check items + the seven zoom radios; the theme trio
+# left the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 4),
-    ("&Cards", 5),
-    ("Re&sults", 7),
-    ("&View", 8),
+    ("&Cards", 4),
+    ("Re&sults", 12),
+    ("&View", 9),
     ("&Help", 4),
 )
 
@@ -235,11 +246,11 @@ ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
 RADIO_MENU_ITEMS = ZOOM_MENU_ITEMS
 
-# Canvas defaults, and the first member of each of the dialog's four
+# Canvas defaults, and the checked default of each of the dialog's four
 # radio groups (short-lap policy, entry mode, plate model, jokers mode
 # -- Phase 5's jokers_per_deck_radio opens it, jokers_total_radio is
 # the checked default).
-SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio", "jokers_total_radio")
+SELECTED_RADIOS = ("hold_short_radio", "mixed_radio", "pooled_radio", "jokers_total_radio")
 GROUP_OPENING_RADIOS = (
     "hold_short_radio",
     "solo_radio",
@@ -282,6 +293,12 @@ def _window(window_name: str) -> Element:
     """Return the top-level window element called *window_name*."""
     filename = WINDOWS[window_name][0]
     return _top_level_windows(filename)[window_name]
+
+
+def _main_frame_top_sizer() -> Element:
+    """Return the frame's own outermost sizer (its direct child)."""
+    frame = _top_level_windows("main.xrc")["main_frame"]
+    return next(child for child in frame if child.attrib.get("class") == "wxBoxSizer")
 
 
 def _control_names_in(window: Element) -> list[str]:
@@ -392,6 +409,18 @@ def test_window_declares_no_duplicate_control_name(window_name: str) -> None:
     assert repeated == []
 
 
+def test_show_held_only_chk_declares_the_frozen_needs_review_label() -> None:
+    """The Needs Review tab's filter box carries its frozen copy."""
+    checkbox = next(
+        obj
+        for obj in _window("main_frame").iter("object")
+        if obj.get("name") == "show_held_only_chk"
+    )
+
+    assert checkbox.get("class") == "wxCheckBox"
+    assert _param(checkbox, "label") == "Show Held Cards Only"
+
+
 @pytest.mark.parametrize("filename", XRC_FILES)
 def test_xrc_file_declares_no_dataviewlistctrl(filename: str) -> None:
     """Measured: its XRC handler discards the authored name."""
@@ -439,6 +468,26 @@ def test_main_frame_declares_the_canvas_minimum_size() -> None:
     assert _param(frame, "size") == "1100,780"
 
 
+def test_main_frame_top_sizer_declares_no_spacer_slot() -> None:
+    """G4: the retired InfoBar slot is gone from the frame's top sizer.
+
+    The console's vertical sizer used to carry a zero-size ``spacer``
+    at index 0 as the insertion point for the two code-side InfoBars,
+    so a code-built bar could add a row above the ride-info block.
+    Nothing may occupy that slot now.
+    """
+    classes = [child.attrib["class"] for child in _main_frame_top_sizer() if child.tag == "object"]
+
+    assert "spacer" not in classes
+
+
+def test_main_frame_top_sizer_leads_with_the_header_row() -> None:
+    """G4: the frame's first child is the header, not an empty slot."""
+    first = next(child for child in _main_frame_top_sizer() if child.tag == "object")
+
+    assert first.attrib["class"] == "sizeritem"
+
+
 def test_main_splitter_is_declared_as_a_splitter_window() -> None:
     """The control is authored here; only its sash comes from code."""
     splitter = _objects_by_name(_window("main_frame"))["main_splitter"]
@@ -470,20 +519,20 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_two_menu_item_names() -> None:
-    """D1/D4/C6/Part D + Phase 2: 42 ``mi_*`` items."""
+def test_main_menubar_declares_forty_seven_menu_item_names() -> None:
+    """D1/D4/C6/Part D + Phase 2 + G6 + G7: 47 ``mi_*`` names."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 42
+    assert len(menu_item_names) == 47
 
 
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
     """No orphaned menu item: every authored name is routed, and back.
 
     ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
-    is driven from, so its 45 ids and the authored item names must be
+    is driven from, so its 50 ids and the authored item names must be
     one set. A row that outlives its route, or a route with no item,
     would leave an item the enablement walk can never reach.
     """
@@ -510,6 +559,63 @@ def test_ride_menu_declares_the_spec_15_row_order_after_d1() -> None:
     names = [item.attrib["name"] for item in _menu_items(ride_menu)]
 
     assert tuple(names) == RIDE_MENU_ITEMS
+
+
+def test_results_menu_declares_the_publish_rows_after_the_previews() -> None:
+    """G6: the five publish items close the Results menu."""
+    results_menu = _menus()[4]
+
+    names = [item.attrib["name"] for item in _menu_items(results_menu)]
+
+    assert tuple(names) == RESULTS_MENU_ITEMS
+
+
+def test_results_menu_given_the_publish_group_leaves_one_radio_free_run() -> None:
+    """G6: the publish items are check items, never radios."""
+    results_menu = _menus()[4]
+
+    radios = [
+        item.attrib["name"] for item in _menu_items(results_menu) if _param(item, "radio") == "1"
+    ]
+
+    assert radios == []
+
+
+def test_results_menu_given_the_publish_group_separates_it_from_the_previews() -> None:
+    """G6: a separator opens the publish group."""
+    results_menu = _menus()[4]
+    children = [child for child in results_menu if child.tag == "object"]
+
+    assert children[7].attrib["class"] == "separator"
+
+
+@pytest.mark.parametrize(
+    ("item_name", "label"),
+    [
+        ("mi_export_html", "Export &HTML…"),
+        ("mi_show_times", "Show lap && total times"),
+        ("mi_laps_board", "Laps leaderboard"),
+        ("mi_time_board", "Fastest-time leaderboard"),
+        ("mi_full_field", "Full field"),
+        ("mi_all_cards", "All cards drawn"),
+    ],
+)
+def test_results_menu_row_declares_its_label(item_name: str, label: str) -> None:
+    """G6: the renamed export row, plus the five publish options."""
+    item = _objects_by_name(_window("main_menubar"))[item_name]
+
+    assert _param(item, "label") == label
+
+
+@pytest.mark.parametrize(
+    "item_name",
+    ["mi_show_times", "mi_laps_board", "mi_time_board", "mi_full_field", "mi_all_cards"],
+)
+def test_results_publish_row_declares_a_checkable_item(item_name: str) -> None:
+    """G6: each publish option is checkable (no radio group)."""
+    item = _objects_by_name(_window("main_menubar"))[item_name]
+
+    assert (_param(item, "checkable"), _param(item, "radio")) == ("1", "")
 
 
 @pytest.mark.parametrize(
@@ -883,11 +989,28 @@ def test_view_menu_radio_item_declares_the_radio_kind(item_name: str) -> None:
     assert _param(item, "radio") == "1"
 
 
-def test_view_menu_hide_times_item_declares_the_check_kind() -> None:
-    """A check item, which also keeps the radio groups apart."""
-    item = _objects_by_name(_window("main_menubar"))["mi_hide_times"]
+def test_view_menu_time_column_items_declare_the_check_kind() -> None:
+    """Two check items, which also keep the radio groups apart."""
+    items = _objects_by_name(_window("main_menubar"))
 
-    assert _param(item, "checkable") == "1"
+    assert (
+        _param(items["mi_show_total_times"], "checkable"),
+        _param(items["mi_show_lap_time"], "checkable"),
+    ) == ("1", "1")
+
+
+@pytest.mark.parametrize(
+    ("item_name", "label"),
+    [
+        ("mi_show_total_times", "&Show Total Times on Crossings Panel"),
+        ("mi_show_lap_time", "&Show Lap Time in Crossings Panel"),
+    ],
+)
+def test_view_menu_time_column_item_declares_its_label(item_name: str, label: str) -> None:
+    """Both View rows carry their frozen mnemonic label."""
+    item = _objects_by_name(_window("main_menubar"))[item_name]
+
+    assert _param(item, "label") == label
 
 
 def test_settings_dialog_declares_no_text_zoom_control() -> None:
@@ -907,7 +1030,7 @@ def test_settings_dialog_declares_no_text_zoom_control() -> None:
 
 @pytest.mark.parametrize("radio_name", SELECTED_RADIOS)
 def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
-    """always-deal/mixed/pooled start selected, as drawn."""
+    """hold-short/mixed/pooled start selected, as drawn."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert _param(radio, "value") == "1"
@@ -987,7 +1110,7 @@ def test_team_size_spin_declares_the_spec_documented_range() -> None:
 
 # ------------------------------------------------- W4 lap fields
 # (labels declare the entry format, and the short-lap card policy pair
-# sits next to them with always-deal as the declared XRC default.)
+# sits next to them with hold-short as the declared XRC default.)
 
 
 def test_lap_field_static_labels_declare_the_entry_formats() -> None:
@@ -1047,11 +1170,11 @@ def test_plate_input_declares_a_relative_sysfont_not_a_point_size() -> None:
 
 
 def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
-    """A7/P8-D3: the "Plate number" hint and a wider DIP width."""
+    """A7/P8-D3: the "Rider plate" hint and a wider DIP width."""
     control = _objects_by_name(_window("main_frame"))["plate_input"]
     width = int(_param(control, "size").split(",")[0])
 
-    assert (_param(control, "hint"), width >= 200) == ("Plate number", True)
+    assert (_param(control, "hint"), width >= 200) == ("Rider plate", True)
 
 
 # --------------------------------------------------------------------
@@ -1126,7 +1249,7 @@ def test_ride_setup_declares_no_file_picker_control() -> None:
 
 
 # --------------------------------------------------------------------
-# Plan §9: the crossing-detail Number prompt (dialogs.xrc).
+# Plan §9: the crossing-detail Plate prompt (dialogs.xrc).
 
 NUMBER_DLG = "crossing_number_dlg"
 # Four digits plus the control's own borders, in DIP: the plate the
@@ -1146,7 +1269,7 @@ def test_crossing_number_dlg_is_declared_as_a_top_level_wx_dialog() -> None:
     assert _number_dialog().attrib["class"] == "wxDialog"
 
 
-def test_crossing_number_dlg_declares_the_number_caption() -> None:
+def test_crossing_number_dlg_declares_the_plate_caption() -> None:
     """UX-DESKTOP §7: the one input carries a real, persistent label."""
     labels = [
         _param(obj, "label")
@@ -1154,7 +1277,7 @@ def test_crossing_number_dlg_declares_the_number_caption() -> None:
         if obj.attrib["class"] == "wxStaticText"
     ]
 
-    assert labels == ["Number"]
+    assert labels == ["Plate"]
 
 
 def test_crossing_number_dlg_number_input_is_a_four_digit_text_ctrl() -> None:
@@ -1198,7 +1321,8 @@ def test_crossing_number_dlg_declares_no_duplicate_control_name() -> None:
 # Plan §1: the Rider Simulator's two Generate buttons collapse into the
 # one "Generate Riders" button, so gen_teams_btn leaves the XRC file
 # (and, with it, ui/ids.py). Phase 2 adds check_btn beside it and
-# re-authors the count defaults.
+# re-authors the count defaults. G9 adds the three behaviour dropdowns
+# under the interval row.
 
 SIMULATION_XRC = "simulation.xrc"
 SIMULATION_DLG = "simulation_dlg"
@@ -1208,6 +1332,9 @@ SIMULATION_DIALOG_CONTROLS = (
     "solo_spin",
     "laps_spin",
     "interval_spin",
+    "short_lap_choice",
+    "lapped_choice",
+    "team_stop_choice",
     "gen_riders_btn",
     "check_btn",
     "go_btn",
@@ -1295,6 +1422,30 @@ def test_settings_dlg_declares_the_average_speed_decimal_entry() -> None:
         _param(entry, "min"),
         _param(entry, "size"),
     ) == ("wxSpinCtrlDouble", "12.0", "1", "1", "60,-1")
+
+
+SETTINGS_TIME_CHECKBOXES = (
+    ("show_total_times_chk", "Show Total Times on Crossings Panel"),
+    ("show_lap_time_chk", "Show Lap Time in Crossings Panel"),
+)
+
+
+@pytest.mark.parametrize(("name", "label"), SETTINGS_TIME_CHECKBOXES)
+def test_settings_dlg_declares_the_time_column_checkbox_label(name: str, label: str) -> None:
+    """Both checkboxes carry their frozen copy."""
+    checkbox = _objects_by_name(_settings_dialog())[name]
+
+    assert (checkbox.attrib["class"], _param(checkbox, "label")) == ("wxCheckBox", label)
+
+
+@pytest.mark.parametrize(("name", "_label"), SETTINGS_TIME_CHECKBOXES)
+def test_settings_dlg_time_column_checkbox_declares_no_checked_state(
+    name: str, _label: str
+) -> None:
+    """A stored setting: the presenter seeds it, so no ``<checked>``."""
+    checkbox = _objects_by_name(_settings_dialog())[name]
+
+    assert checkbox.find("checked") is None
 
 
 def test_settings_avg_speed_entry_declares_its_avg_lap_time_label() -> None:

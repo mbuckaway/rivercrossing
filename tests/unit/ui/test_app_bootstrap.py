@@ -30,7 +30,6 @@ and every heavy collaborator -- ``build_app``, ``Store``,
 from __future__ import annotations
 
 import gc
-import json
 import os
 import platform
 import re
@@ -41,6 +40,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from conftest import _records
 from rivercrossing import __version__
 from rivercrossing.roster import Roster
 from rivercrossing.store import PreviousSession, SchemaVersionMismatchError, SessionState
@@ -219,20 +219,13 @@ def _install_fakes(  # noqa: PLR0913 -- (monkeypatch, tmp_path), verbose_logging
         lambda _path=None: AppSettings(
             appearance="system",
             sound_on=True,
-            hide_times=False,
+            show_total_times=False,
+            show_lap_time=True,
             zoom_percent=100,
             verbose_logging=verbose_logging,
         ),
     )
     return bootstrap
-
-
-def _records(path: Path) -> list[dict[str, object]]:
-    """Return the NDJSON records at *path* (none when it is absent)."""
-    if not path.exists():
-        return []
-    text = path.read_text(encoding="utf-8")
-    return [json.loads(line) for line in text.splitlines() if line]
 
 
 def _entries(path: Path) -> list[dict[str, object]]:

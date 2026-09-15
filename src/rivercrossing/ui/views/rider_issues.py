@@ -37,9 +37,9 @@ from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.rider_issues import RiderIssueRow, RiderIssuesPresenter
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
+    DialogFindMixin,
     associate_model,
     clamp_to_display,
-    find_control,
     load_dialog,
 )
 
@@ -120,7 +120,7 @@ class IssuesListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
         return (issue.plate, issue.name, issue.message)[col]
 
 
-class RiderIssuesView:
+class RiderIssuesView(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``rider_issues_dlg`` (R-78).
 
     Implements the ``RiderIssuesView`` Protocol
@@ -173,19 +173,6 @@ class RiderIssuesView:
         self._apply_min_size()
         self.presenter.refresh()
         self.show_card_check(card_check)
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append ``issues_list``'s three columns in canvas order."""

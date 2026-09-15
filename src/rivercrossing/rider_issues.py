@@ -137,7 +137,7 @@ def _missing_number_issues(roster: Roster) -> Iterator[RiderIssue]:
                     entry=entry,
                     rider=rider,
                     kind="missing-number",
-                    message="missing number",
+                    message="missing plate",
                 )
 
 
@@ -229,7 +229,7 @@ def _duplicate_number_issues(roster: Roster) -> Iterator[RiderIssue]:
                 entry=entry,
                 rider=rider,
                 kind="duplicate-number",
-                message=f"duplicate number {plate}",
+                message=f"duplicate plate {plate}",
             )
         else:
             seen.add(plate)

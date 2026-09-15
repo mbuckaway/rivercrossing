@@ -23,6 +23,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
+from conftest import _roster_with_entries
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.hands import best_hand
 from rivercrossing.ride import (
@@ -77,14 +78,6 @@ class _FakeClock:
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed day, Sept 20, 2026."""
     return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig's planned_start
-
-
-def _roster_with_entries(*plates: str) -> Roster:
-    """Build a MIXED rider_pooled roster of one solo entry per plate."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    for plate in plates:
-        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
-    return roster
 
 
 def _pooled_team_roster() -> Roster:

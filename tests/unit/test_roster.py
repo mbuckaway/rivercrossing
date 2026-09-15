@@ -33,6 +33,8 @@ import re
 from typing import TYPE_CHECKING
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from rivercrossing.cards import seeded_card_codes
 from rivercrossing.ride import RideStatus
@@ -63,6 +65,7 @@ from rivercrossing.roster import (
     can_fix_name,
     can_move_rider,
     rider_name_key,
+    team_name_key,
 )
 
 if TYPE_CHECKING:
@@ -84,6 +87,21 @@ def test_rider_name_key_folds_case_and_collapses_whitespace() -> None:
     assert rider_name_key("  mary   anne ", " KNIBBE ") == "mary anne knibbe"
     assert rider_name_key("John", "") == "john"
     assert rider_name_key("JoHN", "") == rider_name_key("john", "")
+
+
+# ------------------------------------------------------- team_name_key
+# The one shared fuzzy key the CSV import preview's near-duplicate team
+# scan and the rider-issues report both compare names through.
+
+
+@given(name=st.text(max_size=100))
+@settings(max_examples=200, deadline=None)
+def test_team_name_key_given_any_name_is_an_alphanumeric_fixed_point(name: str) -> None:
+    """T-7 invariant: the fuzzy key is an alphanumeric fixed point."""
+    key = team_name_key(name)
+
+    assert team_name_key(key) == key
+    assert all(char.isalnum() and char == char.lower() for char in key)
 
 
 def test_roster_bare_construction_defaults_max_team_size_to_four() -> None:
