@@ -33,7 +33,7 @@ rivercrossing/
 │   └── branding/               # icon + DMG-background SVG sources and their COMMITTED generated
 │                               #   artifacts (.icns/.ico/dual-res .tiff — no PNG in git);
 │                               #   regenerate with tools/gen_app_icons.py via `nox -s gen_branding`
-├── docs/user-guide/            # per the User Guide outline (6a)
+├── docs/user-guide.html        # the built user guide (6a)
 ├── src/rivercrossing/
 │   ├── __init__.py             # __version__ single source
 │   ├── __main__.py             # python -m rivercrossing → ui.app.main()
@@ -45,11 +45,9 @@ rivercrossing/
 │   ├── roster.py               # in-memory entries/riders/teams + lock matrix (§1–§2, E3)
 │   ├── rider_issues.py         # roster defect report (R-78, §S4)
 │   ├── store/
-│   │   ├── __init__.py         # Store facade (public API)
-│   │   ├── schema.py           # DDL v1 + PRAGMAs (WAL, foreign_keys)
-│   │   ├── migrations.py       # linear, numbered, idempotent
-│   │   ├── writer.py           # the single async writer task (§10)
-│   │   ├── audit.py            # append-only audit log (R-33/R-38)
+│   │   ├── __init__.py         # Store facade (public API); audit reads via Store.audit_rows
+│   │   ├── schema.py           # DDL v1 + PRAGMAs (WAL, foreign_keys); one flattened v1
+│   │   │                       #   baseline — no migrations module (Phase 2, SCHEMA_VERSION=1)
 │   │   └── backup.py           # open + hourly + manual, keep 20 (R-54)
 │   ├── csvio.py                # §7 import/export, preview-then-commit
 │   ├── htmlexport.py           # §8 Jinja2 renderer (self-contained page)
@@ -63,21 +61,24 @@ rivercrossing/
 │       ├── logging.py          # per-invocation NDJSON log (F1): one file per launch, pruned
 │       │                       #   to the last 20; the app's one crash log (A2)
 │       ├── ids.py              # mirror of XRC names — generated from xrc/, drift fails CI (R-05/73)
-│       ├── xrc/                # canonical UI: main, setup, riders, detail, results,
-│       │                       #   library, audit, settings, dialogs (.xrc — Spec §15b)
+│       ├── xrc/                # canonical UI: main, setup, riders, results, library,
+│       │                       #   audit, settings, teams, simulation, dialogs (.xrc — Spec §15b)
 │       ├── assets/             # icons, cue WAVs, cards/ (53 bitmaps @1x/2x), fonts
-│       ├── presenters/         # pure Python, no wx — one per window
-│       │   ├── console.py · setup.py · riders.py · results.py
-│       │   ├── library.py · detail.py · audit.py · settings.py
+│       ├── presenters/         # pure Python, no wx — one per window, plus the shared seam
+│       │   ├── console.py · setup.py · riders.py · results.py · audit.py
+│       │   ├── library.py · settings.py · teams.py · data_source.py · rider_issues.py
+│       │   └── selftest.py · simulator.py
 │       └── views/              # wx only — thin loaders binding xrc/ resources, no business logic
-│           ├── main_frame.py   # 1a/1b + menubar (2c) + status bar
-│           ├── console_panel.py# feed, entry field, counters (1a, 8a–8c)
+│           ├── main_frame.py   # 1a/1b + menubar (2c) + status bar + feed/entry/counters (8a–8c)
 │           ├── ride_setup.py   # 1c/7a
 │           ├── rider_editor.py # 1d/2b + csv preview (3e)
-│           ├── entry_detail.py # 1e/7b
+│           ├── crossing_detail.py # 1e/7b (J2/K2)
 │           ├── results_win.py  # 1f
 │           ├── ride_library.py # 1g
-│           ├── audit_view.py   # Ride ▸ Audit Trail (R-38)
+│           ├── audit.py        # Ride ▸ Audit Trail (R-38)
+│           ├── team_editor.py · rider_issues.py · gauges.py · corrections.py
+│           ├── settings.py · about.py · selftest.py · shortcuts.py · simulator.py
+│           ├── _support.py     # shared window helpers (find by name, load, screen fit)
 │           └── dialogs.py      # 3a–3f, 4a: settings, DNF, edit-crossing,
 │                               #   confirms, resume/exit, about, self-test
 └── tests/                      # mirrors src; see S5
@@ -151,7 +152,8 @@ rivercrossing.standings — ordering & tie-breaks (§5 · R-43/60)
 ```
 class TieBreak(Enum): MOST_LAPS TOTAL_TIME HIGH_CARD_DRAW
 @dataclass EntryResult(entry_id, plate, name, kind, laps, total_time,
-                       best_lap, cards, hand: EvaluatedHand, dnf: bool)
+                       best_lap, cards, hand: EvaluatedHand, dnf: bool,
+                       sex: str | None = None)
 @dataclass Placed(place: int, result: EntryResult, tie_note: str | None,
                   draw_required: bool)                 # never silently ordered
 rank(results, order: tuple[TieBreak, ...]) -> list[Placed]
@@ -164,12 +166,13 @@ tiebreak_order_from_spellings(spellings) -> tuple[TieBreak, ...]   # ride spelli
 rivercrossing.ride — state machine & timing (§3/§6 · R-30…36)
 
 ```
-class RideStatus(Enum): DRAFT RUNNING FINISHED REOPENED
+class RideStatus(StrEnum): DRAFT RUNNING FINISHED REOPENED
 @dataclass RideConfig(name, event_date, venue, lap_km, organizer, scorer, planned_start,
                       planned_duration_s, min_lap_s, entry_mode, plate_model,
                       max_team_size=4, deck_count=8, jokers_per_deck=1, jokers_mode="total",
                       max_cards=None,
-                      tiebreak_order=("high_card","laps","total_time"), logo_path=None)
+                      tiebreak_order=("high_card","laps","total_time"), logo_path=None,
+                      hold_short_laps=True)
     # §2 ride-row setup fields; defined here since E3.5, built by ride_setup_dlg,
     # consumed by RideEngine below; EPIC 6's standings imports the tiebreak spellings
 class RideEngine:             # pure; wall-clock injected for tests
@@ -178,10 +181,11 @@ class RideEngine:             # pure; wall-clock injected for tests
     set_start_time(at: datetime) -> Event               # lap-1 recompute (3d)
     record_crossing(plate: str, at=None) -> CrossingResult
         # → lap n, lap_time, card | ShortLapFlagged (flagged; card held only under hold_short_laps) | UnknownPlate
-    add_crossing_at(plate: str, at: datetime) -> CrossingResult   # RUNNING·REOPENED
-    undo_last() -> Event · edit_crossing(id, …) · void_crossing(id, reason)
-    reassign_crossing(id, plate) · deal_manual(plate, reason) · void_card(id, reason)
-    mark_dnf(plate, reason) · move_rider(rider_id, team_id)    # per-rider; pooled only (R-17)
+    add_crossing_at(plate, crossed_at, reason) -> Event   # RUNNING·REOPENED
+    undo_last() -> Event · edit_crossing(entry_id, seq, crossed_at, reason)
+    void_crossing(entry_id, seq, reason) · reassign_crossing(seq, new_plate, reason)
+    deal_manual(plate, reason) · void_card(entry_id, card, reason) · mark_dnf(plate, reason)
+    # rider moves are not the engine's: Roster.move_rider(rider, *, to_entry); pooled only (R-17)
     stop() -> Event · finish() -> Event · reopen() -> Event       # REOPENED = corrections only
     state: RideStatus · elapsed() · remaining() · on_course: int
     snapshot() -> list[EntryResult]                     # feeds standings live
@@ -208,8 +212,10 @@ rivercrossing.roster — in-memory roster & lock matrix (§1–§2 · R-11/12/15
 
 ```
 class EntryMode(StrEnum): SOLO MIXED · class PlateModel(StrEnum): RIDER_POOLED TEAM_RELAY
-@dataclass Entry(plate, display_name, type, riders, status, notes)   # identity, not value
-@dataclass Rider(name, plate: str | None, sort_order)
+@dataclass Entry(plate, display_name, type, riders, status, notes, has_data, logo_card)
+                 # identity, not value; has_data is the delete guard (R-15)
+@dataclass Rider(first_name, last_name="", plate: str | None = None,
+                 sex: str | None = None, sort_order=0)
 class Roster:                 # one ride's entries/riders; status set by the E4 engine
     __init__(*, entry_mode=SOLO, max_team_size=4, plate_model=RIDER_POOLED)
     create_solo_entry · create_team_entry · create_team_entry_of_one · add_rider_to_team
@@ -238,18 +244,19 @@ rivercrossing.store — persistence (§2/§9 · R-50…54)
 
 ```
 class Store:                  # facade; sqlite3, WAL, foreign_keys ON
-    Store.open(path) -> Store              # runs migrations; records session row
+    Store.open(path) -> Store              # ensures the one flattened v1 schema; records session row
     rides() · create_ride(config) · duplicate_ride(id) · delete_ride(id, typed_name)
     load_engine(ride_id) -> RideEngine     # replay events; shoe from stored seed
     append(ride_id, event: Event) -> None  # sync commit path (syncs ride.status for lifecycle actions)
     append_roster_event(ride_id, action, payload_json) -> None  # roster plate-change audit row; no status write
-    audit(ride_id, filter=…) -> list[AuditRow]
+    audit_rows(ride_id) -> list[AuditRow]  # the audit viewer's read accessor (E7.3.1)
     session_state() -> SessionState        # CLEAN_QUIT | CRASHED | RUNNING_AT_EXIT (R-52)
-class AsyncWriter:            # §10 single writer; UI awaits put(), never blocks
-    put(event) -> Awaitable[None] · drain() · close()
+# AsyncWriter (§10's single writer: put()/drain()/close()) is deliberately absent —
+#   nothing calls it yet, and append() commits synchronously (store/__init__.py)
 backup.run(path, keep=20) · backup.schedule_hourly(…) · backup.restore(src, dst)
-schema.py: rides · entries · riders · crossings · cards · audit · sessions · settings
-(columns per Spec §2, incl. status enum with REOPENED, shoe seed, plate_model)
+schema.py: ride · entry · rider · crossing · card · app_session · audit (+ schema_version)
+(columns per Spec §2, incl. status enum with REOPENED, shoe seed, plate_model; one flattened
+ v1 baseline — no migrations, and no settings table: E8.1.1 keeps settings in a JSON config file)
 ```
 
 rivercrossing.csvio / htmlexport / pdfexport (§7/§8/§8b · R-21/61/62/63)
@@ -273,7 +280,8 @@ htmlexport.sections(payload, placed) -> Sections
     # laps boards 5/5 (or 10); team rows render plate-less
 htmlexport.format_generated(at) -> str
     # "Generated H:MM, Mon D YYYY" — a pure function of its input, no tz conversion (R-62)
-htmlexport.render(ride, placed, opts, *, logo_src=None, generated=None, logo_path=None) -> str
+htmlexport.render(ride, placed, opts, *, logo_src=None, generated=None, logo_path=None,
+                  team_logos=None) -> str
     # Jinja2 (autoescape, StrictUndefined), base.html.j2 + macros
     # (event_header, podium_card, standings_row, laps_board, time_board, field_row, drawn_row)
     # — STATIC markup, no page JS; vendored Tailwind CSS + fonts inlined, payload JSON
@@ -294,11 +302,15 @@ rivercrossing.ui — MVP shell (§10/§13/§15 · R-02/03/31/73/76)
 class ConsoleView(Protocol):   show_feed(rows) · show_counters(c) · flash_crossing(r)
                                set_state(RideStatus) · focus_entry() · play(cue)
                                show_notice(text) · clear_entry()   # Phase 8: entry-row feedback
-class ConsolePresenter:        on_plate_entered(text) · on_undo() · on_arm_stop(bool)
-                               on_stop_confirmed() · on_hide_times(bool) · tick()
-# same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv)
-# ResultsPresenter (1f flags, rerank on tie-break change) · LibraryPresenter (1g)
-# DetailPresenter (1e/7b) · AuditPresenter (R-38) · SettingsPresenter (3a)
+class ConsolePresenter:        on_plate_entered(text) · on_undo() · on_start() · on_finish()
+                               on_stop_requested() · on_stop_confirmed() · on_reopen()
+                               on_time_columns(*, show_total, show_lap) · tick()
+                               # arm-to-stop is retired; hide-times is on_time_columns (R-37)
+# same pattern: SetupPresenter (7a radios, defaults per §13) · RidersPresenter (csv;
+# AddRiderPresenter/EditRiderPresenter) · ResultsPresenter (1f flags — its tie-break order
+# is read from RideConfig at construction, no rerank control) · AuditPresenter (R-38) ·
+# TeamsPresenter (team_editor_dlg) · RiderIssuesPresenter (R-78) · SelfTestPresenter (3f) ·
+# SimulatorPresenter (Rider Simulator); library.py/settings.py hold the View protocol only
 app.main() -> int              # wx.App; resume dialog per session_state (4a/1h)
 theme.apply(app, mode) -> AppearanceResult   # light|dark|system via wx.App.SetAppearance (R-03);
                                # tokens(mode) deferred — no custom-drawn consumer yet (O2)
@@ -311,27 +323,23 @@ ids.py: PLATE_INPUT = "plate_input" …   # = XRC names, generated from xrc/ (§
 sound.play(Cue.RECORDED | Cue.FLAGGED | Cue.ERROR)   # §10 cues, settings toggle
 ```
 
-### S5 · tests/ — mirrors src, plus the harness
+### S5 · tests/ — mirrors src, plus the one open/quit smoke
 
 ```
 tests/
 ├── unit/                      # per core module, headless, coverage ≥ 90% (R-71)
 │   ├── test_cards.py · test_hands.py · test_standings.py · test_ride.py · test_roster.py
 │   ├── test_store.py · test_csvio.py · test_htmlexport.py · test_pdfexport.py
-│   └── presenters/            # FakeView-driven presenter tests — still no wx
+│   ├── presenters/            # FakeView-driven presenter tests — still no wx
+│   ├── ui/                    # view-layer and app-wiring tests
+│   └── fixtures/              # csv/htmlexport/pdfexport fixtures + committed goldens
 ├── (vectors: src/rivercrossing/vectors/ — the 7,462-rank sweep + joker table ship as package
 │                              #   data so the launch self-test reads them from the app, R-44/72)
-├── property/                  # Hypothesis: hands invariants, shoe determinism,
-│                              #   roster mutation sequences, csv round-trip identity
-├── simulations/               # seeded whole rides: 180×6 h, both entry modes,
-│   └── test_simulated_rides.py#   both plate models, 0–10 jokers, cap on/off (§12)
-├── functional/                # real wx, driven via ids.py + direct event injection (§12)
-│   ├── harness.py             # find-by-SetName, click, type, dialog hooks
-│   ├── pages.py               # page objects per window (1a…8c)
-│   └── test_menu_coverage.py  # walks every §15 route in every ride state (R-73)
-├── acceptance/
-│   └── test_full_race.py      # scripted race incl. kill+relaunch, reopen→finish again (R-74)
+├── functional/                # the ONE permitted functional test: real wx, driven via ids.py
+│   └── test_app_menu_quit.py  # open/quit smoke (spec §14) — the Windows open-crash gate
 └── conftest.py                # tmp DB per test, frozen clock, seeded shoes
+# property/ · simulations/ · acceptance/ are retired and must not be re-created: unit tests
+#   plus the one open/quit smoke are the whole suite (spec §14, R-73/R-74)
 ```
 
 ### S6 · pyproject.toml — the shape
@@ -339,13 +347,17 @@ tests/
 ```
 [project]  name = "rivercrossing"  requires-python = ">=3.14"
     # import package rivercrossing — renamed with the product (§11)
-dependencies = ["wxPython~=4.3.1", "fpdf2", "jinja2"]     # wxWidgets 3.3.3, cp314 wheel;
-    # SetAppearance ships in it, so dark mode is live on both platforms (R-03)
+dependencies = ["wxPython~=4.3.1", "fpdf2", "jinja2", "phevaluator", "platformdirs"]
+    # wxWidgets 3.3.3, cp314 wheel; SetAppearance ships in it, so dark mode is
+    # live on both platforms (R-03). phevaluator backs the eval5 fast path (§5);
+    # platformdirs locates the per-user settings.json (E8.1.1).
     # wxasync is deliberately absent — Spec §10; E5 picks the wx⇄asyncio integration
     # sqlite3 is stdlib; Tailwind CLI is a build-time asset step, not a runtime dep
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio", "hypothesis", "coverage[toml]",
-       "ruff", "mypy", "pyinstaller"]
+dev = ["pytest", "pytest-asyncio", "pytest-cov", "pytest-xdist", "pytest-rerunfailures",
+       "hypothesis", "defusedxml", "coverage[toml]", "nox", "ruff>=0.15", "mypy",
+       "import-linter", "pyinstaller", "pypdf", "pillow",
+       "dmgbuild; sys_platform == 'darwin'"]
 [project.gui-scripts]  rivercrossing = "rivercrossing.ui.app:main"
 [tool.ruff] · [tool.mypy] strict = true · [tool.pytest.ini_options]
 [tool.coverage.report] fail_under = 90        # core modules (R-71)

@@ -142,7 +142,8 @@ def tinted_dialogs(monkeypatch: pytest.MonkeyPatch) -> list[object]:
     the live ``wx.App``, so all three are swapped for recorders: they
     are the GUI I/O boundary of this seam (T-10), not the logic under
     test. A test that wants the log drives its own replacement (see
-    :func:`test_run_dialog_given_a_verbose_log_records_the_dialog_open`).
+    :func:`test_run_dialog_given_a_verbose_log_records_the_dialog_
+    open`).
     """
     tinted: list[object] = []
     monkeypatch.setattr(dialogs, "wire_close_button", lambda _dialog: None)

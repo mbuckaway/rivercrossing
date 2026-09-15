@@ -61,6 +61,11 @@ _MIN_AVG_SPEED_KMH = 1.0
 class AppSettings:
     """The settings_dlg fields (appearance, sound, times, zoom, log).
 
+    The two time-column fields are independent: ``show_total_times``
+    (default off) shows the feed's Total column, ``show_lap_time``
+    (default on) shows its Lap time column. Each mirrors its own
+    Settings checkbox and View-menu check item (R-37).
+
     E8.1.1 adds the two layout fields: ``splitter_sash`` and
     ``window_geometry`` (x, y, width, height) persist the console's
     sash position and the frame's placement -- the two settings that
@@ -83,16 +88,31 @@ class AppSettings:
     the interval from the live ride's lap length, so these are the
     fallbacks for a dialog opened with no seeds.
 
+    G9 adds the three simulator *behaviour* fields: the
+    ``sim_short_laps``/``sim_lapped``/``sim_team_stop`` dropdowns
+    (``simulation.xrc``) that select the run's leading short-lap,
+    lapped and team-stop riders. Zero is the dropdowns' "Disabled"
+    item, so the stored value is the count itself; the defaults (one
+    short-lap rider, the other two off) mirror the XRC selections.
+
     Plan §10 adds ``avg_speed_kmh``: the settings dialog's average
     rider speed, feeding the card-sufficiency estimate ``Riders ▸
     Check for Rider Issues…`` shows. The 12 km/h default matches the
     ``avg_speed_spin`` XRC authoring; the loader floors a stored value
     at :data:`_MIN_AVG_SPEED_KMH`.
+
+    G6 adds the five ``publish_*`` fields: the results export options,
+    moved off the results dialog's removed "Publish options" box onto
+    the Results menu's checkable row. Their defaults are the retired
+    XRC checkboxes' own (times off, laps leaderboard on, fastest-time
+    leaderboard off, full field on, all cards on), so an upgrade reads
+    the same as the canvas did.
     """
 
     appearance: str
     sound_on: bool
-    hide_times: bool
+    show_total_times: bool
+    show_lap_time: bool
     zoom_percent: int
     splitter_sash: int | None = None
     window_geometry: tuple[int, int, int, int] | None = None
@@ -104,21 +124,38 @@ class AppSettings:
     sim_solo: int = 15
     sim_laps: int = 1
     sim_interval: int = 45
+    # G9: the three behaviour dropdowns, 0 = "Disabled"; defaults
+    # mirror the XRC selections.
+    sim_short_laps: int = 1
+    sim_lapped: int = 0
+    sim_team_stop: int = 0
     # Plan §10: the card-sufficiency estimate's average rider speed.
     avg_speed_kmh: float = 12.0
+    # G6: the results export options (the Results menu's checkable
+    # row); defaults are the removed XRC checkboxes' own.
+    publish_show_times: bool = False
+    publish_laps_board: bool = True
+    publish_time_board: bool = False
+    publish_full_field: bool = True
+    publish_all_cards: bool = True
 
 
 def default_settings() -> AppSettings:
     """Return the all-defaults :class:`AppSettings`.
 
     The first-launch / corrupt-file fallback: System appearance, sound
-    on (spec §10's default), times shown, 100% zoom, no saved layout
-    yet, verbose logging on, and the simulator's XRC spin defaults.
+    on (spec §10's default), Total hidden and Lap time shown, 100%
+    zoom, no saved layout yet, verbose logging on, the simulator's
+    XRC spin and behaviour defaults (G9: one short-lap rider, no
+    lapped riders, no team rider stopping), and G6's publish options
+    (times off, laps leaderboard on, fastest-time leaderboard off,
+    full field and all cards on).
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
         sound_on=True,
-        hide_times=False,
+        show_total_times=False,
+        show_lap_time=True,
         zoom_percent=DEFAULT_ZOOM_PERCENT,
         splitter_sash=None,
         window_geometry=None,
@@ -128,7 +165,15 @@ def default_settings() -> AppSettings:
         sim_solo=15,
         sim_laps=1,
         sim_interval=45,
+        sim_short_laps=1,
+        sim_lapped=0,
+        sim_team_stop=0,
         avg_speed_kmh=12.0,
+        publish_show_times=False,
+        publish_laps_board=True,
+        publish_time_board=False,
+        publish_full_field=True,
+        publish_all_cards=True,
     )
 
 
@@ -185,7 +230,8 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     payload = {
         "appearance": settings.appearance,
         "sound_on": settings.sound_on,
-        "hide_times": settings.hide_times,
+        "show_total_times": settings.show_total_times,
+        "show_lap_time": settings.show_lap_time,
         "zoom_percent": settings.zoom_percent,
         "splitter_sash": settings.splitter_sash,
         "window_geometry": (
@@ -197,7 +243,15 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "sim_solo": settings.sim_solo,
         "sim_laps": settings.sim_laps,
         "sim_interval": settings.sim_interval,
+        "sim_short_laps": settings.sim_short_laps,
+        "sim_lapped": settings.sim_lapped,
+        "sim_team_stop": settings.sim_team_stop,
         "avg_speed_kmh": settings.avg_speed_kmh,
+        "publish_show_times": settings.publish_show_times,
+        "publish_laps_board": settings.publish_laps_board,
+        "publish_time_board": settings.publish_time_board,
+        "publish_full_field": settings.publish_full_field,
+        "publish_all_cards": settings.publish_all_cards,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -238,7 +292,8 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
     return AppSettings(
         appearance=_appearance_or(raw.get("appearance"), defaults.appearance),
         sound_on=_bool_or(raw.get("sound_on"), default=defaults.sound_on),
-        hide_times=_bool_or(raw.get("hide_times"), default=defaults.hide_times),
+        show_total_times=_bool_or(raw.get("show_total_times"), default=defaults.show_total_times),
+        show_lap_time=_bool_or(raw.get("show_lap_time"), default=defaults.show_lap_time),
         zoom_percent=_clamp_zoom(_int_or(raw.get("zoom_percent"), defaults.zoom_percent)),
         splitter_sash=_int_or(raw.get("splitter_sash"), None),
         window_geometry=_geometry_or(raw.get("window_geometry"), None),
@@ -248,8 +303,26 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         sim_solo=_int_or(raw.get("sim_solo"), defaults.sim_solo),
         sim_laps=_int_or(raw.get("sim_laps"), defaults.sim_laps),
         sim_interval=_int_or(raw.get("sim_interval"), defaults.sim_interval),
+        sim_short_laps=_int_or(raw.get("sim_short_laps"), defaults.sim_short_laps),
+        sim_lapped=_int_or(raw.get("sim_lapped"), defaults.sim_lapped),
+        sim_team_stop=_int_or(raw.get("sim_team_stop"), defaults.sim_team_stop),
         avg_speed_kmh=_float_or(
             raw.get("avg_speed_kmh"), defaults.avg_speed_kmh, minimum=_MIN_AVG_SPEED_KMH
+        ),
+        publish_show_times=_bool_or(
+            raw.get("publish_show_times"), default=defaults.publish_show_times
+        ),
+        publish_laps_board=_bool_or(
+            raw.get("publish_laps_board"), default=defaults.publish_laps_board
+        ),
+        publish_time_board=_bool_or(
+            raw.get("publish_time_board"), default=defaults.publish_time_board
+        ),
+        publish_full_field=_bool_or(
+            raw.get("publish_full_field"), default=defaults.publish_full_field
+        ),
+        publish_all_cards=_bool_or(
+            raw.get("publish_all_cards"), default=defaults.publish_all_cards
         ),
     )
 

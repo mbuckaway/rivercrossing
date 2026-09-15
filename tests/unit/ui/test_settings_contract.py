@@ -3,9 +3,9 @@
 
 Constructing a real ``wx.Dialog`` needs a desktop, so these tests
 drive the view over control doubles with ``find_control`` patched at
-the module seam -- the same double-driven shape
-``test_ride_setup_contract.py`` uses for ``ride_setup_dlg``. Phase 1
-re-shaped two of the dialog's surfaces, pinned here:
+its one shared seam (``ui.views._support``) -- the same double-driven
+shape ``test_ride_setup_contract.py`` uses for ``ride_setup_dlg``.
+Phase 1 re-shaped two of the dialog's surfaces, pinned here:
 
 * the average rider speed is a one-decimal ``wxSpinCtrlDouble``
   (``avg_speed_spin``) whose value now round-trips the decimal the
@@ -25,7 +25,7 @@ import wx
 
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.settings import AppSettings, default_settings
-from rivercrossing.ui.views import settings as settings_view
+from rivercrossing.ui.views import _support
 from rivercrossing.ui.views.settings import SettingsDialog
 
 if TYPE_CHECKING:
@@ -79,7 +79,8 @@ def _controls() -> dict[str, _FakeControl]:
         ids.APPEARANCE_LIGHT_RADIO: _FakeControl(value=False),
         ids.APPEARANCE_DARK_RADIO: _FakeControl(value=False),
         ids.SOUND_CHK: _FakeControl(value=False),
-        ids.HIDE_TIMES_CHK: _FakeControl(value=False),
+        ids.SHOW_TOTAL_TIMES_CHK: _FakeControl(value=False),
+        ids.SHOW_LAP_TIME_CHK: _FakeControl(value=False),
         ids.VERBOSE_LOG_CHK: _FakeControl(value=False),
         ids.AVG_SPEED_SPIN: _FakeControl(value=12.0),
     }
@@ -104,7 +105,8 @@ def _build_view(
     """Decorate a dialog double, with ``find_control`` stubbed."""
     controls = _controls()
     dialog = _FakeDialog()
-    monkeypatch.setattr(settings_view, "find_control", _stub_find_control(controls))
+    # The one lookup every view's inherited ``_find`` resolves through.
+    monkeypatch.setattr(_support, "find_control", _stub_find_control(controls))
     view = SettingsDialog(
         dialog,  # type: ignore[arg-type] -- the double stands in for the loaded dialog
         settings=settings,
@@ -172,6 +174,31 @@ def test_settings_dialog_collect_settings_carries_the_dialogless_fields_through(
     )
 
 
+def test_settings_dialog_collect_settings_carries_the_publish_options_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G6: OK must never reset the Results menu's publish options."""
+    settings = replace(
+        default_settings(),
+        publish_show_times=True,
+        publish_laps_board=False,
+        publish_time_board=True,
+        publish_full_field=False,
+        publish_all_cards=False,
+    )
+    view, _controls, _dialog = _build_view(monkeypatch, settings=settings)
+
+    collected = view.collect_settings()
+
+    assert (
+        collected.publish_show_times,
+        collected.publish_laps_board,
+        collected.publish_time_board,
+        collected.publish_full_field,
+        collected.publish_all_cards,
+    ) == (True, False, True, False, False)
+
+
 # ---------------------------------------- the appearance radio render
 
 
@@ -188,6 +215,36 @@ def test_settings_dialog_init_given_an_appearance_checks_exactly_its_radio(
     assert checked == (f"appearance_{appearance}_radio",)
 
 
+# ---------------------------------------- the time-column checkboxes
+
+
+def test_settings_dialog_init_given_the_time_flags_renders_both_checkboxes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each checkbox renders its own flag, independently."""
+    settings = replace(default_settings(), show_total_times=True, show_lap_time=False)
+
+    _view, controls, _dialog = _build_view(monkeypatch, settings=settings)
+
+    assert (
+        controls[ids.SHOW_TOTAL_TIMES_CHK].GetValue(),
+        controls[ids.SHOW_LAP_TIME_CHK].GetValue(),
+    ) == (True, False)
+
+
+def test_settings_dialog_collect_settings_given_the_time_checkboxes_returns_both_flags(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OK collects the two checkbox states into the two fields."""
+    view, controls, _dialog = _build_view(monkeypatch, settings=default_settings())
+    controls[ids.SHOW_TOTAL_TIMES_CHK].SetValue(True)  # noqa: FBT003 -- control double's wx-shaped API
+    controls[ids.SHOW_LAP_TIME_CHK].SetValue(False)  # noqa: FBT003 -- control double's wx-shaped API
+
+    collected = view.collect_settings()
+
+    assert (collected.show_total_times, collected.show_lap_time) == (True, False)
+
+
 # ------------------------------------------- the retired backup seam
 
 
@@ -195,7 +252,7 @@ def test_settings_dialog_init_given_a_backup_seam_raises_type_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Phase 1 removed the seam from the constructor."""
-    monkeypatch.setattr(settings_view, "find_control", _stub_find_control(_controls()))
+    monkeypatch.setattr(_support, "find_control", _stub_find_control(_controls()))
 
     with pytest.raises(TypeError, match="unexpected keyword argument 'on_backup_now'"):
         SettingsDialog(

@@ -3,8 +3,7 @@
 
 ``ResultsPresenter`` goes live in E6.4.1: it ranks the
 ``standings(order=...)`` from the ride's stored ``tiebreak_order``
-(set in Ride Setup) and builds the ``ExportOptions`` the export
-handlers (E6.4.2) read. E7.3.2 (the stale-export flag) adds the live
+(set in Ride Setup). E7.3.2 (the stale-export flag) adds the live
 channel: the presenter holds the engine event count captured at the
 last export (the export watermark) and, on the first render, asks the
 data source whether a correction event landed at/after that
@@ -20,6 +19,11 @@ it structurally satisfies ``DataSource`` (every Protocol member)
 while overriding ``standings`` to record the orders it was called
 with and ``results_stale`` to answer the stale-export query with a
 test-configured value.
+
+G6 retired the presenter's publish-options channel: the five publish
+flags left the results dialog for the Results menu and are persisted
+as ``AppSettings.publish_*``, so ``app._export_options`` reads the
+settings and the presenter holds no options at all.
 """
 
 from dataclasses import replace
@@ -29,7 +33,6 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from rivercrossing.cards import Shoe
-from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import Event, RideConfig, RideEngine
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import DEFAULT_TIEBREAK_ORDER, TieBreak
@@ -49,20 +52,15 @@ class RecordingResultsView:
 
     ``set_stale`` records every stale-flag update the presenter applies
     (E7.3.2) -- ``stale_calls`` is the assertion surface for the
-    stale-export flag. ``publish_options`` returns whatever the test
-    last handed to ``show_publish_options`` -- the fake "checkbox
-    states" the presenter reads. ``show_standings`` records the two
-    Phase 3 sections separately (``shown_teams``/``shown_solo``);
-    ``shown_rows`` is the flattened convenience view the pre-split
-    assertions read.
+    stale-export flag. ``show_standings`` records the two Phase 3
+    sections separately (``shown_teams``/``shown_solo``); ``shown_rows``
+    is the flattened convenience view the pre-split assertions read.
     """
 
     def __init__(self) -> None:
         """Start every channel empty."""
         self.shown_teams: list[StandingsRow] = []
         self.shown_solo: list[StandingsRow] = []
-        self.reported_options = ExportOptions()
-        self.publish_reads = 0
         self.stale_calls: list[bool] = []
 
     @property
@@ -78,15 +76,6 @@ class RecordingResultsView:
     def set_stale(self, *, stale: bool) -> None:
         """Record one stale-flag update (True shows the banner)."""
         self.stale_calls.append(stale)
-
-    def show_publish_options(self, options: ExportOptions) -> None:
-        """Record the reflected checkbox states."""
-        self.reported_options = options
-
-    def publish_options(self) -> ExportOptions:
-        """Return the recorded checkbox states, and count the read."""
-        self.publish_reads += 1
-        return self.reported_options
 
 
 class RecordingResultsSource(EmptyDataSource):
@@ -222,34 +211,6 @@ def test_results_presenter_holds_the_view_and_data_source_it_was_given() -> None
 
     assert presenter.view is view
     assert presenter.data_source is source
-
-
-# -------------------------------------------------- publish options
-
-
-def test_on_publish_toggled_builds_export_options_from_the_view_checkboxes() -> None:
-    """The stored options equal the checkbox states the view reports."""
-    view = RecordingResultsView()
-    view.reported_options = ExportOptions(
-        show_times=True,
-        laps_board=False,
-        time_board=True,
-        full_field=False,
-        all_cards=False,
-    )
-    presenter = ResultsPresenter(view, RecordingResultsSource())
-
-    presenter.on_publish_toggled()
-
-    assert presenter.export_options() == view.reported_options
-    assert view.publish_reads == 1
-
-
-def test_export_options_defaults_to_the_canvas_flags_before_any_toggle() -> None:
-    """Times off, laps board on, time board off, cards on."""
-    presenter = ResultsPresenter(RecordingResultsView(), RecordingResultsSource())
-
-    assert presenter.export_options() == ExportOptions()
 
 
 # --------------------------------------- E7.3.2 stale-export flag

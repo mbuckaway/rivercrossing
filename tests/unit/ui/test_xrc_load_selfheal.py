@@ -8,17 +8,22 @@ Simulation…`` posts "Simulation — no window authored yet" because
 every other dialog/menubar load site carries the same failure class.
 :func:`~rivercrossing.ui.views._support.load_dialog` and
 :func:`~rivercrossing.ui.views._support.load_menubar` are the one
-shared answer: a miss retries once against
+shared answer: a miss retries twice against
 :func:`~rivercrossing.ui.views._support.fresh_resource` (a private
-``XmlResource`` loaded from every packaged ``.xrc``), so a shipped
-window comes back instead of ``None``.
+``XmlResource`` loaded from every packaged ``.xrc``), dropping the
+memoized rebuild between attempts. One retry was not enough: it could
+hit a *frozen degraded* rebuild and answer ``None`` for the rest of the
+session, so the cache entry is evicted and the second attempt re-parses
+from disk. A shipped window then comes back instead of ``None``.
 
 Most tests build no wx object: the resource and the recovered window are
-plain doubles, and ``fresh_resource`` is monkeypatched. The last group
-drives the real ``fresh_resource`` against a temporary xrc directory
-instead -- a real ``wx.App()`` and ``XmlResource`` there -- so the
-Load-result check, its warning and the module-scope memoization are
-pinned by behaviour, not by a double.
+plain doubles, and ``fresh_resource`` is monkeypatched. The later groups
+drive the real ``fresh_resource`` -- against a temporary xrc directory
+(a real ``wx.App()`` and ``XmlResource`` there), and against the
+packaged ``ui/xrc`` for the two simulator dialogs the reported
+regression skipped -- so the Load-result check, its warning, the
+module-scope memoization and the shipped window ids are pinned by
+behaviour, not by a double.
 """
 
 from __future__ import annotations
@@ -145,7 +150,7 @@ def test_load_dialog_given_a_parent_forwards_it_on_the_fresh_retry(
 def test_load_dialog_given_a_window_no_resource_carries_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A target no .xrc authors still reads as absent."""
+    """A target no .xrc authors reads as absent after both attempts."""
     resource = _ResourceDouble()
     missing = _ResourceDouble()
     monkeypatch.setattr(_support, "fresh_resource", lambda: missing)
@@ -154,7 +159,9 @@ def test_load_dialog_given_a_window_no_resource_carries_returns_none(
 
     assert result is None
     assert resource.dialogs == [(None, "no_such_dlg")]
-    assert missing.dialogs == [(None, "no_such_dlg")]
+    # Both self-heal attempts miss: the failed first attempt evicts the
+    # memoized rebuild, the second asks the rebuilt resource again.
+    assert missing.dialogs == [(None, "no_such_dlg")] * 2
 
 
 def test_load_menubar_given_a_shipped_menubar_returns_it_without_a_rebuild(
@@ -190,7 +197,7 @@ def test_load_menubar_given_a_skipped_menubar_recovers_it_from_a_fresh_resource(
 def test_load_menubar_given_a_menubar_no_resource_carries_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A menubar no resource carries still reads as absent."""
+    """A menubar no resource carries stays absent on both attempts."""
     resource = _ResourceDouble()
     missing = _ResourceDouble()
     monkeypatch.setattr(_support, "fresh_resource", lambda: missing)
@@ -199,7 +206,7 @@ def test_load_menubar_given_a_menubar_no_resource_carries_returns_none(
 
     assert result is None
     assert resource.menubars == [(None, "no_such_menubar")]
-    assert missing.menubars == [(None, "no_such_menubar")]
+    assert missing.menubars == [(None, "no_such_menubar")] * 2
 
 
 # ------------------------- a rebuild that fails must not reach wx
@@ -216,6 +223,8 @@ def test_load_dialog_given_a_rebuild_that_raises_returns_none(
 ) -> None:
     """T-3 negative: a failed rebuild answers None, never raises."""
     resource = _ResourceDouble()
+    warnings: list[str] = []
+    monkeypatch.setattr(wx, "LogWarning", warnings.append)
 
     def _explode() -> object:
         raise OSError("cannot read the xrc dir")
@@ -224,6 +233,7 @@ def test_load_dialog_given_a_rebuild_that_raises_returns_none(
 
     result = _support.load_dialog(resource, ids.SIMULATION_DLG)
 
+    assert warnings == ["XRC rebuild failed: OSError: cannot read the xrc dir"]
     assert result is None
     assert resource.dialogs == [(None, ids.SIMULATION_DLG)]
 
@@ -233,6 +243,8 @@ def test_load_menubar_given_a_rebuild_that_raises_returns_none(
 ) -> None:
     """T-3 negative: the menubar seam guards the rebuild too."""
     resource = _ResourceDouble()
+    warnings: list[str] = []
+    monkeypatch.setattr(wx, "LogWarning", warnings.append)
 
     def _explode() -> object:
         raise OSError("cannot read the xrc dir")
@@ -241,6 +253,7 @@ def test_load_menubar_given_a_rebuild_that_raises_returns_none(
 
     result = _support.load_menubar(resource, ids.MAIN_MENUBAR)
 
+    assert warnings == ["XRC rebuild failed: OSError: cannot read the xrc dir"]
     assert result is None
     assert resource.menubars == [(None, ids.MAIN_MENUBAR)]
 
@@ -384,3 +397,81 @@ def test_fresh_resource_given_the_same_dir_returns_the_cached_resource(
     second = _support.fresh_resource(xrc_dir=tmp_path)
 
     assert first is second
+
+
+# -------------- the frozen degraded rebuild (eviction between attempts)
+#
+# The single retry could land on the memoized *degraded* rebuild and
+# answer ``None`` for the rest of the session. The two-attempt loop
+# evicts that cache entry, so the next attempt re-parses from disk.
+
+
+def test_load_dialog_given_a_frozen_degraded_rebuild_evicts_it_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A degraded rebuild is evicted so the retry recovers."""
+    degraded = _ResourceDouble()
+    recovered = _ResourceDouble(_Window())
+    replies = iter([degraded, recovered])
+    calls: list[object] = []
+
+    def _fresh() -> object:
+        resource = next(replies)
+        calls.append(resource)
+        return resource
+
+    monkeypatch.setattr(_support, "fresh_resource", _fresh)
+    monkeypatch.setitem(_support._rebuilt_resources, _support._XRC_DIR, degraded)
+
+    result = _support.load_dialog(_ResourceDouble(), ids.SIMULATION_DLG)
+
+    assert result is recovered.window
+    assert calls == [degraded, recovered]
+    assert _support._XRC_DIR not in _support._rebuilt_resources
+
+
+def test_load_menubar_given_a_frozen_degraded_rebuild_evicts_it_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The menubar seam evicts the degraded rebuild on the same loop."""
+    degraded = _ResourceDouble()
+    recovered = _ResourceDouble(_Window())
+    replies = iter([degraded, recovered])
+    calls: list[object] = []
+
+    def _fresh() -> object:
+        resource = next(replies)
+        calls.append(resource)
+        return resource
+
+    monkeypatch.setattr(_support, "fresh_resource", _fresh)
+    monkeypatch.setitem(_support._rebuilt_resources, _support._XRC_DIR, degraded)
+
+    result = _support.load_menubar(_ResourceDouble(), ids.MAIN_MENUBAR)
+
+    assert result is recovered.window
+    assert calls == [degraded, recovered]
+    assert _support._XRC_DIR not in _support._rebuilt_resources
+
+
+# -------------------- the packaged simulator dialogs (the regression)
+#
+# The reported bug: ``File ▸ Simulation…`` posted "no window authored
+# yet" because the singleton had skipped ``simulation_dlg``'s subtree.
+# Pinning the shipped ids against the real packaged ``ui/xrc`` is the
+# regression's own test.
+
+
+@pytest.mark.parametrize("name", [ids.SIMULATION_DLG, ids.SIM_RUNNING_DLG])
+def test_fresh_resource_given_the_packaged_dir_resolves_each_simulator_dialog(
+    wx_app: Any,  # noqa: ANN401, ARG001 -- taken for the real XRC build, not read
+    name: str,
+) -> None:
+    """Both shipped simulator dialogs load from the packaged dir."""
+    resource = _support.fresh_resource()
+
+    window = resource.LoadDialog(None, name)
+
+    assert isinstance(window, wx.Dialog)
+    assert window.GetName() == name
+    window.Destroy()

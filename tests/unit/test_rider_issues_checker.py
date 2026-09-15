@@ -28,7 +28,6 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from rivercrossing import csvio
 from rivercrossing.rider_issues import RiderIssue, rider_issues
 from rivercrossing.roster import (
     Entry,
@@ -37,7 +36,6 @@ from rivercrossing.roster import (
     PlateModel,
     Rider,
     Roster,
-    team_name_key,
 )
 
 _CANONICAL_KINDS = (
@@ -172,7 +170,7 @@ def test_rider_issues_pooled_rider_with_blank_plate_reports_missing_number(
     issues = rider_issues(roster)
 
     assert issues == (
-        RiderIssue(entry=entry, rider=rider, kind="missing-number", message="missing number"),
+        RiderIssue(entry=entry, rider=rider, kind="missing-number", message="missing plate"),
     )
 
 
@@ -231,7 +229,7 @@ def test_rider_issues_two_pooled_entries_sharing_plate_report_duplicate_number()
             entry=dupe,
             rider=dupe_rider,
             kind="duplicate-number",
-            message="duplicate number 7",
+            message="duplicate plate 7",
         ),
     )
 
@@ -256,7 +254,7 @@ def test_rider_issues_two_relay_entries_sharing_plate_report_duplicate_number() 
     issues = rider_issues(roster)
 
     assert issues == (
-        RiderIssue(entry=dupe, rider=None, kind="duplicate-number", message="duplicate number 7"),
+        RiderIssue(entry=dupe, rider=None, kind="duplicate-number", message="duplicate plate 7"),
     )
 
 
@@ -375,12 +373,6 @@ def test_rider_issues_exact_team_name_duplicate_is_not_also_a_near_duplicate() -
     kinds = [issue.kind for issue in rider_issues(roster)]
 
     assert kinds == ["duplicate-team-name"]
-
-
-@pytest.mark.parametrize("name", ["Good 2 Go", "Good 2Go", "MARY's   TEAM", "Win Win and More"])
-def test_team_name_key_matches_the_csv_preview_fuzzy_key(name: str) -> None:
-    """The rider report and the CSV preview share one fuzzy key."""
-    assert team_name_key(name) == csvio._fuzzy_team_key(name)
 
 
 # ------------------------------ stable ordering

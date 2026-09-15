@@ -7,7 +7,7 @@ that *applies* those rules to a real menu bar. This module pins the
 binder headlessly:
 
 1. ``enablement_table`` produces one enable/disable verdict per routed
-   menu item id (45 ids, one per ``commands.ROUTE_TABLE`` row), and
+   menu item id (50 ids, one per ``commands.ROUTE_TABLE`` row), and
    the verdicts agree with ``commands.is_route_enabled`` for every
    generated ``RideState`` (a Hypothesis property).
 2. The correction rows' verdicts are parametrized over the four ride
@@ -45,7 +45,6 @@ _ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in 
 _CORRECTION_CASES: tuple[tuple[str, frozenset[RideStatus]], ...] = (
     ("Undo Last Crossing", frozenset({RideStatus.RUNNING})),
     ("Add Crossing at Time…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
-    ("Edit Crossing…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
     ("Deal Bonus Card…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
     ("Mark DNF…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
 )
@@ -126,19 +125,43 @@ def test_enablement_table_correction_route_follows_ride_state(
 
 
 @pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
-def test_enablement_table_edit_crossing_needs_a_crossing(status: RideStatus) -> None:
-    """Edit Crossing's ≥1-crossing condition gates the binder too.
+def test_enablement_table_undo_crossing_needs_a_crossing(status: RideStatus) -> None:
+    """Undo Last Crossing's ≥1-crossing condition gates the binder too.
 
-    The condition only ever enables within the row's §15 states
-    (RUNNING · REOPENED): a DRAFT/FINISHED ride stays disabled
+    The condition only ever enables within the row's §15 state
+    (RUNNING): a DRAFT/FINISHED/REOPENED ride stays disabled
     regardless of crossings.
     """
     empty = commands.RideState(status=status, ride_open=True, crossings=0)
     one = commands.RideState(status=status, ride_open=True, crossings=1)
-    allowed = status in (RideStatus.RUNNING, RideStatus.REOPENED)
+    allowed = status is RideStatus.RUNNING
 
-    assert menu_state.enablement_table(empty)[ids.MI_EDIT_CROSSING] is False
-    assert menu_state.enablement_table(one)[ids.MI_EDIT_CROSSING] is allowed
+    assert menu_state.enablement_table(empty)[ids.MI_UNDO_CROSSING] is False
+    assert menu_state.enablement_table(one)[ids.MI_UNDO_CROSSING] is allowed
+
+
+# G6: the Results publish row's ids, transcribed independently of
+# app._RESULTS_PUBLISH_MENU_IDS. Their §15 rule is "always"; R-63's
+# show-times/board gate is applied by the app *after* this walk, not
+# by a route rule.
+_PUBLISH_MENU_IDS = (
+    "mi_show_times",
+    "mi_laps_board",
+    "mi_time_board",
+    "mi_full_field",
+    "mi_all_cards",
+)
+
+
+@pytest.mark.parametrize("item_id", _PUBLISH_MENU_IDS)
+@pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
+def test_enablement_table_given_a_publish_id_is_enabled_in_every_state(
+    item_id: str, *, status: RideStatus
+) -> None:
+    """G6: the publish row declares no ride-state gate at all."""
+    table = menu_state.enablement_table(_baseline_state(status))
+
+    assert table[item_id] is True
 
 
 @pytest.mark.parametrize(
@@ -176,23 +199,43 @@ def test_enablement_table_start_ride_follows_state_and_stop_gate(
         (RideStatus.RUNNING, False, False),
         (RideStatus.RUNNING, True, True),
         (RideStatus.FINISHED, True, True),
-        (RideStatus.REOPENED, True, False),
+        (RideStatus.REOPENED, False, True),
+        (RideStatus.REOPENED, True, True),
     ],
-    ids=["draft", "draft_stopped", "live_running", "stopped_running", "finished", "reopened"],
+    ids=[
+        "draft",
+        "draft_stopped",
+        "live_running",
+        "stopped_running",
+        "finished",
+        "reopened",
+        "reopened_stopped",
+    ],
 )
 def test_enablement_table_clear_ride_follows_state_and_stop_gate(
     status: RideStatus, *, ride_stopped: bool, expected: bool
 ) -> None:
-    """D3: mi_clear_ride enables in DRAFT, stopped RUNNING and FINISHED.
+    """D3 + G5: mi_clear_ride enables through all four ride states.
 
-    A live RUNNING ride has to stop first, and a REOPENED ride has to
-    finish first -- Clear resets the ride it targets.
+    A live RUNNING ride has to stop first; a REOPENED ride is
+    clearable as it stands (neither stop value gates it), because
+    clearing is the only way to unload it from memory -- and the
+    store is never touched.
     """
     state = commands.RideState(status=status, ride_stopped=ride_stopped)
 
     table = menu_state.enablement_table(state)
 
     assert table[ids.MI_CLEAR_RIDE] is expected
+
+
+def test_enablement_table_clear_ride_enables_a_reopened_ride() -> None:
+    """G5: the binder enables Clear Ride… for an open REOPENED ride."""
+    state = commands.RideState(status=RideStatus.REOPENED, ride_open=True, ride_stopped=False)
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_CLEAR_RIDE] is True
 
 
 @pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
@@ -376,7 +419,7 @@ def test_apply_to_menubar_missing_item_is_a_silent_skip() -> None:
 
     menu_state.apply_to_menubar(menubar, state, xrcid=_FAKE_IDS.__getitem__)
 
-    assert menubar.items[_FAKE_IDS[ids.MI_EDIT_CROSSING]].enabled is True
+    assert menubar.items[_FAKE_IDS[ids.MI_ADD_CROSSING_AT]].enabled is True
 
 
 def test_apply_to_menubar_default_seam_resolves_ids_lazily() -> None:

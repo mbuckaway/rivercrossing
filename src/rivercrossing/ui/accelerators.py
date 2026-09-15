@@ -9,7 +9,7 @@ accelerators are spelled out, so it is kept separate from
 table rather than folded into one more field there: E8.2.1 imports
 only this, never the full command table, to build its dialog rows.
 
-Three of the five are declared in ``main.xrc``'s ``<accel>``
+Three of the eight are declared in ``main.xrc``'s ``<accel>``
 elements (``Ctrl+Z``, ``F5``, ``F1``); ``Enter`` is the console's
 own default action -- typing a plate and pressing it records a
 crossing -- and is not a menu accelerator at all, so its
@@ -17,7 +17,10 @@ crossing -- and is not a menu accelerator at all, so its
 code-side row: main.xrc has no menu item for "edit crossing", so the
 console binds it as a frame accelerator
 (``views.main_frame.MainFrame``) and its ``menu_item_id`` is ``None``
-too.
+too. The crossings feed's ``Delete``, ``Ctrl+D`` and ``Ctrl+E`` rows
+are the same shape again: no menu item exists for a Delete or an
+Edit Plate command, so ``MainFrame`` binds all three frame-side and
+this table only documents them.
 """
 
 from dataclasses import dataclass
@@ -35,9 +38,10 @@ class Accelerator:
             to match this spelling exactly).
         action: The shortcuts dialog's own action text.
         menu_item_id: The ``mi_*`` name whose XRC ``<accel>`` this
-            row cross-checks, or ``None`` for the two code-side rows
-            (``Enter``, the console's default action, and ``F2``, the
-            frame accelerator "edit crossing").
+            row cross-checks, or ``None`` for the five code-side rows
+            (``Enter``, the console's default action; ``F2``, the
+            frame accelerator "edit crossing"; and the crossings
+            feed's ``Delete``/``Ctrl+D``/``Ctrl+E``).
     """
 
     key: str
@@ -51,4 +55,7 @@ ACCELERATOR_TABLE: tuple[Accelerator, ...] = (
     Accelerator(key="F5", action="Standings (Results window)", menu_item_id="mi_standings"),
     Accelerator(key="F1", action="User guide", menu_item_id="mi_user_guide"),
     Accelerator(key="F2", action="Edit crossing (open detail)", menu_item_id=None),
+    Accelerator(key="Delete", action="Delete selected crossing", menu_item_id=None),
+    Accelerator(key="Ctrl+D", action="Delete selected crossing", menu_item_id=None),
+    Accelerator(key="Ctrl+E", action="Edit crossing plate", menu_item_id=None),
 )

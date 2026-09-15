@@ -42,6 +42,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from conftest import _pooled_team_roster, _roster_with_entries
 from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
 from rivercrossing.ride import (
@@ -59,6 +60,7 @@ from rivercrossing.ride import (
     CardCheck,
     Crossing,
     Event,
+    HeldCrossing,
     IllegalStateError,
     PendingMiss,
     RideConfig,
@@ -155,15 +157,16 @@ def test_ride_config_bare_required_fields_defaults_logo_path_to_none() -> None:
     assert config.logo_path is None
 
 
-def test_ride_config_bare_required_fields_defaults_hold_short_laps_to_false() -> None:
-    """W4 default: a short lap always deals unless the operator opts in.
+def test_ride_config_bare_required_fields_defaults_hold_short_laps_to_true() -> None:
+    """W4 default: a short lap holds its card for review (R-34).
 
-    The always-deal decision rides on ``hold_short_laps=False``, the
-    field's dataclass default.
+    The hold-for-review decision rides on ``hold_short_laps=True``, the
+    field's dataclass default -- the value a fresh ``ride_setup_dlg``
+    submits (``hold_short_radio`` checked in setup.xrc).
     """
     config = _config()
 
-    assert config.hold_short_laps is False
+    assert config.hold_short_laps is True
 
 
 def test_ride_config_given_a_logo_path_stores_it_verbatim() -> None:
@@ -410,14 +413,6 @@ class _FakeClock:
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed day, Sept 20, 2026."""
     return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig's planned_start
-
-
-def _roster_with_entries(*plates: str) -> Roster:
-    """Build a MIXED rider_pooled roster of one solo entry per plate."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    for plate in plates:
-        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
-    return roster
 
 
 def _make_engine(
@@ -1275,13 +1270,14 @@ def test_record_crossing_short_lap_flags_holds_card_and_still_records_lap() -> N
 
 
 def test_record_crossing_short_lap_given_always_deal_flags_but_still_credits() -> None:
-    """W4 default: a short lap flags for review AND credits its card.
+    """Always deal: a short lap flags for review AND credits its card.
 
     ``flagged`` is the review channel -- the FLAGGED audio cue and the
-    Needs Review panel -- not the hold decision. Always-deal therefore
-    flags the short lap while still crediting its card (R-34).
+    Needs Review panel -- not the hold decision. Always deal therefore
+    flags the short lap while still crediting its card (R-34). The
+    policy is the operator's explicit opt-in now, so the test names it.
     """
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=False))
     engine.start()
 
     result = engine.record_crossing("12", at=_dt(10, 0, 30))
@@ -1314,7 +1310,8 @@ def test_record_crossing_short_lap_flags_under_both_card_policies(
 def test_record_crossing_given_always_deal_credits_every_accepted_lap() -> None:
     """E1 regression: Always Deal credits a card on every crossing.
 
-    With ``hold_short_laps=False`` (the W4 default) the short-lap
+    With ``hold_short_laps=False`` (the operator's always-deal opt-in)
+    the short-lap
     policy gate is the only thing that ever holds a card, so five
     crossings -- a very short opener, then laps one second under,
     exactly at, one second over ``min_lap_s``, and a long one --
@@ -1484,6 +1481,100 @@ def test_void_held_already_voided_crossing_raises_illegal_state_error() -> None:
 
     with pytest.raises(IllegalStateError, match=re.escape("crossing's card is not held")):
         engine.void_held(crossing)
+
+
+def test_return_to_held_moves_a_credited_card_into_the_hold_queue() -> None:
+    """return_to_held un-credits the card and re-holds it (R-34)."""
+    engine, _ = _make_engine()
+    engine.start()
+    result = engine.record_crossing("12", at=_dt(10, 30))
+    crossing = engine.crossings[-1]
+    assert engine.credited_cards("12") == (result.card,)
+
+    event = engine.return_to_held(crossing)
+
+    assert event == Event(
+        action="return_to_held",
+        payload={"entry_id": "12", "seq": 1, "card": result.card.code()},
+    )
+    assert engine.credited_cards("12") == ()
+    assert engine.held_card_for(crossing) == result.card
+    assert engine.held_crossings() == (HeldCrossing(crossing=crossing, card=result.card),)
+
+
+def test_return_to_held_re_holds_a_void_held_card() -> None:
+    """return_to_held re-holds a card the review panel voided (R-34)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    result = engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+    engine.void_held(crossing)
+    assert engine.held_crossings() == ()
+
+    event = engine.return_to_held(crossing)
+
+    assert event == Event(
+        action="return_to_held",
+        payload={"entry_id": "12", "seq": 1, "card": result.card.code()},
+    )
+    assert engine.held_crossings() == (HeldCrossing(crossing=crossing, card=result.card),)
+
+
+def test_return_to_held_clears_a_void_card_marker_and_re_holds_the_card() -> None:
+    """return_to_held un-retires a void_card'd card into the hold."""
+    engine, _ = _make_engine(config=_config(min_lap_s=1))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 30))
+    second = engine.record_crossing("12", at=_dt(10, 32))
+    crossing = engine.crossings[1]
+    engine.void_card("12", second.card, reason="wrong card dealt")
+    # Pokes the private marker deliberately: the void/un-void
+    # bookkeeping is what this test pins, and it has no public reader.
+    assert second.card in engine._voided_cards
+
+    event = engine.return_to_held(crossing)
+
+    assert event == Event(
+        action="return_to_held",
+        payload={"entry_id": "12", "seq": 2, "card": second.card.code()},
+    )
+    assert second.card not in engine._voided_cards
+    assert engine.held_card_for(crossing) == second.card
+
+
+def test_return_to_held_given_an_already_held_card_raises_illegal_state_error() -> None:
+    """return_to_held on a held crossing raises (R-34 negative)."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=True))
+    engine.start()
+    engine.record_crossing("12", at=_dt(10, 0, 30))
+    crossing = engine.held_crossings()[0].crossing
+
+    with pytest.raises(IllegalStateError, match=re.escape("crossing's card is already held")):
+        engine.return_to_held(crossing)
+
+
+def test_return_to_held_given_a_never_dealt_crossing_raises_key_error() -> None:
+    """return_to_held for a crossing never dealt fails loudly."""
+    engine, _ = _make_engine()
+    engine.start()
+    crossing = Crossing(entry_id="12", seq=99, crossed_at=_dt(10, 30))
+
+    with pytest.raises(KeyError, match=re.escape(str(crossing))):
+        engine.return_to_held(crossing)
+
+
+def test_return_to_held_after_finish_re_holds_the_card_and_keeps_the_state() -> None:
+    """Card disposition is state-irrelevant: FINISHED still re-holds."""
+    engine, _ = _make_engine()
+    engine.start()
+    result = engine.record_crossing("12", at=_dt(10, 30))
+    crossing = engine.crossings[-1]
+    engine.finish()
+
+    engine.return_to_held(crossing)
+
+    assert engine.state is RideStatus.FINISHED
+    assert engine.held_card_for(crossing) == result.card
 
 
 def test_record_crossing_shoe_exhaustion_reshuffles_and_audits() -> None:
@@ -2172,8 +2263,12 @@ def test_credited_cards_given_one_crossing_returns_the_dealt_card() -> None:
 
 
 def test_credited_cards_given_many_crossings_returns_them_in_deal_order() -> None:
-    """T-4 boundary: many laps credit their cards, oldest first."""
-    engine, _ = _make_engine()
+    """T-4 boundary: many laps credit their cards, oldest first.
+
+    Always deal, named explicitly: under the default hold policy these
+    one-minute-apart laps would be held rather than credited.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=False))
     engine.start()
     first = engine.record_crossing("12", at=_dt(10, 30))
     second = engine.record_crossing("12", at=_dt(10, 31))
@@ -2223,7 +2318,7 @@ def test_credited_cards_given_a_pooled_team_returns_the_entrys_whole_hand() -> N
             Rider(first_name="Priya", last_name="", plate="9"),
         ],
     )
-    engine, _ = _make_engine(roster=roster)
+    engine, _ = _make_engine(roster=roster, config=_config(hold_short_laps=False))
     engine.start()
     first = engine.record_crossing("45", at=_dt(10, 30))
     second = engine.record_crossing("9", at=_dt(10, 31))
@@ -2259,8 +2354,8 @@ def test_engine_held_card_for_given_a_credited_crossing_returns_none() -> None:
 
 
 def test_engine_held_card_for_given_a_short_lap_under_always_deal_returns_none() -> None:
-    """W4 default: a short lap credits like any other -- not held."""
-    engine, _ = _make_engine()
+    """Always deal: a short lap credits like any other -- not held."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=False))
     engine.start()
 
     engine.record_crossing("12", at=_dt(10, 0, 30))
@@ -2430,6 +2525,52 @@ def test_apply_void_held_event_discards_held_card_never_credited() -> None:
     results = {entry.plate: entry for entry in engine.snapshot()}
     assert results["12"].cards == ()
     assert engine.events[-1] == event
+
+
+def test_apply_return_to_held_event_re_holds_the_credited_card() -> None:
+    """apply("return_to_held") re-holds a credited card by entry/seq."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    result = engine.record_crossing("12", at=_dt(10, 30))
+    crossing = engine.crossings[0]
+    event = Event(
+        action="return_to_held",
+        payload={"entry_id": "12", "seq": 1, "card": result.card.code()},
+    )
+
+    engine.apply(event)
+
+    assert engine.held_card_for(crossing) == result.card
+    assert engine.credited_cards("12") == ()
+    assert engine.events[-1] == event
+
+
+def test_apply_replay_return_to_held_reproduces_the_re_held_disposition() -> None:
+    """Replaying a return_to_held log rebuilds the live held queue.
+
+    The live ride ends with every dealt card back in the hold queue --
+    one released from the credited hand, one un-retired from
+    ``void_card`` -- so the replayed engine must agree on the snapshot,
+    the hold queue and the voided-card record.
+    """
+    live, _ = _make_engine(config=_config(hold_short_laps=True))
+    live.start(at=_dt(10, 0))
+    live.record_crossing("12", at=_dt(10, 0, 30))  # short lap -> held
+    live.record_crossing("12", at=_dt(10, 40))  # credited
+    third = live.record_crossing("12", at=_dt(11, 0))  # credited
+    live.void_card("12", third.card, reason="wrong card dealt")
+    live.return_to_held(live.crossings[1])
+    live.return_to_held(live.crossings[2])
+    replayed, _ = _make_engine(config=_config(hold_short_laps=True))
+    # logic-coverage-exempt: T-8 -- the loop is pure Arrange
+    # (re-applying the recorded log); assertions run after the loop.
+    for event in live.events:
+        replayed.apply(event)
+
+    assert replayed.snapshot() == live.snapshot()
+    assert replayed.held_crossings() == live.held_crossings()
+    assert replayed._voided_cards == live._voided_cards
+    assert replayed._shoe.dealt == live._shoe.dealt
 
 
 def test_apply_undo_event_reverses_the_last_crossing() -> None:
@@ -2625,6 +2766,19 @@ def test_apply_confirm_held_for_an_unrecorded_crossing_raises_clear_error() -> N
         engine.apply(event)
 
 
+def test_apply_return_to_held_for_an_unrecorded_crossing_raises_clear_error() -> None:
+    """return_to_held for an unseen crossing fails loudly."""
+    engine, _ = _make_engine()
+    engine.start(at=_dt(10, 0))
+    event = Event(
+        action="return_to_held",
+        payload={"entry_id": "12", "seq": 99, "card": "AS"},
+    )
+
+    with pytest.raises(RideEngineError, match=re.escape("no crossing")):
+        engine.apply(event)
+
+
 # ============================================================ D2
 # Edit Ride: the engine's config is the live ride's own settings, so an
 # edit replaces it in place -- the ride, its shoe and its event log are
@@ -2732,16 +2886,6 @@ def test_engine_update_config_given_a_finished_ride_keeps_its_closed_shoe() -> N
 
 
 # ============================ J1: per-rider crossing attribution
-
-
-def _pooled_team_roster() -> Roster:
-    """Build a rider_pooled team roster: Sarah (45), Priya (9)."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_team_entry(
-        display_name="Dirt Dynamos",
-        riders=[Rider(first_name="Sarah", plate="45"), Rider(first_name="Priya", plate="9")],
-    )
-    return roster
 
 
 def _pooled_team_engine() -> RideEngine:

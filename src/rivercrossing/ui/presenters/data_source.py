@@ -29,10 +29,12 @@ from rivercrossing.standings import (
     hand_name,
     rank_by_kind,
 )
+from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from rivercrossing.cards import Card
     from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine
     from rivercrossing.standings import Placed
 
@@ -84,12 +86,24 @@ class FeedRow:
     so the list's native header sort orders by time rather than by its
     ``h:mm:ss`` text (``StandingsRow.total_seconds``' own rule).
 
+    ``team`` is the Team column's cell: the entry's ``display_name``
+    for a ``TEAM`` entry, ``"solo"`` for a solo rider -- the word every
+    rider list shows, never the solo rider's own name repeated from the
+    Name column -- and ``""`` for a miss, which has no entry at all.
+
     ``duplicate`` (Phase 3) marks one half of a live duplicate pair
     (``RideEngine.duplicate_crossings``: same entry, identical
     instant), so the Needs Review tab can list both halves -- the
     earlier twin's derived lap time is real and so never sets
     ``flagged`` on its own -- and the operator can open either one and
     delete it.
+
+    ``card_status`` carries that card's *disposition* -- ``"held"``,
+    ``"credited"`` or ``"voided"`` -- derived by elimination
+    (:func:`_card_status_for`). The ``held`` bool alone cannot say it:
+    it is False both for a credited card and for a voided one. A row
+    that dealt no card at all (a miss) leaves the field at its ``""``
+    default.
     """
 
     time: str
@@ -99,8 +113,10 @@ class FeedRow:
     lap_time: str
     total: str
     card: str
+    team: str = ""
     flagged: bool = False
     held: bool = False
+    card_status: str = ""
     edited: bool = False
     missed: bool = False
     miss_seq: int | None = None
@@ -509,6 +525,25 @@ def _rider_name_for(entry: Entry | None, rider_plate: str | None) -> str | None:
     return None
 
 
+def _team_name_for(entry: Entry | None) -> str:
+    """Return the Team column's cell for *entry*, or blank for no entry.
+
+    A solo rider names no team, so the cell reads the word "solo"
+    rather than leaving the column blank or repeating the rider's own
+    name from the Name column; the word is the one every rider list
+    shows for a solo rider (:data:`rider_columns.SOLO_TEAM_TEXT`), so
+    the two screens cannot drift. A crossing whose plate no longer
+    resolves to the roster (``None``) has no team to name either, so
+    its cell stays blank -- as does a miss's, which is built from the
+    ``FeedRow.team`` default (``_miss_feed_row``).
+    """
+    if entry is None:
+        return ""
+    if entry.type is EntryType.SOLO:
+        return SOLO_TEAM_TEXT
+    return entry.display_name
+
+
 def _miss_feed_row(miss: PendingMiss, start: datetime | None) -> FeedRow:
     """Build the feed row for one pending miss (K).
 
@@ -551,6 +586,99 @@ def _insert_newest_first(
             rows.insert(index, candidate)
             return
     rows.append(candidate)
+
+
+@dataclass(frozen=True, slots=True)
+class _FeedContext:
+    """Everything one crossings feed needs beyond the crossing itself.
+
+    ``EngineDataSource.feed_rows`` builds it once in its prelude (the
+    entry lookup maps and the four derived crossing sets) and hands it
+    to :func:`_crossing_feed_row` for every crossing, so the per-row
+    builder takes two arguments rather than eleven. Nothing outside
+    this module sees it.
+    """
+
+    engine: RideEngine
+    roster: Roster
+    start: datetime | None
+    dnf_riders: frozenset[str]
+    dnf_entries: frozenset[str]
+    held_crossings: frozenset[Crossing]
+    edited: frozenset[tuple[str, int]]
+    duplicates: frozenset[Crossing]
+    times_by_entry: dict[str, tuple[float, ...]]
+    totals_by_entry: dict[str, list[float]]
+
+
+def _card_status_for(engine: RideEngine, crossing: Crossing, held_card: Card | None) -> str:
+    """Return *crossing*'s card disposition: held, credited or voided.
+
+    Read by elimination, never from ``RideEngine._voided_cards``: a
+    card voided out of the hold queue (:meth:`RideEngine.void_held`)
+    is dropped, not returned to the shoe, so it never joins that set
+    and never credits either -- membership in the set would miss the
+    very case it is named for. Held comes first (R-34): a held card
+    waits uncredited; a card the entry's credited hand does not hold
+    was voided off it. *crossing* is one the engine recorded
+    (:func:`_crossing_feed_row` walks ``engine.crossings``), so the
+    dealt-card lookup cannot miss.
+    """
+    if held_card is not None:
+        return "held"
+    if engine.card_for(crossing) in engine.credited_cards(crossing.entry_id):
+        return "credited"
+    return "voided"
+
+
+def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datetime, FeedRow]:
+    """Build one live crossing's feed row and its sort instant.
+
+    The per-crossing half of :meth:`EngineDataSource.feed_rows`. Plan
+    §6: ``flagged`` is the short-lap review flag (true under both card
+    policies) and ``held`` the hold-mode card disposition, so the
+    Needs Review routing can tell a credited short lap from a held
+    one. W9: the ``card`` cell carries the real dealt code -- the
+    held card's own when this lap's card is held (R-34), the credited
+    card otherwise. ``card_status`` names that disposition for the
+    Card column (``_card_status_for``). The seq guard covers a stale
+    crossing whose lap is past the entry's recorded times.
+    """
+    engine = context.engine
+    feed_entry = context.roster.resolve_plate(crossing.entry_id)
+    times = context.times_by_entry.get(crossing.entry_id, ())
+    totals = context.totals_by_entry.get(crossing.entry_id, ())
+    lap_time_s = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+    total_s = totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
+    held_card = engine.held_card_for(crossing)
+    rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
+    entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
+    team_name = _team_name_for(feed_entry)
+    elapsed_s = _elapsed_seconds(crossing.crossed_at, context.start)
+    rider_plate = crossing.rider_plate
+    return (
+        crossing.crossed_at,
+        FeedRow(
+            time=format_duration(elapsed_s),
+            plate=rider_plate or crossing.entry_id,
+            entry=rider_name or entry_name,
+            team=team_name,
+            lap=crossing.seq,
+            lap_time=_format_lap_time(lap_time_s),
+            total=format_duration(total_s),
+            card=(held_card.code() if held_card is not None else engine.card_for(crossing).code()),
+            card_status=_card_status_for(engine, crossing, held_card),
+            flagged=crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s,
+            held=crossing in context.held_crossings,
+            edited=(crossing.entry_id, crossing.seq) in context.edited,
+            duplicate=crossing in context.duplicates,
+            dnf=(rider_plate is not None and rider_plate in context.dnf_riders)
+            or crossing.entry_id in context.dnf_entries,
+            elapsed_s=elapsed_s,
+            lap_time_s=lap_time_s,
+            total_s=total_s,
+        ),
+    )
 
 
 class EngineDataSource:
@@ -607,11 +735,6 @@ class EngineDataSource:
         (:func:`corrected_crossing_keys`) -- the feed's visual marker
         for spec §3 design 8c's "edits highlighted in the feed".
 
-        Plan §6: a row's ``flagged`` bit is the short-lap review flag
-        (true under both card policies) and its ``held`` bit the
-        hold-mode card disposition, so the Needs Review routing can
-        tell a credited short lap from a held one.
-
         K: pending misses are synthesised into the same feed as
         ``-``/``missed`` rows, interleaved newest-first with the
         crossings (a miss is not a crossing, so it never reaches the
@@ -625,17 +748,14 @@ class EngineDataSource:
         or the whole entry is (Phase 4's marker); a row is ``duplicate``
         when the crossing is one half of a live duplicate pair (Phase
         3, ``engine.duplicate_crossings``).
+
+        This method is the prelude (the per-render lookups below) plus
+        the merge loop: :func:`_crossing_feed_row` builds each crossing
+        row, :func:`_miss_feed_row` each miss row.
         """
         engine = self._engine
-        start = engine.actual_start
-        dnf_riders = engine.dnf_riders
         dnf_entries = frozenset(
             entry.plate for entry in self._roster.entries if engine.entry_is_dnf(entry)
-        )
-        held_crossings = frozenset(item.crossing for item in engine.held_crossings())
-        edited = corrected_crossing_keys(engine.events, engine.crossings)
-        duplicates = frozenset(
-            crossing for pair in engine.duplicate_crossings() for crossing in pair
         )
         times_by_entry: dict[str, tuple[float, ...]] = {}
         totals_by_entry: dict[str, list[float]] = {}
@@ -648,59 +768,24 @@ class EngineDataSource:
                 total += lap_time
                 running.append(total)
             totals_by_entry[entry.plate] = running
-
-        rows: list[tuple[datetime, FeedRow]] = []
-        for crossing in engine.crossings:
-            feed_entry = self._roster.resolve_plate(crossing.entry_id)
-            times = times_by_entry.get(crossing.entry_id, ())
-            totals = totals_by_entry.get(crossing.entry_id, [])
-            # Plan §6: ``flagged`` is the short-lap review channel (both
-            # policies), ``held`` the hold-mode card disposition. The
-            # seq guard covers a stale crossing whose lap is past the
-            # entry's recorded times.
-            lap_time_s = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
-            total_s = totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
-            flagged = crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s
-            held = crossing in held_crossings
-            held_card = engine.held_card_for(crossing)
-            rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
-            entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
-            elapsed_s = _elapsed_seconds(crossing.crossed_at, start)
-            rider_plate = crossing.rider_plate
-            rows.append(
-                (
-                    crossing.crossed_at,
-                    FeedRow(
-                        time=format_duration(elapsed_s),
-                        plate=rider_plate or crossing.entry_id,
-                        entry=rider_name or entry_name,
-                        lap=crossing.seq,
-                        lap_time=_format_lap_time(lap_time_s),
-                        total=format_duration(total_s),
-                        # W9: every row carries the real dealt
-                        # code -- the held card's own when this lap's
-                        # card is held (R-34), the credited card
-                        # otherwise.
-                        card=(
-                            held_card.code()
-                            if held_card is not None
-                            else engine.card_for(crossing).code()
-                        ),
-                        flagged=flagged,
-                        held=held,
-                        edited=(crossing.entry_id, crossing.seq) in edited,
-                        duplicate=crossing in duplicates,
-                        dnf=(rider_plate is not None and rider_plate in dnf_riders)
-                        or crossing.entry_id in dnf_entries,
-                        elapsed_s=elapsed_s,
-                        lap_time_s=lap_time_s,
-                        total_s=total_s,
-                    ),
-                )
-            )
+        context = _FeedContext(
+            engine=engine,
+            roster=self._roster,
+            start=engine.actual_start,
+            dnf_riders=engine.dnf_riders,
+            dnf_entries=dnf_entries,
+            held_crossings=frozenset(item.crossing for item in engine.held_crossings()),
+            edited=corrected_crossing_keys(engine.events, engine.crossings),
+            duplicates=frozenset(
+                crossing for pair in engine.duplicate_crossings() for crossing in pair
+            ),
+            times_by_entry=times_by_entry,
+            totals_by_entry=totals_by_entry,
+        )
+        rows = [_crossing_feed_row(context, crossing) for crossing in engine.crossings]
         rows.reverse()  # newest first: crossings keep their record order
         for miss in reversed(engine.pending_misses()):
-            _insert_newest_first(rows, (miss.crossed_at, _miss_feed_row(miss, start)))
+            _insert_newest_first(rows, (miss.crossed_at, _miss_feed_row(miss, context.start)))
         return [row for _crossed_at, row in rows]
 
     def counters(self) -> Counters:

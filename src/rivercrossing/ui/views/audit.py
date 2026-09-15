@@ -26,7 +26,11 @@ import wx.dataview
 
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.audit import ALL_ACTIONS, AuditPresenter
-from rivercrossing.ui.views._support import associate_model, clamp_to_display, find_control
+from rivercrossing.ui.views._support import (
+    DialogFindMixin,
+    associate_model,
+    clamp_to_display,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -108,7 +112,7 @@ class AuditListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
         return _TEXT_ACCESSORS[col](self._rows[row])
 
 
-class AuditDialog:
+class AuditDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``audit_dlg`` (D, R-38).
 
     Implements the :class:`~rivercrossing.ui.presenters.audit.
@@ -165,19 +169,6 @@ class AuditDialog:
         )
 
         self._bind_events()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append ``audit_list``'s five text columns in canvas order.

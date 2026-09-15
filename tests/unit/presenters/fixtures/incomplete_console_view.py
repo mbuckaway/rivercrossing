@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Mypy fixture: a ``ConsoleView`` missing its ``play`` method.
 
-Static-typing-only fixture for
-``test_protocols.py::test_console_view_missing_method_fails_mypy_typecheck``
-(E1.2.3's mandated "mypy snapshot test", T-5/negative-path sibling for
-the type system rather than runtime). ``IncompleteConsoleView``
-implements every ``ConsoleView`` member except ``play``; passing it to
+Static-typing-only fixture for the mypy snapshot test
+``test_protocols.py::test_console_view_missing_method_fails_mypy_
+typecheck`` (E1.2.3's mandated "mypy snapshot test", T-5/negative-path
+sibling for the type system rather than runtime).
+``IncompleteConsoleView`` implements every ``ConsoleView`` member
+except ``play``; passing it to
 a function typed to require a full ``ConsoleView`` must fail
 ``mypy --strict``, naming ``play`` as the missing member. This file is
 never imported at runtime by anything except the mypy subprocess the
@@ -56,7 +57,7 @@ class IncompleteConsoleView:
     def set_stop_enabled(self, *, enabled: bool) -> None:
         """No-op fixture stub."""
 
-    def set_hide_times(self, *, hide: bool) -> None:
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
         """No-op fixture stub."""
 
     def show_clock(self, elapsed: str, remaining: str) -> None:

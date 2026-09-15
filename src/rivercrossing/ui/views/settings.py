@@ -3,7 +3,7 @@
 
 E8.1.2 finishes the dialog E8.1.1's presenter stubbed: this thin view
 renders the current :class:`AppSettings` into the appearance radios,
-the sound/hide-times/verbose-log checkboxes and (plan §10) the
+the sound/time-column/verbose-log checkboxes and (plan §10) the
 ``avg_speed_spin`` average rider speed, and OK collects a fresh
 :class:`AppSettings` for the app's ``on_save`` callback (which
 persists + applies it). W13 (notes #12): the text-zoom choice left
@@ -25,7 +25,7 @@ import wx
 from rivercrossing.ui import ids
 from rivercrossing.ui.presenters.settings import AppSettings, appearance_for_radio
 from rivercrossing.ui.theme import ThemeMode
-from rivercrossing.ui.views._support import find_control
+from rivercrossing.ui.views._support import DialogFindMixin
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 __all__ = ["SettingsDialog"]
 
 
-class SettingsDialog:
+class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``settings_dlg`` (3a).
 
     Implements ``SettingsView`` (module-skeletons.md's presenter
@@ -71,20 +71,13 @@ class SettingsDialog:
         self.light_radio = self._find(ids.APPEARANCE_LIGHT_RADIO, wx.RadioButton)
         self.dark_radio = self._find(ids.APPEARANCE_DARK_RADIO, wx.RadioButton)
         self.sound_chk = self._find(ids.SOUND_CHK, wx.CheckBox)
-        self.hide_times_chk = self._find(ids.HIDE_TIMES_CHK, wx.CheckBox)
+        self.show_total_times_chk = self._find(ids.SHOW_TOTAL_TIMES_CHK, wx.CheckBox)
+        self.show_lap_time_chk = self._find(ids.SHOW_LAP_TIME_CHK, wx.CheckBox)
         self.verbose_log_chk = self._find(ids.VERBOSE_LOG_CHK, wx.CheckBox)
         self.avg_speed_spin = self._find(ids.AVG_SPEED_SPIN, wx.SpinCtrlDouble)
 
         self.show_settings(settings)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, id=wx.ID_OK)
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def show_settings(self, settings: AppSettings) -> None:
         """Render *settings* into the dialog's controls (SettingsView).
@@ -102,7 +95,8 @@ class SettingsDialog:
         self.light_radio.SetValue(settings.appearance == ThemeMode.LIGHT.value)
         self.dark_radio.SetValue(settings.appearance == ThemeMode.DARK.value)
         self.sound_chk.SetValue(settings.sound_on)
-        self.hide_times_chk.SetValue(settings.hide_times)
+        self.show_total_times_chk.SetValue(settings.show_total_times)
+        self.show_lap_time_chk.SetValue(settings.show_lap_time)
         self.verbose_log_chk.SetValue(settings.verbose_logging)
         self.avg_speed_spin.SetValue(settings.avg_speed_kmh)
 
@@ -112,9 +106,11 @@ class SettingsDialog:
         ``avg_speed_kmh`` reads the entry's own float (``GetValue`` on
         a ``wx.SpinCtrlDouble``); the control's <min> floors it at
         1 km/h, mirroring the presenter's ``_MIN_AVG_SPEED_KMH``. The
-        zoom and two layout fields (``zoom_percent``/
-        ``splitter_sash``/``window_geometry``) have no dialog control,
-        so the current values carry over unchanged.
+        zoom, the two layout fields and G6's five publish options
+        (``zoom_percent``/``splitter_sash``/``window_geometry``/
+        ``publish_*``) have no dialog control, so the current values
+        carry over unchanged -- OK must never reset the Results menu's
+        export options.
         """
         return AppSettings(
             appearance=appearance_for_radio(
@@ -122,12 +118,18 @@ class SettingsDialog:
                 dark=self.dark_radio.GetValue(),
             ),
             sound_on=bool(self.sound_chk.GetValue()),
-            hide_times=bool(self.hide_times_chk.GetValue()),
+            show_total_times=bool(self.show_total_times_chk.GetValue()),
+            show_lap_time=bool(self.show_lap_time_chk.GetValue()),
             verbose_logging=bool(self.verbose_log_chk.GetValue()),
             avg_speed_kmh=float(self.avg_speed_spin.GetValue()),
             zoom_percent=self._settings.zoom_percent,
             splitter_sash=self._settings.splitter_sash,
             window_geometry=self._settings.window_geometry,
+            publish_show_times=self._settings.publish_show_times,
+            publish_laps_board=self._settings.publish_laps_board,
+            publish_time_board=self._settings.publish_time_board,
+            publish_full_field=self._settings.publish_full_field,
+            publish_all_cards=self._settings.publish_all_cards,
         )
 
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx handler signature; EndModal is explicit, no Skip needed

@@ -217,7 +217,9 @@ def _bare_view(*, logo_path: Path | None = None) -> RideSetup:
         setattr(view, name, _FakeControl())
     # The doubled Cards controls carry the same XRC defaults the
     # authored controls open on (setup.xrc): 1 joker, the total radio
-    # checked, the cap choice on "Disabled".
+    # checked, the cap choice on "Disabled". hold_short_radio carries
+    # the W4 pair's own authored default too -- checked.
+    view.hold_short_radio = _FakeControl(value=True)
     view.jokers_spin = _FakeControl(value=1)
     view.jokers_per_deck_radio = _FakeControl(value=False)
     view.jokers_total_radio = _FakeControl(value=True)
@@ -354,6 +356,36 @@ def test_ride_setup_form_values_given_no_staged_logo_submits_none() -> None:
     values = view._form_values()
 
     assert values.logo_path is None
+
+
+# --------------------------------- short-lap card policy (W4)
+# The pair's own XRC-checked member is hold_short_radio, so a fresh
+# dialog submits hold_short_laps=True; the other radio is the opt-out.
+
+
+def test_ride_setup_bare_form_values_read_the_authored_short_lap_default() -> None:
+    """A fresh dialog opens on the hold-short radio (setup.xrc)."""
+    view = _bare_view()
+
+    values = view._form_values()
+
+    assert values.hold_short_laps is True
+
+
+@pytest.mark.parametrize(
+    ("checked", "expected"),
+    [(True, True), (False, False)],
+    ids=["hold_short_checked", "always_deal_checked"],
+)
+def test_ride_setup_form_values_given_either_short_lap_radio_submits_it(
+    checked: bool,  # noqa: FBT001 -- parametrize passes the flag positionally
+    expected: bool,  # noqa: FBT001 -- parametrize passes the flag positionally
+) -> None:
+    """T-3: both states of the W4 pair read back as hold_short_laps."""
+    view = _bare_view()
+    view.hold_short_radio.SetValue(checked)
+
+    assert view._form_values().hold_short_laps is expected
 
 
 # --------------------------------- jokers mode + card cap (Phase 5)

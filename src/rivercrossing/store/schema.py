@@ -23,8 +23,8 @@ any other stamped version.
 That flatten folded four changes back into the CREATE:
 
 - ``ride.hold_short_laps`` -- the short-lap card policy -- is a real
-  column (NOT NULL, DEFAULT 0 = always deal), in the same position
-  ``_INSERT_RIDE_SQL`` lists it.
+  column (NOT NULL, DEFAULT 1 = hold short-lap cards for review), in
+  the same position ``_INSERT_RIDE_SQL`` lists it.
 - ``ride.jokers_mode`` -- the shoe's jokers mode (Phase 5: ``per_deck``
   re-deals ``jokers_per_deck`` jokers every cycle, ``total`` spends
   them once per ride) -- is a real column too, NOT NULL DEFAULT
@@ -151,7 +151,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
         rng_seed           INTEGER NOT NULL,
         created_at         INTEGER NOT NULL,
         updated_at         INTEGER NOT NULL,
-        hold_short_laps    INTEGER NOT NULL DEFAULT 0
+        hold_short_laps    INTEGER NOT NULL DEFAULT 1
     )
     """,
     """

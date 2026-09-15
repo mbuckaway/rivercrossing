@@ -72,8 +72,9 @@ them open and later EPICs will build on them:
   (``_INSERT_RIDE_SQL``/``create_ride``/``duplicate_ride``/
   ``load_engine``). Stored as INTEGER 0/1 and rebuilt as ``bool``, so
   event replay reproduces each ride's own hold disposition. The column
-  is part of the v1 baseline with a NOT NULL DEFAULT 0 (always deal,
-  the W4 default), so a row written without it reads as "never hold".
+  is part of the v1 baseline with a NOT NULL DEFAULT 1 (hold short-lap
+  cards for review, the W4 default), so a row written without it reads
+  as the dialog's own default rather than as "never hold".
 - **jokers_mode (Phase 5)**: the setup dialog's per-deck/total radio
   pair is another config column the facade writes and reads
   (``_INSERT_RIDE_SQL``/``create_ride``/``duplicate_ride``/
@@ -185,6 +186,7 @@ view-model deferred to E5.4.1.
 """
 
 import json
+import os
 import secrets
 import sqlite3
 import tempfile
@@ -354,12 +356,16 @@ def _materialize_ride_logo(ride_id: int, logo_png: bytes | None) -> Path | None:
     The ``ride`` table keeps the logo as a BLOB (spec §2) but every
     logo surface renders from a file (``views.about``'s ride logo, the
     console header's ``ride_logo_bmp``), so loading a ride re-writes
-    the bytes to one deterministic per-ride file in the process temp
-    directory. Re-loading the same ride overwrites the same path, so
-    repeated loads never accumulate files.
+    the bytes to a fresh file in the process temp directory and hands
+    back its path. The file comes from :func:`tempfile.mkstemp` --
+    created ``O_CREAT``/``O_EXCL`` under a random name -- so no
+    data-derived path exists for a pre-planted symlink to sit at
+    (CWE-377), and the bytes are written through the handle it
+    returns.
 
     Args:
-        ride_id: The ride the logo belongs to (its file name).
+        ride_id: The ride the logo belongs to (it names the file, so
+            the operator can tell one ride's temp logo from another's).
         logo_png: The stored PNG bytes, or ``None``.
 
     Returns:
@@ -369,9 +375,10 @@ def _materialize_ride_logo(ride_id: int, logo_png: bytes | None) -> Path | None:
     """
     if not logo_png:
         return None
-    path = Path(tempfile.gettempdir()) / f"rivercrossing-ride-{ride_id}-logo.png"
-    path.write_bytes(logo_png)
-    return path
+    descriptor, name = tempfile.mkstemp(prefix=f"rivercrossing-ride-{ride_id}-", suffix=".png")
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(logo_png)
+    return Path(name)
 
 
 def _to_epoch(value: datetime) -> int:
@@ -876,9 +883,9 @@ class Store:
         roster, never an append (the replace semantics the rider
         editor's DRAFT edits need). ``has_data`` is deliberately not
         stored (derived at load time from recorded rows), and
-        ``dnf_at``/``emergency_contact``/``waiver_signed``/``ccn_reg_id``
-        stay NULL -- the in-memory Roster model carries no such fields
-        (module docstring's E5.4.1 resolutions).
+        ``dnf_at``/``emergency_contact``/``waiver_signed``/
+        ``ccn_reg_id`` stay NULL -- the in-memory Roster model carries
+        no such fields (module docstring's E5.4.1 resolutions).
 
         Args:
             ride_id: The ride whose roster to write.

@@ -8,7 +8,7 @@ draw that text: ``ui/rider_columns.py``'s Cards cell, ``results_win``'s
 "Best 5" column and ``dialogs``'s void-card confirm. This module is
 the one implementation they share; it replaced two identical private
 copies (``results_win``'s own ``_SUIT_SYMBOLS``/``format_card`` pair
-and ``dialogs``'s ``_format_card_code``).
+and ``dialogs``'s own private copy).
 
 No ``wx`` import may ever land here: ``ui/rider_columns.py`` imports
 this module and the presenters import that (R-71), so it must stay

@@ -55,12 +55,17 @@ until a logo is staged, and ``logo_browse_btn``. A picked file is
 *staged* -- :meth:`RideSetup.stage_logo` resizes it into
 :data:`LOGO_STANDARD_SIZE` through the pure
 :func:`~rivercrossing.ui.views.team_editor.logo_fit_size` rule and
-writes the copy to a temp file, so the operator's own file is never
-touched and the store's ``read_bytes`` at create/update time reads a
+writes the copy to its own temp directory, so the operator's own file
+is never touched and the store's ``read_bytes`` at create/update time
+reads a
 PNG the dialog already bounded. ``_logo_path`` is what the form
-submits; ``logo_picker``'s own transient text is gone.
+submits; ``logo_picker``'s own transient text is gone. That directory
+is the dialog's to clean up: a re-pick and the dialog's own destroy
+both remove it (:meth:`RideSetup.discard_staged_logo`), so a browsing
+session leaves no temp files behind.
 """
 
+import shutil
 import tempfile
 from datetime import date, time
 from pathlib import Path
@@ -86,7 +91,7 @@ from rivercrossing.ui.presenters.setup import (
     _format_min_lap,
 )
 from rivercrossing.ui.views import team_editor
-from rivercrossing.ui.views._support import find_control
+from rivercrossing.ui.views._support import DialogFindMixin
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -192,6 +197,17 @@ def _staged_logo_path(image: Any, picked: Path) -> Path:  # noqa: ANN401 -- wx s
     return staged
 
 
+def _discard_staged_dir(directory: Path | None) -> None:
+    """Remove a staged-logo temp directory, if there is one.
+
+    Best-effort by design: the directory is the app's own scratch
+    space, so a half-removed one (a file still open, a permissions
+    quirk) must never turn a dialog close into an error.
+    """
+    if directory is not None:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
 def _pick_logo_path(parent: wx.Window) -> Path | None:
     """Ask the operator which PNG to use as the ride's logo.
 
@@ -215,7 +231,7 @@ def _pick_logo_path(parent: wx.Window) -> Path | None:
         return Path(picker.GetPath())
 
 
-class RideSetup:
+class RideSetup(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``ride_setup_dlg`` (1c/7a, R-17)."""
 
     def __init__(  # noqa: PLR0913 -- (dialog, roster, config, on_submitted): the view's own wiring
@@ -282,6 +298,11 @@ class RideSetup:
         # or the record's own file (D2). None until one is staged --
         # show_logo(None) is what every fresh dialog opens on.
         self._logo_path: Path | None = None
+        # The staged copy's own temp directory (``_staged_logo_path``
+        # creates one per pick); removed when a later pick replaces it
+        # and when the dialog is destroyed, so a browsing session never
+        # leaves temp directories behind.
+        self._staged_logo_dir: Path | None = None
         self._apply_tiebreak_min_size()
         self.show_tiebreak_order(DEFAULT_TIEBREAK_ORDER)
         self.show_logo(None)
@@ -291,19 +312,6 @@ class RideSetup:
         self.presenter = SetupPresenter(self, roster, config)
 
         self._bind_events()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build the code-side :data:`SETUP_INFOBAR`, wrapped on top.
@@ -332,6 +340,32 @@ class RideSetup:
         self.dialog.Bind(wx.EVT_RADIOBUTTON, self._on_entry_mode_radio, self.mixed_radio)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_browse_logo, self.logo_browse_btn)
         self.dialog.Bind(wx.EVT_BUTTON, self._on_ok, self.ok_btn)
+        # The staged logo's teardown rides the dialog's own destroy --
+        # the one exit every route shares, Cancel and Escape included
+        # (``_on_destroy``'s own docstring).
+        self.dialog.Bind(wx.EVT_WINDOW_DESTROY, self._on_destroy)
+
+    def _on_destroy(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Discard the staged logo's temp directory with the dialog.
+
+        Cancel and Escape end the modal without running :meth:`_on_ok`,
+        so the destroy event -- which every way out of
+        ``ride_setup_dlg`` goes through, ``dialogs.run_dialog``'s
+        caller destroying the loaded window -- is the teardown seam
+        that cannot be skipped. The store has read the staged bytes by
+        then: a committed submit runs its callback before ``EndModal``.
+        """
+        event.Skip()
+        self.discard_staged_logo()
+
+    def discard_staged_logo(self) -> None:
+        """Remove this dialog's staged logo directory, if it has one.
+
+        A no-op once the directory is gone, so calling it on both the
+        replacement and the teardown path is safe.
+        """
+        _discard_staged_dir(self._staged_logo_dir)
+        self._staged_logo_dir = None
 
     def _on_browse_logo(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Handle ``logo_browse_btn``: pick a PNG, then stage it.
@@ -352,13 +386,18 @@ class RideSetup:
         that copy becomes ``self._logo_path`` -- the path the form
         submits and the store reads. A file wx cannot decode stages
         nothing, leaving :data:`LOGO_STATUS_NO_LOGO` up rather than a
-        preview of something that will not render later.
+        preview of something that will not render later. A re-pick
+        drops the previous pick's directory first: each pick mints its
+        own, so browsing through ten files must not leave ten behind.
         """
         image = _load_logo_png(path)
         if not image.IsOk():
             self.show_logo(None)
             return
-        self._logo_path = _staged_logo_path(image, path)
+        staged = _staged_logo_path(image, path)
+        self.discard_staged_logo()
+        self._staged_logo_dir = staged.parent
+        self._logo_path = staged
         self._show_logo_preview(_preview_bitmap(image), status=path.name)
 
     def _apply_tiebreak_min_size(self) -> None:

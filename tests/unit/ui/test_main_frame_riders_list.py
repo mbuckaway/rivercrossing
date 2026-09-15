@@ -92,8 +92,8 @@ def test_review_notebook_given_the_riders_page_still_holds_the_riders_list() -> 
 
 
 def test_review_notebook_given_the_needs_review_page_still_holds_its_controls() -> None:
-    """The Needs Review page keeps flagged_list and review_btn."""
-    assert _control_names(_pages()[1]) == ["flagged_list", "review_btn"]
+    """The Needs Review page keeps its list, box and button."""
+    assert _control_names(_pages()[1]) == ["flagged_list", "show_held_only_chk", "review_btn"]
 
 
 # ------------------------------------------------------- the columns

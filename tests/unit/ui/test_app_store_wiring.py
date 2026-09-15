@@ -67,7 +67,10 @@ def _engine(plate: str = "12") -> RideEngine:
         plate_model=PlateModel.RIDER_POOLED,
     )
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
-    clock = lambda: datetime(2026, 9, 20, 10, 1)  # noqa: E731, DTZ001 -- a fixed fake instant
+
+    def clock() -> datetime:
+        return datetime(2026, 9, 20, 10, 1)  # noqa: DTZ001 -- a fixed fake instant
+
     return RideEngine(config=config, shoe=shoe, clock=clock, roster=roster)
 
 
@@ -121,7 +124,7 @@ def test_wire_store_append_given_a_failing_store_posts_a_notice_and_keeps_the_cr
     an unguarded store error would abort ``record_crossing`` mid-way
     -- the crossing exists in memory but the presenter's caller never
     finishes, and the wx handler swallows the raise with zero signal
-    (EPIC3-SESSION-SUMMARY.md's measured note).
+    (the measured note).
     """
     engine = _engine()
     engine.start()

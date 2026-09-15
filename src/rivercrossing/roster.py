@@ -394,8 +394,8 @@ _FUZZY_QUOTE_TRANSLATION = str.maketrans("", "", "'\"\u2018\u2019\u201c\u201d")
 def team_name_key(name: str) -> str:
     """Return *name*'s fuzzy key for near-duplicate team detection.
 
-    The one shared home for the key both the CSV import preview
-    (:func:`rivercrossing.csvio._fuzzy_team_key`) and the rider-issues
+    The one shared home for the key both the CSV import preview's
+    near-duplicate team scan and the rider-issues
     report compare team names through, so the two cannot drift: fold
     case, drop apostrophes/quotes, tokenize on whitespace and drop the
     standalone ``and``/``&`` tokens, then strip every remaining

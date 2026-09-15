@@ -6,11 +6,11 @@ replays one scripted race through the live engine. Both halves of that
 flow live here, each wrapping an already-XRC-loaded window with its
 code-side behaviour:
 
-* :class:`SimulatorDialog` reads the five count fields, seeds them
-  from the persisted settings, derives the solo field from the riders
-  and teams counts, forwards Generate Riders and Check to the
-  presenter's rules, and runs the race through
-  :class:`SimRunningDialog` when GO validates.
+* :class:`SimulatorDialog` reads the five count fields and the three
+  behaviour dropdowns (G9), seeds them from the persisted settings,
+  derives the solo field from the riders and teams counts, forwards
+  Generate Riders and Check to the presenter's rules, and runs the
+  race through :class:`SimRunningDialog` when GO validates.
 * :class:`SimRunningDialog` owns the progress gauge and the status
   line, and pumps the event loop so the gauge repaints and Cancel is
   dispatched while the race runs.
@@ -54,7 +54,7 @@ from rivercrossing.ui.presenters.simulator import (
     default_interval_minutes,
     resolve_solo,
 )
-from rivercrossing.ui.views._support import find_control, load_dialog
+from rivercrossing.ui.views._support import DialogFindMixin, load_dialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -77,7 +77,7 @@ MIN_WIDTH = 425
 # The error InfoBar's frozen name (spec.md 15b). XRC cannot author a
 # wxInfoBar at all (simulation.xrc's own header), so this name never
 # appears in ui/ids.py -- the bar is built code-side and named with
-# SetName(), mirroring main_frame.py's RESUME_INFOBAR precedent.
+# SetName(), the pattern rider_editor.py's ROSTER_INFOBAR follows.
 SIM_INFOBAR = "sim_infobar"
 
 # The Check button's message-box caption (plan §2).
@@ -121,7 +121,7 @@ def _load_running_window(parent: wx.Window) -> wx.Dialog:
     return load_dialog(wx.xrc.XmlResource.Get(), ids.SIM_RUNNING_DLG, parent=parent)
 
 
-class SimulatorDialog:
+class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``simulation_dlg``.
 
     Seeds the count fields from the persisted settings, derives the
@@ -133,14 +133,19 @@ class SimulatorDialog:
     the dialog open; a successful Generate closes it so the app
     persists the roster.
 
-    :attr:`sim_values` is the five spins as last confirmed in
-    :meth:`_on_generate_riders`/:meth:`_on_go`; the app reads it after
-    the modal ends, when the real window is gone (plan §1).
+    :attr:`sim_values` is the five spins -- and :attr:`sim_behaviors`
+    the three behaviour choices (G9) -- as last confirmed in
+    :meth:`_on_generate_riders`/:meth:`_on_go`; the app reads them
+    after the modal ends, when the real window is gone (plan §1).
     """
 
     # The five spin values, snapshotted before each successful close so
     # the app can persist them without touching the destroyed window.
     sim_values: tuple[int, int, int, int, int]
+
+    # G9: the three behaviour counts (0 = "Disabled"), snapshotted the
+    # same way and from the same three dropdowns.
+    sim_behaviors: tuple[int, int, int]
 
     def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the seeds and the speed setting
         self,
@@ -153,6 +158,9 @@ class SimulatorDialog:
         sim_solo: int = 15,
         sim_laps: int = 1,
         sim_interval: int = 45,
+        sim_short_laps: int = 1,
+        sim_lapped: int = 0,
+        sim_team_stop: int = 0,
         avg_speed_kmh: float = 12.0,
     ) -> None:
         """Decorate an already-loaded ``simulation_dlg`` window.
@@ -170,6 +178,10 @@ class SimulatorDialog:
             sim_laps: The persisted "Number of laps" seed.
             sim_interval: The persisted "Minutes between first rider"
                 seed, used when no engine is threaded in.
+            sim_short_laps: The persisted "Short-lap riders" seed.
+            sim_lapped: The persisted "Lapped riders" seed.
+            sim_team_stop: The persisted "Team riders stop after 4
+                laps" seed.
             avg_speed_kmh: The operator's average rider speed, the
                 setting the interval seed derives from.
         """
@@ -181,6 +193,9 @@ class SimulatorDialog:
         self.solo_spin = self._find(ids.SOLO_SPIN, wx.SpinCtrl)
         self.laps_spin = self._find(ids.LAPS_SPIN, wx.SpinCtrl)
         self.interval_spin = self._find(ids.INTERVAL_SPIN, wx.SpinCtrl)
+        self.short_lap_choice = self._find(ids.SHORT_LAP_CHOICE, wx.Choice)
+        self.lapped_choice = self._find(ids.LAPPED_CHOICE, wx.Choice)
+        self.team_stop_choice = self._find(ids.TEAM_STOP_CHOICE, wx.Choice)
         self.check_btn = self._find(ids.CHECK_BTN, wx.Button)
         self.gen_riders_btn = self._find(ids.GEN_RIDERS_BTN, wx.Button)
         self.go_btn = self._find(ids.GO_BTN, wx.Button)
@@ -189,6 +204,7 @@ class SimulatorDialog:
             (sim_riders, sim_teams, sim_solo, sim_laps, sim_interval),
             avg_speed_kmh=avg_speed_kmh,
         )
+        self._seed_choices((sim_short_laps, sim_lapped, sim_team_stop))
         self._auto_solo()
         self._snapshot_sim_values()
 
@@ -220,6 +236,28 @@ class SimulatorDialog:
         self.solo_spin.SetValue(solo)
         self.laps_spin.SetValue(laps)
         self.interval_spin.SetValue(interval)
+
+    def _seed_choices(self, values: tuple[int, int, int]) -> None:
+        """Seed the three behaviour dropdowns with *values* (G9).
+
+        Each dropdown's item 0 is "Disabled" and items 1..10 are the
+        counts themselves, so the count is the selection index -- and
+        a stored value outside 0..10 selects nothing, leaving the
+        authored default, exactly as an out-of-range spin value clamps
+        to its own control.
+        """
+        short_laps, lapped, team_stop = values
+        self.short_lap_choice.SetSelection(short_laps)
+        self.lapped_choice.SetSelection(lapped)
+        self.team_stop_choice.SetSelection(team_stop)
+
+    def _selected_behaviors(self) -> tuple[int, int, int]:
+        """Return the three dropdowns' current counts (G9)."""
+        return (
+            self.short_lap_choice.GetSelection(),
+            self.lapped_choice.GetSelection(),
+            self.team_stop_choice.GetSelection(),
+        )
 
     def _resolved_solo(self) -> int | None:
         """Return the solo count the two team spins imply (plan §1).
@@ -282,7 +320,7 @@ class SimulatorDialog:
         show(self.dialog, CHECK_TITLE, message)
 
     def _snapshot_sim_values(self) -> None:
-        """Record the five spins for the app to persist (plan §1)."""
+        """Record the spins and behaviours for the app (plan §1, G9)."""
         self.sim_values = (
             self.riders_spin.GetValue(),
             self.teams_spin.GetValue(),
@@ -290,19 +328,7 @@ class SimulatorDialog:
             self.laps_spin.GetValue(),
             self.interval_spin.GetValue(),
         )
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
+        self.sim_behaviors = self._selected_behaviors()
 
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build the code-side :data:`SIM_INFOBAR`, inserted on top.
@@ -403,19 +429,23 @@ class SimulatorDialog:
             self.sim_infobar.ShowMessage(refusal, wx.ICON_WARNING)
             self.dialog.Layout()
             return
+        short_laps, lapped, team_stop = self._selected_behaviors()
         running = SimRunningDialog(
             _load_running_window(self.dialog),
             engine=self.presenter.engine,
             roster=self.presenter.roster,
             laps=laps,
             interval_minutes=interval_minutes,
+            short_laps=short_laps,
+            lapped=lapped,
+            team_stop=team_stop,
         )
         running.run()
         self._snapshot_sim_values()
         self.dialog.EndModal(wx.ID_OK)
 
 
-class SimRunningDialog:
+class SimRunningDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``sim_running_dlg``.
 
     Owns the progress gauge, the status line and Cancel, and drives one
@@ -425,7 +455,7 @@ class SimRunningDialog:
     so the dialog stays responsive.
     """
 
-    def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the race settings
+    def __init__(  # noqa: PLR0913 -- (dialog, engine, roster) + the race settings and G9's three counts
         self,
         dialog: wx.Dialog,
         *,
@@ -433,6 +463,9 @@ class SimRunningDialog:
         roster: Roster,
         laps: int,
         interval_minutes: int,
+        short_laps: int = 0,
+        lapped: int = 0,
+        team_stop: int = 0,
     ) -> None:
         """Decorate an already-loaded ``sim_running_dlg`` window.
 
@@ -442,11 +475,18 @@ class SimRunningDialog:
             roster: The roster the simulation races.
             laps: How many laps to simulate.
             interval_minutes: The minutes between one lap and the next.
+            short_laps: How many of the run's leading entries cross
+                under the ride's minimum lap time (G9).
+            lapped: How many of them sit out the first wave (G9).
+            team_stop: How many team riders stop after lap 4 (G9).
         """
         self.dialog = dialog
         self.presenter = SimulatorPresenter(engine, roster)
         self.laps = laps
         self.interval_minutes = interval_minutes
+        self.short_laps = short_laps
+        self.lapped = lapped
+        self.team_stop = team_stop
         self._cancelled = False
         self.outcome: SimOutcome | None = None
 
@@ -462,16 +502,6 @@ class SimRunningDialog:
         self.dialog.SetEscapeId(self.cancel_btn.GetId())
         self.dialog.Bind(wx.EVT_BUTTON, self._on_cancel, self.cancel_btn)
         self.dialog.Fit()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _on_cancel(self, _event: wx.CommandEvent) -> None:
         """Record the cancel request; the run loop polls it."""
@@ -508,6 +538,9 @@ class SimRunningDialog:
         self.outcome = self.presenter.run_simulation(
             self.laps,
             self.interval_minutes,
+            short_laps=self.short_laps,
+            lapped=self.lapped,
+            team_stop=self.team_stop,
             on_progress=self.update,
             is_cancelled=self.is_cancelled,
         )

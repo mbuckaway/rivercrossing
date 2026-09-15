@@ -11,12 +11,14 @@ XRC-backed entries agree with ``main.xrc``'s live ``<accel>``
 declarations -- needs a live toolkit and is not pinned here.
 """
 
+import pytest
+
 from rivercrossing.ui import accelerators
 
 
-def test_accelerator_table_declares_exactly_five_entries() -> None:
-    """Enter, Ctrl+Z, F5, F1, F2 -- no more, no fewer."""
-    assert len(accelerators.ACCELERATOR_TABLE) == 5
+def test_accelerator_table_declares_exactly_eight_entries() -> None:
+    """Enter, Ctrl+Z, F5, F1, F2, Delete, Ctrl+D, Ctrl+E."""
+    assert len(accelerators.ACCELERATOR_TABLE) == 8
 
 
 def test_accelerator_table_declares_each_key_exactly_once() -> None:
@@ -42,3 +44,24 @@ def test_f2_accelerator_is_a_code_side_frame_accelerator() -> None:
     f2_row = next(row for row in accelerators.ACCELERATOR_TABLE if row.key == "F2")
 
     assert (f2_row.action, f2_row.menu_item_id) == ("Edit crossing (open detail)", None)
+
+
+@pytest.mark.parametrize(
+    ("key", "action"),
+    [
+        ("Delete", "Delete selected crossing"),
+        ("Ctrl+D", "Delete selected crossing"),
+        ("Ctrl+E", "Edit crossing plate"),
+    ],
+    ids=["delete", "ctrl_d", "ctrl_e"],
+)
+def test_accelerator_table_declares_the_crossings_panel_hotkeys(key: str, action: str) -> None:
+    """The console feed's Delete/Ctrl+D/Ctrl+E rows are code-side.
+
+    Like F2 they carry no ``menu_item_id``: main.xrc declares no menu
+    item for either command, so ``MainFrame`` binds them as frame
+    accelerators and ``MainFrame.accelerator_entries`` owns the rows.
+    """
+    row = next(row for row in accelerators.ACCELERATOR_TABLE if row.key == key)
+
+    assert (row.action, row.menu_item_id) == (action, None)

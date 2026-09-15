@@ -8,22 +8,27 @@ a control by name inside this window, raising a useful error naming
 both the window and the missing control if it is absent."
 ``_default_card_images``'s process-lifetime cache repeated the same
 pattern across ``main_frame.py`` and that same dialog. This module is
-their one shared home; every view still exposes its own thin ``_find``
-method (existing tests call it as a bound method) that forwards here.
+their one shared home; every view still exposes ``_find`` as a bound
+method (existing tests call it that way), now inherited from
+:class:`DialogFindMixin` instead of repeated in each module.
 
 :func:`associate_model` is not a duplication extraction -- see its
 own docstring for exactly what it does and does not claim to fix.
 
 :func:`load_dialog` and :func:`load_menubar` answer the same rule,
-and both retry a miss once through :func:`fresh_resource` -- the one
-rebuild source. Every window and menubar load site -- ``ui/app.py``'s
-route, quit, self-test and resume flows, ``ui/views/corrections.py``'s
-six runners, ``crossing_detail.py``, ``ride_library.py``,
-``simulator.py`` and the rest of the sites loading straight off
-``wx.xrc.XmlResource.Get()`` -- asked the resource for its window and
-got ``None`` back when a load had silently skipped it. That is the
-Fault-B degraded-load class, which reads to the operator as a menu row
-clicking through to "no window authored yet".
+and both retry a miss through :func:`fresh_resource` -- the one
+rebuild source -- up to :data:`_LOAD_ATTEMPTS` times, evicting the
+memoized rebuild between attempts so a *frozen degraded* rebuild (the
+one that skipped the subtree is exactly the one cached) cannot answer
+``None`` for the rest of the session. Every window and menubar load
+site -- ``ui/app.py``'s route, quit, self-test and resume flows,
+``ui/views/corrections.py``'s six runners, ``crossing_detail.py``,
+``ride_library.py``, ``simulator.py`` and the rest of the sites
+loading straight off ``wx.xrc.XmlResource.Get()`` -- asked the
+resource for its window and got ``None`` back when a load had
+silently skipped it. That is the Fault-B degraded-load class, which
+reads to the operator as a menu row clicking through to "no window
+authored yet".
 
 Phase 3 adds the rider-list piece both rider lists need:
 :class:`RiderRowListModel` (a ``DataViewIndexListModel`` rendering
@@ -41,7 +46,7 @@ from __future__ import annotations
 import gc
 from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import wx
 import wx.xrc  # submodule, not loaded by plain `import wx`
@@ -57,11 +62,13 @@ if TYPE_CHECKING:
 __all__ = [
     "FIND_SETTLE_ATTEMPTS",
     "FRAME_SCREEN_MARGIN",
+    "DialogFindMixin",
     "RiderRowListModel",
     "associate_model",
     "clamp_to_display",
     "default_card_images",
     "find_control",
+    "find_window_by_name",
     "fit_frame_to_screen",
     "fresh_resource",
     "load_dialog",
@@ -139,8 +146,32 @@ def fit_frame_to_screen(frame: Any, min_size: tuple[int, int]) -> None:  # noqa:
     )
 
 
+def find_window_by_name(window: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return *window*'s descendant control named *name*, or None.
+
+    Recursive ``GetChildren()`` walk -- the scoped, cross-platform
+    replacement for ``wx.Window.FindWindowByName(name, window)``, which
+    on Windows ARM64 (wxPython 4.3.1) does not resolve children that
+    are present. Returns the live child wrapper, so ``isinstance``
+    checks against it are correct.
+    """
+    for child in window.GetChildren():
+        if child.GetName() == name:
+            return child
+        found = find_window_by_name(child, name)
+        if found is not None:
+            return found
+    return None
+
+
 def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
     """Resolve one of *window*'s own child controls by name.
+
+    The lookup is :func:`find_window_by_name`'s scoped recursive
+    ``GetChildren()`` walk, never ``wx.Window.FindWindowByName``: on
+    Windows ARM64 (wxPython 4.3.1) that call does not resolve children
+    that are present, so this module resolves them itself, the same way
+    on both platforms.
 
     Callers always pass their own window explicitly as *window*:
     the bare static form of ``FindWindowByName`` defaults to
@@ -188,7 +219,7 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
             a whole-subtree load gap (an ``XmlResource`` degradation)
             reads differently from one missing control.
     """
-    control = wx.Window.FindWindowByName(name, window)
+    control = find_window_by_name(window, name)
     attempts = 0
     while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
         wx.SafeYield()
@@ -201,7 +232,7 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         # the same poison wrapper every attempt.
         del control
         gc.collect()
-        control = wx.Window.FindWindowByName(name, window)
+        control = find_window_by_name(window, name)
         attempts += 1
     if not isinstance(control, expected_type):
         children = [child.GetName() for child in window.GetChildren()]
@@ -216,6 +247,56 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
             f"(first-level children: {len(children)} -- {children!r})"
         )
     return control
+
+
+class DialogFindMixin:
+    """The one ``_find`` every view that decorates an XRC window uses.
+
+    Seventeen views carried a verbatim ``_find`` -- "resolve one of
+    this window's own child controls by name, raising with the window
+    and the missing control both named" -- differing only in the
+    attribute holding the loaded window (``dialog`` everywhere but the
+    console, which holds its ``wx.Frame`` in ``frame``). SIMPLECODE
+    Rule 3's extraction: the body lives here once and every view
+    inherits it.
+
+    The contract is one attribute, :attr:`_window_attr`: the name of
+    the instance attribute holding the XRC window this view resolves
+    its controls inside. It defaults to ``"dialog"``; ``MainFrame``
+    overrides it with ``"frame"``.
+
+    Inheriting keeps :func:`find_control`'s measured address-reuse
+    retry (its own docstring) in front of every lookup, and keeps
+    ``_find`` a bound method on every view -- the form view code and
+    tests call it in.
+    """
+
+    # The instance attribute naming the XRC window this view resolves
+    # its controls inside.
+    _window_attr: ClassVar[str] = "dialog"
+
+    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
+        """Resolve one of this view's own child controls by name.
+
+        See :func:`find_control`'s docstring for the full measured
+        reasoning this mirrors: an explicit window parent scopes the
+        lookup, and the retry loop settles the address-reuse hazard
+        this wx build exhibits under sustained window churn.
+
+        Args:
+            name: The frozen control name to resolve.
+            expected_type: The wx class the control must be an
+                instance of; defaults to any ``wx.Window``.
+
+        Returns:
+            The resolved control.
+
+        Raises:
+            LookupError: If *name* does not resolve to an
+                *expected_type* instance inside the view's window,
+                even after settling.
+        """
+        return find_control(getattr(self, self._window_attr), name, expected_type)
 
 
 # The packaged XRC directory every view loads from; fresh_resource's
@@ -274,22 +355,33 @@ def fresh_resource(xrc_dir: Path | None = None) -> Any:  # noqa: ANN401 -- wx sh
     return _loaded_xrc_dir(xrc_dir if xrc_dir is not None else _XRC_DIR)
 
 
+# Two fresh attempts per miss. One was not enough: the first attempt can
+# land on a memoized *degraded* rebuild -- the rebuild that skipped the
+# subtree is exactly the one _loaded_xrc_dir legitimately cached -- and
+# every later attempt then reused it, answering None for the rest of the
+# session. The loop evicts that cache entry between attempts, so the
+# second attempt re-parses from disk.
+_LOAD_ATTEMPTS = 2
+
+
 def load_dialog(
     resource: Any,  # noqa: ANN401 -- wx ships no stubs
     name: str,
     *,
     parent: Any = None,  # noqa: ANN401 -- wx ships no stubs
 ) -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Load dialog *name* from *resource*, rebuilding once if missing.
+    """Load dialog *name* from *resource*, rebuilding twice if missing.
 
     ``LoadDialog`` returns ``None`` when a load skipped the dialog's
     subtree -- the Fault-B class behind the reported ``File ▸
-    Simulation…`` "no window authored yet" notice. A miss retries once
-    against :func:`fresh_resource`, so a shipped dialog comes back
-    instead of ``None``; only a target no ``.xrc`` authors stays
-    ``None``. A rebuild that raises (an ``OSError``, a parse error)
-    also answers ``None``: this runs inside a wx event handler, where
-    an escaping exception is a crash.
+    Simulation…`` "no window authored yet" notice. A miss makes up to
+    :data:`_LOAD_ATTEMPTS` fresh attempts through
+    :func:`fresh_resource`, evicting the memoized rebuild between them
+    so a frozen degraded rebuild cannot answer ``None`` for the rest of
+    the session; only a target no ``.xrc`` authors stays ``None``. A
+    rebuild that raises (an ``OSError``, a parse error) is reported
+    through ``wx.LogWarning`` and also answers ``None``: this runs
+    inside a wx event handler, where an escaping exception is a crash.
 
     *parent* is passed to both loads. It defaults to ``None`` -- the
     parentless load every menu route uses -- and the two sites that
@@ -302,25 +394,40 @@ def load_dialog(
     if window is not None:
         return window
     try:
-        return fresh_resource().LoadDialog(parent, name)
-    except Exception:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
+        for _ in range(_LOAD_ATTEMPTS):
+            window = fresh_resource().LoadDialog(parent, name)
+            if window is not None:
+                return window
+            _rebuilt_resources.pop(_XRC_DIR, None)
+    except Exception as exc:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
+        wx.LogWarning(f"XRC rebuild failed: {type(exc).__name__}: {exc}")
         return None
+    return None
 
 
 def load_menubar(resource: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Load menubar *name* from *resource*, rebuilding once if missing.
+    """Load menubar *name* from *resource*, rebuilding twice if missing.
 
     The :func:`load_dialog` shape on the ``LoadMenuBar`` seam: a miss
-    retries once against :func:`fresh_resource`, and a rebuild that
-    raises answers ``None`` rather than escaping into the wx handler.
+    makes up to :data:`_LOAD_ATTEMPTS` fresh attempts against
+    :func:`fresh_resource`, evicting the memoized rebuild between them
+    (the frozen-degraded-rebuild case :func:`load_dialog` documents),
+    and a rebuild that raises is reported through ``wx.LogWarning`` and
+    answers ``None`` rather than escaping into the wx handler.
     """
     menubar = resource.LoadMenuBar(None, name)
     if menubar is not None:
         return menubar
     try:
-        return fresh_resource().LoadMenuBar(None, name)
-    except Exception:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
+        for _ in range(_LOAD_ATTEMPTS):
+            menubar = fresh_resource().LoadMenuBar(None, name)
+            if menubar is not None:
+                return menubar
+            _rebuilt_resources.pop(_XRC_DIR, None)
+    except Exception as exc:  # noqa: BLE001 -- a rebuild failure must not reach the wx handler
+        wx.LogWarning(f"XRC rebuild failed: {type(exc).__name__}: {exc}")
         return None
+    return None
 
 
 @cache

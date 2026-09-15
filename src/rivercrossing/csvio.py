@@ -571,6 +571,12 @@ def export(ride: Roster, path: Path, *, placed: Sequence[Placed] | None = None) 
     file and swapped over *path* with :func:`os.replace`, so a crash
     mid-export leaves the previous complete file in place.
 
+    CWE-1236: a cell whose text starts with ``=``, ``+``, ``-``, ``@``,
+    TAB or CR is written with a leading single quote, so opening the
+    file in a spreadsheet cannot execute an operator-typed name or
+    note as a formula (:func:`_write_csv_rows`, the one writer both
+    export shapes share).
+
     Args:
         ride: The roster to export. Never mutated.
         path: The file to write. Replaced atomically; a pre-existing
@@ -873,17 +879,6 @@ def _team_size_problem(size: int, max_team_size: int) -> str | None:
     return None
 
 
-def _fuzzy_team_key(name: str) -> str:
-    """Return *name*'s fuzzy key for near-duplicate team detection.
-
-    Delegates to :func:`~rivercrossing.roster.team_name_key`, the one
-    shared home the rider-issues report also compares team names
-    through -- this private csvio-local name is kept only so existing
-    call sites and tests do not have to move.
-    """
-    return team_name_key(name)
-
-
 def _duplicate_rider_warnings(rows: Sequence[_DataRow]) -> list[ImportConflict]:
     """Return one warning per rider name that repeats (case-folded).
 
@@ -932,7 +927,8 @@ def _near_duplicate_team_warnings(
     """Return one warning per pair of near-duplicate team names.
 
     Two distinct normalized team names that share a fuzzy key
-    (:func:`_fuzzy_team_key`) are near-duplicates; the warning names
+    (:func:`~rivercrossing.roster.team_name_key`) are near-duplicates;
+    the warning names
     both, first-seen first, at the second name's first row. A name in
     *converted_team_names* was reshaped to solo, so it is skipped --
     the warning would otherwise name a team the preview no longer has.
@@ -949,7 +945,7 @@ def _near_duplicate_team_warnings(
             order.append(row.team_name)
     fuzzy_groups: dict[str, list[str]] = {}
     for name in order:
-        fuzzy_groups.setdefault(_fuzzy_team_key(name), []).append(name)
+        fuzzy_groups.setdefault(team_name_key(name), []).append(name)
     return [
         ImportConflict(
             row=first_row[second],
@@ -1654,6 +1650,27 @@ def _update_name_notes(ride: Roster, existing: Entry, parsed: ParsedEntry) -> bo
     return True
 
 
+# CWE-1236: a spreadsheet executes any cell whose text starts with one
+# of these. TAB and CR are included because a spreadsheet strips the
+# leading whitespace and then reads the character that follows it, so
+# a "\t=cmd" cell is as live as a "=cmd" one.
+_FORMULA_LEADS = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _neutralise_formula_cell(cell: str) -> str:
+    """Return *cell* with a leading formula trigger escaped (CWE-1236).
+
+    A single leading quote makes the spreadsheet read the cell as text
+    without changing the value a CSV reader sees beyond that one
+    character -- csvio's both exports write free text the operator
+    typed (names, team names, notes), so a cell is never safely
+    trusted.
+    """
+    if cell.startswith(_FORMULA_LEADS):
+        return f"'{cell}"
+    return cell
+
+
 def _write_csv_rows(path: Path, header: Sequence[str], rows: Sequence[Sequence[str]]) -> None:
     """Write *header* and *rows* to *path* as CSV, atomically (R-52).
 
@@ -1662,12 +1679,17 @@ def _write_csv_rows(path: Path, header: Sequence[str], rows: Sequence[Sequence[s
     therefore flushed) before the swap -- so a crash mid-export leaves
     the previous complete file in place and a reader never observes a
     truncated CSV.
+
+    Every cell passes through :func:`_neutralise_formula_cell`, so both
+    of this module's export shapes inherit the CWE-1236 guard from this
+    one row writer.
     """
     tmp = path.with_name(path.name + ".tmp")
     with tmp.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(header)
-        writer.writerows(rows)
+        writer.writerow([_neutralise_formula_cell(cell) for cell in header])
+        for row in rows:
+            writer.writerow([_neutralise_formula_cell(cell) for cell in row])
     os.replace(tmp, path)  # noqa: PTH105 -- R-52 mandates the os.replace atomic swap; tests patch it
 
 

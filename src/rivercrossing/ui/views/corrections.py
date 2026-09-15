@@ -23,7 +23,10 @@ the engine afterwards, exactly like the section-C rows).
 Every form/confirm requires a non-empty ``reason``: the OK handler
 keeps the dialog open and refocuses ``reason_input`` when it is blank
 (``_bind_reason_gate``), so the engine's own empty-reason refusal is
-never the first line of defence in the UI. ``dnf_confirm_dlg`` gates
+never the first line of defence in the UI. ``void_card_confirm_dlg``
+also shows that gate up front -- its OK starts disabled and enables on
+the first non-blank ``wx.EVT_TEXT`` (``_bind_reason_enable``).
+``dnf_confirm_dlg`` gates
 on its ``plate_input`` as well (``_bind_plate_gate``) -- its target is
 typed in, and a blank plate would otherwise reach the engine's own
 unknown-plate refusal instead of the form's.
@@ -45,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 import wx.adv as _wx_adv  # submodule, not loaded by plain `import wx`
 
 from rivercrossing.ui import ids, require_wx
+from rivercrossing.ui.card_text import format_card
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import find_control, load_dialog
 
@@ -117,7 +121,7 @@ class DnfMark:
     """One confirmed ``dnf_confirm_dlg`` submission (E7.2.1).
 
     ``plate`` is whatever the operator typed into the dialog's
-    ``plate_input`` -- a pooled rider's own number, or a whole entry's
+    ``plate_input`` -- a pooled rider's own plate, or a whole entry's
     plate -- and the engine's ``mark_dnf`` resolves the scope from the
     roster; the dialog never decides which is which.
     """
@@ -189,6 +193,24 @@ def _picked_time(time_picker: Any, base_date: date) -> datetime:  # noqa: ANN401
     return datetime.combine(
         base_date, time(picked.GetHour(), picked.GetMinute(), picked.GetSecond())
     )
+
+
+def _bind_reason_enable(dialog: Any, reason_input: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Start OK disabled and enable it when the reason is non-blank.
+
+    ``void_card_confirm_dlg`` is a scoring change: the operator must not
+    be able to click "Void card" before saying why. The button starts
+    disabled and ``wx.EVT_TEXT`` re-enables it the moment the reason box
+    holds non-blank text -- the visual half of
+    :func:`_bind_reason_gate`'s refusal, which still guards the click.
+    """
+    ok_button = _find(dialog, "wxID_OK")
+    ok_button.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
+
+    def _on_text(_event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        ok_button.Enable(bool(reason_input.GetValue().strip()))
+
+    reason_input.Bind(wx.EVT_TEXT, _on_text)
 
 
 def _bind_reason_gate(reason_input: Any) -> Callable[[], bool]:  # noqa: ANN401 -- wx ships no stubs
@@ -271,7 +293,7 @@ def _run_dialog(dialog: Any, frame: Any) -> int:  # noqa: ANN401 -- wx ships no 
     return dialogs.run_dialog(dialog, opener=frame)
 
 
-def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time, seq, base_date)
+def run_edit_crossing(  # noqa: PLR0913 -- resource, frame + the dialog's own fields
     resource: Any,  # noqa: ANN401 -- wx ships no stubs
     *,
     frame: Any,  # noqa: ANN401 -- wx ships no stubs
@@ -280,6 +302,9 @@ def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time
     time: str,
     seq: int | None = None,
     base_date: date | None = None,
+    title: str | None = None,
+    read_only_plate: bool = False,
+    suppress_void: bool = False,
 ) -> CrossingEdit | None:
     """Open ``edit_crossing_dlg``; return the confirmed edit, or None.
 
@@ -291,6 +316,13 @@ def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time
     crossing identity the caller already knows (the selected lap);
     ``None`` leaves it to the caller to resolve (the menu flow).
 
+    The three optional overrides let a caller re-purpose the same
+    window: *title* replaces the ``adding``-derived one (the crossing
+    detail's "Edit Time"), *read_only_plate* shows *plate* without
+    offering it for editing, and *suppress_void* hides ``void_btn``
+    (and unbinds it) where voiding the crossing is not on offer. Their
+    defaults preserve the Cards menu routes' behaviour.
+
     Returns:
         The confirmed submission, or ``None`` on cancel.
     """
@@ -298,15 +330,18 @@ def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time
     if dialog is None:
         return None
     try:
-        dialog.SetTitle("Add Crossing at Time" if adding else "Edit Crossing")
+        dialog.SetTitle(
+            title if title is not None else ("Add Crossing at Time" if adding else "Edit Crossing")
+        )
         plate_input = _find(dialog, ids.PLATE_INPUT)
         time_picker = _find(dialog, ids.TIME_PICKER)
         reason_input = _find(dialog, ids.REASON_INPUT)
         void_btn = _find(dialog, ids.VOID_BTN)
         plate_input.SetValue(plate)
+        plate_input.Enable(not read_only_plate)
         _set_time_picker(time_picker, time)
-        void_btn.Show(not adding)
-        void_btn.Enable(not adding)
+        void_btn.Show((not adding) and (not suppress_void))
+        void_btn.Enable((not adding) and (not suppress_void))
         base = base_date if base_date is not None else datetime.now(UTC).date()
         confirmed: CrossingEdit | None = None
 
@@ -331,7 +366,7 @@ def run_edit_crossing(  # noqa: PLR0913 -- (resource, frame, adding, plate, time
 
         gate = _bind_reason_gate(reason_input)
         _bind_ok(dialog, gate, _commit_edit)
-        if not adding:
+        if not adding and not suppress_void:
 
             def _on_void(_event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
                 if gate():
@@ -387,17 +422,22 @@ def run_void_card(  # noqa: PLR0913 -- (resource, frame, entry_id, card, entry)
 ) -> CardVoid | None:
     """Open ``void_card_confirm_dlg``; return the confirmed void.
 
-    Writes ``card_lbl`` naming the card + entry (never blank --
-    ``dialogs.void_card_message``), so the operator sees exactly which
-    dealt card they are about to void.
+    Writes the dialog's two data labels -- ``card_lbl`` with the
+    formatted card and ``entry_lbl`` with the entry's own name, never
+    blank -- so the operator sees exactly which dealt card they are
+    about to void. OK starts disabled and enables once the reason box
+    holds non-blank text (:func:`_bind_reason_enable`); the reason gate
+    still guards the click.
     """
     dialog = load_dialog(resource, ids.VOID_CARD_CONFIRM_DLG)
     if dialog is None:
         return None
     try:
         card_lbl = _find(dialog, ids.CARD_LBL)
+        entry_lbl = _find(dialog, ids.ENTRY_LBL)
         reason_input = _find(dialog, ids.REASON_INPUT)
-        card_lbl.SetLabel(dialogs.void_card_message(card, entry))
+        card_lbl.SetLabel(format_card(card))
+        entry_lbl.SetLabel(entry)
         confirmed: CardVoid | None = None
 
         def _commit() -> None:
@@ -408,6 +448,7 @@ def run_void_card(  # noqa: PLR0913 -- (resource, frame, entry_id, card, entry)
                 reason=reason_input.GetValue().strip(),
             )
 
+        _bind_reason_enable(dialog, reason_input)
         _bind_ok(dialog, _bind_reason_gate(reason_input), _commit)
         result = _run_dialog(dialog, frame)
         return confirmed if result == wx.ID_OK else None
@@ -425,12 +466,12 @@ def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's f
 ) -> DnfMark | None:
     """Open ``dnf_confirm_dlg``; return the confirmed DNF mark.
 
-    The dialog is a form: ``plate_input`` takes the rider number (or a
+    The dialog is a form: ``plate_input`` takes the rider plate (or a
     whole entry's plate) and ``reason_input`` the reason, both
     non-empty before OK closes it -- the same gate every correction
     form applies. *plate* prefills the input (the entry-detail button
     passes its own entry plate; the menu route passes nothing and the
-    operator types the number). *entry* writes the ``entry_lbl``
+    operator types the plate). *entry* writes the ``entry_lbl``
     naming sentence (``dialogs.dnf_message``) when a target is already
     known; with none, XRC's own standing copy stays.
     """

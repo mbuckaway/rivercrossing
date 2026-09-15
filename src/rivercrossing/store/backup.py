@@ -41,7 +41,21 @@ open and later EPICs build on them):
   is only the hourly seam. Its first ``tick()`` seeds the last-seen
   hour and does not run (the open backup is a separate call); a
   later tick whose hour has strictly advanced runs the runner exactly
-  once. E5.4 wires the app's real timer to ``tick()``.
+  once. The app half of that seam belongs to the app: R-71 keeps
+  every ``wx`` import under ``rivercrossing.ui``, so no timer can live
+  in this stdlib-only module. The wiring is therefore: one
+  ``Store.backup_now()`` right after ``Store.open`` in ``ui/app.py``'s
+  ``main`` (R-54's "on open"; that method is this module's own
+  :func:`run` on the store's backing path), then that same method as
+  the hourly runner of a ``wx.Timer`` owned by the main frame --
+  ``scheduler = schedule_hourly(store.backup_now)`` and
+  ``main_frame.wire_console``'s ``_tick_timer`` shape
+  (``timer = wx.Timer(frame)``, ``frame.Bind(wx.EVT_TIMER, lambda
+  _event: scheduler.tick(), timer)``, ``timer.Start(3_600_000)``) --
+  stopped from that frame's own ``wx.EVT_WINDOW_DESTROY`` for
+  ``_tick_timer``'s measured reason: a running ``wx.Timer`` whose
+  owner was destroyed keeps its native timer registered, and the next
+  ``wxSafeYield`` dispatches against the freed owner.
 """
 
 import os

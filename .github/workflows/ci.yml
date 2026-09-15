@@ -329,6 +329,20 @@ jobs:
             echo "tag ${GITHUB_REF_NAME} does not match rivercrossing.__version__ ${version} -- bump the version before tagging" >&2
             exit 1
           fi
+      - name: CHANGELOG section present
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          python3 - "${version}" <<'PY' > changelog-section.md
+          import re, sys
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          ver = sys.argv[1]
+          m = re.search(rf"(?ms)^(## \[{re.escape(ver)}\].*?)(?=^## \[|\Z)", text)
+          sys.stdout.write((m.group(1).rstrip() + "\n") if m else "")
+          PY
+          if [ ! -s changelog-section.md ]; then
+            echo "no CHANGELOG section for ${version} -- add it before tagging" >&2
+            exit 1
+          fi
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -499,3 +513,6 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" \
             --generate-notes assets/*
+          gh release view "${GITHUB_REF_NAME}" --json body -q .body > notes.md
+          { cat notes.md; printf '\n\n---\n\n'; cat changelog-section.md; } > combined.md
+          gh release edit "${GITHUB_REF_NAME}" --notes-file combined.md

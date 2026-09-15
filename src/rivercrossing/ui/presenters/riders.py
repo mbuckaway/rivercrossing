@@ -780,8 +780,7 @@ class RidersPresenter:
         :meth:`RidersView.show_validation` with Import disabled, and
         never raise past this handler: wx swallows an exception that
         escapes the presenter's caller, which would leave the dialog
-        open with nothing happening (the measured note
-        ``docs/EPIC3-SESSION-SUMMARY.md`` records).
+        open with nothing happening (measured).
 
         Phase 3 threads :attr:`_map_unknown_sex_to_male` into every
         preview, so the toggle's re-run and a fresh pick agree; Phase E
@@ -851,7 +850,7 @@ class RidersPresenter:
         are present after all) shows via
         :meth:`RidersView.show_validation` and returns ``False``,
         never raising past this handler -- mirroring
-        :meth:`on_add`/:meth:`on_save`/:meth:`on_delete`'s own
+        :meth:`on_add_committed`/:meth:`on_delete`'s own
         refusal shape. Returns ``True`` once the commit actually
         applied, so :class:`~rivercrossing.ui.views.rider_editor.
         CsvPreviewDialog` knows whether to end its own modal loop.

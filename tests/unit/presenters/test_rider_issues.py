@@ -402,7 +402,7 @@ def test_on_row_selected_given_the_last_row_accepts_it() -> None:
     presenter.on_row_selected(1)
 
     assert ("set_convert_solo_enabled", (False,)) in view.calls
-    assert presenter._selected is not None
+    assert presenter._selected is presenter._issues[1]
 
 
 def test_on_nothing_selected_clears_the_selection_and_disables_every_button() -> None:

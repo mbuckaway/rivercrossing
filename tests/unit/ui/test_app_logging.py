@@ -16,11 +16,13 @@ constructed):
   :func:`~rivercrossing.ui.app._make_event_filter` records the
   whitelisted control events and skips everything else, and never
   swallows an event.
-- **D1 unauthored-window marker.**
-  :func:`~rivercrossing.ui.app._open_target` records a marker when a
-  route's XRC target loads no window -- a menu row clicking through
-  to nothing, the silent-death class -- and still posts the
-  status-bar notice.
+- **D1 unauthored-window warning.**
+  :func:`~rivercrossing.ui.app._open_target` records an always-on
+  ``warn`` when a route's XRC target loads no window -- a menu row
+  clicking through to nothing, the silent-death class -- and still
+  posts the status-bar notice. The console's two dialog entry points
+  (``_open_rider_editor_for``, ``_show_crossing_detail_dialog``)
+  record the same warning beside their notice.
 
 A real :class:`~rivercrossing.ui.logging.Logging` over ``tmp_path``
 is the assertion surface, so each test checks the record that would
@@ -29,7 +31,6 @@ reach a support session rather than that a mock was called.
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -38,6 +39,7 @@ import wx
 import wx.xrc
 from xrc_fixtures import pin_no_authored_window
 
+from conftest import _records
 from rivercrossing.roster import Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import commands
@@ -84,14 +86,6 @@ class _AppWithLog:
     def __init__(self, log: Logging | None) -> None:
         """Store the app's log (``None`` when un-wired)."""
         self.log = log
-
-
-def _records(path: Path) -> list[dict[str, object]]:
-    """Return the NDJSON records at *path* (none when it is absent)."""
-    if not path.exists():
-        return []
-    text = path.read_text(encoding="utf-8")
-    return [json.loads(line) for line in text.splitlines() if line]
 
 
 def _entries(path: Path) -> list[dict[str, object]]:
@@ -192,6 +186,18 @@ def test_bind_routes_without_a_log_still_dispatches_the_route(
 # ------------------------------------------- F3: the settings toggle
 
 
+class _SettingsMenuItem:
+    """A menu-item double recording the settings apply's verdict."""
+
+    def __init__(self) -> None:
+        """Start with no recorded verdict."""
+        self.enabled: bool | None = None
+
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record the enablement verdict."""
+        self.enabled = enabled
+
+
 class _SettingsFrame(_NoticeFrame):
     """A frame double answering the settings apply's menubar sync."""
 
@@ -199,6 +205,7 @@ class _SettingsFrame(_NoticeFrame):
         """Start with an empty check log."""
         super().__init__()
         self.checks: list[tuple[int, bool]] = []
+        self.menu_item = _SettingsMenuItem()
 
     def GetMenuBar(self) -> _SettingsFrame:  # noqa: N802 -- wx API name
         """Return this frame as the menubar double."""
@@ -207,6 +214,12 @@ class _SettingsFrame(_NoticeFrame):
     def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- wx API name, positional bool
         """Record one menu check sync."""
         self.checks.append((item_id, checked))
+
+    def FindItem(  # noqa: N802 -- wx API name
+        self, _real_id: int
+    ) -> tuple[_SettingsMenuItem, None]:
+        """Answer the one item the R-63 publish gate looks up (G6)."""
+        return self.menu_item, None
 
 
 class _FakeThemeController:
@@ -221,7 +234,8 @@ def _settings(*, verbose_logging: bool) -> AppSettings:
     return AppSettings(
         appearance="system",
         sound_on=True,
-        hide_times=False,
+        show_total_times=False,
+        show_lap_time=True,
         zoom_percent=100,
         verbose_logging=verbose_logging,
     )
@@ -404,11 +418,16 @@ class _MissingWindowResource:
         """Report the target has no authored window."""
 
 
-def test_open_target_given_no_authored_window_records_the_marker_and_posts_the_notice(
+def test_open_target_given_no_authored_window_records_the_warning_and_posts_the_notice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """D1: a click-through to nothing is in log and notice."""
-    log = Logging(_log_path(tmp_path))
+    """D1: a click-through to nothing is in the log whatever the trace.
+
+    The record is always-on (``WARNING``), not a trace marker: this
+    failure must be diagnosable from the log even with verbose logging
+    off.
+    """
+    log = Logging(_log_path(tmp_path), verbose=False)
     frame = _NoticeFrame()
     pin_no_authored_window(monkeypatch, _MissingWindowResource)
     context = _context(frame=frame, log=log, resource=_MissingWindowResource())
@@ -418,8 +437,8 @@ def test_open_target_given_no_authored_window_records_the_marker_and_posts_the_n
 
     assert _entries(_log_path(tmp_path)) == [
         {
-            "level": "DEBUG",
-            "event": "marker",
+            "level": "WARNING",
+            "event": "warn",
             "msg": "Standings: no window authored for target 'results_dlg'",
         }
     ]
@@ -502,3 +521,74 @@ def test_open_target_given_a_skipped_dialog_recovers_it_and_posts_no_notice(
     assert recovered.destroyed is True
     assert frame.notices == []
     assert _entries(_log_path(tmp_path)) == []
+
+
+# ------------------ D1: the console entry points' unauthored warning
+
+
+def test_open_rider_editor_for_given_no_authored_window_records_the_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D1: the Riders-tab editor miss reaches the log too."""
+    log = Logging(_log_path(tmp_path), verbose=False)
+    frame = _NoticeFrame()
+    pin_no_authored_window(monkeypatch, _MissingWindowResource)
+    context = _context(frame=frame, log=log, resource=_MissingWindowResource())
+
+    app_module._open_rider_editor_for(context, "77")
+
+    assert _entries(_log_path(tmp_path)) == [
+        {
+            "level": "WARNING",
+            "event": "warn",
+            "msg": "Rider Editor — no window authored yet",
+        }
+    ]
+    assert frame.notices == ["Rider Editor — no window authored yet"]
+
+
+def test_show_crossing_detail_dialog_given_no_authored_window_records_the_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D1: the crossing-detail miss reaches the log too."""
+    log = Logging(_log_path(tmp_path), verbose=False)
+    frame = _NoticeFrame()
+    pin_no_authored_window(monkeypatch, _MissingWindowResource)
+    context = _context(frame=frame, log=log, resource=_MissingWindowResource())
+
+    app_module._show_crossing_detail_dialog(context, object(), object())
+
+    assert _entries(_log_path(tmp_path)) == [
+        {
+            "level": "WARNING",
+            "event": "warn",
+            "msg": "Crossing Detail — no window authored yet",
+        }
+    ]
+    assert frame.notices == ["Crossing Detail — no window authored yet"]
+
+
+def test_open_rider_editor_for_given_no_authored_window_and_no_log_posts_the_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1: an app with no log still posts the Riders-tab notice."""
+    frame = _NoticeFrame()
+    pin_no_authored_window(monkeypatch, _MissingWindowResource)
+    context = _context(frame=frame, log=None, resource=_MissingWindowResource())
+
+    app_module._open_rider_editor_for(context, "77")
+
+    assert frame.notices == ["Rider Editor — no window authored yet"]
+
+
+def test_show_crossing_detail_dialog_given_no_authored_window_and_no_log_posts_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1: an app with no log still posts the crossing-detail notice."""
+    frame = _NoticeFrame()
+    pin_no_authored_window(monkeypatch, _MissingWindowResource)
+    context = _context(frame=frame, log=None, resource=_MissingWindowResource())
+
+    app_module._show_crossing_detail_dialog(context, object(), object())
+
+    assert frame.notices == ["Crossing Detail — no window authored yet"]

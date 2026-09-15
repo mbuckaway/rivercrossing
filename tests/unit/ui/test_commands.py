@@ -45,8 +45,8 @@ ROUTE_COUNTS_BY_MENU = (
     ("File", 8),  # D1: New Ride… moved to the Ride menu; +mi_simulation
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
     ("Riders", 4),  # Phase 2: mi_entry_detail retired
-    ("Cards", 5),  # Phase 2: mi_reassign_plate + mi_void_card retired
-    ("Results", 7),  # C6: mi_tiebreak_order retired; +1: Preview split per format
+    ("Cards", 4),  # Phase 2: mi_reassign_plate + mi_void_card retired (G7: mi_edit_crossing)
+    ("Results", 8),  # C6: mi_tiebreak_order retired; G6: +the publish row
     ("View", 1),
     ("Help", 4),
 )
@@ -83,17 +83,17 @@ ROUTE_TARGETS = (
     (commands.TargetKind.DIALOG, ids.DNF_CONFIRM_DLG),  # Mark DNF...
     (commands.TargetKind.COMMAND, None),  # Undo Last Crossing: "no dialog"
     (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Add Crossing at Time...
-    (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Edit Crossing...
     (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Bonus Card...
     (commands.TargetKind.COMMAND, None),  # Review Held Cards: focuses an existing panel
     (commands.TargetKind.DIALOG, ids.RESULTS_DLG),  # Standings (Part C: modal dialog)
-    (commands.TargetKind.COMMAND, None),  # Generate HTML...: OS-native save dialog
+    (commands.TargetKind.COMMAND, None),  # Export HTML...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Podium Poster PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Preview HTML in Browser: external browser
     (commands.TargetKind.COMMAND, None),  # Preview PDF in Browser: external browser
-    (commands.TargetKind.COMMAND, None),  # Hide Times / Zoom: direct commands (W13)
+    (commands.TargetKind.COMMAND, None),  # Publish options (G6): direct commands
+    (commands.TargetKind.COMMAND, None),  # Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
     (commands.TargetKind.DIALOG, ids.SHORTCUTS_DLG),  # Keyboard Shortcuts
     (commands.TargetKind.DIALOG, ids.SELFTEST_DLG),  # Run Evaluator Self-test
@@ -117,18 +117,18 @@ def test_route_table_declares_exactly_the_thirty_eight_spec_15_rows() -> None:
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4."""
+    """File 8, Ride 9, Riders 4, Cards 4, Results 8, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_five_real_menu_item_ids_once_each() -> None:
-    """42 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_fifty_real_menu_item_ids_once_each() -> None:
+    """47 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 45
-    assert len(set(flat_ids)) == 45
+    assert len(flat_ids) == 50
+    assert len(set(flat_ids)) == 50
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -159,6 +159,12 @@ def test_route_for_id_given_the_retired_add_entry_id_raises_after_d4() -> None:
     """D4: mi_add_entry left the Riders menu and the route table."""
     with pytest.raises(commands.UnroutedMenuItemError, match=re.escape("mi_add_entry")):
         commands.route_for_id("mi_add_entry")
+
+
+def test_route_for_id_given_the_retired_edit_crossing_id_raises_after_g7() -> None:
+    """G7: mi_edit_crossing left the Cards menu and the route table."""
+    with pytest.raises(commands.UnroutedMenuItemError, match=re.escape("mi_edit_crossing")):
+        commands.route_for_id("mi_edit_crossing")
 
 
 # Phase 2 retired the dead correction surfaces: Entry Detail… (its
@@ -212,11 +218,16 @@ def test_new_ride_route_declares_the_no_ride_gate() -> None:
 
 
 def test_clear_ride_route_declares_the_d3_enablement_rule() -> None:
-    """D3: the Clear Ride… row's own "Enabled when" cell, structured."""
+    """D3 + G5: the Clear Ride… row's own "Enabled when" cell.
+
+    REOPENED joins the clearable set: clearing is the only way to
+    unload a reopened ride from memory, and the row never removes it
+    from the store.
+    """
     rule = commands.route_for_id(ids.MI_CLEAR_RIDE).enabled_when
 
     assert rule.allowed_states == frozenset(
-        {RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}
+        {RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED}
     )
     assert rule.requires_ride_stopped is True
 
@@ -240,6 +251,32 @@ def test_standings_route_is_always_enabled_after_part_d() -> None:
     route = commands.route_for_id(ids.MI_STANDINGS)
 
     assert route.enabled_when == commands.Enablement()
+
+
+def test_results_publish_route_given_the_five_ids_is_one_always_on_command() -> None:
+    """G6: five publish items, one always-on COMMAND row."""
+    route = commands.route_for_id("mi_show_times")
+
+    assert (route.menu, route.kind, route.target) == (
+        "Results",
+        commands.TargetKind.COMMAND,
+        "results_publish",
+    )
+    assert route.ids == (
+        "mi_show_times",
+        "mi_laps_board",
+        "mi_time_board",
+        "mi_full_field",
+        "mi_all_cards",
+    )
+    assert route.enabled_when == commands.Enablement()
+
+
+def test_export_html_route_label_reads_export_after_g6() -> None:
+    """G6 renamed the Results row's label to match its verb."""
+    route = commands.route_for_id(ids.MI_EXPORT_HTML)
+
+    assert route.label == "Export HTML…"
 
 
 def test_is_route_enabled_given_standings_and_no_ride_open_is_enabled() -> None:
@@ -315,10 +352,11 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Ride > Finish Ride...
     frozenset({RideStatus.FINISHED}),  # Ride > Reopen Ride: "FINISHED"
     None,  # Ride > Audit Trail...: "ride open, >=1 audit row"
-    # Clear Ride... (D3): DRAFT / stopped RUNNING / FINISHED.
-    # REOPENED is not clearable -- finish it first; the stop clause
-    # only ever gates a RUNNING ride.
-    frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}),
+    # Clear Ride... (D3 + G5): DRAFT / stopped RUNNING / FINISHED /
+    # REOPENED -- clearing is the only way to unload a reopened ride
+    # from memory, and it never touches the store; the stop clause only
+    # ever gates a RUNNING ride.
+    frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED}),
     None,  # Riders > Rider Editor: "ride open"
     None,  # Riders > Teams Editor: "ride open, mixed (teams allowed)" -- teams_allowed is a
     # condition-only gate, never a RideStatus membership rule
@@ -326,18 +364,18 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Riders > Mark DNF...
     frozenset({RideStatus.RUNNING}),  # Cards > Undo Last Crossing: "RUNNING, >=1 crossing"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Add Crossing at Time...
-    frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Edit Crossing...
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Deal Bonus Card...
     None,  # Cards > Review Held Cards: "held cards > 0"
     None,  # Results > Standings: "always" -- the dialog shows the empty state
-    frozenset({RideStatus.FINISHED}),  # Results > Generate HTML...
+    frozenset({RideStatus.FINISHED}),  # Results > Export HTML…
     frozenset({RideStatus.FINISHED}),  # Results > Export PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Podium Poster PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Export Standings CSV...
     # Part D: each Preview row is FINISHED plus its own format's export.
     frozenset({RideStatus.FINISHED}),  # Results > Preview HTML in Browser
     frozenset({RideStatus.FINISHED}),  # Results > Preview PDF in Browser
-    None,  # View > Hide Times / Zoom: "always"
+    None,  # Results > Publish Options (G6): "always" -- direct commands
+    None,  # View > Times / Zoom: "always"
     None,  # Help > User Guide: "always"
     None,  # Help > Keyboard Shortcuts: "always"
     None,  # Help > Run Evaluator Self-test: "always"
@@ -625,9 +663,11 @@ def test_is_route_enabled_given_start_ride_stopped_condition_matches_spec(
     assert result is expected_enabled
 
 
-# D2/D3: the two rows the 1.0.12 ride-menu work adds.
-# Clear Ride… enables in DRAFT, in stopped RUNNING and in FINISHED; a
-# live RUNNING ride and a REOPENED (corrections) ride do not.
+# D2/D3: the two rows the 1.0.12 ride-menu work adds, plus the 1.0.17
+# follow-up (G5). Clear Ride… enables in DRAFT, in stopped RUNNING, in
+# FINISHED and in REOPENED; only a live RUNNING ride has to stop
+# first, since the stop clause is consulted while the status is
+# RUNNING alone.
 CLEAR_RIDE_CASES = (
     (RideStatus.DRAFT, False, True),
     (RideStatus.DRAFT, True, True),
@@ -635,7 +675,8 @@ CLEAR_RIDE_CASES = (
     (RideStatus.RUNNING, True, True),
     (RideStatus.FINISHED, False, True),
     (RideStatus.FINISHED, True, True),
-    (RideStatus.REOPENED, True, False),
+    (RideStatus.REOPENED, False, True),
+    (RideStatus.REOPENED, True, True),
 )
 
 
@@ -643,12 +684,39 @@ CLEAR_RIDE_CASES = (
 def test_is_route_enabled_given_clear_ride_matches_spec_d3(
     status: RideStatus, *, ride_stopped: bool, expected_enabled: bool
 ) -> None:
-    """T-13: all four states x the stop clause for Clear Ride…."""
+    """T-13: all four states x the stop clause for Clear Ride….
+
+    The REOPENED rows pin G5: neither stop value gates a reopened
+    ride, because the stop clause is consulted for a RUNNING status
+    alone.
+    """
     state = dataclasses.replace(_baseline_state(status), ride_stopped=ride_stopped)
 
     result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
 
     assert result is expected_enabled
+
+
+def test_is_route_enabled_given_clear_ride_and_reopened_ride_open_is_enabled() -> None:
+    """G5: a REOPENED ride IS clearable -- the only way to unload it.
+
+    Clearing drops the ride from memory and never writes to the store,
+    so a reopened ride stays saved and reopenable from the library.
+    """
+    state = commands.RideState(status=RideStatus.REOPENED, ride_open=True, ride_stopped=False)
+
+    result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
+
+    assert result is True
+
+
+def test_is_route_enabled_given_clear_ride_and_live_running_is_disabled() -> None:
+    """D3: a live RUNNING ride must stop first, even after G5."""
+    state = commands.RideState(status=RideStatus.RUNNING, ride_open=True, ride_stopped=False)
+
+    result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
+
+    assert result is False
 
 
 @pytest.mark.parametrize("ride_open", RIDE_OPEN_CASES, ids=RIDE_OPEN_CASE_IDS)
@@ -680,10 +748,11 @@ def test_is_route_enabled_given_new_ride_follows_the_closed_ride_in_every_state(
 # --- E7.2.1: the live binder's enable/disable table for the -----------
 # --- correction rows (menu_state applies exactly this table) ----------
 
-# spec.md §15's "Enabled when" cells for the four correction rows the
+# spec.md §15's "Enabled when" cells for the three correction rows the
 # live menu binder targets (Phase 2 retired Reassign Plate… and Void
-# Card…), transcribed independently of commands.py itself (the same
-# double-transcription discipline as ALLOWED_STATES). The fourth field
+# Card…; G7 retired Edit Crossing…), transcribed independently of
+# commands.py itself (the same double-transcription discipline as
+# ALLOWED_STATES). The fourth field
 # is an "entry has cards" requirement; None means the row has no such
 # condition (no live row declares one since Void Card… retired).
 _RUNNING_FOR_TESTS = frozenset({RideStatus.RUNNING})
@@ -692,7 +761,6 @@ _RUNNING_REOPENED_FOR_TESTS = frozenset({RideStatus.RUNNING, RideStatus.REOPENED
 _CORRECTION_ENABLEMENT = (
     ("Undo Last Crossing", _RUNNING_FOR_TESTS, 1, None),
     ("Add Crossing at Time…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
-    ("Edit Crossing…", _RUNNING_REOPENED_FOR_TESTS, 1, None),
     ("Deal Bonus Card…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
 )
 
@@ -710,7 +778,7 @@ def test_is_route_enabled_given_correction_route_matches_the_live_binder_table( 
     *,
     status: RideStatus,
 ) -> None:
-    """The four correction rows' verdicts are the §15 table, per state.
+    """The three correction rows' verdicts are the §15 table, per state.
 
     Every row's state gate, its numeric minimum and any entry-has-cards
     condition combine exactly as the live binder applies them

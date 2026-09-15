@@ -46,8 +46,8 @@ A refused operation (add/remove after start, a blank or duplicate
 team name, ...) renders as a code-side ``wxInfoBar``
 (:data:`TEAMS_INFOBAR`) -- the same measured pattern
 ``rider_editor.py``'s ``RiderEditor`` uses, slide effects disabled for
-the same reason. ``_find`` is shared via
-``ui.views._support.find_control``.
+the same reason. ``_find`` is inherited from
+``ui.views._support.DialogFindMixin``.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -65,10 +65,10 @@ from rivercrossing.ui.presenters.teams import (
 )
 from rivercrossing.ui.views import dialogs
 from rivercrossing.ui.views._support import (
+    DialogFindMixin,
     associate_model,
     clamp_to_display,
     default_card_images,
-    find_control,
     load_dialog,
 )
 
@@ -383,7 +383,7 @@ def _build_infobar(dialog: wx.Dialog, name: str) -> Any:  # noqa: ANN401 -- wx s
     return bar
 
 
-class TeamEditor:
+class TeamEditor(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``team_editor_dlg`` (Phase 3 rework).
 
     Implements :class:`~rivercrossing.ui.presenters.teams.TeamsView`
@@ -438,19 +438,6 @@ class TeamEditor:
 
         self._bind_events()
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _apply_notes_min_height(self) -> None:
         """Floor the Notes box at :data:`NOTES_MIN_LINES` text lines."""
@@ -694,7 +681,7 @@ class TeamEditor:
         self.dialog.Fit()
 
 
-class AddTeamDialog:
+class AddTeamDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``add_team_dlg`` (R-20).
 
     Implements ``AddTeamView`` (``ui.presenters.teams``) over its own
@@ -733,19 +720,6 @@ class AddTeamDialog:
 
         self._bind_events()
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _apply_min_size(self) -> None:
         """Floor *and* open the dialog at :data:`ADD_TEAM_MIN_SIZE`.
@@ -855,9 +829,9 @@ def run_add_team_flow(parent: wx.Window, roster: Roster, *, editing: Entry | Non
     :class:`~rivercrossing.ui.presenters.teams.AddTeamPresenter`
     instance over the same live roster; on a committed change the
     caller refreshes its own rows/form through
-    :meth:`~rivercrossing.ui.presenters.teams.TeamsPresenter.on_add_committed`
-    or
-    :meth:`~rivercrossing.ui.presenters.teams.TeamsPresenter.on_edit_committed`.
+    :meth:`~rivercrossing.ui.presenters.teams.TeamsPresenter.
+    on_add_committed` or :meth:`~rivercrossing.ui.presenters.teams.
+    TeamsPresenter.on_edit_committed`.
 
     Args:
         parent: The window to return focus to once ``add_team_dlg``

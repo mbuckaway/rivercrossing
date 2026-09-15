@@ -9,6 +9,7 @@ post notices instead of failing.
 """
 
 from base64 import b64encode
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,12 +25,14 @@ import inspect
 
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
+from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import EntryResult, Placed
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.cards_imagelist import SCALE_2X, asset_filename, asset_key, cards_dir
+from rivercrossing.ui.presenters.settings import default_settings
 from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS, ResultsWindow
 
 
@@ -128,13 +131,15 @@ def _export_inputs(context: app_module._RouteContext) -> tuple[object, object, o
 
     ``_placed_for_export`` returns Phase 3's ``(teams, solo)`` pair --
     each kind ranked from 1 -- which the tests unpack into the two
-    ``_write_export`` arguments.
+    ``_write_export`` arguments. G6: the options come from the route
+    context's own settings (the Results menu's publish flags), so the
+    context is the argument.
     """
     engine = context.presenter.engine
     return (
         engine.config,
         app_module._placed_for_export(context),
-        app_module._export_options(),
+        app_module._export_options(context),
     )
 
 
@@ -165,6 +170,57 @@ def _presenter(engine: _StubEngine) -> object:
             self.engine = engine
 
     return _Presenter(engine)
+
+
+# --- G6: the publish options now come from the persisted settings ---
+
+PUBLISH_SETTINGS_CASES = (
+    (
+        {
+            "publish_show_times": False,
+            "publish_laps_board": True,
+            "publish_time_board": False,
+            "publish_full_field": True,
+            "publish_all_cards": True,
+        },
+        ExportOptions(),
+    ),
+    (
+        {
+            "publish_show_times": True,
+            "publish_laps_board": False,
+            "publish_time_board": True,
+            "publish_full_field": False,
+            "publish_all_cards": False,
+        },
+        ExportOptions(
+            show_times=True, laps_board=False, time_board=True, full_field=False, all_cards=False
+        ),
+    ),
+)
+PUBLISH_SETTINGS_IDS = ("canvas_defaults", "all_flipped")
+
+
+@pytest.mark.parametrize(("stored", "expected"), PUBLISH_SETTINGS_CASES, ids=PUBLISH_SETTINGS_IDS)
+def test_export_options_given_stored_publish_flags_maps_them_onto_the_writer(
+    stored: dict[str, bool], expected: ExportOptions
+) -> None:
+    """G6: each publish_* flag reaches its ExportOptions field."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    context.settings = replace(default_settings(), **stored)
+
+    options = app_module._export_options(context)
+
+    assert options == expected
+
+
+def test_export_options_given_no_stored_flags_returns_the_settings_defaults() -> None:
+    """G6: a fresh context exports the persisted defaults, not zeros."""
+    context = _context(engine=_StubEngine(_snapshot()))
+
+    options = app_module._export_options(context)
+
+    assert options == ExportOptions()
 
 
 class _RecordingMenuItem:
@@ -635,11 +691,11 @@ def test_results_window_accepts_an_on_export_callback_seam() -> None:
     assert "on_export: Callable[[str], None] | None = None" in source
 
 
-# ============================================================ E2
-# Ride ▸ Finish Ride… (and the quit flow's Finish First) now
-# publishes the finished ride's HTML and PDF results itself, into a
-# deterministic per-user directory instead of through the save
-# dialog, so a finished ride always leaves its results behind.
+# ============================================================ E2/F
+# Ride ▸ Finish Ride… (and the quit flow's Finish First) publishes
+# nothing: the finish-time auto-export into a per-user ``exports``
+# directory was removed, so every results file comes from the
+# operator's own Results-menu request.
 
 
 class _FinishPresenter:
@@ -707,14 +763,15 @@ def _sync_offloop(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Path]]:
     return written
 
 
-def test_handle_finish_route_given_a_finished_engine_exports_html_and_pdf(
+def test_handle_finish_route_given_a_finished_engine_exports_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E2: finishing publishes both results files with no save dialog.
+    """F: a finish leaves every export to the operator's Results menu.
 
-    The two exports land in ``<user_data_dir>/exports`` named from the
-    ride slug, and each completion records its own format's path, so
-    both Preview rows enable -- HTML opens the page, PDF the report.
+    Finishing no longer publishes anything on its own: no results file
+    is written, no per-user ``exports`` directory is created, and both
+    recorded export paths stay empty until the operator asks for an
+    export from the Results menu.
     """
     engine, _source = app_module._build_console_engine(_export_roster())
     engine.start()
@@ -722,34 +779,33 @@ def test_handle_finish_route_given_a_finished_engine_exports_html_and_pdf(
     context = _finish_context(engine=engine)
     _stub_confirmed_finish(monkeypatch)
     data_dir = tmp_path / "data"
-    monkeypatch.setattr(app_module, "user_data_dir", lambda _appname: str(data_dir))
+    # raising=False: the finish path no longer reads user_data_dir at
+    # all (the auto-export is gone), so this stub only keeps a failing
+    # run hermetic instead of writing into the real per-user data dir.
+    monkeypatch.setattr(app_module, "user_data_dir", lambda _appname: str(data_dir), raising=False)
     written = _sync_offloop(monkeypatch)
 
     app_module._handle_finish_route(context)
 
-    exports = data_dir / "exports"
-    html = exports / "gorba-epic-2026-results.html"
-    pdf = exports / "gorba-epic-2026-results.pdf"
-    assert written == [("export_html", html), ("export_pdf", pdf)]
-    assert "race-data" in html.read_text(encoding="utf-8")
-    assert len(PdfReader(str(pdf)).pages) >= 1
-    assert (context.html_export_path, context.pdf_export_path) == (html, pdf)
+    assert engine.state is RideStatus.FINISHED
+    assert written == []
+    assert not (data_dir / "exports").exists()
+    assert (context.html_export_path, context.pdf_export_path) == (None, None)
 
 
 def test_handle_finish_route_given_a_running_engine_exports_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """E2: a finish that did not land in FINISHED publishes nothing.
+    """E2: a refused finish leaves the engine RUNNING, writing nothing.
 
-    The export gate is the engine's own FINISHED state, so a refused
-    finish (still RUNNING here) never writes results and never creates
-    the exports directory.
+    No FINISHED transition means no results state either -- and with
+    the finish-time auto-export removed, no finish writes a results
+    file or creates the per-user exports directory.
     """
     engine, _source = app_module._build_console_engine(_export_roster())
     engine.start()
     context = _finish_context(engine=engine)
     _stub_confirmed_finish(monkeypatch)
-    monkeypatch.setattr(app_module, "user_data_dir", lambda _appname: str(tmp_path / "data"))
     written = _sync_offloop(monkeypatch)
 
     app_module._handle_finish_route(context)
@@ -758,84 +814,6 @@ def test_handle_finish_route_given_a_running_engine_exports_nothing(
     assert written == []
     assert (context.html_export_path, context.pdf_export_path) == (None, None)
     assert not (tmp_path / "data" / "exports").exists()
-
-
-# ------------------------- E2/Part D: one path field per export format
-# The auto-export schedules HTML first and PDF second, but the two
-# workers finish in whatever order the OS grants them. Each format now
-# records into its own field through the same ``wx.CallAfter``
-# completion callback, so a PDF worker landing after the HTML one can
-# no longer clobber the path Preview HTML opens -- pinned below.
-
-
-class _DeferredExport:
-    """A fake off-loop seam whose completions flush on demand.
-
-    Mirrors ``_run_export_offloop``'s keyword inputs but defers each
-    completion instead of running it on a worker thread, so a test can
-    force the PDF writeback to land after the HTML one (:meth:`flush`).
-    """
-
-    def __init__(self) -> None:
-        """Start with nothing scheduled."""
-        self.scheduled: list[tuple[str, Path]] = []
-        self._completions: list[Callable[[], None]] = []
-
-    def __call__(
-        self,
-        context: app_module._RouteContext,
-        target: str,
-        path: Path,
-        **captured: object,
-    ) -> None:
-        """Record the schedule; defer this export's writeback."""
-        self.scheduled.append((target, path))
-
-        def complete() -> None:
-            app_module._record_export_completion(
-                context,
-                target,
-                path,
-                captured["watermark"],  # type: ignore[arg-type]
-            )
-
-        self._completions.append(complete)
-
-    def flush(self) -> None:
-        """Run every pending writeback in scheduling order."""
-        for complete in self._completions:
-            complete()
-        self._completions.clear()
-
-
-def test_handle_finish_route_given_a_pdf_worker_landing_last_records_both_paths(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """E2/Part D: a late PDF worker never clobbers the HTML path.
-
-    Both completions are forced to run after ``_handle_finish_route``
-    returns, HTML first and PDF last -- the interleaving that used to
-    make Preview open the wrong file. Each format now lands in its own
-    field, so both Preview rows read the right path.
-    """
-    engine, _source = app_module._build_console_engine(_export_roster())
-    engine.start()
-    engine.finish()
-    context = _finish_context(engine=engine)
-    _stub_confirmed_finish(monkeypatch)
-    data_dir = tmp_path / "data"
-    monkeypatch.setattr(app_module, "user_data_dir", lambda _appname: str(data_dir))
-    offloop = _DeferredExport()
-    monkeypatch.setattr(app_module, "_run_export_offloop", offloop)
-
-    app_module._handle_finish_route(context)
-    offloop.flush()
-
-    exports = data_dir / "exports"
-    html = exports / "gorba-epic-2026-results.html"
-    pdf = exports / "gorba-epic-2026-results.pdf"
-    assert offloop.scheduled == [("export_html", html), ("export_pdf", pdf)]
-    assert (context.html_export_path, context.pdf_export_path) == (html, pdf)
 
 
 class _InlineThread:

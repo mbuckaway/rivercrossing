@@ -6,7 +6,9 @@ Four behaviours, none of which needs a display:
 - the **search row** ``main.xrc`` now declares above ``crossings_list``
   (a ``wxStaticText`` label + ``crossings_search``), read as XML;
 - the **column flags** every feed column is appended with (sortable and
-  resizable) and the two hide-times columns ``_build_columns`` returns;
+  resizable) and the two independent time-column handles
+  ``_build_columns`` keeps (Total/Lap time) that ``set_time_columns``
+  toggles;
 - the **native header sort** -- the default Time-ascending arrow, the
   remembered column re-applied after every ``show_feed`` rebuild, and
   ``CrossingsFeedModel.Compare``'s own per-column keys;
@@ -49,7 +51,11 @@ class _Column:
     """A ``wx.dataview.DataViewColumn`` double for the native sort."""
 
     def __init__(
-        self, model_column: int, *, ascending: bool = True, is_sort_key: bool = False
+        self,
+        model_column: int,
+        *,
+        ascending: bool = True,
+        is_sort_key: bool = False,
     ) -> None:
         """Carry *model_column*, the arrow and the sort-key state.
 
@@ -60,8 +66,13 @@ class _Column:
         self.model_column = model_column
         self.ascending = ascending
         self.is_sort_key = is_sort_key
+        self.hidden: bool | None = None
         self.sort_orders: list[bool] = []
         self.operations: list[str] = []
+
+    def SetHidden(self, hidden: bool) -> None:  # noqa: N802, FBT001 -- wx API name the double mirrors
+        """Record the explicit hidden state the view applied."""
+        self.hidden = hidden
 
     def GetModelColumn(self) -> int:  # noqa: N802 -- wx API name the double mirrors
         """Return the model column this header sorts."""
@@ -183,6 +194,10 @@ class _Shell:
         self._feed_sort_column = sort_column
         self._feed_sort_ascending = sort_ascending
         self._presenter: _Presenter | None = None
+        # R-37's two handles, set by _build_columns and read by
+        # set_time_columns.
+        self._total_column: Any = None
+        self._lap_time_column: Any = None
 
     def _notify_ride_changed(self) -> None:
         """Discard the menu-binder notification the real frame fires."""
@@ -279,7 +294,7 @@ def test_feed_column_flags_include_the_sortable_and_resizable_bits() -> None:
 
 
 def test_build_columns_given_the_shell_appends_every_feed_column_with_flags() -> None:
-    """Seven columns, canvas order, pinned widths and both flags."""
+    """Eight columns, canvas order, pinned widths and both flags."""
     control = _CrossingsListControl()
     shell = _Shell(control=control)
 
@@ -296,17 +311,38 @@ def test_build_columns_given_the_shell_appends_every_feed_column_with_flags() ->
     }
 
 
-def test_build_columns_given_the_shell_returns_only_the_hide_times_columns() -> None:
-    """R-37's toggle keeps its handle on Lap time and Total alone."""
+def test_build_columns_given_the_shell_keeps_the_total_and_lap_time_handles() -> None:
+    """R-37: the toggle keeps its handle on Total and Lap time alone."""
     control = _CrossingsListControl()
     shell = _Shell(control=control)
 
-    hideable = main_frame.MainFrame._build_columns(shell)
+    main_frame.MainFrame._build_columns(shell)
 
-    assert hideable == (
-        control.columns[feed_model.COL_LAP_TIME],
+    assert (shell._total_column, shell._lap_time_column) == (
         control.columns[feed_model.COL_TOTAL],
+        control.columns[feed_model.COL_LAP_TIME],
     )
+
+
+# T-13: the two independent show flags -> all four decisions.
+_TIME_COLUMN_CASES = ((False, False), (False, True), (True, False), (True, True))
+
+
+@pytest.mark.parametrize(("show_total", "show_lap"), _TIME_COLUMN_CASES)
+def test_set_time_columns_given_each_pair_of_flags_hides_each_column_independently(
+    show_total: bool,  # noqa: FBT001 -- parametrized test inputs
+    show_lap: bool,  # noqa: FBT001 -- parametrized test inputs
+) -> None:
+    """The Total and Lap-time columns hide/show independently (R-37)."""
+    total = _Column(feed_model.COL_TOTAL)
+    lap = _Column(feed_model.COL_LAP_TIME)
+    shell = _Shell(control=_CrossingsListControl())
+    shell._total_column = total
+    shell._lap_time_column = lap
+
+    main_frame.MainFrame.set_time_columns(shell, show_total=show_total, show_lap=show_lap)
+
+    assert (total.hidden, lap.hidden) == (not show_total, not show_lap)
 
 
 # ----------------------------------------------------- the default sort
@@ -515,19 +551,23 @@ class _FeedModel:
 
 
 class _FeedShell:
-    """A ``MainFrame`` double owning the F2 handler's own state."""
+    """A ``MainFrame`` double owning the feed handlers' own state."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 -- (selection, model) + the three feed seams
         self,
         *,
         selection: _Selection | None = None,
         model: _FeedModel | None = None,
         open_crossing: object = None,
+        delete_crossing: object = None,
+        edit_plate_crossing: object = None,
     ) -> None:
-        """Store the state the F2 handler reads."""
+        """Store the state the F2/Delete/Ctrl+E handlers read."""
         self.crossings_list = _FeedList(_Selection() if selection is None else selection)
         self._crossings_model = model
         self._on_open_crossing = open_crossing
+        self._on_delete_crossing = delete_crossing
+        self._on_edit_plate_crossing = edit_plate_crossing
 
 
 def test_on_edit_crossing_accelerator_given_a_selected_row_fires_the_seam() -> None:
@@ -550,10 +590,57 @@ def test_accelerator_entries_given_a_frame_id_returns_the_f2_entry() -> None:
     """
     shell = object.__new__(main_frame.MainFrame)
     shell._edit_crossing_id = 4242
+    shell._delete_crossing_id = 4343
+    shell._edit_plate_crossing_id = 4444
 
     entries = main_frame.MainFrame.accelerator_entries(shell)
 
-    assert [(entry.GetKeyCode(), entry.GetCommand()) for entry in entries] == [(wx.WXK_F2, 4242)]
+    assert [(entry.GetKeyCode(), entry.GetCommand()) for entry in entries] == [
+        (wx.WXK_F2, 4242),
+        (wx.WXK_DELETE, 4343),
+        (ord("D"), 4343),
+        (ord("E"), 4444),
+    ]
+
+
+def test_accelerator_entries_given_a_frame_id_modifies_delete_with_ctrl_only() -> None:
+    """The two Delete bindings differ in modifier, never in command id.
+
+    Delete and Ctrl+D run the same ``_delete_crossing_id`` command (one
+    bound id, two rows), while F2 stays a bare accelerator.
+    """
+    shell = object.__new__(main_frame.MainFrame)
+    shell._edit_crossing_id = 4242
+    shell._delete_crossing_id = 4343
+    shell._edit_plate_crossing_id = 4444
+
+    entries = main_frame.MainFrame.accelerator_entries(shell)
+
+    assert [(entry.GetFlags(), entry.GetCommand()) for entry in entries] == [
+        (wx.ACCEL_NORMAL, 4242),
+        (wx.ACCEL_NORMAL, 4343),
+        (wx.ACCEL_CTRL, 4343),
+        (wx.ACCEL_CTRL, 4444),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "key"),
+    [
+        ("DELETE_CROSSING_KEY", wx.WXK_DELETE),
+        ("DELETE_CROSSING_CTRL_KEY", ord("D")),
+        ("EDIT_PLATE_CROSSING_KEY", ord("E")),
+    ],
+    ids=["delete", "ctrl_d", "ctrl_e"],
+)
+def test_crossings_panel_hotkey_constants_bind_the_expected_keys(name: str, key: int) -> None:
+    """The three new frame accelerators' own key constants.
+
+    wxPython exposes no ``WXK_D``/``WXK_E`` for letter keys, so the
+    Ctrl+D/Ctrl+E rows carry ``ord("D")``/``ord("E")`` -- the spelling
+    ``app._accelerator_entries``' own tests already use for Ctrl+Z.
+    """
+    assert getattr(main_frame, name) == key
 
 
 def test_on_edit_crossing_accelerator_given_no_selection_fires_nothing() -> None:
@@ -595,6 +682,137 @@ def test_on_edit_crossing_accelerator_given_no_callback_resolves_but_opens_nothi
     main_frame.MainFrame._on_edit_crossing_accelerator(shell, _SortEvent())
 
     assert (len(model.resolved), shell._on_open_crossing) == (1, None)
+
+
+# ------------------------- Delete / Ctrl+D / Ctrl+E (crossings panel)
+#
+# The three new frame accelerators are the F2 handler's own shape with
+# a different seam: the view resolves the feed's *selection* through
+# the model and fires the app's callback with the row index.
+
+
+def test_set_on_delete_crossing_registers_the_callback() -> None:
+    """The feed's Delete seam mirrors set_on_open_crossing."""
+    shell = _FeedShell()
+    fired: list[int] = []
+
+    main_frame.MainFrame.set_on_delete_crossing(shell, fired.append)
+
+    assert shell._on_delete_crossing == fired.append
+
+
+def test_set_on_edit_plate_crossing_registers_the_callback() -> None:
+    """The feed's Ctrl+E seam mirrors set_on_open_crossing."""
+    shell = _FeedShell()
+    fired: list[int] = []
+
+    main_frame.MainFrame.set_on_edit_plate_crossing(shell, fired.append)
+
+    assert shell._on_edit_plate_crossing == fired.append
+
+
+def test_on_delete_crossing_accelerator_given_a_selected_row_fires_the_seam() -> None:
+    """Delete/Ctrl+D runs the delete flow on the selected feed row."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=3), delete_crossing=fired.append)
+
+    main_frame.MainFrame._on_delete_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == [3]
+
+
+def test_on_delete_crossing_accelerator_given_no_model_fires_nothing() -> None:
+    """T-3 negative: rows never rendered mean no row can delete."""
+    fired: list[int] = []
+    shell = _FeedShell(delete_crossing=fired.append)
+
+    main_frame.MainFrame._on_delete_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == []
+
+
+def test_on_delete_crossing_accelerator_given_no_selection_fires_nothing() -> None:
+    """T-3 negative: an invalid selection never resolves a row."""
+    fired: list[int] = []
+    model = _FeedModel(row=0)
+    shell = _FeedShell(selection=_Selection(ok=False), model=model, delete_crossing=fired.append)
+
+    main_frame.MainFrame._on_delete_crossing_accelerator(shell, _SortEvent())
+
+    assert (fired, model.resolved) == ([], [])
+
+
+def test_on_delete_crossing_accelerator_given_wx_not_found_row_fires_nothing() -> None:
+    """T-3 negative: a stale selection resolves to no row."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=wx.NOT_FOUND), delete_crossing=fired.append)
+
+    main_frame.MainFrame._on_delete_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == []
+
+
+def test_on_delete_crossing_accelerator_given_no_callback_resolves_but_deletes_nothing() -> None:
+    """T-3 negative: an unwired console resolves, deletes nothing."""
+    model = _FeedModel(row=2)
+    shell = _FeedShell(model=model)
+
+    main_frame.MainFrame._on_delete_crossing_accelerator(shell, _SortEvent())
+
+    assert (len(model.resolved), shell._on_delete_crossing) == (1, None)
+
+
+def test_on_edit_plate_crossing_accelerator_given_a_selected_row_fires_the_seam() -> None:
+    """Ctrl+E runs the plate-reassign flow on the selected feed row."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=3), edit_plate_crossing=fired.append)
+
+    main_frame.MainFrame._on_edit_plate_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == [3]
+
+
+def test_on_edit_plate_crossing_accelerator_given_no_model_fires_nothing() -> None:
+    """T-3 negative: rows never rendered mean no row can be edited."""
+    fired: list[int] = []
+    shell = _FeedShell(edit_plate_crossing=fired.append)
+
+    main_frame.MainFrame._on_edit_plate_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == []
+
+
+def test_on_edit_plate_crossing_accelerator_given_no_selection_fires_nothing() -> None:
+    """T-3 negative: an invalid selection never resolves a row."""
+    fired: list[int] = []
+    model = _FeedModel(row=0)
+    shell = _FeedShell(
+        selection=_Selection(ok=False), model=model, edit_plate_crossing=fired.append
+    )
+
+    main_frame.MainFrame._on_edit_plate_crossing_accelerator(shell, _SortEvent())
+
+    assert (fired, model.resolved) == ([], [])
+
+
+def test_on_edit_plate_crossing_accelerator_given_wx_not_found_row_fires_nothing() -> None:
+    """T-3 negative: a stale selection resolves to no row."""
+    fired: list[int] = []
+    shell = _FeedShell(model=_FeedModel(row=wx.NOT_FOUND), edit_plate_crossing=fired.append)
+
+    main_frame.MainFrame._on_edit_plate_crossing_accelerator(shell, _SortEvent())
+
+    assert fired == []
+
+
+def test_on_edit_plate_crossing_accelerator_given_no_callback_resolves_but_edits_nothing() -> None:
+    """T-3 negative: an unwired console resolves, edits nothing."""
+    model = _FeedModel(row=2)
+    shell = _FeedShell(model=model)
+
+    main_frame.MainFrame._on_edit_plate_crossing_accelerator(shell, _SortEvent())
+
+    assert (len(model.resolved), shell._on_edit_plate_crossing) == (1, None)
 
 
 # ------------------------------------------- CrossingsFeedModel.Compare
@@ -644,6 +862,15 @@ def test_compare_given_the_name_column_orders_case_insensitively() -> None:
     assert result == 1
 
 
+def test_compare_given_the_team_column_orders_case_insensitively() -> None:
+    """Casefolded teams: "aces" sorts with "Aces", before "Zoe"."""
+    model = _model(_feed_row(team="Zoe"), _feed_row(team="aces"))
+
+    result = _compare(model, 0, 1, feed_model.COL_TEAM, ascending=True)
+
+    assert result == 1
+
+
 def test_compare_given_the_lap_column_orders_numerically() -> None:
     """Lap 2 before lap 10, never the "10" < "2" text order."""
     model = _model(_feed_row(lap=10), _feed_row(lap=2))
@@ -669,12 +896,13 @@ def test_compare_given_equal_keys_falls_back_to_the_rows_own_order() -> None:
         (feed_model.COL_TIME, -1),
         (feed_model.COL_PLATE, -1),
         (feed_model.COL_NAME, -1),
+        (feed_model.COL_TEAM, -1),
         (feed_model.COL_CARD, -1),
         (feed_model.COL_LAP, -1),
         (feed_model.COL_LAP_TIME, -1),
         (feed_model.COL_TOTAL, -1),
     ],
-    ids=["time", "plate", "name", "card", "lap", "lap_time", "total"],
+    ids=["time", "plate", "name", "team", "card", "lap", "lap_time", "total"],
 )
 def test_compare_given_each_column_orders_by_that_columns_own_key(
     column: int, expected: int
@@ -682,11 +910,19 @@ def test_compare_given_each_column_orders_by_that_columns_own_key(
     """Every column has a key; row 0's values are the smaller."""
     model = _model(
         _feed_row(
-            plate="2", entry="Amy", lap=2, card="9H", elapsed_s=10.0, lap_time_s=10.0, total_s=10.0
+            plate="2",
+            entry="Amy",
+            team="Aces",
+            lap=2,
+            card="9H",
+            elapsed_s=10.0,
+            lap_time_s=10.0,
+            total_s=10.0,
         ),
         _feed_row(
             plate="10",
             entry="Zoe",
+            team="Zoe",
             lap=10,
             card="KH",
             elapsed_s=600.0,
@@ -724,10 +960,39 @@ def test_get_value_by_row_given_a_missed_row_renders_the_blank_lap() -> None:
     ) == ("", "missed")
 
 
+def test_get_column_count_given_the_feed_returns_the_eight_columns() -> None:
+    """The Team column makes the feed eight columns wide."""
+    model = _model(_feed_row())
+
+    assert model.GetColumnCount() == 8
+
+
+def test_get_value_by_row_given_a_team_row_returns_the_team_name() -> None:
+    """The Team column reads the row's own team display name."""
+    model = _model(_feed_row(team="Dirt Dynamos"))
+
+    assert model.GetValueByRow(0, feed_model.COL_TEAM) == "Dirt Dynamos"
+
+
+def test_get_value_by_row_given_a_solo_row_returns_the_word_solo() -> None:
+    """A solo entry names no team, so its Team cell reads "solo"."""
+    model = _model(_feed_row(team="solo"))
+
+    assert model.GetValueByRow(0, feed_model.COL_TEAM) == "solo"
+
+
+def test_get_value_by_row_given_a_missed_row_returns_the_blank_team() -> None:
+    """T-3 negative: a miss has no entry: its Team cell is ""."""
+    model = _model(_feed_row(plate="-", entry="missed", team="", missed=True))
+
+    assert model.GetValueByRow(0, feed_model.COL_TEAM) == ""
+
+
 def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     *,
     plate: str = "1",
     entry: str = "Rider",
+    team: str = "",
     lap: int = 1,
     card: str = "9H",
     dnf: bool = False,
@@ -741,6 +1006,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         time="0:10:00",
         plate=plate,
         entry=entry,
+        team=team,
         lap=lap,
         lap_time="1:00",
         total="1:00",

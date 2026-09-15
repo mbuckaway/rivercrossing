@@ -24,6 +24,9 @@ from hypothesis import strategies as st
 
 _GEN_IDS_PATH = Path(__file__).resolve().parents[2] / "tools" / "gen_ids.py"
 
+# The repo's own generated registry and the .xrc tree it comes from.
+_COMMITTED_IDS = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" / "ids.py"
+
 
 def _load_gen_ids(path: Path) -> ModuleType:
     """Load tools/gen_ids.py by path -- it isn't a package."""
@@ -333,3 +336,26 @@ def test_main_write_flag_returns_two_when_xrc_has_duplicate_name(tmp_path: Path)
     exit_code = gen_ids.main(["--write", "--xrc-dir", str(DUPLICATE_DIR), "--out", str(out_path)])
 
     assert exit_code == 2
+
+
+def test_scan_xrc_directory_real_tree_registers_the_needs_review_checkbox() -> None:
+    """The Needs Review filter box is a frozen name (R-05)."""
+    result = gen_ids.scan_xrc_directory(gen_ids.DEFAULT_XRC_DIR)
+
+    assert "show_held_only_chk" in result.names
+
+
+def test_write_ids_module_regeneration_matches_committed_ids_byte_for_byte(
+    tmp_path: Path,
+) -> None:
+    """Regenerating ids.py from the repo's own .xrc files is a no-op.
+
+    The registry is a checked-in artifact (R-05), so the honesty check
+    the drift gate runs must hold on a clean tree -- the Needs Review
+    checkbox's ``SHOW_HELD_ONLY_CHK`` constant included.
+    """
+    out_path = tmp_path / "ids.py"
+
+    gen_ids.write_ids_module(out_path, gen_ids.DEFAULT_XRC_DIR)
+
+    assert out_path.read_bytes() == _COMMITTED_IDS.read_bytes()

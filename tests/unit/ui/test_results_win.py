@@ -5,15 +5,15 @@ Only what genuinely needs no window is pinned here, in the
 ``test_main_frame_riders_list.py`` / ``test_rider_list_columns.py``
 style:
 
-- :data:`STANDINGS_COLUMN_FLAGS` and the shared eight-column list, with
-  Best lap directly after Total (Phase 5, Part 3);
+- :data:`STANDINGS_COLUMN_FLAGS` and the shared six-column list, every
+  column pinned to its own width (G6);
 - :meth:`StandingsListModel.Compare` -- the native header sort's
-  per-column keys, its numeric Total/Best lap (seconds, not display
-  text) and its non-negated row-position tie-break -- driven against a
-  shell that owns only ``_rows``/``GetRow``;
+  per-column keys, its numeric Place/Laps and its non-negated
+  row-position tie-break -- driven against a shell that owns only
+  ``_rows``/``GetRow``;
 - :meth:`ResultsWindow._build_columns`, for the Plate column the Team
-  list drops under ``RIDER_POOLED`` (Part 2) and the two time columns
-  ``show_times_chk`` gates (Part 3);
+  list drops under ``RIDER_POOLED`` (Part 2) and the Hand width each
+  list's own column set pins (G6);
 - :meth:`ResultsWindow.show_standings`, driven against a fake dialog
   and fake controls, for both the MIXED notebook and the SOLO
   standalone list;
@@ -23,7 +23,11 @@ style:
   pattern: importing wx is safe without a display, opening a modal is
   not);
 - the Part D export-button gate, driven against a fake ride status and
-  fake buttons (no real button is created).
+  fake buttons (no real button is created);
+- :meth:`ResultsWindow._apply_min_size`'s ten-row floor on the three
+  standings lists (D16) -- the ``STANDINGS_*`` constants pinned, and
+  the ``SetMinSize`` argument captured by a recording control double
+  per list.
 
 The live layout -- real columns on real controls -- stays with the
 (functional) suite.
@@ -38,7 +42,6 @@ import wx
 from hypothesis import given
 from hypothesis import strategies as st
 
-from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.ui import std_dialogs
@@ -46,18 +49,18 @@ from rivercrossing.ui.presenters.data_source import StandingsRow
 from rivercrossing.ui.views import results_win
 from rivercrossing.ui.views.results_win import (
     COL_BEST5,
-    COL_BESTLAP,
     COL_ENTRY,
     COL_HAND,
     COL_LAPS,
     COL_PLACE,
     COL_PLATE,
-    COL_TOTAL,
     COLUMN_LABELS,
+    COLUMN_WIDTHS,
     DRAW_EXPLANATION,
     DRAW_INFO_TITLE,
+    HAND_WIDTH,
     STANDINGS_COLUMN_FLAGS,
-    TIME_COLUMNS,
+    TEAM_HAND_WIDTH,
     ResultsWindow,
     StandingsListModel,
 )
@@ -132,20 +135,24 @@ class _ListControl:
 
     def __init__(self) -> None:
         """Start with no columns and no bindings."""
-        self.columns: list[tuple[str, int, int, _Column]] = []
+        self.columns: list[tuple[str, int, int, int, _Column]] = []
         self.bindings: list[tuple[object, object]] = []
 
-    def AppendTextColumn(  # noqa: N802 -- wx API name the double mirrors
-        self, label: str, col: int, *, flags: int
+    def AppendTextColumn(  # noqa: N802, PLR0913 -- wx API name and shape
+        self, label: str, col: int, *, width: int, flags: int
     ) -> _Column:
         """Record the column and return its double."""
         column = _Column()
-        self.columns.append((label, col, flags, column))
+        self.columns.append((label, col, width, flags, column))
         return column
 
     def Bind(self, event: object, handler: object) -> None:  # noqa: N802 -- wx API name
         """Record one (event, handler) binding."""
         self.bindings.append((event, handler))
+
+    def widths_by_label(self) -> dict[str, int]:
+        """Map each appended column's label to its pinned width."""
+        return {label: width for label, _col, width, _flags, _column in self.columns}
 
 
 class _BindingDialog:
@@ -166,32 +173,23 @@ class _BindShell:
     """A ResultsWindow shell owning only what _bind_events reaches."""
 
     def __init__(self) -> None:
-        """Build the dialog, the five checkboxes and the three lists."""
+        """Build the dialog and the three lists."""
         self.dialog = _BindingDialog()
-        self.show_times_chk = _CheckBox()
-        self.laps_board_chk = _CheckBox()
-        self.time_board_chk = _CheckBox()
-        self.full_field_chk = _CheckBox()
-        self.all_cards_chk = _CheckBox()
         self.lists = (_ListControl(), _ListControl(), _ListControl())
         self.standings_list, self.teams_standings_list, self.solo_standings_list = self.lists
-
-    def _on_publish_toggle(self, event: object) -> None:
-        """Delegate the toggle to the real view handler."""
-        ResultsWindow._on_publish_toggle(self, event)
 
     def _on_standings_activated(self, event: object) -> None:
         """Delegate the activation to the real view handler."""
         ResultsWindow._on_standings_activated(self, event)
 
 
-def test_build_columns_for_given_a_control_appends_the_eight_canvas_columns() -> None:
+def test_build_columns_for_given_a_control_appends_the_six_canvas_columns() -> None:
     """One column per COLUMN_LABELS entry, in order."""
     control = _ListControl()
 
     ResultsWindow._build_columns_for(control)
 
-    assert [(label, col) for label, col, _flags, _column in control.columns] == [
+    assert [(label, col) for label, col, _width, _flags, _column in control.columns] == [
         (label, col) for col, label in enumerate(COLUMN_LABELS)
     ]
 
@@ -202,18 +200,49 @@ def test_build_columns_for_given_a_control_carries_the_shared_column_flags() -> 
 
     ResultsWindow._build_columns_for(control)
 
-    assert [flags for _label, _col, flags, _column in control.columns] == (
+    assert [flags for _label, _col, _width, flags, _column in control.columns] == (
         [STANDINGS_COLUMN_FLAGS] * len(COLUMN_LABELS)
     )
 
 
-def test_build_columns_for_given_a_control_returns_its_total_and_best_lap_columns() -> None:
-    """Return the two time columns show_times_chk gates (Part 3)."""
+def test_build_columns_for_given_a_control_pins_every_column_width() -> None:
+    """G6: each column is appended with its own pinned width."""
     control = _ListControl()
 
-    columns = ResultsWindow._build_columns_for(control)
+    ResultsWindow._build_columns_for(control)
 
-    assert columns == (control.columns[COL_TOTAL][3], control.columns[COL_BESTLAP][3])
+    assert [width for _label, _col, width, _flags, _column in control.columns] == list(
+        COLUMN_WIDTHS
+    )
+
+
+def test_column_widths_given_the_six_columns_are_the_g6_pins() -> None:
+    """G6: Place 60, Plate 50, Entry 160, Laps 50, Best 5 160, Hand."""
+    assert COLUMN_WIDTHS == (60, 50, 160, 50, 160, 210)
+    assert COLUMN_WIDTHS[COL_HAND] == HAND_WIDTH
+
+
+def test_team_hand_width_given_a_pooled_team_frees_the_plate_column() -> None:
+    """G6: the hidden Plate column's 50px go to the team's Hand."""
+    assert TEAM_HAND_WIDTH == 260
+    assert HAND_WIDTH + COLUMN_WIDTHS[COL_PLATE] == TEAM_HAND_WIDTH
+
+
+def test_min_size_given_the_solo_columns_fits_the_dialog_at_740() -> None:
+    """G6: 740 = the solo columns 690 plus scrollbar and borders."""
+    assert results_win.MIN_SIZE == (740, 442)
+
+
+def test_build_columns_for_given_a_wide_hand_pins_only_the_hand_column() -> None:
+    """G6: the team list's Hand width is its own parameter."""
+    control = _ListControl()
+
+    ResultsWindow._build_columns_for(control, hand_width=TEAM_HAND_WIDTH)
+
+    assert control.widths_by_label() == {
+        **dict(zip(COLUMN_LABELS, COLUMN_WIDTHS, strict=True)),
+        "Hand": TEAM_HAND_WIDTH,
+    }
 
 
 def test_build_columns_for_given_no_hide_plate_leaves_every_column_visible() -> None:
@@ -222,8 +251,8 @@ def test_build_columns_for_given_no_hide_plate_leaves_every_column_visible() -> 
 
     ResultsWindow._build_columns_for(control)
 
-    assert [column.hidden for _label, _col, _flags, column in control.columns] == [None] * len(
-        COLUMN_LABELS
+    assert [column.hidden for _label, _col, _width, _flags, column in control.columns] == (
+        [None] * len(COLUMN_LABELS)
     )
 
 
@@ -233,12 +262,12 @@ def test_build_columns_for_given_hide_plate_hides_only_the_plate_column() -> Non
 
     ResultsWindow._build_columns_for(control, hide_plate=True)
 
-    assert [column.hidden for _label, _col, _flags, column in control.columns] == [
+    assert [column.hidden for _label, _col, _width, _flags, column in control.columns] == [
         True if col == COL_PLATE else None for col in range(len(COLUMN_LABELS))
     ]
 
 
-# ----------------------------------- the shared header (Parts 2 and 3)
+# ----------------------------------- the shared header (Part 2 + G6)
 
 
 class _ColumnsShell:
@@ -252,47 +281,20 @@ class _ColumnsShell:
         self.solo_standings_list = _ListControl()
 
     def _build_columns_for(
-        self, control: object, *, hide_plate: bool = False
-    ) -> tuple[object, ...]:
+        self, control: object, *, hide_plate: bool = False, hand_width: int = HAND_WIDTH
+    ) -> None:
         """Delegate one list's columns to the real view method."""
-        return ResultsWindow._build_columns_for(control, hide_plate=hide_plate)
+        ResultsWindow._build_columns_for(control, hide_plate=hide_plate, hand_width=hand_width)
 
 
-def test_column_labels_place_best_lap_directly_after_total() -> None:
-    """Part 3: the header reads Place..Total, Best lap, Best 5, Hand."""
-    assert COLUMN_LABELS == (
-        "Place",
-        "Plate",
-        "Entry",
-        "Laps",
-        "Total",
-        "Best lap",
-        "Best 5",
-        "Hand",
-    )
-    assert COL_BESTLAP == COL_TOTAL + 1
+def test_column_labels_given_the_reworked_dialog_are_the_six_g6_columns() -> None:
+    """G6: Total and Best lap leave the header entirely."""
+    assert COLUMN_LABELS == ("Place", "Plate", "Entry", "Laps", "Best 5", "Hand")
 
 
-def test_time_columns_hold_the_total_and_best_lap_indexes() -> None:
-    """Both time columns are gated together by show_times_chk (R-63)."""
-    assert TIME_COLUMNS == (COL_TOTAL, COL_BESTLAP)
-
-
-def test_build_columns_returns_the_two_time_columns_of_every_list() -> None:
-    """Part 3: each list's Total and Best lap columns, list by list."""
-    shell = _ColumnsShell(PlateModel.TEAM_RELAY)
-
-    columns = ResultsWindow._build_columns(shell)
-
-    assert columns == tuple(
-        control.columns[col][3]
-        for control in (
-            shell.standings_list,
-            shell.teams_standings_list,
-            shell.solo_standings_list,
-        )
-        for col in TIME_COLUMNS
-    )
+def test_column_indexes_given_the_six_columns_are_zero_to_five() -> None:
+    """G6: Best 5 and Hand reindex to 4 and 5."""
+    assert (COL_PLACE, COL_PLATE, COL_ENTRY, COL_LAPS, COL_BEST5, COL_HAND) == (0, 1, 2, 3, 4, 5)
 
 
 def test_build_columns_given_rider_pooled_hides_the_plate_column_on_the_team_list() -> None:
@@ -301,7 +303,7 @@ def test_build_columns_given_rider_pooled_hides_the_plate_column_on_the_team_lis
 
     ResultsWindow._build_columns(shell)
 
-    assert shell.teams_standings_list.columns[COL_PLATE][3].hidden is True
+    assert shell.teams_standings_list.columns[COL_PLATE][4].hidden is True
 
 
 def test_build_columns_given_rider_pooled_leaves_the_other_plate_columns_untouched() -> None:
@@ -311,8 +313,8 @@ def test_build_columns_given_rider_pooled_leaves_the_other_plate_columns_untouch
     ResultsWindow._build_columns(shell)
 
     assert [
-        shell.standings_list.columns[COL_PLATE][3].hidden,
-        shell.solo_standings_list.columns[COL_PLATE][3].hidden,
+        shell.standings_list.columns[COL_PLATE][4].hidden,
+        shell.solo_standings_list.columns[COL_PLATE][4].hidden,
     ] == [None, None]
 
 
@@ -323,13 +325,50 @@ def test_build_columns_given_team_relay_keeps_every_plate_column() -> None:
     ResultsWindow._build_columns(shell)
 
     assert [
-        control.columns[COL_PLATE][3].hidden
+        control.columns[COL_PLATE][4].hidden
         for control in (
             shell.standings_list,
             shell.teams_standings_list,
             shell.solo_standings_list,
         )
     ] == [None, None, None]
+
+
+def test_build_columns_given_rider_pooled_pins_the_team_hand_column_at_260() -> None:
+    """G6: the team Hand takes the hidden Plate column's width."""
+    shell = _ColumnsShell(PlateModel.RIDER_POOLED)
+
+    ResultsWindow._build_columns(shell)
+
+    assert shell.teams_standings_list.widths_by_label()["Hand"] == TEAM_HAND_WIDTH
+
+
+def test_build_columns_given_rider_pooled_pins_the_solo_and_standalone_hand_at_210() -> None:
+    """G6: only the team list's Hand width differs from the solo pin."""
+    shell = _ColumnsShell(PlateModel.RIDER_POOLED)
+
+    ResultsWindow._build_columns(shell)
+
+    assert [
+        shell.standings_list.widths_by_label()["Hand"],
+        shell.solo_standings_list.widths_by_label()["Hand"],
+    ] == [HAND_WIDTH, HAND_WIDTH]
+
+
+def test_build_columns_given_team_relay_pins_every_hand_column_at_210() -> None:
+    """G6: a shown Plate column keeps the team Hand at 210."""
+    shell = _ColumnsShell(PlateModel.TEAM_RELAY)
+
+    ResultsWindow._build_columns(shell)
+
+    assert [
+        control.widths_by_label()["Hand"]
+        for control in (
+            shell.standings_list,
+            shell.teams_standings_list,
+            shell.solo_standings_list,
+        )
+    ] == [HAND_WIDTH, HAND_WIDTH, HAND_WIDTH]
 
 
 # ------------------------------------------------------------- Compare
@@ -382,8 +421,6 @@ ORDER_CASES = (
     (COL_PLATE, _row(plate="2"), _row(plate="9")),
     (COL_ENTRY, _row(entry="A Racer"), _row(entry="B Racer")),
     (COL_LAPS, _row(laps=1), _row(laps=2)),
-    (COL_TOTAL, _row(total_seconds=59.0), _row(total_seconds=3600.0)),
-    (COL_BESTLAP, _row(best_lap_seconds=59.0), _row(best_lap_seconds=3600.0)),
     (COL_BEST5, _row(best5=("2C",)), _row(best5=("AC",))),
     (COL_HAND, _row(hand="High Card — Ace"), _row(hand="Pair of twos")),
 )
@@ -427,32 +464,28 @@ def test_standings_compare_given_reversed_equal_key_rows_orders_by_position() ->
     assert result == 1
 
 
-def test_standings_compare_given_total_column_orders_by_seconds_not_display_text() -> None:
-    """T-5: the numeric key sorts 36000s after 32400s, not the text.
+def test_standings_compare_given_the_laps_column_orders_numerically_not_as_text() -> None:
+    """T-5: the int key sorts 10 laps after 9, which the text would not.
 
-    A string sort of the rendered text would order "10:00:00" before
-    "9:00:00", so this pins the numeric ``total_seconds`` key.
+    The rendered cells are the strings "10" and "9", so this pins the
+    numeric ``laps`` key -- the dialog's remaining numeric columns.
     """
-    ten_hours = _row(total="10:00:00", total_seconds=36000.0)
-    nine_hours = _row(total="9:00:00", total_seconds=32400.0)
-    shell = _CompareShell([ten_hours, nine_hours])
+    ten = _row(laps=10)
+    nine = _row(laps=9)
+    shell = _CompareShell([ten, nine])
 
-    result = StandingsListModel.Compare(shell, 0, 1, COL_TOTAL, True)  # noqa: FBT003 -- wx's positional bool
+    result = StandingsListModel.Compare(shell, 0, 1, COL_LAPS, True)  # noqa: FBT003 -- wx's positional bool
 
     assert result == 1
 
 
-def test_standings_compare_given_best_lap_column_orders_by_seconds_not_display_text() -> None:
-    """Part 3: Best lap sorts on seconds, never its rendered text.
+def test_standings_compare_given_the_place_column_orders_numerically_not_as_text() -> None:
+    """T-5: the int key sorts place 10 after place 9, not before it."""
+    tenth = _row(place=10)
+    ninth = _row(place=9)
+    shell = _CompareShell([tenth, ninth])
 
-    The rendered "1:40:00" sorts before "59:00" as text but after it as
-    a duration, so this pins the numeric ``best_lap_seconds`` key.
-    """
-    long_lap = _row(best_lap="1:40:00", best_lap_seconds=6000.0)
-    short_lap = _row(best_lap="59:00", best_lap_seconds=3540.0)
-    shell = _CompareShell([long_lap, short_lap])
-
-    result = StandingsListModel.Compare(shell, 0, 1, COL_BESTLAP, True)  # noqa: FBT003 -- wx's positional bool
+    result = StandingsListModel.Compare(shell, 0, 1, COL_PLACE, True)  # noqa: FBT003 -- wx's positional bool
 
     assert result == 1
 
@@ -591,185 +624,6 @@ def test_show_standings_given_empty_sections_renders_empty_models() -> None:
 
     assert shell.teams_standings_list.model.GetCount() == 0
     assert shell.solo_standings_list.model.GetCount() == 0
-
-
-# -------------------------------------- publish-checkbox gating (R-63)
-
-
-class _CheckBox:
-    """A ``wx.CheckBox`` double recording its tick and enablement."""
-
-    def __init__(self, *, checked: bool = False, enabled: bool = True) -> None:
-        """Start at *checked*/*enabled* (the XRC defaults)."""
-        self.checked = checked
-        self.enabled = enabled
-
-    def GetValue(self) -> bool:  # noqa: N802 -- wx API name the double mirrors
-        """Return the recorded tick state."""
-        return self.checked
-
-    def SetValue(self, value: bool) -> None:  # noqa: N802, FBT001 -- wx API name and bool
-        """Record a programmatic tick."""
-        self.checked = value
-
-    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name and bool
-        """Record the enablement."""
-        self.enabled = enabled
-
-
-class _CheckEvent:
-    """A checkbox event double naming the control it fired from."""
-
-    def __init__(self, source: _CheckBox) -> None:
-        """Store the control the event fired from."""
-        self.source = source
-        self.skipped = False
-
-    def Skip(self) -> None:  # noqa: N802 -- wx API name the double mirrors
-        """Record the event.Skip()."""
-        self.skipped = True
-
-    def GetEventObject(self) -> _CheckBox:  # noqa: N802 -- wx API name
-        """Return the control the event fired from."""
-        return self.source
-
-
-class _TogglePresenter:
-    """A ``ResultsPresenter`` double counting toggle forwards."""
-
-    def __init__(self) -> None:
-        """Start with no forwards."""
-        self.toggles = 0
-
-    def on_publish_toggled(self) -> None:
-        """Record one forward from the view."""
-        self.toggles += 1
-
-
-class _PublishShell:
-    """A ResultsWindow shell owning only the publish checkboxes."""
-
-    def __init__(self, *, show_times: bool, time_board: bool) -> None:
-        """Build the five boxes, the time columns and the presenter."""
-        self.show_times_chk = _CheckBox(checked=show_times)
-        self.laps_board_chk = _CheckBox(checked=True)
-        self.time_board_chk = _CheckBox(checked=time_board)
-        self.full_field_chk = _CheckBox(checked=True)
-        self.all_cards_chk = _CheckBox(checked=True)
-        self._time_columns = (_Column(), _Column())
-        self.presenter = _TogglePresenter()
-
-    def _apply_show_times_state(self) -> None:
-        """Delegate the gate to the real view method."""
-        ResultsWindow._apply_show_times_state(self)
-
-
-def test_apply_show_times_state_given_times_off_disables_and_clears_the_time_board() -> None:
-    """R-63: times off clears and disables the Fastest-time box."""
-    shell = _PublishShell(show_times=False, time_board=True)
-
-    ResultsWindow._apply_show_times_state(shell)
-
-    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (False, False)
-
-
-def test_apply_show_times_state_given_times_off_hides_the_total_column() -> None:
-    """Times off still hides the Total column on every list."""
-    shell = _PublishShell(show_times=False, time_board=False)
-
-    ResultsWindow._apply_show_times_state(shell)
-
-    assert shell._time_columns[0].hidden is True
-
-
-def test_apply_show_times_state_given_times_off_hides_the_best_lap_column_too() -> None:
-    """Part 3: Best lap is time data, so times off hides it as well."""
-    shell = _PublishShell(show_times=False, time_board=False)
-
-    ResultsWindow._apply_show_times_state(shell)
-
-    assert shell._time_columns[1].hidden is True
-
-
-def test_apply_show_times_state_given_times_off_hides_all_three_lists_time_columns() -> None:
-    """T-4: every list's two time columns, not only the first one."""
-    shell = _PublishShell(show_times=False, time_board=False)
-    shell._time_columns = tuple(_Column() for _ in range(6))
-
-    ResultsWindow._apply_show_times_state(shell)
-
-    assert [column.hidden for column in shell._time_columns] == [True] * 6
-
-
-def test_apply_show_times_state_given_times_on_reenables_the_time_board() -> None:
-    """Re-checking show_times restores the box and the columns."""
-    shell = _PublishShell(show_times=True, time_board=False)
-    shell.time_board_chk.enabled = False  # the state while times were off
-    shell._time_columns[0].SetHidden(True)  # noqa: FBT003 -- wx's positional bool
-
-    ResultsWindow._apply_show_times_state(shell)
-
-    assert (shell.time_board_chk.enabled, shell._time_columns[0].hidden) == (True, False)
-
-
-def test_apply_show_times_state_given_times_on_keeps_a_checked_time_board() -> None:
-    """R-63(d): with times on a checked box is left alone."""
-    shell = _PublishShell(show_times=True, time_board=True)
-
-    ResultsWindow._apply_show_times_state(shell)
-
-    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (True, True)
-
-
-def test_publish_options_given_times_on_reports_a_checked_time_board() -> None:
-    """R-63(d): with times on the mapping keeps time_board."""
-    shell = _PublishShell(show_times=True, time_board=True)
-
-    options = ResultsWindow.publish_options(shell)
-
-    assert options == ExportOptions(show_times=True, time_board=True)
-
-
-def test_show_publish_options_given_times_on_restores_the_time_board_tick() -> None:
-    """Re-enabling times re-enables the box and its tick (R-63)."""
-    shell = _PublishShell(show_times=False, time_board=False)
-    shell.time_board_chk.enabled = False  # the state while times were off
-
-    ResultsWindow.show_publish_options(shell, ExportOptions(show_times=True, time_board=True))
-
-    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (True, True)
-
-
-def test_on_publish_toggle_given_times_off_clears_the_time_board_option() -> None:
-    """Unchecking times clears the box before the read."""
-    shell = _PublishShell(show_times=False, time_board=True)
-    event = _CheckEvent(shell.show_times_chk)
-
-    ResultsWindow._on_publish_toggle(shell, event)
-
-    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (False, False)
-    assert ResultsWindow.publish_options(shell).time_board is False
-    assert (shell.presenter.toggles, event.skipped) == (1, True)
-
-
-def test_on_publish_toggle_given_another_checkbox_still_forwards_and_skips() -> None:
-    """Only show_times_chk runs the gate; other toggles forward."""
-    shell = _PublishShell(show_times=True, time_board=True)
-    event = _CheckEvent(shell.laps_board_chk)
-
-    ResultsWindow._on_publish_toggle(shell, event)
-
-    assert (shell.presenter.toggles, event.skipped) == (1, True)
-    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (True, True)
-
-
-def test_show_publish_options_given_times_off_clears_a_reflected_time_board_tick() -> None:
-    """Reflected options can never show a tick while times are off."""
-    shell = _PublishShell(show_times=True, time_board=True)
-
-    ResultsWindow.show_publish_options(shell, ExportOptions(show_times=False, time_board=True))
-
-    assert (shell.time_board_chk.enabled, shell.time_board_chk.GetValue()) == (False, False)
 
 
 # ------------------------------------------------- export-button gate
@@ -1089,19 +943,133 @@ def test_bind_events_binds_the_activation_handler_on_every_standings_list() -> N
     ] * len(shell.lists)
 
 
-def test_bind_events_still_binds_every_publish_checkbox_to_the_dialog() -> None:
-    """T-3: the new activation binding displaces no checkbox forward."""
+def test_bind_events_given_the_reworked_dialog_binds_no_dialog_control() -> None:
+    """G6: the publish checkboxes left, so nothing is bound."""
     shell = _BindShell()
 
     ResultsWindow._bind_events(shell)
 
-    assert [(event, source) for event, _handler, source in shell.dialog.bindings] == [
-        (wx.EVT_CHECKBOX, checkbox)
-        for checkbox in (
-            shell.show_times_chk,
-            shell.laps_board_chk,
-            shell.time_board_chk,
-            shell.full_field_chk,
-            shell.all_cards_chk,
+    assert shell.dialog.bindings == []
+
+
+# ------------------------------- the standings lists' ten-row floor
+
+
+class _FlooredControl:
+    """A standings-list double recording its floor and the order."""
+
+    def __init__(self, calls: list[str], name: str) -> None:
+        """Join *calls* and start with no floor recorded."""
+        self.calls = calls
+        self.name = name
+        self.min_size: wx.Size | None = None
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record one floor and when it was applied."""
+        self.calls.append(f"{self.name}.SetMinSize")
+        self.min_size = size
+
+
+class _MinSizeDialog:
+    """A ``wx.Dialog`` double recording its own floor and its Fit()."""
+
+    def __init__(self, calls: list[str]) -> None:
+        """Join *calls* and start with no floor recorded."""
+        self.calls = calls
+        self.min_size: wx.Size | None = None
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the dialog's own floor."""
+        self.calls.append("dialog.SetMinSize")
+        self.min_size = size
+
+    def Fit(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the fitting call."""
+        self.calls.append("dialog.Fit")
+
+
+class _MinSizeShell:
+    """A ResultsWindow shell owning only the min-size slots."""
+
+    def __init__(self) -> None:
+        """Build the dialog double and the three list doubles."""
+        self.calls: list[str] = []
+        self.dialog = _MinSizeDialog(self.calls)
+        self.standings_list = _FlooredControl(self.calls, "standings_list")
+        self.teams_standings_list = _FlooredControl(self.calls, "teams_standings_list")
+        self.solo_standings_list = _FlooredControl(self.calls, "solo_standings_list")
+        self.lists = (
+            self.standings_list,
+            self.teams_standings_list,
+            self.solo_standings_list,
         )
+
+    def _apply_min_size(self) -> None:
+        """Delegate the floor to the real view method."""
+        ResultsWindow._apply_min_size(self)
+
+
+def test_standings_min_rows_given_the_results_lists_is_ten() -> None:
+    """The scorer's working set: ten rows visible, no scrollbar."""
+    assert results_win.STANDINGS_MIN_ROWS == 10
+
+
+def test_standings_row_height_given_the_measured_wx_metric_is_seventeen() -> None:
+    """The measured DataView row height on wxPython 4.3.1."""
+    assert results_win.STANDINGS_ROW_HEIGHT == 17
+
+
+def test_standings_header_height_given_the_measured_wx_metric_is_twenty_eight() -> None:
+    """The measured DataView header height on wxPython 4.3.1."""
+    assert results_win.STANDINGS_HEADER_HEIGHT == 28
+
+
+def test_standings_list_min_height_given_ten_rows_is_198() -> None:
+    """28 px header + 10 x 17 px rows: the floor each list is given."""
+    assert results_win.STANDINGS_LIST_MIN_HEIGHT == 198
+
+
+def test_standings_list_min_height_given_the_parts_is_header_plus_ten_rows() -> None:
+    """The floor is derived from its parts, never a bare 198."""
+    assert results_win.STANDINGS_LIST_MIN_HEIGHT == (
+        results_win.STANDINGS_HEADER_HEIGHT
+        + results_win.STANDINGS_MIN_ROWS * results_win.STANDINGS_ROW_HEIGHT
+    )
+
+
+def test_apply_min_size_given_the_three_lists_floors_each_at_198() -> None:
+    """A MIXED notebook page and the SOLO list all hold ten rows."""
+    shell = _MinSizeShell()
+
+    ResultsWindow._apply_min_size(shell)
+
+    assert [(control.min_size.width, control.min_size.height) for control in shell.lists] == [
+        (-1, results_win.STANDINGS_LIST_MIN_HEIGHT)
+    ] * len(shell.lists)
+
+
+def test_apply_min_size_given_the_three_lists_floors_them_before_fitting_the_dialog() -> None:
+    """Fit() must measure floored children, so floors come first."""
+    shell = _MinSizeShell()
+
+    ResultsWindow._apply_min_size(shell)
+
+    assert shell.calls == [
+        "standings_list.SetMinSize",
+        "teams_standings_list.SetMinSize",
+        "solo_standings_list.SetMinSize",
+        "dialog.SetMinSize",
+        "dialog.Fit",
     ]
+
+
+def test_apply_min_size_given_the_dialog_keeps_the_measured_width_floor() -> None:
+    """D16's width floor and the Fit()-measured height are unchanged."""
+    shell = _MinSizeShell()
+
+    ResultsWindow._apply_min_size(shell)
+
+    assert (shell.dialog.min_size.width, shell.dialog.min_size.height) == (
+        results_win.MIN_SIZE[0],
+        -1,
+    )

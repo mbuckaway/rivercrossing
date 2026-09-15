@@ -24,8 +24,8 @@ and the presenter refuses first with the same operator-facing reason.
 Selection enablement belongs to the view's own reconcile (it reads the
 list control's real selection after every render and calls
 :meth:`RiderIssuesPresenter.on_row_selected` or
-:meth:`RiderIssuesPresenter.on_nothing_selected`); ``_load`` never
-gates a button itself.
+:meth:`RiderIssuesPresenter.on_nothing_selected`); :meth:`RiderIssues
+Presenter.refresh` never gates a button itself.
 
 Pure Python -- no ``wx`` import may ever land here (R-71).
 """
@@ -123,7 +123,7 @@ class RiderIssuesPresenter:
         self._issues: tuple[RiderIssue, ...] = ()
         self.did_change: bool = False
         if load:
-            self._load()
+            self.refresh()
 
     def on_row_selected(self, index: int) -> None:
         """Select issue-list row *index*; gate the three fix buttons.
@@ -146,24 +146,13 @@ class RiderIssuesPresenter:
 
         The view's selection reconcile calls this when the list control
         holds no live, in-range row, so the disable half of
-        enablement is owned here rather than by ``_load`` (which would
+        enablement is owned here rather than by ``refresh`` (which would
         fight the reconcile on every render).
         """
         self._selected = None
         self.view.set_convert_solo_enabled(enabled=False)
         self.view.set_assign_plate_enabled(enabled=False)
         self.view.set_renumber_enabled(enabled=False)
-
-    def refresh(self) -> None:
-        """Re-render the report from the roster's current issues.
-
-        The public counterpart to :meth:`_load`: the one entry point a
-        caller outside this presenter uses to catch this dialog up
-        with a roster change it never itself made -- the view re-lists
-        after a nested team/rider editor closes, since that editor
-        edits the same in-memory roster.
-        """
-        self._load()
 
     def on_open_editor(self) -> str:
         """Return which editor the selection opens, "" if none."""
@@ -224,7 +213,7 @@ class RiderIssuesPresenter:
             self.view.show_validation(str(exc))
             return False
         self.did_change = True
-        self._load()
+        self.refresh()
         return True
 
     def on_assign_plate(self) -> bool:
@@ -286,7 +275,7 @@ class RiderIssuesPresenter:
             self.view.show_validation(str(exc))
             return False
         self.did_change = True
-        self._load()
+        self.refresh()
         return True
 
     def _is_convertible(self, issue: RiderIssue) -> bool:
@@ -318,17 +307,23 @@ class RiderIssuesPresenter:
             return "convert to solo requires a rider-pooled ride"
         return "a team-of-one can only be converted while the ride is draft"
 
-    def _load(self) -> None:
-        """Render the full report from the roster's current issues.
+    def refresh(self) -> None:
+        """Re-render the report from the roster's current issues.
+
+        The one entry point a caller outside this presenter uses to
+        catch this dialog up with a roster change it never itself
+        made -- the view re-lists after a nested team/rider editor
+        closes, since that editor edits the same in-memory roster.
 
         The retained selection survives a re-render only when its exact
         issue is still reported; a roster change that fixed or removed
-        it clears ``_selected``. Loading never gates a button itself --
-        the view's own reconcile reads the list control's real
+        it clears ``_selected``. A refresh never gates a button
+        itself -- the view's own reconcile reads the list control's real
         selection right after ``show_issues`` and notifies this
         presenter through :meth:`on_row_selected` or
         :meth:`on_nothing_selected`, so enable and disable have one
-        owner and ``_load`` cannot recurse through ``refresh``.
+        owner and this method cannot recurse into itself through the
+        view.
         """
         issues = rider_issues(self.roster)
         self._issues = issues

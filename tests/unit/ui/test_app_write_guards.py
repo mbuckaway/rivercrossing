@@ -5,7 +5,7 @@ Store writes (``create_ride``/``save_roster``/``delete_ride``/
 ``duplicate_ride``/``close_session`` and the ``on_event`` append
 sink) and settings writes run inside wx menu/button/sash handlers,
 and wx swallows a Python exception raised inside an event handler
-(measured: ``docs/EPIC3-SESSION-SUMMARY.md``) -- so an unguarded
+(measured) -- so an unguarded
 write failure vanishes with zero signal, and worst case the operator
 is told an import succeeded while the roster silently stayed
 unpersisted. Each write route below wraps its store call in
@@ -450,16 +450,34 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
     swallowed by wx with the dialog already closed and nothing said.
     """
 
+    class _StubMenuItem:
+        """Record the enable verdict the R-63 publish gate applies."""
+
+        def __init__(self) -> None:
+            """Start with no recorded verdict."""
+            self.enabled: bool | None = None
+
+        def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+            """Record the verdict."""
+            self.enabled = enabled
+
     class _StubMenubar:
         """Record every radio-check call the apply path makes."""
 
         def __init__(self) -> None:
-            """Start with an empty check log."""
+            """Start with an empty check log and one item double."""
             self.checks: list[tuple[int, bool]] = []
+            self.item = _StubMenuItem()
 
         def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- mirrors wx MenuBar.Check's positional bool
             """Record one check call."""
             self.checks.append((item_id, checked))
+
+        def FindItem(  # noqa: N802 -- wx API name
+            self, _real_id: int
+        ) -> tuple[_StubMenuItem, None]:
+            """Answer the one item the publish gate looks up (G6)."""
+            return self.item, None
 
     class _SettingsFrame(_NoticeFrame):
         """A notice frame that also answers GetMenuBar."""
@@ -491,7 +509,8 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
     new_settings = AppSettings(
         appearance="system",
         sound_on=True,
-        hide_times=False,
+        show_total_times=False,
+        show_lap_time=True,
         zoom_percent=context.settings.zoom_percent,
     )
 
@@ -529,17 +548,19 @@ class _EditorViewStub:
 
 
 class _SimulatorViewStub:
-    """A SimulatorDialog-shaped stub: the change flag plus the spins."""
+    """A SimulatorDialog-shaped stub: the flag, spins and behaviours."""
 
     def __init__(
         self,
         *,
         roster_changed: bool,
         sim_values: tuple[int, int, int, int, int] = (10, 2, 2, 1, 1),
+        sim_behaviors: tuple[int, int, int] = (1, 0, 0),
     ) -> None:
-        """Hold a presenter stub and the five spin values to persist."""
+        """Hold a presenter stub and the values the close persists."""
         self.presenter = _EditorPresenterStub(roster_changed=roster_changed)
         self.sim_values = sim_values
+        self.sim_behaviors = sim_behaviors
 
 
 class _FakeWindow:
@@ -895,6 +916,24 @@ def test_persist_simulator_changes_carries_the_spin_values_into_settings(
         context.settings.sim_laps,
         context.settings.sim_interval,
     ) == (37, 6, 5, 4, 9)
+    assert app_module.settings_store.load_settings(context.settings_path) == context.settings
+
+
+def test_persist_simulator_changes_carries_the_three_behaviours_into_settings(
+    tmp_path: Path,
+) -> None:
+    """G9: the closed dialog's three behaviour counts persist too."""
+    context = _context(store=None)
+    context.settings_path = tmp_path / "settings.json"
+    view = _SimulatorViewStub(roster_changed=False, sim_behaviors=(3, 7, 10))
+
+    app_module._persist_simulator_changes(context, view)
+
+    assert (
+        context.settings.sim_short_laps,
+        context.settings.sim_lapped,
+        context.settings.sim_team_stop,
+    ) == (3, 7, 10)
     assert app_module.settings_store.load_settings(context.settings_path) == context.settings
 
 
