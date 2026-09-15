@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 39-row route table,
+``commands.py`` imports no ``wx`` at all, so its 38-row route table,
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -45,7 +45,7 @@ ROUTE_COUNTS_BY_MENU = (
     ("File", 8),  # D1: New Ride… moved to the Ride menu; +mi_simulation
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
     ("Riders", 4),  # Phase 2: mi_entry_detail retired
-    ("Cards", 5),  # Phase 2: mi_reassign_plate + mi_void_card retired
+    ("Cards", 4),  # Phase 2: mi_reassign_plate + mi_void_card retired (G7: mi_edit_crossing)
     ("Results", 8),  # C6: mi_tiebreak_order retired; G6: +the publish row
     ("View", 1),
     ("Help", 4),
@@ -83,7 +83,6 @@ ROUTE_TARGETS = (
     (commands.TargetKind.DIALOG, ids.DNF_CONFIRM_DLG),  # Mark DNF...
     (commands.TargetKind.COMMAND, None),  # Undo Last Crossing: "no dialog"
     (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Add Crossing at Time...
-    (commands.TargetKind.DIALOG, ids.EDIT_CROSSING_DLG),  # Edit Crossing...
     (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Bonus Card...
     (commands.TargetKind.COMMAND, None),  # Review Held Cards: focuses an existing panel
     (commands.TargetKind.DIALOG, ids.RESULTS_DLG),  # Standings (Part C: modal dialog)
@@ -111,25 +110,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_thirty_eight_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 39
+    assert len(commands.ROUTE_TABLE) == 38
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 9, Riders 4, Cards 5, Results 8, View 1, Help 4."""
+    """File 8, Ride 9, Riders 4, Cards 4, Results 8, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_fifty_one_real_menu_item_ids_once_each() -> None:
-    """48 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_fifty_real_menu_item_ids_once_each() -> None:
+    """47 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 51
-    assert len(set(flat_ids)) == 51
+    assert len(flat_ids) == 50
+    assert len(set(flat_ids)) == 50
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -160,6 +159,12 @@ def test_route_for_id_given_the_retired_add_entry_id_raises_after_d4() -> None:
     """D4: mi_add_entry left the Riders menu and the route table."""
     with pytest.raises(commands.UnroutedMenuItemError, match=re.escape("mi_add_entry")):
         commands.route_for_id("mi_add_entry")
+
+
+def test_route_for_id_given_the_retired_edit_crossing_id_raises_after_g7() -> None:
+    """G7: mi_edit_crossing left the Cards menu and the route table."""
+    with pytest.raises(commands.UnroutedMenuItemError, match=re.escape("mi_edit_crossing")):
+        commands.route_for_id("mi_edit_crossing")
 
 
 # Phase 2 retired the dead correction surfaces: Entry Detail… (its
@@ -359,7 +364,6 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Riders > Mark DNF...
     frozenset({RideStatus.RUNNING}),  # Cards > Undo Last Crossing: "RUNNING, >=1 crossing"
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Add Crossing at Time...
-    frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Edit Crossing...
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Deal Bonus Card...
     None,  # Cards > Review Held Cards: "held cards > 0"
     None,  # Results > Standings: "always" -- the dialog shows the empty state
@@ -744,10 +748,11 @@ def test_is_route_enabled_given_new_ride_follows_the_closed_ride_in_every_state(
 # --- E7.2.1: the live binder's enable/disable table for the -----------
 # --- correction rows (menu_state applies exactly this table) ----------
 
-# spec.md §15's "Enabled when" cells for the four correction rows the
+# spec.md §15's "Enabled when" cells for the three correction rows the
 # live menu binder targets (Phase 2 retired Reassign Plate… and Void
-# Card…), transcribed independently of commands.py itself (the same
-# double-transcription discipline as ALLOWED_STATES). The fourth field
+# Card…; G7 retired Edit Crossing…), transcribed independently of
+# commands.py itself (the same double-transcription discipline as
+# ALLOWED_STATES). The fourth field
 # is an "entry has cards" requirement; None means the row has no such
 # condition (no live row declares one since Void Card… retired).
 _RUNNING_FOR_TESTS = frozenset({RideStatus.RUNNING})
@@ -756,7 +761,6 @@ _RUNNING_REOPENED_FOR_TESTS = frozenset({RideStatus.RUNNING, RideStatus.REOPENED
 _CORRECTION_ENABLEMENT = (
     ("Undo Last Crossing", _RUNNING_FOR_TESTS, 1, None),
     ("Add Crossing at Time…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
-    ("Edit Crossing…", _RUNNING_REOPENED_FOR_TESTS, 1, None),
     ("Deal Bonus Card…", _RUNNING_REOPENED_FOR_TESTS, 0, None),
 )
 
@@ -774,7 +778,7 @@ def test_is_route_enabled_given_correction_route_matches_the_live_binder_table( 
     *,
     status: RideStatus,
 ) -> None:
-    """The four correction rows' verdicts are the §15 table, per state.
+    """The three correction rows' verdicts are the §15 table, per state.
 
     Every row's state gate, its numeric minimum and any entry-has-cards
     condition combine exactly as the live binder applies them

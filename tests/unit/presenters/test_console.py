@@ -2822,7 +2822,6 @@ def _reopened_ride_state(engine: RideEngine) -> commands.RideState:
 
 _REOPENED_ENABLED_ROWS = (
     ids.MI_ADD_CROSSING_AT,
-    ids.MI_EDIT_CROSSING,
     ids.MI_DEAL_MANUAL,
     ids.MI_MARK_DNF,
     ids.MI_FINISH_RIDE,
@@ -2856,7 +2855,7 @@ def test_on_reopen_given_finished_ride_disables_live_entry() -> None:
 
 @pytest.mark.parametrize("item_id", _REOPENED_ENABLED_ROWS, ids=lambda value: value)
 def test_commands_given_reopened_state_keeps_correction_row_enabled(item_id: str) -> None:
-    """Stays enabled: the six correction rows, Finish and Start."""
+    """Stays enabled: the three correction rows, Finish and Start."""
     engine, clock = _running_engine()
     _record(engine, clock, "12", lap_time_s=100)
     engine.finish()

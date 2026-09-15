@@ -1717,8 +1717,8 @@ def _decorate(
 
     Two rows share the ``ride_setup_dlg`` target -- New Ride and Edit
     Ride -- so the fired row's own id decides which decoration runs
-    before the table is consulted (the ``mi_add_crossing_at``/
-    ``mi_edit_crossing`` precedent). Every other target is
+    before the table is consulted (the same id-keyed dispatch
+    ``_correction_route_handler`` uses). Every other target is
     :data:`_DECORATORS`, one ``_decorate_<target>`` helper per target
     that has a view class; each helper does its own deferred import,
     so a route imports only the view it opens.
@@ -2596,10 +2596,10 @@ def _handle_set_start_time_route(context: _RouteContext) -> None:
 
 # ========================================== E7.2.1 correction routes
 #
-# The four Cards/Riders correction rows (Add Crossing at Time, Edit
-# Crossing, Deal Bonus Card, Mark DNF) previously opened their dialogs
-# through _open_target's generic path -- plain XRC with no engine
-# wiring. Each handler below mirrors the _open_ride_confirm shape: run
+# The three Cards/Riders correction rows (Add Crossing at Time, Deal
+# Bonus Card, Mark DNF) previously opened their dialogs through
+# _open_target's generic path -- plain XRC with no engine wiring.
+# Each handler below mirrors the _open_ride_confirm shape: run
 # the dialog through views.corrections' shared runner (which prefills,
 # writes the named labels and enforces the non-empty reason), then
 # apply the confirmed engine command, refresh the console (tick
@@ -2607,7 +2607,8 @@ def _handle_set_start_time_route(context: _RouteContext) -> None:
 # notice. Phase 2 retired the Reassign Plate… and Void Card… rows --
 # Crossing Detail owns both corrections now -- so the dialogs here are
 # self-sufficient (the operator types the plate) and no longer read a
-# current-entry context.
+# current-entry context. G7 retired the Edit Crossing… row: Crossing
+# Detail's Edit Time and the F2 accelerator are its replacements.
 
 _CORRECTION_ERRORS = (IllegalStateError, UnknownPlateError, ValueError, ShoeClosedError)
 
@@ -2621,12 +2622,6 @@ def _correction_engine(context: _RouteContext) -> RideEngine | None:
 def _now_time_text() -> str:
     """Return local wall time as ``HH:MM:SS`` for a prefill."""
     return datetime.now(UTC).astimezone().strftime("%H:%M:%S")
-
-
-def _latest_seq_for_plate(engine: RideEngine, plate: str) -> int | None:
-    """Return *plate*'s highest crossing seq, or None."""
-    seqs = [crossing.seq for crossing in engine.crossings if crossing.entry_id == plate]
-    return max(seqs) if seqs else None
 
 
 def _apply_correction(
@@ -2678,59 +2673,6 @@ def _handle_add_crossing_at_route(context: _RouteContext) -> None:
         context,
         lambda: engine.add_crossing_at(edit.entry_id, crossed_at, edit.reason),
         "Crossing added",
-    )
-
-
-def _handle_edit_crossing_route(context: _RouteContext) -> None:
-    """Cards ▸ Edit Crossing…: edit_crossing_dlg in edit mode.
-
-    The dialog carries no crossing selector (dialogs.xrc section C),
-    so the seq the operator means is the entry's latest crossing when
-    the dialog was not opened from a selected lap (the menu flow) --
-    the "fix the most recent time error" reading of the row's
-    "≥1 crossing" enablement.
-    """
-    engine = _correction_engine(context)
-    if engine is None:
-        context.frame.SetStatusText("Edit Crossing… — no ride open")
-        return
-    from rivercrossing.ui.views import (  # noqa: PLC0415 -- deferred, see module docstring
-        corrections,
-    )
-
-    edit = corrections.run_edit_crossing(
-        context.resource,
-        frame=context.frame,
-        adding=False,
-        plate="",
-        time=_now_time_text(),
-        base_date=engine.config.event_date,
-    )
-    if edit is None:
-        return
-    seq = edit.seq
-    if seq is None:
-        seq = _latest_seq_for_plate(engine, edit.entry_id)
-        if seq is None:
-            context.frame.SetStatusText(f"Edit Crossing… — no crossings for {edit.entry_id}")
-            return
-    if edit.void:
-        _apply_correction(
-            context,
-            lambda: engine.void_crossing(edit.entry_id, seq, edit.reason),
-            "Crossing voided",
-        )
-        return
-    if edit.crossed_at is None:
-        # logic-coverage-exempt: T-3 -- the runner always sets
-        # crossed_at on a non-void commit (views/corrections.py); the
-        # guard only narrows the optional type for mypy.
-        return
-    crossed_at = edit.crossed_at
-    _apply_correction(
-        context,
-        lambda: engine.edit_crossing(edit.entry_id, seq, crossed_at, edit.reason),
-        "Crossing edited",
     )
 
 
@@ -2786,7 +2728,6 @@ def _handle_mark_dnf_route(context: _RouteContext) -> None:
 
 _CORRECTION_HANDLERS: dict[str, Callable[[_RouteContext], None]] = {
     ids.MI_ADD_CROSSING_AT: _handle_add_crossing_at_route,
-    ids.MI_EDIT_CROSSING: _handle_edit_crossing_route,
     ids.MI_DEAL_MANUAL: _handle_deal_manual_route,
     ids.MI_MARK_DNF: _handle_mark_dnf_route,
 }
@@ -3791,10 +3732,11 @@ def _correction_route_handler(
 ) -> Callable[[Any], None] | None:
     """Return the correction-route handler for *route*, if it is one.
 
-    E7.2.1's six correction rows dispatch by their own item id, not by
-    target -- ``mi_add_crossing_at`` and ``mi_edit_crossing`` share
-    one target (``EDIT_CROSSING_DLG``) with different modes. Returns
-    ``None`` for every other row, so ``_make_route_handler`` falls
+    E7.2.1's correction rows dispatch by their own item id, never by
+    target: the row's target (a plain XRC name such as
+    ``EDIT_CROSSING_DLG``) says which dialog opens, while the handler
+    that runs is what wires the engine into it. Returns ``None`` for
+    every other row, so ``_make_route_handler`` falls
     through to the generic open.
     """
     if route.ids and route.ids[0] in _CORRECTION_HANDLERS:
@@ -3954,9 +3896,9 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     live_flow_handler = _LIVE_FLOW_HANDLERS.get(route.target)
     if live_flow_handler is not None:
         return lambda _event: live_flow_handler(context)
-    # E7.2.1: the six correction rows dispatch by their own item id,
-    # not by target -- mi_add_crossing_at and mi_edit_crossing share
-    # one target (EDIT_CROSSING_DLG) with different modes.
+    # E7.2.1: the correction rows dispatch by their own item id, not
+    # by target -- the target names the dialog, the handler wires the
+    # engine into it.
     correction_handler = _correction_route_handler(context, route)
     if correction_handler is not None:
         return correction_handler

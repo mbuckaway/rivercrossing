@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Headless tests for app.py's ``_make_route_handler`` dispatch.
 
-The four Cards/Riders correction rows dispatch through
-``_make_route_handler`` by their own item id -- not by target, since
-``mi_add_crossing_at`` and ``mi_edit_crossing`` share
-``EDIT_CROSSING_DLG`` with different modes. The ux-polish wiring of
+The three Cards/Riders correction rows dispatch through
+``_make_route_handler`` by their own item id, never by target: the
+id-keyed table is what gives a row the engine-wired handler instead
+of ``_open_target``'s plain XRC open (G7 retired the Cards ▸ Edit
+Crossing… row, which used to share ``EDIT_CROSSING_DLG`` with
+``mi_add_crossing_at``). The ux-polish wiring of
 the two last-dead Ride menu rows (Stop Ride…, Set Start Time…)
 added a second, target-keyed dispatch family for the same function
 (``_LIVE_FLOW_HANDLERS``), pinned here too. W5 moved mi_stop_ride
@@ -35,11 +37,11 @@ from rivercrossing.ui.views import crossing_detail as crossing_detail_module
 from rivercrossing.ui.views.corrections import DnfMark
 from rivercrossing.ui.views.main_frame import MainFrame
 
-# Phase 2 retired the Reassign Plate… and Void Card… menu rows, so the
-# correction dispatch family is four rows now.
+# Phase 2 retired the Reassign Plate… and Void Card… menu rows and G7
+# retired Edit Crossing…, so the correction dispatch family is three
+# rows now.
 _CORRECTION_ROUTES = (
     ids.MI_ADD_CROSSING_AT,
-    ids.MI_EDIT_CROSSING,
     ids.MI_DEAL_MANUAL,
     ids.MI_MARK_DNF,
 )
@@ -100,29 +102,14 @@ def test_make_route_handler_dispatches_each_correction_route_by_its_own_id(
     assert fired == [context]
 
 
-def test_shared_edit_crossing_target_dispatch_differs_by_mode(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Add and Edit share a target but bind different handlers."""
-    assert commands.route_for_id(ids.MI_ADD_CROSSING_AT).target == ids.EDIT_CROSSING_DLG
-    assert commands.route_for_id(ids.MI_EDIT_CROSSING).target == ids.EDIT_CROSSING_DLG
-    fired: list[str] = []
-    monkeypatch.setitem(
-        app_module._CORRECTION_HANDLERS,
-        ids.MI_ADD_CROSSING_AT,
-        lambda _context: fired.append("add"),
-    )
-    monkeypatch.setitem(
-        app_module._CORRECTION_HANDLERS,
-        ids.MI_EDIT_CROSSING,
-        lambda _context: fired.append("edit"),
-    )
-    context = _StubContext()
+def test_edit_crossing_row_given_g7_retirement_binds_no_correction_handler() -> None:
+    """G7: the retired Cards row left no handler function behind."""
+    assert not hasattr(app_module, "_handle_edit_crossing_route")
 
-    app_module._make_route_handler(context, commands.route_for_id(ids.MI_ADD_CROSSING_AT))(None)  # type: ignore[arg-type]
-    app_module._make_route_handler(context, commands.route_for_id(ids.MI_EDIT_CROSSING))(None)  # type: ignore[arg-type]
 
-    assert fired == ["add", "edit"]
+def test_edit_crossing_row_given_g7_retirement_leaves_no_dispatch_entry() -> None:
+    """G7: nothing dispatches the retired mi_edit_crossing item id."""
+    assert "mi_edit_crossing" not in app_module._CORRECTION_HANDLERS
 
 
 def test_make_route_handler_binds_the_deal_bonus_card_row(

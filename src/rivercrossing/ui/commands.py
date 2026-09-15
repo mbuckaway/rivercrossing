@@ -2,9 +2,9 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 39 menu rows reaches ("Opens / does"), and when it is allowed to
+the 38 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 39 :class:`MenuRoute` rows
+once, so both jobs read off the same 38 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
@@ -12,7 +12,8 @@ split per format -- HTML and PDF -- in Part D, and G6 moved the five
 results publish options out of the results dialog onto a checkable
 Results row.) Phase 2 retired the dead Entry Detail… row and the
 duplicate Reassign Plate… / Void Card… rows -- Crossing Detail now
-owns both corrections.)
+owns both corrections -- and G7 retired Edit Crossing…, whose ground
+Crossing Detail's Edit Time and the F2 accelerator already cover.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -266,8 +267,8 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         label="Edit Ride…",
         ids=("mi_edit_ride",),
         # The same dialog as New Ride… in its preload mode; app.py's
-        # _decorate distinguishes them by the row's own id (the
-        # mi_add_crossing_at/mi_edit_crossing precedent). Only the
+        # _decorate distinguishes them by the row's own id (the same
+        # id-keyed dispatch the Cards correction rows use). Only the
         # ride-open gate applies -- the structural fields are locked
         # inside the dialog for any ride past DRAFT (D2).
         kind=TargetKind.WINDOW,
@@ -409,7 +410,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.DNF_CONFIRM_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    # --- Cards: 5 rows ---
+    # --- Cards: 4 rows ---
     MenuRoute(
         menu="Cards",
         label="Undo Last Crossing",
@@ -428,19 +429,11 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.EDIT_CROSSING_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    MenuRoute(
-        menu="Cards",
-        label="Edit Crossing…",
-        ids=("mi_edit_crossing",),
-        kind=TargetKind.DIALOG,
-        target=ids.EDIT_CROSSING_DLG,
-        enabled_when=Enablement(
-            allowed_states=_RUNNING_REOPENED, min_crossings=1
-        ),  # "RUNNING · REOPENED, ≥1 crossing"
-    ),
-    # Phase 2: Reassign Plate… and Void Card… retired -- Crossing
-    # Detail owns both corrections now. mi_deal_manual is the bonus-card
-    # deal (the manual correction's remaining row).
+    # Phase 2 retired the Reassign Plate… and Void Card… rows --
+    # Crossing Detail owns both corrections now -- and G7 retired Edit
+    # Crossing…, whose ground Crossing Detail's Edit Time and the F2
+    # accelerator already cover. mi_deal_manual is the bonus-card deal
+    # (the manual correction's remaining row).
     MenuRoute(
         menu="Cards",
         label="Deal Bonus Card…",

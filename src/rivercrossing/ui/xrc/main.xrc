@@ -678,9 +678,9 @@
   </object>
 
   <!--
-    Seven menus, 48 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 9 - Riders 5 - Cards 7 - Results 12 -
-    View 1 row, 8 items - Help 4). File order follows the 15 table
+    Seven menus, 47 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 8 - Ride 9 - Riders 4 - Cards 4 - Results 12 -
+    View 1 row, 9 items - Help 4). File order follows the 15 table
     (Import CSV, Export CSV, Back Up, Simulation), not 15b's listing
     order.
 
@@ -703,6 +703,9 @@
     menu's one destructive row) resets the open ride to a fresh
     DRAFT. D4 retires mi_add_entry from the Riders menu: the Rider
     Editor row is the single entry point for adding riders.
+
+    G7 retires mi_edit_crossing from the Cards menu: Crossing Detail's
+    Edit Time and the F2 accelerator cover the same ground.
 
     Part D: mi_standings' "Enabled when" is now "always"; with no ride
     open the dialog's empty-state source covers it.
@@ -801,9 +804,6 @@
       </object>
       <object class="wxMenuItem" name="mi_add_crossing_at">
         <label>&amp;Add Crossing at Time…</label>
-      </object>
-      <object class="wxMenuItem" name="mi_edit_crossing">
-        <label>&amp;Edit Crossing…</label>
       </object>
       <object class="wxMenuItem" name="mi_deal_manual">
         <label>&amp;Deal Bonus Card…</label>

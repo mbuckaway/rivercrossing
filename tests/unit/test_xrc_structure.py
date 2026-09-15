@@ -112,11 +112,12 @@ RIDERS_MENU_ITEMS = (
     "mi_mark_dnf",
 )
 # Phase 2 retired mi_reassign_plate and mi_void_card: Crossing Detail
-# now owns both corrections, not the Cards menu.
+# now owns both corrections, not the Cards menu. G7 retired
+# mi_edit_crossing: Crossing Detail's Edit Time and the F2 accelerator
+# cover the same ground.
 CARDS_MENU_ITEMS = (
     "mi_undo_crossing",
     "mi_add_crossing_at",
-    "mi_edit_crossing",
     "mi_deal_manual",
     "mi_review_held",
 )
@@ -216,11 +217,12 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4, Phase 2 and G6 (Results lost
-# its tie-break row in Part C and split its Preview row per format,
-# then gained G6's five publish items; Phase 2 retired mi_entry_detail,
-# mi_reassign_plate and mi_void_card): File 8 (mi_simulation added),
-# Ride 9, Riders 4, Cards 5, Results 12, View 1, Help 4. The single
+# spec.md section 15's rows after D1/D4, Phase 2, G6 and G7 (Results
+# lost its tie-break row in Part C and split its Preview row per
+# format, then gained G6's five publish items; Phase 2 retired
+# mi_entry_detail, mi_reassign_plate and mi_void_card, G7 retired
+# mi_edit_crossing): File 8 (mi_simulation added), Ride 9, Riders 4,
+# Cards 4, Results 12, View 1, Help 4. The single
 # View row expands into the 9 items section 15b names for it (W13: the
 # two time-column check items + the seven zoom radios; the theme trio
 # left the View menu).
@@ -228,7 +230,7 @@ MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 4),
-    ("&Cards", 5),
+    ("&Cards", 4),
     ("Re&sults", 12),
     ("&View", 9),
     ("&Help", 4),
@@ -504,20 +506,20 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_eight_menu_item_names() -> None:
-    """D1/D4/C6/Part D + Phase 2 + G6: 48 ``mi_*`` names."""
+def test_main_menubar_declares_forty_seven_menu_item_names() -> None:
+    """D1/D4/C6/Part D + Phase 2 + G6 + G7: 47 ``mi_*`` names."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 48
+    assert len(menu_item_names) == 47
 
 
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
     """No orphaned menu item: every authored name is routed, and back.
 
     ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
-    is driven from, so its 51 ids and the authored item names must be
+    is driven from, so its 50 ids and the authored item names must be
     one set. A row that outlives its route, or a route with no item,
     would leave an item the enablement walk can never reach.
     """

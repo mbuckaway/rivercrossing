@@ -877,8 +877,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # on every ride-state change (the epic's "existing ride-state-
         # change seam"), and show_feed fires it too -- the console
         # re-renders the feed on every record/undo/tick, so the binder
-        # also refreshes the §15 count conditions (Edit Crossing's
-        # "≥1 crossing", Void Card's "entry has cards") within a tick
+        # also refreshes the §15 count conditions (Undo Last Crossing's
+        # "≥1 crossing", Audit Trail's "≥1 audit row") within a tick
         # of any engine change, not only on a state transition.
         self._status: RideStatus = RideStatus.DRAFT
         self._on_ride_changed: Callable[[RideStatus], None] | None = None

@@ -45,7 +45,6 @@ _ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in 
 _CORRECTION_CASES: tuple[tuple[str, frozenset[RideStatus]], ...] = (
     ("Undo Last Crossing", frozenset({RideStatus.RUNNING})),
     ("Add Crossing at Time…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
-    ("Edit Crossing…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
     ("Deal Bonus Card…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
     ("Mark DNF…", frozenset({RideStatus.RUNNING, RideStatus.REOPENED})),
 )
@@ -126,19 +125,19 @@ def test_enablement_table_correction_route_follows_ride_state(
 
 
 @pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
-def test_enablement_table_edit_crossing_needs_a_crossing(status: RideStatus) -> None:
-    """Edit Crossing's ≥1-crossing condition gates the binder too.
+def test_enablement_table_undo_crossing_needs_a_crossing(status: RideStatus) -> None:
+    """Undo Last Crossing's ≥1-crossing condition gates the binder too.
 
-    The condition only ever enables within the row's §15 states
-    (RUNNING · REOPENED): a DRAFT/FINISHED ride stays disabled
+    The condition only ever enables within the row's §15 state
+    (RUNNING): a DRAFT/FINISHED/REOPENED ride stays disabled
     regardless of crossings.
     """
     empty = commands.RideState(status=status, ride_open=True, crossings=0)
     one = commands.RideState(status=status, ride_open=True, crossings=1)
-    allowed = status in (RideStatus.RUNNING, RideStatus.REOPENED)
+    allowed = status is RideStatus.RUNNING
 
-    assert menu_state.enablement_table(empty)[ids.MI_EDIT_CROSSING] is False
-    assert menu_state.enablement_table(one)[ids.MI_EDIT_CROSSING] is allowed
+    assert menu_state.enablement_table(empty)[ids.MI_UNDO_CROSSING] is False
+    assert menu_state.enablement_table(one)[ids.MI_UNDO_CROSSING] is allowed
 
 
 # G6: the Results publish row's ids, transcribed independently of
@@ -420,7 +419,7 @@ def test_apply_to_menubar_missing_item_is_a_silent_skip() -> None:
 
     menu_state.apply_to_menubar(menubar, state, xrcid=_FAKE_IDS.__getitem__)
 
-    assert menubar.items[_FAKE_IDS[ids.MI_EDIT_CROSSING]].enabled is True
+    assert menubar.items[_FAKE_IDS[ids.MI_ADD_CROSSING_AT]].enabled is True
 
 
 def test_apply_to_menubar_default_seam_resolves_ids_lazily() -> None:
