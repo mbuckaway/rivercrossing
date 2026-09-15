@@ -232,6 +232,55 @@ def test_compare_identical_hands_returns_zero() -> None:
     assert compare(first, second) == 0
 
 
+# -------------------------------- natural beats wild (fewer jokers win)
+
+
+def test_compare_identical_natural_hands_still_tie() -> None:
+    """Two natural hands of the same cards still compare as equal."""
+    first = eval5(_cards("AS KS QS JS 10S"))
+    second = eval5(_cards("AS KS QS JS 10S"))
+
+    assert compare(first, second) == 0
+
+
+def test_compare_natural_royal_flush_beats_wild_royal_flush() -> None:
+    """A natural royal flush beats an equal wild one (fewer jokers)."""
+    natural = eval5(_cards("AS KS QS JS 10S"))
+    wild = eval5(_cards("AS KS QS JS JK"))
+
+    assert compare(natural, wild) == 1
+
+
+def test_compare_fewer_jokers_beats_more_jokers() -> None:
+    """One joker beats two on two otherwise equal royal flushes."""
+    fewer = eval5(_cards("AS KS QS JS JK"))
+    more = eval5(_cards("AS KS QS JK JK"))
+
+    assert compare(fewer, more) == 1
+
+
+def test_compare_natural_five_of_a_kind_beats_wild_five_of_a_kind() -> None:
+    """Five natural aces beat four aces plus a wild joker."""
+    natural = eval5(_cards("AS AD AH AC AD"))
+    wild = eval5(_cards("AS AD AH AC JK"))
+
+    assert compare(natural, wild) == 1
+
+
+def test_compare_natural_partial_beats_wild_partial() -> None:
+    """A 4-card natural quads beats an equal 4-card wild quads.
+
+    The rule reaches partial hands too: both pools are QUADS with the
+    same ace-high tiebreak, so only the joker count can separate them.
+    """
+    natural = best_hand(_cards("AS AD AH AC"))
+    wild = best_hand(_cards("AS AD AH JK"))
+
+    assert natural.cls == wild.cls == HandClass.QUADS
+    assert natural.tiebreak == wild.tiebreak == (4, Rank.ACE.value)
+    assert compare(natural, wild) == 1
+
+
 def test_eval5_royal_flush_is_the_best_natural_hand() -> None:
     """The royal flush lands in ``HandClass.ROYAL_FLUSH``, no kicker."""
     royal = eval5(_cards("10S JS QS KS AS"))
@@ -478,6 +527,32 @@ def test_best_hand_five_or_more_jokers_among_many_cards_is_five_aces() -> None:
 
     assert evaluated.cls == HandClass.FIVE_OF_A_KIND
     assert evaluated.tiebreak == (NATURAL_HAND_SIZE, Rank.ACE.value)
+
+
+def test_best_hand_four_naturals_plus_one_joker_still_reaches_five_aces() -> None:
+    """Four naturals plus a joker still reaches five aces.
+
+    Four naturals cannot make 5 cards on their own, so ``best_hand``
+    must start its joker count at 1 for this pool -- the lower bound
+    the plan review flagged as the one defect in the k-loop.
+    """
+    evaluated = best_hand([*_cards("AS AD AH AC"), *_cards("JK")])
+
+    assert evaluated.cls == HandClass.FIVE_OF_A_KIND
+    assert evaluated.tiebreak == (NATURAL_HAND_SIZE, Rank.ACE.value)
+
+
+def test_best_hand_surplus_joker_does_not_downgrade_a_natural_hand() -> None:
+    """A spare joker is left unused when it cannot improve the hand.
+
+    Five naturals already make a royal flush; the sixth card is a
+    joker that can only reach the same royal flush, so the natural
+    five-card hand plays alone and ``jokers_played_as`` stays empty.
+    """
+    evaluated = best_hand(_cards("AS KS QS JS 10S JK"))
+
+    assert evaluated.cls == HandClass.ROYAL_FLUSH
+    assert evaluated.jokers_played_as == ()
 
 
 def test_best_hand_four_card_ace_high_sits_under_every_five_card_ace_high() -> None:
@@ -756,6 +831,49 @@ def test_self_test_five_of_a_kind_check_passes_with_no_timing_detail() -> None:
 
     assert report.checks[2].passed is True
     assert report.checks[2].detail == ""
+
+
+def test_self_test_five_of_a_kind_check_fails_when_wild_five_loses_to_the_royal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check (c) fails on its first clause: wild five beats royal flush.
+
+    Monkeypatches ``hands.compare`` -- the module's own comparison
+    seam, so the failure is deterministic -- to report every pair as
+    equal. The check's ``and`` then short-circuits on its left operand
+    (T-3), which the real vectors can never exercise.
+    """
+    # logic-coverage-exempt: T-10 -- hands.compare is the SUT's own
+    # comparison seam, patched here only to force this check's failure
+    # path deterministically; no I/O boundary is involved.
+    monkeypatch.setattr(hands, "compare", lambda _a, _b: 0)
+
+    report = self_test()
+
+    assert report.checks[2].passed is False
+
+
+def test_self_test_five_of_a_kind_check_fails_when_natural_five_loses_to_wild(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check (c) fails on its second clause: natural five beats wild.
+
+    The stub reports a wild hand as better and a natural one as equal,
+    so the first clause passes, the ``and`` does *not* short-circuit,
+    and only the natural-beats-wild clause can fail the check (T-3).
+    """
+
+    def wild_only_compare(a: EvaluatedHand, _b: EvaluatedHand) -> int:
+        return 1 if a.jokers_played_as else 0
+
+    # logic-coverage-exempt: T-10 -- hands.compare is the SUT's own
+    # comparison seam, patched here only to force this check's failure
+    # path deterministically; no I/O boundary is involved.
+    monkeypatch.setattr(hands, "compare", wild_only_compare)
+
+    report = self_test()
+
+    assert report.checks[2].passed is False
 
 
 def test_self_test_report_passed_true_when_every_check_passed() -> None:
