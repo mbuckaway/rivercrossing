@@ -22,8 +22,10 @@ all without a display:
   (``test_dialogs_positioning.py``'s precedent).
 * **The dialog's authored shape** -- ``dialogs.xrc``'s
   ``crossing_detail_dlg`` declares no ``edit_plate_input`` row (the
-  plate is read-only copy) and labels ``edit_btn`` "Edit Plate", pinned
-  over the XML because a loader test cannot see either.
+  plate is read-only copy), labels ``edit_btn`` "Edit Plate" and
+  authors its nine value fields as read-only entry boxes inside one
+  "Details" group of four columns, pinned over the XML because a
+  loader test cannot see any of it.
 * **The two seams this workstream adds** -- ``MainFrame.
   set_on_open_crossing`` / ``_on_crossing_activated`` and the app's
   ``_crossing_for_feed_row`` / ``_feed_row_target``, whose row
@@ -374,16 +376,20 @@ class _RecordingDialog:
         self.layouts += 1
 
 
-class _RecordingLabel:
-    """A ``wx.StaticText`` double recording the text it was given."""
+class _RecordingValueBox:
+    """A ``wx.TextCtrl`` double recording the value it was given."""
 
     def __init__(self) -> None:
         """Start blank."""
-        self.label = ""
+        self.value = ""
 
-    def SetLabel(self, text: str) -> None:  # noqa: N802
-        """Record the rendered text."""
-        self.label = text
+    def SetValue(self, text: str) -> None:  # noqa: N802
+        """Record the rendered value."""
+        self.value = text
+
+    def GetValue(self) -> str:  # noqa: N802
+        """Return the rendered value."""
+        return self.value
 
 
 class _RecordingText:
@@ -452,8 +458,8 @@ class _RecordingEvent:
         self.skipped = True
 
 
-# The nine read-only value labels, in the dialog's own canvas order.
-_LABEL_ATTRS = (
+# The nine read-only value boxes, in the dialog's own canvas order.
+_VALUE_ATTRS = (
     "crossing_rider_lbl",
     "crossing_team_lbl",
     "crossing_plate_lbl",
@@ -464,6 +470,11 @@ _LABEL_ATTRS = (
     "crossing_card_lbl",
     "crossing_held_lbl",
 )
+
+# The nine frozen value names split across the dialog's two value
+# columns (G2): the first five sit beside their captions in the first
+# half, the last four in the second.
+_VALUE_COLUMNS = (_VALUE_ATTRS[:5], _VALUE_ATTRS[5:])
 
 
 def _view(
@@ -484,8 +495,8 @@ def _view(
     view.crossing = crossing if crossing is not None else engine.crossings[-1]
     view.roster = roster
     view.engine = engine
-    for attr in _LABEL_ATTRS:
-        setattr(view, attr, _RecordingLabel())
+    for attr in _VALUE_ATTRS:
+        setattr(view, attr, _RecordingValueBox())
     view.edit_btn = _RecordingButton()
     view.edit_time_btn = _RecordingButton()
     view.void_card_btn = _RecordingButton()
@@ -590,11 +601,171 @@ def test_ids_given_the_removed_plate_field_declares_no_plate_input_constant() ->
     assert not hasattr(ids, "EDIT_PLATE_INPUT")
 
 
+# ------------------------------------------- the "Details" group (G2)
+#
+# The nine value fields are read-only entry boxes now, laid out as four
+# vertical columns in a row inside one "Details" group: the caption
+# column and its own value column, twice. The nine frozen names are
+# unchanged, so ui/ids.py is unchanged too -- only the class behind each
+# name and the sizer structure around them moved.
+
+# The two caption columns' text, in the order the dialog draws them.
+_CAPTION_COLUMNS = (
+    ("Rider", "Team", "Plate", "Lap #", "Crossing time"),
+    ("Lap time", "Total time", "Card", "Held / flagged"),
+)
+
+
+def _param(element: Element, tag: str) -> str:
+    """Return the text of *element*'s direct ``<tag>`` child, or ""."""
+    child = element.find(tag)
+    return "" if child is None or child.text is None else child.text
+
+
+def _crossing_detail_objects() -> dict[str, Element]:
+    """Map each named control of the dialog to its element."""
+    return {
+        element.get("name"): element
+        for element in _crossing_detail_controls()
+        if element.get("name") is not None
+    }
+
+
+def _details_box() -> Element:
+    """Return ``crossing_detail_dlg``'s one ``wxStaticBoxSizer``."""
+    return next(
+        element
+        for element in _crossing_detail_controls()
+        if element.get("class") == "wxStaticBoxSizer"
+    )
+
+
+def _group_items() -> list[Element]:
+    """Return the "Details" box's four column items, in order."""
+    return [item for item in _details_box() if item.get("class") == "sizeritem"]
+
+
+def _group_box(column: int) -> Element:
+    """Return the ``wxBoxSizer`` one column sizer item wraps."""
+    return _group_items()[column].find("object")
+
+
+def _group_cells(column: int) -> list[Element]:
+    """Return the controls one column holds, in order."""
+    return [item.find("object") for item in _group_box(column).findall("object")]
+
+
+def _value_sizeritem(name: str) -> Element:
+    """Return the sizer item wrapping the control named *name*."""
+    return next(
+        element
+        for element in _crossing_detail_controls()
+        if element.get("class") == "sizeritem"
+        and element.find("object") is not None
+        and element.find("object").get("name") == name
+    )
+
+
+def test_crossing_detail_dlg_given_its_fields_wraps_them_in_one_details_group() -> None:
+    """G2: one horizontal "Details" group box holds the fields."""
+    boxes = [
+        element
+        for element in _crossing_detail_controls()
+        if element.get("class") == "wxStaticBoxSizer"
+    ]
+
+    assert [(element.findtext("label"), _param(element, "orient")) for element in boxes] == [
+        ("Details", "wxHORIZONTAL")
+    ]
+
+
+def test_crossing_detail_dlg_given_its_details_group_lays_four_columns_in_a_row() -> None:
+    """G2: caption, value, caption, value -- four vertical columns."""
+    columns = _group_items()
+
+    assert [_param(item.find("object"), "orient") for item in columns] == ["wxVERTICAL"] * 4
+
+
+@pytest.mark.parametrize(
+    ("column", "captions"), [(0, 0), (2, 1)], ids=["first_half", "second_half"]
+)
+def test_crossing_detail_dlg_given_a_caption_column_lists_its_labels(
+    column: int, captions: int
+) -> None:
+    """G2: the captions keep their copy and carry no frozen name."""
+    cells = _group_cells(column)
+
+    assert [cell.findtext("label") for cell in cells] == list(_CAPTION_COLUMNS[captions])
+    assert [cell.get("name") for cell in cells] == [None] * len(_CAPTION_COLUMNS[captions])
+
+
+@pytest.mark.parametrize(
+    ("column", "names"),
+    [(1, _VALUE_COLUMNS[0]), (3, _VALUE_COLUMNS[1])],
+    ids=["first_half", "second_half"],
+)
+def test_crossing_detail_dlg_given_a_value_column_declares_its_frozen_names(
+    column: int, names: tuple[str, ...]
+) -> None:
+    """G2: the nine frozen ``crossing_*_lbl`` names keep their order."""
+    cells = _group_cells(column)
+
+    assert [cell.get("name") for cell in cells] == list(names)
+
+
+@pytest.mark.parametrize("value_name", _VALUE_ATTRS)
+def test_crossing_detail_dlg_value_field_is_a_read_only_entry_box(value_name: str) -> None:
+    """G2: each value field is a 180-wide read-only ``wxTextCtrl``."""
+    control = _crossing_detail_objects()[value_name]
+
+    assert (control.get("class"), _param(control, "style"), _param(control, "size")) == (
+        "wxTextCtrl",
+        "wxTE_READONLY",
+        "180,-1",
+    )
+
+
+@pytest.mark.parametrize("value_name", _VALUE_ATTRS)
+def test_crossing_detail_dlg_value_box_takes_the_columns_slack(value_name: str) -> None:
+    """G2: each entry box is laid out with ``wxEXPAND``."""
+    item = _value_sizeritem(value_name)
+
+    assert "wxEXPAND" in _param(item, "flag")
+
+
+@pytest.mark.parametrize("column", [0, 2], ids=["first_half", "second_half"])
+def test_crossing_detail_dlg_caption_column_takes_no_option_growth(column: int) -> None:
+    """G2: a caption column auto-sizes to its longest label."""
+    assert _param(_group_items()[column], "option") == ""
+
+
+@pytest.mark.parametrize("value_name", _VALUE_ATTRS)
+def test_crossing_detail_dlg_value_row_holds_the_caption_rows_stride(value_name: str) -> None:
+    """G2 measured: a 24 px box + 6 px == the 16 px caption + 14 px."""
+    assert _param(_value_sizeritem(value_name), "border") == "6"
+
+
+def test_crossing_detail_dlg_caption_row_holds_the_value_rows_stride() -> None:
+    """G2: a caption column and its value column are separate sizers.
+
+    Nothing aligns their rows for them, so both take a 30 px row stride
+    (measured: a caption stands 16 px tall against a 24 px box) and each
+    caption sits beside its own box.
+    """
+    borders = {
+        _param(item, "border")
+        for column in (0, 2)
+        for item in _group_box(column).findall("object")
+    }
+
+    assert borders == {"14"}
+
+
 # ---------------------------------------------------------- render
 
 
-def test_render_given_a_lone_crossing_fills_every_label() -> None:
-    """The nine read-only labels carry the built field values."""
+def test_render_given_a_lone_crossing_fills_every_value_box() -> None:
+    """The nine read-only entry boxes carry the built field values."""
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
@@ -603,16 +774,16 @@ def test_render_given_a_lone_crossing_fills_every_label() -> None:
     view.render()
 
     assert (
-        view.crossing_rider_lbl.label,
-        view.crossing_team_lbl.label,
-        view.crossing_plate_lbl.label,
-        view.crossing_lap_lbl.label,
-        view.crossing_time_lbl.label,
-        view.crossing_lap_time_lbl.label,
-        view.crossing_total_lbl.label,
+        view.crossing_rider_lbl.value,
+        view.crossing_team_lbl.value,
+        view.crossing_plate_lbl.value,
+        view.crossing_lap_lbl.value,
+        view.crossing_time_lbl.value,
+        view.crossing_lap_time_lbl.value,
+        view.crossing_total_lbl.value,
     ) == ("Amy", "solo", "12", "1", "10:02:00", "2:00", "0:02:00")
-    assert view.crossing_card_lbl.label == format_card(engine.card_for(engine.crossings[0]).code())
-    assert view.crossing_held_lbl.label == "Credited"
+    assert view.crossing_card_lbl.value == format_card(engine.card_for(engine.crossings[0]).code())
+    assert view.crossing_held_lbl.value == "Credited"
 
 
 def test_render_given_the_newest_crossing_enables_delete() -> None:
@@ -808,7 +979,7 @@ def test_on_edit_time_given_a_confirmed_edit_rerenders_the_crossing_in_place(
     assert engine.events[-1].payload["reason"] == "wrong clock"
     assert (view.dialog.modal_ids, event.skipped) == ([], True)
     assert view.crossing is engine.crossings[0]
-    assert view.crossing_time_lbl.label == "10:03:00"
+    assert view.crossing_time_lbl.value == "10:03:00"
 
 
 def test_on_edit_time_given_a_mid_ride_crossing_rerenders_that_crossing(
@@ -830,7 +1001,7 @@ def test_on_edit_time_given_a_mid_ride_crossing_rerenders_that_crossing(
 
     assert view.crossing is engine.crossings[0]
     assert [c.crossed_at for c in engine.crossings] == [_dt(10, 1), _dt(10, 5), _dt(10, 7)]
-    assert (view.crossing_time_lbl.label, view.crossing_lap_lbl.label) == ("10:01:00", "1")
+    assert (view.crossing_time_lbl.value, view.crossing_lap_lbl.value) == ("10:01:00", "1")
 
 
 def test_on_edit_time_given_a_seqless_submission_retimes_the_crossings_own_lap(
@@ -934,7 +1105,7 @@ def test_on_void_card_given_a_confirmed_void_rerenders_the_crossing_in_place(
     assert engine.events[-1].action == "void_card"
     assert engine.events[-1].payload["reason"] == "wrong card"
     assert (view.dialog.modal_ids, event.skipped) == ([], True)
-    assert (view.crossing_held_lbl.label, view.void_card_btn.enabled) == ("Voided", False)
+    assert (view.crossing_held_lbl.value, view.void_card_btn.enabled) == ("Voided", False)
 
 
 def test_on_void_card_given_a_pooled_team_crossing_names_the_typing_rider(
@@ -1053,7 +1224,7 @@ def test_on_edit_given_a_confirmed_number_reassigns_and_rerenders_in_place(
     assert engine.events[-1].payload["new_plate"] == "34"
     assert (view.dialog.modal_ids, event.skipped) == ([], True)
     assert view.crossing is engine.crossings[0]
-    assert view.crossing_plate_lbl.label == "34"
+    assert view.crossing_plate_lbl.value == "34"
 
 
 @pytest.mark.parametrize(
@@ -1183,7 +1354,7 @@ def test_on_edit_given_a_mid_ride_crossing_addresses_it_by_ride_wide_ordinal(
     assert engine.events[-1].payload["seq"] == 2
     assert engine.events[-1].payload["old_entry_id"] == "34"
     assert (view.crossing.entry_id, view.crossing.seq) == ("12", 3)
-    assert view.crossing_time_lbl.label == "10:03:00"
+    assert view.crossing_time_lbl.value == "10:03:00"
 
 
 # The re-render above rides on ``_commit_plate``'s own report: True when
@@ -1200,7 +1371,7 @@ def test_commit_plate_given_a_recorded_crossing_reports_success() -> None:
     committed = view._commit_plate("34")
 
     assert (committed, view.dialog.modal_ids) == (True, [])
-    assert (view.crossing.rider_plate, view.crossing_plate_lbl.label) == ("34", "34")
+    assert (view.crossing.rider_plate, view.crossing_plate_lbl.value) == ("34", "34")
     assert view.crossing_detail_infobar.messages == []
 
 
@@ -1924,8 +2095,8 @@ def _miss_view(
     view.miss = miss if miss is not None else engine.pending_misses()[-1]
     view.engine = engine
     view._miss_plate = plate
-    for attr in _LABEL_ATTRS:
-        setattr(view, attr, _RecordingLabel())
+    for attr in _VALUE_ATTRS:
+        setattr(view, attr, _RecordingValueBox())
     view.edit_btn = _RecordingButton()
     view.edit_time_btn = _RecordingButton()
     view.void_card_btn = _RecordingButton()
@@ -1945,15 +2116,15 @@ def test_render_given_a_pending_miss_fills_the_placeholder_cells() -> None:
     view.render()
 
     assert (
-        view.crossing_rider_lbl.label,
-        view.crossing_team_lbl.label,
-        view.crossing_plate_lbl.label,
-        view.crossing_lap_lbl.label,
-        view.crossing_time_lbl.label,
-        view.crossing_lap_time_lbl.label,
-        view.crossing_total_lbl.label,
-        view.crossing_card_lbl.label,
-        view.crossing_held_lbl.label,
+        view.crossing_rider_lbl.value,
+        view.crossing_team_lbl.value,
+        view.crossing_plate_lbl.value,
+        view.crossing_lap_lbl.value,
+        view.crossing_time_lbl.value,
+        view.crossing_lap_time_lbl.value,
+        view.crossing_total_lbl.value,
+        view.crossing_card_lbl.value,
+        view.crossing_held_lbl.value,
     ) == ("-", "missed", "-", "", "10:02:00", "", "", "", "Not yet scored")
 
 
@@ -2001,7 +2172,7 @@ def test_on_edit_given_a_miss_and_a_saved_number_stores_and_shows_it(
 
     view._on_edit(event)
 
-    assert (view._miss_plate, view.crossing_plate_lbl.label, event.skipped) == ("34", "34", True)
+    assert (view._miss_plate, view.crossing_plate_lbl.value, event.skipped) == ("34", "34", True)
     assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
 
 

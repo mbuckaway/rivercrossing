@@ -6,9 +6,11 @@ Double-clicking a row in the console's ``crossings_list`` opens
 row shows every fact the feed compresses into seven columns -- the
 rider the typed plate belongs to, the entry's team, the plate, the lap
 number, the crossing/lap/total times, the dealt card's glyph and that
-card's disposition -- plus the corrections the engine already owns.
-The plate is read-only copy (``crossing_plate_lbl``; the dialog has no
-editable field), so Edit opens the ``crossing_number_dlg``
+card's disposition -- plus the corrections the engine already owns, all
+rendered into the nine read-only entry boxes ``crossing_*_lbl`` (G2:
+four columns in one "Details" group). The plate is read-only copy
+(``crossing_plate_lbl``; the dialog has no editable field), so Edit
+opens the ``crossing_number_dlg``
 Save/Cancel prompt (:func:`run_plate_dialog`) and commits the plate
 through
 :meth:`~rivercrossing.ride.RideEngine.reassign_crossing` -- the
@@ -39,7 +41,7 @@ A **miss** row (a pending miss, K) opens the same dialog in miss mode:
 :class:`MissDetailView` renders the placeholders the feed row itself
 shows (Plate ``-``, Name ``missed``). Its Edit opens the same Plate
 prompt, blank (a miss has no plate to correct), and the number it saves
-is shown in the plate label; its OK assigns that number through
+is shown in the plate entry box; its OK assigns that number through
 :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`, which
 records the crossing and deals its card at the miss's own instant.
 Delete is not offered: a miss is not ``engine.crossings[-1]`` and cannot
@@ -142,7 +144,7 @@ _CANCEL_LABEL = "Cancel"
 
 @dataclass(frozen=True, slots=True)
 class CrossingDetailFields:
-    """The read-only value each ``crossing_detail_dlg`` label renders.
+    """The read-only value each ``crossing_detail_dlg`` box renders.
 
     One field per frozen ``_lbl`` control, in the dialog's own canvas
     order -- the whole view-model :func:`build_fields` (a crossing) and
@@ -292,8 +294,8 @@ def build_miss_fields(miss: PendingMiss) -> CrossingDetailFields:
     A miss has no entry, lap or card, so only the instant the operator
     signalled it is known; every other cell renders the placeholder the
     feed's own ``-``/``missed`` row uses. The plate a scorer types is
-    not one of these labels: Edit opens the Plate prompt and shows its
-    answer in the plate label, and OK commits that number through
+    not one of these boxes: Edit opens the Plate prompt and shows its
+    answer in the plate box, and OK commits that number through
     ``assign_plate_to_miss``. Pure -- no ``wx`` -- so the mapping is
     pinned headlessly.
     """
@@ -480,7 +482,7 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
 
     The crossing mode (:class:`CrossingDetailView`) and the miss mode
     (:class:`MissDetailView`) decorate the same frozen dialog, so the
-    nine value labels, the four correction buttons, the stock OK, the
+    nine value boxes, the four correction buttons, the stock OK, the
     code-side info bar and Escape all live here. Each subclass supplies
     what differs: the view-model it renders, what OK commits (nothing in
     crossing mode, the miss's assignment in miss mode) and what Edit
@@ -500,15 +502,15 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         self.dialog = dialog
         self.engine = engine
 
-        self.crossing_rider_lbl = self._find(ids.CROSSING_RIDER_LBL, wx.StaticText)
-        self.crossing_team_lbl = self._find(ids.CROSSING_TEAM_LBL, wx.StaticText)
-        self.crossing_plate_lbl = self._find(ids.CROSSING_PLATE_LBL, wx.StaticText)
-        self.crossing_lap_lbl = self._find(ids.CROSSING_LAP_LBL, wx.StaticText)
-        self.crossing_time_lbl = self._find(ids.CROSSING_TIME_LBL, wx.StaticText)
-        self.crossing_lap_time_lbl = self._find(ids.CROSSING_LAP_TIME_LBL, wx.StaticText)
-        self.crossing_total_lbl = self._find(ids.CROSSING_TOTAL_LBL, wx.StaticText)
-        self.crossing_card_lbl = self._find(ids.CROSSING_CARD_LBL, wx.StaticText)
-        self.crossing_held_lbl = self._find(ids.CROSSING_HELD_LBL, wx.StaticText)
+        self.crossing_rider_lbl = self._find(ids.CROSSING_RIDER_LBL, wx.TextCtrl)
+        self.crossing_team_lbl = self._find(ids.CROSSING_TEAM_LBL, wx.TextCtrl)
+        self.crossing_plate_lbl = self._find(ids.CROSSING_PLATE_LBL, wx.TextCtrl)
+        self.crossing_lap_lbl = self._find(ids.CROSSING_LAP_LBL, wx.TextCtrl)
+        self.crossing_time_lbl = self._find(ids.CROSSING_TIME_LBL, wx.TextCtrl)
+        self.crossing_lap_time_lbl = self._find(ids.CROSSING_LAP_TIME_LBL, wx.TextCtrl)
+        self.crossing_total_lbl = self._find(ids.CROSSING_TOTAL_LBL, wx.TextCtrl)
+        self.crossing_card_lbl = self._find(ids.CROSSING_CARD_LBL, wx.TextCtrl)
+        self.crossing_held_lbl = self._find(ids.CROSSING_HELD_LBL, wx.TextCtrl)
         self.edit_btn = self._find(ids.EDIT_BTN, wx.Button)
         self.edit_time_btn = self._find(ids.EDIT_TIME_BTN, wx.Button)
         self.void_card_btn = self._find(ids.VOID_CARD_BTN, wx.Button)
@@ -553,16 +555,16 @@ class _DetailDialogView(DialogFindMixin):  # _find: ui.views._support
         return bar
 
     def _render_fields(self, fields: CrossingDetailFields) -> None:
-        """Write *fields* onto the nine read-only labels."""
-        self.crossing_rider_lbl.SetLabel(fields.rider)
-        self.crossing_team_lbl.SetLabel(fields.team)
-        self.crossing_plate_lbl.SetLabel(fields.plate)
-        self.crossing_lap_lbl.SetLabel(fields.lap)
-        self.crossing_time_lbl.SetLabel(fields.time)
-        self.crossing_lap_time_lbl.SetLabel(fields.lap_time)
-        self.crossing_total_lbl.SetLabel(fields.total)
-        self.crossing_card_lbl.SetLabel(fields.card)
-        self.crossing_held_lbl.SetLabel(fields.held)
+        """Write *fields* onto the nine read-only entry boxes."""
+        self.crossing_rider_lbl.SetValue(fields.rider)
+        self.crossing_team_lbl.SetValue(fields.team)
+        self.crossing_plate_lbl.SetValue(fields.plate)
+        self.crossing_lap_lbl.SetValue(fields.lap)
+        self.crossing_time_lbl.SetValue(fields.time)
+        self.crossing_lap_time_lbl.SetValue(fields.lap_time)
+        self.crossing_total_lbl.SetValue(fields.total)
+        self.crossing_card_lbl.SetValue(fields.card)
+        self.crossing_held_lbl.SetValue(fields.held)
 
     def show_refusal(self, message: str) -> None:
         """Show *message* on :data:`CROSSING_DETAIL_INFOBAR`."""
@@ -624,7 +626,7 @@ class CrossingDetailView(_DetailDialogView):
         self.render()
 
     def render(self) -> None:
-        """Write :func:`build_fields`' values onto the nine labels.
+        """Write :func:`build_fields`' values onto the nine entry boxes.
 
         The button gates live here too: Edit (the Plate prompt) and Edit
         Time are always offered; Delete -- either correction, whichever
@@ -842,7 +844,7 @@ class MissDetailView(_DetailDialogView):
     :func:`build_miss_fields` once at construction and offers exactly
     one action -- score the miss. Its Edit opens the same §9 Plate
     prompt the crossing mode uses, blank (a miss has no plate to
-    correct), and shows the saved number in the plate label; OK assigns
+    correct), and shows the saved number in the plate box; OK assigns
     it through
     :meth:`~rivercrossing.ride.RideEngine.assign_plate_to_miss`, which
     records the crossing and deals its card at the miss's own instant.
@@ -875,7 +877,7 @@ class MissDetailView(_DetailDialogView):
         self.render()
 
     def render(self) -> None:
-        """Write :func:`build_miss_fields` onto the labels and gates.
+        """Write :func:`build_miss_fields` onto the boxes and gates.
 
         Edit -- the Plate prompt the typed number comes from -- is the
         miss's one action. Delete, Edit Time and Void Card are all
@@ -901,7 +903,7 @@ class MissDetailView(_DetailDialogView):
         if new_plate is None:
             return
         self._miss_plate = new_plate
-        self.crossing_plate_lbl.SetLabel(new_plate)
+        self.crossing_plate_lbl.SetValue(new_plate)
 
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx ships no stubs
         """Handle ``wxID_OK``: assign the miss's plate and close.
