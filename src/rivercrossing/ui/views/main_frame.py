@@ -87,7 +87,6 @@ __all__ = [
     "ELAPSED_CLOCK",
     "ELAPSED_CLOCK_PANEL",
     "FEED_COLUMN_FLAGS",
-    "FINISHED_INFOBAR",
     "FLAG_COLUMN_LABELS",
     "FLAG_COL_LAP",
     "FLAG_COL_LAP_TIME",
@@ -132,26 +131,11 @@ _TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
     feed_model.COL_TOTAL: lambda row: row.total,
 }
 
-# ui/ids.py is generated from the .xrc files (R-05); these three
-# names never appear there since XRC cannot author a wxInfoBar at
-# all (xrc-windows.md's own code-side footnote, main.xrc's header).
+# ui/ids.py is generated from the .xrc files (R-05); these two names
+# never appear there since XRC cannot author a wxInfoBar at all
+# (xrc-windows.md's own code-side footnote, main.xrc's header).
 RESUME_INFOBAR = "resume_infobar"
 REOPENED_INFOBAR = "reopened_infobar"
-FINISHED_INFOBAR = "finished_infobar"
-
-# W11 F3: the FINISHED banner's two code-side buttons (xrc-windows.md
-# A: "result banner InfoBar (finished_infobar) with Reopen/Results
-# buttons"). They are wx.InfoBar AddButton children, so they never
-# appear in ui/ids.py either; the names are applied with SetName() so
-# tests (and assistive tech) can find them, the same InfoBar rule.
-FINISHED_REOPEN_BTN = "finished_reopen_btn"
-FINISHED_RESULTS_BTN = "finished_results_btn"
-
-# The FINISHED result banner's message (xrc-windows.md A's state
-# variant; the copy is W11's own, no text was frozen). Shown by
-# set_state on FINISHED alongside the two buttons above; dismissed on
-# every other state, so REOPENED's corrections banner takes over.
-FINISHED_BANNER = "Ride finished — results are ready."
 
 # The WS-D gauges' frozen names, applied with SetName() because XRC
 # cannot author a wx.Control subclass either -- the InfoBar rule
@@ -858,9 +842,8 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self.frame.Bind(wx.EVT_DISPLAY_CHANGED, self._on_display_changed)
 
         # Phase 6: F2 opens the selected feed row's Crossing Detail.
-        # The id is frame-local (wx.NewIdRef, the FINISHED banner
-        # buttons' own idiom) because no menu item owns this command;
-        # accelerator_entries() also hands the entry to
+        # The id is frame-local (wx.NewIdRef) because no menu item owns
+        # this command; accelerator_entries() also hands the entry to
         # app._apply_accelerators, so the bootstrap's menubar-derived
         # table cannot drop it after construction.
         self._edit_crossing_id = wx.NewIdRef()
@@ -887,12 +870,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self._next_infobar_slot = 1  # main.xrc's spacer placeholder sits at index 0
         self.resume_infobar = self._build_infobar(RESUME_INFOBAR)
         self.reopened_infobar = self._build_infobar(REOPENED_INFOBAR)
-        self.finished_infobar = self._build_infobar(FINISHED_INFOBAR)
-        # W11 F3: the FINISHED banner's buttons (built once; the bar's
-        # own Show/Dismiss cycle shows or hides them with it).
-        self._add_finished_banner_buttons()
-        self._on_finished_reopen: Callable[[], None] | None = None
-        self._on_finished_view_results: Callable[[], None] | None = None
 
         self._total_column: Any = None
         self._lap_time_column: Any = None
@@ -972,7 +949,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
 
         ``main.xrc``'s spacer placeholder sits at sizer index 0; each
         InfoBar is inserted right after it (and after any InfoBar
-        already inserted), so the three stack in call order. A fresh
+        already inserted), so the two stack in call order. A fresh
         ``wx.InfoBar`` starts hidden (measured) -- nothing further is
         needed for R-73's "hidden by default".
 
@@ -982,7 +959,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         ``Dismiss()``/``ShowMessage()`` on a ``wx.InfoBar`` with its
         default slide effect never returns, shown or not -- disabling
         both effects here is what keeps a future ``ShowMessage()``/
-        ``Dismiss()`` call on any of these three safe.
+        ``Dismiss()`` call on either of these two safe.
         """
         bar = wx.InfoBar(self.frame)
         bar.SetName(name)
@@ -990,46 +967,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self.frame.GetSizer().Insert(self._next_infobar_slot, bar, 0, wx.EXPAND)
         self._next_infobar_slot += 1
         return bar
-
-    def _add_finished_banner_buttons(self) -> None:
-        """Add the FINISHED banner's Reopen/Results buttons (W11 F3).
-
-        Measured on wxPython 4.3.1: ``wx.InfoBar.AddButton(id, label)``
-        creates a real ``wx.Button`` child; binding the click on that
-        child (not the bar) is what receives both a synthetic click
-        and a real one, and the click never auto-dismisses the bar
-        (the handler's state transition owns dismissal). The
-        buttons carry the frozen-style names the tests find them by.
-        """
-        reopen_id = wx.NewIdRef()
-        self.finished_infobar.AddButton(reopen_id, "Reopen…")
-        reopen_btn = self._finished_button(reopen_id)
-        reopen_btn.SetName(FINISHED_REOPEN_BTN)
-        reopen_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_finished_reopen_clicked())
-
-        results_id = wx.NewIdRef()
-        self.finished_infobar.AddButton(results_id, "View results…")
-        results_btn = self._finished_button(results_id)
-        results_btn.SetName(FINISHED_RESULTS_BTN)
-        results_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_finished_view_results_clicked())
-
-    def _finished_button(self, button_id: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
-        """Return the InfoBar child button that carries *button_id*.
-
-        Raises:
-            LookupError: If no child of ``finished_infobar`` carries
-                *button_id* -- a wx build where AddButton creates no
-                child would break every finished-banner action loudly
-                instead of silently doing nothing.
-        """
-        for child in self.finished_infobar.GetChildren():
-            if child.GetId() == button_id:
-                return child
-        # logic-coverage-exempt: T-5 -- AddButton creates the child
-        # synchronously (measured probe on this wx baseline); a missing
-        # child means the wx build changed, and failing loudly is the
-        # point of the guard, so no negative-path test can drive it.
-        raise LookupError(f"finished_infobar has no button with id {button_id}")
 
     # --------------------------------------------------------- gauges
 
@@ -1355,34 +1292,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         if row == wx.NOT_FOUND:
             return
         self._fire_open_flagged(row)
-
-    def set_finished_actions(
-        self,
-        *,
-        on_reopen: Callable[[], None] | None = None,
-        on_view_results: Callable[[], None] | None = None,
-    ) -> None:
-        """Register the FINISHED banner's two button flows (W11 F3).
-
-        The app wires these to its own flows: ``on_reopen`` is the
-        same ``_handle_reopen_ride_route`` ``mi_reopen_ride`` runs
-        (confirm included), ``on_view_results`` the same results
-        frame the ``mi_standings`` row opens. The console itself only
-        fires them when its banner buttons are clicked; a console the
-        app never wired (test constructions) leaves the buttons inert.
-        """
-        self._on_finished_reopen = on_reopen
-        self._on_finished_view_results = on_view_results
-
-    def _on_finished_reopen_clicked(self) -> None:
-        """Run the app's reopen flow from the FINISHED banner."""
-        if self._on_finished_reopen is not None:
-            self._on_finished_reopen()
-
-    def _on_finished_view_results_clicked(self) -> None:
-        """Open the results frame from the FINISHED banner."""
-        if self._on_finished_view_results is not None:
-            self._on_finished_view_results()
 
     def _on_rider_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Fire the open-rider seam with the activated row's plate."""
@@ -1719,14 +1628,13 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
 
         The status label and record-crossing row enablement (A4:
         ``record_btn`` tracks ``plate_input``, both live only in
-        RUNNING), and the two state banners: REOPENED is a
-        corrections-only state (spec §3, R-36), so the console shows
-        ``reopened_infobar`` to say entry is off and corrections are
-        on (E5.2.2); FINISHED shows the result banner
-        (``finished_infobar`` with its Reopen/Results buttons, W11
-        F3). Each banner is dismissed for every other status, so a
-        FINISHED -> REOPENED transition swaps the result banner for
-        the corrections banner.
+        RUNNING), plus the REOPENED state's corrections banner:
+        REOPENED is a corrections-only state (spec §3, R-36), so the
+        console shows ``reopened_infobar`` to say entry is off and
+        corrections are on (E5.2.2), and dismisses it for every other
+        status. FINISHED carries no banner -- its red lamp and
+        "FINISHED" label hold the state, and the status bar's own
+        notice names the Results menu.
 
         This is the E7.2.1 menu-binder's "ride-state-change seam":
         every presenter state transition (start/stop/finish/reopen)
@@ -1747,14 +1655,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             self.reopened_infobar.ShowMessage(REOPENED_BANNER, wx.ICON_INFORMATION)
         else:
             self.reopened_infobar.Dismiss()
-        # W11 F3: FINISHED shows the result banner (Reopen/Results
-        # buttons, xrc-windows.md A); every other state dismisses it,
-        # so leaving FINISHED (REOPENED after a reopen) hands the
-        # console to the corrections banner above.
-        if status is RideStatus.FINISHED:
-            self.finished_infobar.ShowMessage(FINISHED_BANNER, wx.ICON_INFORMATION)
-        else:
-            self.finished_infobar.Dismiss()
         self._status = status
         self._notify_ride_changed()
         if self._presenter is not None:
@@ -1772,7 +1672,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         create one; a DRAFT reading would suggest one already exists)
         with its lamp lit red (Phase 6 -- a labelled state is never
         carried by colour alone, UX-DESKTOP section 7), every ride
-        control is inert, all three banners are dismissed, and the
+        control is inert, both banners are dismissed, and the
         clocks/feed/counters/lap show their zero state. ``_status``
         returns to DRAFT so the menu binder's ride-state seam sees
         DRAFT; the app's own ``ride_open=False`` state keeps the
@@ -1801,7 +1701,6 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             control.Enable(False)  # noqa: FBT003 -- wx API takes a positional bool
         self.resume_infobar.Dismiss()
         self.reopened_infobar.Dismiss()
-        self.finished_infobar.Dismiss()
         self.show_clock("0:00:00", "0:00:00")
         self.set_clock_fractions(elapsed_frac=0.0, remaining_frac=0.0)
         self.show_feed([])

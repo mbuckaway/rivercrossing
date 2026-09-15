@@ -27,6 +27,7 @@ from rivercrossing.ui.views._support import (
     DialogFindMixin,
     associate_model,
     clamp_to_display,
+    find_window_by_name,
     load_dialog,
 )
 
@@ -530,11 +531,11 @@ class RideLibrary(DialogFindMixin):  # _find: ui.views._support
             # this is a broken build, not a reachable state.
             return
         try:
-            message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+            message_lbl = find_window_by_name(dialog, ids.MESSAGE_LBL)
             if message_lbl is not None:
                 message_lbl.SetLabel(dialogs.delete_ride_message(selected.name))
             dialogs.bind_delete_confirmation_gate(dialog, selected.name)
-            delete_button = wx.Window.FindWindowByName(WX_ID_DELETE, dialog)
+            delete_button = find_window_by_name(dialog, WX_ID_DELETE)
             if delete_button is not None:
                 # wxID_DELETE is not one of the ids wx auto-binds to
                 # end a modal (measured), so the confirmed Delete ends

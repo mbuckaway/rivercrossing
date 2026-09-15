@@ -33,6 +33,7 @@ from rivercrossing.ui.presenters.data_source import EngineDataSource, format_dur
 from rivercrossing.ui.views import corrections, dialogs
 from rivercrossing.ui.views import crossing_detail as crossing_detail_module
 from rivercrossing.ui.views.corrections import DnfMark
+from rivercrossing.ui.views.main_frame import MainFrame
 
 # Phase 2 retired the Reassign Plate… and Void Card… menu rows, so the
 # correction dispatch family is four rows now.
@@ -689,65 +690,23 @@ def test_show_crossing_detail_dialog_given_a_pending_miss_builds_the_miss_view(
     assert built == [{"miss": miss, "engine": engine}]
 
 
-# ============================================================ W11 F3
-# The FINISHED banner: ``finished_infobar`` was constructed but never
-# shown (xrc-windows.md A's frozen-but-unimplemented state variant).
-# MainFrame.set_state now shows it with the app-wired Reopen/Results
-# actions; these pins keep the app-side wiring on the right flows (the
-# same ``_handle_reopen_ride_route`` mi_reopen_ride runs, and the
-# mi_standings results open).
+# ================================================================== D
+# The FINISHED banner is gone. The top status light and the
+# "FINISHED" label carry the state, and the status bar carries the
+# ride-finished notice, so both halves of the banner's seam went with
+# it: the view's ``set_finished_actions`` and the app's
+# ``_wire_finished_banner_actions``. Pinned here so neither half comes
+# back without the banner returning with it.
 
 
-class _FinishedActionsConsole:
-    """A console-view stand-in recording the finished-actions wiring."""
-
-    def __init__(self) -> None:
-        """Start with no registered actions."""
-        self._actions: dict[str, object] = {}
-
-    def set_finished_actions(self, **actions: object) -> None:
-        """Record the action callbacks the app wired."""
-        self._actions = actions
+def test_main_frame_given_no_finished_banner_has_no_set_finished_actions_seam() -> None:
+    """D: the removed banner leaves no finished-actions view seam."""
+    assert not hasattr(MainFrame, "set_finished_actions")
 
 
-def test_wire_finished_banner_actions_wires_reopen_and_view_results_flows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """F3: the banner's two buttons fire the menu's own two flows.
-
-    Reopen runs the same ``_handle_reopen_ride_route`` (with its
-    confirm) that ``mi_reopen_ride`` runs; View results opens the
-    results frame through the same ``mi_standings`` target the Results
-    menu row opens.
-    """
-    reopened: list[object] = []
-    opened: list[object] = []
-    monkeypatch.setattr(app_module, "_handle_reopen_ride_route", reopened.append)
-    monkeypatch.setattr(app_module, "_open_target", lambda _context, route: opened.append(route))
-    console = _FinishedActionsConsole()
-    context = _RouteStub(console_view=console)
-
-    app_module._wire_finished_banner_actions(context)  # type: ignore[arg-type]
-    console._actions["on_reopen"]()  # type: ignore[operator]
-    console._actions["on_view_results"]()  # type: ignore[operator]
-
-    assert reopened == [context]
-    assert opened == [commands.route_for_id("mi_standings")]
-
-
-def test_wire_finished_banner_actions_without_a_console_view_is_a_no_op(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A console-less route-level context has nothing to wire."""
-    called: list[object] = []
-    monkeypatch.setattr(
-        app_module, "_handle_reopen_ride_route", lambda _context: called.append("reopen")
-    )
-    monkeypatch.setattr(app_module, "_open_target", lambda _context, _route: called.append("open"))
-
-    app_module._wire_finished_banner_actions(_RouteStub(console_view=None))  # type: ignore[arg-type]
-
-    assert called == []
+def test_app_given_no_finished_banner_has_no_wiring_seam() -> None:
+    """D: the app wires no finished-banner actions."""
+    assert not hasattr(app_module, "_wire_finished_banner_actions")
 
 
 # ================================== Phase 3: Riders ▸ Mark DNF…

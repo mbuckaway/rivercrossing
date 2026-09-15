@@ -2573,7 +2573,7 @@ def test_on_finish_given_gate_clear_finishes_the_ride() -> None:
 
     assert engine.state is RideStatus.FINISHED
     assert view.last_state is RideStatus.FINISHED
-    assert view.last_notice == "Ride finished"
+    assert view.last_notice == "Ride is finished. Results are available"
 
 
 def test_on_finish_given_gate_blocked_refuses_and_notices(
@@ -2897,7 +2897,7 @@ def test_on_finish_given_reopened_ride_finishes_again_and_notices() -> None:
 
     assert engine.state is RideStatus.FINISHED
     assert view.last_state is RideStatus.FINISHED
-    assert view.last_notice == "Ride finished again"
+    assert view.last_notice == "Ride is finished. Results are available"
 
 
 def test_on_finish_given_reopened_ride_and_blocked_gate_refuses(

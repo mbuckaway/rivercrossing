@@ -59,8 +59,6 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from platformdirs import user_data_dir
-
 from rivercrossing import __version__, csvio, htmlexport, pdfexport
 from rivercrossing.cards import Shoe, ShoeClosedError
 from rivercrossing.htmlexport import ExportOptions
@@ -364,6 +362,26 @@ def _load_xrc_resources() -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is h
 _FIND_SETTLE_ATTEMPTS = 25
 
 
+def find_window_by_name(window: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs; Any is honest
+    """Return *window*'s descendant control named *name*, or None.
+
+    This module's binding of
+    :func:`~rivercrossing.ui.views._support.find_window_by_name` -- the
+    scoped recursive ``GetChildren()`` walk that replaced
+    ``wx.Window.FindWindowByName(name, window)``, which on Windows
+    ARM64 (wxPython 4.3.1) does not resolve children that are present.
+    Reached through the deferred import every wx-touching name in this
+    module uses, because this module's own top-level code imports no wx
+    (``rivercrossing.ui.views._support`` imports wx at module scope,
+    and ``test_app_wiring`` pins the wx-free import).
+    """
+    from rivercrossing.ui.views._support import (  # noqa: PLC0415 -- deferred, see module docstring
+        find_window_by_name as support_find_window_by_name,
+    )
+
+    return support_find_window_by_name(window, name)
+
+
 def _missing_required_control(
     frame: Any,  # noqa: ANN401 -- wx ships no stubs; Any is honest
     required: tuple[str, ...],
@@ -372,16 +390,16 @@ def _missing_required_control(
     """Return *required*'s first name that does not resolve in *frame*.
 
     The verify step of :func:`_load_frame_verified`. A name resolves
-    only when ``wx.Window.FindWindowByName(name, frame)`` answers an
-    instance of ``classes[name]`` -- the concrete class
-    ``MainFrame.__init__`` later ``_find``s. A ``None`` answer, or a
-    NON-None stale wrapper of the WRONG Python type (the wx/SIP
-    wrapper-cache corruption: an address reuse answers a stale wrapper
-    whose Python class is wrong for the live control), means XRC
-    silently skipped that control during the load (the Fault-B
-    degraded-load class) -- a degraded load is rebuilt, never
-    false-fasted. ``None`` (the return) means every required name
-    resolved to its expected class: the build is complete.
+    only when :func:`find_window_by_name` answers an instance of
+    ``classes[name]`` -- the concrete class ``MainFrame.__init__``
+    later ``_find``s. A ``None`` answer, or a NON-None stale wrapper of
+    the WRONG Python type (the wx/SIP wrapper-cache corruption: an
+    address reuse answers a stale wrapper whose Python class is wrong
+    for the live control), means XRC silently skipped that control
+    during the load (the Fault-B degraded-load class) -- a degraded
+    load is rebuilt, never false-fasted. ``None`` (the return) means
+    every required name resolved to its expected class: the build is
+    complete.
 
     Each lookup settles the stale-lookup hazard with the bounded
     ``del control; gc.collect()`` re-query idiom the tests use too --
@@ -389,16 +407,15 @@ def _missing_required_control(
     event processing the degradation hides in.
     """
     require_wx()
-    import wx  # noqa: PLC0415 -- deferred, see module docstring
 
     for name in required:
         expected = classes[name]
-        control = wx.Window.FindWindowByName(name, frame)
+        control = find_window_by_name(frame, name)
         attempts = 0
         while not isinstance(control, expected) and attempts < _FIND_SETTLE_ATTEMPTS:
             del control
             gc.collect()
-            control = wx.Window.FindWindowByName(name, frame)
+            control = find_window_by_name(frame, name)
             attempts += 1
         if not isinstance(control, expected):
             return name
@@ -1777,12 +1794,6 @@ _EXPORT_SUGGESTED_NAMES = {
     "export_results_csv": "{slug}-standings.csv",
 }
 
-# E2: Ride ▸ Finish Ride… (and the quit flow's Finish First) publishes
-# into this directory under the per-user data dir -- no save dialog,
-# so a finished ride always leaves its results behind for the operator
-# to find next to the database.
-_EXPORTS_DIR_NAME = "exports"
-
 
 def _pick_export_path(suggested_name: str) -> Path | None:
     """Open the OS save dialog for one export (E6.4.2 picker seam).
@@ -2111,56 +2122,6 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
     )
 
 
-def _finished_exports_dir() -> Path:
-    """Return the per-user directory Finish publishes results into (E2).
-
-    ``user_data_dir("RiverCrossing")/exports`` -- the same per-user
-    data directory the rides database lives in, so the operator finds
-    the finished ride's results without a save dialog.
-    """
-    return Path(user_data_dir("RiverCrossing")) / _EXPORTS_DIR_NAME
-
-
-def _auto_export_finished_results(context: _RouteContext, engine: RideEngine) -> None:
-    """Publish the finished ride's HTML and PDF results (E2, R-02).
-
-    Ride ▸ Finish Ride… used to leave the operator with no results
-    file until they ran the Results menu by hand. The two exports now
-    run the same off-loop writer the menu rows do -- the wx-touching
-    inputs (config, standings, publish options, watermark, team logos)
-    are captured here on the main thread, the render/write happens on
-    the worker's thread -- into the deterministic per-user directory
-    instead of through the save dialog.
-
-    Part D: each worker's completion records its own format's path and
-    re-applies the menu state (:func:`_record_export_completion`), so
-    both Preview rows enable off the finished ride's files; the export
-    watermark is the event count the rendered files captured.
-    """
-    directory = _finished_exports_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-    slug = _ride_slug(engine.config.name)
-    config = engine.config
-    teams, solo = _placed_for_export(context)
-    opts = _export_options()
-    watermark = len(engine.events)
-    team_logos = _team_logo_srcs(context.roster)
-    html_path = directory / _EXPORT_SUGGESTED_NAMES["export_html"].format(slug=slug)
-    pdf_path = directory / _EXPORT_SUGGESTED_NAMES["export_pdf"].format(slug=slug)
-    for target, path in (("export_html", html_path), ("export_pdf", pdf_path)):
-        _run_export_offloop(
-            context,
-            target,
-            path,
-            config=config,
-            teams=teams,
-            solo=solo,
-            opts=opts,
-            watermark=watermark,
-            team_logos=team_logos,
-        )
-
-
 def _handle_preview_browser(context: _RouteContext, path: Path | None) -> None:
     """Results ▸ Preview …: open *path* in the browser (E6.4.2).
 
@@ -2284,10 +2245,9 @@ def _handle_finish_route(context: _RouteContext) -> None:
     presenter threaded (route-level tests), a notice stands in for the
     action after a confirmed dialog.
 
-    E2: a finish that actually reached FINISHED auto-publishes the
-    ride's HTML and PDF results (:func:`_auto_export_finished_results`)
-    -- the quit flow's "Finish First" reaches the same handler, so
-    both finish paths leave the results behind.
+    F: the finish publishes nothing. Every results file comes from the
+    operator's own Results-menu request, so both finish paths (this
+    row and the quit flow's "Finish First") leave the disk untouched.
     """
     from rivercrossing.ui import std_dialogs  # noqa: PLC0415 -- deferred, see app.py
     from rivercrossing.ui.views import dialogs  # noqa: PLC0415 -- deferred, see app.py
@@ -2316,11 +2276,6 @@ def _handle_finish_route(context: _RouteContext) -> None:
         context.frame.SetStatusText(f"{label} — not yet implemented")
         return
     presenter.on_finish()
-    # E2: only a finish that really locked the ride publishes results;
-    # a gate refusal or a DRAFT refusal leaves the state unchanged.
-    engine = presenter.engine
-    if engine.state is RideStatus.FINISHED:
-        _auto_export_finished_results(context, engine)
 
 
 # H2: the title and affirmative button label for each native ride
@@ -3407,27 +3362,6 @@ def _wire_crossing_open_seam(context: _RouteContext) -> None:
     console_view.set_on_edit_plate_crossing(lambda row: _edit_plate_crossing_for(context, row))
 
 
-def _wire_finished_banner_actions(context: _RouteContext) -> None:
-    """Wire the FINISHED banner's two buttons to the menu's flows.
-
-    W11 F3: the console's ``finished_infobar`` (shown by
-    :meth:`MainFrame.set_state` on FINISHED) carries a Reopen button
-    and a View results button; the view is passive, so this is the
-    app's half that points them at the same flows the menu rows run:
-    ``on_reopen`` fires the same ``_handle_reopen_ride_route``
-    ``mi_reopen_ride`` runs (confirm included), ``on_view_results``
-    opens the same results frame the ``mi_standings`` row opens. A
-    console-less route-level context has nothing to wire.
-    """
-    console_view = context.console_view
-    if console_view is None:
-        return
-    console_view.set_finished_actions(
-        on_reopen=lambda: _handle_reopen_ride_route(context),
-        on_view_results=lambda: _open_target(context, commands.route_for_id("mi_standings")),
-    )
-
-
 def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     """Run the quit-confirm dialog for the ride's current status.
 
@@ -3482,12 +3416,12 @@ def _confirm_quit(context: _RouteContext) -> quit_flow.QuitOutcome:
     dialog = load_dialog(context.resource, dialog_name)
     if dialog_name == ids.EXIT_RUNNING_DLG:
         ride_name = presenter.engine.config.name if presenter is not None else "The ride"
-        message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+        message_lbl = find_window_by_name(dialog, ids.MESSAGE_LBL)
         if message_lbl is not None:
             message_lbl.SetLabel(quit_flow.running_exit_message(ride_name))
 
     finish_first_id: int | None = None
-    finish_first_button = wx.Window.FindWindowByName(ids.FINISH_FIRST_BTN, dialog)
+    finish_first_button = find_window_by_name(dialog, ids.FINISH_FIRST_BTN)
     if finish_first_button is not None:
         finish_first_id = finish_first_button.GetId()
         dialog.Bind(
@@ -4040,12 +3974,12 @@ def _run_resume_dialog(
             (ride.name for ride in store.rides() if ride.id == ride_id),
             "The ride",  # FK-guaranteed present; same fallback _confirm_quit uses
         )
-        message_lbl = wx.Window.FindWindowByName(ids.MESSAGE_LBL, dialog)
+        message_lbl = find_window_by_name(dialog, ids.MESSAGE_LBL)
         if message_lbl is not None:
             message_lbl.SetLabel(resume_flow.resume_message(ride_name, previous.state, ended_at))
 
         continue_id: int | None = None
-        continue_btn = wx.Window.FindWindowByName(ids.CONTINUE_BTN, dialog)
+        continue_btn = find_window_by_name(dialog, ids.CONTINUE_BTN)
         if continue_btn is not None:
             continue_id = continue_btn.GetId()
             # dialogs.xrc's own documented contract (spec §15b): the
@@ -4058,7 +3992,7 @@ def _run_resume_dialog(
                 lambda event: dialog.EndModal(event.GetId()),
                 continue_btn,
             )
-        library_btn = wx.Window.FindWindowByName(ids.LIBRARY_BTN, dialog)
+        library_btn = find_window_by_name(dialog, ids.LIBRARY_BTN)
         if library_btn is not None:
             # E1.5.3's product decision: resume_dlg's Escape routes to
             # library_btn (the non-committal path; nothing to cancel on
@@ -4241,10 +4175,8 @@ def build_main_window(
     activation seam the same way, routed by the row's card
     disposition (:func:`_wire_flagged_open_seam` ->
     :func:`_open_flagged_review_for`: a held card's confirm/void
-    decision, a credited short lap's crossing detail) and the
-    FINISHED banner's
-    two buttons (:func:`_wire_finished_banner_actions` -> the reopen
-    and results flows); J2 adds the crossings feed's own activation
+    decision, a credited short lap's crossing detail); J2 adds the
+    crossings feed's own activation
     seam (:func:`_wire_crossing_open_seam` -> the read-only Crossing
     Detail dialog on the activated row's live crossing). W3 retired
     every launch modal from this function -- ``resume_dlg``, the
@@ -4428,7 +4360,6 @@ def build_main_window(
     _wire_rider_open_seam(context)
     _wire_flagged_open_seam(context)
     _wire_crossing_open_seam(context)
-    _wire_finished_banner_actions(context)
     _bind_process_quit_paths(context)
     _bind_theme(context)
     # E7.2.1: the live menu-enablement binder (E1.4.2's missing half).

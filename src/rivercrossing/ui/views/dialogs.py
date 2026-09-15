@@ -68,8 +68,7 @@ import gc
 from typing import TYPE_CHECKING, Any
 
 from rivercrossing.ui import ids, require_wx, theme
-from rivercrossing.ui.card_text import format_card
-from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS
+from rivercrossing.ui.views._support import FIND_SETTLE_ATTEMPTS, find_window_by_name
 
 if TYPE_CHECKING:
     from rivercrossing.ui.logging import Logging
@@ -94,7 +93,6 @@ __all__ = [
     "run_dialog",
     "set_default_button",
     "set_initial_focus",
-    "void_card_message",
     "wire_close_button",
     "wire_escape_to",
 ]
@@ -168,27 +166,29 @@ class MissingDialogControlError(LookupError):
 def _control(dialog: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
     """Return the *expected_type* control named *name* in *dialog*.
 
-    Mirrors ``_support.find_control``'s shape: the lookup always
-    passes *dialog* as the explicit ``parent`` argument to
-    ``FindWindowByName``, never as an instance-method call, since
-    the latter silently searches every top-level window in the
-    process instead (measured).
+    Mirrors ``_support.find_control``'s shape: the lookup is scoped to
+    *dialog* -- never the bare static ``wx.Window.FindWindowByName``,
+    which searches every top-level window in the process instead
+    (measured) -- and it goes through ``_support.find_window_by_name``'s
+    recursive walk, never ``wx.Window.FindWindowByName(..., dialog)``:
+    on Windows ARM64 (wxPython 4.3.1) that call does not resolve
+    children that are present.
 
     The ``isinstance`` check is not decoration: under the address-
     reuse hazard ``_support.find_control`` documents, a freshly
-    allocated control can transiently answer ``FindWindowByName``
-    with a different, already-destroyed control's Python class --
-    only the wrapper's Python *type* gives that away, and generic
-    methods (``GetName()`` among them) still dispatch correctly even
-    then. Retrying with ``del``/``gc.collect()`` reference hygiene
-    between attempts resolves it, exactly as ``find_control`` does.
+    allocated control can transiently answer the lookup with a
+    different, already-destroyed control's Python class -- only the
+    wrapper's Python *type* gives that away, and generic methods
+    (``GetName()`` among them) still dispatch correctly even then.
+    Retrying with ``del``/``gc.collect()`` reference hygiene between
+    attempts resolves it, exactly as ``find_control`` does.
 
     Raises:
         MissingDialogControlError: If *name* does not resolve to an
             *expected_type* instance inside *dialog*, even after
             settling.
     """
-    control = wx.Window.FindWindowByName(name, dialog)
+    control = find_window_by_name(dialog, name)
     attempts = 0
     while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
         wx.SafeYield()
@@ -197,7 +197,7 @@ def _control(dialog: Any, name: str, expected_type: type = wx.Window) -> Any:  #
         # query keeps the poison entry alive -- find_control's remedy).
         del control
         gc.collect()
-        control = wx.Window.FindWindowByName(name, dialog)
+        control = find_window_by_name(dialog, name)
         attempts += 1
     if not isinstance(control, expected_type):
         raise MissingDialogControlError(
@@ -213,7 +213,7 @@ def wire_close_button(dialog: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
     that instead carries ``wxID_CANCEL`` needs no wiring here, since
     wx already binds Escape and a click on Cancel by itself.
     """
-    close_button = wx.Window.FindWindowByName("wxID_CLOSE", dialog)
+    close_button = find_window_by_name(dialog, "wxID_CLOSE")
     if close_button is None:
         return
     dialog.SetEscapeId(close_button.GetId())
@@ -361,18 +361,6 @@ def finish_again_labels() -> tuple[str, str]:
     :func:`finish_ride_message` / "Finish ride".
     """
     return "Finish again?", "Finish again"
-
-
-def void_card_message(card_code: str, entry: str) -> str:
-    """Return ``void_card_confirm_dlg``'s ``card_lbl`` copy (E7.2.1).
-
-    Names the card being voided and the entry it belongs to
-    (``"9♥ — 45 · J. Okafor"``) -- UX-DESKTOP §4: the confirm names
-    the object; a blank label is a failed assertion, never cosmetic
-    (the same rule the E5.4.1 message helpers pin). Mirrors
-    dialogs.xrc's own data-bearing sentence.
-    """
-    return f"{format_card(card_code)} — {entry}"
 
 
 def dnf_message(plate: str, name: str) -> str:

@@ -256,7 +256,6 @@ def _bare_view() -> MainFrame:
         "undo_btn",
         "resume_infobar",
         "reopened_infobar",
-        "finished_infobar",
     ):
         setattr(view, name, _NoOp())
     for name in _SILENCED_METHODS:

@@ -545,27 +545,53 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- The card being voided ("9♥ — 45 · J. Okafor"); the consequence
-           beside it is fixed wording and stays in XRC. -->
+      <!-- The card being voided and the entry it belongs to, in the same
+           two-column caption/data grid crossing_detail_dlg uses. Both cells
+           are code-written (run_void_card), never blank (UX-DESKTOP §4). -->
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxBoxSizer">
-          <orient>wxHORIZONTAL</orient>
+        <object class="wxFlexGridSizer">
+          <cols>2</cols>
+          <vgap>6</vgap>
+          <hgap>8</hgap>
+          <growablecols>1</growablecols>
+
           <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
-            <border>6</border>
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Card</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText" name="card_lbl">
               <label></label>
             </object>
           </object>
+
           <object class="sizeritem">
-            <option>1</option>
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText">
-              <label>— removes the card from the entry's scored hand. Audit-logged.</label>
+              <label>Entry</label>
             </object>
           </object>
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText" name="entry_lbl">
+              <label></label>
+            </object>
+          </object>
+        </object>
+      </object>
+
+      <!-- The consequence, below the grid and above the Reason row; fixed
+           wording and stays in XRC. -->
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxStaticText">
+          <label>Removes the card from the entry's scored hand. Audit-logged.</label>
         </object>
       </object>
 
@@ -809,13 +835,12 @@
        here and written by views/crossing_detail.py's CrossingDetailView
        (the view-model is code-side, like every other DataView/label
        content on this canvas); the captions are fixed copy and carry no
-       frozen name.
-
-       edit_plate_input is the dialog's one editable control: it starts
-       disabled at the crossing's current plate and Edit unlocks it, so
-       OK only ever commits a plate the operator deliberately changed.
-       It is deliberately not wxTE_READONLY: a read-only control cannot
-       be unlocked, and the disabled state is what says "press Edit".
+       frozen name. The plate is read-only copy too, in
+       crossing_plate_lbl above, so edit_btn, which says "Edit Plate",
+       opens the §9 Plate prompt instead of an editable field here, and
+       every correction re-renders this dialog in place: OK is the one
+       control that closes it (Delete closes it too, its crossing being
+       gone).
 
        edit_btn, edit_time_btn, void_card_btn and delete_btn sit in a
        sibling wxBoxSizer beside the stock button sizer:
@@ -961,17 +986,6 @@
             </object>
           </object>
 
-          <object class="sizeritem">
-            <flag>wxALIGN_CENTRE_VERTICAL</flag>
-            <object class="wxStaticText">
-              <label>New plate</label>
-            </object>
-          </object>
-          <object class="sizeritem">
-            <flag>wxEXPAND</flag>
-            <object class="wxTextCtrl" name="edit_plate_input"/>
-          </object>
-
         </object>
       </object>
 
@@ -985,7 +999,7 @@
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>6</border>
             <object class="wxButton" name="edit_btn">
-              <label>Edit</label>
+              <label>Edit Plate</label>
             </object>
           </object>
 

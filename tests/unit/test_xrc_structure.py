@@ -34,9 +34,9 @@ XRC_DIR = Path(__file__).resolve().parents[2] / "src" / "rivercrossing" / "ui" /
 XRC_FILES = ("main.xrc", "setup.xrc", "settings.xrc")
 
 # xrc-windows.md section A. main_menubar is the *menubar* resource's
-# own name, so it is not one of the frame's controls. resume_infobar,
-# reopened_infobar and finished_infobar are deliberately absent: XRC
-# drops the name of a wxInfoBar, so they are built in code.
+# own name, so it is not one of the frame's controls. resume_infobar
+# and reopened_infobar are deliberately absent: XRC drops the name of
+# a wxInfoBar, so they are built in code.
 MAIN_FRAME_CONTROLS = (
     "ride_logo_bmp",
     "ride_name_value",

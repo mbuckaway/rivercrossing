@@ -109,6 +109,10 @@ __all__ = [
     "MIN_SIZE",
     "STALE_INFOBAR",
     "STANDINGS_COLUMN_FLAGS",
+    "STANDINGS_HEADER_HEIGHT",
+    "STANDINGS_LIST_MIN_HEIGHT",
+    "STANDINGS_MIN_ROWS",
+    "STANDINGS_ROW_HEIGHT",
     "TIE_BADGE",
     "TIME_COLUMNS",
     "ResultsWindow",
@@ -170,11 +174,21 @@ DRAW_EXPLANATION = (
 # sizer content -- see this task's own report for how it was measured.
 MIN_SIZE = (755, 442)
 
+# D16's row floor: the three standings lists hold ten rows -- the
+# scorer's own working set -- rather than Fit()'s measurement of
+# whatever the loaded ride happened to carry. The 17px row and 28px
+# header are wxDataViewCtrl's measured metrics on wxPython 4.3.1 /
+# wxWidgets 3.3.3, so the floor is 198px.
+STANDINGS_MIN_ROWS = 10
+STANDINGS_ROW_HEIGHT = 17
+STANDINGS_HEADER_HEIGHT = 28
+STANDINGS_LIST_MIN_HEIGHT = STANDINGS_HEADER_HEIGHT + STANDINGS_MIN_ROWS * STANDINGS_ROW_HEIGHT
+
 # The stale-export InfoBar's frozen name (xrc-windows.md D / spec.md
 # §15b). XRC cannot author a wxInfoBar at all (results.xrc's own
 # header), so this name never appears in ui/ids.py -- the bar is built
 # code-side and named with SetName(), mirroring main_frame.py's
-# RESUME_INFOBAR/REOPENED_INFOBAR/FINISHED_INFOBAR precedent.
+# RESUME_INFOBAR/REOPENED_INFOBAR precedent.
 STALE_INFOBAR = "stale_infobar"
 
 # AppendTextColumn's own default flags include
@@ -654,9 +668,21 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
     def _apply_min_size(self) -> None:
         """Force the measured width floor, then Fit() the rest (D16).
 
+        Each standings list is floored to hold
+        :data:`STANDINGS_MIN_ROWS` rows -- the MIXED notebook's two
+        pages and the SOLO standalone list alike -- before the dialog
+        measures itself, so Fit() sees the floored children and every
+        list shows ten rows without a scrollbar.
+
         See :meth:`ride_library.RideLibrary._apply_min_size`'s
         docstring for the measured ``SetMinSize`` + ``Fit()``
         reasoning this mirrors.
         """
+        for control in (
+            self.standings_list,
+            self.teams_standings_list,
+            self.solo_standings_list,
+        ):
+            control.SetMinSize(wx.Size(-1, STANDINGS_LIST_MIN_HEIGHT))
         self.dialog.SetMinSize(wx.Size(MIN_SIZE[0], -1))
         self.dialog.Fit()

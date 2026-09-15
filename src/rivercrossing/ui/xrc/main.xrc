@@ -8,7 +8,7 @@
 
     * wxInfoBar cannot be authored here. XRC yields a generic wx.Control and
       silently drops the name attribute, so FindWindowByName returns None.
-      resume_infobar, reopened_infobar and finished_infobar are built with
+      resume_infobar and reopened_infobar are built with
       wx.InfoBar() in code and given their frozen names with SetName().
     * wxDataViewListCtrl cannot be authored here either: its XRC handler
       hard-forces the control name to "dataviewCtrl". crossings_list and
@@ -59,7 +59,7 @@
       <orient>wxVERTICAL</orient>
 
       <!--
-        InfoBar slot. resume_infobar / reopened_infobar / finished_infobar are
+        InfoBar slot. resume_infobar / reopened_infobar are
         constructed in code and inserted at index 0 of this sizer; see the file
         header for why they cannot be declared here.
       -->

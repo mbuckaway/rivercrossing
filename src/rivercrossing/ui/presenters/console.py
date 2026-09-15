@@ -699,7 +699,6 @@ class ConsolePresenter:
         if not FINISH_GATE():
             self.view.show_notice("Finish blocked: evaluator self-test did not pass")
             return
-        was_reopened = self.engine.state is RideStatus.REOPENED
         try:
             self.engine.finish()
         except IllegalStateError as exc:
@@ -708,7 +707,7 @@ class ConsolePresenter:
         self.refresh_feed()
         self._refresh_counters()
         self.view.set_state(self.engine.state, stopped=self.engine.stopped)
-        self.view.show_notice("Ride finished again" if was_reopened else "Ride finished")
+        self.view.show_notice("Ride is finished. Results are available")
 
     def on_reopen(self) -> None:
         """Handle Ride ▸ Reopen Ride (E5.4.1, spec §3).

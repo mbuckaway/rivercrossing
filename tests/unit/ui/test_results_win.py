@@ -23,7 +23,11 @@ style:
   pattern: importing wx is safe without a display, opening a modal is
   not);
 - the Part D export-button gate, driven against a fake ride status and
-  fake buttons (no real button is created).
+  fake buttons (no real button is created);
+- :meth:`ResultsWindow._apply_min_size`'s ten-row floor on the three
+  standings lists (D16) -- the ``STANDINGS_*`` constants pinned, and
+  the ``SetMinSize`` argument captured by a recording control double
+  per list.
 
 The live layout -- real columns on real controls -- stays with the
 (functional) suite.
@@ -1105,3 +1109,126 @@ def test_bind_events_still_binds_every_publish_checkbox_to_the_dialog() -> None:
             shell.all_cards_chk,
         )
     ]
+
+
+# ------------------------------- the standings lists' ten-row floor
+
+
+class _FlooredControl:
+    """A standings-list double recording its floor and the order."""
+
+    def __init__(self, calls: list[str], name: str) -> None:
+        """Join *calls* and start with no floor recorded."""
+        self.calls = calls
+        self.name = name
+        self.min_size: wx.Size | None = None
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record one floor and when it was applied."""
+        self.calls.append(f"{self.name}.SetMinSize")
+        self.min_size = size
+
+
+class _MinSizeDialog:
+    """A ``wx.Dialog`` double recording its own floor and its Fit()."""
+
+    def __init__(self, calls: list[str]) -> None:
+        """Join *calls* and start with no floor recorded."""
+        self.calls = calls
+        self.min_size: wx.Size | None = None
+
+    def SetMinSize(self, size: wx.Size) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the dialog's own floor."""
+        self.calls.append("dialog.SetMinSize")
+        self.min_size = size
+
+    def Fit(self) -> None:  # noqa: N802 -- wx API name the SUT calls
+        """Record the fitting call."""
+        self.calls.append("dialog.Fit")
+
+
+class _MinSizeShell:
+    """A ResultsWindow shell owning only the min-size slots."""
+
+    def __init__(self) -> None:
+        """Build the dialog double and the three list doubles."""
+        self.calls: list[str] = []
+        self.dialog = _MinSizeDialog(self.calls)
+        self.standings_list = _FlooredControl(self.calls, "standings_list")
+        self.teams_standings_list = _FlooredControl(self.calls, "teams_standings_list")
+        self.solo_standings_list = _FlooredControl(self.calls, "solo_standings_list")
+        self.lists = (
+            self.standings_list,
+            self.teams_standings_list,
+            self.solo_standings_list,
+        )
+
+    def _apply_min_size(self) -> None:
+        """Delegate the floor to the real view method."""
+        ResultsWindow._apply_min_size(self)
+
+
+def test_standings_min_rows_given_the_results_lists_is_ten() -> None:
+    """The scorer's working set: ten rows visible, no scrollbar."""
+    assert results_win.STANDINGS_MIN_ROWS == 10
+
+
+def test_standings_row_height_given_the_measured_wx_metric_is_seventeen() -> None:
+    """The measured DataView row height on wxPython 4.3.1."""
+    assert results_win.STANDINGS_ROW_HEIGHT == 17
+
+
+def test_standings_header_height_given_the_measured_wx_metric_is_twenty_eight() -> None:
+    """The measured DataView header height on wxPython 4.3.1."""
+    assert results_win.STANDINGS_HEADER_HEIGHT == 28
+
+
+def test_standings_list_min_height_given_ten_rows_is_198() -> None:
+    """28 px header + 10 x 17 px rows: the floor each list is given."""
+    assert results_win.STANDINGS_LIST_MIN_HEIGHT == 198
+
+
+def test_standings_list_min_height_given_the_parts_is_header_plus_ten_rows() -> None:
+    """The floor is derived from its parts, never a bare 198."""
+    assert results_win.STANDINGS_LIST_MIN_HEIGHT == (
+        results_win.STANDINGS_HEADER_HEIGHT
+        + results_win.STANDINGS_MIN_ROWS * results_win.STANDINGS_ROW_HEIGHT
+    )
+
+
+def test_apply_min_size_given_the_three_lists_floors_each_at_198() -> None:
+    """A MIXED notebook page and the SOLO list all hold ten rows."""
+    shell = _MinSizeShell()
+
+    ResultsWindow._apply_min_size(shell)
+
+    assert [(control.min_size.width, control.min_size.height) for control in shell.lists] == [
+        (-1, results_win.STANDINGS_LIST_MIN_HEIGHT)
+    ] * len(shell.lists)
+
+
+def test_apply_min_size_given_the_three_lists_floors_them_before_fitting_the_dialog() -> None:
+    """Fit() must measure floored children, so floors come first."""
+    shell = _MinSizeShell()
+
+    ResultsWindow._apply_min_size(shell)
+
+    assert shell.calls == [
+        "standings_list.SetMinSize",
+        "teams_standings_list.SetMinSize",
+        "solo_standings_list.SetMinSize",
+        "dialog.SetMinSize",
+        "dialog.Fit",
+    ]
+
+
+def test_apply_min_size_given_the_dialog_keeps_the_measured_width_floor() -> None:
+    """D16's width floor and the Fit()-measured height are unchanged."""
+    shell = _MinSizeShell()
+
+    ResultsWindow._apply_min_size(shell)
+
+    assert (shell.dialog.min_size.width, shell.dialog.min_size.height) == (
+        results_win.MIN_SIZE[0],
+        -1,
+    )

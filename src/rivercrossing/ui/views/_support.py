@@ -68,6 +68,7 @@ __all__ = [
     "clamp_to_display",
     "default_card_images",
     "find_control",
+    "find_window_by_name",
     "fit_frame_to_screen",
     "fresh_resource",
     "load_dialog",
@@ -145,8 +146,32 @@ def fit_frame_to_screen(frame: Any, min_size: tuple[int, int]) -> None:  # noqa:
     )
 
 
+def find_window_by_name(window: Any, name: str) -> Any:  # noqa: ANN401 -- wx ships no stubs
+    """Return *window*'s descendant control named *name*, or None.
+
+    Recursive ``GetChildren()`` walk -- the scoped, cross-platform
+    replacement for ``wx.Window.FindWindowByName(name, window)``, which
+    on Windows ARM64 (wxPython 4.3.1) does not resolve children that
+    are present. Returns the live child wrapper, so ``isinstance``
+    checks against it are correct.
+    """
+    for child in window.GetChildren():
+        if child.GetName() == name:
+            return child
+        found = find_window_by_name(child, name)
+        if found is not None:
+            return found
+    return None
+
+
 def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
     """Resolve one of *window*'s own child controls by name.
+
+    The lookup is :func:`find_window_by_name`'s scoped recursive
+    ``GetChildren()`` walk, never ``wx.Window.FindWindowByName``: on
+    Windows ARM64 (wxPython 4.3.1) that call does not resolve children
+    that are present, so this module resolves them itself, the same way
+    on both platforms.
 
     Callers always pass their own window explicitly as *window*:
     the bare static form of ``FindWindowByName`` defaults to
@@ -194,7 +219,7 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
             a whole-subtree load gap (an ``XmlResource`` degradation)
             reads differently from one missing control.
     """
-    control = wx.Window.FindWindowByName(name, window)
+    control = find_window_by_name(window, name)
     attempts = 0
     while not isinstance(control, expected_type) and attempts < FIND_SETTLE_ATTEMPTS:
         wx.SafeYield()
@@ -207,7 +232,7 @@ def find_control(window: Any, name: str, expected_type: type = wx.Window) -> Any
         # the same poison wrapper every attempt.
         del control
         gc.collect()
-        control = wx.Window.FindWindowByName(name, window)
+        control = find_window_by_name(window, name)
         attempts += 1
     if not isinstance(control, expected_type):
         children = [child.GetName() for child in window.GetChildren()]

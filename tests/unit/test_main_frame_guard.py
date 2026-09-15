@@ -10,18 +10,23 @@ app-side fix (``ui.app._load_frame_verified``) verifies the frame's
 required controls and rebuilds once from a fresh private resource.
 
 The verify is a CONCRETE-class check, not a name-only check: under the
-wx/SIP wrapper-cache corruption ``FindWindowByName`` can answer a
+wx/SIP wrapper-cache corruption the control lookup can answer a
 NON-None stale wrapper of the WRONG Python type for a live control, so
 a name-only ``is None`` check false-fasts a degraded load and the ctor
 later raises. The app gate checks each name resolves to the exact class
 ``MainFrame.__init__`` demands, with the bounded
 ``del control; gc.collect()`` settle (never a ``SafeYield``).
 
-These tests never construct a real window: ``FindWindowByName`` is
-monkeypatched to simulate a skipped subtree or a stale wrapper, and the
-frame/resource objects are ``MagicMock``s, so the verify/rebuild
-decision logic runs headless (the same reason ``test_view_support.py``
-carries no window).
+These tests never construct a real window: the app gate's control
+lookup -- ``app.find_window_by_name``, the scoped recursive
+``GetChildren()`` walk that replaced the ``wx.Window.FindWindowByName``
+call that does not resolve present children on Windows ARM64
+(wxPython 4.3.1, measured) -- is monkeypatched to simulate a skipped
+subtree or a stale wrapper, and the frame/resource objects are
+``MagicMock``s, so the verify/rebuild decision logic runs headless
+(the same reason ``test_view_support.py`` carries no window). The two
+tests that exercise the walk itself use plain frame/control doubles
+instead of ``MagicMock``s.
 """
 
 from __future__ import annotations
@@ -47,8 +52,39 @@ class _FakeControl:
 
     ``isinstance`` is what the app gate checks, so the tests pass this
     plain class (and instances of it) as the expected class/return of a
-    monkeypatched ``FindWindowByName`` -- no real wx window is built.
+    monkeypatched ``app.find_window_by_name`` -- no real wx window is
+    built. The name is what the ``GetChildren()`` walk matches on.
     """
+
+    def __init__(self, name: str = "") -> None:
+        """Name the control (empty when only the type is needed)."""
+        self._name = name
+
+    def GetName(self) -> str:  # noqa: N802 -- wx API name
+        """Return the control's frozen name."""
+        return self._name
+
+
+class _FakeFrame:
+    """A headless frame double: a name plus its direct children."""
+
+    def __init__(self, name: str, *children: object) -> None:
+        """Name this frame and hold its direct children."""
+        self._name = name
+        self._children = list(children)
+
+    def GetName(self) -> str:  # noqa: N802 -- wx API name
+        """Return the frame's own XRC name."""
+        return self._name
+
+    def GetChildren(self) -> list[object]:  # noqa: N802 -- wx API name
+        """Return the frame's direct children."""
+        return self._children
+
+
+def _refuse_wx_lookup(*_args: object, **_kwargs: object) -> None:
+    """Fail the test if anything consults the wx name lookup."""
+    pytest.fail("the app gate must not call wx.Window.FindWindowByName")
 
 
 def test_required_controls_lists_exactly_the_init_find_controls() -> None:
@@ -155,9 +191,9 @@ def test_missing_required_control_returns_none_when_all_controls_resolve(
     classes = {ids.CROSSINGS_LIST: _FakeControl, ids.MAIN_SPLITTER: _FakeControl}
     frame = MagicMock()
     monkeypatch.setattr(
-        wx.Window,
-        "FindWindowByName",
-        lambda _name, _parent=None: _FakeControl(),
+        app,
+        "find_window_by_name",
+        lambda _window, _name: _FakeControl(),
     )
 
     assert app._missing_required_control(frame, required, classes) is None
@@ -171,9 +207,9 @@ def test_missing_required_control_returns_the_first_skipped_control_name(
     classes = {ids.CROSSINGS_LIST: _FakeControl, ids.LAST_CROSSING_LBL: _FakeControl}
     frame = MagicMock()
     monkeypatch.setattr(
-        wx.Window,
-        "FindWindowByName",
-        lambda name, _parent=None: None if name == ids.LAST_CROSSING_LBL else _FakeControl(),
+        app,
+        "find_window_by_name",
+        lambda _window, name: None if name == ids.LAST_CROSSING_LBL else _FakeControl(),
     )
 
     assert app._missing_required_control(frame, required, classes) == ids.LAST_CROSSING_LBL
@@ -187,9 +223,9 @@ def test_missing_required_control_reports_a_wrong_typed_wrapper_as_missing(
     classes = {ids.CROSSINGS_LIST: _FakeControl}
     frame = MagicMock()
     monkeypatch.setattr(
-        wx.Window,
-        "FindWindowByName",
-        lambda _name, _parent=None: object(),
+        app,
+        "find_window_by_name",
+        lambda _window, _name: object(),
     )
 
     assert app._missing_required_control(frame, required, classes) == ids.CROSSINGS_LIST
@@ -204,12 +240,12 @@ def test_missing_required_control_settles_a_transiently_wrong_wrapper(
     frame = MagicMock()
     lookups = 0
 
-    def _find(_name: str, _parent: object = None) -> object:
+    def _find(_window: object, _name: str) -> object:
         nonlocal lookups
         lookups += 1
         return object() if lookups < 3 else _FakeControl()
 
-    monkeypatch.setattr(wx.Window, "FindWindowByName", _find)
+    monkeypatch.setattr(app, "find_window_by_name", _find)
 
     assert app._missing_required_control(frame, required, classes) is None
     assert lookups == 3
@@ -222,6 +258,36 @@ def test_missing_required_control_returns_none_for_an_empty_contract() -> None:
     assert app._missing_required_control(frame, (), {}) is None
 
 
+def test_missing_required_control_resolves_children_without_the_wx_name_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Windows-ARM64 fix at the app gate: the walk finds the child.
+
+    ``wx.Window.FindWindowByName`` answers ``None`` for children that
+    are present on Windows ARM64 (wxPython 4.3.1), which made this
+    gate report a healthy frame as incomplete and rebuild it. The wx
+    lookup is patched to fail loudly, so this passes only while the
+    gate resolves controls through the ``GetChildren()`` walk.
+    """
+    required = (ids.CROSSINGS_LIST,)
+    classes = {ids.CROSSINGS_LIST: _FakeControl}
+    frame = _FakeFrame(ids.MAIN_FRAME, _FakeFrame("panel", _FakeControl(ids.CROSSINGS_LIST)))
+
+    monkeypatch.setattr(wx.Window, "FindWindowByName", _refuse_wx_lookup)
+
+    assert app._missing_required_control(frame, required, classes) is None
+
+
+def test_app_find_window_by_name_resolves_a_nested_control() -> None:
+    """The app's own lookup: the shared walk, deferred import too."""
+    target = _FakeControl(ids.CROSSINGS_LIST)
+    frame = _FakeFrame(ids.MAIN_FRAME, _FakeFrame("panel", target))
+
+    found = app.find_window_by_name(frame, ids.CROSSINGS_LIST)
+
+    assert found is target
+
+
 def test_load_frame_verified_returns_the_first_frame_when_complete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -232,9 +298,9 @@ def test_load_frame_verified_returns_the_first_frame_when_complete(
     resource = MagicMock()
     resource.LoadFrame.return_value = frame
     monkeypatch.setattr(
-        wx.Window,
-        "FindWindowByName",
-        lambda _name, _parent=None: _FakeControl(),
+        app,
+        "find_window_by_name",
+        lambda _window, _name: _FakeControl(),
     )
 
     def _fresh_must_not_run() -> None:
@@ -267,9 +333,9 @@ def test_load_frame_verified_rebuilds_once_from_a_fresh_resource(
     fresh.LoadFrame.return_value = rebuilt
     monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
     monkeypatch.setattr(
-        wx.Window,
-        "FindWindowByName",
-        lambda _name, parent=None: None if parent is degraded else _FakeControl(),
+        app,
+        "find_window_by_name",
+        lambda window, _name: None if window is degraded else _FakeControl(),
     )
 
     result = app._load_frame_verified(resource, required, classes)
@@ -295,9 +361,9 @@ def test_load_frame_verified_rebuilds_when_a_control_is_the_wrong_class(
     fresh.LoadFrame.return_value = rebuilt
     monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
     monkeypatch.setattr(
-        wx.Window,
-        "FindWindowByName",
-        lambda _name, parent=None: object() if parent is degraded else _FakeControl(),
+        app,
+        "find_window_by_name",
+        lambda window, _name: object() if window is degraded else _FakeControl(),
     )
 
     result = app._load_frame_verified(resource, required, classes)
@@ -324,7 +390,7 @@ def test_load_frame_verified_raises_when_rebuild_is_still_incomplete(
     fresh = MagicMock()
     fresh.LoadFrame.return_value = rebuilt
     monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
-    monkeypatch.setattr(wx.Window, "FindWindowByName", lambda _name, _parent=None: None)
+    monkeypatch.setattr(app, "find_window_by_name", lambda _window, _name: None)
 
     with pytest.raises(
         LookupError,
@@ -351,7 +417,7 @@ def test_load_frame_verified_raises_when_the_fresh_resource_has_no_frame(
     fresh = MagicMock()
     fresh.LoadFrame.return_value = None
     monkeypatch.setattr(_support, "fresh_resource", lambda: fresh)
-    monkeypatch.setattr(wx.Window, "FindWindowByName", lambda _name, _parent=None: None)
+    monkeypatch.setattr(app, "find_window_by_name", lambda _window, _name: None)
 
     with pytest.raises(
         LookupError,
