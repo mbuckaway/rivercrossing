@@ -530,17 +530,19 @@ class _EditorViewStub:
 
 
 class _SimulatorViewStub:
-    """A SimulatorDialog-shaped stub: the change flag plus the spins."""
+    """A SimulatorDialog-shaped stub: the flag, spins and behaviours."""
 
     def __init__(
         self,
         *,
         roster_changed: bool,
         sim_values: tuple[int, int, int, int, int] = (10, 2, 2, 1, 1),
+        sim_behaviors: tuple[int, int, int] = (1, 0, 0),
     ) -> None:
-        """Hold a presenter stub and the five spin values to persist."""
+        """Hold a presenter stub and the values the close persists."""
         self.presenter = _EditorPresenterStub(roster_changed=roster_changed)
         self.sim_values = sim_values
+        self.sim_behaviors = sim_behaviors
 
 
 class _FakeWindow:
@@ -896,6 +898,24 @@ def test_persist_simulator_changes_carries_the_spin_values_into_settings(
         context.settings.sim_laps,
         context.settings.sim_interval,
     ) == (37, 6, 5, 4, 9)
+    assert app_module.settings_store.load_settings(context.settings_path) == context.settings
+
+
+def test_persist_simulator_changes_carries_the_three_behaviours_into_settings(
+    tmp_path: Path,
+) -> None:
+    """G9: the closed dialog's three behaviour counts persist too."""
+    context = _context(store=None)
+    context.settings_path = tmp_path / "settings.json"
+    view = _SimulatorViewStub(roster_changed=False, sim_behaviors=(3, 7, 10))
+
+    app_module._persist_simulator_changes(context, view)
+
+    assert (
+        context.settings.sim_short_laps,
+        context.settings.sim_lapped,
+        context.settings.sim_team_stop,
+    ) == (3, 7, 10)
     assert app_module.settings_store.load_settings(context.settings_path) == context.settings
 
 

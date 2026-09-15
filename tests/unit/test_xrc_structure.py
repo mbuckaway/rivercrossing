@@ -1216,7 +1216,8 @@ def test_crossing_number_dlg_declares_no_duplicate_control_name() -> None:
 # Plan §1: the Rider Simulator's two Generate buttons collapse into the
 # one "Generate Riders" button, so gen_teams_btn leaves the XRC file
 # (and, with it, ui/ids.py). Phase 2 adds check_btn beside it and
-# re-authors the count defaults.
+# re-authors the count defaults. G9 adds the three behaviour dropdowns
+# under the interval row.
 
 SIMULATION_XRC = "simulation.xrc"
 SIMULATION_DLG = "simulation_dlg"
@@ -1226,6 +1227,9 @@ SIMULATION_DIALOG_CONTROLS = (
     "solo_spin",
     "laps_spin",
     "interval_spin",
+    "short_lap_choice",
+    "lapped_choice",
+    "team_stop_choice",
     "gen_riders_btn",
     "check_btn",
     "go_btn",

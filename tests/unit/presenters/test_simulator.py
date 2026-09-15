@@ -23,10 +23,18 @@ screen's clock is meant to.
 The clock is the naive fixed instant ``test_results.py``'s
 ``_engine_source_with_correction`` uses: the engine's lap arithmetic
 subtracts naive timestamps, so an aware clock would ``TypeError``
-against them. ``gorba_config(min_lap_s=1)`` keeps every simulated lap
-well above the short-lap floor, so no crossing is flagged for review.
+against them. ``_draft``'s default ``min_lap_s=1`` keeps every
+simulated lap well above the short-lap floor, so only a G9 short-lap
+run flags anything for review.
+
+G9 adds the three configurable anomalies -- short-lap riders, lapped
+riders and team riders that stop after lap 4 -- so the suite also
+pins each behaviour's own arithmetic: the clamped ``min_lap_s - 30 s``
+short-lap gap, the first wave a lapped rider sits out, and the lap a
+stopped rider's rotation slot hands to the next active team member.
 """
 
+import random
 import re
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -53,6 +61,7 @@ from rivercrossing.ui.presenters.simulator import (
     SimulatorPresenter,
     _lap_offsets,
     _plates_to_record,
+    _short_lap_gap,
     check_message,
     default_interval_minutes,
     resolve_solo,
@@ -72,15 +81,24 @@ _SEED = 42
 
 
 def _draft(
-    *, plate_model: PlateModel = PlateModel.RIDER_POOLED
+    *,
+    plate_model: PlateModel = PlateModel.RIDER_POOLED,
+    min_lap_s: int = 1,
+    hold_short_laps: bool = True,
 ) -> tuple[SimulatorPresenter, RideEngine, Roster]:
     """Build a DRAFT mixed ride over *plate_model* and its presenter.
 
     The roster is empty; a test populates it through the presenter or
-    the roster's own primitives, then runs the simulation.
+    the roster's own primitives, then runs the simulation. The default
+    one-second minimum keeps every simulated lap well above the
+    short-lap floor, so only a G9 short-lap run flags anything; the
+    short-lap tests raise it and drive the behaviours.
     """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=plate_model)
-    config = replace(gorba_config(min_lap_s=1), plate_model=plate_model)
+    config = replace(
+        gorba_config(min_lap_s=min_lap_s, hold_short_laps=hold_short_laps),
+        plate_model=plate_model,
+    )
     engine = RideEngine(
         config=config,
         shoe=Shoe(
@@ -118,6 +136,19 @@ def _signature(roster: Roster) -> list[tuple[str, list[tuple[str, str, str | Non
 def _actual_start_of(engine: RideEngine) -> datetime:
     """Return the instant the engine's own start event recorded."""
     return datetime.fromisoformat(str(engine.events[0].payload["actual_start"]))
+
+
+def _shuffled_order(roster: Roster, seed: int) -> list[int]:
+    """Return the entry positions one run's seed shuffles them into.
+
+    The run's own rule, replayed independently of the module under
+    test: the G9 counts select the leading positions of *this* order,
+    so a test can name the entries a behaviour takes without reading
+    the presenter's internals.
+    """
+    order = list(range(len(roster.entries)))
+    random.Random(seed).shuffle(order)  # noqa: S311 -- replays one seed's run
+    return order
 
 
 def _laps_of(engine: RideEngine) -> list[list[Crossing]]:
@@ -1044,7 +1075,281 @@ def test_run_simulation_relay_team_laps_equal_solo_laps() -> None:
     assert laps_by_entry[team.plate] == laps_by_entry[solo.plate] == 3
 
 
+# ------------------------------------------- the behaviours (G9)
+#
+# Three configurable anomalies, each a perturbation of the same
+# scripted loop: short-lap riders cross impossibly fast, lapped riders
+# miss the gun (one lap behind, no crossing in the first wave), and
+# team riders stop after lap 4. Each count selects the first N
+# positions of the one shuffled order, so one seed reproduces a run
+# with all three.
+
+
+@pytest.mark.parametrize(
+    ("min_lap_s", "expected_seconds"),
+    [
+        pytest.param(0, 1.0, id="below-the-margin"),
+        pytest.param(1, 1.0, id="one-second-floor"),
+        pytest.param(30, 1.0, id="the-margin-itself"),
+        pytest.param(31, 1.0, id="margin-at-one-second"),
+        pytest.param(32, 2.0, id="margin-above-one-second"),
+        pytest.param(1080, 1050.0, id="the-gorba-minimum"),
+    ],
+)
+def test_short_lap_gap_given_a_minimum_returns_the_clamped_margin(
+    min_lap_s: int, expected_seconds: float
+) -> None:
+    """T-4: the gap is min_lap_s - 30 s, clamped at one second."""
+    gap = _short_lap_gap(min_lap_s)
+
+    assert gap == timedelta(seconds=expected_seconds)
+
+
+@given(min_lap_s=st.integers(min_value=31, max_value=100_000))
+def test_short_lap_gap_given_any_usable_minimum_stays_under_it(min_lap_s: int) -> None:
+    """T-7: the gap is always below the minimum, so the lap flags."""
+    gap = _short_lap_gap(min_lap_s)
+
+    assert timedelta(seconds=1) <= gap < timedelta(seconds=min_lap_s)
+
+
+def test_run_simulation_given_a_short_lap_rider_records_its_laps_under_the_minimum() -> None:
+    """A short-lap rider's every lap is short, and its card is held."""
+    presenter, engine, roster = _draft(min_lap_s=1080)
+    presenter.generate_solo_riders(1, seed=_SEED)
+
+    outcome = presenter.run_simulation(laps=3, interval_minutes=45, short_laps=1)
+
+    assert engine.lap_times(roster.entries[0].plate) == (1050.0, 1050.0, 1050.0)
+    assert len(engine.held_crossings()) == 3
+    assert outcome == SimOutcome(cancelled=False, recorded=3, blocked=None)
+
+
+def test_run_simulation_given_a_short_lap_rider_and_always_deal_credits_its_cards() -> None:
+    """T-3: under always deal, the short lap's card is credited."""
+    presenter, engine, roster = _draft(min_lap_s=1080, hold_short_laps=False)
+    presenter.generate_solo_riders(1, seed=_SEED)
+
+    presenter.run_simulation(laps=3, interval_minutes=45, short_laps=1)
+
+    assert engine.held_crossings() == ()
+    assert len(engine.credited_cards(roster.entries[0].plate)) == 3
+
+
+def test_run_simulation_given_short_lap_riders_shortens_the_orders_leading_entries() -> None:
+    """The two shortest entries are the shuffled order's first two.
+
+    The ride's minimum is 60 s -- one minute, exactly the interval --
+    so an un-shortened lap lands on the floor and is not flagged (short
+    is ``lap_time < min_lap_s``). That leaves only the deliberately
+    shortened leading entries, whose laps are the 30 s
+    ``min_lap_s - 30`` gap, for the engine to hold.
+    """
+    presenter, engine, roster = _draft(min_lap_s=60)
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+    order = _shuffled_order(roster, _SEED)
+
+    presenter.run_simulation(laps=2, interval_minutes=1, short_laps=2)
+
+    flagged = {held.crossing.entry_id for held in engine.held_crossings()}
+    assert flagged == {roster.entries[position].plate for position in order[:2]}
+    assert all(engine.lap_times(plate) == (30.0, 30.0) for plate in flagged)
+    others = [entry.plate for entry in roster.entries if entry.plate not in flagged]
+    assert all(engine.lap_times(plate) == (60.0, 60.0) for plate in others)
+
+
+def test_run_simulation_without_short_lap_riders_flags_nothing() -> None:
+    """T-3: a zero count leaves the script unchanged -- no holds."""
+    presenter, engine, _roster = _draft(min_lap_s=1080)
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+
+    presenter.run_simulation(laps=2, interval_minutes=45, short_laps=0)
+
+    assert engine.held_crossings() == ()
+
+
+def test_run_simulation_given_a_lapped_rider_finishes_it_one_lap_behind() -> None:
+    """A lapped rider skips the first wave, then laps normally."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+
+    outcome = presenter.run_simulation(laps=3, interval_minutes=45, lapped=1)
+
+    laps_by_entry = [result.laps for result in engine.snapshot()]
+    assert sorted(laps_by_entry) == [2, 3, 3, 3, 3, 3]
+    assert outcome == SimOutcome(cancelled=False, recorded=17, blocked=None)
+
+
+def test_run_simulation_given_a_lapped_rider_skips_only_the_first_wave() -> None:
+    """The lapped rider's own crossings stay one interval apart."""
+    presenter, engine, roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+    behind = roster.entries[_shuffled_order(roster, _SEED)[0]]
+
+    presenter.run_simulation(laps=3, interval_minutes=45, lapped=1)
+
+    instants = [c.crossed_at for c in engine.crossings if c.entry_id == behind.plate]
+    assert instants == [
+        _actual_start_of(engine) + timedelta(minutes=90),
+        _actual_start_of(engine) + timedelta(minutes=135),
+    ]
+
+
+def test_run_simulation_without_lapped_riders_records_every_first_wave() -> None:
+    """T-3: a zero count leaves every entry crossing the first wave."""
+    presenter, _engine, _roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+
+    outcome = presenter.run_simulation(laps=3, interval_minutes=45, lapped=0)
+
+    assert outcome == SimOutcome(cancelled=False, recorded=18, blocked=None)
+
+
+@pytest.mark.parametrize(
+    ("laps", "expected_rider_offsets"),
+    [
+        pytest.param(4, [0, 1, 2, 3], id="lap-four-still-rides"),
+        pytest.param(5, [0, 1, 2, 3, 1], id="lap-five-passes-to-the-next-active-rider"),
+    ],
+)
+def test_run_simulation_given_a_stopped_team_rider_swaps_it_out_from_lap_five(
+    laps: int, expected_rider_offsets: list[int]
+) -> None:
+    """T-4: the stop takes effect on the lap after the fourth."""
+    presenter, engine, roster = _draft()
+    presenter.generate_riders(4, 1, 0, seed=_SEED)
+    team = _entries_of(roster, EntryType.TEAM)[0]
+
+    presenter.run_simulation(laps=laps, interval_minutes=1, team_stop=1)
+
+    plates = [crossing.rider_plate for crossing in engine.crossings]
+    assert plates == [team.riders[offset].plate for offset in expected_rider_offsets]
+
+
+def test_run_simulation_given_a_stopped_team_rider_never_records_it_after_lap_four() -> None:
+    """The team laps once a wave, never under its stopped plate."""
+    presenter, engine, roster = _draft()
+    presenter.generate_riders(4, 1, 0, seed=_SEED)
+    team = _entries_of(roster, EntryType.TEAM)[0]
+
+    presenter.run_simulation(laps=8, interval_minutes=1, team_stop=1)
+
+    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    stopped = team.riders[0].plate
+    after_four = {crossing.rider_plate for crossing in engine.crossings[4:]}
+    assert laps_by_entry[team.plate] == 8
+    assert stopped not in after_four
+
+
+def test_run_simulation_given_a_fully_stopped_team_records_nothing_after_lap_four() -> None:
+    """A team whose every rider stopped crosses nothing from lap 5."""
+    presenter, engine, _roster = _draft()
+    presenter.generate_riders(2, 1, 0, seed=_SEED)
+
+    outcome = presenter.run_simulation(laps=6, interval_minutes=1, team_stop=2)
+
+    assert outcome == SimOutcome(cancelled=False, recorded=4, blocked=None)
+    assert len(engine.crossings) == 4
+
+
+def test_run_simulation_team_stop_counts_the_skipped_positions_as_progress() -> None:
+    """A skipped position counts as progress, never as recorded."""
+    presenter, _engine, _roster = _draft()
+    presenter.generate_riders(2, 1, 0, seed=_SEED)
+    calls: list[tuple[int, int]] = []
+
+    outcome = presenter.run_simulation(
+        laps=6,
+        interval_minutes=1,
+        team_stop=2,
+        on_progress=lambda done, total: calls.append((done, total)),
+    )
+
+    assert calls[-1] == (6, 6)
+    assert outcome.recorded == 4
+
+
+def test_run_simulation_given_a_relay_ride_keeps_team_stop_a_no_op() -> None:
+    """A relay ride crosses under its entry plate however many stop."""
+    presenter, engine, roster = _draft(plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="TEAM-0001",
+        plate="11",
+        riders=[Rider(first_name="A", sex="M"), Rider(first_name="B", sex="M")],
+    )
+
+    presenter.run_simulation(laps=8, interval_minutes=1, team_stop=1)
+
+    assert [crossing.entry_id for crossing in engine.crossings] == [roster.entries[0].plate] * 8
+
+
+def test_run_simulation_given_every_behaviour_and_one_seed_replays_the_same_race() -> None:
+    """T-7: one seed reproduces a run with all three behaviours."""
+    first, first_engine, _first_roster = _draft(min_lap_s=1080)
+    second, second_engine, _second_roster = _draft(min_lap_s=1080)
+    first.generate_riders(10, 2, 4, seed=_SEED)
+    second.generate_riders(10, 2, 4, seed=_SEED)
+
+    first.run_simulation(laps=8, interval_minutes=45, short_laps=2, lapped=1, team_stop=2)
+    second.run_simulation(laps=8, interval_minutes=45, short_laps=2, lapped=1, team_stop=2)
+
+    first_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in first_engine.crossings]
+    second_race = [(c.entry_id, c.rider_plate, c.crossed_at) for c in second_engine.crossings]
+    assert first_race == second_race
+
+
+def test_run_simulation_given_a_lapped_rider_skips_the_orders_leading_entry() -> None:
+    """The counts index the shuffled order, never the roster order."""
+    presenter, engine, roster = _draft()
+    presenter.generate_riders(10, 2, 4, seed=_SEED)
+    behind = roster.entries[_shuffled_order(roster, _SEED)[0]]
+
+    outcome = presenter.run_simulation(laps=3, interval_minutes=45, lapped=1)
+
+    laps_by_entry = {result.entry_id: result.laps for result in engine.snapshot()}
+    assert laps_by_entry[behind.plate] == 2
+    assert outcome.recorded == 17
+
+
 # ------------------------------------------------ _plates_to_record
+
+
+def test_plates_to_record_pooled_given_a_stopped_rider_uses_the_next_active_one() -> None:
+    """A stopped slot hands the lap to the team's next active rider."""
+    presenter, _engine, roster = _draft()
+    presenter.generate_riders(4, 1, 0, seed=_SEED)
+    team = _entries_of(roster, EntryType.TEAM)[0]
+
+    plates = _plates_to_record(roster, 4, stopped_plates=frozenset({team.riders[0].plate}))
+
+    assert plates == [team.riders[1].plate]
+
+
+def test_plates_to_record_pooled_given_every_rider_stopped_records_nothing() -> None:
+    """T-3: a fully stopped team's position records no plate at all."""
+    presenter, _engine, roster = _draft()
+    presenter.generate_riders(2, 1, 0, seed=_SEED)
+    team = _entries_of(roster, EntryType.TEAM)[0]
+
+    plates = _plates_to_record(
+        roster, 0, stopped_plates=frozenset(rider.plate for rider in team.riders)
+    )
+
+    assert plates == [None]
+
+
+def test_plates_to_record_relay_ignores_the_stopped_plates() -> None:
+    """T-3: a relay ride ignores the stopped plates entirely."""
+    _presenter, _engine, roster = _draft(plate_model=PlateModel.TEAM_RELAY)
+    entry = roster.create_team_entry(
+        display_name="TEAM-0001",
+        plate="11",
+        riders=[Rider(first_name="A", sex="M"), Rider(first_name="B", sex="M")],
+    )
+
+    plates = _plates_to_record(roster, 4, stopped_plates=frozenset({entry.plate}))
+
+    assert plates == [entry.plate]
 
 
 def test_plates_to_record_relay_returns_one_plate_per_entry() -> None:

@@ -1433,7 +1433,9 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
     Plan §1/§3: the spins are seeded from the live settings, so the
     dialog opens on the operator's last-used counts -- and the average
     speed is handed over, so the interval opens on this ride's own
-    speed-derived default.
+    speed-derived default. G9 seeds the three behaviour dropdowns from
+    the same settings, so the short-lap, lapped and team-stop counts
+    the operator last chose come back with the spins.
     """
     from rivercrossing.ui.views.simulator import SimulatorDialog  # noqa: PLC0415 -- deferred
 
@@ -1449,6 +1451,9 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
         sim_solo=context.settings.sim_solo,
         sim_laps=context.settings.sim_laps,
         sim_interval=context.settings.sim_interval,
+        sim_short_laps=context.settings.sim_short_laps,
+        sim_lapped=context.settings.sim_lapped,
+        sim_team_stop=context.settings.sim_team_stop,
         avg_speed_kmh=context.settings.avg_speed_kmh,
     )
 
@@ -2852,9 +2857,12 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
 
     Plan §1 adds the settings write: the dialog's five spin values
     (``view.sim_values``, recorded before the modal closed) are stored
-    so the next open seeds the fields with them. This runs whichever
-    way the modal ended -- the window is already gone, so the values
-    are read from the view's plain tuple, never from a wx control.
+    so the next open seeds the fields with them. G9 adds the three
+    behaviour counts (``view.sim_behaviors``, snapshotted the same way)
+    -- the short-lap, lapped and team-stop dropdowns. This runs
+    whichever way the modal ended -- the window is already gone, so the
+    values are read from the view's plain tuples, never from a wx
+    control.
 
     Plan §2 adds the menu re-apply. GO drives the engine directly
     (``SimulatorPresenter.run_simulation``), so no console ride-state
@@ -2873,7 +2881,8 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
         view: The closed ``SimulatorDialog`` (or a simulator-shaped
             stand-in) whose ``presenter.roster_changed`` says whether
             this session generated anything and whose ``sim_values``
-            carry the five spin values to persist.
+            and ``sim_behaviors`` carry the spins and the three
+            behaviour counts to persist.
     """
     if view.presenter.roster_changed:
         store = context.store
@@ -2884,6 +2893,7 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
                 _log_warn(context, f"Could not save riders: {exc}")
                 context.frame.SetStatusText(f"Could not save riders: {exc}")
     sim_riders, sim_teams, sim_solo, sim_laps, sim_interval = view.sim_values
+    sim_short_laps, sim_lapped, sim_team_stop = view.sim_behaviors
     updated = replace(
         context.settings,
         sim_riders=sim_riders,
@@ -2891,6 +2901,9 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
         sim_solo=sim_solo,
         sim_laps=sim_laps,
         sim_interval=sim_interval,
+        sim_short_laps=sim_short_laps,
+        sim_lapped=sim_lapped,
+        sim_team_stop=sim_team_stop,
     )
     try:
         settings_store.save_settings(updated, context.settings_path)

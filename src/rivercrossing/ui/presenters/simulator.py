@@ -13,6 +13,24 @@ logic lands here -- every mutation goes through the shipped ``Roster``
 and ``RideEngine`` methods, so a simulated ride is the same ride the
 console records, and one seed reproduces a whole run.
 
+Three configurable behaviours bend that script, so a demo shows the
+console's review surfaces (G9). Each count selects the leading entries
+of the run's one shuffled order, so one seed still reproduces the whole
+run:
+
+* **Short-lap riders** cross impossibly fast -- each lap at the
+  entry's own previous recorded instant plus ``min_lap_s - 30 s``
+  (clamped at one second) -- so the engine flags every one of their
+  laps and, under the hold policy, holds their cards.
+* **Lapped riders** sit out the first wave only (lapped at the gun,
+  one lap behind) and then lap normally, finishing one lap short.
+* **Team riders stop after 4 laps** record their first four laps and
+  then never cross again -- out of the race, never a DNF. A pooled
+  team whose rotation slot lands on a stopped rider sends the next
+  active rider instead, so the team still laps once per wave; a relay
+  team crosses under its entry plate, so the behaviour is a no-op
+  there.
+
 ``generate_riders`` serves MIXED rides (solo entries plus teams);
 ``generate_solo_riders`` serves SOLO-only rides, where every generated
 rider is their own entry. A solo-only roster refuses team creation
@@ -34,7 +52,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from rivercrossing.ride import StartBlockedError
 from rivercrossing.roster import (
@@ -73,6 +91,17 @@ INTERVAL_MAX_MINUTES = 240
 # leaves the field room to complete the lap before the next one starts
 # (the demo 8 km / 12 km/h ride opens on 40 + 5 = 45 minutes).
 _INTERVAL_BUFFER_MINUTES = 5
+
+# G9. A simulated short lap sits this far under the ride's minimum, so
+# the engine's own rule (lap_time < config.min_lap_s) flags it.
+_SHORT_LAP_MARGIN_S = 30
+
+# G9. The lap a stopped team rider rides to: they record normally while
+# the zero-based lap is below this, then never cross again.
+_TEAM_STOP_LAPS = 4
+
+# The empty stopped set, for the laps before the stop takes effect.
+_NO_STOPPED_PLATES: frozenset[str] = frozenset()
 
 
 def _team_rider_bounds(teams: int, *, min_team_size: int, max_team_size: int) -> tuple[int, int]:
@@ -225,7 +254,9 @@ def _team_entries(roster: Roster) -> list[Entry]:
     return [entry for entry in roster.entries if entry.type is EntryType.TEAM]
 
 
-def _plates_to_record(roster: Roster, lap: int = 0) -> list[str]:
+def _plates_to_record(
+    roster: Roster, lap: int = 0, *, stopped_plates: frozenset[str] = _NO_STOPPED_PLATES
+) -> list[str | None]:
     """Return the plates one simulated lap records, one per entry.
 
     The console's own rule (S1): a relay ride types the entry's plate
@@ -238,25 +269,67 @@ def _plates_to_record(roster: Roster, lap: int = 0) -> list[str]:
     Args:
         roster: The field to read.
         lap: The zero-based lap whose team representatives cross.
+        stopped_plates: The plates of the riders who stopped after lap
+            4 (G9). ``None`` in the returned list means that entry's
+            position records nothing this lap.
+
+    Returns:
+        One plate per entry, in entry order; ``None`` for a position
+        with no one left to cross.
     """
     if roster.plate_model is PlateModel.TEAM_RELAY:
+        # A relay ride crosses under the entry's own plate, so a
+        # stopped *rider* changes nothing (G9).
         return [entry.plate for entry in roster.entries]
-    return [_pooled_plate(entry, lap) for entry in roster.entries]
+    return [_pooled_plate(entry, lap, stopped_plates) for entry in roster.entries]
 
 
-def _pooled_plate(entry: Entry, lap: int) -> str:
+def _pooled_plate(entry: Entry, lap: int, stopped_plates: frozenset[str]) -> str | None:
     """Return *entry*'s crossing plate on *lap* under RIDER_POOLED.
 
     A solo entry crosses under its own plate; a team sends one rider
     per lap, rotating round-robin through its members, so every team
     rider's plate appears for roughly ``laps / team_size`` laps. A
-    riderless team -- refused at start, so reachable only through the
-    DRAFT-time zero-rider team -- falls back to the entry's own
-    provisional plate claim.
+    rotation slot landing on a stopped rider (G9) passes that lap to
+    the next active rider on the team, so the team still crosses once
+    a lap; a team whose every rider has stopped sends nobody and the
+    position records nothing. A riderless team -- refused at start, so
+    reachable only through the DRAFT-time zero-rider team -- falls back
+    to the entry's own provisional plate claim.
     """
     if entry.type is EntryType.SOLO or not entry.riders:
         return entry.plate
-    return cast("str", entry.riders[lap % len(entry.riders)].plate)
+    riders = entry.riders
+    for offset in range(len(riders)):
+        plate = riders[(lap + offset) % len(riders)].plate
+        if plate is not None and plate not in stopped_plates:
+            return plate
+    return None
+
+
+def _short_lap_gap(min_lap_s: int) -> timedelta:
+    """Return the gap one simulated short lap leaves (G9).
+
+    The ride's own minimum, less :data:`_SHORT_LAP_MARGIN_S`, so the
+    derived lap time lands under ``config.min_lap_s`` and the engine's
+    own rule flags the crossing. A minimum of 30 s or less clamps the
+    gap to one second -- the shortest interval the engine will record.
+    """
+    return timedelta(seconds=max(1, min_lap_s - _SHORT_LAP_MARGIN_S))
+
+
+def _stopped_plates(roster: Roster, count: int) -> frozenset[str]:
+    """Return the plates of the first *count* team riders (G9).
+
+    The pick is deterministic -- the team entries' riders in roster
+    order -- so one seed reproduces a run, stopped riders included. A
+    count below one stops nobody, and a plateless rider (a relay
+    team's) has no plate to stop.
+    """
+    if count < 1:
+        return _NO_STOPPED_PLATES
+    riders = [rider.plate for entry in _team_entries(roster) for rider in entry.riders]
+    return frozenset(plate for plate in riders[:count] if plate is not None)
 
 
 def _lap_offsets(entry_count: int, interval_minutes: int) -> list[int]:
@@ -412,11 +485,14 @@ class SimulatorPresenter:
             return "; ".join(problems)
         return None
 
-    def run_simulation(  # noqa: PLR0913 -- (laps, interval) + the two view hooks
+    def run_simulation(  # noqa: PLR0913 -- (laps, interval) + G9's three counts + the two view hooks
         self,
         laps: int,
         interval_minutes: int,
         *,
+        short_laps: int = 0,
+        lapped: int = 0,
+        team_stop: int = 0,
         on_progress: Callable[[int, int], None] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
     ) -> SimOutcome:
@@ -439,12 +515,27 @@ class SimulatorPresenter:
         an empty roster, an incomplete setup, a team below the floor --
         comes back as ``blocked``, never a raise.
 
+        G9 bends that script from the *leading positions of the one
+        shuffled order*, never from the roster's own order, so each
+        count stays reproducible from the run's seed: *short_laps*
+        entries base every lap on their own previous recorded instant
+        plus :func:`_short_lap_gap` (the first crossing on ``start``,
+        exactly ``record_crossing``'s own predecessor rule), *lapped*
+        entries skip the first wave and finish one lap short, and
+        *team_stop* team riders stop after lap 4 -- a pooled team's
+        rotation hands their lap to the next active rider. A skipped
+        position still advances the progress, never ``recorded``.
+
         Args:
             laps: How many laps to simulate.
             interval_minutes: The minutes between one lap and the next.
-            on_progress: Called after every recorded crossing, with the
-                crossings done and the run's total.
-            is_cancelled: Called after every recorded crossing; a True
+            short_laps: How many of the run's leading entries cross
+                under the ride's minimum lap time.
+            lapped: How many of them miss the first wave.
+            team_stop: How many team riders stop after lap 4.
+            on_progress: Called after every attempted position, with
+                the positions done and the run's total.
+            is_cancelled: Called after every attempted position; a True
                 verdict ends the run early. ``None`` never cancels.
 
         Returns:
@@ -466,17 +557,30 @@ class SimulatorPresenter:
         rng.shuffle(order)
         interval = timedelta(minutes=interval_minutes)
         offsets = _lap_offsets(len(order), interval_minutes)
+        stopped = _stopped_plates(self.roster, team_stop)
+        gap = _short_lap_gap(self.engine.config.min_lap_s)
+        last: dict[int, datetime] = dict.fromkeys(order, start)
         total = laps * len(order)
         recorded = 0
         completed = 0
         cancelled = False
         for lap in range(laps):
             wave_open = start + interval * (lap + 1)
-            plates = _plates_to_record(self.roster, lap)
+            plates = _plates_to_record(
+                self.roster,
+                lap,
+                stopped_plates=stopped if lap >= _TEAM_STOP_LAPS else _NO_STOPPED_PLATES,
+            )
             for index, position in enumerate(order):
-                instant = wave_open + timedelta(minutes=offsets[index])
-                if self.engine.record_crossing(plates[position], at=instant).accepted:
+                plate = None if lap == 0 and index < lapped else plates[position]
+                instant = (
+                    last[position] + gap
+                    if index < short_laps
+                    else wave_open + timedelta(minutes=offsets[index])
+                )
+                if plate is not None and self.engine.record_crossing(plate, at=instant).accepted:
                     recorded += 1
+                    last[position] = instant
                 completed += 1
                 if on_progress is not None:
                     on_progress(completed, total)

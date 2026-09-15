@@ -49,12 +49,19 @@ _ALL_FIELDS = {
     "sim_solo",
     "sim_laps",
     "sim_interval",
+    "sim_short_laps",
+    "sim_lapped",
+    "sim_team_stop",
     "avg_speed_kmh",
 }
 
 # The simulator dialog's XRC spin defaults (simulation.xrc): riders
 # 175, teams 40, solo 15, laps 1, interval 45 (plan §1/§3).
 _SIM_DEFAULTS = (175, 40, 15, 1, 45)
+
+# G9's three behaviour dropdown defaults (simulation.xrc): one
+# short-lap rider, no lapped riders, no team riders stopping.
+_SIM_BEHAVIOUR_DEFAULTS = (1, 0, 0)
 
 # The 90-150 zoom ladder, as the JSON-safe rung list files carry.
 _ZOOM_RUNGS = list(ZOOM_LADDER)
@@ -169,6 +176,75 @@ def test_load_settings_missing_sim_keys_falls_back_to_defaults(tmp_path: Path) -
         loaded.sim_laps,
         loaded.sim_interval,
     ) == _SIM_DEFAULTS
+
+
+# --- the three simulator behaviours (G9) ---------------------------
+
+
+def test_default_settings_sim_behaviour_fields_are_the_dialog_defaults() -> None:
+    """G9: a first launch seeds one short-lap rider, nothing else."""
+    settings = default_settings()
+
+    assert (
+        settings.sim_short_laps,
+        settings.sim_lapped,
+        settings.sim_team_stop,
+    ) == _SIM_BEHAVIOUR_DEFAULTS
+
+
+def test_save_then_load_round_trips_the_sim_behaviour_fields(tmp_path: Path) -> None:
+    """The three behaviour counts survive a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), sim_short_laps=3, sim_lapped=7, sim_team_stop=10)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (loaded.sim_short_laps, loaded.sim_lapped, loaded.sim_team_stop) == (3, 7, 10)
+
+
+def test_load_settings_missing_sim_behaviour_keys_uses_the_defaults(tmp_path: Path) -> None:
+    """An older file with none of the three keys seeds the defaults."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (
+        loaded.sim_short_laps,
+        loaded.sim_lapped,
+        loaded.sim_team_stop,
+    ) == _SIM_BEHAVIOUR_DEFAULTS
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        pytest.param(-1, id="min-minus-one"),
+        pytest.param(0, id="min"),
+        pytest.param(1, id="min-plus-one"),
+        pytest.param(9, id="max-minus-one"),
+        pytest.param(10, id="max"),
+        pytest.param(11, id="max-plus-one"),
+    ],
+)
+def test_load_settings_keeps_a_stored_behaviour_count_unchanged(
+    tmp_path: Path, stored: int
+) -> None:
+    """T-4: the loader never clamps the 0..10 dropdown range."""
+    path = tmp_path / "settings.json"
+    original = replace(
+        default_settings(), sim_short_laps=stored, sim_lapped=stored, sim_team_stop=stored
+    )
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (loaded.sim_short_laps, loaded.sim_lapped, loaded.sim_team_stop) == (
+        stored,
+        stored,
+        stored,
+    )
 
 
 # --- average rider speed (plan §10) --------------------------------
@@ -326,6 +402,9 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
                 "sim_solo": 2.5,
                 "sim_laps": None,
                 "sim_interval": "1",
+                "sim_short_laps": "one",
+                "sim_lapped": True,
+                "sim_team_stop": 2.5,
                 "avg_speed_kmh": "fast",
             }
         ),
@@ -417,6 +496,9 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
             sim_solo=4,
             sim_laps=2,
             sim_interval=5,
+            sim_short_laps=2,
+            sim_lapped=1,
+            sim_team_stop=3,
             avg_speed_kmh=17.5,
         ),
         path,
@@ -431,6 +513,9 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     assert raw["show_lap_time"] is False
     assert raw["sim_riders"] == 12
     assert raw["sim_interval"] == 5
+    assert raw["sim_short_laps"] == 2
+    assert raw["sim_lapped"] == 1
+    assert raw["sim_team_stop"] == 3
     assert raw["avg_speed_kmh"] == 17.5
 
 
@@ -513,6 +598,9 @@ _SETTINGS_STRATEGY = st.builds(
     sim_solo=st.integers(min_value=0, max_value=1000),
     sim_laps=st.integers(min_value=0, max_value=1000),
     sim_interval=st.integers(min_value=0, max_value=240),
+    sim_short_laps=st.integers(min_value=0, max_value=10),
+    sim_lapped=st.integers(min_value=0, max_value=10),
+    sim_team_stop=st.integers(min_value=0, max_value=10),
     avg_speed_kmh=st.floats(min_value=1.0, max_value=400.0, allow_nan=False, allow_infinity=False),
 )
 

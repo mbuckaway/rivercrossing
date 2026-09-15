@@ -20,7 +20,18 @@
   count defaults are plan §1's 175 riders / 40 teams / 15 solo riders
   (the auto-fill the dialog derives), and the interval opens on the
   speed-derived default (plan §3); these authored values are the
-  fallback when the dialog is opened with no seeds. gen_riders_btn and
+  fallback when the dialog is opened with no seeds.
+
+  G9 adds the three behaviour dropdowns under the interval row:
+  short_lap_choice, lapped_choice and team_stop_choice, each a
+  Disabled/1..10 wxChoice (item 0 is "Disabled"; 1..10 are the counts
+  themselves, so the selected index is the count). They select the
+  leading entries of the run's shuffled order: short-lap riders cross
+  under the ride's minimum lap time, lapped riders sit out the first
+  wave, and team riders stop after lap 4. The authored selections are
+  the product defaults (one short-lap rider, the other two Disabled),
+  and the dialog seeds all three from settings.json like the spins.
+  gen_riders_btn and
   check_btn are custom ids, so the bottom row is a plain wxBoxSizer
   rather than a wxStdDialogButtonSizer (which only places the ids it
   recognises); wxID_CANCEL stays a stock id so wx keeps its own Escape
@@ -121,6 +132,84 @@
               <min>1</min>
               <max>240</max>
               <value>45</value>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Short-lap riders</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxChoice" name="short_lap_choice">
+              <content>
+                <item>Disabled</item>
+                <item>1</item>
+                <item>2</item>
+                <item>3</item>
+                <item>4</item>
+                <item>5</item>
+                <item>6</item>
+                <item>7</item>
+                <item>8</item>
+                <item>9</item>
+                <item>10</item>
+              </content>
+              <selection>1</selection>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Lapped riders</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxChoice" name="lapped_choice">
+              <content>
+                <item>Disabled</item>
+                <item>1</item>
+                <item>2</item>
+                <item>3</item>
+                <item>4</item>
+                <item>5</item>
+                <item>6</item>
+                <item>7</item>
+                <item>8</item>
+                <item>9</item>
+                <item>10</item>
+              </content>
+              <selection>0</selection>
+            </object>
+          </object>
+
+          <object class="sizeritem">
+            <flag>wxALIGN_CENTRE_VERTICAL</flag>
+            <object class="wxStaticText">
+              <label>Team riders stop after 4 laps</label>
+            </object>
+          </object>
+          <object class="sizeritem">
+            <flag>wxEXPAND</flag>
+            <object class="wxChoice" name="team_stop_choice">
+              <content>
+                <item>Disabled</item>
+                <item>1</item>
+                <item>2</item>
+                <item>3</item>
+                <item>4</item>
+                <item>5</item>
+                <item>6</item>
+                <item>7</item>
+                <item>8</item>
+                <item>9</item>
+                <item>10</item>
+              </content>
+              <selection>0</selection>
             </object>
           </object>
 

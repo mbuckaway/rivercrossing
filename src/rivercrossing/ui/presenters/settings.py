@@ -88,6 +88,13 @@ class AppSettings:
     the interval from the live ride's lap length, so these are the
     fallbacks for a dialog opened with no seeds.
 
+    G9 adds the three simulator *behaviour* fields: the
+    ``sim_short_laps``/``sim_lapped``/``sim_team_stop`` dropdowns
+    (``simulation.xrc``) that select the run's leading short-lap,
+    lapped and team-stop riders. Zero is the dropdowns' "Disabled"
+    item, so the stored value is the count itself; the defaults (one
+    short-lap rider, the other two off) mirror the XRC selections.
+
     Plan §10 adds ``avg_speed_kmh``: the settings dialog's average
     rider speed, feeding the card-sufficiency estimate ``Riders ▸
     Check for Rider Issues…`` shows. The 12 km/h default matches the
@@ -110,6 +117,11 @@ class AppSettings:
     sim_solo: int = 15
     sim_laps: int = 1
     sim_interval: int = 45
+    # G9: the three behaviour dropdowns, 0 = "Disabled"; defaults
+    # mirror the XRC selections.
+    sim_short_laps: int = 1
+    sim_lapped: int = 0
+    sim_team_stop: int = 0
     # Plan §10: the card-sufficiency estimate's average rider speed.
     avg_speed_kmh: float = 12.0
 
@@ -120,7 +132,8 @@ def default_settings() -> AppSettings:
     The first-launch / corrupt-file fallback: System appearance, sound
     on (spec §10's default), Total hidden and Lap time shown, 100%
     zoom, no saved layout yet, verbose logging on, and the simulator's
-    XRC spin defaults.
+    XRC spin and behaviour defaults (G9: one short-lap rider, no
+    lapped riders, no team rider stopping).
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
@@ -136,6 +149,9 @@ def default_settings() -> AppSettings:
         sim_solo=15,
         sim_laps=1,
         sim_interval=45,
+        sim_short_laps=1,
+        sim_lapped=0,
+        sim_team_stop=0,
         avg_speed_kmh=12.0,
     )
 
@@ -206,6 +222,9 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "sim_solo": settings.sim_solo,
         "sim_laps": settings.sim_laps,
         "sim_interval": settings.sim_interval,
+        "sim_short_laps": settings.sim_short_laps,
+        "sim_lapped": settings.sim_lapped,
+        "sim_team_stop": settings.sim_team_stop,
         "avg_speed_kmh": settings.avg_speed_kmh,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
@@ -258,6 +277,9 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         sim_solo=_int_or(raw.get("sim_solo"), defaults.sim_solo),
         sim_laps=_int_or(raw.get("sim_laps"), defaults.sim_laps),
         sim_interval=_int_or(raw.get("sim_interval"), defaults.sim_interval),
+        sim_short_laps=_int_or(raw.get("sim_short_laps"), defaults.sim_short_laps),
+        sim_lapped=_int_or(raw.get("sim_lapped"), defaults.sim_lapped),
+        sim_team_stop=_int_or(raw.get("sim_team_stop"), defaults.sim_team_stop),
         avg_speed_kmh=_float_or(
             raw.get("avg_speed_kmh"), defaults.avg_speed_kmh, minimum=_MIN_AVG_SPEED_KMH
         ),
