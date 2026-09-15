@@ -8,7 +8,7 @@ read-only ``EngineDataSource`` serves feed/counters/status, and the
 view is a recording fake. These tests drive the presenter's event
 handlers against a real ``RideEngine``/``Roster``/``Shoe`` (never wx),
 asserting the cue fired (spec §10), the feed/counters refreshed, the
-field cleared or kept (R-31), the Stop guard flow (R-35), hide-times
+field cleared or kept (R-31), the Stop guard flow (R-35), time-column
 forwarding (R-37), tick refresh, and the E6.4.3 finish-gate hook
 consulted before finishing. WS-D/WS-H grow the console with the
 gauge-clock channel (dial fractions from ``planned_duration_s``, the
@@ -37,7 +37,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from conftest import gorba_config
+from conftest import _roster_with_entries, gorba_config
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import (
     Crossing,
@@ -102,14 +102,6 @@ class _FakeDatetimeClock:
     def advance(self, seconds: float) -> None:
         """Move the fake clock forward by *seconds*."""
         self._now = self._now + timedelta(seconds=seconds)
-
-
-def _roster_with_entries(*plates: str) -> Roster:
-    """Build a MIXED rider_pooled roster of one solo entry per plate."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    for plate in plates:
-        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
-    return roster
 
 
 def _make_engine(  # noqa: PLR0913 -- (roster, config) + the two W4 policy knobs
@@ -208,7 +200,7 @@ class FakeConsoleView:
         self.last_clock_fractions: tuple[float, float] | None = None
         self.last_flagged: list[FeedRow] = []
         self.last_riders: list[RiderRow] = []
-        self.last_hide: bool | None = None
+        self.last_time_columns: tuple[bool, bool] | None = None
         # W12: the teams-chip visibility verdict the presenter pushes
         # at construction (R-11: solo-only rides hide the Teams chip).
         self.team_visible: bool | None = None
@@ -289,9 +281,9 @@ class FakeConsoleView:
         """Record the stop button's enablement (R-35)."""
         self.stop_enabled = enabled
 
-    def set_hide_times(self, *, hide: bool) -> None:
-        """Record the hide-times request (R-37)."""
-        self.last_hide = hide
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Record the two time-column show flags (R-37)."""
+        self.last_time_columns = (show_total, show_lap)
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Record the clock labels."""
@@ -1276,7 +1268,7 @@ def test_on_plate_entered_given_a_miss_symbol_plays_error_and_notifies() -> None
     presenter.on_plate_entered("+")
 
     assert view.cues == [Cue.ERROR]
-    assert view.last_notice == "Number missed — logged for later entry"
+    assert view.last_notice == "Plate missed — logged for later entry"
 
 
 def test_on_plate_entered_given_a_miss_symbol_on_a_draft_ride_notifies_and_keeps_the_field() -> (
@@ -1749,19 +1741,25 @@ def test_on_plate_entered_given_first_crossing_enables_undo_through_the_feed_ren
     assert view.start_enabled is False
 
 
-# ----------------------------------------------------------- hide times
+# ------------------------------------------------------- time columns
+
+# T-13: two independent booleans -> all four decisions.
+_TIME_COLUMN_CASES = ((False, False), (False, True), (True, False), (True, True))
 
 
-@pytest.mark.parametrize("hide", [True, False], ids=["hide", "show"])
-def test_on_hide_times_forwards_the_setting_to_the_view(hide: bool) -> None:  # noqa: FBT001
-    """R-37: the presenter forwards the toggle straight to the view."""
+@pytest.mark.parametrize(("show_total", "show_lap"), _TIME_COLUMN_CASES)
+def test_on_time_columns_forwards_both_flags_to_the_view(
+    show_total: bool,  # noqa: FBT001 -- parametrized test inputs
+    show_lap: bool,  # noqa: FBT001 -- parametrized test inputs
+) -> None:
+    """R-37: both show flags reach the view unchanged."""
     engine, _clock = _running_engine()
     view = FakeConsoleView()
     presenter = _make_presenter(engine, view)
 
-    presenter.on_hide_times(hide=hide)
+    presenter.on_time_columns(show_total=show_total, show_lap=show_lap)
 
-    assert view.last_hide is hide
+    assert view.last_time_columns == (show_total, show_lap)
 
 
 # --------------------------------------------------------- riders order

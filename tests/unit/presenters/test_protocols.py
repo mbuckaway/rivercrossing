@@ -107,13 +107,13 @@ class FakeConsoleView:
     # E4.4.1-E4.4.3: the Protocol grew the four members the live
     # presenter actually calls (the same "add the member once the
     # presenter calls it" precedent main_frame.py's own docstring
-    # records for set_hide_times). Behavioral coverage lives in
+    # records for set_time_columns). Behavioral coverage lives in
     # tests/unit/presenters/test_console.py; these stay no-ops.
     def set_stop_enabled(self, *, enabled: bool) -> None:
         """Record the stop-button enablement (unused here)."""
 
-    def set_hide_times(self, *, hide: bool) -> None:
-        """Record the hide-times toggle (unused here)."""
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Record the two time-column show flags (unused here)."""
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
         """Record the clock labels (unused here)."""
@@ -456,7 +456,7 @@ def test_presenter_holds_the_view_and_data_source_it_was_given(
 # ConsolePresenter behavior moved to test_console.py (E4.4.1):
 # it holds (view, engine, source) and drives a real
 # RideEngine -- every event handler (on_plate_entered/on_undo/
-# on_stop_confirmed/on_start/on_hide_times/tick/on_finish) is covered
+# on_stop_confirmed/on_start/on_time_columns/tick/on_finish) is covered
 # there against a recording fake view and real engine
 # fixtures. What remains here is Protocol conformance (FakeConsoleView
 # above) and the wx-free import probe below.

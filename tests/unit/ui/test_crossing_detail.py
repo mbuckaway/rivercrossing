@@ -12,8 +12,8 @@ all without a display:
   card/held are asserted directly.
 * **The view's three handlers** -- ``_on_ok`` (commit an edited plate
   or close), ``_on_delete`` (undo the newest crossing, void any other)
-  and ``_on_edit`` (the §9 Number prompt, whose own loader
-  :func:`crossing_detail.run_number_dialog` is pinned against a stub
+  and ``_on_edit`` (the §9 Plate prompt, whose own loader
+  :func:`crossing_detail.run_plate_dialog` is pinned against a stub
   resource) -- driven against recording widget doubles built with
   ``object.__new__`` (``test_dialogs_positioning.py``'s precedent).
 * **The two seams this workstream adds** -- ``MainFrame.
@@ -35,7 +35,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 from xrc_fixtures import pin_no_authored_window
 
-from conftest import gorba_config
+from conftest import _pooled_team_roster, gorba_config
 from rivercrossing.cards import Card, Shoe
 from rivercrossing.ride import Crossing, PendingMiss, RideEngine, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
@@ -88,16 +88,6 @@ def _two_solo_roster() -> Roster:
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_solo_entry(first_name="Amy", plate="12")
     roster.create_solo_entry(first_name="Bob", plate="34")
-    return roster
-
-
-def _pooled_team_roster() -> Roster:
-    """Build a rider_pooled team roster: Sarah (45), Priya (9)."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_team_entry(
-        display_name="Dirt Dynamos",
-        riders=[Rider(first_name="Sarah", plate="45"), Rider(first_name="Priya", plate="9")],
-    )
     return roster
 
 
@@ -904,16 +894,16 @@ def test_on_void_card_given_a_finished_ride_keeps_the_dialog_open(
 # §9: in crossing mode Edit opens the ``crossing_number_dlg``
 # Save/Cancel prompt and commits its Save through the engine's own
 # ``reassign_crossing``, which resolves the plate and refuses a blank
-# or unknown one. ``run_number_dialog`` is the prompt's loader+show
+# or unknown one. ``run_plate_dialog`` is the prompt's loader+show
 # seam (the wx boundary); the tests below stub it so the handler's
 # branches are pinned headlessly, and its own tests drive it against a
 # stub resource.
 
 
-def _stub_number_dialog(
+def _stub_plate_dialog(
     monkeypatch: pytest.MonkeyPatch, result: str | None
 ) -> list[dict[str, object]]:
-    """Stub ``run_number_dialog`` to return *result*.
+    """Stub ``run_plate_dialog`` to return *result*.
 
     Each call's ``(opener, plate)`` is recorded for the caller.
     """
@@ -923,7 +913,7 @@ def _stub_number_dialog(
         calls.append({"opener": opener, "plate": plate})
         return result
 
-    monkeypatch.setattr(crossing_detail, "run_number_dialog", _run)
+    monkeypatch.setattr(crossing_detail, "run_plate_dialog", _run)
     return calls
 
 
@@ -935,7 +925,7 @@ def test_on_edit_given_a_confirmed_number_reassigns_the_crossing(
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
     view = _view(engine, roster=roster)
-    _stub_number_dialog(monkeypatch, "34")
+    _stub_plate_dialog(monkeypatch, "34")
     event = _RecordingEvent()
 
     view._on_edit(event)
@@ -961,7 +951,7 @@ def test_on_edit_given_a_crossing_prefills_the_number_prompt(
     crossing = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate=rider_plate)
     engine = _running_engine(_solo_roster())
     view = _view(engine, roster=_solo_roster(), crossing=crossing)
-    calls = _stub_number_dialog(monkeypatch, None)
+    calls = _stub_plate_dialog(monkeypatch, None)
 
     view._on_edit(_RecordingEvent())
 
@@ -977,7 +967,7 @@ def test_on_edit_given_a_cancelled_number_prompt_leaves_the_ride_alone(
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
     view = _view(engine, roster=roster)
-    _stub_number_dialog(monkeypatch, None)
+    _stub_plate_dialog(monkeypatch, None)
     events_before = len(engine.events)
 
     view._on_edit(_RecordingEvent())
@@ -994,7 +984,7 @@ def test_on_edit_given_a_blank_number_keeps_the_dialog_open(
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
     view = _view(engine, roster=roster)
-    _stub_number_dialog(monkeypatch, "")
+    _stub_plate_dialog(monkeypatch, "")
 
     view._on_edit(_RecordingEvent())
 
@@ -1010,7 +1000,7 @@ def test_on_edit_given_an_unknown_number_keeps_the_dialog_open(
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
     view = _view(engine, roster=roster)
-    _stub_number_dialog(monkeypatch, "999")
+    _stub_plate_dialog(monkeypatch, "999")
 
     view._on_edit(_RecordingEvent())
 
@@ -1027,7 +1017,7 @@ def test_on_edit_given_a_finished_ride_keeps_the_dialog_open(
     engine.record_crossing("12", at=_dt(10, 2))
     engine.finish()
     view = _view(engine, roster=roster)
-    _stub_number_dialog(monkeypatch, "34")
+    _stub_plate_dialog(monkeypatch, "34")
 
     view._on_edit(_RecordingEvent())
 
@@ -1046,7 +1036,7 @@ def test_on_edit_given_a_stale_crossing_keeps_the_dialog_open(
     engine.record_crossing("12", at=_dt(10, 2))
     stale = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate="12")
     view = _view(engine, roster=roster, crossing=stale)
-    _stub_number_dialog(monkeypatch, "34")
+    _stub_plate_dialog(monkeypatch, "34")
 
     view._on_edit(_RecordingEvent())
 
@@ -1066,7 +1056,7 @@ def test_on_edit_given_a_mid_ride_crossing_addresses_it_by_ride_wide_ordinal(
     engine.record_crossing("34", at=_dt(10, 3))  # ride-wide 2, Bob lap 1
     engine.record_crossing("12", at=_dt(10, 6))  # ride-wide 3, Amy lap 2
     view = _view(engine, roster=roster, crossing=engine.crossings[1])
-    _stub_number_dialog(monkeypatch, "12")
+    _stub_plate_dialog(monkeypatch, "12")
 
     view._on_edit(_RecordingEvent())
 
@@ -1165,9 +1155,7 @@ def test_on_ok_given_a_blank_plate_keeps_the_dialog_open() -> None:
     view._on_ok(_RecordingEvent())
 
     assert (view.dialog.modal_ids, len(engine.events)) == ([], events_before)
-    assert view.crossing_detail_infobar.messages == [
-        "Enter a plate number to reassign this crossing."
-    ]
+    assert view.crossing_detail_infobar.messages == ["Enter a plate to reassign this crossing."]
 
 
 def test_on_ok_given_an_unknown_plate_keeps_the_dialog_open() -> None:
@@ -1453,6 +1441,224 @@ def test_on_delete_given_a_finished_ride_refuses_the_void(
     assert view.crossing_detail_infobar.messages == [
         "Could not void: cannot void crossing from finished"
     ]
+
+
+# ------------------------------ the shared corrections (Phase 7)
+#
+# The Crossing Detail dialog's two corrections are the console feed's
+# own key flows too (Delete/Ctrl+D removes the selected row, Ctrl+E
+# retypes its plate), so both bodies are module-level helpers here: the
+# dialog adds only the info bar and the EndModal, the app adds only the
+# status bar and the feed refresh.
+
+
+def test_confirm_delete_crossing_given_a_cancel_removes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: Cancel runs no engine command."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    _stub_danger(monkeypatch, wx.ID_CANCEL)
+    refusals: list[str] = []
+    events_before = len(engine.events)
+
+    confirmed = crossing_detail.confirm_delete_crossing(
+        _RecordingDialog(), engine.crossings[0], roster, engine, on_refusal=refusals.append
+    )
+
+    assert (confirmed, len(engine.crossings), len(engine.events)) == (False, 1, events_before)
+    assert refusals == []
+
+
+def test_confirm_delete_crossing_given_the_newest_crossing_names_the_undo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-13 true: the newest crossing keeps the Undo wording."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    parent = _RecordingDialog()
+    refusals: list[str] = []
+    calls = _stub_danger(monkeypatch, wx.ID_CANCEL)
+
+    crossing_detail.confirm_delete_crossing(
+        parent, engine.crossings[0], roster, engine, on_refusal=refusals.append
+    )
+
+    assert calls == [(parent, "Undo Last Crossing?", _DELETE_MESSAGE, "Undo", "Cancel")]
+
+
+def test_confirm_delete_crossing_given_the_newest_crossing_runs_undo_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``undo_last`` removes the newest crossing; it reports True."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 5))
+    _stub_danger(monkeypatch, wx.ID_OK)
+    refusals: list[str] = []
+
+    confirmed = crossing_detail.confirm_delete_crossing(
+        _RecordingDialog(), engine.crossings[-1], roster, engine, on_refusal=refusals.append
+    )
+
+    assert (confirmed, [c.seq for c in engine.crossings], refusals) == (True, [1], [])
+    assert engine.events[-1].action == "undo"
+
+
+def test_confirm_delete_crossing_given_an_earlier_crossing_names_the_delete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-13 false: any other crossing's confirm reads Delete."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 7))
+    parent = _RecordingDialog()
+    refusals: list[str] = []
+    calls = _stub_danger(monkeypatch, wx.ID_CANCEL)
+
+    crossing_detail.confirm_delete_crossing(
+        parent, engine.crossings[1], roster, engine, on_refusal=refusals.append
+    )
+
+    assert calls == [(parent, "Delete Crossing?", _VOID_MESSAGE, "Delete", "Cancel")]
+
+
+def test_confirm_delete_crossing_given_an_earlier_crossing_voids_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§5: a non-newest crossing is voided, later laps renumbering."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.record_crossing("12", at=_dt(10, 7))
+    _stub_danger(monkeypatch, wx.ID_OK)
+    refusals: list[str] = []
+
+    confirmed = crossing_detail.confirm_delete_crossing(
+        _RecordingDialog(), engine.crossings[1], roster, engine, on_refusal=refusals.append
+    )
+
+    assert (confirmed, refusals) == (True, [])
+    assert [(c.seq, c.crossed_at) for c in engine.crossings] == [(1, _dt(10, 2)), (2, _dt(10, 7))]
+    assert engine.events[-1].action == "void_crossing"
+    assert engine.events[-1].payload["reason"] == crossing_detail.DELETE_REASON
+
+
+def test_confirm_delete_crossing_given_a_finished_ride_reports_the_undo_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-5 negative: ``undo_last``'s refusal is reported, not raised."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.finish()
+    _stub_danger(monkeypatch, wx.ID_OK)
+    refusals: list[str] = []
+
+    confirmed = crossing_detail.confirm_delete_crossing(
+        _RecordingDialog(), engine.crossings[0], roster, engine, on_refusal=refusals.append
+    )
+
+    assert (confirmed, refusals) == (False, ["Undo unavailable: cannot undo from finished"])
+    assert len(engine.crossings) == 1
+
+
+def test_confirm_delete_crossing_given_a_finished_ride_reports_the_void_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-5 negative: ``void_crossing``'s refusal is reported too."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 5))
+    engine.finish()
+    _stub_danger(monkeypatch, wx.ID_OK)
+    refusals: list[str] = []
+
+    confirmed = crossing_detail.confirm_delete_crossing(
+        _RecordingDialog(), engine.crossings[0], roster, engine, on_refusal=refusals.append
+    )
+
+    assert (confirmed, refusals) == (False, ["Could not void: cannot void crossing from finished"])
+    assert len(engine.crossings) == 2
+
+
+def test_reassign_crossing_plate_given_a_recorded_crossing_reassigns_it() -> None:
+    """A recorded crossing moves to the new plate; ``None``."""
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+
+    refusal = crossing_detail.reassign_crossing_plate(engine, engine.crossings[0], "34")
+
+    assert refusal is None
+    assert [(c.entry_id, c.rider_plate) for c in engine.crossings] == [("34", "34")]
+    assert engine.events[-1].action == "reassign"
+    assert engine.events[-1].payload["reason"] == crossing_detail.EDIT_REASON
+    assert engine.events[-1].payload["new_plate"] == "34"
+
+
+def test_reassign_crossing_plate_given_a_mid_ride_crossing_uses_the_ride_wide_ordinal() -> None:
+    """``reassign_crossing``'s seq is the record-order ordinal.
+
+    Bob's lap 1 sits at ride-wide ordinal 2 (Amy's lap 1 precedes it),
+    so reassigning it must move *that* crossing.
+    """
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))  # ride-wide 1
+    engine.record_crossing("34", at=_dt(10, 3))  # ride-wide 2
+    engine.record_crossing("12", at=_dt(10, 6))  # ride-wide 3
+
+    refusal = crossing_detail.reassign_crossing_plate(engine, engine.crossings[1], "12")
+
+    assert refusal is None
+    assert [c.entry_id for c in engine.crossings] == ["12", "12", "12"]
+    assert engine.events[-1].payload["seq"] == 2
+    assert engine.events[-1].payload["old_entry_id"] == "34"
+
+
+def test_reassign_crossing_plate_given_a_stale_crossing_returns_the_refusal() -> None:
+    """T-5 negative: a crossing the engine no longer holds refuses."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    stale = Crossing(entry_id="12", seq=1, crossed_at=_dt(10, 2), rider_plate="12")
+    events_before = len(engine.events)
+
+    refusal = crossing_detail.reassign_crossing_plate(engine, stale, "12")
+
+    assert refusal == "Could not reassign: this crossing is no longer recorded."
+    assert len(engine.events) == events_before
+
+
+def test_reassign_crossing_plate_given_an_unknown_plate_returns_the_refusal() -> None:
+    """T-5 negative: an unknown plate's refusal is returned."""
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+
+    refusal = crossing_detail.reassign_crossing_plate(engine, engine.crossings[0], "999")
+
+    assert refusal == "Could not reassign: unknown plate: 999"
+
+
+def test_reassign_crossing_plate_given_a_finished_ride_returns_the_refusal() -> None:
+    """T-5 negative: a locked ride's refusal is returned, not raised."""
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.finish()
+
+    refusal = crossing_detail.reassign_crossing_plate(engine, engine.crossings[0], "34")
+
+    assert refusal == "Could not reassign: cannot reassign crossing from finished"
 
 
 # ------------------------------------------------- the console seam
@@ -1768,9 +1974,7 @@ def test_on_ok_given_a_blank_plate_refuses_and_keeps_the_dialog_open() -> None:
     view._on_ok(_RecordingEvent())
 
     assert (view.dialog.modal_ids, len(engine.pending_misses())) == ([], 1)
-    assert view.crossing_detail_infobar.messages == [
-        "Enter a plate number to assign to this miss."
-    ]
+    assert view.crossing_detail_infobar.messages == ["Enter a plate to assign to this miss."]
 
 
 def test_on_ok_given_an_unknown_plate_refuses_and_keeps_the_dialog_open() -> None:
@@ -1985,6 +2189,7 @@ class _StubPresenter:
         """Store the two collaborators the open seam reads."""
         self.engine = engine
         self.source = source
+        self.refreshes = 0
 
     def rendered_feed_rows(self) -> list[FeedRow]:
         """Return the rows the double's console would be showing.
@@ -1994,6 +2199,10 @@ class _StubPresenter:
         source's own feed (the unfiltered render).
         """
         return self.source.feed_rows()
+
+    def refresh_feed(self) -> None:
+        """Record the post-correction re-render the app asked for."""
+        self.refreshes += 1
 
 
 class _StubFrame:
@@ -2212,9 +2421,9 @@ def test_open_crossing_detail_for_given_a_mid_delete_window_skips_destroy(
     assert window.destroyed is False
 
 
-# ------------------------------------------- the Number prompt's loader
+# ------------------------------------------- the Plate prompt's loader
 #
-# §9: ``run_number_dialog`` is the wx boundary the Edit handler calls.
+# §9: ``run_plate_dialog`` is the wx boundary the Edit handler calls.
 # It loads ``crossing_number_dlg`` from the shared resource, prefills
 # ``number_input`` with the crossing's current plate, shows it modally
 # and returns Save's trimmed text -- or ``None`` on Cancel. Two
@@ -2291,104 +2500,104 @@ def _stub_loader(
     monkeypatch.setattr(dialogs, "run_dialog", _run)
 
 
-def test_run_number_dialog_given_save_returns_the_typed_number(
+def test_run_plate_dialog_given_save_returns_the_typed_plate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """§9: Save's value is what the Edit handler commits."""
     window = _StubNumberWindow()
     _stub_loader(monkeypatch, window, "34")
 
-    result = crossing_detail.run_number_dialog(_StubResource(window), opener=object(), plate="12")
+    result = crossing_detail.run_plate_dialog(_StubResource(window), opener=object(), plate="12")
 
     assert result == "34"
 
 
-def test_run_number_dialog_given_save_trims_the_typed_number(
+def test_run_plate_dialog_given_save_trims_the_typed_plate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A typed number is trimmed before it reaches the engine."""
+    """A typed plate is trimmed before it reaches the engine."""
     window = _StubNumberWindow()
     _stub_loader(monkeypatch, window, "  34  ")
 
-    result = crossing_detail.run_number_dialog(_StubResource(window), opener=object(), plate="12")
+    result = crossing_detail.run_plate_dialog(_StubResource(window), opener=object(), plate="12")
 
     assert result == "34"
 
 
-def test_run_number_dialog_given_a_plate_prefills_and_selects_the_field(
+def test_run_plate_dialog_given_a_plate_prefills_and_selects_the_field(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """§9: the prompt opens on the crossing's own plate."""
     window = _StubNumberWindow()
     _stub_loader(monkeypatch, window, None)
 
-    crossing_detail.run_number_dialog(_StubResource(window), opener=object(), plate="12")
+    crossing_detail.run_plate_dialog(_StubResource(window), opener=object(), plate="12")
 
     assert window.shown_value == "12"
     assert (window.number_input.focused, window.number_input.selected) == (True, True)
 
 
-def test_run_number_dialog_given_a_cancel_returns_none(
+def test_run_plate_dialog_given_a_cancel_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """T-3 negative: Cancel (and Escape) returns no number."""
+    """T-3 negative: Cancel (and Escape) returns no plate."""
     window = _StubNumberWindow()
     _stub_loader(monkeypatch, window, None)
 
-    result = crossing_detail.run_number_dialog(_StubResource(window), opener=object(), plate="12")
+    result = crossing_detail.run_plate_dialog(_StubResource(window), opener=object(), plate="12")
 
     assert result is None
 
 
-def test_run_number_dialog_given_an_unauthored_window_returns_none(
+def test_run_plate_dialog_given_an_unauthored_window_returns_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """T-3 negative: LoadDialog returns None when unauthored."""
     monkeypatch.setattr(crossing_detail, "find_control", _refuse_lookup)
     pin_no_authored_window(monkeypatch, _no_dialog_resource)
 
-    result = crossing_detail.run_number_dialog(_StubResource(None), opener=object(), plate="12")
+    result = crossing_detail.run_plate_dialog(_StubResource(None), opener=object(), plate="12")
 
     assert result is None
 
 
-def test_run_number_dialog_given_save_destroys_the_window(
+def test_run_plate_dialog_given_save_destroys_the_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The loaded window is destroyed however the prompt ends."""
     window = _StubNumberWindow()
     _stub_loader(monkeypatch, window, "34")
 
-    crossing_detail.run_number_dialog(_StubResource(window), opener=object(), plate="12")
+    crossing_detail.run_plate_dialog(_StubResource(window), opener=object(), plate="12")
 
     assert window.destroyed is True
 
 
-def test_run_number_dialog_given_a_cancel_destroys_the_window(
+def test_run_plate_dialog_given_a_cancel_destroys_the_window(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """T-3: the cancel path destroys the window too."""
     window = _StubNumberWindow()
     _stub_loader(monkeypatch, window, None)
 
-    crossing_detail.run_number_dialog(_StubResource(window), opener=object(), plate="12")
+    crossing_detail.run_plate_dialog(_StubResource(window), opener=object(), plate="12")
 
     assert window.destroyed is True
 
 
-def test_run_number_dialog_given_a_mid_delete_window_skips_destroy(
+def test_run_plate_dialog_given_a_mid_delete_window_skips_destroy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """T-3: an already-deleting window is never destroyed twice."""
     window = _StubNumberWindow(being_deleted=True)
     _stub_loader(monkeypatch, window, "34")
 
-    crossing_detail.run_number_dialog(_StubResource(window), opener=object(), plate="12")
+    crossing_detail.run_plate_dialog(_StubResource(window), opener=object(), plate="12")
 
     assert window.destroyed is False
 
 
-def test_run_number_dialog_loads_the_crossing_number_dialog(
+def test_run_plate_dialog_loads_the_crossing_number_dialog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """§9: the loader asks the shared resource for the frozen window."""
@@ -2396,7 +2605,369 @@ def test_run_number_dialog_loads_the_crossing_number_dialog(
     resource = _RecordingResource(window)
     _stub_loader(monkeypatch, window, "34")
 
-    result = crossing_detail.run_number_dialog(resource, opener=object(), plate="12")
+    result = crossing_detail.run_plate_dialog(resource, opener=object(), plate="12")
 
     assert resource.loaded == [(None, ids.CROSSING_NUMBER_DLG)]
     assert result == "34"
+
+
+# -------------------------------------- the feed hotkeys' app halves
+#
+# Delete/Ctrl+D and Ctrl+E fire the same ``(row)`` seam F2 does
+# (``MainFrame.set_on_delete_crossing`` /
+# ``set_on_edit_plate_crossing``); these are the app's halves. Both
+# resolve the row index against the rendered feed exactly like
+# ``_open_crossing_detail_for`` and then run the shared module-level
+# helpers above, so the confirm/reassign text can never drift from the
+# dialog's own buttons.
+
+
+def _stub_confirm_delete(
+    monkeypatch: pytest.MonkeyPatch, *, result: bool
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    """Stub ``confirm_delete_crossing``; record each call."""
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def _confirm(*args: object, **kwargs: object) -> bool:
+        calls.append((args, kwargs))
+        return result
+
+    monkeypatch.setattr(crossing_detail, "confirm_delete_crossing", _confirm)
+    return calls
+
+
+def _stub_plate_prompt(
+    monkeypatch: pytest.MonkeyPatch, result: str | None
+) -> list[dict[str, object]]:
+    """Stub ``run_plate_dialog``; record each call's kwargs."""
+    calls: list[dict[str, object]] = []
+
+    def _run(_resource: object, **kwargs: object) -> str | None:
+        calls.append(kwargs)
+        return result
+
+    monkeypatch.setattr(crossing_detail, "run_plate_dialog", _run)
+    return calls
+
+
+def _stub_reassign_plate(
+    monkeypatch: pytest.MonkeyPatch, refusal: str | None
+) -> list[dict[str, object]]:
+    """Stub ``reassign_crossing_plate``; record each call."""
+    calls: list[dict[str, object]] = []
+
+    def _reassign(engine: object, crossing: object, new_plate: object) -> str | None:
+        calls.append({"engine": engine, "crossing": crossing, "new_plate": new_plate})
+        return refusal
+
+    monkeypatch.setattr(crossing_detail, "reassign_crossing_plate", _reassign)
+    return calls
+
+
+def _hotkey_context(engine: RideEngine, roster: Roster) -> app_module._RouteContext:
+    """Build a route context over a live engine and its console feed."""
+    source = EngineDataSource(engine, roster)
+    context, _window = _open_context(engine, source, roster)
+    return context
+
+
+# ---------------------------------------------------------- Delete
+
+
+def test_delete_crossing_for_given_no_presenter_confirms_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a console-less context has no ride to correct."""
+    context = app_module._RouteContext(
+        frame=_StubFrame(),
+        resource=_RefusingResource(),
+        roster=_solo_roster(),
+        app=None,
+        theme_controller=None,
+    )
+    calls = _stub_confirm_delete(monkeypatch, result=True)
+
+    app_module._delete_crossing_for(context, 0)
+
+    assert calls == []
+
+
+def test_delete_crossing_for_given_a_miss_row_confirms_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a miss row names no crossing to delete."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    context = _hotkey_context(engine, roster)
+    calls = _stub_confirm_delete(monkeypatch, result=True)
+
+    app_module._delete_crossing_for(context, 0)
+
+    assert calls == []
+
+
+def test_delete_crossing_for_given_a_stale_row_confirms_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-4 max + 1: a row outside the feed resolves to nothing."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    calls = _stub_confirm_delete(monkeypatch, result=True)
+
+    app_module._delete_crossing_for(context, 5)
+
+    assert calls == []
+
+
+def test_delete_crossing_for_given_a_crossing_row_runs_the_shared_confirm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The console's Delete key reuses Crossing Detail's own confirm."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    presenter = context.presenter
+    calls = _stub_confirm_delete(monkeypatch, result=True)
+
+    app_module._delete_crossing_for(context, 0)
+
+    assert calls == [
+        (
+            (context.frame, engine.crossings[0], roster, engine),
+            {"on_refusal": context.frame.SetStatusText},
+        )
+    ]
+    assert presenter.refreshes == 1
+
+
+def test_delete_crossing_for_given_a_declined_confirm_leaves_the_feed_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a cancelled confirm refreshes nothing."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    presenter = context.presenter
+    _stub_confirm_delete(monkeypatch, result=False)
+
+    app_module._delete_crossing_for(context, 0)
+
+    assert presenter.refreshes == 0
+
+
+# ---------------------------------------------------------- Ctrl+E
+
+
+def test_edit_plate_crossing_for_given_no_presenter_prompts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a console-less context has no ride to correct."""
+    context = app_module._RouteContext(
+        frame=_StubFrame(),
+        resource=_RefusingResource(),
+        roster=_solo_roster(),
+        app=None,
+        theme_controller=None,
+    )
+    calls = _stub_plate_prompt(monkeypatch, "34")
+
+    app_module._edit_plate_crossing_for(context, 0)
+
+    assert calls == []
+
+
+def test_edit_plate_crossing_for_given_a_miss_row_prompts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a miss row names no crossing to retype."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    context = _hotkey_context(engine, roster)
+    calls = _stub_plate_prompt(monkeypatch, "34")
+
+    app_module._edit_plate_crossing_for(context, 0)
+
+    assert calls == []
+
+
+def test_edit_plate_crossing_for_given_a_stale_row_prompts_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-4 max + 1: a row outside the feed resolves to nothing."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    calls = _stub_plate_prompt(monkeypatch, "34")
+
+    app_module._edit_plate_crossing_for(context, 5)
+
+    assert calls == []
+
+
+def test_edit_plate_crossing_for_given_a_crossing_row_prefills_and_commits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ctrl+E prompts on the crossing's plate, then reassigns it."""
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("34", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    presenter = context.presenter
+    replayed = _stub_reassign_plate(monkeypatch, None)
+    calls = _stub_plate_prompt(monkeypatch, "12")
+
+    app_module._edit_plate_crossing_for(context, 0)
+
+    assert calls == [{"opener": context.frame, "plate": "34"}]
+    assert replayed == [{"engine": engine, "crossing": engine.crossings[0], "new_plate": "12"}]
+    assert presenter.refreshes == 1
+    assert context.frame.notices == []
+
+
+def test_edit_plate_crossing_for_given_a_crossing_without_a_plate_uses_the_entry_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-4 nullable: a crossing with no plate falls back to its id."""
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("34", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    monkeypatch.setattr(
+        app_module,
+        "_feed_row_target",
+        lambda *_args: replace(engine.crossings[0], rider_plate=None),
+    )
+    _stub_reassign_plate(monkeypatch, None)
+    calls = _stub_plate_prompt(monkeypatch, "12")
+
+    app_module._edit_plate_crossing_for(context, 0)
+
+    assert calls == [{"opener": context.frame, "plate": "34"}]
+
+
+def test_edit_plate_crossing_for_given_a_cancelled_prompt_reassigns_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: Cancel commits nothing and refreshes nothing."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    presenter = context.presenter
+    replayed = _stub_reassign_plate(monkeypatch, None)
+    _stub_plate_prompt(monkeypatch, None)
+
+    app_module._edit_plate_crossing_for(context, 0)
+
+    assert (replayed, presenter.refreshes) == ([], 0)
+
+
+def test_edit_plate_crossing_for_given_a_refused_reassign_posts_it_on_the_status_bar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-5 negative: the helper's refusal reaches the status bar."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    context = _hotkey_context(engine, roster)
+    presenter = context.presenter
+    _stub_reassign_plate(monkeypatch, "Could not reassign: unknown plate: 999")
+    _stub_plate_prompt(monkeypatch, "999")
+
+    app_module._edit_plate_crossing_for(context, 0)
+
+    assert context.frame.notices == ["Could not reassign: unknown plate: 999"]
+    assert presenter.refreshes == 0
+
+
+# ------------------------------------------------------- the wiring
+
+
+class _WiringConsole:
+    """A console-view double recording the app's three feed seams."""
+
+    def __init__(self) -> None:
+        """Start with no registered callbacks."""
+        self.open_crossing: Callable[[int], None] | None = None
+        self.delete_crossing: Callable[[int], None] | None = None
+        self.edit_plate_crossing: Callable[[int], None] | None = None
+
+    def set_on_open_crossing(self, callback: Callable[[int], None]) -> None:
+        """Record the open-crossing callback."""
+        self.open_crossing = callback
+
+    def set_on_delete_crossing(self, callback: Callable[[int], None]) -> None:
+        """Record the delete-crossing callback."""
+        self.delete_crossing = callback
+
+    def set_on_edit_plate_crossing(self, callback: Callable[[int], None]) -> None:
+        """Record the edit-plate callback."""
+        self.edit_plate_crossing = callback
+
+
+def test_wire_crossing_open_seam_wires_all_three_feed_seams(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The wire-up hands the console one callback per feed hotkey."""
+    opened: list[tuple[object, int]] = []
+    deleted: list[tuple[object, int]] = []
+    edited: list[tuple[object, int]] = []
+    monkeypatch.setattr(
+        app_module, "_open_crossing_detail_for", lambda context, row: opened.append((context, row))
+    )
+    monkeypatch.setattr(
+        app_module, "_delete_crossing_for", lambda context, row: deleted.append((context, row))
+    )
+    monkeypatch.setattr(
+        app_module,
+        "_edit_plate_crossing_for",
+        lambda context, row: edited.append((context, row)),
+    )
+    console = _WiringConsole()
+    context = app_module._RouteContext(
+        frame=_StubFrame(),
+        resource=_RefusingResource(),
+        roster=_solo_roster(),
+        app=None,
+        theme_controller=None,
+        console_view=console,
+    )
+
+    app_module._wire_crossing_open_seam(context)
+    console.open_crossing(1)
+    console.delete_crossing(2)
+    console.edit_plate_crossing(3)
+
+    assert (opened, deleted, edited) == ([(context, 1)], [(context, 2)], [(context, 3)])
+
+
+def test_wire_crossing_open_seam_given_no_console_view_wires_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a console-less context has nothing to wire."""
+    called: list[str] = []
+    monkeypatch.setattr(
+        app_module, "_open_crossing_detail_for", lambda *_args: called.append("open")
+    )
+    monkeypatch.setattr(app_module, "_delete_crossing_for", lambda *_args: called.append("delete"))
+    monkeypatch.setattr(
+        app_module, "_edit_plate_crossing_for", lambda *_args: called.append("edit")
+    )
+    context = app_module._RouteContext(
+        frame=_StubFrame(),
+        resource=_RefusingResource(),
+        roster=_solo_roster(),
+        app=None,
+        theme_controller=None,
+    )
+
+    app_module._wire_crossing_open_seam(context)
+
+    assert called == []

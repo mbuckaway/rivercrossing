@@ -391,6 +391,53 @@ def test_load_xrc_resources_memoizes_the_global_resource(
     assert get_calls == 1
 
 
+def test_load_xrc_resources_given_a_failed_load_warns_and_is_not_memoized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """T-3 negative: a failed load names its file and holds no cache.
+
+    ``Load`` reports a partly skipped file only through its boolean
+    (the Fault-B degraded-load class), so the failure is named through
+    ``wx.LogWarning`` and the singleton is left un-memoized: the next
+    call re-parses from disk instead of freezing the degraded load for
+    the rest of the session.
+    """
+    from pathlib import Path  # noqa: PLC0415 -- runtime use; the module's Path is annotation-only
+
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    monkeypatch.setattr(app, "_loaded_xrc_resource", None)
+    xrc_dir = Path(app.__file__).resolve().parent / "xrc"
+    expected = [f"XRC load failed for {path}" for path in sorted(xrc_dir.glob("*.xrc"))]
+    warnings: list[str] = []
+    get_calls = 0
+
+    class _DegradedResource:
+        """A resource whose every ``Load`` reports failure."""
+
+        def Load(self, _path: str) -> bool:  # noqa: N802 -- wx API name
+            """Report the file could not be loaded."""
+            return False
+
+    def _fake_get() -> _DegradedResource:
+        nonlocal get_calls
+        get_calls += 1
+        return _DegradedResource()
+
+    monkeypatch.setattr(wx.xrc.XmlResource, "Get", staticmethod(_fake_get))
+    monkeypatch.setattr(wx, "LogWarning", warnings.append)
+
+    first = app._load_xrc_resources()
+    second = app._load_xrc_resources()
+
+    # Both calls re-parsed every file: nothing was memoized, so each
+    # call warned for each shipped .xrc.
+    assert warnings == expected * 2
+    assert app._loaded_xrc_resource is None
+    assert first is not second
+    assert get_calls == 2
+
+
 # --------- Fault-B: a menubar miss must never reach SetMenuBar(None)
 #
 # ``load_menubar`` answers ``None`` when neither the singleton nor the

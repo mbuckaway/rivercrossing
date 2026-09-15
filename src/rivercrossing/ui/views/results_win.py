@@ -48,7 +48,7 @@ Phase 5 adds three display facts the canvas cannot carry:
   ``StandingsRow`` for exactly this.
 - the Plate column's absence on the Team list under ``RIDER_POOLED``
   (Part 2): a pooled team's plate is *derived* from its members, so
-  the column repeats a member's number while the Entry column names
+  the column repeats a member's plate while the Entry column names
   the team. Under ``TEAM_RELAY`` the plate is the entry's identity and
   stays.
 - the Best lap column (Part 3), positioned after Total and gated by
@@ -64,8 +64,8 @@ window's own handler chain never reached the main frame where the
 a FINISHED ride, the same state gate the export menu rows carry. One
 handler implementation serves the menu row and the button.
 
-``_find`` is now shared via ``ui.views._support.find_control`` --
-see that module's docstring for why it used to be duplicated here.
+``_find`` is now inherited from ``ui.views._support.DialogFindMixin``
+-- see that module's docstring for why it used to be duplicated here.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -81,7 +81,11 @@ from rivercrossing.ui import ids
 from rivercrossing.ui.card_text import JOKER_CODE, JOKER_DISPLAY, format_card
 from rivercrossing.ui.presenters.results import ResultsPresenter
 from rivercrossing.ui.std_dialogs import show_info
-from rivercrossing.ui.views._support import _ordering, associate_model, find_control
+from rivercrossing.ui.views._support import (
+    DialogFindMixin,
+    _ordering,
+    associate_model,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -325,7 +329,7 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return result if ascending else -result
 
 
-class ResultsWindow:
+class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``results_dlg`` (1f).
 
     Implements the :class:`~rivercrossing.ui.presenters.results.
@@ -371,7 +375,7 @@ class ResultsWindow:
                 plate_model``). Under ``RIDER_POOLED`` the Team list
                 drops its Plate column: a pooled team's plate is derived
                 from its members' plates, so the column repeats one
-                member's number and the Entry column is the team's
+                member's plate and the Entry column is the team's
                 identity. Under ``TEAM_RELAY`` the entry's own plate is
                 the identity, so the column stays.
             on_export: The app's export flow (W11) -- the same
@@ -413,29 +417,15 @@ class ResultsWindow:
         # E7.3.2: app.py's export completion (and E6.4.2's own
         # ``_export_options``) finds the open window's presenter through
         # ``wx.FindWindowByName(RESULTS_DLG).presenter`` -- the E6.4.2
-        # contract this view was always meant to fulfil. wxPython
-        # wrapper objects hold instance attributes (the ``_spy_repaint``
-        # precedent in _lists_common.py); the wrapper stays alive while
-        # the window's event bindings hold this view, and a closed
-        # window's lookup returns None, so the seam self-clears.
+        # contract this view was always meant to fulfil. The wxPython
+        # wrapper keeps the attribute alive: the window's own event
+        # bindings hold this view, and a closed window's lookup
+        # returns None, so the seam self-clears.
         self.dialog.presenter = self.presenter
 
         self._bind_events()
         self._bind_export_buttons()
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _bind_export_buttons(self) -> None:
         """Wire the four export buttons to the app's export flow (W11).

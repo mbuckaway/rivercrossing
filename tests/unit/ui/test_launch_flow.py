@@ -76,6 +76,10 @@ class _FakeConsoleView:
         """Record the swapped presenter."""
         self.calls.append(("set_presenter", presenter))
 
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Record the two time-column show flags (R-37)."""
+        self.calls.append(("set_time_columns", (show_total, show_lap)))
+
     def show_ride_header(self, **fields: object) -> None:
         """Record the rendered ride-identity header (C1)."""
         self.calls.append(("show_ride_header", fields))

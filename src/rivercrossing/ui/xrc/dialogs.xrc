@@ -458,7 +458,7 @@
     <object class="wxBoxSizer">
       <orient>wxVERTICAL</orient>
 
-      <!-- Phase 3: the target is typed in (a pooled rider's number, or
+      <!-- Phase 3: the target is typed in (a pooled rider's plate, or
            a whole entry's plate), so this dialog no longer needs an
            entry to be open first. entry_lbl carries the consequence
            copy; when a target is already known (the entry-detail
@@ -475,7 +475,7 @@
             <flag>wxALIGN_CENTRE_VERTICAL|wxRIGHT</flag>
             <border>8</border>
             <object class="wxStaticText">
-              <label>Rider number</label>
+              <label>Rider plate</label>
             </object>
           </object>
           <object class="sizeritem">
@@ -1041,7 +1041,7 @@
   </object>
 
   <!-- J2/§9: the Crossing Detail Edit prompt. Edit is the "wrong plate
-       on the line" correction, so it asks for the number in a small
+       on the line" correction, so it asks for the plate in a small
        Save/Cancel dialog rather than unlocking the detail window's own
        read-only plate field; OK still commits that field, but only
        miss mode unlocks it. The one field is a plain wxTextCtrl sized
@@ -1050,12 +1050,12 @@
        placeholder text (UX-DESKTOP §7). Save is the marked default so
        Enter commits and Escape keeps the stock Cancel route; the
        stock sizer and stock ids give both for free (UX-DESKTOP §3). The
-       view (views/crossing_detail.py's run_number_dialog) seeds
+       view (views/crossing_detail.py's run_plate_dialog) seeds
        number_input with the crossing's current plate, focuses and
        selects it, and reads Save's trimmed text; nothing here resolves
        the plate, since RideEngine.reassign_crossing owns the refusal. -->
   <object class="wxDialog" name="crossing_number_dlg">
-    <title>Number</title>
+    <title>Plate</title>
     <style>wxDEFAULT_DIALOG_STYLE|wxRESIZE_BORDER</style>
 
     <object class="wxBoxSizer">
@@ -1072,7 +1072,7 @@
           <object class="sizeritem">
             <flag>wxALIGN_CENTRE_VERTICAL</flag>
             <object class="wxStaticText">
-              <label>Number</label>
+              <label>Plate</label>
             </object>
           </object>
           <object class="sizeritem">

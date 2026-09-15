@@ -391,3 +391,18 @@ def test_build_main_window_passes_the_console_entries_into_apply_accelerators() 
     source = inspect.getsource(app.build_main_window)
 
     assert expected in source
+
+
+def test_build_main_window_gives_the_console_the_hourly_backup_scheduler() -> None:
+    """R-54: the console ticks a scheduler built from the store.
+
+    The composition itself -- one backup per hour boundary, recorded
+    when it fails -- is pinned in ``test_automatic_backup.py``; what
+    this source pin adds is the bootstrap call site that hands it to
+    the console, which no unit test reaches without building the whole
+    window (the same source-pin style used above).
+    """
+    source = inspect.getsource(app.build_main_window)
+
+    assert "backup_scheduler = _build_backup_scheduler(store, log)" in source
+    assert "backup_scheduler=backup_scheduler" in source

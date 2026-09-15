@@ -278,6 +278,7 @@ class _RouteStub:
         presenter: object = None,
         console_view: object = None,
         resource: object = None,
+        app: object = None,
     ) -> None:
         """Store the threaded surfaces."""
         self.frame = frame
@@ -285,6 +286,7 @@ class _RouteStub:
         self.presenter = presenter
         self.console_view = console_view
         self.resource = resource
+        self.app = app
 
 
 def test_wire_flagged_open_seam_routes_the_flagged_row_to_the_review_handler(

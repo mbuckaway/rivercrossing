@@ -38,7 +38,8 @@ from rivercrossing.ui.theme import ThemeMode
 _ALL_FIELDS = {
     "appearance",
     "sound_on",
-    "hide_times",
+    "show_total_times",
+    "show_lap_time",
     "zoom_percent",
     "splitter_sash",
     "window_geometry",
@@ -68,7 +69,8 @@ def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
     original = AppSettings(
         appearance="dark",
         sound_on=False,
-        hide_times=True,
+        show_total_times=True,
+        show_lap_time=False,
         zoom_percent=140,
         splitter_sash=320,
         window_geometry=(40, 60, 1200, 800),
@@ -84,6 +86,36 @@ def test_save_then_load_round_trips_every_field(tmp_path: Path) -> None:
     loaded = load_settings(path)
 
     assert loaded == original
+
+
+def test_default_settings_hide_the_total_and_show_the_lap_time() -> None:
+    """The two independent time-column defaults (Total off, Lap on)."""
+    settings = default_settings()
+
+    assert (settings.show_total_times, settings.show_lap_time) == (False, True)
+
+
+def test_save_then_load_round_trips_the_two_time_column_flags(tmp_path: Path) -> None:
+    """Both show flags survive a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(default_settings(), show_total_times=True, show_lap_time=False)
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (loaded.show_total_times, loaded.show_lap_time) == (True, False)
+
+
+def test_load_settings_missing_both_time_column_keys_uses_the_defaults(
+    tmp_path: Path,
+) -> None:
+    """An older file with neither key seeds Total off and Lap on."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (loaded.show_total_times, loaded.show_lap_time) == (False, True)
 
 
 def test_default_settings_sim_fields_are_the_dialog_xrc_defaults() -> None:
@@ -264,7 +296,8 @@ def test_load_settings_missing_keys_use_defaults_for_each_field(
     assert loaded == AppSettings(
         appearance="dark",
         sound_on=True,
-        hide_times=False,
+        show_total_times=False,
+        show_lap_time=True,
         zoom_percent=100,
         splitter_sash=None,
         window_geometry=None,
@@ -282,7 +315,8 @@ def test_load_settings_wrong_value_types_use_defaults_for_each_field(
             {
                 "appearance": 42,
                 "sound_on": "yes",
-                "hide_times": 1,
+                "show_total_times": 1,
+                "show_lap_time": "yes",
                 "zoom_percent": "140",
                 "splitter_sash": "320",
                 "window_geometry": [1, 2],
@@ -372,7 +406,8 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
         AppSettings(
             appearance="light",
             sound_on=False,
-            hide_times=True,
+            show_total_times=True,
+            show_lap_time=False,
             zoom_percent=120,
             splitter_sash=250,
             window_geometry=(10, 20, 30, 40),
@@ -392,6 +427,8 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     assert set(raw) == _ALL_FIELDS
     assert raw["window_geometry"] == [10, 20, 30, 40]
     assert raw["verbose_logging"] is False
+    assert raw["show_total_times"] is True
+    assert raw["show_lap_time"] is False
     assert raw["sim_riders"] == 12
     assert raw["sim_interval"] == 5
     assert raw["avg_speed_kmh"] == 17.5
@@ -459,7 +496,8 @@ _SETTINGS_STRATEGY = st.builds(
     AppSettings,
     appearance=st.sampled_from(tuple(mode.value for mode in ThemeMode)),
     sound_on=st.booleans(),
-    hide_times=st.booleans(),
+    show_total_times=st.booleans(),
+    show_lap_time=st.booleans(),
     zoom_percent=st.sampled_from(ZOOM_LADDER),
     splitter_sash=st.none() | st.integers(min_value=0, max_value=5000),
     window_geometry=st.none()

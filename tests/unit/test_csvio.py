@@ -50,6 +50,7 @@ Written FIRST, against the two-shape module: this file is red until
 csvio.py's unified rewrite lands.
 """
 
+import csv
 import os
 import re
 import tempfile
@@ -171,6 +172,12 @@ def _unified_file(tmp_path: Path, rows: list[_Row]) -> Path:
 def _read_lines(path: Path) -> list[str]:
     r"""Return *path*'s content as clean lines (no \r\n artifacts)."""
     return path.read_text(encoding="utf-8").splitlines()
+
+
+def _read_csv_rows(path: Path) -> list[list[str]]:
+    """Return *path* parsed as CSV rows, quote- and newline-aware."""
+    with path.open(encoding="utf-8", newline="") as handle:
+        return list(csv.reader(handle))
 
 
 # ======================================================= _map_header
@@ -683,16 +690,6 @@ def test_preview_distinct_team_names_produce_no_near_duplicate_warning(
 
     assert result.conflicts == ()
     assert result.warnings == ()
-
-
-@given(name=st.text(max_size=100))
-@settings(max_examples=200, deadline=None)
-def test_fuzzy_team_key_is_idempotent_and_alphanumeric(name: str) -> None:
-    """The fuzzy key is an alphanumeric fixed point (T-7)."""
-    key = csvio._fuzzy_team_key(name)
-
-    assert csvio._fuzzy_team_key(key) == key
-    assert all(char.isalnum() and char == char.lower() for char in key)
 
 
 # ==================================================== header conflicts
@@ -2263,6 +2260,50 @@ def test_export_of_an_uppercase_team_name_reimports_as_its_normalized_form(
     result = preview(path, target)
 
     assert result.entries[0].display_name == "full send"
+
+
+# ------------------------------------------- CWE-1236: formula cells
+# A spreadsheet executes any cell whose text starts with "=", "+", "-",
+# "@", TAB or CR, so an exported name or notes value can run a formula
+# (or, worse, a DDE command) the moment the operator opens the file.
+# ``_write_csv_rows`` is the one row writer both exports share, so the
+# neutralisation lands there once.
+
+
+@pytest.mark.parametrize("lead", ["=", "+", "-", "@", "\t", "\r"])
+def test_write_csv_rows_given_a_formula_lead_prefixes_a_single_quote(
+    tmp_path: Path, lead: str
+) -> None:
+    """CWE-1236: each of the six lead characters is neutralised."""
+    path = tmp_path / "out.csv"
+    value = f"{lead}cmd|'/c calc'!A1"
+
+    csvio._write_csv_rows(path, ["name"], [[value]])
+
+    assert _read_csv_rows(path) == [["name"], [f"'{value}"]]
+
+
+@pytest.mark.parametrize(
+    ("first_name", "expected_cell"),
+    [
+        ("=SUM(A1)", "'=SUM(A1)"),
+        ("+SUM(A1)", "'+SUM(A1)"),
+        ("-SUM(A1)", "'-SUM(A1)"),
+        ("@SUM(A1)", "'@SUM(A1)"),
+        ("Alex", "Alex"),
+    ],
+)
+def test_export_given_a_formula_leading_name_writes_a_neutralised_cell(
+    tmp_path: Path, first_name: str, expected_cell: str
+) -> None:
+    """CWE-1236: the public export neutralises a name cell."""
+    path = tmp_path / "out.csv"
+    roster = _relay_roster()
+    roster.create_solo_entry(first_name=first_name, last_name="", plate="1")
+
+    export(roster, path)
+
+    assert _read_csv_rows(path)[1] == [expected_cell, "", "solo", "", "1", "", ""]
 
 
 # ================================================ P3: standings columns

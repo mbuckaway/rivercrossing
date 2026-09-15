@@ -117,7 +117,7 @@ class DnfMark:
     """One confirmed ``dnf_confirm_dlg`` submission (E7.2.1).
 
     ``plate`` is whatever the operator typed into the dialog's
-    ``plate_input`` -- a pooled rider's own number, or a whole entry's
+    ``plate_input`` -- a pooled rider's own plate, or a whole entry's
     plate -- and the engine's ``mark_dnf`` resolves the scope from the
     roster; the dialog never decides which is which.
     """
@@ -425,12 +425,12 @@ def run_dnf(  # noqa: PLR0913 -- (resource, frame, plate, entry): the runner's f
 ) -> DnfMark | None:
     """Open ``dnf_confirm_dlg``; return the confirmed DNF mark.
 
-    The dialog is a form: ``plate_input`` takes the rider number (or a
+    The dialog is a form: ``plate_input`` takes the rider plate (or a
     whole entry's plate) and ``reason_input`` the reason, both
     non-empty before OK closes it -- the same gate every correction
     form applies. *plate* prefills the input (the entry-detail button
     passes its own entry plate; the menu route passes nothing and the
-    operator types the number). *entry* writes the ``entry_lbl``
+    operator types the plate). *entry* writes the ``entry_lbl``
     naming sentence (``dialogs.dnf_message``) when a target is already
     known; with none, XRC's own standing copy stays.
     """

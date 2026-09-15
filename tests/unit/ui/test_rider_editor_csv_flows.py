@@ -9,7 +9,7 @@ failure contract itself: a failed ``csvio.export`` (``OSError``
 from an unwritable target) is caught inside the flow and surfaced
 through the caller's ``on_error`` seam -- ``Export failed: {exc}`` --
 instead of an unguarded raise into a wx handler that swallows it
-(measured: ``docs/EPIC3-SESSION-SUMMARY.md``), which would leave the
+(measured), which would leave the
 operator believing the export succeeded. ``_pick_export_path`` is the
 module-level picker seam (the native ``wx.FileDialog`` is never
 drivable headless); no wx window is constructed in this file.

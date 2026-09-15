@@ -142,8 +142,9 @@ ZOOM_MENU_ITEMS = (
 )
 # W13 (testing notes #14): the theme trio left the View menu -- the
 # Settings appearance radios are the single theme surface -- so the
-# View row is hide-times plus the seven zoom radios.
-VIEW_MENU_ITEMS = ("mi_hide_times", *ZOOM_MENU_ITEMS)
+# View row is the two time-column check items plus the seven zoom
+# radios.
+VIEW_MENU_ITEMS = ("mi_show_total_times", "mi_show_lap_time", *ZOOM_MENU_ITEMS)
 HELP_MENU_ITEMS = ("mi_user_guide", "mi_shortcuts", "mi_selftest", "wxID_ABOUT")
 
 MAIN_MENUBAR_CONTROLS = (
@@ -213,16 +214,16 @@ MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Hel
 # tie-break row in Part C and split its Preview row per format; Phase 2
 # retired mi_entry_detail, mi_reassign_plate and mi_void_card): File 8
 # (mi_simulation added), Ride 9, Riders 4, Cards 5, Results 7, View 1,
-# Help 4. The single View row expands into the 8 items section 15b names
-# for it (W13: hide-times + the seven zoom radios; the theme trio left
-# the View menu).
+# Help 4. The single View row expands into the 9 items section 15b names
+# for it (W13: the two time-column check items + the seven zoom radios;
+# the theme trio left the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 4),
     ("&Cards", 5),
     ("Re&sults", 7),
-    ("&View", 8),
+    ("&View", 9),
     ("&Help", 4),
 )
 
@@ -470,20 +471,20 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_two_menu_item_names() -> None:
-    """D1/D4/C6/Part D + Phase 2: 42 ``mi_*`` items."""
+def test_main_menubar_declares_forty_three_menu_item_names() -> None:
+    """D1/D4/C6/Part D + Phase 2 + 2 time items: 43 ``mi_*``."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 42
+    assert len(menu_item_names) == 43
 
 
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
     """No orphaned menu item: every authored name is routed, and back.
 
     ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
-    is driven from, so its 45 ids and the authored item names must be
+    is driven from, so its 46 ids and the authored item names must be
     one set. A row that outlives its route, or a route with no item,
     would leave an item the enablement walk can never reach.
     """
@@ -883,11 +884,28 @@ def test_view_menu_radio_item_declares_the_radio_kind(item_name: str) -> None:
     assert _param(item, "radio") == "1"
 
 
-def test_view_menu_hide_times_item_declares_the_check_kind() -> None:
-    """A check item, which also keeps the radio groups apart."""
-    item = _objects_by_name(_window("main_menubar"))["mi_hide_times"]
+def test_view_menu_time_column_items_declare_the_check_kind() -> None:
+    """Two check items, which also keep the radio groups apart."""
+    items = _objects_by_name(_window("main_menubar"))
 
-    assert _param(item, "checkable") == "1"
+    assert (
+        _param(items["mi_show_total_times"], "checkable"),
+        _param(items["mi_show_lap_time"], "checkable"),
+    ) == ("1", "1")
+
+
+@pytest.mark.parametrize(
+    ("item_name", "label"),
+    [
+        ("mi_show_total_times", "&Show Total Times on Crossings Panel"),
+        ("mi_show_lap_time", "&Show Lap Time in Crossings Panel"),
+    ],
+)
+def test_view_menu_time_column_item_declares_its_label(item_name: str, label: str) -> None:
+    """Both View rows carry their frozen mnemonic label."""
+    item = _objects_by_name(_window("main_menubar"))[item_name]
+
+    assert _param(item, "label") == label
 
 
 def test_settings_dialog_declares_no_text_zoom_control() -> None:
@@ -1047,11 +1065,11 @@ def test_plate_input_declares_a_relative_sysfont_not_a_point_size() -> None:
 
 
 def test_plate_input_declares_a_hint_and_a_wider_size() -> None:
-    """A7/P8-D3: the "Plate number" hint and a wider DIP width."""
+    """A7/P8-D3: the "Rider plate" hint and a wider DIP width."""
     control = _objects_by_name(_window("main_frame"))["plate_input"]
     width = int(_param(control, "size").split(",")[0])
 
-    assert (_param(control, "hint"), width >= 200) == ("Plate number", True)
+    assert (_param(control, "hint"), width >= 200) == ("Rider plate", True)
 
 
 # --------------------------------------------------------------------
@@ -1126,7 +1144,7 @@ def test_ride_setup_declares_no_file_picker_control() -> None:
 
 
 # --------------------------------------------------------------------
-# Plan §9: the crossing-detail Number prompt (dialogs.xrc).
+# Plan §9: the crossing-detail Plate prompt (dialogs.xrc).
 
 NUMBER_DLG = "crossing_number_dlg"
 # Four digits plus the control's own borders, in DIP: the plate the
@@ -1146,7 +1164,7 @@ def test_crossing_number_dlg_is_declared_as_a_top_level_wx_dialog() -> None:
     assert _number_dialog().attrib["class"] == "wxDialog"
 
 
-def test_crossing_number_dlg_declares_the_number_caption() -> None:
+def test_crossing_number_dlg_declares_the_plate_caption() -> None:
     """UX-DESKTOP §7: the one input carries a real, persistent label."""
     labels = [
         _param(obj, "label")
@@ -1154,7 +1172,7 @@ def test_crossing_number_dlg_declares_the_number_caption() -> None:
         if obj.attrib["class"] == "wxStaticText"
     ]
 
-    assert labels == ["Number"]
+    assert labels == ["Plate"]
 
 
 def test_crossing_number_dlg_number_input_is_a_four_digit_text_ctrl() -> None:
@@ -1295,6 +1313,30 @@ def test_settings_dlg_declares_the_average_speed_decimal_entry() -> None:
         _param(entry, "min"),
         _param(entry, "size"),
     ) == ("wxSpinCtrlDouble", "12.0", "1", "1", "60,-1")
+
+
+SETTINGS_TIME_CHECKBOXES = (
+    ("show_total_times_chk", "Show Total Times on Crossings Panel"),
+    ("show_lap_time_chk", "Show Lap Time in Crossings Panel"),
+)
+
+
+@pytest.mark.parametrize(("name", "label"), SETTINGS_TIME_CHECKBOXES)
+def test_settings_dlg_declares_the_time_column_checkbox_label(name: str, label: str) -> None:
+    """Both checkboxes carry their frozen copy."""
+    checkbox = _objects_by_name(_settings_dialog())[name]
+
+    assert (checkbox.attrib["class"], _param(checkbox, "label")) == ("wxCheckBox", label)
+
+
+@pytest.mark.parametrize(("name", "_label"), SETTINGS_TIME_CHECKBOXES)
+def test_settings_dlg_time_column_checkbox_declares_no_checked_state(
+    name: str, _label: str
+) -> None:
+    """A stored setting: the presenter seeds it, so no ``<checked>``."""
+    checkbox = _objects_by_name(_settings_dialog())[name]
+
+    assert checkbox.find("checked") is None
 
 
 def test_settings_avg_speed_entry_declares_its_avg_lap_time_label() -> None:

@@ -407,7 +407,7 @@
             <object class="wxTextCtrl" name="plate_input">
               <style>wxTE_PROCESS_ENTER</style>
               <size>240,-1</size>
-              <hint>Plate number</hint>
+              <hint>Rider plate</hint>
               <font>
                 <sysfont>wxSYS_DEFAULT_GUI_FONT</sysfont>
                 <relativesize>1.5</relativesize>
@@ -846,18 +846,24 @@
 
     <!--
       W13: the theme trio left this menu (the Settings appearance radios
-      are the single theme surface). The zoom ladder is one radio group;
-      wx groups consecutive wxITEM_RADIO entries, and the checkable
-      mi_hide_times between the menu's start and the ladder keeps the
-      zoom group from ever merging with a neighbouring radio item. The
-      zoom items carry no mnemonic: seven numeric labels cannot hold
-      unique ones, and the whole ladder is reachable with Alt+V then the
-      arrow keys.
+      are the single theme surface). R-37's two independent time-column
+      check items lead the menu: the Total column and the Lap time
+      column, each mirrored by its own Settings checkbox. The zoom
+      ladder is one radio group; wx groups consecutive wxITEM_RADIO
+      entries, and the two checkable items between the menu's start and
+      the ladder keep the zoom group from ever merging with a
+      neighbouring radio item. The zoom items carry no mnemonic: seven
+      numeric labels cannot hold unique ones, and the whole ladder is
+      reachable with Alt+V then the arrow keys.
     -->
     <object class="wxMenu">
       <label>&amp;View</label>
-      <object class="wxMenuItem" name="mi_hide_times">
-        <label>&amp;Hide Times on Console</label>
+      <object class="wxMenuItem" name="mi_show_total_times">
+        <label>&amp;Show Total Times on Crossings Panel</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_show_lap_time">
+        <label>&amp;Show Lap Time in Crossings Panel</label>
         <checkable>1</checkable>
       </object>
       <object class="separator"/>

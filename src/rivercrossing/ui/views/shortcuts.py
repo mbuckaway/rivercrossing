@@ -25,7 +25,7 @@ import wx.dataview
 
 from rivercrossing.ui import ids
 from rivercrossing.ui.accelerators import ACCELERATOR_TABLE, Accelerator
-from rivercrossing.ui.views._support import associate_model, find_control
+from rivercrossing.ui.views._support import DialogFindMixin, associate_model
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -91,7 +91,7 @@ class ShortcutsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         return _TEXT_ACCESSORS[col](self._rows[row])
 
 
-class ShortcutsDialog:
+class ShortcutsDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``shortcuts_dlg`` (section E).
 
     The dialog's whole content is the generated shortcuts table, so
@@ -131,19 +131,6 @@ class ShortcutsDialog:
         # (main_frame.py, results_win.py) attaches the same way.
         dialog.shortcuts_view = self
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append the dialog's two text columns in canvas order.

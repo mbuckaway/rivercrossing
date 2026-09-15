@@ -20,7 +20,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from conftest import gorba_config
+from conftest import _pooled_team_roster, gorba_config
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Event, RideEngine
 from rivercrossing.roster import Entry, EntryMode, EntryType, PlateModel, Rider, Roster
@@ -158,16 +158,6 @@ def _running_engine(roster: Roster) -> RideEngine:
     return engine
 
 
-def _pooled_team_roster() -> Roster:
-    """Build a rider_pooled team roster: Sarah (45), Priya (9)."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_team_entry(
-        display_name="Dirt Dynamos",
-        riders=[Rider(first_name="Sarah", plate="45"), Rider(first_name="Priya", plate="9")],
-    )
-    return roster
-
-
 def _relay_team_roster() -> Roster:
     """Build a team_relay roster whose riders carry no plate (S1)."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
@@ -214,6 +204,43 @@ def test_feed_rows_given_solo_rider_shows_their_own_name_and_plate() -> None:
     feed = source.feed_rows()
 
     assert [(row.plate, row.entry) for row in feed] == [("12", "Amy")]
+
+
+def test_feed_rows_given_a_team_crossing_carries_the_team_display_name() -> None:
+    """The Team cell names the team, not the crossing rider."""
+    roster = _relay_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("9", at=_dt(10, 2))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert feed[0].team == "Dirt Dynamos"
+
+
+def test_feed_rows_given_a_pooled_team_crossing_names_the_team_beside_the_rider() -> None:
+    """J1 keeps the rider in Name; Team still names the entry."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert (feed[0].entry, feed[0].team) == ("Sarah", "Dirt Dynamos")
+
+
+def test_feed_rows_given_a_solo_crossing_carries_a_blank_team() -> None:
+    """T-3 negative: a solo entry leaves the Team cell blank."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_solo_entry(first_name="Amy", plate="12")
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert feed[0].team == ""
 
 
 def test_rider_name_for_given_matching_plate_returns_that_riders_full_name() -> None:

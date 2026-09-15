@@ -42,6 +42,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from conftest import _pooled_team_roster, _roster_with_entries
 from rivercrossing.cards import Card, Shoe, ShoeClosedError
 from rivercrossing.hands import best_hand, compare
 from rivercrossing.ride import (
@@ -410,14 +411,6 @@ class _FakeClock:
 def _dt(hour: int, minute: int = 0, second: int = 0) -> datetime:
     """Build a naive datetime on the fixed day, Sept 20, 2026."""
     return datetime(2026, 9, 20, hour, minute, second)  # noqa: DTZ001 -- naive by design, as RideConfig's planned_start
-
-
-def _roster_with_entries(*plates: str) -> Roster:
-    """Build a MIXED rider_pooled roster of one solo entry per plate."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    for plate in plates:
-        roster.create_solo_entry(first_name=f"Rider {plate}", last_name="", plate=plate)
-    return roster
 
 
 def _make_engine(
@@ -2732,16 +2725,6 @@ def test_engine_update_config_given_a_finished_ride_keeps_its_closed_shoe() -> N
 
 
 # ============================ J1: per-rider crossing attribution
-
-
-def _pooled_team_roster() -> Roster:
-    """Build a rider_pooled team roster: Sarah (45), Priya (9)."""
-    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
-    roster.create_team_entry(
-        display_name="Dirt Dynamos",
-        riders=[Rider(first_name="Sarah", plate="45"), Rider(first_name="Priya", plate="9")],
-    )
-    return roster
 
 
 def _pooled_team_engine() -> RideEngine:

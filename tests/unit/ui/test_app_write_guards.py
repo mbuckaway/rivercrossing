@@ -5,7 +5,7 @@ Store writes (``create_ride``/``save_roster``/``delete_ride``/
 ``duplicate_ride``/``close_session`` and the ``on_event`` append
 sink) and settings writes run inside wx menu/button/sash handlers,
 and wx swallows a Python exception raised inside an event handler
-(measured: ``docs/EPIC3-SESSION-SUMMARY.md``) -- so an unguarded
+(measured) -- so an unguarded
 write failure vanishes with zero signal, and worst case the operator
 is told an import succeeded while the roster silently stayed
 unpersisted. Each write route below wraps its store call in
@@ -491,7 +491,8 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
     new_settings = AppSettings(
         appearance="system",
         sound_on=True,
-        hide_times=False,
+        show_total_times=False,
+        show_lap_time=True,
         zoom_percent=context.settings.zoom_percent,
     )
 

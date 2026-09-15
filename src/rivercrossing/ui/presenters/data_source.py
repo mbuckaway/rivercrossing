@@ -84,6 +84,11 @@ class FeedRow:
     so the list's native header sort orders by time rather than by its
     ``h:mm:ss`` text (``StandingsRow.total_seconds``' own rule).
 
+    ``team`` is the Team column's cell: the entry's ``display_name``
+    for a ``TEAM`` entry, ``""`` for a solo rider (and for a miss,
+    which has no entry at all), so the column stays blank rather than
+    repeating the solo rider's own name.
+
     ``duplicate`` (Phase 3) marks one half of a live duplicate pair
     (``RideEngine.duplicate_crossings``: same entry, identical
     instant), so the Needs Review tab can list both halves -- the
@@ -99,6 +104,7 @@ class FeedRow:
     lap_time: str
     total: str
     card: str
+    team: str = ""
     flagged: bool = False
     held: bool = False
     edited: bool = False
@@ -553,6 +559,81 @@ def _insert_newest_first(
     rows.append(candidate)
 
 
+@dataclass(frozen=True, slots=True)
+class _FeedContext:
+    """Everything one crossings feed needs beyond the crossing itself.
+
+    ``EngineDataSource.feed_rows`` builds it once in its prelude (the
+    entry lookup maps and the four derived crossing sets) and hands it
+    to :func:`_crossing_feed_row` for every crossing, so the per-row
+    builder takes two arguments rather than eleven. Nothing outside
+    this module sees it.
+    """
+
+    engine: RideEngine
+    roster: Roster
+    start: datetime | None
+    dnf_riders: frozenset[str]
+    dnf_entries: frozenset[str]
+    held_crossings: frozenset[Crossing]
+    edited: frozenset[tuple[str, int]]
+    duplicates: frozenset[Crossing]
+    times_by_entry: dict[str, tuple[float, ...]]
+    totals_by_entry: dict[str, list[float]]
+
+
+def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datetime, FeedRow]:
+    """Build one live crossing's feed row and its sort instant.
+
+    The per-crossing half of :meth:`EngineDataSource.feed_rows`. Plan
+    §6: ``flagged`` is the short-lap review flag (true under both card
+    policies) and ``held`` the hold-mode card disposition, so the
+    Needs Review routing can tell a credited short lap from a held
+    one. W9: the ``card`` cell carries the real dealt code -- the
+    held card's own when this lap's card is held (R-34), the credited
+    card otherwise. The seq guard covers a stale crossing whose lap is
+    past the entry's recorded times.
+    """
+    engine = context.engine
+    feed_entry = context.roster.resolve_plate(crossing.entry_id)
+    times = context.times_by_entry.get(crossing.entry_id, ())
+    totals = context.totals_by_entry.get(crossing.entry_id, ())
+    lap_time_s = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
+    total_s = totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
+    held_card = engine.held_card_for(crossing)
+    rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
+    entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
+    team_name = (
+        feed_entry.display_name
+        if feed_entry is not None and feed_entry.type is EntryType.TEAM
+        else ""
+    )
+    elapsed_s = _elapsed_seconds(crossing.crossed_at, context.start)
+    rider_plate = crossing.rider_plate
+    return (
+        crossing.crossed_at,
+        FeedRow(
+            time=format_duration(elapsed_s),
+            plate=rider_plate or crossing.entry_id,
+            entry=rider_name or entry_name,
+            team=team_name,
+            lap=crossing.seq,
+            lap_time=_format_lap_time(lap_time_s),
+            total=format_duration(total_s),
+            card=(held_card.code() if held_card is not None else engine.card_for(crossing).code()),
+            flagged=crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s,
+            held=crossing in context.held_crossings,
+            edited=(crossing.entry_id, crossing.seq) in context.edited,
+            duplicate=crossing in context.duplicates,
+            dnf=(rider_plate is not None and rider_plate in context.dnf_riders)
+            or crossing.entry_id in context.dnf_entries,
+            elapsed_s=elapsed_s,
+            lap_time_s=lap_time_s,
+            total_s=total_s,
+        ),
+    )
+
+
 class EngineDataSource:
     """Real ``DataSource`` over ``(engine, roster)`` (E4.4.1).
 
@@ -607,11 +688,6 @@ class EngineDataSource:
         (:func:`corrected_crossing_keys`) -- the feed's visual marker
         for spec §3 design 8c's "edits highlighted in the feed".
 
-        Plan §6: a row's ``flagged`` bit is the short-lap review flag
-        (true under both card policies) and its ``held`` bit the
-        hold-mode card disposition, so the Needs Review routing can
-        tell a credited short lap from a held one.
-
         K: pending misses are synthesised into the same feed as
         ``-``/``missed`` rows, interleaved newest-first with the
         crossings (a miss is not a crossing, so it never reaches the
@@ -625,17 +701,14 @@ class EngineDataSource:
         or the whole entry is (Phase 4's marker); a row is ``duplicate``
         when the crossing is one half of a live duplicate pair (Phase
         3, ``engine.duplicate_crossings``).
+
+        This method is the prelude (the per-render lookups below) plus
+        the merge loop: :func:`_crossing_feed_row` builds each crossing
+        row, :func:`_miss_feed_row` each miss row.
         """
         engine = self._engine
-        start = engine.actual_start
-        dnf_riders = engine.dnf_riders
         dnf_entries = frozenset(
             entry.plate for entry in self._roster.entries if engine.entry_is_dnf(entry)
-        )
-        held_crossings = frozenset(item.crossing for item in engine.held_crossings())
-        edited = corrected_crossing_keys(engine.events, engine.crossings)
-        duplicates = frozenset(
-            crossing for pair in engine.duplicate_crossings() for crossing in pair
         )
         times_by_entry: dict[str, tuple[float, ...]] = {}
         totals_by_entry: dict[str, list[float]] = {}
@@ -648,59 +721,24 @@ class EngineDataSource:
                 total += lap_time
                 running.append(total)
             totals_by_entry[entry.plate] = running
-
-        rows: list[tuple[datetime, FeedRow]] = []
-        for crossing in engine.crossings:
-            feed_entry = self._roster.resolve_plate(crossing.entry_id)
-            times = times_by_entry.get(crossing.entry_id, ())
-            totals = totals_by_entry.get(crossing.entry_id, [])
-            # Plan §6: ``flagged`` is the short-lap review channel (both
-            # policies), ``held`` the hold-mode card disposition. The
-            # seq guard covers a stale crossing whose lap is past the
-            # entry's recorded times.
-            lap_time_s = times[crossing.seq - 1] if crossing.seq <= len(times) else 0.0
-            total_s = totals[crossing.seq - 1] if crossing.seq <= len(totals) else 0.0
-            flagged = crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s
-            held = crossing in held_crossings
-            held_card = engine.held_card_for(crossing)
-            rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
-            entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
-            elapsed_s = _elapsed_seconds(crossing.crossed_at, start)
-            rider_plate = crossing.rider_plate
-            rows.append(
-                (
-                    crossing.crossed_at,
-                    FeedRow(
-                        time=format_duration(elapsed_s),
-                        plate=rider_plate or crossing.entry_id,
-                        entry=rider_name or entry_name,
-                        lap=crossing.seq,
-                        lap_time=_format_lap_time(lap_time_s),
-                        total=format_duration(total_s),
-                        # W9: every row carries the real dealt
-                        # code -- the held card's own when this lap's
-                        # card is held (R-34), the credited card
-                        # otherwise.
-                        card=(
-                            held_card.code()
-                            if held_card is not None
-                            else engine.card_for(crossing).code()
-                        ),
-                        flagged=flagged,
-                        held=held,
-                        edited=(crossing.entry_id, crossing.seq) in edited,
-                        duplicate=crossing in duplicates,
-                        dnf=(rider_plate is not None and rider_plate in dnf_riders)
-                        or crossing.entry_id in dnf_entries,
-                        elapsed_s=elapsed_s,
-                        lap_time_s=lap_time_s,
-                        total_s=total_s,
-                    ),
-                )
-            )
+        context = _FeedContext(
+            engine=engine,
+            roster=self._roster,
+            start=engine.actual_start,
+            dnf_riders=engine.dnf_riders,
+            dnf_entries=dnf_entries,
+            held_crossings=frozenset(item.crossing for item in engine.held_crossings()),
+            edited=corrected_crossing_keys(engine.events, engine.crossings),
+            duplicates=frozenset(
+                crossing for pair in engine.duplicate_crossings() for crossing in pair
+            ),
+            times_by_entry=times_by_entry,
+            totals_by_entry=totals_by_entry,
+        )
+        rows = [_crossing_feed_row(context, crossing) for crossing in engine.crossings]
         rows.reverse()  # newest first: crossings keep their record order
         for miss in reversed(engine.pending_misses()):
-            _insert_newest_first(rows, (miss.crossed_at, _miss_feed_row(miss, start)))
+            _insert_newest_first(rows, (miss.crossed_at, _miss_feed_row(miss, context.start)))
         return [row for _crossed_at, row in rows]
 
     def counters(self) -> Counters:

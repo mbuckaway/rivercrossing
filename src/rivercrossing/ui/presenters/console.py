@@ -5,7 +5,7 @@
 verbatim contract (ui.presenters section) -- names and signatures
 below are binding, not derived -- grown by the members the live
 presenter actually calls: ``set_stop_enabled`` (the Stop gate),
-``set_hide_times`` (R-37), ``show_clock`` (the tick's elapsed
+``set_time_columns`` (R-37), ``show_clock`` (the tick's elapsed
 display), ``set_entry_locked`` (R-35's "only confirming locks the
 entry field"), -- WS-D/WS-H -- ``set_clock_fractions`` (the
 gauge-clock dials), ``show_flagged`` and ``show_riders`` (the review
@@ -309,8 +309,8 @@ class ConsoleView(Protocol):
         """
         ...
 
-    def set_hide_times(self, *, hide: bool) -> None:
-        """Toggle the Lap time/Total columns (R-37)."""
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Show or hide the Total/Lap time columns (R-37)."""
         ...
 
     def show_clock(self, elapsed: str, remaining: str) -> None:
@@ -512,7 +512,7 @@ class ConsolePresenter:
         self.refresh_feed()
         self._refresh_counters()
         self.view.play(Cue.ERROR)
-        self.view.show_notice("Number missed — logged for later entry")
+        self.view.show_notice("Plate missed — logged for later entry")
         self.view.clear_entry()
         self.view.focus_entry()
 
@@ -656,9 +656,9 @@ class ConsolePresenter:
         self.view.set_entry_locked(locked=True)
         self.view.show_notice("Ride stopped — continue to resume")
 
-    def on_hide_times(self, *, hide: bool) -> None:
-        """Handle the hide-times setting toggling live (R-37)."""
-        self.view.set_hide_times(hide=hide)
+    def on_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Handle the two time-column settings toggling live (R-37)."""
+        self.view.set_time_columns(show_total=show_total, show_lap=show_lap)
 
     def on_search_text(self, text: str) -> None:
         """Narrow the crossings list to rows matching *text* (Phase 4).

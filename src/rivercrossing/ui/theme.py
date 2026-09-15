@@ -135,9 +135,6 @@ def apply_light_mode_panel_bg(dialog: Any) -> None:  # noqa: ANN401 -- wx ships 
 
     Args:
         dialog: The ``wx.Dialog`` (or results ``wx.Frame``) to tint.
-
-    Returns:
-        ``None`` -- no-op unless the active appearance is Light.
     """
     wx = require_wx()
     if wx.SystemSettings.GetAppearance().IsDark():

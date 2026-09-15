@@ -61,6 +61,11 @@ _MIN_AVG_SPEED_KMH = 1.0
 class AppSettings:
     """The settings_dlg fields (appearance, sound, times, zoom, log).
 
+    The two time-column fields are independent: ``show_total_times``
+    (default off) shows the feed's Total column, ``show_lap_time``
+    (default on) shows its Lap time column. Each mirrors its own
+    Settings checkbox and View-menu check item (R-37).
+
     E8.1.1 adds the two layout fields: ``splitter_sash`` and
     ``window_geometry`` (x, y, width, height) persist the console's
     sash position and the frame's placement -- the two settings that
@@ -92,7 +97,8 @@ class AppSettings:
 
     appearance: str
     sound_on: bool
-    hide_times: bool
+    show_total_times: bool
+    show_lap_time: bool
     zoom_percent: int
     splitter_sash: int | None = None
     window_geometry: tuple[int, int, int, int] | None = None
@@ -112,13 +118,15 @@ def default_settings() -> AppSettings:
     """Return the all-defaults :class:`AppSettings`.
 
     The first-launch / corrupt-file fallback: System appearance, sound
-    on (spec §10's default), times shown, 100% zoom, no saved layout
-    yet, verbose logging on, and the simulator's XRC spin defaults.
+    on (spec §10's default), Total hidden and Lap time shown, 100%
+    zoom, no saved layout yet, verbose logging on, and the simulator's
+    XRC spin defaults.
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
         sound_on=True,
-        hide_times=False,
+        show_total_times=False,
+        show_lap_time=True,
         zoom_percent=DEFAULT_ZOOM_PERCENT,
         splitter_sash=None,
         window_geometry=None,
@@ -185,7 +193,8 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
     payload = {
         "appearance": settings.appearance,
         "sound_on": settings.sound_on,
-        "hide_times": settings.hide_times,
+        "show_total_times": settings.show_total_times,
+        "show_lap_time": settings.show_lap_time,
         "zoom_percent": settings.zoom_percent,
         "splitter_sash": settings.splitter_sash,
         "window_geometry": (
@@ -238,7 +247,8 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
     return AppSettings(
         appearance=_appearance_or(raw.get("appearance"), defaults.appearance),
         sound_on=_bool_or(raw.get("sound_on"), default=defaults.sound_on),
-        hide_times=_bool_or(raw.get("hide_times"), default=defaults.hide_times),
+        show_total_times=_bool_or(raw.get("show_total_times"), default=defaults.show_total_times),
+        show_lap_time=_bool_or(raw.get("show_lap_time"), default=defaults.show_lap_time),
         zoom_percent=_clamp_zoom(_int_or(raw.get("zoom_percent"), defaults.zoom_percent)),
         splitter_sash=_int_or(raw.get("splitter_sash"), None),
         window_geometry=_geometry_or(raw.get("window_geometry"), None),

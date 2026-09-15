@@ -35,42 +35,61 @@ __all__ = [
     "COL_LAP_TIME",
     "COL_NAME",
     "COL_PLATE",
+    "COL_TEAM",
     "COL_TIME",
     "COL_TOTAL",
-    "TIME_COLUMNS",
+    "LAP_TIME_COLUMN",
+    "TOTAL_COLUMN",
     "card_text_or_blank",
     "edited_row_indexes",
     "entry_text",
     "flagged_row_indexes",
     "flash_crossing_label",
     "lap_text",
+    "review_issue",
 ]
 
 COL_TIME = 0
 COL_PLATE = 1
 COL_NAME = 2  # the entry's display name (W9: header "Name", not "Entry")
-COL_CARD = 3
-COL_LAP = 4
-COL_LAP_TIME = 5
-COL_TOTAL = 6
+COL_TEAM = 3  # the team's display name, blank for a solo entry
+COL_CARD = 4
+COL_LAP = 5
+COL_LAP_TIME = 6
+COL_TOTAL = 7
 
-# W9 feed order -- Time | Plate | Name | Card | Lap | Lap time |
-# Total (the frozen canvas drawing still reads "Entry" and puts Card
-# last; W15's canvas amendment records this change in xrc-windows.md).
-COLUMN_LABELS: tuple[str, ...] = ("Time", "Plate", "Name", "Card", "Lap", "Lap time", "Total")
+# W9 feed order -- Time | Plate | Name | Team | Card | Lap |
+# Lap time | Total (the frozen canvas drawing still reads "Entry" and
+# puts Card last; W15's canvas amendment records this change in
+# xrc-windows.md).
+COLUMN_LABELS: tuple[str, ...] = (
+    "Time",
+    "Plate",
+    "Name",
+    "Team",
+    "Card",
+    "Lap",
+    "Lap time",
+    "Total",
+)
 
-# R-37: the two columns hide-times removes; the clock stays untouched.
-TIME_COLUMNS: tuple[int, ...] = (COL_LAP_TIME, COL_TOTAL)
+# R-37: the feed's two time columns, one per independent show setting
+# (``show_total_times`` / ``show_lap_time``). Each is kept as a
+# one-element column tuple so it matches the view's per-column handle;
+# the clock stays untouched -- R-37 keeps it visible regardless.
+TOTAL_COLUMN: tuple[int, ...] = (COL_TOTAL,)
+LAP_TIME_COLUMN: tuple[int, ...] = (COL_LAP_TIME,)
 
 # W9 explicit widths, one per :data:`COLUMN_LABELS` entry, so nothing
 # truncates at the default window size: 80 fits "14:22:41"-shaped
 # timestamps and "3:02:11" totals, 50 fits "9999" plates and "999"
-# laps, 150 fits the longest demo name ("Trail Blazers (T)"), and 60
-# fits the 24x32 card face plus padding (the width the rider editor's
-# card columns use). DataView columns have no autosize-to-content
+# laps, 150 fits the longest demo name ("Trail Blazers (T)"), 130 fits
+# a 15-character team name ("Blazing Saddles"), and 60 fits the 24x32
+# card face plus padding (the width the rider editor's card columns
+# use). DataView columns have no autosize-to-content
 # (xrc-windows.md's code-side list), so the widths are pinned data
 # here and applied by ``views/main_frame._build_columns``.
-COLUMN_WIDTHS: tuple[int, ...] = (80, 50, 150, 60, 50, 80, 80)
+COLUMN_WIDTHS: tuple[int, ...] = (80, 50, 150, 130, 60, 50, 80, 80)
 
 
 def _time_sort_key(row: FeedRow) -> float:
@@ -88,7 +107,7 @@ def _plate_sort_key(row: FeedRow) -> tuple[int, int] | tuple[int, str]:
 
     The rider lists' own numeric-aware rule (``rider_columns.
     plate_order_key``): a relay ride's alphanumeric plate orders after
-    every rider number instead of interleaving with it.
+    every rider plate instead of interleaving with it.
     """
     return plate_order_key(row.plate)
 
@@ -101,6 +120,15 @@ def _name_sort_key(row: FeedRow) -> str:
     sorted list.
     """
     return row.entry.casefold()
+
+
+def _team_sort_key(row: FeedRow) -> str:
+    """Return the Team sort key: the casefolded team display name.
+
+    The Name column's own rule; a solo row's blank team sorts with the
+    empty string ahead of every named team.
+    """
+    return row.team.casefold()
 
 
 def _card_sort_key(row: FeedRow) -> str:
@@ -131,12 +159,13 @@ def _total_sort_key(row: FeedRow) -> float:
 # list's native header arrows (``views/main_frame.CrossingsFeedModel.
 # Compare``). A column's key is homogeneous *within* the column -- the
 # Plate key is an ``(int, int)``/``(int, str)`` pair, three are
-# ``float``, two ``str``, Lap an ``int`` -- but they differ *between*
+# ``float``, three ``str``, Lap an ``int`` -- but they differ *between*
 # columns, so the shared annotation is the rider columns' own ``Any``.
 COLUMN_SORT_KEYS: tuple[Callable[[FeedRow], Any], ...] = (
     _time_sort_key,
     _plate_sort_key,
     _name_sort_key,
+    _team_sort_key,
     _card_sort_key,
     _lap_sort_key,
     _lap_time_sort_key,
@@ -191,6 +220,28 @@ def edited_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
     here, exactly as it does for :func:`flagged_row_indexes`.
     """
     return frozenset(index for index, row in enumerate(rows) if row.edited)
+
+
+def review_issue(row: FeedRow) -> str:
+    """Return the Needs Review tab's Issue cell text for *row*.
+
+    Why the row entered review. A live duplicate pair (``row.
+    duplicate``, Phase 3) is listed by its own bit and takes the
+    wording first: the earlier twin's derived lap time is real, so it
+    can carry no ``flagged`` bit of its own. Otherwise a short lap
+    (``row.flagged``, R-34) reads as held when its card waits
+    uncredited for a confirm/void decision (``row.held``, hold mode)
+    and as a plain short lap when the card was credited (always-deal).
+    A row that is neither duplicated nor flagged has no issue to
+    show, so the cell is blank.
+    """
+    if row.duplicate:
+        return "Duplicate crossing"
+    if row.flagged and row.held:
+        return "Short lap — card held"
+    if row.flagged:
+        return "Short lap"
+    return ""
 
 
 def lap_text(row: FeedRow) -> str:

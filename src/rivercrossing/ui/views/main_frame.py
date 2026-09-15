@@ -54,6 +54,7 @@ from rivercrossing.ui.presenters.data_source import Counters
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 from rivercrossing.ui.views import dialogs, team_editor
 from rivercrossing.ui.views._support import (
+    DialogFindMixin,
     RiderRowListModel,
     _ordering,
     associate_model,
@@ -69,6 +70,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from rivercrossing.roster import EntryMode
+    from rivercrossing.store.backup import HourlyBackup
     from rivercrossing.ui.presenters.console import ConsolePresenter, Cue
     from rivercrossing.ui.presenters.data_source import (
         DataSource,
@@ -124,6 +126,7 @@ _TEXT_ACCESSORS: dict[int, Callable[[FeedRow], str]] = {
     feed_model.COL_TIME: lambda row: row.time,
     feed_model.COL_PLATE: lambda row: row.plate,
     feed_model.COL_NAME: feed_model.entry_text,
+    feed_model.COL_TEAM: lambda row: row.team,
     feed_model.COL_LAP: feed_model.lap_text,
     feed_model.COL_LAP_TIME: lambda row: row.lap_time,
     feed_model.COL_TOTAL: lambda row: row.total,
@@ -221,6 +224,17 @@ DEFAULT_FEED_SORT: tuple[int, bool] = (feed_model.COL_TIME, True)
 # frame-level accelerator in code with its own wx id.
 EDIT_CROSSING_KEY = wx.WXK_F2
 
+# The crossings feed's own hotkeys (Phase 7): Delete and Ctrl+D remove
+# the selected row through the Crossing Detail delete confirm, Ctrl+E
+# retypes its plate through the Plate prompt. Like F2 they are
+# code-side frame accelerators -- main.xrc declares no menu item for
+# either command. wxPython exposes no WXK_D/WXK_E constants for letter
+# keys, so the two Ctrl rows carry the letter's own ordinal, the
+# spelling app._accelerator_entries' Ctrl+Z handling already uses.
+DELETE_CROSSING_KEY = wx.WXK_DELETE
+DELETE_CROSSING_CTRL_KEY = ord("D")
+EDIT_PLATE_CROSSING_KEY = ord("E")
+
 # console_riders_list's columns (Phase 4): the console draws every
 # shared column (``ui.rider_columns.CONSOLE_RIDER_COLUMNS`` -- Plate |
 # Name | Team | Sex | Cards), so the headers, the cells and the sort
@@ -246,11 +260,13 @@ RIDERS_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAV
 RIDERS_COLUMN_WIDTHS: tuple[int, ...] = (80, 160, 80, 80, 80)
 
 # flagged_list's columns (WS-H): the three cells of the canvas's
-# flagged-row line ("45 · lap 6 · 07:12") as sortable columns.
+# flagged-row line ("45 · lap 6 · 07:12") as sortable columns, plus
+# the Issue column that names why the row entered review.
 FLAG_COL_PLATE = 0
 FLAG_COL_LAP = 1
 FLAG_COL_LAP_TIME = 2
-FLAG_COLUMN_LABELS: tuple[str, ...] = ("Plate", "Lap", "Lap time")
+FLAG_COL_ISSUE = 3
+FLAG_COLUMN_LABELS: tuple[str, ...] = ("Plate", "Lap", "Lap time", "Issue")
 
 # start_blocked_dlg's one column (Phase 5): the blocked-start issue
 # list, one reason per row.
@@ -295,6 +311,12 @@ DEFAULT_SASH = 850
 # without hammering the DataView with rebuilds.
 _TICK_MS = 1000
 
+# How often wire_console's backup timer ticks R-54's hourly scheduler:
+# one hour, in the milliseconds wx.Timer.Start takes. The scheduler
+# itself decides (from its clock) whether the hour has actually
+# advanced, so this interval only has to be no longer than an hour.
+_BACKUP_MS = 3_600_000
+
 
 class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
     """Read-only model over ``FeedRow`` rows for ``crossings_list``.
@@ -331,7 +353,7 @@ class CrossingsFeedModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         self._edited = feed_model.edited_row_indexes(self._rows)
 
     def GetColumnCount(self) -> int:
-        """Return the feed's fixed seven columns."""
+        """Return the feed's fixed eight columns."""
         return len(feed_model.COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- the model has one type
@@ -407,14 +429,17 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
     resolves to ``Any`` and mypy refuses to subclass ``Any``.
 
     The review notebook's "Needs Review" tab: one row per short-lap
-    flag (the rows the console feed bolds), showing Plate | Lap | Lap
-    time. Rows are supplied fresh each ``show_flagged``, exactly like
-    :class:`CrossingsFeedModel`'s own rebuild-per-show pattern.
+    flag -- or duplicate pair -- (the rows the console feed bolds or
+    lists), showing Plate | Lap | Lap time | Issue. Rows are supplied
+    fresh each ``show_flagged``, exactly like
+    :class:`CrossingsFeedModel`'s own rebuild-per-show pattern. The
+    Issue column names why each row is here
+    (``feed_model.review_issue``).
 
     ``held_for_row`` is the tab's routing seam (plan §6): the wrapped
     row's ``held`` bit tells the app whether the activation gets a
     confirm/void decision (hold mode, R-34) or opens the credited
-    short lap's crossing detail. The three rendered columns do not
+    short lap's crossing detail. The four rendered columns do not
     carry it, so it is answered straight off the wrapped row.
     """
 
@@ -424,7 +449,7 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
         self._rows = tuple(rows)
 
     def GetColumnCount(self) -> int:
-        """Return the flagged list's fixed three columns."""
+        """Return the flagged list's fixed four columns."""
         return len(FLAG_COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- the model has one type
@@ -438,6 +463,8 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
             return flagged_row.plate
         if col == FLAG_COL_LAP:
             return str(flagged_row.lap)
+        if col == FLAG_COL_ISSUE:
+            return feed_model.review_issue(flagged_row)
         return flagged_row.lap_time
 
     def held_for_row(self, row: int) -> bool:
@@ -612,15 +639,15 @@ def _pin_current_lap_width(label: wx.StaticText) -> int:
     return width
 
 
-class MainFrame:
+class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
     """Code-side behaviour for ``main_frame`` (the console, 1a).
 
     Implements ``ConsoleView`` (module-skeletons.md's presenter
     contract). E4.4.1-E4.4.3 grew the Protocol with the four members
     the live presenter actually calls (``set_stop_enabled``,
-    ``set_hide_times``, ``show_clock``, ``set_entry_locked``) -- the
+    ``set_time_columns``, ``show_clock``, ``set_entry_locked``) -- the
     "add the member once the presenter calls it" precedent this
-    class's own earlier docstring recorded for ``set_hide_times``.
+    class's own earlier docstring recorded for ``set_time_columns``.
     :meth:`wire_console` binds the lifecycle controls (start/stop/
     undo) and the tick timer, mirroring :meth:`wire_entry`'s
     callback idiom; the app bootstrap calls it after construction.
@@ -635,6 +662,7 @@ class MainFrame:
         initial_geometry: tuple[int, int, int, int] | None = None,
         on_layout_changed: Callable[[int | None, tuple[int, int, int, int] | None], None]
         | None = None,
+        backup_scheduler: HourlyBackup | None = None,
     ) -> None:
         """Decorate an already-loaded ``main_frame`` window.
 
@@ -657,10 +685,16 @@ class MainFrame:
                 wires to the settings store; fired on sash change,
                 move/resize and close. ``None`` (test constructions)
                 reports nothing.
+            backup_scheduler: R-54's hourly automatic backup
+                (``store.backup.schedule_hourly``), whose ``tick()``
+                :meth:`wire_console` drives from this frame's own
+                timer. ``None`` (a no-store bootstrap, or a test
+                construction) wires no backup timer at all.
         """
         self.frame = frame
         self.data_source = data_source
         self._on_layout_changed = on_layout_changed
+        self._backup_scheduler = backup_scheduler
 
         # Every name resolved below is also in module-level
         # REQUIRED_CONTROLS, the Fault-B completeness contract
@@ -775,6 +809,13 @@ class MainFrame:
         # the feed is keyed by row index (the app resolves that back to
         # the live Crossing), not by plate like the other two lists.
         self._on_open_crossing: Callable[[int], None] | None = None
+        # Phase 7: the feed's two hotkey seams, resolved the same way.
+        # Delete/Ctrl+D removes the selected row through the Crossing
+        # Detail delete confirm; Ctrl+E retypes its plate through the
+        # Plate prompt. Separate slots because the app runs a
+        # different flow for each.
+        self._on_delete_crossing: Callable[[int], None] | None = None
+        self._on_edit_plate_crossing: Callable[[int], None] | None = None
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
         self.crossings_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_crossing_activated
@@ -824,6 +865,18 @@ class MainFrame:
         # table cannot drop it after construction.
         self._edit_crossing_id = wx.NewIdRef()
         self.frame.Bind(wx.EVT_MENU, self._on_edit_crossing_accelerator, id=self._edit_crossing_id)
+        # Phase 7: Delete/Ctrl+D and Ctrl+E, bound the same frame-local
+        # way. Delete and Ctrl+D share one command id -- two keys, one
+        # delete flow -- so both rows in accelerator_entries() carry
+        # _delete_crossing_id.
+        self._delete_crossing_id = wx.NewIdRef()
+        self.frame.Bind(
+            wx.EVT_MENU, self._on_delete_crossing_accelerator, id=self._delete_crossing_id
+        )
+        self._edit_plate_crossing_id = wx.NewIdRef()
+        self.frame.Bind(
+            wx.EVT_MENU, self._on_edit_plate_crossing_accelerator, id=self._edit_plate_crossing_id
+        )
         self.frame.SetAcceleratorTable(wx.AcceleratorTable(self.accelerator_entries()))
 
         # The console-view handle the app (and scenarios) reach the
@@ -841,7 +894,9 @@ class MainFrame:
         self._on_finished_reopen: Callable[[], None] | None = None
         self._on_finished_view_results: Callable[[], None] | None = None
 
-        self._hideable_columns = self._build_columns()
+        self._total_column: Any = None
+        self._lap_time_column: Any = None
+        self._build_columns()
         self._crossings_model: CrossingsFeedModel | None = None
         # Phase 4: the feed's current header sort, re-applied whenever
         # the model is rebuilt (a new model drops the control's sort
@@ -866,8 +921,11 @@ class MainFrame:
         # D3: the tick timer and plate-submit callback wire_console/
         # wire_entry install. Declared up front so clear_presenter can
         # unbind a console that never wired them without an
-        # AttributeError.
+        # AttributeError. The R-54 backup timer wire_console builds
+        # alongside the tick timer is declared here for the same
+        # reason.
         self._tick_timer: wx.Timer | None = None
+        self._backup_timer: wx.Timer | None = None
         self._on_submit: Callable[[str], None] | None = None
         # D3: the one-time wiring sentinel. set_presenter binds the
         # entry/lifecycle controls and builds the tick timer on the
@@ -902,21 +960,10 @@ class MainFrame:
 
     # ------------------------------------------------------- lookups
 
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this frame's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors: an explicit
-        ``self.frame`` parent scopes the lookup, and the retry loop
-        settles the address-reuse hazard this wx build exhibits
-        under sustained window churn.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this frame, even
-                after settling.
-        """
-        return find_control(self.frame, name, expected_type)
+    # ``_find`` (DialogFindMixin, ui.views._support) resolves in
+    # ``self.frame`` -- the console's window is a wx.Frame, not a
+    # dialog.
+    _window_attr = "frame"
 
     # ------------------------------------------------------- InfoBars
 
@@ -1000,12 +1047,13 @@ class MainFrame:
 
     # ------------------------------------------------------- columns
 
-    def _build_columns(self) -> tuple[Any, ...]:
-        """Append the feed's seven columns in canvas order.
+    def _build_columns(self) -> None:
+        """Append the feed's eight columns in canvas order.
 
-        Returns:
-            The hide-times-affected columns (Lap time, Total), in
-            column order, for :meth:`set_hide_times` to toggle.
+        Keeps one handle per independently-hidden column: the Total
+        column (``_total_column``) and the Lap time column
+        (``_lap_time_column``), each toggled by its own show setting
+        through :meth:`set_time_columns`.
 
         Each column gets the explicit width from ``feed_model.
         COLUMN_WIDTHS`` (W9): DataView columns never autosize to
@@ -1020,20 +1068,24 @@ class MainFrame:
 
         Every column is text: the Card column renders the dealt
         card's glyph display (``feed_model.card_text_or_blank``), not
-        a bitmap, so all seven share the one renderer.
+        a bitmap, so all eight share the one renderer.
         """
-        hideable = []
         for col, label in enumerate(feed_model.COLUMN_LABELS):
             width = feed_model.COLUMN_WIDTHS[col]
             column = self.crossings_list.AppendTextColumn(
                 label, col, width=width, flags=FEED_COLUMN_FLAGS
             )
-            if col in feed_model.TIME_COLUMNS:
-                hideable.append(column)
-        return tuple(hideable)
+            if col in feed_model.TOTAL_COLUMN:
+                self._total_column = column
+            if col in feed_model.LAP_TIME_COLUMN:
+                self._lap_time_column = column
 
     def _build_flagged_columns(self) -> tuple[Any, ...]:
-        """Append the flagged list's three columns (WS-H)."""
+        """Append the flagged list's four columns (WS-H).
+
+        One column per :data:`FLAG_COLUMN_LABELS` entry -- Plate | Lap
+        | Lap time | Issue -- so the Issue column needs no change here.
+        """
         return tuple(
             self.flagged_list.AppendTextColumn(label, col)
             for col, label in enumerate(FLAG_COLUMN_LABELS)
@@ -1103,18 +1155,52 @@ class MainFrame:
         """
         self._on_open_crossing = callback
 
+    def set_on_delete_crossing(self, callback: Callable[[int], None]) -> None:
+        """Register the feed's delete seam (Phase 7).
+
+        The app wires this to its delete-confirm flow; the console
+        fires ``callback(row)`` when Delete or Ctrl+D is pressed with
+        a feed row selected. *row* is the selected row's index into
+        the rendered feed model, resolved exactly like
+        :meth:`set_on_open_crossing`'s.
+        """
+        self._on_delete_crossing = callback
+
+    def set_on_edit_plate_crossing(self, callback: Callable[[int], None]) -> None:
+        """Register the feed's plate-edit seam (Phase 7).
+
+        The app wires this to its Plate-prompt flow; the console
+        fires ``callback(row)`` when Ctrl+E is pressed with a feed row
+        selected. *row* is the selected row's index into the rendered
+        feed model, resolved exactly like
+        :meth:`set_on_open_crossing`'s.
+        """
+        self._on_edit_plate_crossing = callback
+
     def accelerator_entries(self) -> list[Any]:
         """Return the frame's own code-side accelerator entries.
 
         The three menu-backed shortcuts come from ``main.xrc``'s
         ``<accel>`` elements and are harvested by
-        ``app._apply_accelerators``; F2 (edit crossing) has no menu item
-        to harvest, so the console owns its entry here. The app appends
-        this list to the harvested ones when it re-applies the frame's
-        table at bootstrap -- without that, the frame-level binding made
-        in ``__init__`` would be silently replaced.
+        ``app._apply_accelerators``; the console's own commands -- F2
+        (edit crossing), the feed's Delete/Ctrl+D (delete the selected
+        crossing) and Ctrl+E (edit its plate) -- have no menu item to
+        harvest, so the console owns their entries here. The app
+        appends this list to the harvested ones when it re-applies the
+        frame's table at bootstrap -- without that, the frame-level
+        bindings made in ``__init__`` would be silently replaced.
+
+        Delete and Ctrl+D are two rows for one command, so both carry
+        :attr:`_delete_crossing_id`; only their modifier differs.
         """
-        return [wx.AcceleratorEntry(wx.ACCEL_NORMAL, EDIT_CROSSING_KEY, self._edit_crossing_id)]
+        return [
+            wx.AcceleratorEntry(wx.ACCEL_NORMAL, EDIT_CROSSING_KEY, self._edit_crossing_id),
+            wx.AcceleratorEntry(wx.ACCEL_NORMAL, DELETE_CROSSING_KEY, self._delete_crossing_id),
+            wx.AcceleratorEntry(wx.ACCEL_CTRL, DELETE_CROSSING_CTRL_KEY, self._delete_crossing_id),
+            wx.AcceleratorEntry(
+                wx.ACCEL_CTRL, EDIT_PLATE_CROSSING_KEY, self._edit_plate_crossing_id
+            ),
+        ]
 
     def focus_review_panel(self) -> None:
         """Focus the review notebook's "Needs Review" tab (WS-H).
@@ -1365,6 +1451,51 @@ class MainFrame:
         if self._on_open_crossing is not None:
             self._on_open_crossing(row)
 
+    def _on_delete_crossing_accelerator(
+        self,
+        _event: Any,  # noqa: ANN401 -- wx ships no stubs
+    ) -> None:
+        """Delete the selected feed row's crossing on Delete or Ctrl+D.
+
+        Phase 7: :meth:`_on_edit_crossing_accelerator`'s own shape with
+        the delete seam -- the same model resolution, so a stale or
+        absent selection is a no-op and a row index is all the app
+        gets. The app runs the Crossing Detail danger confirm on it
+        (``set_on_delete_crossing``).
+        """
+        if self._crossings_model is None:
+            return
+        item = self.crossings_list.GetSelection()
+        if not item.IsOk():
+            return
+        row = self._crossings_model.GetRow(item)
+        if row == wx.NOT_FOUND:
+            return
+        if self._on_delete_crossing is not None:
+            self._on_delete_crossing(row)
+
+    def _on_edit_plate_crossing_accelerator(
+        self,
+        _event: Any,  # noqa: ANN401 -- wx ships no stubs
+    ) -> None:
+        """Edit the selected feed row's plate on Ctrl+E (Phase 7).
+
+        The delete handler's third twin: the selection resolves through
+        the feed's model and the row index goes to the
+        :meth:`set_on_edit_plate_crossing` seam, which the app runs
+        through ``run_plate_dialog`` and ``reassign_crossing_plate``.
+        """
+        if self._crossings_model is None:
+            return
+        item = self.crossings_list.GetSelection()
+        if not item.IsOk():
+            return
+        row = self._crossings_model.GetRow(item)
+        if row == wx.NOT_FOUND:
+            return
+        if self._on_edit_plate_crossing is not None:
+            self._on_edit_plate_crossing(row)
+
     def _on_search_text(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Forward the ``crossings_search`` box's current text.
 
@@ -1382,14 +1513,16 @@ class MainFrame:
         if self._presenter is not None:
             self._presenter.on_search_text(self.crossings_search.GetValue())
 
-    def set_hide_times(self, *, hide: bool) -> None:
-        """Toggle the Lap time/Total columns per R-37.
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Show or hide the Total/Lap time columns independently (R-37).
 
-        The clock (``clock_elapsed_lbl``/``clock_remaining_lbl``) is
-        untouched -- R-37 keeps it visible regardless of this setting.
+        Each flag drives its own column: the Total column and the Lap
+        time column hide and show separately. The clock
+        (``clock_elapsed_lbl``/``clock_remaining_lbl``) is untouched --
+        R-37 keeps it visible regardless of these settings.
         """
-        for column in self._hideable_columns:
-            column.SetHidden(hide)
+        self._total_column.SetHidden(not show_total)
+        self._lap_time_column.SetHidden(not show_lap)
 
     # --------------------------------------------- frame size, splitter
 
@@ -1936,6 +2069,12 @@ class MainFrame:
         (``on_stop_requested``) -- the view opens no dialog itself;
         the retired ``stop_confirm_dlg`` load lived here before.
 
+        R-54's hourly automatic backup gets its own frame-owned timer
+        here too, ticking the store-backed scheduler the app threaded
+        in as ``backup_scheduler`` (``None`` wires none). It is
+        independent of the presenter: clearing a ride stops the tick
+        timer, never the hourly backup.
+
         The presenter is stored as :attr:`_presenter` and every
         handler routes through it, so :meth:`set_presenter` can swap
         the console onto a store-loaded ride without rebinding the
@@ -1948,13 +2087,45 @@ class MainFrame:
         self._tick_timer = wx.Timer(self.frame)
         self.frame.Bind(wx.EVT_TIMER, lambda _event: self._presenter.tick(), self._tick_timer)
         self._tick_timer.Start(_TICK_MS)
-        # Stop the timer with the frame: a running wx.Timer whose owner
+        # R-54: the hourly automatic backup, on the tick timer's own
+        # shape -- an owner-scoped wx.Timer whose event drives one
+        # call. The scheduler (not this interval) decides whether a
+        # whole hour has passed since the last backup, so the interval
+        # only has to be no longer than an hour. It is independent of
+        # the presenter: a cleared ride stops the tick timer, never the
+        # hourly backup. No scheduler (a no-store bootstrap) builds no
+        # second timer.
+        scheduler = self._backup_scheduler
+        if scheduler is not None:
+            self._backup_timer = wx.Timer(self.frame)
+            self.frame.Bind(wx.EVT_TIMER, lambda _event: scheduler.tick(), self._backup_timer)
+            self._backup_timer.Start(_BACKUP_MS)
+        # Stop the timers with the frame: a running wx.Timer whose owner
         # was destroyed keeps its native timer registered, and the next
         # wxSafeYield dispatches wxTimerImpl::SendEvent against the
         # freed owner -- a measured segfault (reproduced
         # deterministically: build frame -> destroy -> SafeYield past
-        # the tick period).
-        self.frame.Bind(wx.EVT_WINDOW_DESTROY, lambda _event: self._tick_timer.Stop())
+        # the tick period). ONE handler stops both, because a second
+        # wx.EVT_WINDOW_DESTROY binding with no source REPLACES the
+        # first (measured on wxPython 4.3.1): a separate backup-timer
+        # binding left the tick timer running, and the functional
+        # open/quit smoke segfaulted on exactly that dispatch.
+        self.frame.Bind(wx.EVT_WINDOW_DESTROY, self._on_frame_destroy)
+
+    def _on_frame_destroy(self, _event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Stop this console's timers as its frame is destroyed (R-54).
+
+        The measured segfault remedy :meth:`wire_console` documents: a
+        running ``wx.Timer`` outlives its destroyed owner's native
+        registration otherwise, and the next ``wxSafeYield``
+        dispatches into freed memory. Both timers go through this one
+        handler, since a second ``EVT_WINDOW_DESTROY`` binding on the
+        same window replaces the first.
+        """
+        if self._tick_timer is not None:
+            self._tick_timer.Stop()
+        if self._backup_timer is not None:
+            self._backup_timer.Stop()
 
     def set_presenter(self, presenter: ConsolePresenter) -> None:
         """Swap the console's bound presenter (E5.4.1 library Open).

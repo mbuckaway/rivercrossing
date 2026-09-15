@@ -161,6 +161,10 @@ class _FakeConsoleView:
         """Record the swapped presenter."""
         self.calls.append(("set_presenter", presenter))
 
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Record the two time-column show flags (R-37)."""
+        self.calls.append(("set_time_columns", (show_total, show_lap)))
+
     def clear_presenter(self) -> None:
         """Record the D3 presenter detach."""
         self.calls.append(("clear_presenter", None))

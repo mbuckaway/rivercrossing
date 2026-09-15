@@ -25,11 +25,11 @@ test ends); only the log target and the notice target are fakes.
 
 from __future__ import annotations
 
-import json
 import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from conftest import _records
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui.logging import Logging, build_log_path
 
@@ -56,14 +56,6 @@ class _NoticeFrame:
 def _log_path(directory: Path) -> Path:
     """Return this test's invocation log path inside *directory*."""
     return build_log_path(directory, _LAUNCH)
-
-
-def _records(path: Path) -> list[dict[str, object]]:
-    """Return the NDJSON records at *path* (none when it is absent)."""
-    if not path.exists():
-        return []
-    text = path.read_text(encoding="utf-8")
-    return [json.loads(line) for line in text.splitlines() if line]
 
 
 def _captured_exception() -> tuple[type[BaseException], BaseException, TracebackType | None]:

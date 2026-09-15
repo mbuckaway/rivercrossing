@@ -93,7 +93,7 @@ ROUTE_TARGETS = (
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Preview HTML in Browser: external browser
     (commands.TargetKind.COMMAND, None),  # Preview PDF in Browser: external browser
-    (commands.TargetKind.COMMAND, None),  # Hide Times / Zoom: direct commands (W13)
+    (commands.TargetKind.COMMAND, None),  # Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
     (commands.TargetKind.DIALOG, ids.SHORTCUTS_DLG),  # Keyboard Shortcuts
     (commands.TargetKind.DIALOG, ids.SELFTEST_DLG),  # Run Evaluator Self-test
@@ -123,12 +123,12 @@ def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: in
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_five_real_menu_item_ids_once_each() -> None:
-    """42 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_forty_six_real_menu_item_ids_once_each() -> None:
+    """43 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 45
-    assert len(set(flat_ids)) == 45
+    assert len(flat_ids) == 46
+    assert len(set(flat_ids)) == 46
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -337,7 +337,7 @@ ALLOWED_STATES = (
     # Part D: each Preview row is FINISHED plus its own format's export.
     frozenset({RideStatus.FINISHED}),  # Results > Preview HTML in Browser
     frozenset({RideStatus.FINISHED}),  # Results > Preview PDF in Browser
-    None,  # View > Hide Times / Zoom: "always"
+    None,  # View > Times / Zoom: "always"
     None,  # Help > User Guide: "always"
     None,  # Help > Keyboard Shortcuts: "always"
     None,  # Help > Run Evaluator Self-test: "always"

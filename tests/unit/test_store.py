@@ -3208,6 +3208,35 @@ def test_store_load_engine_given_no_logo_bytes_leaves_logo_path_none(
     assert engine.config.logo_path is None
 
 
+def test_store_load_engine_materializes_each_ride_logo_to_its_own_temp_file(
+    tmp_path: Path,
+) -> None:
+    """CWE-377: each load writes a fresh, uniquely-named temp file.
+
+    ``tempfile.mkstemp`` creates the file atomically under a random
+    name (``O_CREAT``/``O_EXCL``), so there is no data-derived path for
+    a pre-planted symlink to sit at -- and two loads of one ride can
+    never share, or overwrite, a single file.
+    """
+    db_path = tmp_path / "rides.db"
+    logo_bytes = base64.b64decode(_TINY_PNG_B64)
+    logo_path = tmp_path / "logo.png"
+    logo_path.write_bytes(logo_bytes)
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(_config(logo_path=logo_path))
+        first = store.load_engine(ride_id, _replay_roster()).config.logo_path
+        second = store.load_engine(ride_id, _replay_roster()).config.logo_path
+    finally:
+        store.close()
+
+    assert isinstance(first, Path)
+    assert isinstance(second, Path)
+    assert first != second
+    assert first.read_bytes() == logo_bytes
+    assert second.read_bytes() == logo_bytes
+
+
 # --------------------------------------- D2: updating a stored ride
 
 

@@ -54,7 +54,7 @@ from rivercrossing.ui.presenters.simulator import (
     default_interval_minutes,
     resolve_solo,
 )
-from rivercrossing.ui.views._support import find_control, load_dialog
+from rivercrossing.ui.views._support import DialogFindMixin, load_dialog
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -121,7 +121,7 @@ def _load_running_window(parent: wx.Window) -> wx.Dialog:
     return load_dialog(wx.xrc.XmlResource.Get(), ids.SIM_RUNNING_DLG, parent=parent)
 
 
-class SimulatorDialog:
+class SimulatorDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``simulation_dlg``.
 
     Seeds the count fields from the persisted settings, derives the
@@ -291,19 +291,6 @@ class SimulatorDialog:
             self.interval_spin.GetValue(),
         )
 
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
-
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build the code-side :data:`SIM_INFOBAR`, inserted on top.
 
@@ -415,7 +402,7 @@ class SimulatorDialog:
         self.dialog.EndModal(wx.ID_OK)
 
 
-class SimRunningDialog:
+class SimRunningDialog(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``sim_running_dlg``.
 
     Owns the progress gauge, the status line and Cancel, and drives one
@@ -462,16 +449,6 @@ class SimRunningDialog:
         self.dialog.SetEscapeId(self.cancel_btn.GetId())
         self.dialog.Bind(wx.EVT_BUTTON, self._on_cancel, self.cancel_btn)
         self.dialog.Fit()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _on_cancel(self, _event: wx.CommandEvent) -> None:
         """Record the cancel request; the run loop polls it."""

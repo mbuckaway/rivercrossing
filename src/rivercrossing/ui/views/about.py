@@ -10,15 +10,13 @@ ride is threaded -- and ``gorba_link`` needs no wiring
 ``wxID_CLOSE`` is handled by ``dialogs.run_dialog``'s
 ``wire_close_button``).
 
-The logo fallback is belt-and-braces because dialogs.xrc declares
+The logo chain is short because dialogs.xrc declares
 ``about_logo_bmp`` with no bitmap and its own comment promises the
 canvas always shows a logo: ``wx.NullBitmap`` is never acceptable.
-The ride logo is the first choice; without one the chain is the
-frame's own icon, the embedded RiverCrossing logo
-(:data:`EMBEDDED_LOGO_SVG`, rasterised through
-``wx.BitmapBundle.FromSVG`` -- ux-polish), wx's stock information
-icon, and a drawn suit glyph last, so the fallback can never yield a
-null bitmap.
+The ride logo is the first choice; without one the embedded
+RiverCrossing logo (:data:`EMBEDDED_LOGO_SVG`, rasterised through
+``wx.BitmapBundle.FromSVG`` -- ux-polish) comes next, and wx's
+stock information icon last.
 
 ``about_dlg`` is fixed-size (ux-polish): its short, fixed copy must
 never wrap from a user resize, so ``dialogs.xrc`` drops
@@ -41,11 +39,6 @@ __all__ = [
     "EMBEDDED_LOGO_SVG",
     "AboutDialog",
 ]
-
-# The design system's ink/paper tokens (design/README.md), used by the
-# drawn placeholder so the fallback matches the app's own palette.
-_INK = (29, 32, 33)
-_PAPER = (233, 234, 235)
 
 # Pinned About-box size (ux-polish): about_dlg carries no
 # wxRESIZE_BORDER and the dialog is fixed here -- SetSize for the
@@ -118,63 +111,25 @@ def _resolve_logo_bitmap(logo_path: str | Path | None, window: Any) -> Any:  # n
 def _fallback_logo_bitmap(window: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Return a non-null bitmap for the About logo without a ride logo.
 
-    The top window's own icon first (a frame that carries one --
-    ``main.xrc`` sets none today, so ``GetIcon()`` reads ``NullIcon``
-    and the branch is inert); the embedded RiverCrossing logo second
-    (ux-polish: it must come before the stock icon so the About box
-    shows a *real* logo on every platform); the stock information
-    icon third; a drawn placeholder last, so the fallback always
-    returns a valid bitmap.
+    The embedded RiverCrossing logo first (ux-polish: it must come
+    before the stock icon so the About box shows a *real* logo on
+    every platform); wx's stock information icon second, which both
+    supported platforms always supply.
 
     Args:
         window: The logo's target control; the embedded-SVG arm
             renders at this window's DPI (``GetBitmapFor``).
     """
-    app = wx.GetApp()
-    # logic-coverage-exempt: T-3 -- a route handler never runs without
-    # a live app and its top window; the None guards only narrow types.
-    top = app.GetTopWindow() if app is not None else None
-    icon = top.GetIcon() if top is not None else wx.NullIcon
-    if icon.IsOk():
-        # logic-coverage-exempt: T-3 -- main.xrc sets no frame icon, so
-        # IsOk() reads False in every live construction; the frame-icon
-        # path runs only on a desktop whose frame carries one.
-        return icon.ConvertToBitmap()
     embedded = _embedded_logo_bitmap(window)
     if embedded.IsOk():
         return embedded
-    stock = wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, wx.Size(64, 64))
-    if stock.IsOk():
-        return stock
-    # logic-coverage-exempt: T-3 -- the drawn placeholder runs only if
-    # both the embedded logo and the stock art provider return a null
-    # bitmap, which neither target platform produces for a well-formed
-    # SVG or ART_INFORMATION; it is the guaranteed non-null last
-    # resort, never exercised in the VM.
-    return _drawn_placeholder_bitmap()
+    return wx.ArtProvider.GetBitmap(wx.ART_INFORMATION, wx.ART_OTHER, wx.Size(64, 64))
 
 
 def _embedded_logo_bitmap(window: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
     """Rasterise :data:`EMBEDDED_LOGO_SVG` for *window*'s DPI."""
     bundle = wx.BitmapBundle.FromSVG(EMBEDDED_LOGO_SVG.encode("utf-8"), ABOUT_LOGO_SIZE)
     return bundle.GetBitmapFor(window)
-
-
-def _drawn_placeholder_bitmap() -> Any:  # noqa: ANN401 -- wx ships no stubs
-    """Draw the suit glyph into a fresh bitmap (never null)."""
-    bitmap = wx.Bitmap(64, 64)
-    memory_dc = wx.MemoryDC(bitmap)
-    try:
-        memory_dc.SetBackground(wx.Brush(wx.Colour(*_INK)))
-        memory_dc.Clear()
-        memory_dc.SetFont(
-            wx.Font(40, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_NORMAL)
-        )
-        memory_dc.SetTextForeground(wx.Colour(*_PAPER))
-        memory_dc.DrawText("♠", 10, 6)
-    finally:
-        memory_dc.SelectObject(wx.NullBitmap)
-    return bitmap
 
 
 class AboutDialog:

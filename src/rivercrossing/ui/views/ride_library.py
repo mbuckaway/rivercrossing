@@ -24,9 +24,9 @@ import wx.dataview
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import ids
 from rivercrossing.ui.views._support import (
+    DialogFindMixin,
     associate_model,
     clamp_to_display,
-    find_control,
     load_dialog,
 )
 
@@ -223,7 +223,7 @@ def _ordering[T: (str, int)](first: T, second: T) -> int:
     return -1 if first < second else 1
 
 
-class RideLibrary:
+class RideLibrary(DialogFindMixin):  # _find: ui.views._support
     """Code-side behaviour for ``ride_library_dlg`` (1g).
 
     Implements ``LibraryView.show_rides`` (module-skeletons.md's
@@ -316,19 +316,6 @@ class RideLibrary:
         self.show_rides(self.data_source.rides())
         self._update_action_enablement()
         self._apply_min_size()
-
-    def _find(self, name: str, expected_type: type = wx.Window) -> Any:  # noqa: ANN401
-        """Resolve one of this dialog's own child controls by name.
-
-        See :func:`find_control`'s docstring (``ui.views._support``)
-        for the full measured reasoning this mirrors.
-
-        Raises:
-            LookupError: If *name* does not resolve to an
-                *expected_type* instance inside this dialog, even
-                after settling.
-        """
-        return find_control(self.dialog, name, expected_type)
 
     def _build_columns(self) -> None:
         """Append ``rides_list``'s four columns in canvas order.

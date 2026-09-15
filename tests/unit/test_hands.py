@@ -884,7 +884,8 @@ def test_check_field_timing_given_a_slow_clock_reports_fail(
     same category as ``datetime.now`` -- instead of actually running
     slowly, so the budget comparison's false branch is exercised
     deterministically (T-3): the true branch is already covered by
-    ``test_self_test_field_timing_check_detail_reports_seconds_under_budget``.
+    ``test_self_test_field_timing_check_detail_reports_seconds_
+    under_budget``.
     """
     values = iter([0.0, 1.5])
     monkeypatch.setattr(hands.time, "perf_counter", lambda: next(values))

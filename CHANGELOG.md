@@ -4,6 +4,33 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.17] - 2026-09-14
+
+### Added
+
+- **A self-healing XRC load** — a dialog or menubar the process-wide XRC resource silently
+  skips is rebuilt from a fresh private resource (up to twice, evicting the memoized rebuild
+  between attempts), so a menu row no longer clicks through to "no window authored yet".
+- **A "CREATE RIDE" status on the no-ride console** — the empty console says what to do next;
+  menu enablement is unchanged.
+- **The card-shoe mechanics documented** — `docs/SHOWMECHANICS.md`, plus a new "Card shoe"
+  section in the user guide.
+
+### Changed
+
+- **A DRAFT ride's deck/joker edit rebuilds the live shoe** — changing decks, jokers-per-deck
+  or jokers-total on a draft ride reconfigures the in-session shoe, so the live shoe cannot
+  diverge from the stored seed's replay.
+
+### Fixed
+
+- **The Rider Simulator's "no window authored yet" failure** — the simulator dialog is
+  recovered from a fresh resource instead of answering `None`.
+- **CSV fixtures now carry the SEX column** — the canonical-format fixtures match the unified
+  `FIRSTNAME,…,SEX` format, and the one exact-row assertion was updated.
+- **The open/quit smoke drives the full path** — it creates a DRAFT ride, imports the GORBA
+  CSV and opens the Rider Simulator before quitting.
+
 ## [1.0.16] - 2026-09-13
 
 ### Added

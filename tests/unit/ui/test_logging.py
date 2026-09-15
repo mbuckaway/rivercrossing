@@ -10,8 +10,8 @@ Three contracts are pinned here: every record is one JSON object
 carrying ``ts``/``level``/``event``/``file``/``line``/``func`` plus
 the call's own fields; the ``stacklevel=2`` single hop names the
 *app* frame that logged, never this wrapper; and the always-on
-records (``app_start``, ``launch``, ``ride_loaded``, ``exception``)
-survive ``verbose=False`` while the trace methods do not.
+records (``app_start``, ``launch``, ``ride_loaded``, ``exception``,
+``warn``) survive ``verbose=False`` while the trace methods do not.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
+from conftest import _records
 from rivercrossing.ui import logging as invocation_log_module
 from rivercrossing.ui.logging import (
     LOG_BASENAME,
@@ -45,14 +46,6 @@ if TYPE_CHECKING:
 def _log_path(directory: Path) -> Path:
     """Return the invocation log path for *directory*."""
     return build_log_path(directory, datetime(2026, 9, 11, 12, 0, 0, tzinfo=UTC))
-
-
-def _records(path: Path) -> list[dict[str, object]]:
-    """Return the NDJSON records at *path* (none when it is absent)."""
-    if not path.exists():
-        return []
-    text = path.read_text(encoding="utf-8")
-    return [json.loads(line) for line in text.splitlines() if line]
 
 
 def _captured_exception() -> tuple[type[BaseException], BaseException, TracebackType | None]:
@@ -480,6 +473,64 @@ def test_ride_loaded_writes_an_info_ride_loaded_record(tmp_path: Path) -> None:
         "ride_loaded",
         7,
     )
+
+
+def test_warn_writes_a_warning_record_with_verbose_false(tmp_path: Path) -> None:
+    """A warning survives verbose=False: a support session needs it.
+
+    An unauthored window is exactly the failure an operator must be
+    able to diagnose from the log alone, so ``warn`` is deliberately
+    not gated by ``set_verbose``.
+    """
+    path = _log_path(tmp_path)
+    log = Logging(path, verbose=False)
+
+    log.warn(  # noqa: G010 -- Logging.warn is this app's own method
+        "Standings: no window authored for target 'results_dlg'"
+    )
+
+    record = _records(path)[0]
+    assert (record["level"], record["event"], record["msg"]) == (
+        "WARNING",
+        "warn",
+        "Standings: no window authored for target 'results_dlg'",
+    )
+
+
+def test_warn_writes_the_documented_field_set(tmp_path: Path) -> None:
+    """A warn record is the base six fields plus the call's own."""
+    path = _log_path(tmp_path)
+    log = Logging(path)
+
+    log.warn("ride opened")  # noqa: G010 -- Logging.warn is this app's own method
+
+    record = _records(path)[0]
+    assert set(record) == {"ts", "level", "event", "file", "line", "func", "msg"}
+
+
+def test_warn_record_names_the_calling_frame_not_the_wrapper(tmp_path: Path) -> None:
+    """stacklevel=2: the record points at the app frame that warned."""
+    path = _log_path(tmp_path)
+    log = Logging(path)
+    expected_line = inspect.currentframe().f_lineno + 1
+    log.warn("ride opened")  # noqa: G010 -- Logging.warn is this app's own method
+
+    record = _records(path)[0]
+    assert (record["file"], record["func"], record["line"]) == (
+        "test_logging.py",
+        "test_warn_record_names_the_calling_frame_not_the_wrapper",
+        expected_line,
+    )
+
+
+def test_warn_with_an_empty_message_writes_the_empty_msg_field(tmp_path: Path) -> None:
+    """An empty message is still a well-formed record (boundary)."""
+    path = _log_path(tmp_path)
+    log = Logging(path)
+
+    log.warn("")  # noqa: G010 -- Logging.warn is this app's own method
+
+    assert _records(path)[0]["msg"] == ""
 
 
 _ALWAYS_ON_CALLS: dict[str, Callable[[Logging], None]] = {

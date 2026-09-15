@@ -33,6 +33,7 @@ from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui.presenters.console import ConsolePresenter
+from rivercrossing.ui.presenters.settings import default_settings
 
 if TYPE_CHECKING:
     import pytest
@@ -55,6 +56,10 @@ class _FakeConsoleView:
     def set_presenter(self, presenter: object) -> None:
         """Record the swapped presenter."""
         self.calls.append(("set_presenter", presenter))
+
+    def set_time_columns(self, *, show_total: bool, show_lap: bool) -> None:
+        """Record the two time-column show flags (R-37)."""
+        self.calls.append(("set_time_columns", (show_total, show_lap)))
 
     def show_ride_header(self, **fields: object) -> None:
         """Record the rendered ride-identity header (C1)."""
@@ -180,6 +185,9 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
             "set_team_ui_visible",
             "set_presenter",
             "show_ride_header",
+            # R-37: the attach applies the current time-column
+            # visibility, closing the latent launch/attach gap.
+            "set_time_columns",
             "set_state",
             # Phase 4: the feed renders through the presenter's own
             # refresh_feed (the search filter's owner), which feeds
@@ -218,6 +226,32 @@ def test_switch_console_to_ride_renders_name_and_draft_and_wires_append(
             Event(action="start", payload={"actual_start": "2026-09-20T10:00:00"})
         )
         assert [row.action for row in store.audit_rows(ride_id)] == ["start"]
+    finally:
+        store.close()
+
+
+def test_swap_console_onto_given_the_loaded_settings_applies_the_time_columns(
+    tmp_path: Path,
+) -> None:
+    """R-37: a ride attach renders the current time-column visibility.
+
+    Regression: the feed columns were never hidden at launch/attach
+    before, so a persisted choice took effect only on the first menu
+    toggle. The attach now applies both flags straight from the
+    context's live settings.
+    """
+    db_path = tmp_path / "rides.db"
+    store = Store.open(db_path)
+    try:
+        ride_id = store.create_ride(gorba_config())
+        store.save_roster(ride_id, _roster())
+        view = _FakeConsoleView()
+        context = _context(store=store, view=view, roster=_roster())
+        context.settings = replace(default_settings(), show_total_times=True, show_lap_time=False)
+
+        app_module._switch_console_to_ride(context, ride_id)
+
+        assert ("set_time_columns", (True, False)) in view.calls
     finally:
         store.close()
 

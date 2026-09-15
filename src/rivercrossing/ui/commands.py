@@ -132,10 +132,10 @@ class MenuRoute:
         label: The row's own text, transcribed from the "Menu item"
             column (the part after "▸").
         ids: The XRC names this row covers -- one for almost every
-            row; the View row's single "Hide Times · Zoom"
-            entry covers all eight of its radio/check items, since
-            §15 itself groups them into one row (W13 removed the three
-            theme radios -- Settings owns appearance now).
+            row; the View row's single "Times · Zoom" entry covers all
+            nine of its radio/check items, since §15 itself groups them
+            into one row (W13 removed the three theme radios --
+            Settings owns appearance now).
         kind: Which :class:`TargetKind` *target* is.
         target: A ``ui/ids.py`` frozen name for ``WINDOW``/``DIALOG``
             kinds, or a short symbolic action name for ``COMMAND``.
@@ -518,13 +518,14 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # row.
         enabled_when=Enablement(allowed_states=_FINISHED, requires_pdf_export=True),
     ),
-    # --- View: 1 row, 8 ids (W13: the theme trio left the View menu;
+    # --- View: 1 row, 9 ids (W13: the theme trio left the View menu;
     # the Settings appearance radios are the single theme surface) ---
     MenuRoute(
         menu="View",
-        label="Hide Times · Zoom",
+        label="Times · Zoom",
         ids=(
-            "mi_hide_times",
+            "mi_show_total_times",
+            "mi_show_lap_time",
             "mi_zoom_90",
             "mi_zoom_100",
             "mi_zoom_110",

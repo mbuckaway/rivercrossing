@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
 import wx
 
 from rivercrossing.ui.presenters.data_source import FeedRow
@@ -32,7 +33,12 @@ if TYPE_CHECKING:
 
 
 def _row(  # noqa: PLR0913 -- one keyword per feed field a test varies
-    *, plate: str = "12", lap: int = 3, flagged: bool = True, held: bool = False
+    *,
+    plate: str = "12",
+    lap: int = 3,
+    flagged: bool = True,
+    held: bool = False,
+    duplicate: bool = False,
 ) -> FeedRow:
     """Build the short-lap row the review list wraps."""
     return FeedRow(
@@ -45,6 +51,7 @@ def _row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         card="9H",
         flagged=flagged,
         held=held,
+        duplicate=duplicate,
     )
 
 
@@ -65,14 +72,50 @@ def test_flagged_list_model_given_a_credited_short_lap_reports_not_held() -> Non
     assert model.held_for_row(0) is False
 
 
-def test_flagged_list_model_keeps_the_three_review_columns() -> None:
-    """WS-H: the routing adds no column -- Plate | Lap | Lap time."""
+def test_flagged_list_model_keeps_the_four_review_columns() -> None:
+    """WS-H: the Issue reason joins the three routing cells."""
     model = main_frame.FlaggedListModel([_row()])
 
     assert (model.GetColumnCount(), main_frame.FLAG_COLUMN_LABELS) == (
-        3,
-        ("Plate", "Lap", "Lap time"),
+        4,
+        ("Plate", "Lap", "Lap time", "Issue"),
     )
+    assert main_frame.FLAG_COL_ISSUE == 3
+
+
+def test_flagged_list_model_given_a_duplicate_row_shows_the_duplicate_issue() -> None:
+    """A live duplicate pair's row says why it is in Needs Review."""
+    model = main_frame.FlaggedListModel([_row(flagged=False, duplicate=True)])
+
+    assert model.GetValueByRow(0, main_frame.FLAG_COL_ISSUE) == "Duplicate crossing"
+
+
+def test_flagged_list_model_given_a_held_short_lap_shows_the_card_held_issue() -> None:
+    """A held card's row names the hold, not just the short lap."""
+    model = main_frame.FlaggedListModel([_row(flagged=True, held=True)])
+
+    assert model.GetValueByRow(0, main_frame.FLAG_COL_ISSUE) == "Short lap — card held"
+
+
+def test_flagged_list_model_given_a_credited_short_lap_shows_the_short_lap_issue() -> None:
+    """Always-deal: a credited short lap is flagged, not held."""
+    model = main_frame.FlaggedListModel([_row(flagged=True, held=False)])
+
+    assert model.GetValueByRow(0, main_frame.FLAG_COL_ISSUE) == "Short lap"
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected_count"),
+    [([], 0), ([_row()], 1), ([_row(), _row(), _row()], 3)],
+    ids=["empty", "single", "many"],
+)
+def test_flagged_list_model_given_rows_keeps_the_four_columns_for_every_size(
+    rows: list[FeedRow], expected_count: int
+) -> None:
+    """T-4: an empty review tab is still a four-column model."""
+    model = main_frame.FlaggedListModel(rows)
+
+    assert (model.GetCount(), model.GetColumnCount()) == (expected_count, 4)
 
 
 # ------------------------------------------------------------ doubles

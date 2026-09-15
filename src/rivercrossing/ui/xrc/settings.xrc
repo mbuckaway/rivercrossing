@@ -25,11 +25,14 @@
       code-side.
 
   Only the radio group and the average-speed entry declare a
-  default. sound_chk, hide_times_chk and verbose_log_chk are stored
-  settings: the presenter loads them when the dialog opens, so no
-  <checked> is declared for them. avg_speed_spin is both: its
-  <value> is the 12.0 authoring default a bare load shows, and the
-  presenter still seeds the stored value on open.
+  default. sound_chk, show_total_times_chk, show_lap_time_chk and
+  verbose_log_chk are stored settings: the presenter loads them when
+  the dialog opens, so no <checked> is declared for them. The two
+  time-column checkboxes open on the presenter's own defaults (Total
+  hidden, Lap time shown) rather than an authored <checked>.
+  avg_speed_spin is both: its <value> is the 12.0 authoring default a
+  bare load shows, and the presenter still seeds the stored value on
+  open.
 
   Phase 1 (2026-09-13): avg_speed_spin replaced the old integer
   wxSpinCtrl with a one-decimal wxSpinCtrlDouble so the stored
@@ -68,8 +71,9 @@
   enabled; enabling state is code-side either way.
 
   Code-side per the canvas: loading and storing every value; applying
-  the appearance choice through wxApp.SetAppearance; hide_times_chk
-  reaching the console mid-ride.
+  the appearance choice through wxApp.SetAppearance;
+  show_total_times_chk/show_lap_time_chk reaching the console
+  mid-ride (each mirroring its own View-menu item).
 -->
 <resource>
 
@@ -128,8 +132,16 @@
       <object class="sizeritem">
         <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
         <border>10</border>
-        <object class="wxCheckBox" name="hide_times_chk">
-          <label>Hide times on the console (toggle any time, even mid-ride)</label>
+        <object class="wxCheckBox" name="show_total_times_chk">
+          <label>Show Total Times on Crossings Panel</label>
+        </object>
+      </object>
+
+      <object class="sizeritem">
+        <flag>wxEXPAND|wxLEFT|wxRIGHT|wxTOP</flag>
+        <border>10</border>
+        <object class="wxCheckBox" name="show_lap_time_chk">
+          <label>Show Lap Time in Crossings Panel</label>
         </object>
       </object>
 
