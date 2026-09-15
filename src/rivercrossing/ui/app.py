@@ -155,6 +155,21 @@ _TIME_COLUMN_MENU_IDS: dict[str, str] = {
     "show_lap_time": ids.MI_SHOW_LAP_TIME,
 }
 
+# G6: the Results row's own commands.py target. Its five ids share one
+# route, dispatched further by event id below -- the five publish
+# options that moved off the results dialog onto the Results menu.
+_RESULTS_PUBLISH_ROUTE_TARGET = "results_publish"
+
+# G6: each results publish setting and the Results-menu check item that
+# mirrors it (the retired dialog checkboxes' namesake rows).
+_RESULTS_PUBLISH_MENU_IDS: dict[str, str] = {
+    "publish_show_times": ids.MI_SHOW_TIMES,
+    "publish_laps_board": ids.MI_LAPS_BOARD,
+    "publish_time_board": ids.MI_TIME_BOARD,
+    "publish_full_field": ids.MI_FULL_FIELD,
+    "publish_all_cards": ids.MI_ALL_CARDS,
+}
+
 # E9.1.1's launch seam: the env var that points the bundled binary at
 # a temp rides.db (the packaged-app smoke stages one through it), with
 # an explicit ``main(db_path=...)`` argument taking precedence over it.
@@ -585,6 +600,56 @@ def _check_loaded_time_columns(
     menubar.Check(wx.xrc.XRCID(ids.MI_SHOW_LAP_TIME), show_lap)
 
 
+def _check_loaded_publish_options(
+    menubar: Any,  # noqa: ANN401 -- wx ships no stubs
+    settings: AppSettings,
+) -> None:
+    """Set the five publish check items to their stored flags (G6).
+
+    Called at startup after ``LoadMenuBar`` (the fresh check items are
+    unchecked, so a ``False`` flag is a no-op) and whenever the settings
+    dialog applies new values (the mirror of
+    :func:`_check_loaded_time_columns`). ``wxMenuBar.Check`` sets the
+    state explicitly -- a synthetic ``EVT_MENU`` does not
+    auto-toggle check items on this pin (measured for the radio items;
+    the check items need the same explicit set).
+
+    The R-63 gate is applied after the five.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    for key, menu_id in _RESULTS_PUBLISH_MENU_IDS.items():
+        menubar.Check(wx.xrc.XRCID(menu_id), getattr(settings, key))
+    _apply_publish_gate(menubar, settings)
+
+
+def _apply_publish_gate(menubar: Any, settings: AppSettings) -> None:  # noqa: ANN401 -- wx ships no stubs
+    """Apply R-63's gate to the Fastest-time board item (G6).
+
+    The board is nothing but time data, so with show-times off it is
+    unrequestable: unchecked here, and disabled. With times on it is
+    enabled (the row's own §15 rule is "always"). Re-applied after every
+    ``menu_state.apply_to_menubar`` pass (:func:`_apply_menu_state`),
+    which re-enables every routed item on each ride-state change and
+    would otherwise clobber the disable.
+
+    A ``FindItem`` miss (a menubar without the item) is a silent skip,
+    never a crash -- the same rule the enablement walk follows.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    show_times = settings.publish_show_times
+    real_id = wx.xrc.XRCID(ids.MI_TIME_BOARD)
+    item, _menu = menubar.FindItem(real_id)
+    if item is None:
+        return
+    if not show_times:
+        menubar.Check(real_id, False)  # noqa: FBT003 -- wx API takes a positional bool
+    item.Enable(show_times)
+
+
 def _check_loaded_zoom_radio(menubar: Any, percent: int) -> None:  # noqa: ANN401 -- wx ships no stubs
     """Tick the zoom radio for *percent* (E8.1.4, startup).
 
@@ -637,6 +702,68 @@ def _toggle_time_column(context: _RouteContext, *, key: str) -> None:
         presenter.on_time_columns(
             show_total=updated.show_total_times, show_lap=updated.show_lap_time
         )
+
+
+def _toggle_publish_option(context: _RouteContext, *, key: str) -> None:
+    """Flip one results publish setting live and persist it (G6).
+
+    Sets the matching Results-menu check item explicitly -- a synthetic
+    ``EVT_MENU`` does not auto-toggle check items on this pin (measured
+    for the radio items; verified for the check items the same way) --
+    then re-applies R-63's gate.
+
+    Turning show-times *off* also clears ``publish_time_board`` in the
+    same write: the retired dialog checkbox did the same (its
+    ``_apply_show_times_state`` cleared the Fastest-time tick), and
+    keeping the two flags consistent means what is stored, what the
+    menu shows and what an export carries can never disagree.
+
+    Args:
+        context: The live route context.
+        key: The :class:`~rivercrossing.ui.presenters.settings.
+            AppSettings` ``publish_*`` field to flip.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    flipped = not getattr(context.settings, key)
+    # Any-typed: the field is resolved by name (one of the five
+    # ``publish_*`` booleans), the same getattr/replace-by-key shape
+    # :func:`_toggle_time_column` uses.
+    changes: dict[str, Any] = {key: flipped}
+    if key == "publish_show_times" and not flipped:
+        changes["publish_time_board"] = False
+    updated = replace(context.settings, **changes)
+    settings_store.save_settings(updated, context.settings_path)
+    context.settings = updated
+    menubar = context.frame.GetMenuBar()
+    menubar.Check(wx.xrc.XRCID(_RESULTS_PUBLISH_MENU_IDS[key]), flipped)
+    _apply_publish_gate(menubar, updated)
+
+
+def _handle_results_publish_row(
+    context: _RouteContext,
+    route: commands.MenuRoute,
+    event: Any,  # noqa: ANN401 -- wx ships no stubs
+) -> None:
+    """Dispatch the Results publish row by *event*'s own id (G6).
+
+    The five ``results_publish`` ids share one row (commands.py), so the
+    fired id -- and not the row alone -- decides which setting flips;
+    each id maps 1:1 onto its own check item
+    (:data:`_RESULTS_PUBLISH_MENU_IDS`). The trailing notice covers a
+    sixth id bound to this row by mistake, mirroring
+    :func:`_handle_view_row`'s own fallback.
+    """
+    require_wx()
+    import wx.xrc  # noqa: PLC0415 -- submodule, not loaded by plain `import wx`
+
+    real_id = event.GetId()
+    for key, menu_id in _RESULTS_PUBLISH_MENU_IDS.items():
+        if real_id == wx.xrc.XRCID(menu_id):
+            _toggle_publish_option(context, key=key)
+            return
+    context.frame.SetStatusText(f"{route.label} — not yet implemented")
 
 
 def _zoom_item_id_for(real_id: int) -> str | None:
@@ -1260,6 +1387,7 @@ def _apply_settings_live(context: _RouteContext, settings: AppSettings) -> None:
         show_total=settings.show_total_times,
         show_lap=settings.show_lap_time,
     )
+    _check_loaded_publish_options(context.frame.GetMenuBar(), settings)
     sound.set_muted(muted=not settings.sound_on)
     log = _log(context)
     if log is not None:
@@ -1673,6 +1801,11 @@ def _apply_menu_state(context: _RouteContext, status: RideStatus) -> None:
     handlers, so the §15 "Enabled when" cells hold in the app, not
     only in ``test_commands.py``. A frame with no menubar (route-level
     test constructions) is a silent no-op.
+
+    R-63's publish gate is re-applied after the walk: every routed item
+    is an "always"-enabled COMMAND row, so this pass re-enables the
+    Fastest-time board even while show-times is off, and the gate is
+    what puts the disable back (G6).
     """
     from rivercrossing.ui import menu_state  # noqa: PLC0415 -- deferred, see module docstring
 
@@ -1680,6 +1813,7 @@ def _apply_menu_state(context: _RouteContext, status: RideStatus) -> None:
     if menubar is None:
         return
     menu_state.apply_to_menubar(menubar, _menu_ride_state(context, status))
+    _apply_publish_gate(menubar, context.settings)
 
 
 def _handle_import_csv(context: _RouteContext) -> None:
@@ -1869,21 +2003,24 @@ def _placed_for_export(
     return tuple(teams), tuple(solo)
 
 
-def _export_options() -> ExportOptions:
-    """Return the results window's live publish options, else defaults.
+def _export_options(context: _RouteContext) -> ExportOptions:
+    """Return the publish options every results export is written with.
 
-    The ResultsPresenter built by the results window holds the live
-    checkbox state (E6.4.1); with no window open the dataclass
-    defaults (the canvas's own) apply.
+    G6 moved the five publish options off the results dialog: they are
+    the Results menu's checkable row, persisted as
+    ``AppSettings.publish_*``, so the options read the route context's
+    live settings rather than an open window's presenter (which no
+    longer carries any). ``lap_km`` stays at its dataclass default --
+    the page's course length is not an operator setting.
     """
-    wx = require_wx()
-    if wx.GetApp() is None:
-        return ExportOptions()
-    dialog = wx.FindWindowByName(ids.RESULTS_DLG)
-    presenter = getattr(dialog, "presenter", None)
-    if presenter is not None:
-        return cast("ExportOptions", presenter.export_options())
-    return ExportOptions()
+    settings = context.settings
+    return ExportOptions(
+        show_times=settings.publish_show_times,
+        laps_board=settings.publish_laps_board,
+        time_board=settings.publish_time_board,
+        full_field=settings.publish_full_field,
+        all_cards=settings.publish_all_cards,
+    )
 
 
 def _team_logo_srcs(roster: Roster | None) -> dict[str, str]:
@@ -2108,7 +2245,7 @@ def _handle_export_command(context: _RouteContext, target: str) -> None:
         return
     config = engine.config
     teams, solo = _placed_for_export(context)
-    opts = _export_options()
+    opts = _export_options(context)
     watermark = len(engine.events)
     # W8: the roster's team logos are captured on the main thread like
     # every other export input (the off-loop writer never touches the
@@ -3701,7 +3838,10 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     stub below it. ``route.target == _VIEW_ROUTE_TARGET`` (the View
     row, P8-D4) dispatches further by *event*'s own id, inside
     :func:`_handle_view_row`, rather than by anything ``route`` alone
-    carries -- its 11 ids all share this one row. ``export_riders_csv``
+    carries -- its 11 ids all share this one row;
+    ``_RESULTS_PUBLISH_ROUTE_TARGET`` (G6's Results publish row) takes
+    the same shape through :func:`_handle_results_publish_row`, whose
+    five ids each own a persisted setting. ``export_riders_csv``
     (E3.4) is the one ``COMMAND`` row with a real action of its own,
     ahead of the generic stub. ``undo_last_crossing`` (E4.4.2) fires
     the live console presenter's ``on_undo`` (covering both the Cards
@@ -3754,6 +3894,12 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
         return lambda _event: _handle_exit_route(context)
     if route.target == _VIEW_ROUTE_TARGET:
         return lambda event: _handle_view_row(context, route, event)
+    if route.target == _RESULTS_PUBLISH_ROUTE_TARGET:
+        # G6: the five publish check items share one Results row, so --
+        # exactly like the View row above -- the branch dispatches
+        # further by the event's own id, inside
+        # _handle_results_publish_row.
+        return lambda event: _handle_results_publish_row(context, route, event)
     if route.target == "export_riders_csv":
         return lambda _event: _handle_export_csv(context)
     if route.target == "undo_last_crossing":
@@ -4290,6 +4436,7 @@ def build_main_window(
         show_total=loaded_settings.show_total_times,
         show_lap=loaded_settings.show_lap_time,
     )
+    _check_loaded_publish_options(menubar, loaded_settings)
     _check_loaded_zoom_radio(menubar, loaded_settings.zoom_percent)
 
     # E5.4.2: no store-backed ride is open at bootstrap, so the roster

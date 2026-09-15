@@ -106,9 +106,11 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
         ``avg_speed_kmh`` reads the entry's own float (``GetValue`` on
         a ``wx.SpinCtrlDouble``); the control's <min> floors it at
         1 km/h, mirroring the presenter's ``_MIN_AVG_SPEED_KMH``. The
-        zoom and two layout fields (``zoom_percent``/
-        ``splitter_sash``/``window_geometry``) have no dialog control,
-        so the current values carry over unchanged.
+        zoom, the two layout fields and G6's five publish options
+        (``zoom_percent``/``splitter_sash``/``window_geometry``/
+        ``publish_*``) have no dialog control, so the current values
+        carry over unchanged -- OK must never reset the Results menu's
+        export options.
         """
         return AppSettings(
             appearance=appearance_for_radio(
@@ -123,6 +125,11 @@ class SettingsDialog(DialogFindMixin):  # _find: ui.views._support
             zoom_percent=self._settings.zoom_percent,
             splitter_sash=self._settings.splitter_sash,
             window_geometry=self._settings.window_geometry,
+            publish_show_times=self._settings.publish_show_times,
+            publish_laps_board=self._settings.publish_laps_board,
+            publish_time_board=self._settings.publish_time_board,
+            publish_full_field=self._settings.publish_full_field,
+            publish_all_cards=self._settings.publish_all_cards,
         )
 
     def _on_ok(self, event: Any) -> None:  # noqa: ANN401, ARG002 -- wx handler signature; EndModal is explicit, no Skip needed

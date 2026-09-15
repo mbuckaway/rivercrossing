@@ -450,16 +450,34 @@ def test_apply_settings_live_given_an_unwritable_settings_file_posts_a_notice(
     swallowed by wx with the dialog already closed and nothing said.
     """
 
+    class _StubMenuItem:
+        """Record the enable verdict the R-63 publish gate applies."""
+
+        def __init__(self) -> None:
+            """Start with no recorded verdict."""
+            self.enabled: bool | None = None
+
+        def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+            """Record the verdict."""
+            self.enabled = enabled
+
     class _StubMenubar:
         """Record every radio-check call the apply path makes."""
 
         def __init__(self) -> None:
-            """Start with an empty check log."""
+            """Start with an empty check log and one item double."""
             self.checks: list[tuple[int, bool]] = []
+            self.item = _StubMenuItem()
 
         def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- mirrors wx MenuBar.Check's positional bool
             """Record one check call."""
             self.checks.append((item_id, checked))
+
+        def FindItem(  # noqa: N802 -- wx API name
+            self, _real_id: int
+        ) -> tuple[_StubMenuItem, None]:
+            """Answer the one item the publish gate looks up (G6)."""
+            return self.item, None
 
     class _SettingsFrame(_NoticeFrame):
         """A notice frame that also answers GetMenuBar."""

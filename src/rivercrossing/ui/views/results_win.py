@@ -29,15 +29,19 @@ kind split needs no extra column and no merged header row.
 E7.3.2's stale-export flag is the one live banner: ``set_stale``
 shows/hides the code-side ``stale_infobar`` (xrc-windows.md's
 code-side footnote; XRC cannot author a ``wxInfoBar`` -- results.xrc's
-own header). ``show_times_chk`` also toggles the two time columns --
-Total and Best lap -- on every list here and gates the Fastest-time
-box: with times off the box is cleared and disabled, so the
-time_board/time-off combination cannot be requested (R-63). The
-window's one presenter (``self.presenter``, built here like
-``RideSetup`` builds its own) holds the ``ExportOptions`` the export
-handlers (E6.4.2) read.
+own header). The window's one presenter (``self.presenter``, built
+here like ``RideSetup`` builds its own) ranks the rows and drives that
+banner.
 
-Phase 5 adds three display facts the canvas cannot carry:
+G6 reworked the dialog's surface: the Total and Best lap columns are
+gone (the standings table is Place, Plate, Entry, Laps, Best 5, Hand,
+each pinned to its own width), the five publish checkboxes left the
+dialog for the Results menu (``app._RESULTS_PUBLISH_MENU_IDS``, their
+defaults now persisted in ``AppSettings.publish_*``), and the R-63
+gate between show-times and the Fastest-time board moved with them --
+the dialog no longer owns either.
+
+Phase 5 adds two display facts the canvas cannot carry:
 
 - the ⚠ badge's explanation (Part 1). A ``wxDataViewCtrl`` has no
   per-row hover tooltip, and hover is unreachable by keyboard anyway
@@ -51,8 +55,9 @@ Phase 5 adds three display facts the canvas cannot carry:
   the column repeats a member's plate while the Entry column names
   the team. Under ``TEAM_RELAY`` the plate is the entry's identity and
   stays.
-- the Best lap column (Part 3), positioned after Total and gated by
-  ``show_times_chk`` together with it -- both render time data.
+- the Hand column's width (G6): the solo and standalone lists pin it
+  at 210, and the Team list at 260 when the Plate column it drops has
+  freed 50 more.
 
 W11 wires the four export buttons: the app threads an
 ``on_export(target)`` callback (its own ``_handle_export_command``
@@ -73,7 +78,6 @@ from typing import TYPE_CHECKING, Any
 import wx
 import wx.dataview
 
-from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import DEFAULT_TIEBREAK_ORDER, RideStatus
 from rivercrossing.roster import EntryMode, PlateModel
 from rivercrossing.standings import DRAW_TIE_NOTE
@@ -94,16 +98,16 @@ if TYPE_CHECKING:
 
 __all__ = [
     "COLUMN_LABELS",
+    "COLUMN_WIDTHS",
     "COL_BEST5",
-    "COL_BESTLAP",
     "COL_ENTRY",
     "COL_HAND",
     "COL_LAPS",
     "COL_PLACE",
     "COL_PLATE",
-    "COL_TOTAL",
     "DRAW_EXPLANATION",
     "DRAW_INFO_TITLE",
+    "HAND_WIDTH",
     "JOKER_CODE",
     "JOKER_DISPLAY",
     "MIN_SIZE",
@@ -113,8 +117,8 @@ __all__ = [
     "STANDINGS_LIST_MIN_HEIGHT",
     "STANDINGS_MIN_ROWS",
     "STANDINGS_ROW_HEIGHT",
+    "TEAM_HAND_WIDTH",
     "TIE_BADGE",
-    "TIME_COLUMNS",
     "ResultsWindow",
     "StandingsListModel",
     "draw_info_message",
@@ -127,27 +131,31 @@ COL_PLACE = 0
 COL_PLATE = 1
 COL_ENTRY = 2
 COL_LAPS = 3
-COL_TOTAL = 4
-COL_BESTLAP = 5
-COL_BEST5 = 6
-COL_HAND = 7
+COL_BEST5 = 4
+COL_HAND = 5
 
-# xrc-windows.md D's column order, with the Phase 5 Best lap column
-# placed directly after Total: both show the same ride clock, and only
-# show_times_chk hides them (results.xrc's own code-side footnote).
+# xrc-windows.md D's column order after G6, which dropped the two
+# ride-clock columns (Total and Best lap): the scorer reads place,
+# plate, entry, laps, cards, hand.
 COLUMN_LABELS: tuple[str, ...] = (
     "Place",
     "Plate",
     "Entry",
     "Laps",
-    "Total",
-    "Best lap",
     "Best 5",
     "Hand",
 )
 
-# The columns show_times_chk governs -- the two that render time data.
-TIME_COLUMNS: tuple[int, ...] = (COL_TOTAL, COL_BESTLAP)
+# G6's pinned widths: the Hand column has two variants (below), every
+# other column is the same on every list. The six total 690px, which is
+# what the dialog's 740px floor is built from.
+HAND_WIDTH = 210
+COLUMN_WIDTHS: tuple[int, ...] = (60, 50, 160, 50, 160, HAND_WIDTH)
+
+# The Team list's Hand width under RIDER_POOLED: its Plate column is
+# hidden, so Hand takes the width it frees (HAND_WIDTH + 50).
+TEAM_HAND_WIDTH = 260
+
 
 # E6.4.1: the R-43 "draw required" badge (xrc-windows.md D's code-side
 # footnote), rendered as a leading glyph in the Place cell (module
@@ -166,13 +174,13 @@ DRAW_EXPLANATION = (
 )
 
 # D16: XRC has no window-level minsize (results.xrc's own header notes
-# this and defers to code). The width floor is measured on wxPython
-# 4.3.1 / wxWidgets 3.3.3: the publish-checkbox row's static box needs
-# 735px and the export-button+Close row 539px, so 735 + the two 10px
-# sizeritem borders = 755. At the old 720 the five checkboxes wrapped
-# onto a second row. Height is Fit()'s own measurement of the real
-# sizer content -- see this task's own report for how it was measured.
-MIN_SIZE = (755, 442)
+# this and defers to code). Width floor measured on wxPython 4.3.1 /
+# wxWidgets 3.3.3: the solo tab's six pinned columns total 690px
+# (G6's COLUMN_WIDTHS), plus the list's scrollbar (16) and its notebook
+# and sizer borders (~34) = 740, so the Solo tab displays fully at the
+# min width. Height is Fit()'s own measurement of the real sizer
+# content -- see this task's own report for how it was measured.
+MIN_SIZE = (740, 442)
 
 # D16's row floor: the three standings lists hold ten rows -- the
 # scorer's own working set -- rather than Fit()'s measurement of
@@ -250,23 +258,17 @@ _TEXT_ACCESSORS: tuple[Callable[[StandingsRow], str], ...] = (
     lambda standing: standing.plate,
     lambda standing: standing.entry,
     lambda standing: str(standing.laps),
-    lambda standing: standing.total,
-    lambda standing: standing.best_lap,
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
 )
 
 # The native header sort's per-column key, in ``COLUMN_LABELS`` order:
-# Place/Laps are ints, Total and Best lap sort on the stored numeric
-# seconds (never their rendered ``h:mm:ss`` text), and the rest are
-# strings.
+# Place and Laps are ints, the rest are strings.
 _STANDINGS_SORT_KEYS: tuple[Callable[[StandingsRow], Any], ...] = (
     lambda standing: standing.place,
     lambda standing: standing.plate,
     lambda standing: standing.entry,
     lambda standing: standing.laps,
-    lambda standing: standing.total_seconds,
-    lambda standing: standing.best_lap_seconds,
     lambda standing: format_best5(standing.best5),
     lambda standing: standing.hand,
 )
@@ -286,7 +288,7 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         self._rows = tuple(rows)
 
     def GetColumnCount(self) -> int:
-        """Return the standings' fixed eight columns."""
+        """Return the standings' fixed six columns."""
         return len(COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- every column is text here
@@ -322,8 +324,8 @@ class StandingsListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[mi
         items and the model column, and the comparison runs on the
         rows those items index (``DataViewIndexListModel.GetRow``),
         keyed per column by :data:`_STANDINGS_SORT_KEYS`. Place and
-        Laps compare as integers and Total as numeric seconds, so a
-        displayed ``"10:00:00"`` never sorts before ``"9:00:00"``.
+        Laps compare as integers, so a displayed ``"10"`` never sorts
+        before ``"9"``.
 
         Equal keys fall back to the row's own position, which is
         unique: wx's control-side sort is not stable, so without the
@@ -350,9 +352,9 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
     ResultsView` contract in full (E6.4.1): ``show_standings`` (the
     MIXED notebook or the SOLO standalone list, per ``entry_mode``),
     ``set_stale`` (the code-side stale_export banner E7.3.2 triggers
-    after post-export corrections), and ``show_publish_options``/
-    ``publish_options`` (the five publish checkboxes). The one live
-    presenter is built here, the same ``RideSetup`` precedent.
+    after post-export corrections), and the standings lists' own
+    column sets (G6). The one live presenter is built here, the same
+    ``RideSetup`` precedent.
     """
 
     def __init__(  # noqa: PLR0913 -- (dialog, data_source) + the tie-break order, export-watermark, entry-mode, plate-model and export seams
@@ -408,14 +410,8 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         self.teams_standings_list = self._find(ids.TEAMS_STANDINGS_LIST, wx.dataview.DataViewCtrl)
         self.solo_standings_list = self._find(ids.SOLO_STANDINGS_LIST, wx.dataview.DataViewCtrl)
         self.results_notebook = self._find(ids.RESULTS_NOTEBOOK, wx.Notebook)
-        self.show_times_chk = self._find(ids.SHOW_TIMES_CHK, wx.CheckBox)
-        self.laps_board_chk = self._find(ids.LAPS_BOARD_CHK, wx.CheckBox)
-        self.time_board_chk = self._find(ids.TIME_BOARD_CHK, wx.CheckBox)
-        self.full_field_chk = self._find(ids.FULL_FIELD_CHK, wx.CheckBox)
-        self.all_cards_chk = self._find(ids.ALL_CARDS_CHK, wx.CheckBox)
 
-        self._time_columns = self._build_columns()
-        self._apply_show_times_state()
+        self._build_columns()
         self._model: StandingsListModel | None = None
         self._teams_model: StandingsListModel | None = None
         self._solo_model: StandingsListModel | None = None
@@ -460,53 +456,51 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
             if on_export is not None:
                 button.Bind(wx.EVT_BUTTON, lambda _event, t=target: on_export(t))
 
-    def _build_columns(self) -> tuple[Any, ...]:
-        """Build every standings list's columns.
+    def _build_columns(self) -> None:
+        """Build every standings list's six columns (Part 2 + G6).
 
         The Team list drops its Plate column under ``RIDER_POOLED``
         (Part 2): a pooled team's plate is derived from its members, so
         that column repeats a member's plate rather than naming the
         entry, and the Entry column already carries the team's name.
         The standalone and Solo lists always keep theirs, as does the
-        Team list under ``TEAM_RELAY``.
-
-        Returns:
-            The Total and Best lap columns (``TIME_COLUMNS``) of each
-            list, in (standalone, notebook Teams, notebook Solo) order
-            -- the columns ``show_times_chk`` toggles hidden
-            (results.xrc's own code-side footnote: "hides Total col here
-            too").
+        Team list under ``TEAM_RELAY``. With no Plate column to carry
+        the table's width, the team list's Hand column takes it
+        (:data:`TEAM_HAND_WIDTH`).
         """
         hide_team_plate = self.plate_model is PlateModel.RIDER_POOLED
-        return tuple(
-            column
-            for control, hide_plate in (
-                (self.standings_list, False),
-                (self.teams_standings_list, hide_team_plate),
-                (self.solo_standings_list, False),
-            )
-            for column in self._build_columns_for(control, hide_plate=hide_plate)
+        team_hand_width = TEAM_HAND_WIDTH if hide_team_plate else HAND_WIDTH
+        self._build_columns_for(self.standings_list)
+        self._build_columns_for(
+            self.teams_standings_list, hide_plate=hide_team_plate, hand_width=team_hand_width
         )
+        self._build_columns_for(self.solo_standings_list)
 
     @staticmethod
-    def _build_columns_for(control: Any, *, hide_plate: bool = False) -> tuple[Any, ...]:  # noqa: ANN401 -- wx ships no stubs
-        """Append one list's eight columns in canvas order.
+    def _build_columns_for(
+        control: Any,  # noqa: ANN401 -- wx ships no stubs
+        *,
+        hide_plate: bool = False,
+        hand_width: int = HAND_WIDTH,
+    ) -> None:
+        """Append one list's six columns in canvas order.
 
         Args:
             control: The ``DataViewCtrl`` to append to.
             hide_plate: Hide the Plate column (a pooled team's list).
-
-        Returns:
-            *control*'s time columns (:data:`TIME_COLUMNS`) -- Total,
-            then Best lap.
+            hand_width: The Hand column's pinned width; the team list
+                widens it when it hides Plate
+                (:data:`TEAM_HAND_WIDTH`), every other list uses the
+                solo pin.
         """
+        widths = list(COLUMN_WIDTHS)
+        widths[COL_HAND] = hand_width
         columns = [
-            control.AppendTextColumn(label, col, flags=STANDINGS_COLUMN_FLAGS)
+            control.AppendTextColumn(label, col, width=widths[col], flags=STANDINGS_COLUMN_FLAGS)
             for col, label in enumerate(COLUMN_LABELS)
         ]
         if hide_plate:
             columns[COL_PLATE].SetHidden(True)  # noqa: FBT003 -- wx API takes a positional bool
-        return tuple(columns[col] for col in TIME_COLUMNS)
 
     def _build_infobar(self) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Build the code-side :data:`STALE_INFOBAR`, inserted on top.
@@ -524,40 +518,19 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         return bar
 
     def _bind_events(self) -> None:
-        """Forward the publish checkboxes and the list activations.
+        """Forward each standings list's activations.
 
-        Every publish checkbox forwards to the presenter; each standings
-        list explains its own ⚠ rows on the activation gesture
-        (Part 1).
+        Each standings list explains its own ⚠ rows on the activation
+        gesture (Part 1). The publish checkboxes that once bound here
+        left the dialog for the Results menu (G6), so the dialog
+        itself binds nothing.
         """
-        for checkbox in (
-            self.show_times_chk,
-            self.laps_board_chk,
-            self.time_board_chk,
-            self.full_field_chk,
-            self.all_cards_chk,
-        ):
-            self.dialog.Bind(wx.EVT_CHECKBOX, self._on_publish_toggle, checkbox)
         for control in (
             self.standings_list,
             self.teams_standings_list,
             self.solo_standings_list,
         ):
             control.Bind(wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_standings_activated)
-
-    def _on_publish_toggle(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Handle a publish-checkbox click; forward it to the presenter.
-
-        ``show_times_chk`` also toggles the two time columns and gates
-        the Fastest-time board (results.xrc's own footnote) -- a
-        structural sibling-control fact the view owns and applies
-        itself, the same view-side enablement ``RideSetup.
-        set_structure_enabled`` performs.
-        """
-        event.Skip()
-        if event.GetEventObject() is self.show_times_chk:
-            self._apply_show_times_state()
-        self.presenter.on_publish_toggled()
 
     def _on_standings_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
         """Explain the activated row's ⚠ badge (Part 1).
@@ -576,23 +549,6 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         if standing is None or not standing.draw_required:
             return
         show_info(self.dialog, DRAW_INFO_TITLE, draw_info_message(standing))
-
-    def _apply_show_times_state(self) -> None:
-        """Apply the sibling controls ``show_times_chk`` governs.
-
-        Times off hides both time columns (Total and Best lap) on every
-        list and makes the Fastest-time board unrequestable: its box is
-        cleared and disabled, so ``publish_options()`` can never map a
-        time board while no times are shown (R-63 -- the board is
-        nothing but time data). Re-checking show_times re-enables the
-        box.
-        """
-        show_times = self.show_times_chk.GetValue()
-        for column in self._time_columns:
-            column.SetHidden(not show_times)
-        if not show_times:
-            self.time_board_chk.SetValue(False)  # noqa: FBT003 -- wx API takes a positional bool
-        self.time_board_chk.Enable(show_times)
 
     def show_standings(self, teams: list[StandingsRow], solo: list[StandingsRow]) -> None:
         """Render the standings (``ResultsView``, Phase 3).
@@ -636,34 +592,6 @@ class ResultsWindow(DialogFindMixin):  # _find: ui.views._support
         else:
             self.stale_infobar.Dismiss()
         self.dialog.Layout()
-
-    def show_publish_options(self, options: ExportOptions) -> None:
-        """Reflect the five publish checkboxes (``ResultsView``).
-
-        ``SetValue`` fires no ``EVT_CHECKBOX`` (measured), so this
-        cannot loop back into the presenter.
-        """
-        self.show_times_chk.SetValue(options.show_times)
-        self.laps_board_chk.SetValue(options.laps_board)
-        self.time_board_chk.SetValue(options.time_board)
-        self.full_field_chk.SetValue(options.full_field)
-        self.all_cards_chk.SetValue(options.all_cards)
-        self._apply_show_times_state()
-
-    def publish_options(self) -> ExportOptions:
-        """Return the five publish checkboxes as ``ExportOptions``.
-
-        ``lap_km`` stays at its dataclass default -- the results
-        window has no course-length control; E6.4.2's export handlers
-        own that render-only setting.
-        """
-        return ExportOptions(
-            show_times=self.show_times_chk.GetValue(),
-            laps_board=self.laps_board_chk.GetValue(),
-            time_board=self.time_board_chk.GetValue(),
-            full_field=self.full_field_chk.GetValue(),
-            all_cards=self.all_cards_chk.GetValue(),
-        )
 
     def _apply_min_size(self) -> None:
         """Force the measured width floor, then Fit() the rest (D16).

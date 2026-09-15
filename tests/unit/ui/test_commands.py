@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 38-row route table,
+``commands.py`` imports no ``wx`` at all, so its 39-row route table,
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -46,7 +46,7 @@ ROUTE_COUNTS_BY_MENU = (
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
     ("Riders", 4),  # Phase 2: mi_entry_detail retired
     ("Cards", 5),  # Phase 2: mi_reassign_plate + mi_void_card retired
-    ("Results", 7),  # C6: mi_tiebreak_order retired; +1: Preview split per format
+    ("Results", 8),  # C6: mi_tiebreak_order retired; G6: +the publish row
     ("View", 1),
     ("Help", 4),
 )
@@ -87,12 +87,13 @@ ROUTE_TARGETS = (
     (commands.TargetKind.DIALOG, ids.MANUAL_DEAL_DLG),  # Deal Bonus Card...
     (commands.TargetKind.COMMAND, None),  # Review Held Cards: focuses an existing panel
     (commands.TargetKind.DIALOG, ids.RESULTS_DLG),  # Standings (Part C: modal dialog)
-    (commands.TargetKind.COMMAND, None),  # Generate HTML...: OS-native save dialog
+    (commands.TargetKind.COMMAND, None),  # Export HTML...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Podium Poster PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Preview HTML in Browser: external browser
     (commands.TargetKind.COMMAND, None),  # Preview PDF in Browser: external browser
+    (commands.TargetKind.COMMAND, None),  # Publish options (G6): direct commands
     (commands.TargetKind.COMMAND, None),  # Times / Zoom: direct commands (W13)
     (commands.TargetKind.COMMAND, None),  # User Guide: external browser
     (commands.TargetKind.DIALOG, ids.SHORTCUTS_DLG),  # Keyboard Shortcuts
@@ -110,25 +111,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_eight_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 38
+    assert len(commands.ROUTE_TABLE) == 39
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 9, Riders 5, Cards 7, Results 7, View 1, Help 4."""
+    """File 8, Ride 9, Riders 4, Cards 5, Results 8, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_six_real_menu_item_ids_once_each() -> None:
-    """43 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_fifty_one_real_menu_item_ids_once_each() -> None:
+    """48 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 46
-    assert len(set(flat_ids)) == 46
+    assert len(flat_ids) == 51
+    assert len(set(flat_ids)) == 51
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -247,6 +248,32 @@ def test_standings_route_is_always_enabled_after_part_d() -> None:
     assert route.enabled_when == commands.Enablement()
 
 
+def test_results_publish_route_given_the_five_ids_is_one_always_on_command() -> None:
+    """G6: five publish items, one always-on COMMAND row."""
+    route = commands.route_for_id("mi_show_times")
+
+    assert (route.menu, route.kind, route.target) == (
+        "Results",
+        commands.TargetKind.COMMAND,
+        "results_publish",
+    )
+    assert route.ids == (
+        "mi_show_times",
+        "mi_laps_board",
+        "mi_time_board",
+        "mi_full_field",
+        "mi_all_cards",
+    )
+    assert route.enabled_when == commands.Enablement()
+
+
+def test_export_html_route_label_reads_export_after_g6() -> None:
+    """G6 renamed the Results row's label to match its verb."""
+    route = commands.route_for_id(ids.MI_EXPORT_HTML)
+
+    assert route.label == "Export HTML…"
+
+
 def test_is_route_enabled_given_standings_and_no_ride_open_is_enabled() -> None:
     """Part D: the empty-state source replaces the old ride gate."""
     state = commands.RideState(status=RideStatus.DRAFT, ride_open=False)
@@ -336,13 +363,14 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Cards > Deal Bonus Card...
     None,  # Cards > Review Held Cards: "held cards > 0"
     None,  # Results > Standings: "always" -- the dialog shows the empty state
-    frozenset({RideStatus.FINISHED}),  # Results > Generate HTML...
+    frozenset({RideStatus.FINISHED}),  # Results > Export HTML…
     frozenset({RideStatus.FINISHED}),  # Results > Export PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Podium Poster PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Export Standings CSV...
     # Part D: each Preview row is FINISHED plus its own format's export.
     frozenset({RideStatus.FINISHED}),  # Results > Preview HTML in Browser
     frozenset({RideStatus.FINISHED}),  # Results > Preview PDF in Browser
+    None,  # Results > Publish Options (G6): "always" -- direct commands
     None,  # View > Times / Zoom: "always"
     None,  # Help > User Guide: "always"
     None,  # Help > Keyboard Shortcuts: "always"

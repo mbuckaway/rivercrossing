@@ -186,6 +186,18 @@ def test_bind_routes_without_a_log_still_dispatches_the_route(
 # ------------------------------------------- F3: the settings toggle
 
 
+class _SettingsMenuItem:
+    """A menu-item double recording the settings apply's verdict."""
+
+    def __init__(self) -> None:
+        """Start with no recorded verdict."""
+        self.enabled: bool | None = None
+
+    def Enable(self, enabled: bool) -> None:  # noqa: N802, FBT001 -- wx API name
+        """Record the enablement verdict."""
+        self.enabled = enabled
+
+
 class _SettingsFrame(_NoticeFrame):
     """A frame double answering the settings apply's menubar sync."""
 
@@ -193,6 +205,7 @@ class _SettingsFrame(_NoticeFrame):
         """Start with an empty check log."""
         super().__init__()
         self.checks: list[tuple[int, bool]] = []
+        self.menu_item = _SettingsMenuItem()
 
     def GetMenuBar(self) -> _SettingsFrame:  # noqa: N802 -- wx API name
         """Return this frame as the menubar double."""
@@ -201,6 +214,12 @@ class _SettingsFrame(_NoticeFrame):
     def Check(self, item_id: int, checked: bool) -> None:  # noqa: N802, FBT001 -- wx API name, positional bool
         """Record one menu check sync."""
         self.checks.append((item_id, checked))
+
+    def FindItem(  # noqa: N802 -- wx API name
+        self, _real_id: int
+    ) -> tuple[_SettingsMenuItem, None]:
+        """Answer the one item the R-63 publish gate looks up (G6)."""
+        return self.menu_item, None
 
 
 class _FakeThemeController:

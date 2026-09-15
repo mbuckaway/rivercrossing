@@ -121,7 +121,8 @@ CARDS_MENU_ITEMS = (
     "mi_review_held",
 )
 # Part D: the single Preview in Browser row split per format -- each
-# new item gates on its own export existing (HTML / PDF).
+# new item gates on its own export existing (HTML / PDF). G6: the five
+# checkable publish options follow a separator, after the Preview rows.
 RESULTS_MENU_ITEMS = (
     "mi_standings",
     "mi_export_html",
@@ -130,6 +131,11 @@ RESULTS_MENU_ITEMS = (
     "mi_export_results_csv",
     "mi_preview_html_browser",
     "mi_preview_pdf_browser",
+    "mi_show_times",
+    "mi_laps_board",
+    "mi_time_board",
+    "mi_full_field",
+    "mi_all_cards",
 )
 ZOOM_MENU_ITEMS = (
     "mi_zoom_90",
@@ -210,19 +216,20 @@ NAME_CASES = tuple(
 
 MENU_LABELS = ("&File", "&Ride", "Ri&ders", "&Cards", "Re&sults", "&View", "&Help")
 
-# spec.md section 15's rows after D1/D4 and Phase 2 (Results lost its
-# tie-break row in Part C and split its Preview row per format; Phase 2
-# retired mi_entry_detail, mi_reassign_plate and mi_void_card): File 8
-# (mi_simulation added), Ride 9, Riders 4, Cards 5, Results 7, View 1,
-# Help 4. The single View row expands into the 9 items section 15b names
-# for it (W13: the two time-column check items + the seven zoom radios;
-# the theme trio left the View menu).
+# spec.md section 15's rows after D1/D4, Phase 2 and G6 (Results lost
+# its tie-break row in Part C and split its Preview row per format,
+# then gained G6's five publish items; Phase 2 retired mi_entry_detail,
+# mi_reassign_plate and mi_void_card): File 8 (mi_simulation added),
+# Ride 9, Riders 4, Cards 5, Results 12, View 1, Help 4. The single
+# View row expands into the 9 items section 15b names for it (W13: the
+# two time-column check items + the seven zoom radios; the theme trio
+# left the View menu).
 MENU_ITEM_COUNTS = (
     ("&File", 8),
     ("&Ride", 9),
     ("Ri&ders", 4),
     ("&Cards", 5),
-    ("Re&sults", 7),
+    ("Re&sults", 12),
     ("&View", 9),
     ("&Help", 4),
 )
@@ -497,20 +504,20 @@ def test_menu_declares_the_expected_item_count(menu_label: str, expected_items: 
     assert len(items) == expected_items
 
 
-def test_main_menubar_declares_forty_three_menu_item_names() -> None:
-    """D1/D4/C6/Part D + Phase 2 + 2 time items: 43 ``mi_*``."""
+def test_main_menubar_declares_forty_eight_menu_item_names() -> None:
+    """D1/D4/C6/Part D + Phase 2 + G6: 48 ``mi_*`` names."""
     names = _control_names_in(_window("main_menubar"))
 
     menu_item_names = [name for name in names if name.startswith("mi_")]
 
-    assert len(menu_item_names) == 43
+    assert len(menu_item_names) == 48
 
 
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
     """No orphaned menu item: every authored name is routed, and back.
 
     ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
-    is driven from, so its 46 ids and the authored item names must be
+    is driven from, so its 51 ids and the authored item names must be
     one set. A row that outlives its route, or a route with no item,
     would leave an item the enablement walk can never reach.
     """
@@ -537,6 +544,63 @@ def test_ride_menu_declares_the_spec_15_row_order_after_d1() -> None:
     names = [item.attrib["name"] for item in _menu_items(ride_menu)]
 
     assert tuple(names) == RIDE_MENU_ITEMS
+
+
+def test_results_menu_declares_the_publish_rows_after_the_previews() -> None:
+    """G6: the five publish items close the Results menu."""
+    results_menu = _menus()[4]
+
+    names = [item.attrib["name"] for item in _menu_items(results_menu)]
+
+    assert tuple(names) == RESULTS_MENU_ITEMS
+
+
+def test_results_menu_given_the_publish_group_leaves_one_radio_free_run() -> None:
+    """G6: the publish items are check items, never radios."""
+    results_menu = _menus()[4]
+
+    radios = [
+        item.attrib["name"] for item in _menu_items(results_menu) if _param(item, "radio") == "1"
+    ]
+
+    assert radios == []
+
+
+def test_results_menu_given_the_publish_group_separates_it_from_the_previews() -> None:
+    """G6: a separator opens the publish group."""
+    results_menu = _menus()[4]
+    children = [child for child in results_menu if child.tag == "object"]
+
+    assert children[7].attrib["class"] == "separator"
+
+
+@pytest.mark.parametrize(
+    ("item_name", "label"),
+    [
+        ("mi_export_html", "Export &HTML…"),
+        ("mi_show_times", "Show lap && total times"),
+        ("mi_laps_board", "Laps leaderboard"),
+        ("mi_time_board", "Fastest-time leaderboard"),
+        ("mi_full_field", "Full field"),
+        ("mi_all_cards", "All cards drawn"),
+    ],
+)
+def test_results_menu_row_declares_its_label(item_name: str, label: str) -> None:
+    """G6: the renamed export row, plus the five publish options."""
+    item = _objects_by_name(_window("main_menubar"))[item_name]
+
+    assert _param(item, "label") == label
+
+
+@pytest.mark.parametrize(
+    "item_name",
+    ["mi_show_times", "mi_laps_board", "mi_time_board", "mi_full_field", "mi_all_cards"],
+)
+def test_results_publish_row_declares_a_checkable_item(item_name: str) -> None:
+    """G6: each publish option is checkable (no radio group)."""
+    item = _objects_by_name(_window("main_menubar"))[item_name]
+
+    assert (_param(item, "checkable"), _param(item, "radio")) == ("1", "")
 
 
 @pytest.mark.parametrize(

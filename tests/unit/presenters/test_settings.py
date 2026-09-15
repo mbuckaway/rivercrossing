@@ -53,7 +53,18 @@ _ALL_FIELDS = {
     "sim_lapped",
     "sim_team_stop",
     "avg_speed_kmh",
+    # G6: the five publish options, moved off the results dialog.
+    "publish_show_times",
+    "publish_laps_board",
+    "publish_time_board",
+    "publish_full_field",
+    "publish_all_cards",
 }
+
+# G6: the defaults the results dialog's five checkboxes used to declare
+# (results.xrc, before the box was removed): times off, laps board on,
+# time board off, full field on, all cards on.
+_PUBLISH_DEFAULTS = (False, True, False, True, True)
 
 # The simulator dialog's XRC spin defaults (simulation.xrc): riders
 # 175, teams 40, solo 15, laps 1, interval 45 (plan §1/§3).
@@ -100,6 +111,72 @@ def test_default_settings_hide_the_total_and_show_the_lap_time() -> None:
     settings = default_settings()
 
     assert (settings.show_total_times, settings.show_lap_time) == (False, True)
+
+
+def test_default_settings_publish_flags_are_the_retired_xrc_checkbox_defaults() -> None:
+    """G6: times off, laps leaderboard on, time board off, cards on."""
+    settings = default_settings()
+
+    assert (
+        settings.publish_show_times,
+        settings.publish_laps_board,
+        settings.publish_time_board,
+        settings.publish_full_field,
+        settings.publish_all_cards,
+    ) == _PUBLISH_DEFAULTS
+
+
+def test_save_then_load_round_trips_the_publish_flags(tmp_path: Path) -> None:
+    """G6: every publish flag survives a save/load round trip."""
+    path = tmp_path / "settings.json"
+    original = replace(
+        default_settings(),
+        publish_show_times=True,
+        publish_laps_board=False,
+        publish_time_board=True,
+        publish_full_field=False,
+        publish_all_cards=False,
+    )
+
+    save_settings(original, path)
+    loaded = load_settings(path)
+
+    assert (
+        loaded.publish_show_times,
+        loaded.publish_laps_board,
+        loaded.publish_time_board,
+        loaded.publish_full_field,
+        loaded.publish_all_cards,
+    ) == (True, False, True, False, False)
+
+
+def test_load_settings_missing_the_publish_keys_uses_the_defaults(tmp_path: Path) -> None:
+    """An older file with no publish keys seeds the canvas defaults."""
+    path = tmp_path / "settings.json"
+    path.write_text('{"appearance": "dark"}', encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert (
+        loaded.publish_show_times,
+        loaded.publish_laps_board,
+        loaded.publish_time_board,
+        loaded.publish_full_field,
+        loaded.publish_all_cards,
+    ) == _PUBLISH_DEFAULTS
+
+
+@pytest.mark.parametrize("stored", ["yes", 1, None, [], {}])
+def test_load_settings_non_bool_publish_values_use_the_defaults(
+    tmp_path: Path, stored: object
+) -> None:
+    """T-4: a non-bool publish value is corrupt for its field."""
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"publish_show_times": stored}), encoding="utf-8")
+
+    loaded = load_settings(path)
+
+    assert loaded.publish_show_times is False
 
 
 def test_save_then_load_round_trips_the_two_time_column_flags(tmp_path: Path) -> None:
@@ -500,6 +577,11 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
             sim_lapped=1,
             sim_team_stop=3,
             avg_speed_kmh=17.5,
+            publish_show_times=True,
+            publish_laps_board=False,
+            publish_time_board=True,
+            publish_full_field=False,
+            publish_all_cards=False,
         ),
         path,
     )
@@ -517,6 +599,11 @@ def test_save_settings_writes_json_with_every_field(tmp_path: Path) -> None:
     assert raw["sim_lapped"] == 1
     assert raw["sim_team_stop"] == 3
     assert raw["avg_speed_kmh"] == 17.5
+    assert raw["publish_show_times"] is True
+    assert raw["publish_laps_board"] is False
+    assert raw["publish_time_board"] is True
+    assert raw["publish_full_field"] is False
+    assert raw["publish_all_cards"] is False
 
 
 # --- default-path wiring (path=None branches) ----------------------
@@ -602,6 +689,11 @@ _SETTINGS_STRATEGY = st.builds(
     sim_lapped=st.integers(min_value=0, max_value=10),
     sim_team_stop=st.integers(min_value=0, max_value=10),
     avg_speed_kmh=st.floats(min_value=1.0, max_value=400.0, allow_nan=False, allow_infinity=False),
+    publish_show_times=st.booleans(),
+    publish_laps_board=st.booleans(),
+    publish_time_board=st.booleans(),
+    publish_full_field=st.booleans(),
+    publish_all_cards=st.booleans(),
 )
 
 

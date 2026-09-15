@@ -9,6 +9,7 @@ post notices instead of failing.
 """
 
 from base64 import b64encode
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,12 +25,14 @@ import inspect
 
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
+from rivercrossing.htmlexport import ExportOptions
 from rivercrossing.ride import RideStatus
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.standings import EntryResult, Placed
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.cards_imagelist import SCALE_2X, asset_filename, asset_key, cards_dir
+from rivercrossing.ui.presenters.settings import default_settings
 from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS, ResultsWindow
 
 
@@ -128,13 +131,15 @@ def _export_inputs(context: app_module._RouteContext) -> tuple[object, object, o
 
     ``_placed_for_export`` returns Phase 3's ``(teams, solo)`` pair --
     each kind ranked from 1 -- which the tests unpack into the two
-    ``_write_export`` arguments.
+    ``_write_export`` arguments. G6: the options come from the route
+    context's own settings (the Results menu's publish flags), so the
+    context is the argument.
     """
     engine = context.presenter.engine
     return (
         engine.config,
         app_module._placed_for_export(context),
-        app_module._export_options(),
+        app_module._export_options(context),
     )
 
 
@@ -165,6 +170,57 @@ def _presenter(engine: _StubEngine) -> object:
             self.engine = engine
 
     return _Presenter(engine)
+
+
+# --- G6: the publish options now come from the persisted settings ---
+
+PUBLISH_SETTINGS_CASES = (
+    (
+        {
+            "publish_show_times": False,
+            "publish_laps_board": True,
+            "publish_time_board": False,
+            "publish_full_field": True,
+            "publish_all_cards": True,
+        },
+        ExportOptions(),
+    ),
+    (
+        {
+            "publish_show_times": True,
+            "publish_laps_board": False,
+            "publish_time_board": True,
+            "publish_full_field": False,
+            "publish_all_cards": False,
+        },
+        ExportOptions(
+            show_times=True, laps_board=False, time_board=True, full_field=False, all_cards=False
+        ),
+    ),
+)
+PUBLISH_SETTINGS_IDS = ("canvas_defaults", "all_flipped")
+
+
+@pytest.mark.parametrize(("stored", "expected"), PUBLISH_SETTINGS_CASES, ids=PUBLISH_SETTINGS_IDS)
+def test_export_options_given_stored_publish_flags_maps_them_onto_the_writer(
+    stored: dict[str, bool], expected: ExportOptions
+) -> None:
+    """G6: each publish_* flag reaches its ExportOptions field."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    context.settings = replace(default_settings(), **stored)
+
+    options = app_module._export_options(context)
+
+    assert options == expected
+
+
+def test_export_options_given_no_stored_flags_returns_the_settings_defaults() -> None:
+    """G6: a fresh context exports the persisted defaults, not zeros."""
+    context = _context(engine=_StubEngine(_snapshot()))
+
+    options = app_module._export_options(context)
+
+    assert options == ExportOptions()
 
 
 class _RecordingMenuItem:

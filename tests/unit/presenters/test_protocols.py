@@ -53,8 +53,6 @@ if TYPE_CHECKING:
 
     from rivercrossing.roster import EntryMode, PlateModel
 
-from rivercrossing.htmlexport import ExportOptions
-
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -289,13 +287,6 @@ class FakeResultsView:
     def set_stale(self, *, stale: bool) -> None:
         """No-op fake."""
 
-    def show_publish_options(self, options: ExportOptions) -> None:
-        """No-op fake."""
-
-    def publish_options(self) -> ExportOptions:
-        """No-op fake."""
-        return ExportOptions()
-
 
 class FakeLibraryView:
     """A complete ``LibraryView`` implementation for headless tests."""
@@ -418,6 +409,17 @@ class FakeDataSource:
 def test_fake_implementation_satisfies_its_protocol(fake: object, protocol: type) -> None:
     """Each complete fake structurally satisfies its Protocol."""
     assert isinstance(fake, protocol)
+
+
+def test_results_view_protocol_given_the_reworked_dialog_declares_two_members() -> None:
+    """G6: the publish-options members left the ResultsView contract.
+
+    ``FakeResultsView`` above implements exactly these two, so it is
+    the isinstance case that fails the day one of them returns.
+    """
+    declared = set(getattr(ResultsView, "__protocol_attrs__"))  # noqa: B009 -- the Protocol's own member set
+
+    assert declared == {"show_standings", "set_stale"}
 
 
 # ------------------------------------------------ presenter/DataSource

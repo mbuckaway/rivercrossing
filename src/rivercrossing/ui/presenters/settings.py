@@ -100,6 +100,13 @@ class AppSettings:
     Check for Rider Issues…`` shows. The 12 km/h default matches the
     ``avg_speed_spin`` XRC authoring; the loader floors a stored value
     at :data:`_MIN_AVG_SPEED_KMH`.
+
+    G6 adds the five ``publish_*`` fields: the results export options,
+    moved off the results dialog's removed "Publish options" box onto
+    the Results menu's checkable row. Their defaults are the retired
+    XRC checkboxes' own (times off, laps leaderboard on, fastest-time
+    leaderboard off, full field on, all cards on), so an upgrade reads
+    the same as the canvas did.
     """
 
     appearance: str
@@ -124,6 +131,13 @@ class AppSettings:
     sim_team_stop: int = 0
     # Plan §10: the card-sufficiency estimate's average rider speed.
     avg_speed_kmh: float = 12.0
+    # G6: the results export options (the Results menu's checkable
+    # row); defaults are the removed XRC checkboxes' own.
+    publish_show_times: bool = False
+    publish_laps_board: bool = True
+    publish_time_board: bool = False
+    publish_full_field: bool = True
+    publish_all_cards: bool = True
 
 
 def default_settings() -> AppSettings:
@@ -131,9 +145,11 @@ def default_settings() -> AppSettings:
 
     The first-launch / corrupt-file fallback: System appearance, sound
     on (spec §10's default), Total hidden and Lap time shown, 100%
-    zoom, no saved layout yet, verbose logging on, and the simulator's
+    zoom, no saved layout yet, verbose logging on, the simulator's
     XRC spin and behaviour defaults (G9: one short-lap rider, no
-    lapped riders, no team rider stopping).
+    lapped riders, no team rider stopping), and G6's publish options
+    (times off, laps leaderboard on, fastest-time leaderboard off,
+    full field and all cards on).
     """
     return AppSettings(
         appearance=ThemeMode.SYSTEM.value,
@@ -153,6 +169,11 @@ def default_settings() -> AppSettings:
         sim_lapped=0,
         sim_team_stop=0,
         avg_speed_kmh=12.0,
+        publish_show_times=False,
+        publish_laps_board=True,
+        publish_time_board=False,
+        publish_full_field=True,
+        publish_all_cards=True,
     )
 
 
@@ -226,6 +247,11 @@ def save_settings(settings: AppSettings, path: Path | None = None) -> None:
         "sim_lapped": settings.sim_lapped,
         "sim_team_stop": settings.sim_team_stop,
         "avg_speed_kmh": settings.avg_speed_kmh,
+        "publish_show_times": settings.publish_show_times,
+        "publish_laps_board": settings.publish_laps_board,
+        "publish_time_board": settings.publish_time_board,
+        "publish_full_field": settings.publish_full_field,
+        "publish_all_cards": settings.publish_all_cards,
     }
     tmp = settings_path.with_name(settings_path.name + ".tmp")
     tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -282,6 +308,21 @@ def _settings_from_mapping(raw: Mapping[str, object]) -> AppSettings:
         sim_team_stop=_int_or(raw.get("sim_team_stop"), defaults.sim_team_stop),
         avg_speed_kmh=_float_or(
             raw.get("avg_speed_kmh"), defaults.avg_speed_kmh, minimum=_MIN_AVG_SPEED_KMH
+        ),
+        publish_show_times=_bool_or(
+            raw.get("publish_show_times"), default=defaults.publish_show_times
+        ),
+        publish_laps_board=_bool_or(
+            raw.get("publish_laps_board"), default=defaults.publish_laps_board
+        ),
+        publish_time_board=_bool_or(
+            raw.get("publish_time_board"), default=defaults.publish_time_board
+        ),
+        publish_full_field=_bool_or(
+            raw.get("publish_full_field"), default=defaults.publish_full_field
+        ),
+        publish_all_cards=_bool_or(
+            raw.get("publish_all_cards"), default=defaults.publish_all_cards
         ),
     )
 

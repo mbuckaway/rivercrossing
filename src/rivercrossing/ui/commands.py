@@ -2,15 +2,17 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 38 menu rows reaches ("Opens / does"), and when it is allowed to
+the 39 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 38 :class:`MenuRoute` rows
+once, so both jobs read off the same 39 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
-split per format -- HTML and PDF -- in Part D. Phase 2 retired the
-dead Entry Detail… row and the duplicate Reassign Plate… / Void
-Card… rows -- Crossing Detail now owns both corrections.)
+split per format -- HTML and PDF -- in Part D, and G6 moved the five
+results publish options out of the results dialog onto a checkable
+Results row.) Phase 2 retired the dead Entry Detail… row and the
+duplicate Reassign Plate… / Void Card… rows -- Crossing Detail now
+owns both corrections.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -456,7 +458,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target="focus_review_panel",
         enabled_when=Enablement(min_held_cards=1),  # "held cards > 0 (shows count)"
     ),
-    # --- Results: 7 rows ---
+    # --- Results: 8 rows (G6 adds the publish options) ---
     MenuRoute(
         menu="Results",
         label="Standings",
@@ -470,7 +472,7 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
     ),
     MenuRoute(
         menu="Results",
-        label="Generate HTML…",
+        label="Export HTML…",
         ids=("mi_export_html",),
         kind=TargetKind.COMMAND,  # OS-native save dialog -- no app window
         target="export_html",
@@ -522,6 +524,20 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # poster) record the PDF path, so either export enables the
         # row.
         enabled_when=Enablement(allowed_states=_FINISHED, requires_pdf_export=True),
+    ),
+    MenuRoute(
+        menu="Results",
+        label="Publish Options",
+        ids=(
+            "mi_show_times",
+            "mi_laps_board",
+            "mi_time_board",
+            "mi_full_field",
+            "mi_all_cards",
+        ),
+        kind=TargetKind.COMMAND,  # "Direct commands"
+        target="results_publish",
+        enabled_when=ALWAYS,  # "always"
     ),
     # --- View: 1 row, 9 ids (W13: the theme trio left the View menu;
     # the Settings appearance radios are the single theme surface) ---

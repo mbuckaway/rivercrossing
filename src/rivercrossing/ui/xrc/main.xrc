@@ -678,16 +678,19 @@
   </object>
 
   <!--
-    Seven menus, 45 mi_* items and three stock ids, mapping 1:1 onto the
-    spec.md 15 table (File 8 - Ride 9 - Riders 5 - Cards 7 - Results 7 -
+    Seven menus, 48 mi_* items and three stock ids, mapping 1:1 onto the
+    spec.md 15 table (File 8 - Ride 9 - Riders 5 - Cards 7 - Results 12 -
     View 1 row, 8 items - Help 4). File order follows the 15 table
     (Import CSV, Export CSV, Back Up, Simulation), not 15b's listing
     order.
 
-    Results 7: mi_tiebreak_order retired; the tie-break order now comes
+    Results 12: mi_tiebreak_order retired; the tie-break order now comes
     only from the ride's stored config, set in Ride Setup. The single
     mi_preview_browser split into the per-format HTML/PDF preview
-    items (Part D), each gated on its own export existing. File 8:
+    items (Part D), each gated on its own export existing, and G6
+    added the five checkable publish options after them (a separator
+    first, since they are a second group), plus its rename of the
+    HTML row to "Export HTML…". File 8:
     mi_simulation opens the Rider Simulator after Back Up Database.
 
     W14: mi_ride_setup left the Ride menu with its spec.md 15 row; the
@@ -817,7 +820,7 @@
         <accel>F5</accel>
       </object>
       <object class="wxMenuItem" name="mi_export_html">
-        <label>Generate &amp;HTML…</label>
+        <label>Export &amp;HTML…</label>
       </object>
       <object class="wxMenuItem" name="mi_export_pdf">
         <label>Export &amp;PDF…</label>
@@ -833,6 +836,36 @@
       </object>
       <object class="wxMenuItem" name="mi_preview_pdf_browser">
         <label>Preview P&amp;DF in Browser</label>
+      </object>
+      <!--
+        G6: the five publish options moved here from the results
+        dialog's removed "Publish options" box. They are checkable
+        (no <checked>: a check item's state comes from the persisted
+        AppSettings.publish_* flags at startup, applied by
+        app._check_loaded_publish_options). R-63's gate rides on the
+        pair: with show times off, mi_time_board is unchecked and
+        disabled (app._apply_publish_gate).
+      -->
+      <object class="separator"/>
+      <object class="wxMenuItem" name="mi_show_times">
+        <label>Show lap &amp;&amp; total times</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_laps_board">
+        <label>Laps leaderboard</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_time_board">
+        <label>Fastest-time leaderboard</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_full_field">
+        <label>Full field</label>
+        <checkable>1</checkable>
+      </object>
+      <object class="wxMenuItem" name="mi_all_cards">
+        <label>All cards drawn</label>
+        <checkable>1</checkable>
       </object>
     </object>
 

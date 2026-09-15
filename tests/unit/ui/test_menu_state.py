@@ -7,7 +7,7 @@ that *applies* those rules to a real menu bar. This module pins the
 binder headlessly:
 
 1. ``enablement_table`` produces one enable/disable verdict per routed
-   menu item id (45 ids, one per ``commands.ROUTE_TABLE`` row), and
+   menu item id (50 ids, one per ``commands.ROUTE_TABLE`` row), and
    the verdicts agree with ``commands.is_route_enabled`` for every
    generated ``RideState`` (a Hypothesis property).
 2. The correction rows' verdicts are parametrized over the four ride
@@ -139,6 +139,30 @@ def test_enablement_table_edit_crossing_needs_a_crossing(status: RideStatus) -> 
 
     assert menu_state.enablement_table(empty)[ids.MI_EDIT_CROSSING] is False
     assert menu_state.enablement_table(one)[ids.MI_EDIT_CROSSING] is allowed
+
+
+# G6: the Results publish row's ids, transcribed independently of
+# app._RESULTS_PUBLISH_MENU_IDS. Their §15 rule is "always"; R-63's
+# show-times/board gate is applied by the app *after* this walk, not
+# by a route rule.
+_PUBLISH_MENU_IDS = (
+    "mi_show_times",
+    "mi_laps_board",
+    "mi_time_board",
+    "mi_full_field",
+    "mi_all_cards",
+)
+
+
+@pytest.mark.parametrize("item_id", _PUBLISH_MENU_IDS)
+@pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)
+def test_enablement_table_given_a_publish_id_is_enabled_in_every_state(
+    item_id: str, *, status: RideStatus
+) -> None:
+    """G6: the publish row declares no ride-state gate at all."""
+    table = menu_state.enablement_table(_baseline_state(status))
+
+    assert table[item_id] is True
 
 
 @pytest.mark.parametrize(

@@ -174,6 +174,31 @@ def test_settings_dialog_collect_settings_carries_the_dialogless_fields_through(
     )
 
 
+def test_settings_dialog_collect_settings_carries_the_publish_options_through(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G6: OK must never reset the Results menu's publish options."""
+    settings = replace(
+        default_settings(),
+        publish_show_times=True,
+        publish_laps_board=False,
+        publish_time_board=True,
+        publish_full_field=False,
+        publish_all_cards=False,
+    )
+    view, _controls, _dialog = _build_view(monkeypatch, settings=settings)
+
+    collected = view.collect_settings()
+
+    assert (
+        collected.publish_show_times,
+        collected.publish_laps_board,
+        collected.publish_time_board,
+        collected.publish_full_field,
+        collected.publish_all_cards,
+    ) == (True, False, True, False, False)
+
+
 # ---------------------------------------- the appearance radio render
 
 
