@@ -193,7 +193,7 @@ def test_build_fields_given_a_held_card_reports_it_held() -> None:
 
     fields = crossing_detail.build_fields(crossing, roster, engine)
 
-    assert fields.held == "Held — short lap awaiting review"
+    assert fields.held == "Held - Review"
     assert fields.card == format_card(held.code())
 
 
@@ -207,7 +207,50 @@ def test_build_fields_given_a_voided_card_reports_it_voided() -> None:
 
     fields = crossing_detail.build_fields(crossing, roster, engine)
 
-    assert fields.held == "Voided"
+    assert fields.held == "Void"
+
+
+@pytest.mark.parametrize("index", [0, 1], ids=["older_twin", "newer_twin"])
+def test_build_fields_given_either_half_of_a_duplicate_pair_reports_it_duplicate(
+    index: int,
+) -> None:
+    """Phase 3: each half of a same-instant pair reads "Duplicate"."""
+    roster = _solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+
+    fields = crossing_detail.build_fields(engine.crossings[index], roster, engine)
+
+    assert fields.held == "Duplicate"
+
+
+def test_build_fields_given_a_held_duplicate_reports_duplicate_not_held() -> None:
+    """T-13: the pair membership outranks the held disposition."""
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    crossing = engine.crossings[1]
+    assert engine.held_card_for(crossing) is not None
+
+    fields = crossing_detail.build_fields(crossing, roster, engine)
+
+    assert fields.held == "Duplicate"
+
+
+def test_build_fields_given_a_second_duplicate_pair_reports_it_duplicate() -> None:
+    """T-4 [many]: the scan reaches every pair, not just the first."""
+    roster = _two_solo_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("34", at=_dt(10, 5))
+    engine.record_crossing("34", at=_dt(10, 5))
+
+    fields = crossing_detail.build_fields(engine.crossings[3], roster, engine)
+
+    assert fields.held == "Duplicate"
 
 
 class _StubEngine:
@@ -244,6 +287,10 @@ class _StubEngine:
     def credited_cards(self, plate: str) -> tuple[Card, ...]:  # noqa: ARG002
         """Return the scripted credited hand."""
         return self._credited
+
+    def duplicate_crossings(self) -> tuple[tuple[Crossing, Crossing], ...]:
+        """Report no pairs: every scripted crossing is a lone one."""
+        return ()
 
 
 def test_build_fields_given_a_seq_past_the_recorded_laps_renders_zero_times() -> None:
@@ -612,7 +659,7 @@ def test_ids_given_the_removed_plate_field_declares_no_plate_input_constant() ->
 # The two caption columns' text, in the order the dialog draws them.
 _CAPTION_COLUMNS = (
     ("Rider", "Team", "Plate", "Lap #", "Crossing time"),
-    ("Lap time", "Total time", "Card", "Held / flagged"),
+    ("Lap time", "Total time", "Card", "Status"),
 )
 
 
@@ -858,6 +905,13 @@ def test_render_given_a_ride_that_is_not_live_disables_delete(state: RideStatus)
 # The crossing detail's two new corrections: edit_time_btn retimes the
 # crossing through ``edit_crossing_dlg`` in edit mode, void_card_btn
 # voids the crossing's own dealt card through ``void_card_confirm_dlg``.
+#
+# logic-coverage-exempt: T-13 -- the Void Card gate is two booleans,
+# ``_card_is_credited() or _is_duplicate()``, and its fourth row
+# (credited AND duplicate) is unobservable: ``or`` short-circuits and
+# the right operand is a pure read, so (true, false) and (true, true)
+# enable the identical button. The three observable rows are pinned
+# below and in the duplicate cases above.
 
 
 def test_render_given_a_credited_card_enables_the_new_corrections() -> None:
@@ -895,6 +949,19 @@ def test_render_given_a_voided_card_disables_void_card() -> None:
     view.render()
 
     assert (view.edit_time_btn.enabled, view.void_card_btn.enabled) == (True, False)
+
+
+def test_render_given_a_duplicate_whose_card_is_held_enables_void_card() -> None:
+    """Phase 3: voiding one twin is what a held duplicate needs."""
+    roster = _solo_roster()
+    engine = _running_engine(roster, min_lap_s=1080, hold_short_laps=True)
+    engine.record_crossing("12", at=_dt(10, 2))
+    engine.record_crossing("12", at=_dt(10, 2))
+    view = _view(engine, roster=roster, crossing=engine.crossings[1])
+
+    view.render()
+
+    assert (view.void_card_btn.enabled, view.crossing_held_lbl.value) == (True, "Duplicate")
 
 
 def test_render_given_a_pending_miss_disables_both_new_corrections() -> None:
@@ -1105,7 +1172,7 @@ def test_on_void_card_given_a_confirmed_void_rerenders_the_crossing_in_place(
     assert engine.events[-1].action == "void_card"
     assert engine.events[-1].payload["reason"] == "wrong card"
     assert (view.dialog.modal_ids, event.skipped) == ([], True)
-    assert (view.crossing_held_lbl.value, view.void_card_btn.enabled) == ("Voided", False)
+    assert (view.crossing_held_lbl.value, view.void_card_btn.enabled) == ("Void", False)
 
 
 def test_on_void_card_given_a_pooled_team_crossing_names_the_typing_rider(
