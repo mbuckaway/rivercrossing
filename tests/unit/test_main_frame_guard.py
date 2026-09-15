@@ -88,7 +88,7 @@ def _refuse_wx_lookup(*_args: object, **_kwargs: object) -> None:
 
 
 def test_required_controls_lists_exactly_the_init_find_controls() -> None:
-    """The verify tuple is the single source for __init__'s 33 finds.
+    """The verify tuple is the single source for __init__'s 34 finds.
 
     Pins the contract so the guard can never silently drift from
     ``MainFrame.__init__``: if a control is added/removed there without
@@ -134,6 +134,7 @@ def test_required_controls_lists_exactly_the_init_find_controls() -> None:
         ids.REVIEW_NOTEBOOK,
         ids.FLAGGED_LIST,
         ids.REVIEW_BTN,
+        ids.SHOW_HELD_ONLY_CHK,
         ids.CONSOLE_RIDERS_LIST,
     )
 
@@ -178,6 +179,7 @@ def test_required_control_classes_transcribe_the_init_find_calls() -> None:
         ids.REVIEW_NOTEBOOK: wx.Notebook,
         ids.FLAGGED_LIST: wx.dataview.DataViewCtrl,
         ids.REVIEW_BTN: wx.Button,
+        ids.SHOW_HELD_ONLY_CHK: wx.CheckBox,
         ids.CONSOLE_RIDERS_LIST: wx.dataview.DataViewCtrl,
     }
     assert expected == REQUIRED_CONTROL_CLASSES

@@ -71,6 +71,7 @@ MAIN_FRAME_CONTROLS = (
     "teams_count_lbl",
     "review_notebook",
     "flagged_list",
+    "show_held_only_chk",
     "review_btn",
     "console_riders_list",
     "main_statusbar",
@@ -406,6 +407,18 @@ def test_window_declares_no_duplicate_control_name(window_name: str) -> None:
     repeated = sorted(name for name, count in counts.items() if count > 1)
 
     assert repeated == []
+
+
+def test_show_held_only_chk_declares_the_frozen_needs_review_label() -> None:
+    """The Needs Review tab's filter box carries its frozen copy."""
+    checkbox = next(
+        obj
+        for obj in _window("main_frame").iter("object")
+        if obj.get("name") == "show_held_only_chk"
+    )
+
+    assert checkbox.get("class") == "wxCheckBox"
+    assert _param(checkbox, "label") == "Show Held Cards Only"
 
 
 @pytest.mark.parametrize("filename", XRC_FILES)
