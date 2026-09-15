@@ -230,8 +230,13 @@ def test_feed_rows_given_a_pooled_team_crossing_names_the_team_beside_the_rider(
     assert (feed[0].entry, feed[0].team) == ("Sarah", "Dirt Dynamos")
 
 
-def test_feed_rows_given_a_solo_crossing_carries_a_blank_team() -> None:
-    """T-3 negative: a solo entry leaves the Team cell blank."""
+def test_feed_rows_given_a_solo_crossing_carries_the_word_solo() -> None:
+    """A solo entry names no team, so the Team cell reads "solo".
+
+    The same word every rider list shows for a solo rider
+    (``rider_columns.SOLO_TEAM_TEXT``) -- never a blank cell and never
+    the rider's own name repeated from the Name column.
+    """
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
     roster.create_solo_entry(first_name="Amy", plate="12")
     engine = _running_engine(roster)
@@ -240,7 +245,37 @@ def test_feed_rows_given_a_solo_crossing_carries_a_blank_team() -> None:
 
     feed = source.feed_rows()
 
-    assert feed[0].team == ""
+    assert (feed[0].entry, feed[0].team) == ("Amy", "solo")
+
+
+def test_feed_rows_given_a_pending_miss_carries_a_blank_team() -> None:
+    """T-3 negative: a miss has no entry, so its Team cell is ""."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert (feed[0].missed, feed[0].team) == (True, "")
+
+
+def test_feed_rows_given_a_crossing_whose_entry_left_the_roster_is_blank() -> None:
+    """T-3 negative: no resolvable entry, so nothing names a team.
+
+    The crossing is recorded against the real roster and then read
+    through a source whose roster no longer holds that entry -- the
+    feed's own "entry left the roster" case, where Plate and Name fall
+    back to the stored id and the Team cell has nothing to render.
+    """
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    source = EngineDataSource(engine, Roster(entry_mode=EntryMode.MIXED))
+
+    feed = source.feed_rows()
+
+    assert (feed[0].entry, feed[0].team) == ("9", "")
 
 
 def test_rider_name_for_given_matching_plate_returns_that_riders_full_name() -> None:

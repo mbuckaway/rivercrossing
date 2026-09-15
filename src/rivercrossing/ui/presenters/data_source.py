@@ -29,6 +29,7 @@ from rivercrossing.standings import (
     hand_name,
     rank_by_kind,
 )
+from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -85,9 +86,9 @@ class FeedRow:
     ``h:mm:ss`` text (``StandingsRow.total_seconds``' own rule).
 
     ``team`` is the Team column's cell: the entry's ``display_name``
-    for a ``TEAM`` entry, ``""`` for a solo rider (and for a miss,
-    which has no entry at all), so the column stays blank rather than
-    repeating the solo rider's own name.
+    for a ``TEAM`` entry, ``"solo"`` for a solo rider -- the word every
+    rider list shows, never the solo rider's own name repeated from the
+    Name column -- and ``""`` for a miss, which has no entry at all.
 
     ``duplicate`` (Phase 3) marks one half of a live duplicate pair
     (``RideEngine.duplicate_crossings``: same entry, identical
@@ -515,6 +516,25 @@ def _rider_name_for(entry: Entry | None, rider_plate: str | None) -> str | None:
     return None
 
 
+def _team_name_for(entry: Entry | None) -> str:
+    """Return the Team column's cell for *entry*, or blank for no entry.
+
+    A solo rider names no team, so the cell reads the word "solo"
+    rather than leaving the column blank or repeating the rider's own
+    name from the Name column; the word is the one every rider list
+    shows for a solo rider (:data:`rider_columns.SOLO_TEAM_TEXT`), so
+    the two screens cannot drift. A crossing whose plate no longer
+    resolves to the roster (``None``) has no team to name either, so
+    its cell stays blank -- as does a miss's, which is built from the
+    ``FeedRow.team`` default (``_miss_feed_row``).
+    """
+    if entry is None:
+        return ""
+    if entry.type is EntryType.SOLO:
+        return SOLO_TEAM_TEXT
+    return entry.display_name
+
+
 def _miss_feed_row(miss: PendingMiss, start: datetime | None) -> FeedRow:
     """Build the feed row for one pending miss (K).
 
@@ -603,11 +623,7 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
     held_card = engine.held_card_for(crossing)
     rider_name = _rider_name_for(feed_entry, crossing.rider_plate)
     entry_name = feed_entry.display_name if feed_entry is not None else crossing.entry_id
-    team_name = (
-        feed_entry.display_name
-        if feed_entry is not None and feed_entry.type is EntryType.TEAM
-        else ""
-    )
+    team_name = _team_name_for(feed_entry)
     elapsed_s = _elapsed_seconds(crossing.crossed_at, context.start)
     rider_plate = crossing.rider_plate
     return (

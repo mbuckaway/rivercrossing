@@ -52,7 +52,7 @@ __all__ = [
 COL_TIME = 0
 COL_PLATE = 1
 COL_NAME = 2  # the entry's display name (W9: header "Name", not "Entry")
-COL_TEAM = 3  # the team's display name, blank for a solo entry
+COL_TEAM = 3  # the team's display name, `solo` for a solo entry
 COL_CARD = 4
 COL_LAP = 5
 COL_LAP_TIME = 6
@@ -125,8 +125,8 @@ def _name_sort_key(row: FeedRow) -> str:
 def _team_sort_key(row: FeedRow) -> str:
     """Return the Team sort key: the casefolded team display name.
 
-    The Name column's own rule; a solo row's blank team sorts with the
-    empty string ahead of every named team.
+    The Name column's own rule; a miss row -- the only blank Team
+    cell -- sorts with the empty string ahead of every other row.
     """
     return row.team.casefold()
 

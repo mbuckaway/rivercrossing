@@ -123,14 +123,14 @@ def _relay_team_roster() -> Roster:
 
 
 def test_build_fields_given_a_solo_crossing_maps_every_field() -> None:
-    """A solo crossing renders its rider, entry, lap and times."""
+    """A solo crossing renders its rider, "solo", lap and times."""
     roster = _solo_roster()
     engine = _running_engine(roster)
     engine.record_crossing("12", at=_dt(10, 2))
 
     fields = crossing_detail.build_fields(engine.crossings[0], roster, engine)
 
-    assert (fields.rider, fields.team, fields.plate, fields.lap) == ("Amy", "Amy", "12", "1")
+    assert (fields.rider, fields.team, fields.plate, fields.lap) == ("Amy", "solo", "12", "1")
     assert (fields.time, fields.lap_time, fields.total) == ("10:02:00", "2:00", "0:02:00")
 
 
@@ -255,7 +255,11 @@ def test_build_fields_given_a_seq_past_the_recorded_laps_renders_zero_times() ->
 
 
 def test_build_fields_given_an_unknown_entry_falls_back_to_the_entry_id() -> None:
-    """A crossing whose entry left the roster still renders its id."""
+    """A crossing whose entry left the roster still renders its id.
+
+    T-3 negative of the solo branch: with no entry to type-check, the
+    Team field falls back to ``crossing.entry_id`` rather than "solo".
+    """
     crossing = Crossing(entry_id="99", seq=1, crossed_at=_dt(10, 5), rider_plate="99")
     engine = _StubEngine(lap_times=(60.0,), credited=("AS",))
 
@@ -606,7 +610,7 @@ def test_render_given_a_lone_crossing_fills_every_label() -> None:
         view.crossing_time_lbl.label,
         view.crossing_lap_time_lbl.label,
         view.crossing_total_lbl.label,
-    ) == ("Amy", "Amy", "12", "1", "10:02:00", "2:00", "0:02:00")
+    ) == ("Amy", "solo", "12", "1", "10:02:00", "2:00", "0:02:00")
     assert view.crossing_card_lbl.label == format_card(engine.card_for(engine.crossings[0]).code())
     assert view.crossing_held_lbl.label == "Credited"
 
@@ -933,6 +937,36 @@ def test_on_void_card_given_a_confirmed_void_rerenders_the_crossing_in_place(
     assert (view.crossing_held_lbl.label, view.void_card_btn.enabled) == ("Voided", False)
 
 
+def test_on_void_card_given_a_pooled_team_crossing_names_the_typing_rider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """xrc-windows.md: the confirm names the dealt-to entry.
+
+    "45 · J. Okafor" -- the rider whose plate was typed (J1), not the
+    Team column's own display name and never a bare "solo".
+    """
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    card = engine.card_for(engine.crossings[0])
+    view = _view(engine, roster=roster)
+    calls = _stub_run_void_card(
+        monkeypatch, CardVoid(entry_id="45", card=card.code(), reason="wrong card")
+    )
+
+    view._on_void_card(_RecordingEvent())
+
+    assert calls == [
+        {
+            "frame": view.dialog,
+            "entry_id": "9",
+            "card": card.code(),
+            "entry": "45 · Sarah",
+        }
+    ]
+    assert engine.credited_cards("9") == ()
+
+
 def test_on_void_card_given_a_cancelled_dialog_leaves_the_ride_alone(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1238,7 +1272,7 @@ def _delete_fields(
     """Return the view-model Delete's confirm copy renders from."""
     return crossing_detail.CrossingDetailFields(
         rider="Amy",
-        team="Amy",
+        team="solo",
         plate="12",
         lap=lap,
         time=time,

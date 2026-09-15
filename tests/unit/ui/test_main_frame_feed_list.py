@@ -974,9 +974,16 @@ def test_get_value_by_row_given_a_team_row_returns_the_team_name() -> None:
     assert model.GetValueByRow(0, feed_model.COL_TEAM) == "Dirt Dynamos"
 
 
-def test_get_value_by_row_given_a_solo_row_returns_the_blank_team() -> None:
-    """A solo entry has no team, so its Team cell is blank."""
-    model = _model(_feed_row(team=""))
+def test_get_value_by_row_given_a_solo_row_returns_the_word_solo() -> None:
+    """A solo entry names no team, so its Team cell reads "solo"."""
+    model = _model(_feed_row(team="solo"))
+
+    assert model.GetValueByRow(0, feed_model.COL_TEAM) == "solo"
+
+
+def test_get_value_by_row_given_a_missed_row_returns_the_blank_team() -> None:
+    """T-3 negative: a miss has no entry: its Team cell is ""."""
+    model = _model(_feed_row(plate="-", entry="missed", team="", missed=True))
 
     assert model.GetValueByRow(0, feed_model.COL_TEAM) == ""
 

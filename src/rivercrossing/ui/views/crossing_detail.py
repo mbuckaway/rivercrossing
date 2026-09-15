@@ -70,9 +70,11 @@ import wx.xrc  # submodule, not loaded by plain `import wx`
 
 from rivercrossing.cards import Card
 from rivercrossing.ride import RideEngineError, RideStatus
+from rivercrossing.roster import EntryType
 from rivercrossing.ui import ids, std_dialogs
 from rivercrossing.ui.card_text import format_card
 from rivercrossing.ui.presenters.data_source import format_duration
+from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 from rivercrossing.ui.views import corrections, dialogs
 from rivercrossing.ui.views._support import DialogFindMixin, find_control, load_dialog
 
@@ -204,6 +206,24 @@ def _rider_name(entry: Entry | None, rider_plate: str | None) -> str | None:
     return None
 
 
+def _team_name(entry: Entry | None, entry_id: str) -> str:
+    """Return the Team field's text for *entry*.
+
+    A solo rider has no team to name, so the field reads the word
+    :data:`~rivercrossing.ui.rider_columns.SOLO_TEAM_TEXT` rather than
+    repeating the rider's own name from the Rider field -- the word
+    the console feed's Team column shows for the same crossing. A
+    crossing whose entry has left the roster has nothing to type-check,
+    so it falls back to the raw *entry_id* (``build_fields``' own
+    ``entry_name`` rule).
+    """
+    if entry is None:
+        return entry_id
+    if entry.type is EntryType.SOLO:
+        return SOLO_TEAM_TEXT
+    return entry.display_name
+
+
 def _lap_and_total(engine: RideEngine, crossing: Crossing) -> tuple[float, float]:
     """Return ``(lap time, running total)`` in seconds for *crossing*.
 
@@ -247,6 +267,7 @@ def build_fields(crossing: Crossing, roster: Roster, engine: RideEngine) -> Cros
     entry = roster.resolve_plate(crossing.entry_id)
     entry_name = entry.display_name if entry is not None else crossing.entry_id
     rider = _rider_name(entry, crossing.rider_plate)
+    team = _team_name(entry, crossing.entry_id)
     lap_time, total = _lap_and_total(engine, crossing)
     # W9's feed rule: a held crossing still shows the real dealt code,
     # never a placeholder -- held_card_for is that answer.
@@ -254,7 +275,7 @@ def build_fields(crossing: Crossing, roster: Roster, engine: RideEngine) -> Cros
     card = held if held is not None else engine.card_for(crossing)
     return CrossingDetailFields(
         rider=rider or entry_name,
-        team=entry_name,
+        team=team,
         plate=crossing.rider_plate or crossing.entry_id,
         lap=str(crossing.seq),
         time=_local_time(crossing.crossed_at),
@@ -761,12 +782,17 @@ class CrossingDetailView(_DetailDialogView):
         event.Skip()
         card = self.engine.card_for(self.crossing)
         entry = build_fields(self.crossing, self.roster, self.engine)
+        # xrc-windows.md pins this confirm's label to "the entry the
+        # card was dealt to" ("45 · J. Okafor"), and fields.team reads
+        # "solo" for a solo rider, so the name comes from the rider
+        # field -- which falls back to the entry's own name for a
+        # team_relay ride and for an entry that left the roster.
         void = corrections.run_void_card(
             wx.xrc.XmlResource.Get(),
             frame=self.dialog,
             entry_id=self.crossing.entry_id,
             card=card.code(),
-            entry=f"{entry.plate} · {entry.team}",
+            entry=f"{entry.plate} · {entry.rider}",
         )
         if void is None:
             return

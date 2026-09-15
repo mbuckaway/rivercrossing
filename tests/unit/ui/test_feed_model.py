@@ -181,9 +181,9 @@ def test_team_sort_key_given_mixed_case_teams_orders_case_insensitively() -> Non
     assert ordered == [aces, zoe]
 
 
-def test_team_sort_key_given_a_solo_row_returns_the_blank_key() -> None:
-    """A solo row has no team: its key is the empty string."""
-    assert COLUMN_SORT_KEYS[COL_TEAM](_feed_row(team="")) == ""
+def test_team_sort_key_given_a_miss_row_returns_the_blank_key() -> None:
+    """A miss has no entry and no team: its key is empty."""
+    assert COLUMN_SORT_KEYS[COL_TEAM](_feed_row(entry="missed", team="", missed=True)) == ""
 
 
 @given(team=st.text(max_size=20))
