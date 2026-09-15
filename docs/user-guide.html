@@ -188,7 +188,7 @@
 <ul>
   <li><strong>Finish ride</strong> — <strong>Ride ▸ Finish Ride…</strong> locks entry, runs the hand evaluator's self-test (a red self-test blocks finishing, R-44), and computes the final standings — it publishes nothing by itself: the lamp turns red, the status label reads <code>FINISHED</code>, and the status bar says the ride is finished and the results are available. Generate the results yourself from the <strong>Results</strong> menu — <strong>Generate HTML…</strong>, <strong>Export PDF…</strong>, <strong>Podium Poster PDF…</strong>, <strong>Export Standings CSV…</strong> — or from the results dialog's own export buttons. Open the standings with <strong>Results ▸ Standings</strong> (<kbd>F5</kbd>).</li>
   <li><strong>Finish gate</strong> — the evaluator self-test runs fresh on every finish; a red result blocks it. DNF riders are excluded from the results outright — not ranked, not listed, not exported — and held cards never count until you confirm them.</li>
-  <li><strong>Ties</strong> — identical best hands are resolved by the ride's tie-break order (it opens on high-card draw, then most laps, then shortest total time). The order is set in ride setup and locks once the ride starts; <strong>Ride ▸ Edit Ride…</strong> can still change it while the ride is a draft.</li>
+  <li><strong>Ties</strong> — the hand that used fewer jokers wins first; otherwise identical best hands — same hand and same joker count — are resolved by the ride's tie-break order (it opens on high-card draw, then most laps, then shortest total time). The order is set in ride setup and locks once the ride starts; <strong>Ride ▸ Edit Ride…</strong> can still change it while the ride is a draft.</li>
   <li><strong>Reopen for corrections</strong> — <strong>Ride ▸ Reopen Ride</strong> reopens a finished ride for corrections: entry is locked, edits are highlighted in the crossings list, and <em>Finish again</em> re-locks and re-ranks. After corrections, the results dialog flags the published results as stale until you export again.</li>
   <li><strong>Continue a reopened ride</strong> — Start stays live while a ride is reopened: pressing GO (or <strong>Ride ▸ Start Ride</strong>) continues it — entry unlocks, the clock (held at the recorded finish while reopened) goes live again from the ride's original start, and that recorded finish is discarded. Finish again when the riding is truly over.</li>
 </ul>
@@ -209,10 +209,11 @@
 
 <section id="poker-the-run-way">
 <h2>9 · Poker, the run way</h2>
-<p>It is not a race — it is a poker run. Each completed lap deals one card; at the finish, every entry's <strong>best 5-card hand from all cards drawn</strong> is scored. Jokers are wild: a joker plays as any card you need.</p>
+<p>It is not a race — it is a poker run. Each completed lap deals one card; at the finish, every entry's <strong>best 5-card hand from all cards drawn</strong> is scored. Jokers are wild: a joker plays as any card you need — but only when it actually improves the hand; a spare joker that does not improve it is left unused.</p>
 <p>Hand rankings, best to worst:</p>
 <ol>
-  <li>Five of a kind (with jokers)</li>
+  <li>Five of a kind (wild or natural)</li>
+  <li>Royal flush</li>
   <li>Straight flush</li>
   <li>Four of a kind</li>
   <li>Full house</li>
@@ -223,7 +224,9 @@
   <li>One pair</li>
   <li>High card</li>
 </ol>
-<p>Duplicates across entries are expected — the shoe is shuffled, not dealt from a single deck — and the shoe reshuffles automatically if it empties. Two entries with identical best hands are resolved by the ride's tie-break order, never guessed.</p>
+<p><strong>Natural beats wild.</strong> Two hands of the same class and the same kickers are separated by joker count: the hand that used fewer jokers wins, so a natural hand beats an equal hand that used any joker, and one joker beats two. This is part of hand strength, so it is settled before the ride's laps and total-time tie-breaks. A natural five of a kind beats a wild five of a kind of the same rank the same way.</p>
+<p>Only the best five cards score — cards beyond the fifth never change the hand. An entry holding fewer than five cards still ranks: its cards score as the best partial hand they make, and a missing kicker always ranks below a present one.</p>
+<p>Duplicates across entries are expected — the shoe is shuffled, not dealt from a single deck — and the shoe reshuffles automatically if it empties. Two entries with identical best hands — same hand <em>and</em> same joker count — are resolved by the ride's tie-break order, never guessed.</p>
 </section>
 
 <section id="card-shoe">

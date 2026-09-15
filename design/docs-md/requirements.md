@@ -61,10 +61,10 @@ Each requirement is testable and traces to the [engineering spec](spec.md) (§) 
 | ID | Level | Requirement | Trace |
 |---|---|---|---|
 | R-40 | MUST | Each completed lap deals one card from a seeded, shuffled multi-deck shoe; the deal is deterministic and replayable from the stored seed; empty shoe reshuffles with an audit entry. | §4 |
-| R-41 | MUST | Standings rank entries by best 5-card hand from all held cards, jokers fully wild, five of a kind above royal flush; ranking table per §5 stored locally. | §5 |
+| R-41 | MUST | Standings rank entries by best 5-card hand from all held cards, jokers fully wild, five of a kind above royal flush, and — on equal class and kickers — fewer jokers above more, so a natural five of a kind beats a wild one of the same rank; ranking table per §5 stored locally. | §5 |
 | R-42 | MUST | The hand algorithm handles 0–2+ jokers and any card count up to the cap; whole-field evaluation (180 entries × 12 cards) completes in under 1 s. | §5/§11 |
-| R-43 | MUST | Identical hands resolve by the configured tie-break order; unresolved ties are flagged "draw required" — the results window's ⚠ badge, explained on a row double-click — never silently ordered. | §5 · [resultsframe](xrc-windows.md) |
-| R-44 | MUST | Evaluator self-test (7,462 ranks + joker vectors) runs at launch and on demand from Help; failure blocks finishing a ride. | §12 · [selftestdlg](xrc-windows.md) |
+| R-43 | MUST | Identical hands — same class, same kickers and same joker count — resolve by the configured tie-break order; unresolved ties are flagged "draw required" — the results window's ⚠ badge, explained on a row double-click — never silently ordered. | §5 · [resultsframe](xrc-windows.md) |
+| R-44 | MUST | Evaluator self-test (7,462 ranks + joker vectors + five-of-a-kind ordering, natural above wild) runs at launch and on demand from Help; failure blocks finishing a ride. | §12 · [selftestdlg](xrc-windows.md) |
 | R-45 | MUST | Team-mode scoring: every lap's card credits the **team entry**, never an individual rider — on `rider_pooled` a member's laps deal into the team's pooled hand (R-16); on `team_relay` the entry's crossings deal into the team's hand (R-22). Riders never hold or score a hand of their own. | §1/§5 |
 
 ### 6 · Resilience

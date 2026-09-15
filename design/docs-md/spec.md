@@ -78,18 +78,21 @@ The shoe's jokers follow the ride's **jokers mode** (`ride.jokers_mode`, the set
 
 Within a class, standard kicker comparison — the 7,462 distinct natural ranks are stored as one integer per entry, so sorting the field is a plain sort. Ship the rank table locally; self-test on startup against known vectors (wheel straight, joker five-of-a-kind, …).
 
+**Natural beats wild.** Among hands of equal class and kicker, the hand that uses fewer jokers wins. A natural hand beats an equal wild hand, and one joker beats two, two beats three, up to five. This is part of hand strength, so `hands.compare` applies it before the ride's laps/time tie-breaks, and the pair is never a "draw required" tie. A wild is played only where it improves the hand, so a surplus joker is left unused and an equal-rank natural hand always wins; a *natural* five of a kind also beats a *wild* five of a kind of the same rank.
+
 ```
 best_hand(cards):                # any n — R-16 pools are uncapped
   naturals, j = split_jokers(cards)
-  if j >= 5: return FIVE_OF_KIND(Ace)
   best = -inf
-  # a wild never hurts → all jokers play
-  for subset in combinations(naturals, 5 - j):
-    for fill in completions(subset, j):
-      # candidates pruned to: ranks in subset,
-      # straight-completing ranks, suits present,
-      # aces — ≤ ~20 per wild (52 also fine)
-      best = max(best, eval5(subset + fill))
+  # a wild is used only where it improves the hand;
+  # a surplus joker is not played
+  for k in range(max(0, 5 - len(naturals)), min(5, j) + 1):
+    for subset in combinations(naturals, 5 - k):
+      for fill in completions(subset, k):
+        # candidates pruned to: ranks in subset,
+        # straight-completing ranks, suits present,
+        # aces — ≤ ~20 per wild (52 also fine)
+        best = max(best, eval5(subset + fill), key=(class, kickers, -k))
   return best
 # eval5 = phevaluator/treys + a five-of-a-kind
 # check ranked above straight flush.
@@ -99,12 +102,14 @@ best_hand(cards):                # any n — R-16 pools are uncapped
 
 The sketch defines the semantics; the shipped evaluator does not enumerate subsets. It builds one
 candidate hand per hand class directly from rank multiplicities and per-suit straight windows
-(jokers fill greedily), then takes the best — so an uncapped pooled hand (R-16) evaluates in O(n).
+(jokers fill greedily), once per joker count `k` in that same range, then takes the best by
+`(class, kickers, -k)` — so an uncapped pooled hand (R-16) evaluates in O(n).
 Measured: a 60-card pool in under a millisecond, the whole 180×12 field in ~16 ms. Subset
 enumeration saturated its own pruning past ~20 cards and silently dropped straight-completing
-cards — both measured before the rewrite.
+cards — both measured before the rewrite. The `k` range's lower bound is load-bearing: a joker
+count that cannot assemble 5 cards yields no candidate at all.
 
-A joker always plays as whichever natural card — or, with more than one joker, whichever combination of natural cards — turns the hand into the best hand reachable, never the first legal completion. A joker may duplicate a card already held elsewhere in the same hand: the multi-deck shoe (§4) means a repeated card is not a foul, and refusing to reuse a suit just because it appears elsewhere in the hand would silently settle for a worse hand than the cards actually support. The table below is the joker vector set the startup self-test checks (§5's own "known vectors" line, above); `src/rivercrossing/vectors/joker_vectors.csv` encodes it row for row and ships as package data, so the installed app's launch self-test reads the same file the tests do (R-44).
+Within `eval5` (exactly 5 cards) and a partial hand (fewer than 5), a joker always plays as whichever natural card — or, with more than one joker, whichever combination of natural cards — turns the hand into the best hand reachable, never the first legal completion, because neither path has a surplus joker to leave out. In `best_hand`'s 5-or-more-card pools a joker plays only where it strictly improves the hand, so a surplus joker stays unused. A joker may duplicate a card already held elsewhere in the same hand: the multi-deck shoe (§4) means a repeated card is not a foul, and refusing to reuse a suit just because it appears elsewhere in the hand would silently settle for a worse hand than the cards actually support. The table below is the joker vector set the startup self-test checks (§5's own "known vectors" line, above); `src/rivercrossing/vectors/joker_vectors.csv` encodes it row for row and ships as package data, so the installed app's launch self-test reads the same file the tests do (R-44).
 
 *One joker*
 
@@ -147,9 +152,9 @@ A joker always plays as whichever natural card — or, with more than one joker,
 |---|---|
 | A A | Five of a Kind, aces |
 | A | Five of a Kind, aces |
-| (none) | Five of a Kind, aces — the `j >= 5` shortcut above |
+| (none) | Five of a Kind, aces — the `k = 5` row of the pseudocode above |
 
-**Card cap X** (optional per ride): only the first X dealt cards score; later laps still count for laps/time. Entries holding fewer than 5 cards still rank: their cards form the best partial hand, and a missing kicker always ranks below any present one (a 4-card ace-high sits under every 5-card ace-high). A multi-deck shoe can deal one entry two physically identical cards, and within that entry's own hand they rank exactly as the physical cards they are — a pair, three, or four of a kind, or a flush whose kickers happen to repeat a rank, never a dealing error — with five identical cards, wild-assisted or all natural, either way Five of a Kind. Hands this produces outside the 7,462-entry natural table order the same way every hand does: by class, then by the standard kicker comparison. **Ties** between byte-identical hand ranks resolve by the ride's ordered rules, applied to a FINISHED ride's results: the stored order defaults to ① high-card draw ② most laps ③ shortest total time, and a pair the sort still cannot separate when it reaches high-card draw is flagged “draw required” at the venue. A ride that is not yet finished ignores the stored order — its standings auto-rank ① most laps ② shortest total time, never a live venue draw. The order is editable after the finish; standings re-run instantly. Hand names render in one style everywhere — title-case em-dash ("Four of a Kind — Nines", "Full House — Aces over Fours"), produced by `rivercrossing.standings.hand_name` (E6.1.1; the frozen results-window sample row and the golden exports agree on it).
+**Card cap X** (optional per ride): only the first X dealt cards score; later laps still count for laps/time. Entries holding fewer than 5 cards still rank: their cards form the best partial hand, and a missing kicker always ranks below any present one (a 4-card ace-high sits under every 5-card ace-high). A multi-deck shoe can deal one entry two physically identical cards, and within that entry's own hand they rank exactly as the physical cards they are — a pair, three, or four of a kind, or a flush whose kickers happen to repeat a rank, never a dealing error — with five identical cards, wild-assisted or all natural, either way Five of a Kind. Hands this produces outside the 7,462-entry natural table order the same way every hand does: by class, then by the standard kicker comparison. **Ties** between identical hand ranks — same class, same kickers *and* the same joker count — resolve by the ride's ordered rules, applied to a FINISHED ride's results: the stored order defaults to ① high-card draw ② most laps ③ shortest total time, and a pair the sort still cannot separate when it reaches high-card draw is flagged “draw required” at the venue. A ride that is not yet finished ignores the stored order — its standings auto-rank ① most laps ② shortest total time, never a live venue draw. The order is editable after the finish; standings re-run instantly. Hand names render in one style everywhere — title-case em-dash ("Four of a Kind — Nines", "Full House — Aces over Fours"), produced by `rivercrossing.standings.hand_name` (E6.1.1; the frozen results-window sample row and the golden exports agree on it).
 
 **Mixed rides rank two sections, Teams and Solo (Phase 3).** A team's pooled cards would dominate most solo hands, so teams rank against teams and solos against solos — never one combined field. `standings.rank_by_kind` runs the ranking once per kind (teams, then solos), each section numbered from 1 with DNF entrants excluded (R-65). The results window and both exports render the split — the HTML/PDF full fields carry a "Teams" section and a "Solo" section (a kind absent from the ride has no section) — and the §15 standings CSV's `type` column labels each row (`place, plate, entry, type, sex, laps, hand[, total_time]`).
 
