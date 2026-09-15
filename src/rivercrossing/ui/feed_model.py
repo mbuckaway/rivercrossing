@@ -40,6 +40,7 @@ __all__ = [
     "COL_TOTAL",
     "LAP_TIME_COLUMN",
     "TOTAL_COLUMN",
+    "card_status_text",
     "card_text_or_blank",
     "edited_row_indexes",
     "entry_text",
@@ -204,6 +205,30 @@ def card_text_or_blank(card: str) -> str:
         return ""
 
 
+# One display word per card disposition (``FeedRow.card_status``): the
+# three states the feed derives by elimination, plus the blank default
+# an undealt row (a miss) carries.
+_CARD_STATUS_TEXTS: dict[str, str] = {
+    "": "",
+    "held": "Held",
+    "credited": "Credited",
+    "voided": "Void",
+}
+
+
+def card_status_text(row: FeedRow) -> str:
+    """Return *row*'s card disposition as the Card column's status text.
+
+    ``"Held"``, ``"Credited"`` or ``"Void"`` for the three states
+    ``data_source._card_status_for`` derives -- and ``""`` for a row
+    that dealt no card at all (``FeedRow.card_status``'s own default),
+    so an undealt row renders the blank cell ``card_text_or_blank``
+    already gives it. The words are title-cased for the cell; the
+    stored field stays the lowercase token.
+    """
+    return _CARD_STATUS_TEXTS[row.card_status]
+
+
 def flagged_row_indexes(rows: Sequence[FeedRow]) -> frozenset[int]:
     """Return the indexes of every flagged row in *rows* (R-34)."""
     return frozenset(index for index, row in enumerate(rows) if row.flagged)
@@ -229,16 +254,14 @@ def review_issue(row: FeedRow) -> str:
     duplicate``, Phase 3) is listed by its own bit and takes the
     wording first: the earlier twin's derived lap time is real, so it
     can carry no ``flagged`` bit of its own. Otherwise a short lap
-    (``row.flagged``, R-34) reads as held when its card waits
-    uncredited for a confirm/void decision (``row.held``, hold mode)
-    and as a plain short lap when the card was credited (always-deal).
-    A row that is neither duplicated nor flagged has no issue to
-    show, so the cell is blank.
+    (``row.flagged``, R-34) reads as a plain short lap, whoever holds
+    its card: the Card column carries the held/credited/voided state
+    (``FeedRow.card_status``, :func:`card_status_text`), so the Issue
+    cell never repeats it. A row that is neither duplicated nor
+    flagged has no issue to show, so the cell is blank.
     """
     if row.duplicate:
         return "Duplicate crossing"
-    if row.flagged and row.held:
-        return "Short lap — card held"
     if row.flagged:
         return "Short lap"
     return ""

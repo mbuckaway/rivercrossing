@@ -34,6 +34,7 @@ from rivercrossing.ui.rider_columns import SOLO_TEAM_TEXT
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from rivercrossing.cards import Card
     from rivercrossing.ride import Crossing, Event, PendingMiss, RideEngine
     from rivercrossing.standings import Placed
 
@@ -96,6 +97,13 @@ class FeedRow:
     earlier twin's derived lap time is real and so never sets
     ``flagged`` on its own -- and the operator can open either one and
     delete it.
+
+    ``card_status`` carries that card's *disposition* -- ``"held"``,
+    ``"credited"`` or ``"voided"`` -- derived by elimination
+    (:func:`_card_status_for`). The ``held`` bool alone cannot say it:
+    it is False both for a credited card and for a voided one. A row
+    that dealt no card at all (a miss) leaves the field at its ``""``
+    default.
     """
 
     time: str
@@ -108,6 +116,7 @@ class FeedRow:
     team: str = ""
     flagged: bool = False
     held: bool = False
+    card_status: str = ""
     edited: bool = False
     missed: bool = False
     miss_seq: int | None = None
@@ -602,6 +611,26 @@ class _FeedContext:
     totals_by_entry: dict[str, list[float]]
 
 
+def _card_status_for(engine: RideEngine, crossing: Crossing, held_card: Card | None) -> str:
+    """Return *crossing*'s card disposition: held, credited or voided.
+
+    Read by elimination, never from ``RideEngine._voided_cards``: a
+    card voided out of the hold queue (:meth:`RideEngine.void_held`)
+    is dropped, not returned to the shoe, so it never joins that set
+    and never credits either -- membership in the set would miss the
+    very case it is named for. Held comes first (R-34): a held card
+    waits uncredited; a card the entry's credited hand does not hold
+    was voided off it. *crossing* is one the engine recorded
+    (:func:`_crossing_feed_row` walks ``engine.crossings``), so the
+    dealt-card lookup cannot miss.
+    """
+    if held_card is not None:
+        return "held"
+    if engine.card_for(crossing) in engine.credited_cards(crossing.entry_id):
+        return "credited"
+    return "voided"
+
+
 def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datetime, FeedRow]:
     """Build one live crossing's feed row and its sort instant.
 
@@ -611,8 +640,9 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
     Needs Review routing can tell a credited short lap from a held
     one. W9: the ``card`` cell carries the real dealt code -- the
     held card's own when this lap's card is held (R-34), the credited
-    card otherwise. The seq guard covers a stale crossing whose lap is
-    past the entry's recorded times.
+    card otherwise. ``card_status`` names that disposition for the
+    Card column (``_card_status_for``). The seq guard covers a stale
+    crossing whose lap is past the entry's recorded times.
     """
     engine = context.engine
     feed_entry = context.roster.resolve_plate(crossing.entry_id)
@@ -637,6 +667,7 @@ def _crossing_feed_row(context: _FeedContext, crossing: Crossing) -> tuple[datet
             lap_time=_format_lap_time(lap_time_s),
             total=format_duration(total_s),
             card=(held_card.code() if held_card is not None else engine.card_for(crossing).code()),
+            card_status=_card_status_for(engine, crossing, held_card),
             flagged=crossing.seq <= len(times) and lap_time_s < engine.config.min_lap_s,
             held=crossing in context.held_crossings,
             edited=(crossing.entry_id, crossing.seq) in context.edited,
