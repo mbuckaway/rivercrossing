@@ -149,9 +149,14 @@ def _frozen_clock() -> datetime:
     return _dt(10, 0)
 
 
-def _running_engine(roster: Roster) -> RideEngine:
-    """Build a RUNNING engine over *roster* on the GORBA config."""
-    config = gorba_config(min_lap_s=1)
+def _running_engine(roster: Roster, *, hold_short_laps: bool = True) -> RideEngine:
+    """Build a RUNNING engine over *roster* on the GORBA config.
+
+    ``min_lap_s`` is one second, so a lap is short only when a test
+    deliberately crosses twice within it; ``hold_short_laps`` carries
+    the W4 card policy a test needs (the product default here).
+    """
+    config = gorba_config(min_lap_s=1, hold_short_laps=hold_short_laps)
     shoe = Shoe(decks=config.deck_count, jokers_per_deck=config.jokers_per_deck, seed=20260920)
     engine = RideEngine(config=config, shoe=shoe, clock=_frozen_clock, roster=roster)
     engine.start()
@@ -744,3 +749,90 @@ def test_feed_rows_given_two_entries_at_one_instant_leaves_both_rows_clear() -> 
     feed = source.feed_rows()
 
     assert [(row.plate, row.duplicate) for row in feed] == [("34", False), ("12", False)]
+
+
+# ----------------------------------------------------- card disposition
+# ``FeedRow.card_status`` is the Card column's own state: "held" while
+# an R-34 hold waits for confirm/void, "credited" once the card is in
+# the entry's hand, "voided" when it is in neither. The feed derives
+# it by elimination -- held queue, then credited hand, else voided --
+# never from ``RideEngine._voided_cards``, which a card voided out of
+# the hold queue (``void_held``) never joins: the private set would
+# misreport that card as credited.
+
+
+def _half_a_second_on(instant: datetime) -> datetime:
+    """Return *instant* half a second on: under the 1 s minimum."""
+    return instant + timedelta(milliseconds=500)
+
+
+def test_feed_rows_given_a_held_short_lap_carries_the_held_card_status() -> None:
+    """Hold mode: the short lap's card waits uncredited, so "held"."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    engine.record_crossing("45", at=_half_a_second_on(_dt(10, 2)))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert feed[0].card_status == "held"
+
+
+def test_feed_rows_given_an_always_deal_short_lap_carries_the_credited_card_status() -> None:
+    """Always-deal: a short lap's card is credited like any other."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster, hold_short_laps=False)
+    engine.record_crossing("45", at=_dt(10, 2))
+    engine.record_crossing("45", at=_half_a_second_on(_dt(10, 2)))
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert feed[0].card_status == "credited"
+
+
+def test_feed_rows_given_a_voided_held_card_carries_the_voided_card_status() -> None:
+    """Void discards the held card: held nowhere, credited nowhere.
+
+    The lap itself stays recorded, so its row must say "voided" -- the
+    one reading ``RideEngine._voided_cards`` cannot supply, because
+    ``void_held`` never adds to it (the card is dropped, not returned
+    to the shoe).
+    """
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    engine.record_crossing("45", at=_half_a_second_on(_dt(10, 2)))
+    engine.void_held(engine.crossings[-1])
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert feed[0].card_status == "voided"
+
+
+def test_feed_rows_given_a_crossing_whose_card_was_voided_off_the_hand_is_voided() -> None:
+    """void_card leaves the crossing: the row still reports "voided"."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_crossing("45", at=_dt(10, 2))
+    crossing = engine.crossings[-1]
+    engine.void_card("9", engine.card_for(crossing), reason="wrong card off the line")
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert feed[0].card_status == "voided"
+
+
+def test_feed_rows_given_a_pending_miss_carries_no_card_status() -> None:
+    """A miss deals no card, so its Card state stays the default."""
+    roster = _pooled_team_roster()
+    engine = _running_engine(roster)
+    engine.record_miss(_dt(10, 2), reason="missed number")
+    source = EngineDataSource(engine, roster)
+
+    feed = source.feed_rows()
+
+    assert feed[0].card_status == ""

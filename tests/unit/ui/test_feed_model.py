@@ -29,6 +29,7 @@ from rivercrossing.ui.feed_model import (
     COLUMN_WIDTHS,
     LAP_TIME_COLUMN,
     TOTAL_COLUMN,
+    card_status_text,
     card_text_or_blank,
     edited_row_indexes,
     entry_text,
@@ -325,6 +326,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
     duplicate: bool = False,
     dnf: bool = False,
     card: str = "9H",
+    card_status: str = "",
     elapsed_s: float = 0.0,
     lap_time_s: float = 0.0,
     total_s: float = 0.0,
@@ -345,6 +347,7 @@ def _feed_row(  # noqa: PLR0913 -- one keyword per feed field a test varies
         missed=missed,
         duplicate=duplicate,
         dnf=dnf,
+        card_status=card_status,
         elapsed_s=elapsed_s,
         lap_time_s=lap_time_s,
         total_s=total_s,
@@ -577,15 +580,55 @@ def test_flash_crossing_label_given_a_missed_row_names_the_plate_and_miss() -> N
     assert flash_crossing_label(row) == "- · missed"
 
 
+# --- card_status_text (Scope 1b: the Card column's disposition) ------
+# ``FeedRow.card_status`` is the feed's card state, derived by
+# elimination in ``data_source._crossing_feed_row``: "held" (R-34,
+# awaiting confirm/void), "credited" (in the entry's hand), "voided"
+# (in neither). This helper is its display word, so the console's Card
+# column can carry the state the Needs Review Issue cell no longer
+# repeats (``review_issue``).
+
+CARD_STATUS_CASES = (
+    ("", ""),
+    ("held", "Held"),
+    ("credited", "Credited"),
+    ("voided", "Void"),
+)
+
+
+@pytest.mark.parametrize(("status", "text"), CARD_STATUS_CASES)
+def test_card_status_text_given_a_card_status_returns_its_display_word(
+    status: str, text: str
+) -> None:
+    """Each of the three dispositions has its own Card-cell word.
+
+    ``""`` is the blank-cell case: a miss row (and every other row that
+    dealt no card) carries the field's default, not a disposition.
+    """
+    assert card_status_text(_feed_row(card_status=status)) == text
+
+
+@given(status=st.sampled_from(("", "held", "credited", "voided")))
+def test_card_status_text_given_any_known_status_is_blank_exactly_when_that_status_is(
+    status: str,
+) -> None:
+    """Property: only the undealt default renders the blank cell."""
+    text = card_status_text(_feed_row(card_status=status))
+
+    assert (text == "") is (status == "")
+
+
 # --- review_issue (Needs Review tab: why this row is here) -----------
 
 
-# The four reasons the Needs Review tab can show, and the full
+# The three texts the Needs Review tab can show, and the full
 # decision table (T-13): three independent booleans, 2^3 rows. A
-# duplicate outranks a short lap; ``held`` only refines the short-lap
-# wording (a held card waits for a confirm/void decision, R-34).
+# duplicate outranks a short lap. ``held`` no longer refines the
+# wording -- the Card column carries the held/credited/voided state
+# (``FeedRow.card_status``, ``card_status_text``), so a held short lap
+# reads exactly like the credited one and the held rows pin that.
 REVIEW_ISSUE_TEXT = "Short lap"
-REVIEW_ISSUE_HELD_TEXT = "Short lap — card held"
+REVIEW_ISSUE_HELD_TEXT = REVIEW_ISSUE_TEXT
 REVIEW_ISSUE_DUPLICATE_TEXT = "Duplicate crossing"
 REVIEW_ISSUE_TEXTS = frozenset(
     {"", REVIEW_ISSUE_TEXT, REVIEW_ISSUE_HELD_TEXT, REVIEW_ISSUE_DUPLICATE_TEXT}
@@ -623,10 +666,17 @@ def test_review_issue_given_a_rows_flags_returns_its_review_reason(  # noqa: PLR
     held: bool,  # noqa: FBT001 -- parametrize passes the flags positionally
     expected: str,
 ) -> None:
-    """T-13: duplicate outranks short lap; held refines its wording."""
+    """T-13: duplicate outranks short lap; held never changes it."""
     row = _feed_row(duplicate=duplicate, flagged=flagged, held=held)
 
     assert review_issue(row) == expected
+
+
+def test_review_issue_given_a_held_short_lap_reads_as_a_plain_short_lap() -> None:
+    """Scope 1b: the Card column carries the hold, not the Issue."""
+    row = _feed_row(flagged=True, held=True, card="9H", card_status="held")
+
+    assert review_issue(row) == "Short lap"
 
 
 @given(duplicate=st.booleans(), flagged=st.booleans(), held=st.booleans())
