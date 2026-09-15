@@ -518,6 +518,7 @@ REPLAY_ACTIONS: frozenset[str] = frozenset(
         "record_crossing",
         "confirm_held",
         "void_held",
+        "return_to_held",
         "undo",
         "deal_manual",
         "edit_crossing",
@@ -772,6 +773,10 @@ class RideEngine:
       held, never by ride state: the review surface stays usable while
       RUNNING, and FINISHED's corrections flow routes through REOPENED
       for timing changes (undo), not card disposition.
+      ``return_to_held`` is the disposition seam back: whichever
+      accounting a dealt card currently has -- credited, retired by
+      ``void_card``, or discarded by ``void_held`` -- it returns to
+      the hold queue under that same state-irrelevant gate.
     - **Short-lap policy (W4).** ``RideConfig.hold_short_laps`` gates
       whether that hold path runs at all. The True default is the W4
       product decision -- hold short-lap cards for review -- so the
@@ -1547,6 +1552,44 @@ class RideEngine:
         return self._append(
             Event(
                 action="void_held",
+                payload={
+                    "entry_id": crossing.entry_id,
+                    "seq": crossing.seq,
+                    "card": card.code(),
+                },
+            )
+        )
+
+    def return_to_held(self, crossing: Crossing) -> Event:
+        """Put *crossing*'s dealt card back into the hold queue (R-34).
+
+        The operator's "that card needs another look" action: the card
+        leaves wherever it currently sits -- the entry's credited hand,
+        a ``void_card`` retirement, or a previous ``void_held`` discard
+        -- and re-enters the hold queue, awaiting ``confirm_held`` or
+        ``void_held`` again. Audited. Gated only by the card not
+        already being held: ride state is irrelevant to card
+        disposition, exactly as for the other two hold-queue moves.
+
+        Args:
+            crossing: A crossing this engine dealt a card for.
+
+        Returns:
+            The appended ``return_to_held`` audit event.
+
+        Raises:
+            IllegalStateError: *crossing*'s card is already held.
+            KeyError: *crossing* was never dealt by this engine.
+        """
+        if crossing in self._held:
+            raise IllegalStateError("crossing's card is already held")
+        card = self.card_for(crossing)
+        self._voided_cards.discard(card)
+        self._discard_credited(crossing.entry_id, card)
+        self._held[crossing] = card
+        return self._append(
+            Event(
+                action="return_to_held",
                 payload={
                     "entry_id": crossing.entry_id,
                     "seq": crossing.seq,
@@ -2540,7 +2583,7 @@ class RideEngine:
 
     # ------------------------------------- E5.1.2 replay seam: apply
 
-    # The replay dispatch is inherently one branch per action (19
+    # The replay dispatch is inherently one branch per action (20
     # mutations + the unknown-action guard); the cyclomatic count is
     # the event vocabulary's size, not a refactorable control-flow
     # tangle.
@@ -2585,9 +2628,9 @@ class RideEngine:
             ValueError: a replayed correction's reason is empty, or a
                 replayed ``edit_crossing``/``add_crossing_at`` violates
                 Phase 3's zero/negative-lap gate.
-            RideEngineError: ``confirm_held``/``void_held`` name a
-                crossing this engine never recorded (an inconsistent
-                event stream).
+            RideEngineError: ``confirm_held``/``void_held``/
+                ``return_to_held`` name a crossing this engine never
+                recorded (an inconsistent event stream).
         """
         action = event.action
         if action == "start":
@@ -2602,6 +2645,8 @@ class RideEngine:
             self.confirm_held(self._crossing_from(event))
         elif action == "void_held":
             self.void_held(self._crossing_from(event))
+        elif action == "return_to_held":
+            self.return_to_held(self._crossing_from(event))
         elif action == "undo":
             self.undo_last()
         elif action == "deal_manual":
