@@ -183,7 +183,7 @@ Finish the ride, publish in minutes: standings with tie-breaks ①②③ (reorde
 
 - **E6.3 PDF** — E6.3.1 fpdf2 report per 5a–5c (deterministic bytes, R-62); E6.3.2 podium poster 5d.
 
-- **E6.4 Results window live** — E6.4.1 results_dlg standings + publish checkboxes drive ExportOptions; E6.4.2 Results menu items (Generate HTML / Export PDF / Poster / Standings CSV / Preview HTML in Browser / Preview PDF in Browser) with FINISHED gating; E6.4.3 finish gate: evaluator self-test must be green (§2).
+- **E6.4 Results window live** — E6.4.1 results_dlg standings + publish checkboxes drive ExportOptions; E6.4.2 Results menu items (Export HTML / Export PDF / Poster / Standings CSV / Preview HTML in Browser / Preview PDF in Browser) with FINISHED gating; E6.4.3 finish gate: evaluator self-test must be green (§2).
 
 Exit criteria goldens byte-identical · exports open offline from file:// · times appear only when the setting says (R-63) · poster + CSV ship · finish-to-published < 60 s on the acceptance race.
 

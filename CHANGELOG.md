@@ -15,6 +15,15 @@ All notable changes to RiverCrossing are recorded here. The format follows
   menu enablement is unchanged.
 - **The card-shoe mechanics documented** — `docs/SHOWMECHANICS.md`, plus a new "Card shoe"
   section in the user guide.
+- **The publish options moved to the Results menu** — the results dialog's five checkboxes are
+  now five checkable Results-menu items after a separator (Show lap & total times, Laps
+  leaderboard, Fastest-time leaderboard, Full field, All cards drawn), persisted as
+  `AppSettings.publish_*`; R-63's gate rides on the pair, so with times off the Fastest-time
+  board is unchecked and disabled.
+- **Three Rider Simulator behaviours** — Short-lap riders, Lapped riders and "Team riders stop
+  after 4 laps" dropdowns (Disabled or 1–10) bend the scripted race so the console's review
+  surfaces show: short-lap riders cross under the ride's minimum lap, lapped riders miss the
+  first wave, and stopped team riders never cross again.
 
 ### Changed
 
@@ -35,7 +44,26 @@ All notable changes to RiverCrossing are recorded here. The format follows
   exports from the Results menu.
 - **The results standings lists floor at 198 px** — the three lists (`standings_list`,
   `teams_standings_list`, `solo_standings_list`) reserve a 28 px header plus ten 17 px rows, so a
-  ride's top ten are visible; the dialog's 755 px width floor is unchanged.
+  ride's top ten are visible.
+- **The results standings table is six columns** — Place, Plate, Entry, Laps, Best 5, Hand, each
+  pinned to its own width (60 / 50 / 160 / 50 / 160 / 210; the Team list's Hand takes 260 when
+  its Plate column is hidden under `rider_pooled`). The Total and Best lap columns and the
+  "Publish options" box are gone, and the dialog floors at 740 px wide (was 755).
+- **`Results ▸ Generate HTML…` is now `Export HTML…`** — the menu row and the dialog's button.
+- **`Cards ▸ Edit Crossing…` is retired** — Crossing Detail's Edit Time and the F2 accelerator
+  cover the same ground; `mi_edit_crossing` left the generated ids.
+- **A fresh ride holds short-lap cards for review** — the ride's short-lap card policy default
+  flipped (`ride.hold_short_laps`' CREATE default 0 → 1), so a short lap's card is held until the
+  operator confirms or voids it; Always deal is the operator's explicit setup choice.
+- **Solo entries read "solo"** — the crossings feed's Team cell and the Crossing Detail's Team
+  box show `solo` for a solo entry instead of a blank cell or the rider's own name repeated.
+- **The Crossing Detail's nine values are read-only entry boxes** — one "Details" group holding
+  four columns in a row (caption, value, caption, value), replacing the label fields.
+- **A reopened ride is clearable** — Ride ▸ Clear Ride… is enabled for a REOPENED ride too:
+  clearing unloads it from memory and is never a delete. The reopened-ride notice is now
+  status-bar text rather than console InfoBar text.
+- **The shortcuts help shows Cmd on macOS** — the Mac modifier renders as `Cmd` instead of
+  `Ctrl`.
 
 ### Fixed
 

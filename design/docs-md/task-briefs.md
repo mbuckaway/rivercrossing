@@ -166,7 +166,7 @@ E9 last (needs all; 9.1.3 additionally needs org credentials)
 
 - **E6.4.1 Results window live** · Goal: results_dlg standings + publish checkboxes → ExportOptions; stale_infobar constructed in code and named with SetName(), present but hidden (E7 triggers) — XRC cannot author a wxInfoBar (§15b). Refs: #resultsframe. Tests first: harness — checkbox toggles change rendered exports (times case doubles as R-63 UI proof); tie rows badge. Done when: green.
 
-- **E6.4.2 Results menu** · Goal: §15 Results rows live (Standings F5, Generate HTML, Export PDF, Poster, Standings CSV, Preview HTML in Browser / Preview PDF in Browser, Tie-break Order) with FINISHED gating. Tests first: extend menu-coverage walk with the real actions writing tmp files. Done when: walk green.
+- **E6.4.2 Results menu** · Goal: §15 Results rows live (Standings F5, Export HTML, Export PDF, Poster, Standings CSV, Preview HTML in Browser / Preview PDF in Browser, Tie-break Order) with FINISHED gating. Tests first: extend menu-coverage walk with the real actions writing tmp files. Done when: walk green.
 
 - **E6.4.3 Finish gate** · Goal: finish requires evaluator self-test green (Spec §2, E2.4.1 hook). Tests first: hook red → finish confirm blocked with message; hook green → proceeds. Done when: both branches green.
 
