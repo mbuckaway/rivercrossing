@@ -5,10 +5,11 @@ Double-clicking a row in the console's ``crossings_list`` opens
 ``crossing_detail_dlg`` (``dialogs.xrc``) on that row. A **crossing**
 row shows every fact the feed compresses into seven columns -- the
 rider the typed plate belongs to, the entry's team, the plate, the lap
-number, the crossing/lap/total times, the dealt card's glyph and that
-card's disposition -- plus the corrections the engine already owns, all
-rendered into the nine read-only entry boxes ``crossing_*_lbl`` (G2:
-four columns in one "Details" group). The plate is read-only copy
+number, the crossing/lap/total times, the dealt card's glyph and the
+crossing's Status -- the card's disposition, or Duplicate for one half
+of a double-entry pair -- plus the corrections the engine already owns,
+all rendered into the nine read-only entry boxes ``crossing_*_lbl``
+(G2: four columns in one "Details" group). The plate is read-only copy
 (``crossing_plate_lbl``; the dialog has no editable field), so Edit
 opens the ``crossing_number_dlg``
 Save/Cancel prompt (:func:`run_plate_dialog`) and commits the plate
@@ -20,9 +21,10 @@ Time, which opens ``edit_crossing_dlg`` in edit mode through
 commits :meth:`~rivercrossing.ride.RideEngine.edit_crossing`, and Void
 Card, which opens ``void_card_confirm_dlg`` through
 :func:`~rivercrossing.ui.views.corrections.run_void_card` and voids the
-crossing's own **credited** card (a held card stays the review
-surface's). Both were the retired Reassign Plate…/Void Card… menu
-rows' one real home.
+crossing's own **credited** card -- or a held one on a duplicate
+crossing, whose twin the Status field tells the operator to delete (a
+held card on a lone crossing stays the review surface's). Both were
+the retired Reassign Plate…/Void Card… menu rows' one real home.
 
 Every correction commits through the engine and then **returns to this
 dialog**, re-rendered in place on the crossing the engine now holds, so
@@ -122,12 +124,16 @@ DELETE_REASON = "crossing detail delete"
 # EDIT_REASON's own counterpart.
 MISS_EDIT_REASON = "miss detail edit"
 
-# The Card-state field's three values. Held is R-34's short-lap
-# hold-for-review state; a card neither held nor credited was voided
-# out of the ride entirely (RideEngine.void_held).
-_HELD_STATUS = "Held — short lap awaiting review"
+# The Status field's four values. Duplicate is Phase 3's double-entry
+# state (the crossing is one half of a live pair, see _is_duplicate)
+# and takes precedence over the card's own disposition: the operator's
+# next action is to delete one of the two twins. Of the rest, Held is
+# R-34's short-lap hold-for-review state, and a card neither held nor
+# credited was voided out of the ride entirely (RideEngine.void_held).
+_DUPLICATE_STATUS = "Duplicate"
+_HELD_STATUS = "Held - Review"
 _CREDITED_STATUS = "Credited"
-_VOIDED_STATUS = "Voided"
+_VOIDED_STATUS = "Void"
 
 _LAP_SECONDS_PER_HOUR = 3600
 
@@ -241,15 +247,31 @@ def _lap_and_total(engine: RideEngine, crossing: Crossing) -> tuple[float, float
     return times[crossing.seq - 1], sum(times[: crossing.seq])
 
 
+def _is_duplicate(engine: RideEngine, crossing: Crossing) -> bool:
+    """Return whether *crossing* is one half of a live duplicate pair.
+
+    Phase 3's double-entry detector: two crossings of one entry at the
+    identical instant (``engine.duplicate_crossings``). Identity, not
+    equality -- the engine hands out the very ``Crossing`` objects it
+    recorded, the rule :func:`is_last_crossing` reads.
+    """
+    return any(crossing is twin for pair in engine.duplicate_crossings() for twin in pair)
+
+
 def _held_status(engine: RideEngine, crossing: Crossing, held: object | None) -> str:
     """Return the card's disposition text for *crossing*.
 
-    Three states, all read off the engine: the card is held for review
-    (R-34 -- *held* is :meth:`RideEngine.held_card_for`'s answer),
-    it is credited to the entry's hand, or it was voided out of the
-    ride entirely. The distinction matters in exactly the dialog a
-    scorer opens to check why a card is missing from a hand.
+    A duplicate crossing (one half of a live pair) reports
+    :data:`_DUPLICATE_STATUS` first, whatever its card is doing: the
+    row the operator needs corrected is the crossing, not the card.
+    Otherwise three states, all read off the engine: the card is held
+    for review (R-34 -- *held* is :meth:`RideEngine.held_card_for`'s
+    answer), it is credited to the entry's hand, or it was voided out
+    of the ride entirely. The distinction matters in exactly the dialog
+    a scorer opens to check why a card is missing from a hand.
     """
+    if _is_duplicate(engine, crossing):
+        return _DUPLICATE_STATUS
     if held is not None:
         return _HELD_STATUS
     card = engine.card_for(crossing)
@@ -631,16 +653,28 @@ class CrossingDetailView(_DetailDialogView):
         The button gates live here too: Edit (the Plate prompt) and Edit
         Time are always offered; Delete -- either correction, whichever
         this crossing is -- only while the ride is RUNNING or REOPENED;
-        and Void Card only when this crossing's own card is
-        **credited** (a held card is the review surface's, a voided one
-        is already out of the ride).
+        and Void Card when this crossing's own card is **credited** (a
+        held card is the review surface's, a voided one is already out
+        of the ride) or when this crossing is one half of a duplicate
+        pair, whose held card is voidable here because deleting one twin
+        is the correction it needs (Phase 3).
         """
         fields = build_fields(self.crossing, self.roster, self.engine)
         self._render_fields(fields)
         self.edit_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
         self.edit_time_btn.Enable(True)  # noqa: FBT003 -- wx API takes a positional bool
-        self.void_card_btn.Enable(self._card_is_credited())
+        self.void_card_btn.Enable(self._card_is_credited() or self._is_duplicate())
         self.delete_btn.Enable(self.engine.state in (RideStatus.RUNNING, RideStatus.REOPENED))
+
+    def _is_duplicate(self) -> bool:
+        """Return whether this crossing is one half of a duplicate pair.
+
+        Void Card's second gate (Phase 3): a duplicate is shown
+        :data:`_DUPLICATE_STATUS` precisely so the operator deletes one
+        of its two twins, so a **held** card on one must stay voidable
+        here (a credited one already is, via :meth:`_card_is_credited`).
+        """
+        return _is_duplicate(self.engine, self.crossing)
 
     def _card_is_credited(self) -> bool:
         """Return whether this crossing's dealt card is credited.

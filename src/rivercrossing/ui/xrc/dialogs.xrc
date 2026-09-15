@@ -1024,7 +1024,7 @@
                 <flag>wxBOTTOM</flag>
                 <border>14</border>
                 <object class="wxStaticText">
-                  <label>Held / flagged</label>
+                  <label>Status</label>
                 </object>
               </object>
 
