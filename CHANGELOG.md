@@ -4,7 +4,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.17] - 2026-09-14
+## [1.0.18] - 2026-09-15
 
 ### Added
 
@@ -28,6 +28,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ### Changed
 
+- **A natural hand beats a wild one** — on equal class and kickers, the hand using fewer jokers wins (natural, then one joker, up to five), so a natural five of a kind beats an equal wild one. `best_hand` now plays a joker only where it improves the hand, leaving a surplus joker unused, and the rule folds into `hands.compare` before the ride's lap/time tie-breaks (R-41/R-43/R-44).
 - **A DRAFT ride's deck/joker edit rebuilds the live shoe** — changing decks, jokers-per-deck
   or jokers-total on a draft ride reconfigures the in-session shoe, so the live shoe cannot
   diverge from the stored seed's replay.
