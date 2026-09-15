@@ -59,8 +59,36 @@ SHORTCUT_COLUMN_WIDTHS: tuple[int, ...] = (120, 320)
 # and sits inside the 1366x768 floor display (UX-DESKTOP section 6).
 SHORTCUTS_MIN_SIZE = (480, 300)
 
+
+def _display_key(key: str, *, is_mac: bool) -> str:
+    """Return *key* spelled as the platform names its modifier key.
+
+    Spec §15: one menu tree on both platforms, "Ctrl ⇒ ⌘". wx renders
+    the same accelerator as the Cmd key on macOS, so the Help dialog's
+    Key column says ``Cmd`` there; the shortcuts dialog spells its rows
+    literally from :data:`ACCELERATOR_TABLE` (E8.2.1), so the respelling
+    happens here, at render time only -- the table keeps the spelling
+    ``main.xrc``'s ``<accel>`` elements cross-check against, and the
+    bound accelerators are untouched.
+
+    Args:
+        key: An accelerator's key text, e.g. ``"Ctrl+D"``.
+        is_mac: Whether the running platform is macOS.
+
+    Returns:
+        *key* with every ``"Ctrl"`` respelled ``"Cmd"`` on macOS,
+        unchanged otherwise.
+    """
+    if not is_mac:
+        return key
+    return key.replace("Ctrl", "Cmd")
+
+
 _TEXT_ACCESSORS: tuple[Callable[[Accelerator], str], ...] = (
-    lambda accel: accel.key,
+    # wx.Platform is read per cell, not hoisted into a module constant:
+    # the Key column's spelling is a render-time fact of the running
+    # toolkit, and reading it here keeps the transform App-free.
+    lambda accel: _display_key(accel.key, is_mac=wx.Platform == "__WXMAC__"),
     lambda accel: accel.action,
 )
 
