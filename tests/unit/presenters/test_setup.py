@@ -169,7 +169,10 @@ _VALID_FORM_KWARGS: dict[str, object] = {
     "start_time": time(10, 0),
     "duration_text": "6:00",
     "min_lap_text": "18:00",
-    "hold_short_laps": False,
+    # A fresh ride_setup_dlg submits hold_short_laps=True:
+    # hold_short_radio is the XRC-checked member of the W4 pair
+    # (setup.xrc). A test meaning always-deal passes False explicitly.
+    "hold_short_laps": True,
     "entry_mode": EntryMode.MIXED,
     "max_team_size": 4,
     "plate_model": PlateModel.RIDER_POOLED,
@@ -540,6 +543,7 @@ def test_on_submit_given_a_valid_form_returns_the_built_config() -> None:
         max_cards=None,
         tiebreak_order=DEFAULT_TIEBREAK_ORDER,
         logo_path=None,
+        hold_short_laps=True,
     )
 
 
@@ -638,14 +642,28 @@ def test_on_submit_given_a_blank_min_lap_shows_the_blank_message_and_refuses(
     assert view.calls[-1] == ("show_validation", ("Min lap is blank and must be completed",))
 
 
-def test_on_submit_given_hold_short_laps_checked_carries_it_onto_the_config() -> None:
-    """hold_short_radio checked flows through to the built config."""
+@pytest.mark.parametrize(
+    ("hold_short_laps", "expected"),
+    [(True, True), (False, False)],
+    ids=["hold_short_checked", "always_deal_checked"],
+)
+def test_on_submit_given_the_short_lap_policy_radio_carries_it_onto_the_config(
+    hold_short_laps: bool,  # noqa: FBT001 -- parametrize passes the flag positionally
+    expected: bool,  # noqa: FBT001 -- parametrize passes the flag positionally
+) -> None:
+    """Both states of the W4 pair reach RideConfig as the same boolean.
+
+    The view reads the pair (``hold_short_radio.GetValue()``, its XRC
+    checked default) into ``SetupFormValues.hold_short_laps``; the
+    presenter forwards it verbatim, so the checked hold-short radio
+    builds a hold-for-review ride.
+    """
     presenter = SetupPresenter(RecordingSetupView(), Roster())
 
-    config = presenter.on_submit(_form(hold_short_laps=True))
+    config = presenter.on_submit(_form(hold_short_laps=hold_short_laps))
 
     assert config is not None
-    assert config.hold_short_laps is True
+    assert config.hold_short_laps is expected
 
 
 def test_on_submit_given_an_out_of_range_team_size_shows_validation_not_crash() -> None:

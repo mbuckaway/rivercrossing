@@ -222,9 +222,10 @@ class RideConfig:
     concern, not this dataclass's. ``hold_short_laps`` is the one
     field that *does* persist (the ``ride.hold_short_laps`` column,
     part of the flattened v1 baseline, W4): the setup dialog's
-    short-lap card policy, default False = "always deal" -- a lap
-    under ``min_lap_s`` credits its card to the hand -- with True
-    restoring R-34's hold-for-review behaviour
+    short-lap card policy, default True = "hold short-lap cards for
+    review" -- a lap under ``min_lap_s`` deals its card into the held
+    state for confirm/void -- with False the operator's explicit
+    always-deal choice, crediting the card to the hand like any other
     (:meth:`RideEngine.record_crossing`).
 
     ``jokers_per_deck``/``jokers_mode`` are the shoe's joker
@@ -266,7 +267,7 @@ class RideConfig:
     max_cards: int | None = None
     tiebreak_order: tuple[str, str, str] = DEFAULT_TIEBREAK_ORDER
     logo_path: Path | None = None
-    hold_short_laps: bool = False
+    hold_short_laps: bool = True
 
     def __post_init__(self) -> None:
         """Validate this config's own spec-defined bounds.
@@ -647,9 +648,10 @@ class CrossingResult:
     lap (R-40) and ``flagged`` is True when the lap fell under
     ``config.min_lap_s`` *and* ``config.hold_short_laps`` -- the card
     is then *held* (:meth:`RideEngine.held_crossings`), not credited
-    (R-34). Under W4's default (``hold_short_laps`` False) a short lap
-    never flags for review: the card is credited to the hand and
-    ``flagged`` stays False.
+    (R-34). Under the W4 default (``hold_short_laps`` True) that is
+    the ordinary short-lap path; with it False (the operator's
+    explicit always-deal choice) a short lap never flags for review:
+    the card is credited to the hand and ``flagged`` stays False.
     """
 
     accepted: bool
@@ -771,15 +773,17 @@ class RideEngine:
       RUNNING, and FINISHED's corrections flow routes through REOPENED
       for timing changes (undo), not card disposition.
     - **Short-lap policy (W4).** ``RideConfig.hold_short_laps`` gates
-      whether that hold path runs at all. The False default is the W4
-      product decision -- always deal: a short lap's card is credited
-      to the hand like any other and nothing lands in ``_held`` or
+      whether that hold path runs at all. The True default is the W4
+      product decision -- hold short-lap cards for review -- so the
+      flag-and-hold path above is what a ride gets unless the operator
+      explicitly picks always-deal in the setup dialog: with
+      ``hold_short_laps`` False a short lap's card is credited to the
+      hand like any other and nothing lands in ``_held`` or
       ``held_crossings()``, so the review surface stays empty and the
       result's ``flagged`` stays False (flagging *means* "held for
       review"; the downstream feed derives its flagged rows from the
-      hold queue). ``hold_short_laps`` True preserves the pre-W4
-      R-34 behaviour exactly. The setup dialog's
-      ``always_deal_radio``/``hold_short_radio`` pair owns the value
+      hold queue). The setup dialog's
+      ``hold_short_radio``/``always_deal_radio`` pair owns the value
       (setup.xrc, W4), and the store persists it per ride
       (``ride.hold_short_laps``) so replay reproduces the same
       disposition.
@@ -1328,9 +1332,10 @@ class RideEngine:
         ``flagged=True`` -- the review channel the console's FLAGGED
         cue and Needs Review panel read. The W4 policy decides the
         card's disposition alone: with ``config.hold_short_laps`` True
-        the lap still records but its card is held, not credited
-        (R-34); with the False default (always deal) the card is
-        credited to the hand like any other. Refusals come back as
+        (its default, the setup dialog's checked radio) the lap still
+        records but its card is held, not credited (R-34); with it
+        False (the operator's always-deal choice) the card is credited
+        to the hand like any other. Refusals come back as
         ``accepted=False``
         results, never raises: not RUNNING, stopped (E4.1.3), or an
         unknown plate (``reason="unknown_plate"``, E4.2.4 -- the error
@@ -1365,10 +1370,10 @@ class RideEngine:
         lap_time = (crossed_at - previous).total_seconds()
         short = lap_time < self._config.min_lap_s
         if short and self._config.hold_short_laps:
-            # R-34 (W4 opt-in): the card waits for review, uncredited.
+            # R-34 (W4 default): the card waits for review, uncredited.
             self._held[crossing] = card
         else:
-            # W4 default: always deal -- a short lap still credits.
+            # Always-deal policy: a short lap still credits.
             self._credit(entry.plate, card, crossing.rider_plate)
         self._append(
             Event(

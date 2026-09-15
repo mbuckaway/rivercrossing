@@ -156,15 +156,16 @@ def test_ride_config_bare_required_fields_defaults_logo_path_to_none() -> None:
     assert config.logo_path is None
 
 
-def test_ride_config_bare_required_fields_defaults_hold_short_laps_to_false() -> None:
-    """W4 default: a short lap always deals unless the operator opts in.
+def test_ride_config_bare_required_fields_defaults_hold_short_laps_to_true() -> None:
+    """W4 default: a short lap holds its card for review (R-34).
 
-    The always-deal decision rides on ``hold_short_laps=False``, the
-    field's dataclass default.
+    The hold-for-review decision rides on ``hold_short_laps=True``, the
+    field's dataclass default -- the value a fresh ``ride_setup_dlg``
+    submits (``hold_short_radio`` checked in setup.xrc).
     """
     config = _config()
 
-    assert config.hold_short_laps is False
+    assert config.hold_short_laps is True
 
 
 def test_ride_config_given_a_logo_path_stores_it_verbatim() -> None:
@@ -1268,13 +1269,14 @@ def test_record_crossing_short_lap_flags_holds_card_and_still_records_lap() -> N
 
 
 def test_record_crossing_short_lap_given_always_deal_flags_but_still_credits() -> None:
-    """W4 default: a short lap flags for review AND credits its card.
+    """Always deal: a short lap flags for review AND credits its card.
 
     ``flagged`` is the review channel -- the FLAGGED audio cue and the
-    Needs Review panel -- not the hold decision. Always-deal therefore
-    flags the short lap while still crediting its card (R-34).
+    Needs Review panel -- not the hold decision. Always deal therefore
+    flags the short lap while still crediting its card (R-34). The
+    policy is the operator's explicit opt-in now, so the test names it.
     """
-    engine, _ = _make_engine()
+    engine, _ = _make_engine(config=_config(hold_short_laps=False))
     engine.start()
 
     result = engine.record_crossing("12", at=_dt(10, 0, 30))
@@ -1307,7 +1309,8 @@ def test_record_crossing_short_lap_flags_under_both_card_policies(
 def test_record_crossing_given_always_deal_credits_every_accepted_lap() -> None:
     """E1 regression: Always Deal credits a card on every crossing.
 
-    With ``hold_short_laps=False`` (the W4 default) the short-lap
+    With ``hold_short_laps=False`` (the operator's always-deal opt-in)
+    the short-lap
     policy gate is the only thing that ever holds a card, so five
     crossings -- a very short opener, then laps one second under,
     exactly at, one second over ``min_lap_s``, and a long one --
@@ -2165,8 +2168,12 @@ def test_credited_cards_given_one_crossing_returns_the_dealt_card() -> None:
 
 
 def test_credited_cards_given_many_crossings_returns_them_in_deal_order() -> None:
-    """T-4 boundary: many laps credit their cards, oldest first."""
-    engine, _ = _make_engine()
+    """T-4 boundary: many laps credit their cards, oldest first.
+
+    Always deal, named explicitly: under the default hold policy these
+    one-minute-apart laps would be held rather than credited.
+    """
+    engine, _ = _make_engine(config=_config(hold_short_laps=False))
     engine.start()
     first = engine.record_crossing("12", at=_dt(10, 30))
     second = engine.record_crossing("12", at=_dt(10, 31))
@@ -2216,7 +2223,7 @@ def test_credited_cards_given_a_pooled_team_returns_the_entrys_whole_hand() -> N
             Rider(first_name="Priya", last_name="", plate="9"),
         ],
     )
-    engine, _ = _make_engine(roster=roster)
+    engine, _ = _make_engine(roster=roster, config=_config(hold_short_laps=False))
     engine.start()
     first = engine.record_crossing("45", at=_dt(10, 30))
     second = engine.record_crossing("9", at=_dt(10, 31))
@@ -2252,8 +2259,8 @@ def test_engine_held_card_for_given_a_credited_crossing_returns_none() -> None:
 
 
 def test_engine_held_card_for_given_a_short_lap_under_always_deal_returns_none() -> None:
-    """W4 default: a short lap credits like any other -- not held."""
-    engine, _ = _make_engine()
+    """Always deal: a short lap credits like any other -- not held."""
+    engine, _ = _make_engine(config=_config(hold_short_laps=False))
     engine.start()
 
     engine.record_crossing("12", at=_dt(10, 0, 30))

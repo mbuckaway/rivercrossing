@@ -72,8 +72,9 @@ them open and later EPICs will build on them:
   (``_INSERT_RIDE_SQL``/``create_ride``/``duplicate_ride``/
   ``load_engine``). Stored as INTEGER 0/1 and rebuilt as ``bool``, so
   event replay reproduces each ride's own hold disposition. The column
-  is part of the v1 baseline with a NOT NULL DEFAULT 0 (always deal,
-  the W4 default), so a row written without it reads as "never hold".
+  is part of the v1 baseline with a NOT NULL DEFAULT 1 (hold short-lap
+  cards for review, the W4 default), so a row written without it reads
+  as the dialog's own default rather than as "never hold".
 - **jokers_mode (Phase 5)**: the setup dialog's per-deck/total radio
   pair is another config column the facade writes and reads
   (``_INSERT_RIDE_SQL``/``create_ride``/``duplicate_ride``/

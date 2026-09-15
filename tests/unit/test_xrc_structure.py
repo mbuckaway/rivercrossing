@@ -236,11 +236,11 @@ ACCELERATED_ITEMS = ("mi_standings", "mi_undo_crossing", "mi_user_guide")
 
 RADIO_MENU_ITEMS = ZOOM_MENU_ITEMS
 
-# Canvas defaults, and the first member of each of the dialog's four
+# Canvas defaults, and the checked default of each of the dialog's four
 # radio groups (short-lap policy, entry mode, plate model, jokers mode
 # -- Phase 5's jokers_per_deck_radio opens it, jokers_total_radio is
 # the checked default).
-SELECTED_RADIOS = ("always_deal_radio", "mixed_radio", "pooled_radio", "jokers_total_radio")
+SELECTED_RADIOS = ("hold_short_radio", "mixed_radio", "pooled_radio", "jokers_total_radio")
 GROUP_OPENING_RADIOS = (
     "hold_short_radio",
     "solo_radio",
@@ -925,7 +925,7 @@ def test_settings_dialog_declares_no_text_zoom_control() -> None:
 
 @pytest.mark.parametrize("radio_name", SELECTED_RADIOS)
 def test_canvas_radio_default_declares_value_one(radio_name: str) -> None:
-    """always-deal/mixed/pooled start selected, as drawn."""
+    """hold-short/mixed/pooled start selected, as drawn."""
     radio = _objects_by_name(_window("ride_setup_dlg"))[radio_name]
 
     assert _param(radio, "value") == "1"
@@ -1005,7 +1005,7 @@ def test_team_size_spin_declares_the_spec_documented_range() -> None:
 
 # ------------------------------------------------- W4 lap fields
 # (labels declare the entry format, and the short-lap card policy pair
-# sits next to them with always-deal as the declared XRC default.)
+# sits next to them with hold-short as the declared XRC default.)
 
 
 def test_lap_field_static_labels_declare_the_entry_formats() -> None:
