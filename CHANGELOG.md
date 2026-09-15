@@ -8,6 +8,7 @@ All notable changes to RiverCrossing are recorded here. The format follows
 
 ### Added
 
+- **The Needs Review tab reworked** — columns are now Issue | Card | Plate | Lap | Rider | Team with a Card state of Held/Credited/Void; a single Confirm/Void/Cancel dialog replaces the two-step confirm-then-void; a Return to Held action re-opens a credited or voided card; and a Show Held Cards Only checkbox filters to unresolved items.
 - **A self-healing XRC load** — a dialog or menubar the process-wide XRC resource silently
   skips is rebuilt from a fresh private resource (up to twice, evicting the memoized rebuild
   between attempts), so a menu row no longer clicks through to "no window authored yet".
