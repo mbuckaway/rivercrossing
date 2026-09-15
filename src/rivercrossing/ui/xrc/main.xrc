@@ -651,9 +651,22 @@
                           <object class="wxDataViewCtrl" name="flagged_list"/>
                         </object>
                         <object class="sizeritem">
-                          <flag>wxALIGN_RIGHT</flag>
-                          <object class="wxButton" name="review_btn">
-                            <label>Review…</label>
+                          <flag>wxEXPAND</flag>
+                          <object class="wxBoxSizer">
+                            <orient>wxHORIZONTAL</orient>
+                            <object class="sizeritem">
+                              <flag>wxALIGN_CENTRE_VERTICAL</flag>
+                              <object class="wxCheckBox" name="show_held_only_chk">
+                                <label>Show Held Cards Only</label>
+                              </object>
+                            </object>
+                            <object class="sizeritem">
+                              <option>1</option>
+                              <flag>wxALIGN_CENTRE_VERTICAL|wxALIGN_RIGHT</flag>
+                              <object class="wxButton" name="review_btn">
+                                <label>Review…</label>
+                              </object>
+                            </object>
                           </object>
                         </object>
                       </object>

@@ -88,9 +88,12 @@ __all__ = [
     "ELAPSED_CLOCK_PANEL",
     "FEED_COLUMN_FLAGS",
     "FLAG_COLUMN_LABELS",
+    "FLAG_COLUMN_WIDTHS",
+    "FLAG_COL_CARD",
     "FLAG_COL_LAP",
-    "FLAG_COL_LAP_TIME",
     "FLAG_COL_PLATE",
+    "FLAG_COL_RIDER",
+    "FLAG_COL_TEAM",
     "MAX_CURRENT_LAP",
     "MIN_SIZE",
     "NEEDS_REVIEW_PAGE_LABEL",
@@ -236,14 +239,28 @@ RIDERS_LIST_COLUMN_FLAGS = wx.dataview.DATAVIEW_COL_SORTABLE | wx.dataview.DATAV
 # COL_NAME_WIDTH).
 RIDERS_COLUMN_WIDTHS: tuple[int, ...] = (80, 160, 80, 80, 80)
 
-# flagged_list's columns (WS-H): the three cells of the canvas's
-# flagged-row line ("45 · lap 6 · 07:12") as sortable columns, plus
-# the Issue column that names why the row entered review.
-FLAG_COL_PLATE = 0
-FLAG_COL_LAP = 1
-FLAG_COL_LAP_TIME = 2
-FLAG_COL_ISSUE = 3
-FLAG_COLUMN_LABELS: tuple[str, ...] = ("Plate", "Lap", "Lap time", "Issue")
+# flagged_list's columns (WS-H): the review tab's own six cells. The
+# Issue column names why the row entered review; the Card column
+# carries its disposition (held/credited/voided), so the Issue cell
+# never repeats the hold; the other four identify the crossing
+# (Plate | Lap | Rider | Team). Unlike the feed, this list is not
+# sortable -- it renders one review pass in the source's own order.
+FLAG_COL_ISSUE = 0
+FLAG_COL_CARD = 1
+FLAG_COL_PLATE = 2
+FLAG_COL_LAP = 3
+FLAG_COL_RIDER = 4
+FLAG_COL_TEAM = 5
+FLAG_COLUMN_LABELS: tuple[str, ...] = ("Issue", "Card", "Plate", "Lap", "Rider", "Team")
+
+# One width per FLAG_COLUMN_LABELS entry, in that order, so no cell
+# truncates at the default window size: 136 fits the "Duplicate
+# crossing" Issue text, 76 the "Credited" Card word, 64 a "9999"
+# plate, 52 a "999" lap, 256 the longest demo rider name, and 136 a
+# 15-character team name. DataView columns have no
+# autosize-to-content (xrc-windows.md's code-side list), so the widths
+# are pinned data here and applied by ``_build_flagged_columns``.
+FLAG_COLUMN_WIDTHS: tuple[int, ...] = (136, 76, 64, 52, 256, 136)
 
 # start_blocked_dlg's one column (Phase 5): the blocked-start issue
 # list, one reason per row.
@@ -409,17 +426,20 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
 
     The review notebook's "Needs Review" tab: one row per short-lap
     flag -- or duplicate pair -- (the rows the console feed bolds or
-    lists), showing Plate | Lap | Lap time | Issue. Rows are supplied
-    fresh each ``show_flagged``, exactly like
+    lists), showing Issue | Card | Plate | Lap | Rider | Team. Rows
+    are supplied fresh each ``show_flagged``, exactly like
     :class:`CrossingsFeedModel`'s own rebuild-per-show pattern. The
     Issue column names why each row is here
-    (``feed_model.review_issue``).
+    (``feed_model.review_issue``) and the Card column its disposition
+    (``feed_model.card_status_text``).
 
-    ``held_for_row`` is the tab's routing seam (plan §6): the wrapped
-    row's ``held`` bit tells the app whether the activation gets a
-    confirm/void decision (hold mode, R-34) or opens the credited
-    short lap's crossing detail. The four rendered columns do not
-    carry it, so it is answered straight off the wrapped row.
+    ``card_status_for_row`` and ``duplicate_for_row`` are the tab's
+    routing seam (plan §6): the wrapped row's own disposition tells
+    the app whether the activation gets a confirm/void decision (a
+    held card, R-34) or opens the crossing detail (a credited short
+    lap), and the ``duplicate`` bit which half of a live pair it is.
+    The rendered columns carry neither raw token, so both are
+    answered straight off the wrapped row.
     """
 
     def __init__(self, rows: Sequence[FeedRow]) -> None:
@@ -428,7 +448,7 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
         self._rows = tuple(rows)
 
     def GetColumnCount(self) -> int:
-        """Return the flagged list's fixed four columns."""
+        """Return the flagged list's fixed six columns."""
         return len(FLAG_COLUMN_LABELS)
 
     def GetColumnType(self, col: int) -> str:  # noqa: ARG002 -- the model has one type
@@ -438,17 +458,35 @@ class FlaggedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc
     def GetValueByRow(self, row: int, col: int) -> Any:  # noqa: ANN401 -- wx ships no stubs
         """Return the cell value at *row*/*col*."""
         flagged_row = self._rows[row]
+        if col == FLAG_COL_ISSUE:
+            return feed_model.review_issue(flagged_row)
+        if col == FLAG_COL_CARD:
+            return feed_model.card_status_text(flagged_row)
         if col == FLAG_COL_PLATE:
             return flagged_row.plate
         if col == FLAG_COL_LAP:
             return str(flagged_row.lap)
-        if col == FLAG_COL_ISSUE:
-            return feed_model.review_issue(flagged_row)
-        return flagged_row.lap_time
+        if col == FLAG_COL_RIDER:
+            return flagged_row.entry
+        return flagged_row.team
 
-    def held_for_row(self, row: int) -> bool:
-        """Return whether *row*'s card is held for review (plan §6)."""
-        return self._rows[row].held
+    def card_status_for_row(self, row: int) -> str:
+        """Return *row*'s card disposition token (plan §6).
+
+        ``"held"``, ``"credited"`` or ``"voided"`` -- the token
+        ``FeedRow.card_status`` carries; the Card cell renders its
+        title-cased word (``feed_model.card_status_text``).
+        """
+        return self._rows[row].card_status
+
+    def duplicate_for_row(self, row: int) -> bool:
+        """Return whether *row*'s crossing is a live duplicate half.
+
+        Phase 3 marks both halves of a duplicate pair (``FeedRow.
+        duplicate``); such a row is in review without being a short
+        lap, so the routing seam reads the bit directly.
+        """
+        return self._rows[row].duplicate
 
 
 class StartBlockedListModel(wx.dataview.DataViewIndexListModel):  # type: ignore[misc]
@@ -527,6 +565,7 @@ REQUIRED_CONTROLS: tuple[str, ...] = (
     REVIEW_NOTEBOOK,
     ids.FLAGGED_LIST,
     ids.REVIEW_BTN,
+    ids.SHOW_HELD_ONLY_CHK,
     CONSOLE_RIDERS_LIST,
 )
 
@@ -570,6 +609,7 @@ REQUIRED_CONTROL_CLASSES: dict[str, type[wx.Window]] = {
     REVIEW_NOTEBOOK: wx.Notebook,
     ids.FLAGGED_LIST: wx.dataview.DataViewCtrl,
     ids.REVIEW_BTN: wx.Button,
+    ids.SHOW_HELD_ONLY_CHK: wx.CheckBox,
     CONSOLE_RIDERS_LIST: wx.dataview.DataViewCtrl,
 }
 
@@ -764,10 +804,16 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self.review_notebook = self._find(REVIEW_NOTEBOOK, wx.Notebook)
         self.flagged_list = self._find(ids.FLAGGED_LIST, wx.dataview.DataViewCtrl)
         self.review_btn = self._find(ids.REVIEW_BTN, wx.Button)
+        # The Needs Review tab's own filter box: view-local state, never
+        # a presenter input. Toggling it re-filters the rows the last
+        # ``show_flagged`` handed over, rather than asking again.
+        self.show_held_only_chk = self._find(ids.SHOW_HELD_ONLY_CHK, wx.CheckBox)
         self.console_riders_list = self._find(CONSOLE_RIDERS_LIST, wx.dataview.DataViewCtrl)
         self._flagged_columns = self._build_flagged_columns()
         self._riders_columns = self._build_riders_columns()
         self._flagged_model: FlaggedListModel | None = None
+        self._show_held_only = False
+        self._flagged_rows: list[FeedRow] = []
         self._riders_model: RiderRowListModel | None = None
         # The operator's current riders-tab header sort, re-applied
         # whenever the model is rebuilt (a new model drops the
@@ -781,9 +827,9 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         # W11 F2a: the flagged tab's activation seam (its own slot --
         # activating a flagged row routes to the review decision or
         # the credited lap's crossing detail, not the rider editor, so
-        # the two lists keep separate callbacks). It fires
-        # ``(plate, held)``: the row's own disposition decides.
-        self._on_open_flagged: Callable[[str, bool], None] | None = None
+        # the two lists keep separate callbacks). It fires ``(plate,
+        # card status, duplicate)``: the row's own disposition decides.
+        self._on_open_flagged: Callable[[str, str, bool], None] | None = None
         # J2: the crossings feed's activation seam. Its own slot too:
         # the feed is keyed by row index (the app resolves that back to
         # the live Crossing), not by plate like the other two lists.
@@ -796,6 +842,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         self._on_delete_crossing: Callable[[int], None] | None = None
         self._on_edit_plate_crossing: Callable[[int], None] | None = None
         self.review_btn.Bind(wx.EVT_BUTTON, lambda _event: self._on_review_clicked())
+        self.show_held_only_chk.Bind(wx.EVT_CHECKBOX, self._on_show_held_only_changed)
         self.crossings_list.Bind(
             wx.dataview.EVT_DATAVIEW_ITEM_ACTIVATED, self._on_crossing_activated
         )
@@ -922,7 +969,7 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
 
         rows = self.data_source.feed_rows()
         self.show_feed(rows)
-        self.show_flagged([row for row in rows if row.flagged])
+        self.show_flagged([row for row in rows if row.flagged or row.duplicate])
         self.show_riders(self.data_source.riders())
         self.show_counters(self.data_source.counters())
 
@@ -983,13 +1030,15 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
                 self._lap_time_column = column
 
     def _build_flagged_columns(self) -> tuple[Any, ...]:
-        """Append the flagged list's four columns (WS-H).
+        """Append the flagged list's six columns (WS-H).
 
-        One column per :data:`FLAG_COLUMN_LABELS` entry -- Plate | Lap
-        | Lap time | Issue -- so the Issue column needs no change here.
+        One column per :data:`FLAG_COLUMN_LABELS` entry -- Issue |
+        Card | Plate | Lap | Rider | Team -- each pinned to its own
+        :data:`FLAG_COLUMN_WIDTHS` entry, so a long Issue cell never
+        squeezes the identity cells beside it.
         """
         return tuple(
-            self.flagged_list.AppendTextColumn(label, col)
+            self.flagged_list.AppendTextColumn(label, col, width=FLAG_COLUMN_WIDTHS[col])
             for col, label in enumerate(FLAG_COLUMN_LABELS)
         )
 
@@ -1029,18 +1078,20 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         """
         self._on_open_rider = callback
 
-    def set_on_open_flagged(self, callback: Callable[[str, bool], None]) -> None:
+    def set_on_open_flagged(self, callback: Callable[[str, str, bool], None]) -> None:
         """Register the activation seam of the flagged tab (W11 F2a).
 
         The app wires this to its review router; the console itself
-        only fires ``callback(plate, held)`` when a flagged row is
-        activated (double-click or Enter with the list focused). The
-        handler is called with the row's plate and its ``held`` flag:
-        a held card (R-34, hold mode) gets a confirm/void decision, a
-        credited short lap (always-deal) opens its crossing detail. The
-        flagged tab and the riders tab keep separate seams because the
-        app opens a different surface for each (review vs the rider
-        editor).
+        only fires ``callback(plate, card_status, duplicate)`` when a
+        flagged row is activated (double-click or Enter with the list
+        focused). The handler is called with the row's plate, its card
+        disposition (``"held"``/``"credited"``/``"voided"``) and its
+        duplicate bit: a held card (R-34, hold mode) gets a
+        confirm/void decision, while a credited short lap
+        (always-deal) and either half of a duplicate pair open the
+        crossing detail. The flagged tab and the riders tab keep
+        separate seams because the app opens a different surface for
+        each (review vs the rider editor).
         """
         self._on_open_flagged = callback
 
@@ -1222,15 +1273,20 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
     def _fire_open_flagged(self, row: int) -> None:
         """Fire the flagged-open seam for model row *row* (W11 F2a/§6).
 
-        The one place the tab's ``(plate, held)`` pair is assembled,
-        shared by the row's own activation and by ``review_btn`` so the
-        two routes cannot drift. An unwired console (no app yet, test
-        constructions) leaves the row untouched.
+        The one place the tab's ``(plate, card_status, duplicate)``
+        triple is assembled, shared by the row's own activation and by
+        ``review_btn`` so the two routes cannot drift. An unwired
+        console (no app yet, test constructions) leaves the row
+        untouched.
         """
         if self._flagged_model is None or self._on_open_flagged is None:
             return
         plate = self._flagged_model.GetValueByRow(row, FLAG_COL_PLATE)
-        self._on_open_flagged(plate, self._flagged_model.held_for_row(row))
+        self._on_open_flagged(
+            plate,
+            self._flagged_model.card_status_for_row(row),
+            self._flagged_model.duplicate_for_row(row),
+        )
 
     def _on_review_clicked(self) -> None:
         """Handle ``review_btn``: the sidebar's "Review…" affordance.
@@ -1270,13 +1326,13 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
             self._on_open_rider(plate)
 
     def _on_flagged_activated(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
-        """Fire the open-flagged seam with the row's plate + held flag.
+        """Fire the open-flagged seam with the row's plate + status.
 
         W11 F2a: the mirror of :meth:`_on_rider_activated` for the
-        flagged list. The row's plate and its card disposition go to
-        the app's review router (:meth:`_fire_open_flagged`), which
-        decides between the confirm/void decision and the crossing
-        detail.
+        flagged list. The row's plate, its card disposition and its
+        duplicate bit go to the app's review router
+        (:meth:`_fire_open_flagged`), which decides between the
+        confirm/void decision and the crossing detail.
         """
         if self._flagged_model is None:
             return
@@ -1516,15 +1572,36 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
     def show_flagged(self, rows: list[FeedRow]) -> None:
         """Render the review notebook's flagged rows (ConsoleView).
 
-        WS-H: the presenter feeds the flagged subset of the feed here
-        (its ``refresh_feed``) -- every short lap, held or credited --
-        and the view rebuilds the model like :meth:`show_feed` does:
-        fresh rows each call keeps the row-count bookkeeping trivial.
-        The phase-4 search box narrows the crossings list only, so this
-        tab keeps every flagged row whatever the box holds.
+        WS-H: the presenter feeds the review subset of the feed here
+        (its ``refresh_feed``) -- every short lap, held or credited,
+        plus both halves of a live duplicate pair -- and the view
+        rebuilds the model like :meth:`show_feed` does: fresh rows
+        each call keeps the row-count bookkeeping trivial. The phase-4
+        search box narrows the crossings list only, so this tab keeps
+        every review row whatever the box holds.
+
+        The tab's own "Show Held Cards Only" box is applied here, so
+        one filter decides what renders whatever the route in (a
+        presenter refresh, or the box's own toggle). The rows are
+        stored first, so the toggle re-renders without asking the
+        presenter for data it already sent.
         """
-        self._flagged_model = FlaggedListModel(rows)
+        self._flagged_rows = list(rows)
+        self._flagged_model = FlaggedListModel(
+            [row for row in rows if not self._show_held_only or row.held or row.duplicate]
+        )
         self.flagged_list.AssociateModel(self._flagged_model)
+
+    def _on_show_held_only_changed(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Re-render the review tab when the held-only box is toggled.
+
+        WS-H: the box is view-local state (never a presenter input),
+        so the handler copies its value and re-filters the rows the
+        last :meth:`show_flagged` stored.
+        """
+        self._show_held_only = self.show_held_only_chk.GetValue()
+        self.show_flagged(self._flagged_rows)
+        event.Skip()
 
     def show_riders(self, rows: list[RiderRow]) -> None:
         """Render the review notebook's riders rows (ConsoleView).
