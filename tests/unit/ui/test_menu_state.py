@@ -176,23 +176,43 @@ def test_enablement_table_start_ride_follows_state_and_stop_gate(
         (RideStatus.RUNNING, False, False),
         (RideStatus.RUNNING, True, True),
         (RideStatus.FINISHED, True, True),
-        (RideStatus.REOPENED, True, False),
+        (RideStatus.REOPENED, False, True),
+        (RideStatus.REOPENED, True, True),
     ],
-    ids=["draft", "draft_stopped", "live_running", "stopped_running", "finished", "reopened"],
+    ids=[
+        "draft",
+        "draft_stopped",
+        "live_running",
+        "stopped_running",
+        "finished",
+        "reopened",
+        "reopened_stopped",
+    ],
 )
 def test_enablement_table_clear_ride_follows_state_and_stop_gate(
     status: RideStatus, *, ride_stopped: bool, expected: bool
 ) -> None:
-    """D3: mi_clear_ride enables in DRAFT, stopped RUNNING and FINISHED.
+    """D3 + G5: mi_clear_ride enables through all four ride states.
 
-    A live RUNNING ride has to stop first, and a REOPENED ride has to
-    finish first -- Clear resets the ride it targets.
+    A live RUNNING ride has to stop first; a REOPENED ride is
+    clearable as it stands (neither stop value gates it), because
+    clearing is the only way to unload it from memory -- and the
+    store is never touched.
     """
     state = commands.RideState(status=status, ride_stopped=ride_stopped)
 
     table = menu_state.enablement_table(state)
 
     assert table[ids.MI_CLEAR_RIDE] is expected
+
+
+def test_enablement_table_clear_ride_enables_a_reopened_ride() -> None:
+    """G5: the binder enables Clear Ride… for an open REOPENED ride."""
+    state = commands.RideState(status=RideStatus.REOPENED, ride_open=True, ride_stopped=False)
+
+    table = menu_state.enablement_table(state)
+
+    assert table[ids.MI_CLEAR_RIDE] is True
 
 
 @pytest.mark.parametrize("status", STATUSES, ids=lambda status: status.value)

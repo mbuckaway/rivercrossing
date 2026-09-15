@@ -353,13 +353,18 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # -- no XRC window, so a COMMAND target like Stop Ride…'s.
         kind=TargetKind.COMMAND,
         target="clear_ride",
-        # DRAFT, or stopped RUNNING, or FINISHED -- REOPENED is not
-        # clearable (finish it first) and a live RUNNING ride must
-        # stop first; the stopped clause only gates a RUNNING ride.
+        # DRAFT, or stopped RUNNING, or FINISHED, or REOPENED -- a
+        # REOPENED ride IS clearable: clearing is the only way to
+        # unload it from memory, and it is never removed from the
+        # store. A live RUNNING ride must stop first; the stopped
+        # clause only gates a RUNNING ride, so it never refuses
+        # REOPENED.
         # W1: an open ride is also required -- there is nothing to
         # clear on the no-ride bootstrap console.
         enabled_when=Enablement(
-            allowed_states=frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}),
+            allowed_states=frozenset(
+                {RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED}
+            ),
             requires_ride_stopped=True,
             requires_ride_open=True,
         ),

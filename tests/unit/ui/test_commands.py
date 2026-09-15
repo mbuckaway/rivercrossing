@@ -212,11 +212,16 @@ def test_new_ride_route_declares_the_no_ride_gate() -> None:
 
 
 def test_clear_ride_route_declares_the_d3_enablement_rule() -> None:
-    """D3: the Clear Ride… row's own "Enabled when" cell, structured."""
+    """D3 + G5: the Clear Ride… row's own "Enabled when" cell.
+
+    REOPENED joins the clearable set: clearing is the only way to
+    unload a reopened ride from memory, and the row never removes it
+    from the store.
+    """
     rule = commands.route_for_id(ids.MI_CLEAR_RIDE).enabled_when
 
     assert rule.allowed_states == frozenset(
-        {RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}
+        {RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED}
     )
     assert rule.requires_ride_stopped is True
 
@@ -315,10 +320,11 @@ ALLOWED_STATES = (
     frozenset({RideStatus.RUNNING, RideStatus.REOPENED}),  # Ride > Finish Ride...
     frozenset({RideStatus.FINISHED}),  # Ride > Reopen Ride: "FINISHED"
     None,  # Ride > Audit Trail...: "ride open, >=1 audit row"
-    # Clear Ride... (D3): DRAFT / stopped RUNNING / FINISHED.
-    # REOPENED is not clearable -- finish it first; the stop clause
-    # only ever gates a RUNNING ride.
-    frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED}),
+    # Clear Ride... (D3 + G5): DRAFT / stopped RUNNING / FINISHED /
+    # REOPENED -- clearing is the only way to unload a reopened ride
+    # from memory, and it never touches the store; the stop clause only
+    # ever gates a RUNNING ride.
+    frozenset({RideStatus.DRAFT, RideStatus.RUNNING, RideStatus.FINISHED, RideStatus.REOPENED}),
     None,  # Riders > Rider Editor: "ride open"
     None,  # Riders > Teams Editor: "ride open, mixed (teams allowed)" -- teams_allowed is a
     # condition-only gate, never a RideStatus membership rule
@@ -625,9 +631,11 @@ def test_is_route_enabled_given_start_ride_stopped_condition_matches_spec(
     assert result is expected_enabled
 
 
-# D2/D3: the two rows the 1.0.12 ride-menu work adds.
-# Clear Ride… enables in DRAFT, in stopped RUNNING and in FINISHED; a
-# live RUNNING ride and a REOPENED (corrections) ride do not.
+# D2/D3: the two rows the 1.0.12 ride-menu work adds, plus the 1.0.17
+# follow-up (G5). Clear Ride… enables in DRAFT, in stopped RUNNING, in
+# FINISHED and in REOPENED; only a live RUNNING ride has to stop
+# first, since the stop clause is consulted while the status is
+# RUNNING alone.
 CLEAR_RIDE_CASES = (
     (RideStatus.DRAFT, False, True),
     (RideStatus.DRAFT, True, True),
@@ -635,7 +643,8 @@ CLEAR_RIDE_CASES = (
     (RideStatus.RUNNING, True, True),
     (RideStatus.FINISHED, False, True),
     (RideStatus.FINISHED, True, True),
-    (RideStatus.REOPENED, True, False),
+    (RideStatus.REOPENED, False, True),
+    (RideStatus.REOPENED, True, True),
 )
 
 
@@ -643,12 +652,39 @@ CLEAR_RIDE_CASES = (
 def test_is_route_enabled_given_clear_ride_matches_spec_d3(
     status: RideStatus, *, ride_stopped: bool, expected_enabled: bool
 ) -> None:
-    """T-13: all four states x the stop clause for Clear Ride…."""
+    """T-13: all four states x the stop clause for Clear Ride….
+
+    The REOPENED rows pin G5: neither stop value gates a reopened
+    ride, because the stop clause is consulted for a RUNNING status
+    alone.
+    """
     state = dataclasses.replace(_baseline_state(status), ride_stopped=ride_stopped)
 
     result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
 
     assert result is expected_enabled
+
+
+def test_is_route_enabled_given_clear_ride_and_reopened_ride_open_is_enabled() -> None:
+    """G5: a REOPENED ride IS clearable -- the only way to unload it.
+
+    Clearing drops the ride from memory and never writes to the store,
+    so a reopened ride stays saved and reopenable from the library.
+    """
+    state = commands.RideState(status=RideStatus.REOPENED, ride_open=True, ride_stopped=False)
+
+    result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
+
+    assert result is True
+
+
+def test_is_route_enabled_given_clear_ride_and_live_running_is_disabled() -> None:
+    """D3: a live RUNNING ride must stop first, even after G5."""
+    state = commands.RideState(status=RideStatus.RUNNING, ride_open=True, ride_stopped=False)
+
+    result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
+
+    assert result is False
 
 
 @pytest.mark.parametrize("ride_open", RIDE_OPEN_CASES, ids=RIDE_OPEN_CASE_IDS)
