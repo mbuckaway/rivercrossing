@@ -21,6 +21,21 @@ All notable changes to RiverCrossing are recorded here. The format follows
 - **A DRAFT ride's deck/joker edit rebuilds the live shoe** — changing decks, jokers-per-deck
   or jokers-total on a draft ride reconfigures the in-session shoe, so the live shoe cannot
   diverge from the stored seed's replay.
+- **The Crossing Detail's corrections return to the dialog** — the "New plate" caption and its
+  `edit_plate_input` field are gone (the nine `crossing_*_lbl` labels are the window's value
+  fields), `edit_btn` reads "Edit Plate" and opens the Plate prompt (`crossing_number_dlg`), and
+  `edit_time_btn` opens `edit_crossing_dlg` titled "Edit Time" with a read-only plate and no void
+  button; `void_card_btn` carries the same two-column caption grid (`card_lbl`/`entry_lbl`) with
+  its OK disabled until a reason is typed. Every correction re-renders the dialog in place, so
+  only OK (and Delete, on success) closes it.
+- **Finishing a ride publishes nothing** — the FINISHED banner (`finished_infobar` with its
+  Reopen…/View results… buttons) is gone and the finish-time auto-export no longer writes HTML
+  and PDF into `user_data_dir("RiverCrossing")/exports`; the red lamp and the `FINISHED` label
+  hold the state, the status bar reads "Ride is finished. Results are available", and the operator
+  exports from the Results menu.
+- **The results standings lists floor at 198 px** — the three lists (`standings_list`,
+  `teams_standings_list`, `solo_standings_list`) reserve a 28 px header plus ten 17 px rows, so a
+  ride's top ten are visible; the dialog's 755 px width floor is unchanged.
 
 ### Fixed
 
@@ -30,6 +45,10 @@ All notable changes to RiverCrossing are recorded here. The format follows
   `FIRSTNAME,…,SEX` format, and the one exact-row assertion was updated.
 - **The open/quit smoke drives the full path** — it creates a DRAFT ride, imports the GORBA
   CSV and opens the Rider Simulator before quitting.
+- **A control that is present in a window resolves on Windows ARM64** — the lookup walks the
+  window's children through `_support.find_window_by_name` instead of calling
+  `wx.Window.FindWindowByName(..., window)`, which on the ARM builds does not resolve a child the
+  window does carry.
 
 ## [1.0.16] - 2026-09-13
 
