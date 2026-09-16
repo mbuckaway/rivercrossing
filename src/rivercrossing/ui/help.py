@@ -50,6 +50,7 @@ ANCHOR_BY_WINDOW: dict[str, str] = {
     ids.RIDER_EDITOR_DLG: "riders-entries",
     ids.CSV_PREVIEW_DLG: "appendix-b-csv-reference",
     ids.RESULTS_DLG: "results-window",
+    ids.SELFTEST_DLG: "evaluator-self-test",
     ids.RIDE_LIBRARY_DLG: "getting-started",
     ids.AUDIT_DLG: "fixing-mistakes",
     # The correction dialogs all land on Fixing mistakes.

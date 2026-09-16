@@ -43,8 +43,9 @@ def format_check_line(check: SelfTestCheck) -> str:
     The name is padded with dots to :data:`_DOT_COLUMN`, then a
     space, then the check's own detail (only the whole-field timing
     check has one) and PASS/FAIL -- the exact shape xrc-windows.md's
-    four selftest_dlg lines show, verified character-for-character in
-    the presenter's own unit tests.
+    selftest_dlg lines show, verified character-for-character in the
+    presenter's own unit tests, for the two follow-up checks after the
+    canvas's own four as much as for those four.
     """
     label = f"{check.name} ".ljust(_DOT_COLUMN, ".")
     detail = f"{check.detail} " if check.detail else ""

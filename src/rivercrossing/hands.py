@@ -50,6 +50,7 @@ import time
 from collections import Counter
 from dataclasses import dataclass
 from enum import IntEnum
+from functools import cmp_to_key
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -977,6 +978,9 @@ _FIVE_OF_A_KIND_CHECK_NAME = "Five-of-a-kind ordering"
 # The multiplication-sign glyph is xrc-windows.md's own frozen
 # selftest_dlg canvas text, transcribed verbatim.
 _FIELD_TIMING_CHECK_NAME = "Whole-field 180×12 timing"  # noqa: RUF001
+# The two follow-up checks, appended after the canvas's own four.
+_COMPARE_TOTAL_ORDER_CHECK_NAME = "compare() total order"
+_JOKER_COUNT_BOUND_CHECK_NAME = "best_hand() joker bound"
 
 _JOKER_VECTOR_COUNT = 28
 
@@ -1138,6 +1142,119 @@ def _check_field_timing() -> tuple[bool, str]:
     return elapsed < _FIELD_TIMING_BUDGET_SECONDS, f"{elapsed:.2f} s"
 
 
+# Check (e)'s own fixture: a fixed seed, the same discipline
+# :func:`_seeded_field` applies to check (d), so the check scores the
+# identical hands on every launch.
+_COMPARE_SAMPLE_SEED = 20260808
+_COMPARE_SAMPLE_SIZE = 48
+# Every third hand plays a joker, so compare()'s joker-count component
+# (fewer jokers wins, spec section 5) is in the sample alongside class
+# and tiebreak -- an all-natural sample would never reach it.
+_COMPARE_SAMPLE_JOKER_EVERY = 3
+_JOKER_CODE = "JK"
+
+
+def _sample_hand_codes(rng: random.Random, deck: Sequence[str], index: int) -> list[str]:
+    """Draw one sample hand's five card codes, joker included."""
+    joker_count = 1 if index % _COMPARE_SAMPLE_JOKER_EVERY == 0 else 0
+    naturals = [rng.choice(deck) for _ in range(NATURAL_HAND_SIZE - joker_count)]
+    return [*naturals, *([_JOKER_CODE] * joker_count)]
+
+
+def _seeded_compare_sample() -> tuple[EvaluatedHand, ...]:
+    """Build check (e)'s fixed sample of evaluated five-card hands.
+
+    A deterministic seeded draw from the natural deck, so the
+    total-order check compares the identical hands on every launch.
+    """
+    rng = random.Random(_COMPARE_SAMPLE_SEED)  # noqa: S311 -- a deterministic self-test fixture
+    deck = [Card(rank=rank, suit=suit).code() for rank in Rank for suit in Suit]
+    return tuple(
+        eval5([Card.parse(code) for code in _sample_hand_codes(rng, deck, index)])
+        for index in range(_COMPARE_SAMPLE_SIZE)
+    )
+
+
+def _compare_is_antisymmetric(sample: Sequence[EvaluatedHand]) -> bool:
+    """Return whether compare() is antisymmetric over *sample*."""
+    return all(compare(a, b) == -compare(b, a) for a in sample for b in sample)
+
+
+def _compare_is_reflexive(sample: Sequence[EvaluatedHand]) -> bool:
+    """Return whether every hand ties with itself."""
+    return all(compare(hand, hand) == 0 for hand in sample)
+
+
+def _compare_is_transitive(sample: Sequence[EvaluatedHand]) -> bool:
+    """Return whether compare()'s relation survives a sort by itself.
+
+    The sample is sorted *with* ``compare`` -- never with a re-derived
+    key -- and then every ordered pair of the result, not merely the
+    adjacent ones, must agree with that order. A cyclic relation
+    cannot produce such a list.
+    """
+    ordered = sorted(sample, key=cmp_to_key(compare))
+    return all(compare(lower, higher) <= 0 for lower, higher in itertools.combinations(ordered, 2))
+
+
+def _check_compare_total_order() -> tuple[bool, str]:
+    """Check (e): compare() is a strict total order on a seeded sample.
+
+    Antisymmetry (``compare(a, b) == -compare(b, a)``), reflexivity
+    (``compare(a, a) == 0``) and transitivity over
+    :func:`_seeded_compare_sample`'s hands -- every third of them
+    playing a joker. Hand comparison is what orders a whole field
+    (spec section 5), so a relation that is not a total order can rank
+    entries by arrival order rather than by hand. All three legs are
+    evaluated unconditionally, so one broken leg cannot mask the state
+    of the others.
+    """
+    sample = _seeded_compare_sample()
+    passed = all(
+        (
+            _compare_is_antisymmetric(sample),
+            _compare_is_reflexive(sample),
+            _compare_is_transitive(sample),
+        )
+    )
+    return passed, ""
+
+
+# Check (f)'s own pools: a hand's worth of jokers, the two over-length
+# pools a multi-deck shoe can really deal (six and seven jokers), and
+# seven jokers over a natural anchor -- the shape that plays only the
+# jokers that improve the hand.
+_JOKER_BOUND_POOL_SIZES = (5, 6, 7)
+_JOKER_BOUND_MIXED_JOKERS = 7
+_JOKER_BOUND_ANCHOR_CODES = ("AS", "AD", "KH")
+
+
+def _joker_bound_pools() -> tuple[tuple[Card, ...], ...]:
+    """Build check (f)'s four joker pools."""
+    joker = Card(rank=None, suit=None, joker=True)
+    anchor = tuple(Card.parse(code) for code in _JOKER_BOUND_ANCHOR_CODES)
+    return (
+        *((joker,) * size for size in _JOKER_BOUND_POOL_SIZES),
+        ((joker,) * _JOKER_BOUND_MIXED_JOKERS + anchor),
+    )
+
+
+def _check_joker_count_bound() -> tuple[bool, str]:
+    """Check (f): best_hand plays no more than five jokers.
+
+    A five-card result can hold at most five jokers whatever the pool
+    holds, including the over-length pools a multi-deck shoe can deal
+    (six and seven jokers): :func:`best_hand`'s joker-count loop caps
+    itself at :data:`NATURAL_HAND_SIZE`, so a regression that spent
+    the pool's every joker on a candidate would return a "hand" longer
+    than the hand it claims to score.
+    """
+    widest = max(
+        sum(1 for card in best_hand(pool).best5 if card.joker) for pool in _joker_bound_pools()
+    )
+    return widest <= NATURAL_HAND_SIZE, ""
+
+
 def _run_check(name: str, check: Callable[[], tuple[bool, str]]) -> SelfTestCheck:
     """Run *check*, timed, and wrap the result in a SelfTestCheck."""
     start = time.perf_counter()
@@ -1149,25 +1266,31 @@ def _run_check(name: str, check: Callable[[], tuple[bool, str]]) -> SelfTestChec
 def self_test() -> SelfTestReport:
     """Run the evaluator self-test suite (spec section 12, R-44).
 
-    Four independently-timed checks, in the selftest_dlg canvas's own
-    order: the 7,462-rank sweep, the 28 authored joker vectors,
-    five-of-a-kind ordering (above the royal flush, and natural above
-    wild), and the whole 180x12 field scoring inside its R-42 budget.
-    The vector-CSV checks read through
-    :func:`_load_rank_sweep_vectors` / :func:`_load_joker_vectors`, so
-    a corrupted table genuinely turns that check red rather than being
-    trusted unread.
+    Six independently-timed checks. The four frozen selftest_dlg canvas
+    lines lead, in their own order: the 7,462-rank sweep, the 28
+    authored joker vectors, five-of-a-kind ordering (above the royal
+    flush, and natural above wild), and the whole 180x12 field scoring
+    inside its R-42 budget. The two follow-up checks then cover the
+    comparison the field is sorted by (``compare()``'s total order
+    over a seeded sample) and the joker cap ``best_hand`` must respect
+    (no more than five jokers in its result). The vector-CSV checks
+    read through :func:`_load_rank_sweep_vectors` /
+    :func:`_load_joker_vectors`, so a corrupted table genuinely turns
+    that check red rather than being trusted unread.
 
     Wired to both app launch and Help ▸ Run Evaluator Self-test;
     a failing report blocks Finish (E6.4.3, module-skeletons.md S4).
 
     Returns:
-        The full :class:`SelfTestReport`, one check per canvas line.
+        The full :class:`SelfTestReport`, one check per selftest_dlg
+        output line.
     """
     checks = (
         _run_check(_RANK_SWEEP_CHECK_NAME, _check_rank_sweep),
         _run_check(_JOKER_VECTOR_CHECK_NAME, _check_joker_vectors),
         _run_check(_FIVE_OF_A_KIND_CHECK_NAME, _check_five_of_a_kind_ordering),
         _run_check(_FIELD_TIMING_CHECK_NAME, _check_field_timing),
+        _run_check(_COMPARE_TOTAL_ORDER_CHECK_NAME, _check_compare_total_order),
+        _run_check(_JOKER_COUNT_BOUND_CHECK_NAME, _check_joker_count_bound),
     )
     return SelfTestReport(checks=checks)

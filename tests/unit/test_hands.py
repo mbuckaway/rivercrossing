@@ -796,16 +796,16 @@ def test_best_hand_matches_exhaustive_oracle_across_seeded_multi_deck_draws(
 # ------------------------------------------------- E2.4.1: self_test
 
 
-def test_self_test_given_the_real_vectors_reports_all_four_checks_passed() -> None:
+def test_self_test_given_the_real_vectors_reports_all_six_checks_passed() -> None:
     """The real shipped vectors keep every self-test check green."""
     report = self_test()
 
     assert report.passed is True
-    assert len(report.checks) == 4
+    assert len(report.checks) == 6
 
 
 def test_self_test_check_names_match_the_selftest_dlg_canvas_order() -> None:
-    """The four checks appear in xrc-windows.md's own fixed order."""
+    """The four canvas checks lead; the two follow-ups trail."""
     report = self_test()
 
     assert tuple(check.name for check in report.checks) == (
@@ -813,6 +813,8 @@ def test_self_test_check_names_match_the_selftest_dlg_canvas_order() -> None:
         "Joker vector table (28)",
         "Five-of-a-kind ordering",
         "Whole-field 180×12 timing",  # noqa: RUF001 -- xrc-windows.md's frozen text
+        "compare() total order",
+        "best_hand() joker bound",
     )
 
 
@@ -1012,3 +1014,185 @@ def test_check_field_timing_given_a_slow_clock_reports_fail(
 
     assert passed is False
     assert detail == "1.50 s"
+
+
+# ------------------------- E2.4.1 follow-up: checks (e) and (f)
+
+
+_OVERHAND_JOKERS = 6
+_RESULT_JOKER_SAMPLE = 5
+_CYCLE_LENGTH = 3
+
+
+def _joker_card() -> Card:
+    """Build one joker."""
+    return Card(rank=None, suit=None, joker=True)
+
+
+def _joker_result(count: int) -> EvaluatedHand:
+    """Build a best_hand stand-in with *count* result jokers."""
+    jokers = tuple(_joker_card() for _ in range(count))
+    return EvaluatedHand(
+        cls=HandClass.FIVE_OF_A_KIND,
+        tiebreak=(count,),
+        best5=jokers,
+        jokers_played_as=jokers,
+    )
+
+
+def _compare_key(hand: EvaluatedHand) -> tuple[HandClass, tuple[int, ...], int]:
+    """Key compare()'s own ordering: class, tiebreak and joker count."""
+    return (hand.cls, hand.tiebreak, len(hand.jokers_played_as))
+
+
+# Built once at import: compare() is called thousands of times per
+# check, and rebuilding the sample inside the stand-in costs seconds
+# (measured) rather than milliseconds.
+_CYCLE_POSITIONS = {
+    _compare_key(hand): position
+    for position, hand in enumerate(hands._seeded_compare_sample()[:_CYCLE_LENGTH])
+}
+
+
+def _identity_only_compare(a: EvaluatedHand, b: EvaluatedHand) -> int:
+    """Return 0 only for a hand compared with itself."""
+    return 0 if a is b else 1
+
+
+def _never_ties_compare(_a: EvaluatedHand, _b: EvaluatedHand) -> int:
+    """Return 1 for every comparison, never a tie."""
+    return 1
+
+
+def _cyclic_compare(a: EvaluatedHand, b: EvaluatedHand) -> int:
+    """Return an antisymmetric, reflexive but cyclic ordering.
+
+    The seeded sample's first three hands play rock-paper-scissors;
+    every other hand ties with everything, so only those three break
+    transitivity.
+    """
+    back = _CYCLE_POSITIONS.get(_compare_key(b))
+    forward = _CYCLE_POSITIONS.get(_compare_key(a))
+    if forward is None or back is None or forward == back:
+        return 0
+    return 1 if (forward - back) % _CYCLE_LENGTH == 1 else -1
+
+
+def test_check_compare_total_order_given_the_seeded_sample_passes_with_no_detail() -> None:
+    """Check (e) passes on the real sample and carries no detail."""
+    report = self_test()
+
+    assert report.checks[4].passed is True
+    assert report.checks[4].detail == ""
+
+
+def test_check_joker_count_bound_given_the_real_evaluator_passes_with_no_detail() -> None:
+    """Check (f) passes on the real pools and carries no detail."""
+    report = self_test()
+
+    assert report.checks[5].passed is True
+    assert report.checks[5].detail == ""
+
+
+def test_seeded_compare_sample_given_the_same_seed_builds_the_same_hands() -> None:
+    """Check (e)'s sample is deterministic across builds."""
+    # logic-coverage-exempt: T-8 -- determinism is the property under
+    # test, so the same call is made twice; no single actuation can
+    # show that two builds agree.
+    first = hands._seeded_compare_sample()
+    second = hands._seeded_compare_sample()
+
+    assert [_compare_key(hand) for hand in first] == [_compare_key(hand) for hand in second]
+
+
+def test_check_compare_total_order_fails_when_compare_is_not_antisymmetric(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check (e) fails when compare(a, b) is not -compare(b, a)."""
+    # logic-coverage-exempt: T-10 -- hands.compare is the SUT's own
+    # comparison seam, patched here only to force this check's failure
+    # path deterministically; no I/O boundary is involved.
+    monkeypatch.setattr(hands, "compare", _identity_only_compare)
+
+    passed, detail = hands._check_compare_total_order()
+
+    assert passed is False
+    assert detail == ""
+
+
+def test_check_compare_total_order_fails_when_compare_never_ties(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check (e) fails when no hand ties, not even with itself.
+
+    A compare that reports no tie cannot be reflexive -- and cannot be
+    antisymmetric either, since compare(a, a) == -compare(a, a)
+    forces a self-tie for every hand.
+    """
+    # logic-coverage-exempt: T-10 -- see the antisymmetry test above.
+    monkeypatch.setattr(hands, "compare", _never_ties_compare)
+
+    passed, _detail = hands._check_compare_total_order()
+
+    assert passed is False
+
+
+def test_check_compare_total_order_fails_when_compare_is_not_transitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check (e) fails when compare's own relation cycles."""
+    # logic-coverage-exempt: T-10 -- see the antisymmetry test above.
+    monkeypatch.setattr(hands, "compare", _cyclic_compare)
+
+    passed, _detail = hands._check_compare_total_order()
+
+    assert passed is False
+
+
+def test_check_joker_count_bound_fails_when_a_result_plays_six_jokers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check (f) fails the moment one 5-card result plays six jokers."""
+    # logic-coverage-exempt: T-10 -- hands.best_hand is the SUT's own
+    # evaluator entry point, patched here only to force this check's
+    # failure path deterministically; no I/O boundary is involved.
+    monkeypatch.setattr(hands, "best_hand", lambda _cards: _joker_result(_OVERHAND_JOKERS))
+
+    passed, detail = hands._check_joker_count_bound()
+
+    assert passed is False
+    assert detail == ""
+
+
+def test_check_joker_count_bound_passes_when_every_result_plays_five_jokers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound is inclusive: five jokers still passes."""
+    # logic-coverage-exempt: T-10 -- see the six-joker test above.
+    monkeypatch.setattr(hands, "best_hand", lambda _cards: _joker_result(_RESULT_JOKER_SAMPLE))
+
+    passed, detail = hands._check_joker_count_bound()
+
+    assert passed is True
+    assert detail == ""
+
+
+def test_check_joker_count_bound_fails_when_only_the_seven_joker_pool_overflows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check (f) inspects every over-length joker pool.
+
+    The stand-in honours the bound for every pool but the bare
+    seven-joker one, so a check that only ever built a five-joker pool
+    would still report green.
+    """
+    # logic-coverage-exempt: T-10 -- see the six-joker test above.
+    monkeypatch.setattr(
+        hands,
+        "best_hand",
+        lambda cards: _joker_result(_OVERHAND_JOKERS if len(cards) == 7 else _RESULT_JOKER_SAMPLE),
+    )
+
+    passed, _detail = hands._check_joker_count_bound()
+
+    assert passed is False

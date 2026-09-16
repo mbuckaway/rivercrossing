@@ -54,6 +54,7 @@
     <li><a href="#publishing-results">Publishing results</a></li>
     <li><a href="#poker-the-run-way">Poker, the run way</a></li>
     <li><a href="#card-shoe">Card shoe</a></li>
+    <li><a href="#evaluator-self-test">Evaluator self-test</a></li>
     <li><a href="#troubleshooting-faq">Troubleshooting &amp; FAQ</a></li>
     <li><a href="#appendix-a-shortcuts">Appendix A — Keyboard shortcuts</a></li>
     <li><a href="#appendix-b-csv-reference">Appendix B — CSV reference</a></li>
@@ -187,7 +188,7 @@
 <h2>7 · Finishing &amp; standings</h2>
 <ul>
   <li><strong>Finish ride</strong> — <strong>Ride ▸ Finish Ride…</strong> locks entry, runs the hand evaluator's self-test (a red self-test blocks finishing, R-44), and computes the final standings — it publishes nothing by itself: the lamp turns red, the status label reads <code>FINISHED</code>, and the status bar says the ride is finished and the results are available. Generate the results yourself from the <strong>Results</strong> menu — <strong>Generate HTML…</strong>, <strong>Export PDF…</strong>, <strong>Podium Poster PDF…</strong>, <strong>Export Standings CSV…</strong> — or from the results dialog's own export buttons. Open the standings with <strong>Results ▸ Standings</strong> (<kbd>F5</kbd>).</li>
-  <li><strong>Finish gate</strong> — the evaluator self-test runs fresh on every finish; a red result blocks it. DNF riders are excluded from the results outright — not ranked, not listed, not exported — and held cards never count until you confirm them.</li>
+  <li><strong>Finish gate</strong> — the evaluator self-test (see <a href="#evaluator-self-test">Evaluator self-test</a>) runs fresh on every finish; a red result blocks it. DNF riders are excluded from the results outright — not ranked, not listed, not exported — and held cards never count until you confirm them.</li>
   <li><strong>Ties</strong> — the hand that used fewer jokers wins first; otherwise identical best hands — same hand and same joker count — are resolved by the ride's tie-break order (it opens on high-card draw, then most laps, then shortest total time). The order is set in ride setup and locks once the ride starts; <strong>Ride ▸ Edit Ride…</strong> can still change it while the ride is a draft.</li>
   <li><strong>Reopen for corrections</strong> — <strong>Ride ▸ Reopen Ride</strong> reopens a finished ride for corrections: entry is locked, edits are highlighted in the crossings list, and <em>Finish again</em> re-locks and re-ranks. After corrections, the results dialog flags the published results as stale until you export again.</li>
   <li><strong>Continue a reopened ride</strong> — Start stays live while a ride is reopened: pressing GO (or <strong>Ride ▸ Start Ride</strong>) continues it — entry unlocks, the clock (held at the recorded finish while reopened) goes live again from the ride's original start, and that recorded finish is discarded. Finish again when the riding is truly over.</li>
@@ -243,8 +244,23 @@
 </ul>
 </section>
 
+<section id="evaluator-self-test">
+<h2>11 · Evaluator self-test</h2>
+<p>The hand evaluator is the one part of the app nobody can check by eye mid-race, so it checks itself: the app runs the evaluator self-test silently at every launch, and <strong>Help ▸ Run Evaluator Self-test</strong> opens that same suite in the <strong>Evaluator Self-Test</strong> window. The window lists the six checks with their PASS/FAIL lines, and <strong>Run again</strong> re-runs them in place. Every check is scored live against the evaluator you are running — never read from a record of some earlier run — and the whole suite finishes in well under a second, so nothing about race day waits on it.</p>
+<p>The six checks, in order:</p>
+<ol>
+  <li><strong>7,462 distinct ranks</strong> — the packaged rank table's rows sort to exactly the 7,462 natural 5-card ranks, with no gap and no repeat.</li>
+  <li><strong>Joker vector table (28)</strong> — the 28 hand-authored wild-card vectors each still evaluate to their expected hand class and kickers, so the joker layer's documented cases are checked one by one.</li>
+  <li><strong>Five-of-a-kind ordering</strong> — five of a kind outranks a royal flush, and a natural five of a kind outranks a wild one.</li>
+  <li><strong>Whole-field 180×12 timing</strong> — a seeded 180-entry field of 12-card hands scores inside its budget (the line carries the measured seconds).</li>
+  <li><strong>compare() total order</strong> — hand comparison is still a strict total order over a fixed sample: antisymmetric, reflexive and transitive. The standings are a sort by it, so a relation that is not a total order could rank entries by the order they crossed in rather than by the hands they hold.</li>
+  <li><strong>best_hand() joker bound</strong> — a best hand never plays more than five jokers, even when the pool holds six or seven of them.</li>
+</ol>
+<p>It is here to catch a broken evaluator before it scores a race: checks 1–2 read the vector tables that ship inside the app, so a corrupted or stale table fails at launch instead of quietly mis-scoring a field, and the last two guard the comparison and the joker cap every published result depends on. A red self-test blocks finishing a ride — <strong>Ride ▸ Finish Ride…</strong> runs the suite fresh first (see <a href="#finishing-standings">Finishing &amp; standings</a>) — and a red one at launch opens this window so you can read it before carrying on. A green launch run stays silent; the self-test never changes anything it reads.</p>
+</section>
+
 <section id="troubleshooting-faq">
-<h2>11 · Troubleshooting &amp; FAQ</h2>
+<h2>12 · Troubleshooting &amp; FAQ</h2>
 <ul>
   <li><strong>Missed the start</strong> — use <strong>Ride ▸ Set Start Time…</strong> to back-date it; lap-1 times recompute.</li>
   <li><strong>Typed the wrong plate</strong> — undo the crossing, or edit/reassign it and record a reason.</li>
