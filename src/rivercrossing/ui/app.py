@@ -1577,8 +1577,13 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
     ``roster=None``, every generator and race control disabled, and
     ``new_ride_btn`` wired to the app's New Ride flow
     (:func:`_create_simulator_test_ride`) -- the operator's one way
-    forward from a console with no ride on it. No spins are threaded
-    for that open; the dialog reads its own authored defaults.
+    forward from a console with no ride on it.
+
+    Both opens are seeded from the live settings the same way, the
+    no-ride one included: the trimmed dialog's fields are dead, but the
+    close-persist (:func:`_persist_simulator_changes`) reads them back
+    either way, so a no-ride open left on the XRC's authored defaults
+    would write 175/40/15/1/45 over the operator's saved counts.
 
     Plan §1/§3: the spins are seeded from the live settings, so the
     dialog opens on the operator's last-used counts -- and the average
@@ -1589,6 +1594,7 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
     """
     from rivercrossing.ui.views.simulator import SimulatorDialog  # noqa: PLC0415 -- deferred
 
+    settings = context.settings
     presenter = context.presenter
     if presenter is None:
         return SimulatorDialog(
@@ -1596,20 +1602,29 @@ def _decorate_simulation(context: _RouteContext, window: Any) -> Any:  # noqa: A
             engine=None,
             roster=None,
             on_new_ride=lambda: _create_simulator_test_ride(context),
+            sim_riders=settings.sim_riders,
+            sim_teams=settings.sim_teams,
+            sim_solo=settings.sim_solo,
+            sim_laps=settings.sim_laps,
+            sim_interval=settings.sim_interval,
+            sim_short_laps=settings.sim_short_laps,
+            sim_lapped=settings.sim_lapped,
+            sim_team_stop=settings.sim_team_stop,
+            avg_speed_kmh=settings.avg_speed_kmh,
         )
     return SimulatorDialog(
         window,
         engine=presenter.engine,
         roster=context.roster,
-        sim_riders=context.settings.sim_riders,
-        sim_teams=context.settings.sim_teams,
-        sim_solo=context.settings.sim_solo,
-        sim_laps=context.settings.sim_laps,
-        sim_interval=context.settings.sim_interval,
-        sim_short_laps=context.settings.sim_short_laps,
-        sim_lapped=context.settings.sim_lapped,
-        sim_team_stop=context.settings.sim_team_stop,
-        avg_speed_kmh=context.settings.avg_speed_kmh,
+        sim_riders=settings.sim_riders,
+        sim_teams=settings.sim_teams,
+        sim_solo=settings.sim_solo,
+        sim_laps=settings.sim_laps,
+        sim_interval=settings.sim_interval,
+        sim_short_laps=settings.sim_short_laps,
+        sim_lapped=settings.sim_lapped,
+        sim_team_stop=settings.sim_team_stop,
+        avg_speed_kmh=settings.avg_speed_kmh,
     )
 
 
@@ -3006,17 +3021,20 @@ def _persist_team_editor_changes(context: _RouteContext, view: Any) -> None:  # 
 
 
 def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # noqa: ANN401
-    """Persist the roster and spins after the simulator dialog closes.
+    """Persist the settings always, and any roster change, on close.
 
-    The mirror of :func:`_persist_rider_editor_changes`: the simulator
-    generates placeholder riders and teams into the in-memory roster,
-    so with a store-backed ride open and any generated change (the
-    presenter's own ``roster_changed``), that roster is written back
-    so a crashed or abandoned simulated field survives a relaunch. A
-    refused save (a locked or unwritable database) surfaces as a
-    status notice -- recorded in the launch's log too -- the same
-    guard idiom the rider editor uses, for the same
-    wx-swallowed-raise reason.
+    The settings write always runs; the roster write is the
+    conditional half.
+
+    The mirror of :func:`_persist_rider_editor_changes` for the
+    roster: the simulator generates placeholder riders and teams into
+    the in-memory roster, so with a store-backed ride open and any
+    generated change (the presenter's own ``roster_changed``), that
+    roster is written back so a crashed or abandoned simulated field
+    survives a relaunch. A refused save (a locked or unwritable
+    database) surfaces as a status notice -- recorded in the launch's
+    log too -- the same guard idiom the rider editor uses, for the
+    same wx-swallowed-raise reason.
 
     Plan §1 adds the settings write: the dialog's five spin values
     (``view.sim_values``, recorded before the modal closed) are stored
@@ -3037,12 +3055,13 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
     the spot; a GO the engine refused leaves it DRAFT, so the menu
     never claims a ride that never started.
 
-    A view with no presenter is the dialog's own no-ride open
-    (:func:`_decorate_simulation`): it generated nothing into a roster
-    and raced nothing, and its spins were never seeded from the
-    settings (every field is disabled and stands as authored), so the
-    whole close-persist is skipped -- writing those authored defaults
-    back would overwrite the operator's saved counts.
+    The settings write is not gated on the presenter. A view with no
+    presenter is the dialog's own no-ride open
+    (:func:`_decorate_simulation`), which generated nothing and raced
+    nothing -- so there is no roster to save, but there are settings:
+    that open is seeded from the same live settings as the ride-open
+    one, so the counts read back here are the operator's own, and the
+    next open must keep them.
 
     Args:
         context: The route context whose store, roster and settings
@@ -3055,9 +3074,7 @@ def _persist_simulator_changes(context: _RouteContext, view: Any) -> None:  # no
             for the no-ride open.
     """
     presenter = view.presenter
-    if presenter is None:
-        return
-    if presenter.roster_changed:
+    if presenter is not None and presenter.roster_changed:
         store = context.store
         if store is not None and context.active_ride_id is not None:
             try:

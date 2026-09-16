@@ -11,15 +11,18 @@ controls on a real dialog -- stays with the (functional) suite.
 Phase 2 adds the Check button (a system modal, never ``sim_infobar``),
 the solo auto-fill on every riders/teams change, and the
 speed-derived interval seed. The no-ride open (``roster=None``) adds
-the other half: every generator and race control is disabled, and
+the other half: every generator and race control is disabled, the
+counts and behaviour choices are seeded from the passed settings all
+the same (the app's close-persist reads them back), and
 ``new_ride_btn`` -- the dialog's only live action -- routes to the
-app's New Ride and ends the modal.
+app's New Ride and ends the modal. With a ride open that button has
+nothing to do, so it is disabled and never bound.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import wx
@@ -332,7 +335,12 @@ def _engine(lap_km: float = 8.0) -> SimpleNamespace:
 
 
 def _controls() -> dict[str, _Control]:
-    """Return a control double per name the dialog resolves."""
+    """Return a control double per name the dialog resolves.
+
+    Both opens resolve the same names: the ride-open path resolves
+    ``new_ride_btn`` too -- to disable it, never to bind it -- so this
+    one map serves the ride-open and the no-ride tests alike.
+    """
     return {
         "riders_spin": _Spin(175),
         "teams_spin": _Spin(40),
@@ -345,7 +353,18 @@ def _controls() -> dict[str, _Control]:
         "check_btn": _Control(),
         "gen_riders_btn": _Control(),
         "go_btn": _Control(),
+        "new_ride_btn": _Control(),
     }
+
+
+def _spin(doubles: dict[str, _Control], name: str) -> _Spin:
+    """Return the spin double registered as *name*."""
+    return cast("_Spin", doubles[name])
+
+
+def _choice(doubles: dict[str, _Control], name: str) -> _Choice:
+    """Return the choice double registered as *name*."""
+    return cast("_Choice", doubles[name])
 
 
 def _patch_find(monkeypatch: pytest.MonkeyPatch, spins: dict[str, _Control]) -> None:
@@ -461,7 +480,11 @@ def test_simulator_dialog_given_a_solo_roster_leaves_solo_as_seeded(
 def test_simulator_dialog_binds_check_and_the_two_team_count_spins(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Plan §1/§2: Check and both count spins are bound."""
+    """Plan §1/§2: Check and both count spins are bound.
+
+    A ride is already open, so New Ride has nothing to do: it is neither
+    bound nor left clickable (its own pin below).
+    """
     spins = _controls()
     _patch_find(monkeypatch, spins)
 
@@ -478,6 +501,27 @@ def test_simulator_dialog_binds_check_and_the_two_team_count_spins(
         spins["riders_spin"],
         spins["teams_spin"],
     ]
+
+
+def test_simulator_dialog_given_a_ride_disables_the_new_ride_button(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ride-open dialog offers no New Ride, so the button is inert.
+
+    Leaving it enabled with no handler is the defect: XRC authors the
+    button for every open, so the ride-open path must disable it rather
+    than leave a live-looking control that does nothing.
+    """
+    controls = _controls()
+    _patch_find(monkeypatch, controls)
+
+    SimulatorDialog(
+        _FakeDialog(),
+        engine=None,
+        roster=Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED),
+    )
+
+    assert controls["new_ride_btn"].enabled is False
 
 
 @pytest.mark.parametrize(
@@ -531,16 +575,6 @@ def test_simulator_dialog_seeds_the_behaviour_defaults_when_none_are_passed(
 # --- the no-ride open: New Ride is the dialog's only live action
 
 
-def _no_ride_controls() -> dict[str, _Control]:
-    """Return the authored control doubles plus the New Ride button.
-
-    ``_controls()`` deliberately carries no ``new_ride_btn`` key: the
-    ride-open path never resolves that name, so its absence there is
-    what proves the lookup happens on the no-ride branch alone.
-    """
-    return {**_controls(), "new_ride_btn": _Control()}
-
-
 # Every control that generates or races: all dead without a ride.
 NO_RIDE_DISABLED_CONTROLS = (
     "riders_spin",
@@ -562,7 +596,7 @@ def test_simulator_dialog_given_no_ride_disables_every_generator_control(
     monkeypatch: pytest.MonkeyPatch, control_name: str
 ) -> None:
     """No ride means no roster to generate into, so it is dead."""
-    controls = _no_ride_controls()
+    controls = _controls()
     _patch_find(monkeypatch, controls)
 
     SimulatorDialog(_FakeDialog(), engine=None, roster=None)
@@ -574,7 +608,7 @@ def test_simulator_dialog_given_no_ride_enables_the_new_ride_button(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """New Ride is the one action a ride-less dialog offers."""
-    controls = _no_ride_controls()
+    controls = _controls()
     _patch_find(monkeypatch, controls)
 
     SimulatorDialog(_FakeDialog(), engine=None, roster=None)
@@ -586,7 +620,7 @@ def test_simulator_dialog_given_no_ride_binds_only_the_new_ride_button(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Nothing else on a ride-less dialog is wired to a handler."""
-    controls = _no_ride_controls()
+    controls = _controls()
     _patch_find(monkeypatch, controls)
 
     view = SimulatorDialog(_FakeDialog(), engine=None, roster=None)
@@ -598,7 +632,7 @@ def test_simulator_dialog_given_no_ride_holds_no_presenter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """There is no roster or engine to present, so no presenter."""
-    controls = _no_ride_controls()
+    controls = _controls()
     _patch_find(monkeypatch, controls)
 
     view = SimulatorDialog(_FakeDialog(), engine=None, roster=None)
@@ -606,16 +640,89 @@ def test_simulator_dialog_given_no_ride_holds_no_presenter(
     assert view.presenter is None
 
 
-def test_simulator_dialog_given_no_ride_snapshots_the_authored_defaults(
+def test_simulator_dialog_given_no_ride_seeds_the_fields_from_the_passed_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Nothing seeds the fields: the app persists the authored ones."""
-    controls = _no_ride_controls()
+    """The ride-less dialog holds the operator's persisted counts.
+
+    The fields are disabled but still seeded, so the snapshots the app
+    reads after the modal closes carry the counts the app threaded in --
+    never the XRC's authored defaults, which a close-persist would then
+    write back over the operator's own.
+    """
+    controls = _controls()
+    _patch_find(monkeypatch, controls)
+
+    view = SimulatorDialog(
+        _FakeDialog(),
+        engine=None,
+        roster=None,
+        sim_riders=37,
+        sim_teams=6,
+        sim_solo=5,
+        sim_laps=4,
+        sim_interval=9,
+        sim_short_laps=2,
+        sim_lapped=1,
+        sim_team_stop=3,
+    )
+
+    assert (
+        _spin(controls, "riders_spin").value,
+        _spin(controls, "teams_spin").value,
+        _spin(controls, "solo_spin").value,
+        _spin(controls, "laps_spin").value,
+        _spin(controls, "interval_spin").value,
+    ) == (37, 6, 5, 4, 9)
+    assert (
+        _choice(controls, "short_lap_choice").selection,
+        _choice(controls, "lapped_choice").selection,
+        _choice(controls, "team_stop_choice").selection,
+    ) == (2, 1, 3)
+    assert (view.sim_values, view.sim_behaviors) == ((37, 6, 5, 4, 9), (2, 1, 3))
+
+
+def test_simulator_dialog_given_no_ride_and_no_seeds_holds_the_view_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no seeds passed the fields hold the view's own defaults.
+
+    Those defaults are the XRC's authored values, so a no-ride open the
+    app threaded nothing into snapshots what it opened on either way.
+    """
+    controls = _controls()
     _patch_find(monkeypatch, controls)
 
     view = SimulatorDialog(_FakeDialog(), engine=None, roster=None)
 
     assert (view.sim_values, view.sim_behaviors) == ((175, 40, 15, 1, 45), (1, 0, 0))
+
+
+@pytest.mark.parametrize(
+    ("short_laps", "lapped", "team_stop"),
+    [
+        pytest.param(0, 0, 0, id="every-choice-disabled"),
+        pytest.param(1, 0, 0, id="the-product-defaults"),
+        pytest.param(10, 10, 10, id="every-choice-at-its-ceiling"),
+    ],
+)
+def test_simulator_dialog_given_no_ride_seeds_the_three_behaviour_choices(  # noqa: PLR0913, PLR0917
+    monkeypatch: pytest.MonkeyPatch, short_laps: int, lapped: int, team_stop: int
+) -> None:
+    """G9: the ride-less dialog keeps the persisted behaviour counts."""
+    controls = _controls()
+    _patch_find(monkeypatch, controls)
+
+    view = SimulatorDialog(
+        _FakeDialog(),
+        engine=None,
+        roster=None,
+        sim_short_laps=short_laps,
+        sim_lapped=lapped,
+        sim_team_stop=team_stop,
+    )
+
+    assert view.sim_behaviors == (short_laps, lapped, team_stop)
 
 
 def test_snapshot_sim_values_records_the_current_spins() -> None:

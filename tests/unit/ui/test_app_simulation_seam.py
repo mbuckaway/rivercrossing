@@ -18,15 +18,19 @@ with no console gets the dialog in its trimmed form -- ``engine=None``,
 callback builds the next free "GORBA Test Ride #N" and hands it to the
 New Ride persist. The store-less bootstrap the trimmed dialog is
 reachable from has no database to create a ride in, so the flow says
-so on the status bar instead; the dialog's own close-persist is
-pinned here too, since a view with no presenter must write nothing.
+so on the status bar instead; the trimmed open is handed the same
+settings seeds as the ride-open one, so the close-persist below writes
+back the operator's own counts rather than the XRC's authored
+defaults. The dialog's own close-persist is pinned here too: the
+settings write runs whichever form the dialog opened in, and only a
+loaded, changed roster reaches the store.
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -34,6 +38,7 @@ from conftest import gorba_config
 from rivercrossing.roster import EntryMode, PlateModel, Roster
 from rivercrossing.store import Store
 from rivercrossing.ui import app as app_module
+from rivercrossing.ui.presenters import settings as settings_store
 from rivercrossing.ui.presenters.ride_defaults import DEFAULT_ORGANIZER, DEFAULT_VENUE
 from rivercrossing.ui.presenters.settings import default_settings
 
@@ -69,13 +74,71 @@ class _DialogRecorder:
 
 
 class _NoRideViewStub:
-    """A no-ride ``SimulatorDialog`` stand-in: no presenter threaded."""
+    """A no-ride ``SimulatorDialog`` stand-in: no presenter threaded.
 
-    def __init__(self) -> None:
+    The trimmed dialog's own shape: ``presenter`` is ``None``, and the
+    two snapshots carry whatever the fields were seeded with.
+    """
+
+    def __init__(
+        self,
+        *,
+        sim_values: tuple[int, int, int, int, int] = (175, 40, 15, 1, 45),
+        sim_behaviors: tuple[int, int, int] = (1, 0, 0),
+    ) -> None:
         """Stand in the trimmed dialog's own attributes."""
         self.presenter = None
-        self.sim_values = (175, 40, 15, 1, 45)
-        self.sim_behaviors = (1, 0, 0)
+        self.sim_values = sim_values
+        self.sim_behaviors = sim_behaviors
+
+
+class _ChangingPresenterStub:
+    """A simulator-presenter double carrying only its changed flag."""
+
+    def __init__(self, *, roster_changed: bool) -> None:
+        """Record whether the session generated anything."""
+        self.roster_changed = roster_changed
+
+
+class _RideOpenViewStub:
+    """A ride-open ``SimulatorDialog`` stand-in over a presenter."""
+
+    def __init__(
+        self,
+        *,
+        roster_changed: bool,
+        sim_values: tuple[int, int, int, int, int] = (10, 2, 2, 1, 1),
+        sim_behaviors: tuple[int, int, int] = (1, 0, 0),
+    ) -> None:
+        """Hold the presenter double and the close-persist snapshots."""
+        self.presenter = _ChangingPresenterStub(roster_changed=roster_changed)
+        self.sim_values = sim_values
+        self.sim_behaviors = sim_behaviors
+
+
+class _SaveRecorderStore:
+    """A store double recording the roster saves that reach it."""
+
+    def __init__(self) -> None:
+        """Start with no recorded save."""
+        self.saved: list[tuple[int, Roster]] = []
+
+    def save_roster(self, ride_id: int, roster: Roster) -> None:
+        """Record one persisted roster."""
+        self.saved.append((ride_id, roster))
+
+
+class _NoSaveStore:
+    """A store double that fails the test if a roster save reaches it.
+
+    Only ``save_roster`` is exercised, so the double is cast to
+    :class:`~rivercrossing.store.Store` at its call site rather than
+    reconstructed as a full store.
+    """
+
+    def save_roster(self, _ride_id: int, _roster: Roster) -> None:
+        """Refuse: a no-ride close must never save a roster."""
+        raise AssertionError("a no-ride close must not save a roster")
 
 
 class _NoticeFrame:
@@ -185,7 +248,13 @@ def test_decorate_simulation_given_live_settings_seeds_the_dialog_exactly(
 def test_decorate_simulation_without_a_presenter_builds_the_trimmed_no_ride_dialog(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A console-less context opens the New-Ride-only dialog."""
+    """A console-less context opens the New-Ride-only dialog.
+
+    The trimmed open is handed the same eight seeds and the average
+    speed the ride-open path gets: the dialog's fields are dead either
+    way, but its close-persist reads them back, so an unseeded open
+    would write the XRC's authored defaults over the operator's own.
+    """
     built = _patch_simulator_dialog(monkeypatch)
     context = _context(presenter=None)
     window = object()
@@ -193,9 +262,33 @@ def test_decorate_simulation_without_a_presenter_builds_the_trimmed_no_ride_dial
     view = app_module._decorate_simulation(context, window)
 
     assert (built[0].dialog, view) == (window, built[0])
-    assert set(built[0].kwargs) == {"engine", "roster", "on_new_ride"}
     assert (built[0].kwargs["engine"], built[0].kwargs["roster"]) == (None, None)
     assert callable(built[0].kwargs["on_new_ride"])
+    assert set(built[0].kwargs) == {
+        "engine",
+        "roster",
+        "on_new_ride",
+        "sim_riders",
+        "sim_teams",
+        "sim_solo",
+        "sim_laps",
+        "sim_interval",
+        "sim_short_laps",
+        "sim_lapped",
+        "sim_team_stop",
+        "avg_speed_kmh",
+    }
+    assert (
+        built[0].kwargs["sim_riders"],
+        built[0].kwargs["sim_teams"],
+        built[0].kwargs["sim_solo"],
+        built[0].kwargs["sim_laps"],
+        built[0].kwargs["sim_interval"],
+        built[0].kwargs["sim_short_laps"],
+        built[0].kwargs["sim_lapped"],
+        built[0].kwargs["sim_team_stop"],
+        built[0].kwargs["avg_speed_kmh"],
+    ) == (37, 6, 5, 4, 9, 2, 1, 3, 21.5)
 
 
 def test_decorate_simulation_no_ride_new_ride_posts_the_no_store_notice(
@@ -213,24 +306,71 @@ def test_decorate_simulation_no_ride_new_ride_posts_the_no_store_notice(
     assert notices == ["New Ride — no store is open"]
 
 
-def test_persist_simulator_changes_given_no_presenter_persists_nothing(
+def test_persist_simulator_changes_given_no_presenter_writes_the_settings(
     tmp_path: Path,
 ) -> None:
-    """The no-ride dialog's close persists neither roster nor spins.
+    """A no-ride close persists the counts the dialog opened on.
 
     The trimmed dialog's ``presenter`` is ``None`` (its own no-ride
-    open), so the close-persist must return before it reads
-    ``roster_changed``: the view's authored spin defaults are not a
-    session's choices, and writing them back would overwrite the
-    operator's saved counts.
+    open) -- a fact about the roster it never had, not about the
+    settings it did: the app hands it the operator's persisted counts,
+    so the close writes those same counts back.
     """
     context = _context(presenter=None)
+    context.settings_path = tmp_path / "settings.json"
+    view = _NoRideViewStub(sim_values=(37, 6, 5, 4, 9), sim_behaviors=(2, 1, 3))
+
+    app_module._persist_simulator_changes(context, view)
+
+    assert (
+        context.settings.sim_riders,
+        context.settings.sim_teams,
+        context.settings.sim_solo,
+        context.settings.sim_laps,
+        context.settings.sim_interval,
+        context.settings.sim_short_laps,
+        context.settings.sim_lapped,
+        context.settings.sim_team_stop,
+    ) == (37, 6, 5, 4, 9, 2, 1, 3)
+    assert settings_store.load_settings(context.settings_path) == context.settings
+
+
+def test_persist_simulator_changes_given_no_presenter_skips_the_roster_save(
+    tmp_path: Path,
+) -> None:
+    """Nothing was generated into a roster, so no roster is written.
+
+    The store double raises if a save reaches it, so this both proves
+    the roster write is skipped and lets the settings write below it
+    still run: a refused settings write would leave the live values
+    alone, and this pins the round-trip to the file instead.
+    """
+    context = _context(presenter=None, store=cast("Store", _NoSaveStore()))
+    context.active_ride_id = 5
     context.settings_path = tmp_path / "settings.json"
 
     app_module._persist_simulator_changes(context, _NoRideViewStub())
 
-    assert context.settings.sim_riders == 37
-    assert not context.settings_path.exists()
+    assert settings_store.load_settings(context.settings_path) == context.settings
+
+
+def test_persist_simulator_changes_given_a_changed_roster_saves_the_roster(
+    tmp_path: Path,
+) -> None:
+    """A ride-open session that generated riders still persists them.
+
+    Gating the roster write on the presenter does not drop it: a
+    ride-open dialog whose session changed its roster saves that roster
+    (and the counts, on the same close).
+    """
+    store = _SaveRecorderStore()
+    context = _context(presenter=None, store=cast("Store", store))
+    context.active_ride_id = 5
+    context.settings_path = tmp_path / "settings.json"
+
+    app_module._persist_simulator_changes(context, _RideOpenViewStub(roster_changed=True))
+
+    assert store.saved == [(5, context.roster)]
 
 
 def test_create_simulator_test_ride_given_no_store_posts_the_no_store_notice() -> None:
