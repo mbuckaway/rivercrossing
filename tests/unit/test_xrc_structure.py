@@ -123,11 +123,10 @@ CARDS_MENU_ITEMS = (
     "mi_deal_manual",
 )
 # Part D: the single Preview in Browser row split per format -- each
-# new item gates on its own export existing (HTML / PDF). G6: the five
-# checkable publish options follow a separator, after the Preview rows.
-# The UI-removals batch authored the two Podium-Poster-HTML rows
-# (mi_export_poster_html, mi_preview_poster_html_browser); they are
-# routed by the poster-HTML export task (see _PENDING_ROUTE_IDS below).
+# new item gates on its own export existing (HTML / PDF), and the
+# poster page gained its own pair (mi_export_poster_html and
+# mi_preview_poster_html_browser). G6: the five checkable publish
+# options follow a separator, after the Preview rows.
 RESULTS_MENU_ITEMS = (
     "mi_standings",
     "mi_export_html",
@@ -535,31 +534,19 @@ def test_main_menubar_declares_forty_eight_menu_item_names() -> None:
     assert len(menu_item_names) == 48
 
 
-# The UI-removals batch authors two Podium-Poster-HTML rows in
-# ``main.xrc`` but deliberately does NOT route them: the poster-HTML
-# export is a later task, and ``commands.ROUTE_TABLE`` is where its
-# "Opens / does" and "Enabled when" cells belong. Until then these ids
-# have no route, so they are excluded from the "no orphans" equality
-# below -- named here, rather than silently dropped, so the poster-HTML
-# task must remove this constant when it registers the routes.
-_PENDING_ROUTE_IDS = ("mi_export_poster_html", "mi_preview_poster_html_browser")
-
-
 def test_main_menubar_item_names_are_exactly_the_routed_item_set() -> None:
     """No orphaned menu item: every authored name is routed, and back.
 
     ``commands.ROUTE_TABLE`` is the section 15 route map the menubar
-    is driven from, so its 49 ids and the authored item names must be
-    one set, plus :data:`_PENDING_ROUTE_IDS`' two not-yet-routed
-    poster-HTML rows. A row that outlives its route, or a route with no
-    item, would leave an item the enablement walk can never reach.
+    is driven from, so its 51 ids and the authored item names must be
+    one set. A row that outlives its route, or a route with no item,
+    would leave an item the enablement walk can never reach.
     """
     routed = {item_id for route in commands.ROUTE_TABLE for item_id in route.ids}
 
     authored = set(_control_names_in(_window("main_menubar")))
 
-    assert routed == authored - set(_PENDING_ROUTE_IDS)
-    assert set(_PENDING_ROUTE_IDS) <= authored
+    assert routed == authored
 
 
 def test_file_menu_declares_the_spec_15_row_order_after_d1() -> None:

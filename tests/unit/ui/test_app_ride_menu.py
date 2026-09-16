@@ -323,6 +323,7 @@ def test_handle_clear_ride_route_given_a_confirmed_danger_leaves_the_store_untou
         engine = context.presenter.engine  # type: ignore[union-attr] -- the swap above set it
         context.html_export_path = tmp_path / "results.html"
         context.pdf_export_path = tmp_path / "results.pdf"
+        context.poster_html_export_path = tmp_path / "podium.html"
         context.export_watermark = 2
         calls = _stub_danger(monkeypatch, result=wx.ID_OK)
         view.calls.clear()
@@ -339,6 +340,7 @@ def test_handle_clear_ride_route_given_a_confirmed_danger_leaves_the_store_untou
         assert context.active_ride_id is None
         assert context.html_export_path is None
         assert context.pdf_export_path is None
+        assert context.poster_html_export_path is None
         assert context.export_watermark is None
         assert context.roster.entries == ()
         assert context.roster.entry_mode is EntryMode.MIXED

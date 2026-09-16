@@ -206,6 +206,24 @@ def test_main_source_closes_the_store_inside_a_finally() -> None:
     assert "store.close()" in tail
 
 
+def test_main_source_opts_out_of_macos_automatic_tabbing_once() -> None:
+    """The OS-injected View menu rows are dropped before the frame.
+
+    macOS injects View ▸ Show/Hide Tab Bar into every app that does not
+    opt out, and no XRC menubar authors them, so R-73's route walk can
+    never reach them. The API is macOS-only (``wx/osx/app.h``) and the
+    MSW build wraps no such method, so the call is guarded by its own
+    presence -- the ``theme.apply`` ``SetAppearance`` pattern.
+    """
+    source = inspect.getsource(app.main)
+    call = 'getattr(app, "OSXEnableAutomaticTabbing", None)'
+
+    assert source.count(call) == 1
+    assert (
+        source.index("app = build_app()") < source.index(call) < source.index("_bootstrap_window(")
+    )
+
+
 def test_bootstrap_window_accepts_an_opened_store_and_still_opens_its_own() -> None:
     """W3: main() passes its Store in; helpers keep the db_path seam."""
     source = inspect.getsource(app._bootstrap_window)

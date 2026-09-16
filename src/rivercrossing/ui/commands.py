@@ -2,20 +2,23 @@
 """The menu route map and its state-enablement rules (E1.4.1, E1.4.2).
 
 spec.md section 15 is one table with two jobs: which target each of
-the 37 menu rows reaches ("Opens / does"), and when it is allowed to
+the 39 menu rows reaches ("Opens / does"), and when it is allowed to
 fire ("Enabled when"). :data:`ROUTE_TABLE` is that table transcribed
-once, so both jobs read off the same 37 :class:`MenuRoute` rows
+once, so both jobs read off the same 39 :class:`MenuRoute` rows
 instead of two tables that could drift apart. (Results lost its
 mi_tiebreak_order row: the tie-break order now comes only from the
 ride's stored config, set in Ride Setup; its single Preview row
 split per format -- HTML and PDF -- in Part D, and G6 moved the five
 results publish options out of the results dialog onto a checkable
-Results row.) Phase 2 retired the dead Entry Detail… row and the
-duplicate Reassign Plate… / Void Card… rows -- Crossing Detail now
-owns both corrections -- and G7 retired Edit Crossing…, whose ground
-Crossing Detail's Edit Time and the F2 accelerator already cover. The
-UI-removals batch retired the Cards ▸ Review Held Cards row with its
-console review panel shortcut and its "held cards > 0" rule.)
+Results row. The poster page's own export and preview pair,
+mi_export_poster_html / mi_preview_poster_html_browser, joined
+Results beside their PDF siblings.) Phase 2 retired the dead Entry
+Detail… row and the duplicate Reassign Plate… / Void Card… rows --
+Crossing Detail now owns both corrections -- and G7 retired Edit
+Crossing…, whose ground Crossing Detail's Edit Time and the F2
+accelerator already cover. The UI-removals batch retired the Cards
+▸ Review Held Cards row with its console review panel shortcut and
+its "held cards > 0" rule.)
 
 No wx import lands here (R-71 does not require it, since nothing
 below touches a window, but the presenter-protocol pattern --
@@ -108,6 +111,9 @@ class Enablement:
         requires_pdf_export: Preview PDF in Browser's "a PDF export
             exists" (either PDF writer -- report or poster -- records
             it).
+        requires_poster_html_export: Preview Podium Poster HTML in
+            Browser's "a poster page export exists" -- the results
+            page's own HTML export never satisfies it.
     """
 
     allowed_states: frozenset[RideStatus] | None = None
@@ -120,6 +126,7 @@ class Enablement:
     requires_entry_has_cards: bool = False
     requires_html_export: bool = False
     requires_pdf_export: bool = False
+    requires_poster_html_export: bool = False
 
 
 ALWAYS = Enablement()
@@ -444,7 +451,8 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         target=ids.MANUAL_DEAL_DLG,
         enabled_when=Enablement(allowed_states=_RUNNING_REOPENED),  # "RUNNING · REOPENED"
     ),
-    # --- Results: 8 rows (G6 adds the publish options) ---
+    # --- Results: 10 rows (G6 adds the publish options; H the two
+    # Podium-Poster-HTML rows) ---
     MenuRoute(
         menu="Results",
         label="Standings",
@@ -482,6 +490,14 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
     ),
     MenuRoute(
         menu="Results",
+        label="Podium Poster HTML…",
+        ids=("mi_export_poster_html",),
+        kind=TargetKind.COMMAND,  # OS-native save dialog -- no app window
+        target="export_poster_html",
+        enabled_when=Enablement(allowed_states=_FINISHED),  # "FINISHED"
+    ),
+    MenuRoute(
+        menu="Results",
         label="Export Standings CSV…",
         ids=("mi_export_results_csv",),
         kind=TargetKind.COMMAND,  # OS-native save dialog -- no app window
@@ -499,6 +515,17 @@ ROUTE_TABLE: tuple[MenuRoute, ...] = (
         # is in-memory: a restart disables the row until the next
         # export.
         enabled_when=Enablement(allowed_states=_FINISHED, requires_html_export=True),
+    ),
+    MenuRoute(
+        menu="Results",
+        label="Preview Podium Poster HTML in Browser",
+        ids=("mi_preview_poster_html_browser",),
+        kind=TargetKind.COMMAND,  # opens the external, OS-default browser
+        target="preview_poster_html_browser",
+        # The poster page's own preview: FINISHED plus *its* format's
+        # export, never the results page's or the PDF's (each preview
+        # row gates on the one path it opens).
+        enabled_when=Enablement(allowed_states=_FINISHED, requires_poster_html_export=True),
     ),
     MenuRoute(
         menu="Results",
@@ -627,6 +654,8 @@ class RideState:
             written this session.
         pdf_exported: Whether a PDF results export (the report or the
             podium poster) has been written this session.
+        poster_html_exported: Whether a podium-poster *page* export
+            (the poster's HTML sibling) has been written this session.
         teams_allowed: Whether the open ride's entry_mode is mixed
             (teams exist to edit).
     """
@@ -639,6 +668,7 @@ class RideState:
     entry_has_cards: bool = False
     html_exported: bool = False
     pdf_exported: bool = False
+    poster_html_exported: bool = False
     teams_allowed: bool = False
 
 
@@ -660,6 +690,7 @@ def is_route_enabled(route: MenuRoute, state: RideState) -> bool:
         and (not rule.requires_entry_has_cards or state.entry_has_cards)
         and (not rule.requires_html_export or state.html_exported)
         and (not rule.requires_pdf_export or state.pdf_exported)
+        and (not rule.requires_poster_html_export or state.poster_html_exported)
         and state.crossings >= rule.min_crossings
         and state.audit_rows >= rule.min_audit_rows
     )

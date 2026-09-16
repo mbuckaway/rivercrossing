@@ -2,7 +2,7 @@
 """Headless tests for the menu route map and its rules (E1.4.1, E1.4.2).
 
 Everything here runs without ``wx`` and without a display:
-``commands.py`` imports no ``wx`` at all, so its 37-row route table,
+``commands.py`` imports no ``wx`` at all, so its 39-row route table,
 its ``route_for_id`` dispatch and its ``is_route_enabled`` rule are
 pure Python -- exactly the kind
 of logic R-71's >=90% branch-coverage gate is meant to cover, and
@@ -46,7 +46,9 @@ ROUTE_COUNTS_BY_MENU = (
     ("Ride", 9),  # D1: +mi_new_ride, +mi_edit_ride, +mi_clear_ride
     ("Riders", 4),  # Phase 2: mi_entry_detail retired
     ("Cards", 3),  # Phase 2: mi_reassign_plate + mi_void_card retired (G7: mi_edit_crossing)
-    ("Results", 8),  # C6: mi_tiebreak_order retired; G6: +the publish row
+    # C6: mi_tiebreak_order retired; G6: +the publish row; H: the two
+    # Podium-Poster-HTML rows (the export and its preview).
+    ("Results", 10),
     ("View", 1),
     ("Help", 4),
 )
@@ -88,8 +90,11 @@ ROUTE_TARGETS = (
     (commands.TargetKind.COMMAND, None),  # Export HTML...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Export PDF...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Podium Poster PDF...: OS-native save dialog
+    (commands.TargetKind.COMMAND, None),  # Podium Poster HTML...: OS-native save dialog (H)
     (commands.TargetKind.COMMAND, None),  # Export Standings CSV...: OS-native save dialog
     (commands.TargetKind.COMMAND, None),  # Preview HTML in Browser: external browser
+    # H: the poster page's own preview row, beside the HTML one.
+    (commands.TargetKind.COMMAND, None),  # Preview Podium Poster HTML in Browser
     (commands.TargetKind.COMMAND, None),  # Preview PDF in Browser: external browser
     (commands.TargetKind.COMMAND, None),  # Publish options (G6): direct commands
     (commands.TargetKind.COMMAND, None),  # Times / Zoom: direct commands (W13)
@@ -109,25 +114,25 @@ TARGET_CASE_IDS = [f"{route.menu}:{route.label}" for route, _target in TARGET_CA
 ALL_ROUTE_IDS = tuple(item_id for route in commands.ROUTE_TABLE for item_id in route.ids)
 
 
-def test_route_table_declares_exactly_the_thirty_seven_spec_15_rows() -> None:
+def test_route_table_declares_exactly_the_thirty_nine_spec_15_rows() -> None:
     """A lost route shrinks this count, not the suite (spec.md §15)."""
-    assert len(commands.ROUTE_TABLE) == 37
+    assert len(commands.ROUTE_TABLE) == 39
 
 
 @pytest.mark.parametrize(("menu", "expected_rows"), ROUTE_COUNTS_BY_MENU)
 def test_route_table_menu_breakdown_matches_spec_15(menu: str, expected_rows: int) -> None:
-    """File 8, Ride 9, Riders 4, Cards 3, Results 8, View 1, Help 4."""
+    """File 8, Ride 9, Riders 4, Cards 3, Results 10, View 1, Help 4."""
     rows = [route for route in commands.ROUTE_TABLE if route.menu == menu]
 
     assert len(rows) == expected_rows
 
 
-def test_route_table_covers_all_forty_nine_real_menu_item_ids_once_each() -> None:
-    """46 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
+def test_route_table_covers_all_fifty_one_real_menu_item_ids_once_each() -> None:
+    """48 mi_* + 3 stock ids (main.xrc's own header), none repeated."""
     flat_ids = [item_id for route in commands.ROUTE_TABLE for item_id in route.ids]
 
-    assert len(flat_ids) == 49
-    assert len(set(flat_ids)) == 49
+    assert len(flat_ids) == 51
+    assert len(set(flat_ids)) == 51
 
 
 @pytest.mark.parametrize(("route", "expected_kind"), KIND_CASES, ids=KIND_CASE_IDS)
@@ -271,6 +276,50 @@ def test_results_publish_route_given_the_five_ids_is_one_always_on_command() -> 
     assert route.enabled_when == commands.Enablement()
 
 
+def test_poster_html_route_declares_the_export_row_after_the_pdf_poster() -> None:
+    """H: the poster page's export row mirrors the PDF poster's own."""
+    route = commands.route_for_id(ids.MI_EXPORT_POSTER_HTML)
+
+    assert (route.menu, route.label) == ("Results", "Podium Poster HTML…")
+    assert (route.kind, route.target) == (commands.TargetKind.COMMAND, "export_poster_html")
+    assert route.enabled_when == commands.Enablement(
+        allowed_states=frozenset({RideStatus.FINISHED})
+    )
+
+
+def test_preview_poster_html_route_declares_the_finished_and_export_gates() -> None:
+    """H: the poster preview needs FINISHED *and* its own export."""
+    route = commands.route_for_id(ids.MI_PREVIEW_POSTER_HTML_BROWSER)
+
+    assert (route.menu, route.label) == ("Results", "Preview Podium Poster HTML in Browser")
+    assert (route.kind, route.target) == (
+        commands.TargetKind.COMMAND,
+        "preview_poster_html_browser",
+    )
+    assert route.enabled_when == commands.Enablement(
+        allowed_states=frozenset({RideStatus.FINISHED}), requires_poster_html_export=True
+    )
+
+
+def test_exports_requiring_poster_html_cover_only_the_poster_preview_row() -> None:
+    """H: the new gate belongs to the poster preview alone."""
+    gated = tuple(
+        route for route in commands.ROUTE_TABLE if route.enabled_when.requires_poster_html_export
+    )
+
+    assert [route.label for route in gated] == ["Preview Podium Poster HTML in Browser"]
+
+
+def test_is_route_enabled_given_poster_preview_and_only_the_html_export_stays_disabled() -> None:
+    """H: an HTML results export never enables the poster preview."""
+    route = commands.route_for_id(ids.MI_PREVIEW_POSTER_HTML_BROWSER)
+    state = dataclasses.replace(_baseline_state(RideStatus.FINISHED), poster_html_exported=False)
+
+    result = commands.is_route_enabled(route, state)
+
+    assert result is False
+
+
 def test_export_html_route_label_reads_export_after_g6() -> None:
     """G6 renamed the Results row's label to match its verb."""
     route = commands.route_for_id(ids.MI_EXPORT_HTML)
@@ -368,9 +417,11 @@ ALLOWED_STATES = (
     frozenset({RideStatus.FINISHED}),  # Results > Export HTML…
     frozenset({RideStatus.FINISHED}),  # Results > Export PDF...
     frozenset({RideStatus.FINISHED}),  # Results > Podium Poster PDF...
+    frozenset({RideStatus.FINISHED}),  # Results > Podium Poster HTML... (H)
     frozenset({RideStatus.FINISHED}),  # Results > Export Standings CSV...
     # Part D: each Preview row is FINISHED plus its own format's export.
     frozenset({RideStatus.FINISHED}),  # Results > Preview HTML in Browser
+    frozenset({RideStatus.FINISHED}),  # Results > Preview Podium Poster HTML in Browser (H)
     frozenset({RideStatus.FINISHED}),  # Results > Preview PDF in Browser
     None,  # Results > Publish Options (G6): "always" -- direct commands
     None,  # View > Times / Zoom: "always"
@@ -399,6 +450,7 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
         entry_has_cards=True,
         html_exported=True,
         pdf_exported=True,
+        poster_html_exported=True,
         teams_allowed=True,
     )
 
@@ -440,6 +492,7 @@ _ROUTES_BY_LABEL = {route.label: route for route in commands.ROUTE_TABLE}
 AUDIT_TRAIL_ROUTE = _ROUTES_BY_LABEL["Audit Trail…"]
 PREVIEW_HTML_ROUTE = _ROUTES_BY_LABEL["Preview HTML in Browser"]
 PREVIEW_PDF_ROUTE = _ROUTES_BY_LABEL["Preview PDF in Browser"]
+PREVIEW_POSTER_HTML_ROUTE = _ROUTES_BY_LABEL["Preview Podium Poster HTML in Browser"]
 START_RIDE_ROUTE = _ROUTES_BY_LABEL["Start Ride"]
 NEW_RIDE_ROUTE = _ROUTES_BY_LABEL["New Ride…"]
 EDIT_RIDE_ROUTE = _ROUTES_BY_LABEL["Edit Ride…"]
@@ -571,6 +624,7 @@ def test_is_route_enabled_given_entry_has_cards_condition_gates_the_probe(
 PREVIEW_FORMAT_ROUTES = (
     (PREVIEW_HTML_ROUTE, "html_exported"),
     (PREVIEW_PDF_ROUTE, "pdf_exported"),
+    (PREVIEW_POSTER_HTML_ROUTE, "poster_html_exported"),
 )
 PREVIEW_CASES = tuple(
     (status, exported, status is RideStatus.FINISHED and exported)
@@ -584,7 +638,7 @@ PREVIEW_FLAG_CASES = (False, True)
 @pytest.mark.parametrize(
     ("route", "field"),
     PREVIEW_FORMAT_ROUTES,
-    ids=("preview_html", "preview_pdf"),
+    ids=("preview_html", "preview_pdf", "preview_poster_html"),
 )
 @pytest.mark.parametrize(
     ("status", "exported", "expected_enabled"), PREVIEW_CASES, ids=PREVIEW_CASE_IDS
@@ -608,20 +662,23 @@ def test_is_route_enabled_given_preview_requires_finished_and_its_format_export(
 @pytest.mark.parametrize(
     ("route", "own_field"),
     PREVIEW_FORMAT_ROUTES,
-    ids=("preview_html", "preview_pdf"),
+    ids=("preview_html", "preview_pdf", "preview_poster_html"),
 )
 @pytest.mark.parametrize("own_exported", PREVIEW_FLAG_CASES, ids=("own_missing", "own_present"))
 @pytest.mark.parametrize(
     "other_exported", PREVIEW_FLAG_CASES, ids=("other_missing", "other_present")
 )
-def test_is_route_enabled_given_preview_ignores_the_other_formats_export(  # noqa: PLR0913 -- the T-13 row inputs
+def test_is_route_enabled_given_preview_ignores_the_other_formats_exports(  # noqa: PLR0913 -- the T-13 row inputs
     route: commands.MenuRoute, own_field: str, *, own_exported: bool, other_exported: bool
 ) -> None:
-    """T-13: the other format's export never enables this row."""
+    """T-13: the other formats' exports never enable this row."""
     state = dataclasses.replace(
         _baseline_state(RideStatus.FINISHED),
         html_exported=own_exported if own_field == "html_exported" else other_exported,
         pdf_exported=own_exported if own_field == "pdf_exported" else other_exported,
+        poster_html_exported=(
+            own_exported if own_field == "poster_html_exported" else other_exported
+        ),
     )
 
     result = commands.is_route_enabled(route, state)
@@ -800,6 +857,7 @@ def _ride_states_with(*, ride_open: bool) -> st.SearchStrategy[commands.RideStat
         entry_has_cards=st.booleans(),
         html_exported=st.booleans(),
         pdf_exported=st.booleans(),
+        poster_html_exported=st.booleans(),
     )
 
 

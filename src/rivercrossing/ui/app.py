@@ -258,12 +258,15 @@ class _RouteContext:
     console_view: Any = None
     active_ride_id: int | None = None
     # E6.4.2/Part D: the most recent per-format results exports,
-    # backing Preview HTML in Browser / Preview PDF in Browser
-    # (commands.RideState.html_exported / pdf_exported derive from
-    # them). In-memory for the session: an app restart disables both
-    # preview items until the next export.
+    # backing Preview HTML in Browser / Preview PDF in Browser /
+    # Preview Podium Poster HTML in Browser
+    # (commands.RideState.html_exported / pdf_exported /
+    # poster_html_exported derive from them). In-memory for the
+    # session: an app restart disables every preview item until the
+    # next export.
     html_export_path: Path | None = None
     pdf_export_path: Path | None = None
+    poster_html_export_path: Path | None = None
     # E7.3.2: the engine event count captured at the last successful
     # results export (the export watermark). The results refresh
     # compares the live event log to it: any correction event at/after
@@ -1280,6 +1283,7 @@ def _handle_clear_ride_route(context: _RouteContext) -> None:
     context.active_ride_id = None
     context.html_export_path = None
     context.pdf_export_path = None
+    context.poster_html_export_path = None
     context.export_watermark = None
     context.roster = Roster(
         entry_mode=EntryMode.MIXED,
@@ -1775,6 +1779,7 @@ def _menu_ride_state(context: _RouteContext, status: RideStatus) -> commands.Rid
         entry_has_cards=any(result.cards for result in engine.snapshot()),
         html_exported=context.html_export_path is not None,
         pdf_exported=context.pdf_export_path is not None,
+        poster_html_exported=context.poster_html_export_path is not None,
         # Phase 4: teams only exist on a mixed ride, so the Teams
         # Editor menu row follows the config's entry_mode -- the
         # same fact the roster itself records (R-11).
@@ -1921,6 +1926,7 @@ _EXPORT_SUGGESTED_NAMES = {
     "export_html": "{slug}-results.html",
     "export_pdf": "{slug}-results.pdf",
     "export_poster": "{slug}-podium.pdf",
+    "export_poster_html": "{slug}-podium.html",
     "export_results_csv": "{slug}-standings.csv",
 }
 
@@ -2105,6 +2111,14 @@ def _write_export(  # noqa: PLR0913, PLR0917 -- (config, teams, solo, opts, targ
         pdfexport.render(config, placed, opts, path, logo_path=config.logo_path)
     elif target == "export_poster":
         pdfexport.podium_poster(config, placed, path, logo_path=config.logo_path)
+    elif target == "export_poster_html":
+        # The poster page is the PDF poster's HTML sibling: the same
+        # one-page podium content, rendered through the shared model's
+        # own environment and written by the same R-52 atomic swap.
+        html = htmlexport.render_poster(config, placed, opts, logo_path=config.logo_path)
+        pdfexport._atomic_write_bytes(  # noqa: SLF001 -- pdfexport's own R-52 atomic writer
+            path, html.encode("utf-8")
+        )
     elif target == "export_results_csv":
         csvio.export_standings(placed, path, show_times=opts.show_times)
     else:  # pragma: no cover -- the dispatch table owns the targets
@@ -2168,6 +2182,7 @@ _EXPORT_PATH_FIELDS = {
     "export_html": "html_export_path",
     "export_pdf": "pdf_export_path",
     "export_poster": "pdf_export_path",
+    "export_poster_html": "poster_html_export_path",
 }
 
 
@@ -2277,6 +2292,11 @@ def _handle_preview_html_browser(context: _RouteContext) -> None:
 def _handle_preview_pdf_browser(context: _RouteContext) -> None:
     """Results ▸ Preview PDF in Browser: open the last PDF export."""
     _handle_preview_browser(context, context.pdf_export_path)
+
+
+def _handle_preview_poster_html_browser(context: _RouteContext) -> None:
+    """Results ▸ Preview Podium Poster HTML in Browser: the page."""
+    _handle_preview_browser(context, context.poster_html_export_path)
 
 
 def _active_top_level_window(wx: Any) -> Any:  # noqa: ANN401 -- wx ships no stubs
@@ -2691,13 +2711,35 @@ def _handle_deal_manual_route(context: _RouteContext) -> None:
     )
 
 
+def _dnf_notice(roster: Roster, plate: str) -> str:
+    """Compose the Mark DNF… status notice for *plate*.
+
+    The engine's own scope rule decides what the row just marked: a
+    plate naming a pooled team member is that member's own mark, so the
+    notice names the rider; every other plate -- a solo entry's, or a
+    relay team's, whose riders carry none (S1) -- marks the whole entry,
+    so it names the entry. The parenthetical carries the team's name
+    for a team row and reads "solo" for a solo entry, which has no team
+    to name. A plate no entry names keeps the row's generic notice.
+    """
+    entry = roster.resolve_plate(plate)
+    if entry is None:
+        return "DNF marked"
+    is_team = entry.type is EntryType.TEAM
+    member = next((rider for rider in entry.riders if rider.plate == plate), None)
+    name = member.full_name if is_team and member is not None else entry.display_name
+    label = entry.display_name if is_team else "solo"
+    return f"{plate} · {name} ({label}) — DNF"
+
+
 def _handle_mark_dnf_route(context: _RouteContext) -> None:
     """Riders ▸ Mark DNF…: dnf_confirm_dlg, then mark the typed target.
 
     Phase 3 makes this row self-sufficient: the dialog's ``plate_input``
     asks for the rider plate (or a whole entry's plate), so no entry
     has to be open first. The engine's ``mark_dnf`` decides whether the
-    plate scopes to one pooled rider or to the whole entry.
+    plate scopes to one pooled rider or to the whole entry; the notice
+    :func:`_dnf_notice` builds names whichever it was.
     """
     engine = _correction_engine(context)
     if engine is None:
@@ -2713,7 +2755,7 @@ def _handle_mark_dnf_route(context: _RouteContext) -> None:
     _apply_correction(
         context,
         lambda: engine.mark_dnf(dnf.plate, dnf.reason),
-        "DNF marked",
+        _dnf_notice(context.roster, dnf.plate),
     )
 
 
@@ -3742,6 +3784,7 @@ _TARGET_ACTIONS: dict[str, Callable[[_RouteContext], None]] = {
 }
 _TARGET_ACTIONS["preview_html_browser"] = _handle_preview_html_browser
 _TARGET_ACTIONS["preview_pdf_browser"] = _handle_preview_pdf_browser
+_TARGET_ACTIONS["preview_poster_html_browser"] = _handle_preview_poster_html_browser
 _TARGET_ACTIONS["backup_database"] = _handle_backup_database
 _TARGET_ACTIONS[ids.CSV_PREVIEW_DLG] = _handle_import_csv
 _TARGET_ACTIONS[ids.RIDER_ISSUES_DLG] = _handle_check_rider_issues
@@ -3820,11 +3863,7 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
     fire time, because :func:`_bind_routes` runs its one binding pass
     before any ride is open; with no presenter threaded, each posts
     its own notice ("Start Ride — no ride open" for the start row).
-    ``focus_review_panel``
-    (ux-polish) focuses the console's
-    review-panel "Needs Review" tab through the wired console view,
-    with the generic stub standing in for a console-less route-level
-    context. ``finish_ride`` (E4.4.4; H2's COMMAND target -- the XRC
+    ``finish_ride`` (E4.4.4; H2's COMMAND target -- the XRC
     confirm retired for the native danger dialog) opens its confirm
     through :func:`_handle_finish_route`, which runs
     ``presenter.on_finish`` on a confirmed OK -- the same
@@ -3897,11 +3936,6 @@ def _make_route_handler(  # noqa: PLR0911, PLR0912, C901 -- one early-return per
         # show_danger; the target-keyed branch keeps the confirm ->
         # on_finish flow ahead of the generic COMMAND notice.
         return lambda _event: _handle_finish_route(context)
-    if route.target == "focus_review_panel":
-        console_view = context.console_view
-        if console_view is not None:
-            return lambda _event: console_view.focus_review_panel()
-        return lambda _event: context.frame.SetStatusText(f"{route.label} — not yet implemented")
     # E5.4.1/H2's two native ride confirms both need a real handler
     # ahead of the generic COMMAND notice (their confirm -> action
     # shape, like the finish route), so they share one dispatch table
@@ -4897,6 +4931,20 @@ def main(db_path: Path | None = None) -> int:
 
     wx = require_wx()
     app = build_app()  # bound for this whole call -- an unbound App is collected immediately
+    # macOS injects View ▸ Show/Hide Tab Bar into an app that does not
+    # opt out, and no XRC menubar authors those rows, so the route walk
+    # can never reach them -- opting out before any window exists is
+    # what keeps the menubar exactly the routes. The method is
+    # macOS-only (wx/osx/app.h); the MSW build wraps no such method, so
+    # the call is guarded by its own presence (theme.apply's
+    # SetAppearance pattern).
+    enable_automatic_tabbing = getattr(app, "OSXEnableAutomaticTabbing", None)
+    # logic-coverage-exempt: T-3 -- the absent-method arm is reachable
+    # only on a wx build that wraps no macOS tab-bar API (the MSW
+    # wheel), which this platform's suite cannot load; the source pin
+    # in test_app_wiring.py covers the call's presence and order.
+    if enable_automatic_tabbing is not None:
+        enable_automatic_tabbing(False)  # noqa: FBT003 -- wx API takes a positional bool
     app.log = log
     # Route unhandled exceptions (bootstrap and main-loop alike) to
     # this launch's log before anything can raise.
