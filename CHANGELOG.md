@@ -4,6 +4,43 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.19] - 2026-09-16
+
+### Added
+
+- **Podium Poster HTML** — a new `Results ▸ Podium Poster HTML…` export renders the podium poster as a
+  self-contained HTML page (the top three entries, top five for a solo-only event), mirroring the
+  poster PDF and honoring the publish check-menu options; `Results ▸ Preview Podium Poster HTML in
+  Browser` opens the last one.
+- **Two more evaluator self-test checks** — a `compare()` total-order sweep (antisymmetry,
+  reflexivity, transitivity) and a `best_hand()` joker-count bound, bringing the self-test to six
+  checks; Help ▸ Run Evaluator Self-test is now documented in the user guide.
+
+### Changed
+
+- **The audit trail was reworked** — the always-"scorer" Who column is gone; every column is
+  sortable and resizable, and the trail opens sorted on When, newest first; and the Action dropdown
+  lists every action flat, so no action is unreachable.
+- **Audit reasons are filled in** — the Reason column is auto-filled at record time for the actions
+  that carried none: `rider · team` for a crossing, "N jokers added" for a shoe reshuffle, elapsed
+  time for start/stop/finish/reopen/set-start-time, and `old → new` for a plate change. A
+  user-supplied reason is left untouched.
+- **The Needs Review Review… button is sized to its label again** and pushed to the far right,
+  restoring its pre-rework width.
+- **The results dialog's export buttons are gone** — the four buttons (HTML/PDF/poster/CSV) left the
+  standings dialog for the Results menu; the dialog keeps only Close, right-justified.
+- **The About dialog has no logo** — the ride logo and its fallbacks are removed.
+- **The View menu carries no tab-bar rows** — macOS automatic window tabbing is disabled, so the OS
+  no longer injects "Show/Hide Tab Bar" into an app with no tabs.
+
+### Fixed
+
+- **Review Held Cards is retired** — the Cards ▸ Review Held Cards item only re-focused the
+  already-visible review panel; it and its "held cards > 0" enablement rule are removed (the
+  console's Review… button stays).
+- **Marking a rider DNF now confirms it** — the status bar names the plate, rider and team/solo
+  (`212 · M. Chen (Team Alpha) — DNF`).
+
 ## [1.0.18] - 2026-09-15
 
 ### Added
