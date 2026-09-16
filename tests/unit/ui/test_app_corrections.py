@@ -28,7 +28,7 @@ from xrc_fixtures import pin_no_authored_window
 from conftest import gorba_config
 from rivercrossing.cards import Shoe
 from rivercrossing.ride import Crossing, RideEngine
-from rivercrossing.roster import EntryMode, PlateModel, Roster
+from rivercrossing.roster import EntryMode, PlateModel, Rider, Roster
 from rivercrossing.ui import app as app_module
 from rivercrossing.ui import commands, ids, std_dialogs
 from rivercrossing.ui.presenters.data_source import EngineDataSource, format_duration
@@ -894,8 +894,84 @@ def test_handle_mark_dnf_route_opens_the_dialog_unprefilled(
 
     assert (captured["plate"], captured["entry"]) == ("", "")
     assert [event.action for event in engine.events[-1:]] == ["dnf"]
-    assert context.frame.notices == ["DNF marked"]
+    assert context.frame.notices == ["12 · Rider 12 (solo) — DNF"]
     assert context.presenter.ticks == 1
+
+
+# The notice names what was actually marked: the engine's own scope rule
+# (a pooled team member's own number marks that rider; every other plate
+# marks the whole entry) decides between the rider's name and the
+# entry's, and the parenthetical names the team a team row belongs to.
+
+
+def _pooled_team_roster() -> Roster:
+    """Build one pooled team whose riders carry plates 45 and 9."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        riders=[
+            Rider(first_name="Alex", last_name="Smith", plate="45"),
+            Rider(first_name="Bo", last_name="Jones", plate="9"),
+        ],
+    )
+    return roster
+
+
+def _solo_roster() -> Roster:
+    """Build one solo entry named "Rider 12" on plate 12."""
+    roster = Roster()
+    roster.create_solo_entry(first_name="Rider 12", last_name="", plate="12")
+    return roster
+
+
+def _relay_team_roster() -> Roster:
+    """Build one team_relay team -- its riders carry no plate (S1)."""
+    roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
+    roster.create_team_entry(
+        display_name="Dirt Dynamos",
+        plate="9",
+        riders=[
+            Rider(first_name="Alex", last_name="Smith"),
+            Rider(first_name="Bo", last_name="Jones"),
+        ],
+    )
+    return roster
+
+
+_DNF_NOTICE_CASES = (
+    (_solo_roster(), "12", "12 · Rider 12 (solo) — DNF"),
+    (_pooled_team_roster(), "45", "45 · Alex Smith (Dirt Dynamos) — DNF"),
+    # The pooled team's own plate is its lowest member's (S1), so it
+    # scopes to that member exactly as the engine's mark_dnf does.
+    (_pooled_team_roster(), "9", "9 · Bo Jones (Dirt Dynamos) — DNF"),
+)
+_DNF_NOTICE_CASE_IDS = ("solo_entry", "team_member", "pooled_team_plate")
+
+
+@pytest.mark.parametrize(
+    ("roster", "plate", "expected"), _DNF_NOTICE_CASES, ids=_DNF_NOTICE_CASE_IDS
+)
+def test_dnf_notice_given_a_known_plate_names_the_marked_entry(
+    roster: Roster, plate: str, expected: str
+) -> None:
+    """A pooled plate names its rider; a solo entry names itself."""
+    notice = app_module._dnf_notice(roster, plate)
+
+    assert notice == expected
+
+
+def test_dnf_notice_given_a_relay_team_plate_names_the_entry() -> None:
+    """A relay plate marks the whole entry -- its riders have none."""
+    notice = app_module._dnf_notice(_relay_team_roster(), "9")
+
+    assert notice == "9 · Dirt Dynamos (Dirt Dynamos) — DNF"
+
+
+def test_dnf_notice_given_an_unknown_plate_falls_back_to_the_generic_notice() -> None:
+    """T-3 negative: a plate no entry names keeps the plain notice."""
+    notice = app_module._dnf_notice(_solo_roster(), "404")
+
+    assert notice == "DNF marked"
 
 
 def test_handle_mark_dnf_route_given_a_cancelled_dialog_marks_nothing(

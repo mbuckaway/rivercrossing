@@ -7,7 +7,7 @@ that *applies* those rules to a real menu bar. This module pins the
 binder headlessly:
 
 1. ``enablement_table`` produces one enable/disable verdict per routed
-   menu item id (50 ids, one per ``commands.ROUTE_TABLE`` row), and
+   menu item id (51 ids, one per ``commands.ROUTE_TABLE`` row), and
    the verdicts agree with ``commands.is_route_enabled`` for every
    generated ``RideState`` (a Hypothesis property).
 2. The correction rows' verdicts are parametrized over the four ride
@@ -61,7 +61,6 @@ def _baseline_state(status: RideStatus) -> commands.RideState:
         ride_open=True,
         ride_stopped=True,
         crossings=1,
-        held_cards=1,
         audit_rows=1,
         entry_has_cards=True,
         html_exported=True,
@@ -77,7 +76,6 @@ def _state_strategy() -> st.SearchStrategy[commands.RideState]:
         ride_open=st.booleans(),
         ride_stopped=st.booleans(),
         crossings=st.integers(min_value=0, max_value=5),
-        held_cards=st.integers(min_value=0, max_value=5),
         audit_rows=st.integers(min_value=0, max_value=5),
         entry_has_cards=st.booleans(),
         html_exported=st.booleans(),

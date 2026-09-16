@@ -50,6 +50,16 @@ def test_anchor_for_given_an_unmapped_window_returns_the_default_anchor(
     assert help_module.anchor_for(window_name) == help_module.DEFAULT_ANCHOR
 
 
+def test_anchor_for_given_the_evaluator_self_test_dialog_returns_its_own_chapter() -> None:
+    """selftest_dlg deep-links to the evaluator self-test chapter.
+
+    It fell back to the opening chapter before the guide grew that
+    chapter, so Help from the self-test window opened at the top of the
+    guide rather than at the chapter explaining the report.
+    """
+    assert help_module.anchor_for("selftest_dlg") == "evaluator-self-test"
+
+
 @given(st.none() | st.text())
 def test_anchor_for_given_any_window_name_returns_a_known_anchor(
     window_name: str | None,

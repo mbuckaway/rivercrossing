@@ -127,7 +127,7 @@ def test_scan_xrc_directory_unknown_suffix_warns_and_known_suffixes_do_not() -> 
         "main_menubar",
         "main_statusbar",
         "audit_search",
-        "about_logo_bmp",
+        "ride_logo_bmp",
         "gorba_link",
         "selftest_output",
         "main_splitter",

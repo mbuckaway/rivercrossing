@@ -1495,7 +1495,12 @@ def test_change_solo_plate_appends_an_audit_event() -> None:
 
     assert roster.audit_log[-1] == AuditEvent(
         action="change_solo_plate",
-        payload={"display_name": "Alex", "old_plate": "1", "new_plate": "9"},
+        payload={
+            "display_name": "Alex",
+            "old_plate": "1",
+            "new_plate": "9",
+            "reason": "1 → 9",
+        },
     )
 
 
@@ -1581,7 +1586,12 @@ def test_change_pooled_rider_plate_appends_an_audit_event() -> None:
 
     assert roster.audit_log[-1] == AuditEvent(
         action="change_pooled_rider_plate",
-        payload={"rider_name": "Alex", "old_plate": "5", "new_plate": "1"},
+        payload={
+            "rider_name": "Alex",
+            "old_plate": "5",
+            "new_plate": "1",
+            "reason": "5 → 1",
+        },
     )
 
 
@@ -1705,7 +1715,12 @@ def test_change_team_plate_appends_an_audit_event() -> None:
 
     assert roster.audit_log[-1] == AuditEvent(
         action="change_team_plate",
-        payload={"display_name": "Team A", "old_plate": "1", "new_plate": "9"},
+        payload={
+            "display_name": "Team A",
+            "old_plate": "1",
+            "new_plate": "9",
+            "reason": "1 → 9",
+        },
     )
 
 

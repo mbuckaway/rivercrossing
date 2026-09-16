@@ -61,6 +61,7 @@ from rivercrossing.htmlexport import (
     build_payload,
     format_generated,
     render,
+    render_poster,
     sections,
 )
 from rivercrossing.standings import EntryResult, Placed
@@ -80,18 +81,26 @@ _FIVE_CARDS = (
 )
 
 
-def _sample_entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf): the EntryResult's own fields
+def _hand(codes: str) -> tuple[Card, ...]:
+    """Parse a card-code string ("9S 9D 9C") into a card tuple."""
+    return tuple(Card.parse(code) for code in codes.split())
+
+
+def _sample_entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf, codes): the EntryResult's own fields
     plate: str,
     name: str,
     laps: int,
     *,
     kind: str = "solo",
     dnf: bool = False,
+    codes: str | None = None,
 ) -> EntryResult:
     """Build one finished-ride EntryResult for the render() seam tests.
 
-    The same five-card hand stands in for every entry's draw.
+    The same five-card hand stands in for every entry's draw unless
+    *codes* gives the entry its own draw.
     """
+    cards = _FIVE_CARDS if codes is None else _hand(codes)
     return EntryResult(
         entry_id=plate,
         plate=plate,
@@ -100,8 +109,8 @@ def _sample_entry(  # noqa: PLR0913 -- (plate, name, laps, kind, dnf): the Entry
         laps=laps,
         total_time=float(laps * 1800 + 120),
         best_lap=1800.0,
-        cards=_FIVE_CARDS,
-        hand=best_hand(_FIVE_CARDS),
+        cards=cards,
+        hand=best_hand(cards),
         dnf=dnf,
     )
 
@@ -1785,3 +1794,294 @@ def test_laps_board_row_from_record_reads_and_defaults_the_type_key() -> None:
 
     assert typed == LapsBoardRow(plate=88, entry="Moss Ridge Riders", laps=11, type="TEAM")
     assert untyped == LapsBoardRow(plate=7, entry="Luca Ferrari", laps=10)
+
+
+# ====================================================== render_poster
+# The poster page is ``_PosterPDF``'s HTML sibling ([5d]): the shared
+# model's per-kind top three -- or a solo-only field's top five -- each
+# card carrying its place, its ``#plate`` entry name (teams never show
+# a plate), the team/solo line, the hand's title-case prose and the
+# best-5 cards. The PDF is the contract; this suite pins the same
+# content rules for the page.
+
+_POSTER_TEAMS = (
+    ("88", "Moss Ridge Riders", "9S 9D 9C KH 2S"),
+    ("77", "Dirt Dynamos", "AS KS QS JS 10S"),
+    ("66", "River Rats", "5S 5D 5C 5H 3S"),
+    ("55", "Fourth Team", "7S 7D 7C 6H 2S"),
+)
+_POSTER_SOLO = (
+    ("7", "Luca Ferrari", "2S 2D 2C 3H 4S"),
+    ("8", "Ana Silva", "AS AD AC KH 2S"),
+    ("9", "Bo Jones", "QS QD QC JH 2S"),
+    ("10", "Cy Marsh", "JS JD JC 10H 2S"),
+)
+# Independently transcribed from the draws above: the six hands the
+# poster must print, in section order (teams 1-3, then solo 1-3).
+_POSTER_PODIUM_HANDS = (
+    "Three of a Kind — Nines",
+    "Royal Flush",
+    "Four of a Kind — Fives",
+    "Three of a Kind — Twos",
+    "Three of a Kind — Aces",
+    "Three of a Kind — Queens",
+)
+# Each kind's leader runs 30 (team) / 20 (solo) laps, one lap back per
+# place; the leader's rendered total is the show_times probe.
+_POSTER_TOP_TEAM_LAPS = 30
+_POSTER_TOP_SOLO_LAPS = 20
+_POSTER_TEAM_TOTAL = "15:02:00"
+_POSTER_SOLO_TOTAL = "10:02:00"
+
+
+def _poster_placed() -> tuple[Placed, ...]:
+    """Rank four teams then four solo riders, each kind from place 1.
+
+    Laps descend with place, so the podium is each kind's own top
+    three and place 4 falls off the poster.
+    """
+    teams = tuple(
+        Placed(
+            place=index + 1,
+            result=_sample_entry(
+                plate, name, _POSTER_TOP_TEAM_LAPS - index, kind="team", codes=codes
+            ),
+            tie_note=None,
+            draw_required=False,
+        )
+        for index, (plate, name, codes) in enumerate(_POSTER_TEAMS)
+    )
+    solo = tuple(
+        Placed(
+            place=index + 1,
+            result=_sample_entry(plate, name, _POSTER_TOP_SOLO_LAPS - index, codes=codes),
+            tie_note=None,
+            draw_required=False,
+        )
+        for index, (plate, name, codes) in enumerate(_POSTER_SOLO)
+    )
+    return (*teams, *solo)
+
+
+def _poster_page(placed: tuple[Placed, ...], *, opts: ExportOptions | None = None) -> str:
+    """Render *placed* as a poster under the fixture's pinned stamp."""
+    return render_poster(
+        _StubRide(),
+        placed,
+        ExportOptions() if opts is None else opts,
+        generated=_FIXTURE_GENERATED,
+    )
+
+
+def test_render_poster_given_a_ride_titles_the_page_and_its_header() -> None:
+    """The header mirrors the PDF's: organizer, meta, heading, title."""
+    page = _poster_page(_poster_placed())
+
+    assert "<title>Test Poker Run 2026 — Podium poster</title>" in page
+    assert "Organizer: Test Org" in page
+    assert "Saturday June 6, 2026 · Test Venue · 8 km loop" in page
+    assert ">Best poker hands</h1>" in page
+    assert ">Test Poker Run 2026</h2>" in page
+
+
+def test_render_poster_given_a_pinned_stamp_prints_the_footer_credits() -> None:
+    """The footer carries the credits line plus the generated stamp."""
+    page = _poster_page(_poster_placed())
+
+    assert "Scorer: T. Ester" in page
+    assert _FIXTURE_GENERATED in page
+
+
+def test_render_poster_given_no_pinned_stamp_stamps_the_local_clock() -> None:
+    """Without the seam the footer stamps the samples' live style."""
+    page = render_poster(_StubRide(), _poster_placed(), ExportOptions())
+
+    matches = re.findall(r"Generated \d{2}:\d{2}, [A-Z][a-z]{2,4} \d{1,2} \d{4}", page)
+    assert len(matches) == 1
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Moss Ridge Riders",
+        "Dirt Dynamos",
+        "River Rats",
+        "Luca Ferrari",
+        "Ana Silva",
+        "Bo Jones",
+    ],
+)
+def test_render_poster_given_a_team_event_names_each_kinds_top_three(name: str) -> None:
+    """A team event's poster carries both kinds' top three."""
+    page = _poster_page(_poster_placed())
+
+    assert name in page
+
+
+@pytest.mark.parametrize(
+    ("name", "hand"),
+    [
+        ("Fourth Team", "Three of a Kind — Sevens"),
+        ("Cy Marsh", "Three of a Kind — Jacks"),
+    ],
+    ids=["team_4", "solo_4"],
+)
+def test_render_poster_given_a_team_event_omits_each_kinds_fourth_place(
+    name: str, hand: str
+) -> None:
+    """Place 4 of either kind never reaches the one-page poster."""
+    page = _poster_page(_poster_placed())
+
+    assert name not in page
+    assert hand not in page
+
+
+@pytest.mark.parametrize("heading", ["Teams", "Solo riders"])
+def test_render_poster_given_a_team_event_titles_each_section(heading: str) -> None:
+    """A team event stacks two titled sections, as the PDF does."""
+    page = _poster_page(_poster_placed())
+
+    assert f">{heading}</h3>" in page
+
+
+@pytest.mark.parametrize("hand", _POSTER_PODIUM_HANDS)
+def test_render_poster_given_a_podium_hand_prints_the_title_case_prose(hand: str) -> None:
+    """The card prints the D1 prose casing, never the report's caps."""
+    page = _poster_page(_poster_placed())
+
+    assert f">{hand}</div>" in page
+    assert hand.upper() not in page
+
+
+@pytest.mark.parametrize(
+    ("plate", "name"),
+    [("88", "Moss Ridge Riders"), ("77", "Dirt Dynamos"), ("66", "River Rats")],
+)
+def test_render_poster_given_a_team_card_omits_the_plate(plate: str, name: str) -> None:
+    """A team card carries no plate -- its section names the kind."""
+    page = _poster_page(_poster_placed())
+
+    assert f"#{plate}" not in page
+    assert f">{name}</div>" in page
+
+
+def test_render_poster_given_a_solo_card_keeps_the_plate_prefix() -> None:
+    """A solo card keeps the ``#plate`` prefix ([5d])."""
+    page = _poster_page(_poster_placed())
+
+    assert "#7 Luca Ferrari" in page
+
+
+def test_render_poster_given_a_team_card_names_entry_kind_and_laps() -> None:
+    """The team/solo line names the kind, the entry and its laps."""
+    page = _poster_page(_poster_placed())
+
+    assert ">Team — Moss Ridge Riders · 30 laps</div>" in page
+
+
+def test_render_poster_given_a_solo_card_names_entry_kind_and_laps() -> None:
+    """A solo card's line reads "Solo — <name> · <n> laps"."""
+    page = _poster_page(_poster_placed())
+
+    assert ">Solo — Luca Ferrari · 20 laps</div>" in page
+
+
+@pytest.mark.parametrize("total", [_POSTER_TEAM_TOTAL, _POSTER_SOLO_TOTAL])
+def test_render_poster_given_show_times_off_omits_every_total_time(total: str) -> None:
+    """Times are hidden unless the export options ask for them."""
+    page = _poster_page(_poster_placed(), opts=ExportOptions(show_times=False))
+
+    assert total not in page
+
+
+@pytest.mark.parametrize("total", [_POSTER_TEAM_TOTAL, _POSTER_SOLO_TOTAL])
+def test_render_poster_given_show_times_on_prints_the_podium_totals(total: str) -> None:
+    """show_times adds each podium card's rendered total time."""
+    page = _poster_page(_poster_placed(), opts=ExportOptions(show_times=True))
+
+    assert f" laps · {total}</div>" in page
+
+
+def test_render_poster_given_a_solo_only_event_lists_the_top_five() -> None:
+    """A solo-only poster lists five cards, mirroring the PDF's 1+4."""
+    page = _poster_page(_field(teams=0, solo=7))
+
+    assert "Solo 5" in page
+    assert "Solo 6" not in page
+
+
+def test_render_poster_given_a_solo_only_event_prints_no_section_heading() -> None:
+    """A solo-only field has no kind to name in a section heading."""
+    page = _poster_page(_field(teams=0, solo=3))
+
+    assert ">Teams</h3>" not in page
+    assert ">Solo riders</h3>" not in page
+
+
+def test_render_poster_given_an_empty_field_renders_the_cover_alone() -> None:
+    """T-4: a zero-entry field still renders one valid poster page."""
+    page = _poster_page(())
+
+    assert page.startswith("<!DOCTYPE html>")
+    assert ">Best poker hands</h1>" in page
+    assert ">Teams</h3>" not in page
+
+
+def test_render_poster_given_a_single_solo_entry_renders_one_card() -> None:
+    """T-4: the smallest non-empty field renders its one card."""
+    page = _poster_page(_field(teams=0, solo=1))
+
+    assert "#10 Solo 1" in page
+
+
+def test_render_poster_given_no_logo_embeds_the_transparent_fallback() -> None:
+    """D8: the page never carries an empty img src."""
+    page = _poster_page(_poster_placed())
+
+    assert _TRANSPARENT_PNG in page
+    assert 'src=""' not in page
+
+
+def test_render_poster_given_a_logo_path_embeds_the_file_as_a_data_uri(
+    tmp_path: Path,
+) -> None:
+    """logo_path is the raw-PNG alternative to a logo data URI."""
+    logo = tmp_path / "org-logo.png"
+    logo.write_bytes(b"\x89PNG\r\n\x1a\n")
+    expected = "data:image/png;base64," + base64.b64encode(logo.read_bytes()).decode("ascii")
+
+    page = render_poster(
+        _StubRide(),
+        _poster_placed(),
+        ExportOptions(),
+        logo_path=logo,
+        generated=_FIXTURE_GENERATED,
+    )
+
+    assert expected in page
+
+
+def test_render_poster_page_is_self_contained_with_no_fetchable_reference() -> None:
+    """The poster works offline from file://, like the results page."""
+    page = _poster_page(_poster_placed())
+
+    assert "http://" not in page
+    assert "<script" not in page
+    assert "<link" not in page
+    assert "url(http" not in page
+    assert "generated by tools/gen_css.py" in page
+
+
+def test_render_poster_given_a_non_numeric_plate_raises_value_error() -> None:
+    """The poster shares the results page's integer-plate contract."""
+    placed = (
+        Placed(
+            place=1,
+            result=_sample_entry("ABC", "Bad Plate", 3),
+            tie_note=None,
+            draw_required=False,
+        ),
+    )
+
+    with pytest.raises(ValueError, match=re.escape("plate 'ABC' is not numeric")):
+        _poster_page(placed)

@@ -21,8 +21,6 @@ from pypdf import PdfReader
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-import inspect
-
 from rivercrossing.cards import Card
 from rivercrossing.hands import best_hand
 from rivercrossing.htmlexport import ExportOptions
@@ -33,7 +31,6 @@ from rivercrossing.ui import app as app_module
 from rivercrossing.ui import std_dialogs
 from rivercrossing.ui.cards_imagelist import SCALE_2X, asset_filename, asset_key, cards_dir
 from rivercrossing.ui.presenters.settings import default_settings
-from rivercrossing.ui.views.results_win import _EXPORT_BUTTONS, ResultsWindow
 
 
 class _StubConfig:
@@ -253,9 +250,13 @@ class _RecordingMenuBar:
         return (None, None) if name is None else (self.items[name], None)
 
 
-# Part D: the two per-format preview rows the export-completion menu
+# Part D: the three per-format preview rows the export-completion menu
 # refresh enables; the recording menubar walks the real xrcids.
-PREVIEW_MENU_IDS = ("mi_preview_html_browser", "mi_preview_pdf_browser")
+PREVIEW_MENU_IDS = (
+    "mi_preview_html_browser",
+    "mi_preview_pdf_browser",
+    "mi_preview_poster_html_browser",
+)
 
 
 def _gating_engine(*, state: RideStatus = RideStatus.FINISHED) -> _StubEngine:
@@ -284,13 +285,15 @@ def test_ride_slug_slugifies_and_never_empty() -> None:
         "export_html",
         "export_pdf",
         "export_poster",
+        "export_poster_html",
         "export_results_csv",
         "preview_html_browser",
         "preview_pdf_browser",
+        "preview_poster_html_browser",
     ],
 )
 def test_target_actions_cover_every_results_export_row(target: str) -> None:
-    """Every export target + both previews resolves to a handler."""
+    """Every export target + every preview resolves to a handler."""
     assert target in app_module._TARGET_ACTIONS
 
 
@@ -303,6 +306,38 @@ def test_target_actions_route_each_preview_to_its_own_handler() -> None:
     assert (
         app_module._TARGET_ACTIONS["preview_pdf_browser"] is app_module._handle_preview_pdf_browser
     )
+    assert (
+        app_module._TARGET_ACTIONS["preview_poster_html_browser"]
+        is app_module._handle_preview_poster_html_browser
+    )
+
+
+# Part D/h: the poster-HTML export registers like its three siblings --
+# a suggested filename, its own recorded preview path, and a target
+# action built from the name table (no hand-written dispatch entry).
+def test_export_suggested_names_given_the_poster_html_row_names_the_file() -> None:
+    """The row's OS-native picker suggests ``{slug}-podium.html``."""
+    assert app_module._EXPORT_SUGGESTED_NAMES["export_poster_html"] == "{slug}-podium.html"
+
+
+def test_export_path_fields_given_the_poster_html_row_records_its_own_path() -> None:
+    """The poster page owns a preview field, never the PDF's."""
+    assert app_module._EXPORT_PATH_FIELDS["export_poster_html"] == "poster_html_export_path"
+
+
+def test_target_actions_given_the_poster_html_row_writes_the_poster_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The poster-HTML target dispatches to the real export command."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.html"
+    monkeypatch.setattr(app_module, "_pick_export_path", lambda _name: out)
+    _inline_offloop(monkeypatch)
+
+    app_module._TARGET_ACTIONS["export_poster_html"](context)
+
+    assert "Best poker hands" in out.read_text(encoding="utf-8")
+    assert context.poster_html_export_path == out
 
 
 def test_write_export_html_writes_a_self_contained_page(tmp_path: Path) -> None:
@@ -341,6 +376,21 @@ def test_write_export_poster_writes_one_page(tmp_path: Path) -> None:
     app_module._write_export(config, teams, solo, opts, "export_poster", out)
 
     assert len(PdfReader(str(out)).pages) == 1
+
+
+def test_write_export_poster_html_writes_the_podium_page(tmp_path: Path) -> None:
+    """The poster-HTML export writes the shared model's podium page."""
+    context = _context(engine=_StubEngine(_snapshot()))
+    out = tmp_path / "podium.html"
+
+    config, groups, opts = _export_inputs(context)
+    teams, solo = _unpack_groups(groups)
+    app_module._write_export(config, teams, solo, opts, "export_poster_html", out)
+
+    text = out.read_text(encoding="utf-8")
+    assert "Best poker hands" in text
+    assert ">#88 Rider</div>" in text
+    assert "Four of a Kind — Nines" in text
 
 
 def test_write_export_csv_writes_the_s15_header(tmp_path: Path) -> None:
@@ -523,6 +573,43 @@ def test_handle_preview_pdf_browser_opens_the_pdf_export(
     assert context.frame.notices == ["Opened results.pdf"]
 
 
+def test_handle_preview_poster_html_browser_opens_the_poster_export(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The poster preview opens the poster page's recorded path."""
+    context = _context(engine=None)
+    context.poster_html_export_path = tmp_path / "podium.html"
+    opened: list[Path] = []
+    monkeypatch.setattr(app_module, "_open_in_browser", opened.append)
+
+    app_module._handle_preview_poster_html_browser(context)
+
+    assert opened == [tmp_path / "podium.html"]
+    assert context.frame.notices == ["Opened podium.html"]
+
+
+def test_handle_preview_poster_html_browser_without_export_notices() -> None:
+    """No poster export yet posts a notice and opens nothing."""
+    context = _context(engine=None)
+
+    app_module._handle_preview_poster_html_browser(context)
+
+    assert context.frame.notices == ["No export yet — generate one first"]
+
+
+def test_handle_preview_poster_html_browser_ignores_the_other_formats_exports(
+    tmp_path: Path,
+) -> None:
+    """The HTML and PDF exports never satisfy the poster preview row."""
+    context = _context(engine=None)
+    context.html_export_path = tmp_path / "results.html"
+    context.pdf_export_path = tmp_path / "results.pdf"
+
+    app_module._handle_preview_poster_html_browser(context)
+
+    assert context.frame.notices == ["No export yet — generate one first"]
+
+
 def test_handle_preview_html_browser_without_export_notices() -> None:
     """No HTML export yet posts a notice and opens nothing."""
     context = _context(engine=None)
@@ -638,57 +725,6 @@ def test_team_logo_srcs_omits_a_card_code_with_no_asset_behind_it() -> None:
     srcs = app_module._team_logo_srcs(roster)
 
     assert srcs == {}
-
-
-# ============================================================ W11
-# F1 (dead-control wiring): the results-frame export buttons were
-# bound through a synthetic EVT_MENU ProcessEvent that never reached
-# the main frame's handlers (the results frame opens parentless), so
-# the buttons silently did nothing. The window now threads an
-# ``on_export(target)`` callback and the app wires it to the same
-# ``_handle_export_command`` routes the menu rows run. These pins keep
-# the view's button table and the app's dispatch table in lockstep
-# headless; the real-button behaviour needs a live window and is not
-# pinned here.
-
-
-def test_results_window_export_buttons_map_each_button_to_its_route_target() -> None:
-    """W11: the four buttons name the four menu export targets."""
-    assert dict(_EXPORT_BUTTONS) == {
-        "export_html_btn": "export_html",
-        "export_pdf_btn": "export_pdf",
-        "poster_btn": "export_poster",
-        "export_csv_btn": "export_results_csv",
-    }
-
-
-def test_results_window_export_button_targets_all_dispatch_like_the_menu_rows() -> None:
-    """W11: every button target has a real ``_TARGET_ACTIONS`` handler.
-
-    ``_TARGET_ACTIONS`` is the dispatch table ``_make_route_handler``
-    consults for the Results menu rows, so a button target missing
-    here would fire a callback with no route behind it.
-    """
-    for _button_name, target in _EXPORT_BUTTONS:
-        assert target in app_module._EXPORT_SUGGESTED_NAMES
-        assert target in app_module._TARGET_ACTIONS
-
-
-def test_results_window_accepts_an_on_export_callback_seam() -> None:
-    """W11: the decoration-time ``on_export`` seam exists.
-
-    The callback replaces the dead synthetic-menu-event mechanism:
-    each export button fires it with the button's route target, and
-    the app wires it to ``_handle_export_command`` at decoration time.
-    """
-    # Source pin, not inspect.signature: the view's DataSource
-    # annotation is TYPE_CHECKING-only and lazily evaluated (PEP 649
-    # on 3.14), so resolving the signature raises NameError. The
-    # repo's own wiring pins (test_app_wiring.py) use the same
-    # inspect.getsource form.
-    source = inspect.getsource(ResultsWindow.__init__)
-
-    assert "on_export: Callable[[str], None] | None = None" in source
 
 
 # ============================================================ E2/F
@@ -851,14 +887,15 @@ def _inline_offloop(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("target", "expected_html", "expected_pdf"),
+    ("target", "expected_html", "expected_pdf", "expected_poster_html"),
     [
-        ("export_html", True, False),
-        ("export_pdf", False, True),
-        ("export_poster", False, True),
-        ("export_results_csv", False, False),
+        ("export_html", True, False, False),
+        ("export_pdf", False, True, False),
+        ("export_poster", False, True, False),
+        ("export_poster_html", False, False, True),
+        ("export_results_csv", False, False, False),
     ],
-    ids=["html", "pdf", "poster", "csv"],
+    ids=["html", "pdf", "poster", "poster_html", "csv"],
 )
 def test_run_export_offloop_completion_records_and_refreshes_per_format(  # noqa: PLR0913, PLR0917
     tmp_path: Path,
@@ -866,12 +903,13 @@ def test_run_export_offloop_completion_records_and_refreshes_per_format(  # noqa
     target: str,
     expected_html: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
     expected_pdf: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
+    expected_poster_html: bool,  # noqa: FBT001 -- a parametrize row value, not a call-site flag
 ) -> None:
     """Part D: each export records its path and refreshes the menu.
 
     The completion callback records the per-format path (the CSV target
-    records neither) and re-reads the menu state on the main thread, so
-    the matching Preview row enables immediately and the other stays
+    records none) and re-reads the menu state on the main thread, so
+    the matching Preview row enables immediately and the others stay
     disabled. The full status x flag decision tables live in
     test_commands.py.
     """
@@ -892,13 +930,19 @@ def test_run_export_offloop_completion_records_and_refreshes_per_format(  # noqa
         watermark=7,
     )
 
-    assert (context.html_export_path, context.pdf_export_path) == (
+    assert (
+        context.html_export_path,
+        context.pdf_export_path,
+        context.poster_html_export_path,
+    ) == (
         out if expected_html else None,
         out if expected_pdf else None,
+        out if expected_poster_html else None,
     )
     assert context.export_watermark == 7
     assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is expected_html
     assert menubar.items[PREVIEW_MENU_IDS[1]].enabled is expected_pdf
+    assert menubar.items[PREVIEW_MENU_IDS[2]].enabled is expected_poster_html
     assert context.frame.notices == [f"Exported {out.name}"]
 
 
@@ -985,7 +1029,7 @@ def test_handle_export_command_records_the_html_path_for_preview(
 
 
 def test_apply_menu_state_given_a_fresh_context_after_restart_disables_preview() -> None:
-    """Part D: the paths are in-memory, so a restart disables both."""
+    """Part D: the paths are in-memory, so a restart disables all."""
     menubar = _RecordingMenuBar(PREVIEW_MENU_IDS)
     context = _context(engine=_gating_engine(), menubar=menubar)
 
@@ -993,6 +1037,7 @@ def test_apply_menu_state_given_a_fresh_context_after_restart_disables_preview()
 
     assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is False
     assert menubar.items[PREVIEW_MENU_IDS[1]].enabled is False
+    assert menubar.items[PREVIEW_MENU_IDS[2]].enabled is False
 
 
 def test_record_export_completion_given_a_reopened_ride_keeps_finished_rows_disabled() -> None:
@@ -1011,6 +1056,17 @@ def test_record_export_completion_given_a_reopened_ride_keeps_finished_rows_disa
     assert context.html_export_path == out
     assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is False
     assert menubar.items[PREVIEW_MENU_IDS[1]].enabled is False
+    assert menubar.items[PREVIEW_MENU_IDS[2]].enabled is False
+
+
+def test_record_export_completion_given_the_poster_html_target_records_its_own_path() -> None:
+    """Part D: the poster page owns the poster preview path alone."""
+    context = _context(engine=_gating_engine())
+    out = Path("/finished/podium.html")
+
+    app_module._record_export_completion(context, "export_poster_html", out, 2)
+
+    assert (context.poster_html_export_path, context.pdf_export_path) == (out, None)
 
 
 def test_record_export_completion_without_a_presenter_applies_the_no_ride_state() -> None:
@@ -1027,3 +1083,4 @@ def test_record_export_completion_without_a_presenter_applies_the_no_ride_state(
 
     assert context.html_export_path == out
     assert menubar.items[PREVIEW_MENU_IDS[0]].enabled is False
+    assert menubar.items[PREVIEW_MENU_IDS[2]].enabled is False

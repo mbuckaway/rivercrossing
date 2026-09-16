@@ -20,7 +20,9 @@ renderer half (E6.2.2) implements ``render()`` per the template
 contract: a StrictUndefined, autoescaping ``Environment`` over the
 vendored templates, the ``racejson`` filter that escapes every
 ``</``, and a self-contained production page with CSS/fonts inlined
-and the record embedded.
+and the record embedded. :func:`render_poster` is that environment's
+second page: the one-page podium poster ([5d]) the PDF exporter also
+writes, from the same shared model.
 """
 
 import base64
@@ -56,6 +58,7 @@ __all__ = [
     "format_generated",
     "racejson",
     "render",
+    "render_poster",
     "sections",
 ]
 
@@ -874,6 +877,85 @@ def render(  # noqa: PLR0913 -- D15's frozen signature (ride, placed, opts, logo
         logo_src = _logo_data_uri(logo_path)
     payload = build_payload(ride, placed, opts, generated, team_logos=team_logos)
     return _render_payload(payload, logo_src=logo_src, placed=placed)
+
+
+# ============================================ poster renderer ([5d])
+
+# The poster's per-kind card counts, mirroring ``pdfexport._PosterPDF``:
+# the top three of each kind on a team event (two sections of three
+# cards still fit one page), the top five on a solo-only field.
+_POSTER_PODIUM_ROWS = 3
+_POSTER_SOLO_ONLY_ROWS = 5
+
+
+def _poster_sections(payload: RacePayload) -> tuple[tuple[str, tuple[ResultRow, ...]], ...]:
+    """Plan the poster's ``(heading, rows)`` sections from *payload*.
+
+    The same partition and the same per-kind cap ``_PosterPDF.build``
+    applies: any team row makes it a team event, so both kinds get a
+    titled section of their top three; a solo-only field gets one
+    untitled section (its heading cell is empty) of its top five. A
+    kind with no rows still yields its section -- the template skips an
+    empty row tuple -- so a team-only event renders "Teams" alone.
+    """
+    teams = tuple(row for row in payload.results if _is_team_kind(row.entry_type))
+    solo = tuple(row for row in payload.results if not _is_team_kind(row.entry_type))
+    if not teams:
+        return (("", solo[:_POSTER_SOLO_ONLY_ROWS]),)
+    return (
+        ("Teams", teams[:_POSTER_PODIUM_ROWS]),
+        ("Solo riders", solo[:_POSTER_PODIUM_ROWS]),
+    )
+
+
+def render_poster(  # noqa: PLR0913 -- (ride, placed, opts): the frozen signature plus the logo/generated seams
+    ride: _RideLike,
+    placed: Sequence[Placed],
+    opts: ExportOptions,
+    *,
+    logo_path: Path | str | None = None,
+    generated: str | None = None,
+) -> str:
+    """Render one ride's podium poster as a self-contained page.
+
+    The HTML sibling of ``pdfexport.podium_poster`` ([5d]), rendering
+    the same shared model through the same environment the results page
+    uses: one card per placing carrying the place number, the
+    ``#plate`` entry name (a team card carries none -- its section
+    names the kind), the team/solo line, the hand's title-case prose
+    and the best-5 card chips. A team event stacks the top three teams
+    over the top three solo riders; a solo-only field lists its top
+    five, with no section heading to name a kind it does not have.
+
+    Args:
+        ride: Ride-like object exposing ``name``/``event_date``/
+            ``venue``/``lap_km``/``organizer``/``scorer``;
+            ``RideConfig`` satisfies it structurally.
+        placed: Ranked standings, one per entry (teams and solo riders
+            may share the sequence; the kind partitions it).
+        opts: Export flags; only ``show_times`` reaches the poster, as
+            the card's trailing total time.
+        logo_path: Raw PNG path, base64-embedded; None falls back to
+            the transparent 1x1 URI (D8).
+        generated: The pinned footer stamp; None stamps the local now.
+
+    Returns:
+        The full poster page as a string.
+
+    Raises:
+        ValueError: An entry's plate is not numeric.
+    """
+    payload = build_payload(ride, placed, opts, generated)
+    context = {
+        "event": payload.event,
+        "options": payload.options,
+        "poster_sections": _poster_sections(payload),
+        "logo_src": _logo_data_uri(logo_path) if logo_path is not None else _TRANSPARENT_PNG,
+        "logo_alt": payload.event.organizer,
+        "compiled_css": _asset_text("compiled_css"),
+        "fonts_css": _asset_text("fonts_css"),
+    }
+    return _make_environment().get_template("poster.html.j2").render(**context)
 
 
 # ============================================ record -> payload (TB-5)

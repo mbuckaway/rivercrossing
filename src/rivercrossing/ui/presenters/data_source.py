@@ -216,10 +216,16 @@ class StandingsRow:
 
 @dataclass(frozen=True, slots=True)
 class AuditRow:
-    """One row of the audit trail (audit_dlg, audit_list, R-38)."""
+    """One row of the audit trail (audit_dlg, audit_list, R-38).
+
+    ``who`` is retired (scope 6a): the engine never records another
+    actor, so every cell read the same word and the column carried no
+    information. ``reason`` is the event payload's own -- corrections
+    carry the reason the operator typed, and the actions that record
+    none fill their own (spec 6d).
+    """
 
     when: str
-    who: str
     action: str
     entry: str
     reason: str
@@ -918,11 +924,15 @@ class EngineDataSource:
         return rows(teams), rows(solo)
 
     def audit_rows(self) -> list[AuditRow]:
-        """Return the audit trail rows, newest first."""
+        """Return the audit trail rows, newest first.
+
+        ``reason`` is the event payload's own, so a live ride's trail
+        reads exactly what the store-backed one projects from the
+        persisted payloads (scope 6d).
+        """
         return [
             AuditRow(
                 when=_event_time(event),
-                who="scorer",
                 action=event.action,
                 entry=str(event.payload.get("entry_id") or event.payload.get("plate") or ""),
                 reason=str(event.payload.get("reason") or ""),

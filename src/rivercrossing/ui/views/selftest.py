@@ -31,7 +31,7 @@ class SelfTestDialog(DialogFindMixin):  # _find: ui.views._support
     Implements ``SelfTestView`` (module-skeletons.md's presenter
     contract) directly on the dialog's own controls: no separate
     view-model row type exists for this dialog, since its whole
-    content is the four rendered report lines.
+    content is the rendered report lines.
     """
 
     def __init__(self, dialog: wx.Dialog) -> None:

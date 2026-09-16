@@ -10,8 +10,8 @@
 
     * wxDataViewListCtrl cannot be authored here: its XRC handler
       hard-forces the control name to "dataviewCtrl". audit_list is a
-      wxDataViewCtrl, whose name IS honoured; the when/who/action/
-      entry/reason columns and the rows are appended in code with a
+      wxDataViewCtrl, whose name IS honoured; the when/action/entry/
+      reason columns and the rows are appended in code with a
       DataViewIndexListModel subclass (canvas code-side item 1).
     * wxSearchCtrl round-trips through XRC with its name intact
       (tools/toolkit_probe.py check_xrc_names).
@@ -22,11 +22,13 @@
       minimum is documented for this dialog, so it declares no <size>
       and the sizer handler Fit()s it and applies SetSizeHints().
       Phase 6 supplies the floor from code instead: AuditDialog appends
-      the five columns at their own pinned widths (When 90 / Who 120 /
-      Action 180 / Entry 120 / Reason 330 - an unpinned wxDataViewCtrl
-      column keeps the platform's 80 DIP default and clips the Reason
-      cell) and floors and opens the dialog at MIN_SIZE (1000x600)
-      through _apply_min_size, clamped to the display's work area.
+      the four columns at their own pinned widths (When 90 / Action 180
+      / Entry 120 / Reason 330 - an unpinned wxDataViewCtrl column keeps
+      the platform's 80 DIP default and clips the Reason cell), every
+      column sortable and resizable, and floors and opens the dialog at
+      MIN_SIZE (1000x600) through _apply_min_size, clamped to the
+      display's work area. The Who column is retired: the engine never
+      records another actor, so every cell read the same word.
 
   The two filter controls carry visible wxStaticText labels. The canvas
   draws none, but UX-DESKTOP 7 requires a real, persistent label on
@@ -34,10 +36,12 @@
   by a screen reader. The labels are unnamed: they are chrome, not
   data, and nothing needs to find them.
 
-  action_choice's six entries are the filter set drawn on the canvas.
-  No <selection> is declared - the presenter picks the current filter,
-  and an XRC wxChoice with content already lands on index 0
-  ("All actions"), which is the canvas default.
+  action_choice's 29 entries are the flat filter set: "All actions"
+  plus one item per audited action, in the order
+  presenters/audit.py's ACTION_CHOICES declares them (test_audit.py
+  pins the two together). No <selection> is declared - the presenter
+  picks the current filter, and an XRC wxChoice with content already
+  lands on index 0 ("All actions"), which is the canvas default.
 
   Code-side per the canvas: audit_list columns and rows, newest first;
   the search text and the chosen action both narrowing the same query.
@@ -86,11 +90,34 @@
             <object class="wxChoice" name="action_choice">
               <content>
                 <item>All actions</item>
-                <item>Crossing edits</item>
-                <item>Card deals/voids</item>
-                <item>Moves</item>
-                <item>DNF</item>
-                <item>Shoe reshuffle</item>
+                <item>Record Crossing</item>
+                <item>Add Crossing at Time</item>
+                <item>Edit Crossing</item>
+                <item>Void Crossing</item>
+                <item>Undo Last Crossing</item>
+                <item>Reassign Crossing</item>
+                <item>Record Miss</item>
+                <item>Assign Plate to Miss</item>
+                <item>Deal Bonus Card</item>
+                <item>Confirm Held Card</item>
+                <item>Void Held Card</item>
+                <item>Return to Held</item>
+                <item>Void Card</item>
+                <item>Move Rider</item>
+                <item>Add Rider to Team</item>
+                <item>Extract Rider to Solo</item>
+                <item>Change Solo Plate</item>
+                <item>Change Pooled Rider Plate</item>
+                <item>Change Team Plate</item>
+                <item>Remove Rider</item>
+                <item>Mark DNF</item>
+                <item>Shoe Reshuffle</item>
+                <item>Start Ride</item>
+                <item>Continue Ride</item>
+                <item>Set Start Time</item>
+                <item>Stop Ride</item>
+                <item>Finish Ride</item>
+                <item>Reopen Ride</item>
               </content>
             </object>
           </object>

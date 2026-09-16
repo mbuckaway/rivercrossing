@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from rivercrossing.ui.presenters.data_source import AuditRow, DataSource
 
 __all__ = [
-    "ACTION_BUCKETS",
+    "ACTION_CHOICES",
     "ALL_ACTIONS",
     "AuditPresenter",
     "AuditView",
@@ -21,39 +21,44 @@ __all__ = [
 # XRC lands the choice on index 0, which is this label).
 ALL_ACTIONS = "All actions"
 
-# §15-D's action-bucket mapping, the audit_dlg filter set (audit.xrc's
-# six items). The actions in NO bucket -- start, continue,
-# set_start_time, stop, finish, reopen -- appear only under
-# "All actions", exactly as the canvas draws them.
-ACTION_BUCKETS: dict[str, frozenset[str]] = {
-    "Crossing edits": frozenset(
-        {
-            "record_crossing",
-            "undo",
-            "edit_crossing",
-            "void_crossing",
-            "add_crossing_at",
-            "reassign",
-            # K: a miss is a crossing-entry event -- recording it and
-            # resolving it to a real plate both live under this bucket.
-            "record_miss",
-            "assign_plate_to_miss",
-        }
-    ),
-    "Card deals/voids": frozenset({"deal_manual", "confirm_held", "void_held", "void_card"}),
-    "Moves": frozenset(
-        {
-            "move_rider",
-            "add_rider_to_team",
-            "extract_rider_to_solo",
-            "change_solo_plate",
-            "change_pooled_rider_plate",
-            "change_team_plate",
-        }
-    ),
-    "DNF": frozenset({"dnf"}),
-    "Shoe reshuffle": frozenset({"shoe_reshuffle"}),
-}
+# audit.xrc's flat action_choice, in the .xrc's own declared order: one
+# row per audited action, each carrying the label the dropdown draws and
+# the action string the audit trail records. Every action the app can
+# audit appears exactly once -- the engine's own event actions
+# (``ride.py``'s ``apply`` dispatch) plus the roster mutations Store
+# persists as ``user_action`` rows -- so the filter is a straight
+# equality test on the row's own action. ``test_audit.py`` pins this
+# tuple against the .xrc's item order, so the two cannot drift.
+ACTION_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Record Crossing", "record_crossing"),
+    ("Add Crossing at Time", "add_crossing_at"),
+    ("Edit Crossing", "edit_crossing"),
+    ("Void Crossing", "void_crossing"),
+    ("Undo Last Crossing", "undo"),
+    ("Reassign Crossing", "reassign"),
+    ("Record Miss", "record_miss"),
+    ("Assign Plate to Miss", "assign_plate_to_miss"),
+    ("Deal Bonus Card", "deal_manual"),
+    ("Confirm Held Card", "confirm_held"),
+    ("Void Held Card", "void_held"),
+    ("Return to Held", "return_to_held"),
+    ("Void Card", "void_card"),
+    ("Move Rider", "move_rider"),
+    ("Add Rider to Team", "add_rider_to_team"),
+    ("Extract Rider to Solo", "extract_rider_to_solo"),
+    ("Change Solo Plate", "change_solo_plate"),
+    ("Change Pooled Rider Plate", "change_pooled_rider_plate"),
+    ("Change Team Plate", "change_team_plate"),
+    ("Remove Rider", "remove_rider"),
+    ("Mark DNF", "dnf"),
+    ("Shoe Reshuffle", "shoe_reshuffle"),
+    ("Start Ride", "start"),
+    ("Continue Ride", "continue"),
+    ("Set Start Time", "set_start_time"),
+    ("Stop Ride", "stop"),
+    ("Finish Ride", "finish"),
+    ("Reopen Ride", "reopen"),
+)
 
 
 @runtime_checkable
@@ -77,9 +82,9 @@ class AuditPresenter:
     filters -- ``audit_search`` matches the entry's plate OR display
     name (resolved through the optional roster, so a pooled team
     member's plate finds its team name), and ``action_choice`` matches
-    the §15-D action bucket -- and renders through
-    :meth:`AuditView.show_audit_rows`. A deep-linked entry (entry
-    detail's audit button, R-38) pre-fills the search through
+    the one action it names (:data:`ACTION_CHOICES`) -- and renders
+    through :meth:`AuditView.show_audit_rows`. A deep-linked entry
+    (entry detail's audit button, R-38) pre-fills the search through
     :meth:`AuditView.set_entry_filter` and starts the search on that
     plate.
     """
@@ -105,8 +110,8 @@ class AuditPresenter:
             entry_filter: The deep-linked entry's plate (entry detail's
                 audit button, R-38); pre-fills audit_search and starts
                 the search narrowed to it.
-            action_filter: The action_choice bucket to start on;
-                defaults to :data:`ALL_ACTIONS` (no action filter).
+            action_filter: The audited action to start on, or
+                :data:`ALL_ACTIONS` for no action filter.
         """
         self.view = view
         self.data_source = data_source
@@ -126,27 +131,41 @@ class AuditPresenter:
         self._entry_filter = text
         self.refresh()
 
-    def on_action_selected(self, bucket: str) -> None:
-        """Handle an action_choice selection (§15-D bucket filter)."""
-        self._action_filter = bucket
+    def on_action_selected(self, action: str) -> None:
+        """Handle an action_choice selection (one action's rows).
+
+        *action* is an audited action string
+        (:data:`ACTION_CHOICES`), or :data:`ALL_ACTIONS` -- the view
+        resolves the dropdown's label before forwarding.
+        """
+        self._action_filter = action
         self.refresh()
 
     def _filtered(self, rows: list[AuditRow]) -> list[AuditRow]:
-        """Return *rows* narrowed by the current search and bucket.
+        """Return *rows* narrowed by the current search and action.
 
         Both filters narrow the same query (audit.xrc's own note): the
         search text matches a row's plate or its entry's display name,
-        and the chosen bucket keeps only its mapped actions. An empty
-        search and :data:`ALL_ACTIONS` filter nothing.
+        and the chosen action keeps only its own rows. An empty search
+        and :data:`ALL_ACTIONS` filter nothing.
         """
         needle = self._entry_filter.strip().casefold()
-        actions = ACTION_BUCKETS.get(self._action_filter)
         return [
             row
             for row in rows
-            if (not needle or self._matches(row, needle))
-            and (actions is None or row.action in actions)
+            if (not needle or self._matches(row, needle)) and self._matches_action(row)
         ]
+
+    def _matches_action(self, row: AuditRow) -> bool:
+        """Return whether *row* survives the current action filter.
+
+        :data:`ALL_ACTIONS` -- ``action_choice``'s first entry -- is the
+        no-filter value, so it keeps every row; any other selection
+        keeps only the rows whose own action is exactly that one.
+        """
+        if self._action_filter == ALL_ACTIONS:
+            return True
+        return row.action == self._action_filter
 
     def _matches(self, row: AuditRow, needle: str) -> bool:
         """Return whether *row*'s plate or display name has *needle*."""

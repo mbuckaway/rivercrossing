@@ -65,13 +65,22 @@ def test_fake_self_test_view_satisfies_the_self_test_view_protocol() -> None:
             "0.31 s",
             "Whole-field 180×12 timing ... 0.31 s PASS",  # noqa: RUF001
         ),
+        ("compare() total order", "", "compare() total order ....... PASS"),
+        ("best_hand() joker bound", "", "best_hand() joker bound ..... PASS"),
     ],
-    ids=["rank_sweep", "joker_vectors", "five_of_a_kind", "field_timing"],
+    ids=[
+        "rank_sweep",
+        "joker_vectors",
+        "five_of_a_kind",
+        "field_timing",
+        "compare_total_order",
+        "joker_count_bound",
+    ],
 )
-def test_format_check_line_given_each_canvas_check_matches_its_frozen_line(
+def test_format_check_line_given_each_self_test_check_matches_its_frozen_line(
     name: str, detail: str, expected: str
 ) -> None:
-    """Every canvas line renders character-for-character."""
+    """Every self-test line renders character-for-character."""
     check = SelfTestCheck(name=name, passed=True, duration_seconds=0.0, detail=detail)
 
     assert format_check_line(check) == expected

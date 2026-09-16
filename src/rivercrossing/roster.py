@@ -892,7 +892,12 @@ class Roster:
             entry.riders[0].plate = plate
         self._log(
             "change_solo_plate",
-            {"display_name": entry.display_name, "old_plate": old_plate, "new_plate": plate},
+            {
+                "display_name": entry.display_name,
+                "old_plate": old_plate,
+                "new_plate": plate,
+                "reason": f"{old_plate} → {plate}",
+            },
         )
 
     def change_pooled_rider_plate(self, rider: Rider, *, plate: str) -> None:
@@ -930,7 +935,12 @@ class Roster:
         self._recompute_pooled_plate(entry)
         self._log(
             "change_pooled_rider_plate",
-            {"rider_name": rider.full_name, "old_plate": old_plate, "new_plate": plate},
+            {
+                "rider_name": rider.full_name,
+                "old_plate": old_plate,
+                "new_plate": plate,
+                "reason": f"{old_plate} → {plate}",
+            },
         )
 
     def change_team_plate(self, entry: Entry, *, plate: str) -> None:
@@ -969,7 +979,12 @@ class Roster:
         entry.plate = plate
         self._log(
             "change_team_plate",
-            {"display_name": entry.display_name, "old_plate": old_plate, "new_plate": plate},
+            {
+                "display_name": entry.display_name,
+                "old_plate": old_plate,
+                "new_plate": plate,
+                "reason": f"{old_plate} → {plate}",
+            },
         )
 
     def change_plate(self, entry: Entry, rider: Rider | None, *, plate: str) -> None:

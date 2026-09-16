@@ -112,15 +112,17 @@ VECTORS_PACKAGE_DEST = f"rivercrossing/{VECTORS_SUBDIR}"
 # E6.2.1: the frozen results templates and the two vendored CSS
 # artifacts (spec section 8). ``htmlexport.render`` reads the templates
 # via Jinja2's PackageLoader, and the page inlines compiled_css +
-# fonts_css, so all five must land under
+# fonts_css, so all six must land under
 # ``rivercrossing/htmlexport/templates/`` in the bundle. The base64
 # fonts_css ships instead of the ``fonts/`` woff2 sources (they never
 # ride along); the manifest therefore names the artifacts, not the
-# font files.
+# font files. ``poster.html.j2`` is the podium poster's own page
+# (``htmlexport.render_poster``) beside the results page.
 HTMLEXPORT_TEMPLATES_SUBDIR = "htmlexport/templates"
 REQUIRED_TEMPLATES: tuple[str, ...] = (
     "base.html.j2",
     "macros.html.j2",
+    "poster.html.j2",
     "theme.css",
     "compiled_css",
     "fonts_css",

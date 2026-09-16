@@ -259,3 +259,28 @@ def test_asset_key_given_the_retired_t_ten_code_raises_unknown_card_code_error()
     """T-5: the legacy "T" ten has no bitmap and no surviving alias."""
     with pytest.raises(UnknownCardCodeError, match=re.escape("'TD'")):
         asset_key("TD")
+
+
+# ------------------------------------------------ templates manifest
+
+
+def test_required_templates_declares_the_poster_page_beside_the_results_page() -> None:
+    """A template disappearing must shrink this, not the suite.
+
+    ``poster.html.j2`` is ``htmlexport.render_poster``'s own page: a
+    bundle without it exports a poster straight into
+    ``TemplateNotFound``.
+    """
+    assert set(manifest.REQUIRED_TEMPLATES) == {
+        "base.html.j2",
+        "macros.html.j2",
+        "poster.html.j2",
+        "theme.css",
+        "compiled_css",
+        "fonts_css",
+    }
+
+
+def test_missing_templates_given_the_real_source_tree_finds_nothing_absent() -> None:
+    """The tree both the wheel and the bundle are built from."""
+    assert manifest.missing_templates(_PACKAGE_DIR) == ()

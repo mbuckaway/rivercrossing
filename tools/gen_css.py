@@ -41,9 +41,13 @@ DEFAULT_OUT_DIR = DEFAULT_TEMPLATES_DIR
 COMPILED_CSS_NAME = "compiled_css"
 FONTS_CSS_NAME = "fonts_css"
 
-# The three shipped template files; the wrapper below needs theme.css
+# The three scanned template files; the wrapper below needs theme.css
 # (it holds the @theme tokens and custom rules), and the .j2 files are
 # scanned by the CLI's automatic content detection for utility classes.
+# poster.html.j2 is deliberately absent: the podium poster reuses the
+# results page's widget tokens (its card markup duplicates macros'
+# classes), so a new utility there must be added here -- and the
+# artifact regenerated -- or the class renders unstyled.
 INPUT_TEMPLATE_FILES: tuple[str, ...] = ("base.html.j2", "macros.html.j2", "theme.css")
 
 # Pinned CLI, matching package.json's devDependencies (@tailwindcss/cli
