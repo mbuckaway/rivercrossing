@@ -3170,7 +3170,7 @@ def test_store_save_roster_zero_rider_relay_team_keeps_its_relay_plate(tmp_path:
     """W8: an empty relay team round-trips its own plate, no riders."""
     db_path = tmp_path / "rides.db"
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.TEAM_RELAY)
-    roster.create_empty_team(display_name="Trail Blazers", plate="RC 88")
+    roster.create_empty_team(display_name="Trail Blazers", plate="88")
     ride_id = _save_roster_ride(
         db_path,
         roster,
@@ -3181,7 +3181,7 @@ def test_store_save_roster_zero_rider_relay_team_keeps_its_relay_plate(tmp_path:
     reloaded = _round_trip_roster(db_path, ride_id)
 
     (entry,) = reloaded.entries
-    assert entry.plate == "RC 88"
+    assert entry.plate == "88"
     assert entry.riders == []
 
 

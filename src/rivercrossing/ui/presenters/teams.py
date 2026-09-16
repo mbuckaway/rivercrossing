@@ -256,7 +256,7 @@ class AddTeamPresenter:
         before any roster rule runs -- on an edit the entry's own name
         never collides with itself, so re-casing a name is allowed. A
         relay ride's plate row is forwarded to the roster's own
-        non-empty and duplicate guards. A roster refusal (solo-only
+        whole-number and duplicate guards. A roster refusal (solo-only
         ride, the ride has left DRAFT, ...) shows via
         :meth:`AddTeamView.show_validation` and leaves the roster
         unchanged, never raising past this handler.
