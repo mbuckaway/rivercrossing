@@ -50,8 +50,8 @@ rivercrossing/
 │   │   │                       #   baseline — no migrations module (Phase 2, SCHEMA_VERSION=1)
 │   │   └── backup.py           # open + hourly + manual, keep 20 (R-54)
 │   ├── csvio.py                # §7 import/export, preview-then-commit
-│   ├── htmlexport.py           # §8 Jinja2 renderer (self-contained page)
-│   │   └── templates/          #   base.html.j2 + widget macros + vendored CSS/fonts
+│   ├── htmlexport.py           # §8 Jinja2 renderer (self-contained page; + poster page)
+│   │   └── templates/          #   base.html.j2 + poster.html.j2 + widget macros + vendored CSS/fonts
 │   ├── pdfexport.py            # §8b fpdf2 renderer + podium poster (5a–5d)
 │   └── ui/
 │       ├── app.py              # wx.App bootstrap, theme + session wiring
@@ -143,7 +143,9 @@ class HandClass(IntEnum):     # low beats high nothing — order is the local ra
 best_hand(cards: Sequence[Card]) -> EvaluatedHand      # 0..N cards, any joker count;
     # N<5 ⇒ partial-hand rule; whole-field 180×12 < 1 s (R-42)
 compare(a: EvaluatedHand, b: EvaluatedHand) -> int
-self_test() -> SelfTestReport   # 7,462 distinct-rank sweep + joker vectors;
+self_test() -> SelfTestReport   # six checks: 7,462 distinct-rank sweep + joker vectors +
+                                # five-of-a-kind ordering + field timing, then compare()'s
+                                # total order and best_hand()'s joker bound;
                                 # wired to launch + Help menu; failure blocks Finish (R-44)
 ```
 
@@ -288,6 +290,11 @@ htmlexport.render(ride, placed, opts, *, logo_src=None, generated=None, logo_pat
     # embedded (</ escaped as <\/), logo base64 (transparent 1×1 fallback), laps/time boards
     # derived from placed when the options ask; times off ⇒ neither cells nor JSON fields emitted.
     # Tests: golden pages from committed fixtures + JSON round-trip (§8)
+htmlexport.render_poster(ride, placed, opts, *, logo_path=None, generated=None) -> str
+    # the poster page (§8b's 5d content) — poster.html.j2 through the same
+    # environment and payload: top 3 teams over top 3 solo riders, or a
+    # solo-only field's top 5; one card per placing, no heading for a kind
+    # the ride does not have
 pdfexport.render(ride, placed, opts, path, *, letter=True, created_at=None, logo_path=None)
     # fpdf2, deterministic bytes (R-62); aware-UTC creation stamp is the only timestamp
 pdfexport.podium_poster(ride, placed, path, *, letter=True, created_at=None, logo_path=None)
