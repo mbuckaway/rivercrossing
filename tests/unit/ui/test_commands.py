@@ -250,6 +250,20 @@ def test_clear_ride_route_declares_the_ride_open_gate() -> None:
     assert rule.requires_ride_open is True
 
 
+def test_simulation_route_declares_no_ride_open_gate_and_the_stop_clause() -> None:
+    """The Simulation row's own "Enabled when" cell.
+
+    The row gates on the ride state alone -- DRAFT, or a RUNNING ride
+    whose console Stop has locked entry -- and never on "a ride is
+    open"; its own GO leaves the ride stopped-RUNNING, so the stop
+    clause is what keeps the row live for a second rehearsal.
+    """
+    rule = commands.route_for_id(ids.MI_SIMULATION).enabled_when
+
+    assert rule.requires_ride_open is False
+    assert rule.requires_ride_stopped is True
+
+
 def test_standings_route_is_always_enabled_after_part_d() -> None:
     """Part D: Standings opens the empty-state dialog with no ride."""
     route = commands.route_for_id(ids.MI_STANDINGS)
@@ -388,7 +402,11 @@ ALLOWED_STATES = (
     None,  # File > Import Riders CSV...: "ride open (DRAFT-only edits)"
     None,  # File > Export Riders CSV...: "ride open"
     None,  # File > Back Up Database...: "always"
-    frozenset({RideStatus.DRAFT}),  # File > Simulation...: DRAFT only
+    # File > Simulation...: DRAFT, or a RUNNING ride whose console Stop
+    # has locked entry -- the stopped-RUNNING state the simulator's own
+    # GO leaves behind, so a second rehearsal can be run without first
+    # unloading the ride.
+    frozenset({RideStatus.DRAFT, RideStatus.RUNNING}),
     None,  # File > Settings...: "always"
     None,  # File > Exit: "always"
     None,  # Ride > New Ride...: "no ride open" -- condition-only, never a state rule (D1)
@@ -497,6 +515,7 @@ START_RIDE_ROUTE = _ROUTES_BY_LABEL["Start Ride"]
 NEW_RIDE_ROUTE = _ROUTES_BY_LABEL["New Ride…"]
 EDIT_RIDE_ROUTE = _ROUTES_BY_LABEL["Edit Ride…"]
 CLEAR_RIDE_ROUTE = _ROUTES_BY_LABEL["Clear Ride…"]
+SIMULATION_ROUTE = _ROUTES_BY_LABEL["Simulation…"]
 
 RIDE_OPEN_CASES = (True, False)
 RIDE_OPEN_CASE_IDS = ("ride_open", "no_ride_open")
@@ -755,6 +774,42 @@ def test_is_route_enabled_given_clear_ride_and_live_running_is_disabled() -> Non
     state = commands.RideState(status=RideStatus.RUNNING, ride_open=True, ride_stopped=False)
 
     result = commands.is_route_enabled(CLEAR_RIDE_ROUTE, state)
+
+    assert result is False
+
+
+def test_is_route_enabled_given_simulation_and_a_draft_console_without_a_ride_is_enabled() -> None:
+    """The Simulation row declares no ride-open gate of its own.
+
+    The no-ride bootstrap console reports DRAFT with ``ride_open``
+    false (:func:`app._menu_ride_state`), and the row's rule reads the
+    state alone.
+    """
+    state = commands.RideState(status=RideStatus.DRAFT, ride_open=False)
+
+    result = commands.is_route_enabled(SIMULATION_ROUTE, state)
+
+    assert result is True
+
+
+def test_is_route_enabled_given_simulation_and_a_stopped_running_ride_is_enabled() -> None:
+    """The simulator's own GO leaves the ride stopped-RUNNING.
+
+    The row stays live there, so the operator can rehearse the race a
+    second time without unloading the ride.
+    """
+    state = commands.RideState(status=RideStatus.RUNNING, ride_open=True, ride_stopped=True)
+
+    result = commands.is_route_enabled(SIMULATION_ROUTE, state)
+
+    assert result is True
+
+
+def test_is_route_enabled_given_simulation_and_a_live_running_ride_is_disabled() -> None:
+    """A live RUNNING ride has entry locked, so the roster is closed."""
+    state = commands.RideState(status=RideStatus.RUNNING, ride_open=True, ride_stopped=False)
+
+    result = commands.is_route_enabled(SIMULATION_ROUTE, state)
 
     assert result is False
 
