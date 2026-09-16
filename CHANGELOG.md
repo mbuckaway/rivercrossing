@@ -4,6 +4,36 @@ All notable changes to RiverCrossing are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versioning follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.20] - 2026-09-16
+
+### Added
+
+- **Rider Simulator "New Ride"** — a `New Ride` button builds a ride from the app's defaults, named
+  `GORBA Test Ride #N` (unique per database, MIXED, rider-pooled, max team 5), and reuses the
+  New Ride… save path. File ▸ Simulation… is now available with no ride open and on a stopped
+  RUNNING ride, so a lap can be added at a time; the simulator's other controls stay disabled until
+  a ride exists.
+- **Team-overlap review issue** — a team's lap under the ride's minimum lap time now reads
+  "Team overlap" on the Needs Review tab, distinct from a solo rider's short lap.
+- **Numeric-only plates** — every plate is a whole number for both plate models (relay included).
+  A non-digit CSV `NUMBER` cell is a conflict to fix, and the console plate box silently ignores
+  any character other than a digit or a miss symbol (`= / + - .`).
+
+### Changed
+
+- **Edit Ride now saves the ride's shape** — `entry_mode`, `max_team_size` and `plate_model` reach
+  the live roster as well as the database, so the CSV import and simulator see an edited ride's team
+  cap immediately (previously an edit to max team size was not recognised until a reload).
+- **Crossing Detail resolves a miss's plate** — entering a number for a missed crossing via Edit now
+  shows the rider and team in the dialog, not just the plate box.
+- **User guide** documents the conditions a Needs Review row appears for (short lap, duplicate
+  crossing, team overlap).
+
+### Fixed
+
+- **Simulator settings** — the no-ride simulator persists the operator's saved counts without
+  overwriting them, and its `New Ride` button is disabled rather than inert when a ride is open.
+
 ## [1.0.19] - 2026-09-16
 
 ### Added
