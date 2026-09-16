@@ -1333,7 +1333,8 @@ def test_crossing_number_dlg_declares_no_duplicate_control_name() -> None:
 # one "Generate Riders" button, so gen_teams_btn leaves the XRC file
 # (and, with it, ui/ids.py). Phase 2 adds check_btn beside it and
 # re-authors the count defaults. G9 adds the three behaviour dropdowns
-# under the interval row.
+# under the interval row. The no-ride open leads the same row with
+# new_ride_btn, the one action a ride-less dialog offers.
 
 SIMULATION_XRC = "simulation.xrc"
 SIMULATION_DLG = "simulation_dlg"
@@ -1346,6 +1347,7 @@ SIMULATION_DIALOG_CONTROLS = (
     "short_lap_choice",
     "lapped_choice",
     "team_stop_choice",
+    "new_ride_btn",
     "gen_riders_btn",
     "check_btn",
     "go_btn",
@@ -1374,6 +1376,19 @@ def test_simulation_dlg_declares_the_check_button_in_the_generator_row() -> None
 
     assert any(item is objects["check_btn"] for item in row.iter("object"))
     assert _param(objects["check_btn"], "label") == "Check"
+
+
+def test_simulation_dlg_declares_new_ride_ahead_of_the_generator_row() -> None:
+    """The no-ride open leads with New Ride, before Generate."""
+    dialog = _simulation_dialog()
+    objects = _objects_by_name(dialog)
+    names = _control_names_in(dialog)
+
+    assert names.index("new_ride_btn") < names.index("gen_riders_btn")
+    assert (objects["new_ride_btn"].attrib["class"], _param(objects["new_ride_btn"], "label")) == (
+        "wxButton",
+        "New Ride",
+    )
 
 
 def test_simulation_dlg_declares_the_new_count_defaults() -> None:

@@ -10,12 +10,16 @@ controls on a real dialog -- stays with the (functional) suite.
 
 Phase 2 adds the Check button (a system modal, never ``sim_infobar``),
 the solo auto-fill on every riders/teams change, and the
-speed-derived interval seed.
+speed-derived interval seed. The no-ride open (``roster=None``) adds
+the other half: every generator and race control is disabled, and
+``new_ride_btn`` -- the dialog's only live action -- routes to the
+app's New Ride and ends the modal.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import TYPE_CHECKING
 
 import pytest
 import wx
@@ -28,6 +32,9 @@ from rivercrossing.ui.presenters.simulator import (
 )
 from rivercrossing.ui.views import simulator as simulator_module
 from rivercrossing.ui.views.simulator import SimRunningDialog, SimulatorDialog
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 class _Control:
@@ -521,6 +528,96 @@ def test_simulator_dialog_seeds_the_behaviour_defaults_when_none_are_passed(
     assert view.sim_behaviors == (1, 0, 0)
 
 
+# --- the no-ride open: New Ride is the dialog's only live action
+
+
+def _no_ride_controls() -> dict[str, _Control]:
+    """Return the authored control doubles plus the New Ride button.
+
+    ``_controls()`` deliberately carries no ``new_ride_btn`` key: the
+    ride-open path never resolves that name, so its absence there is
+    what proves the lookup happens on the no-ride branch alone.
+    """
+    return {**_controls(), "new_ride_btn": _Control()}
+
+
+# Every control that generates or races: all dead without a ride.
+NO_RIDE_DISABLED_CONTROLS = (
+    "riders_spin",
+    "teams_spin",
+    "solo_spin",
+    "laps_spin",
+    "interval_spin",
+    "short_lap_choice",
+    "lapped_choice",
+    "team_stop_choice",
+    "gen_riders_btn",
+    "check_btn",
+    "go_btn",
+)
+
+
+@pytest.mark.parametrize("control_name", NO_RIDE_DISABLED_CONTROLS)
+def test_simulator_dialog_given_no_ride_disables_every_generator_control(
+    monkeypatch: pytest.MonkeyPatch, control_name: str
+) -> None:
+    """No ride means no roster to generate into, so it is dead."""
+    controls = _no_ride_controls()
+    _patch_find(monkeypatch, controls)
+
+    SimulatorDialog(_FakeDialog(), engine=None, roster=None)
+
+    assert controls[control_name].enabled is False
+
+
+def test_simulator_dialog_given_no_ride_enables_the_new_ride_button(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """New Ride is the one action a ride-less dialog offers."""
+    controls = _no_ride_controls()
+    _patch_find(monkeypatch, controls)
+
+    SimulatorDialog(_FakeDialog(), engine=None, roster=None)
+
+    assert controls["new_ride_btn"].enabled is True
+
+
+def test_simulator_dialog_given_no_ride_binds_only_the_new_ride_button(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing else on a ride-less dialog is wired to a handler."""
+    controls = _no_ride_controls()
+    _patch_find(monkeypatch, controls)
+
+    view = SimulatorDialog(_FakeDialog(), engine=None, roster=None)
+
+    assert view.dialog.bound == [controls["new_ride_btn"]]
+
+
+def test_simulator_dialog_given_no_ride_holds_no_presenter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """There is no roster or engine to present, so no presenter."""
+    controls = _no_ride_controls()
+    _patch_find(monkeypatch, controls)
+
+    view = SimulatorDialog(_FakeDialog(), engine=None, roster=None)
+
+    assert view.presenter is None
+
+
+def test_simulator_dialog_given_no_ride_snapshots_the_authored_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing seeds the fields: the app persists the authored ones."""
+    controls = _no_ride_controls()
+    _patch_find(monkeypatch, controls)
+
+    view = SimulatorDialog(_FakeDialog(), engine=None, roster=None)
+
+    assert (view.sim_values, view.sim_behaviors) == ((175, 40, 15, 1, 45), (1, 0, 0))
+
+
 def test_snapshot_sim_values_records_the_current_spins() -> None:
     """sim_values always reflects the five spins at snapshot time."""
     roster = Roster(entry_mode=EntryMode.MIXED, plate_model=PlateModel.RIDER_POOLED)
@@ -767,3 +864,48 @@ def test_on_go_given_an_out_of_range_lap_count_warns_and_keeps_the_dialog_open()
 
     assert shell.sim_infobar.messages == ["laps must be at least 1"]
     assert (shell.dialog.ended, shell.dialog.layouts) == ([], 1)
+
+
+# --- the no-ride open: New Ride routes to the app, then closes
+
+
+class _CallOrderDialog(_FakeDialog):
+    """A fake dialog logging its own close onto a shared call log."""
+
+    def __init__(self, log: list[str]) -> None:
+        """Start never-closed, appending every close to *log*."""
+        super().__init__()
+        self.log = log
+
+    def EndModal(self, result: int) -> None:  # noqa: N802 -- wx API name
+        """Log the close, then record it as the base double does."""
+        self.log.append("closed")
+        super().EndModal(result)
+
+
+def _no_ride_shell(on_new_ride: Callable[[], None] | None) -> SimulatorDialog:
+    """Build a dialog shell owning only its own callback and window."""
+    shell = object.__new__(SimulatorDialog)
+    shell.on_new_ride = on_new_ride
+    shell.dialog = _FakeDialog()
+    return shell
+
+
+def test_on_new_ride_given_a_callback_routes_then_closes_the_dialog() -> None:
+    """New Ride hands over to the app before it ends the modal."""
+    log: list[str] = []
+    shell = _no_ride_shell(lambda: log.append("routed"))
+    shell.dialog = _CallOrderDialog(log)
+
+    SimulatorDialog._on_new_ride(shell, None)
+
+    assert (log, shell.dialog.ended) == (["routed", "closed"], [wx.ID_OK])
+
+
+def test_on_new_ride_given_no_callback_still_closes_the_dialog() -> None:
+    """A dialog the app threaded no route into closes on its own."""
+    shell = _no_ride_shell(None)
+
+    SimulatorDialog._on_new_ride(shell, None)
+
+    assert shell.dialog.ended == [wx.ID_OK]
