@@ -49,7 +49,7 @@ import wx.xrc  # Submodule: plain `import wx` does not load it.
 
 from rivercrossing.ride import RideStatus
 from rivercrossing.ui import feed_model, ids, sound, std_dialogs
-from rivercrossing.ui.presenters.console import status_text, stop_light_mode
+from rivercrossing.ui.presenters.console import MISS_SYMBOLS, status_text, stop_light_mode
 from rivercrossing.ui.presenters.data_source import Counters
 from rivercrossing.ui.rider_columns import CONSOLE_RIDER_COLUMNS
 from rivercrossing.ui.views import dialogs, team_editor
@@ -1850,6 +1850,11 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
         wx's own default-button dispatch and fire a second submit
         for the one Enter keypress.
 
+        The plate field also gets ``EVT_CHAR``, bound to
+        :meth:`_on_plate_char` -- the entry alphabet filter, one
+        filter for every plate model. It rides this one binding, so
+        the swap semantics below cover it like any other handler.
+
         The callback is stored as :attr:`_on_submit` and every
         handler routes through it, so :meth:`set_presenter` can swap
         the console onto a new ride without rebinding (E5.4.1's
@@ -1864,7 +1869,33 @@ class MainFrame(DialogFindMixin):  # _find: ui.views._support, over self.frame
                 callback(self.plate_input.GetValue())
 
         self.plate_input.Bind(wx.EVT_TEXT_ENTER, _submit)
+        self.plate_input.Bind(wx.EVT_CHAR, self._on_plate_char)
         self.record_btn.Bind(wx.EVT_BUTTON, _submit)
+
+    def _on_plate_char(self, event: Any) -> None:  # noqa: ANN401 -- wx ships no stubs
+        """Filter printable keys down to plate characters (T7).
+
+        The field takes a plate number or one of
+        :data:`~rivercrossing.ui.presenters.console.MISS_SYMBOLS` --
+        the scorer's shorthand for a crossing whose number was missed
+        -- and nothing else. A disallowed printable character is
+        consumed rather than ``Skip()``ed: it never reaches the
+        control and wx never beeps at it. Every other key ``Skip()``s
+        on as usual -- the digits and miss symbols, and every control
+        key, which reports ``wx.WXK_NONE`` from ``GetUnicodeKey()``
+        (Backspace, Enter and the arrows included, so the field's own
+        ``wxTE_PROCESS_ENTER`` submit still fires).
+
+        The digit arm pins ASCII deliberately: plain
+        ``str.isdigit()`` would admit ``٣`` and ``²``.
+        """
+        key = event.GetUnicodeKey()
+        if key == wx.WXK_NONE:
+            event.Skip()
+            return
+        character = chr(key)
+        if (character.isascii() and character.isdigit()) or character in MISS_SYMBOLS:
+            event.Skip()
 
     def play(self, cue: Cue) -> None:
         """Play the audio cue for the given event (ConsoleView, R-31).
